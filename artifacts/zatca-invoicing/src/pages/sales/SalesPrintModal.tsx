@@ -19,7 +19,7 @@ function isNonPaymentDoc(type: SalesPrintType) {
   return type === "quotation" || type === "order";
 }
 
-interface PrintData {
+export interface PrintData {
   type: SalesPrintType;
   doc: any;
   lines: any[];

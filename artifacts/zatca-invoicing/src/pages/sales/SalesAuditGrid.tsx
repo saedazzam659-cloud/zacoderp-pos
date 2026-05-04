@@ -26,8 +26,10 @@ import {
   ListChecks, AlertTriangle, AlertCircle, Info, Loader2, Eye,
   CheckCircle2, FileText, Plus, Send, Undo2, RotateCcw, X, Filter,
   Trash2, Settings2, ArrowUp, ArrowDown, RotateCw, EyeOff, Palette, Check,
-  Copy, Pencil,
+  Copy, Pencil, FileDown,
 } from "lucide-react";
+import SalesPrintModal, { type PrintData } from "./SalesPrintModal";
+import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 
 // ── Header color theme palette ────────────────────────────────────────────
 // Default is "white" (light header with dark text). Selecting any other color
@@ -645,7 +647,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     enabled: !!user,
   });
 
-  const { data: customers = [] } = useQuery<any[]>({
+  const { data: customers = [], isFetched: customersFetched } = useQuery<any[]>({
     queryKey: ["customers", cid],
     queryFn: () => getList(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`),
     enabled: !!user,
@@ -1071,10 +1073,100 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     toast({ title: "تم تصدير ملف CSV بنجاح" });
   }
 
+  // ── Per-invoice print modal (uses SalesPrintModal w/ 12 templates) ───
+  // Single source of truth for "print one invoice" used by:
+  //   1. The per-row Printer icon in the row actions.
+  //   2. The toolbar "طباعة" button when exactly one row is selected.
+  //   3. The auto-print-after-save flow (sessionStorage handoff from the
+  //      sales-invoice form). When the form sets the `autoPrintSalesInvoice`
+  //      flag, we read it on mount, fetch the invoice, and immediately open
+  //      the modal with `autoPrintOnOpen=true` so it fires the print dialog
+  //      without an extra click.
+  const [printData, setPrintData]   = useState<PrintData | null>(null);
+  const [printOpen, setPrintOpen]   = useState(false);
+  const [printAuto, setPrintAuto]   = useState(false);
+  const [printDefault, setPrintDefault] =
+    useState<"a4" | "thermal">(((user as any)?.company?.printTemplateSales === "thermal") ? "thermal" : "a4");
+
+  async function openPrintFor(invId: number, opts?: { autoPrint?: boolean; template?: "a4" | "thermal" }) {
+    try {
+      const r = await fetch(`${API}/api/sales/sales-invoices/${invId}`, { headers: authH });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const full = await r.json();
+      // The grid's customers list holds the full customer object — pass
+      // that to the print modal so templates render full address/VAT/etc.
+      // If the user clicked print before the customers query resolved, or
+      // the customer is missing from the list (deleted/different tenant
+      // cache), fall back to fetching the single customer directly so the
+      // template still has VAT / address / phone instead of "—".
+      let customer: any = null;
+      if (full.customerId) {
+        customer = customers.find((c: any) => c.id === full.customerId) ?? null;
+        if (!customer) {
+          try {
+            const cr = await fetch(`${API}/api/customers/${full.customerId}`, { headers: authH });
+            if (cr.ok) customer = await cr.json();
+          } catch { /* keep customer=null; modal renders "—" gracefully */ }
+        }
+      }
+      setPrintData({
+        type: "invoice",
+        doc: full,
+        lines: full.lines ?? [],
+        customer,
+        company: (user as any)?.company ?? null,
+      });
+      if (opts?.template) setPrintDefault(opts.template);
+      setPrintAuto(!!opts?.autoPrint);
+      setPrintOpen(true);
+    } catch (err: any) {
+      toast({
+        title: "تعذَّر تحميل الفاتورة للطباعة",
+        description: err?.message ?? String(err),
+        variant: "destructive",
+      });
+    }
+  }
+
+  // ── Auto-print after save handoff ───────────────────────────────────
+  // When the sales-invoice form saves with the company's
+  // `printAutoAfterSaveSales` toggle on, it sets `autoPrintSalesInvoice` in
+  // sessionStorage and navigates back here. We pick that up exactly once
+  // per mount, wait for the customers query to *settle* (success OR error
+  // — NOT for it to be non-empty: a tenant may legitimately have zero
+  // customers, and `openPrintFor` falls back to fetching the customer
+  // directly anyway), then open the print modal with `autoPrint=true`.
+  // A stale flag (e.g. a leftover key from a tab the user closed mid-flow)
+  // is also cleared here so it cannot fire on a later unrelated mount.
+  const autoPrintConsumed = useRef(false);
+  useEffect(() => {
+    if (autoPrintConsumed.current) return;
+    if (!user || !customersFetched) return;
+    let raw: string | null = null;
+    try { raw = sessionStorage.getItem("autoPrintSalesInvoice"); } catch { /* ignore */ }
+    if (!raw) return;
+    autoPrintConsumed.current = true;
+    try { sessionStorage.removeItem("autoPrintSalesInvoice"); } catch { /* ignore */ }
+    let parsed: { id?: number; template?: "a4" | "thermal"; ts?: number } = {};
+    try { parsed = JSON.parse(raw); } catch { /* ignore */ }
+    if (!parsed?.id) return;
+    // Discard hints older than 5 minutes — if the user lingered on another
+    // page or tab before navigating back, we don't want a surprise print
+    // dialog firing for an invoice they finished saving long ago.
+    if (parsed.ts && Date.now() - parsed.ts > 5 * 60 * 1000) return;
+    void openPrintFor(parsed.id, { autoPrint: true, template: parsed.template });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, customersFetched]);
+
   // ── Bulk print (selected invoices' CONTENTS) ─────────────────────────
   // When user has selected one or more rows and clicks "طباعة", we fetch the
-  // full invoice + line items for each selection and render them in a new
-  // window as a print-friendly Arabic/RTL document, then call window.print().
+  // full invoice + line items for each selection and render them as a
+  // print-friendly Arabic/RTL document via a hidden same-origin iframe
+  // (NOT window.open — Chrome's popup blocker silently kills that path).
+  // For a single selection, we hand off to the SalesPrintModal so the user
+  // gets the 12-template picker; for multi-selection we keep the existing
+  // bulk-printing layout (`buildBulkPrintHtml`) since the picker doesn't
+  // support multi-document mode.
   // When no rows are selected, fall back to printing the audit screen itself.
   const [printing, setPrinting] = useState(false);
 
@@ -1086,6 +1178,13 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       // useEffect below handles the actual window.print() call after React
       // has flushed the expanded view to the DOM.
       setPrintAllOverride(true);
+      return;
+    }
+    if (selected.size === 1) {
+      // Single selection → use the rich SalesPrintModal with the 12-template
+      // picker so the user can pick a design (classic, gold, ocean, …).
+      const id = Array.from(selected)[0];
+      void openPrintFor(id);
       return;
     }
     setPrinting(true);
@@ -1119,28 +1218,134 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
         });
       }
       const html = buildBulkPrintHtml(ok, { cusMap, branchMap, repMap });
-      const w = window.open("", "_blank", "width=900,height=700");
-      if (!w) {
-        toast({
-          title: "تم منع النوافذ المنبثقة",
-          description: "اسمح بالنوافذ المنبثقة لهذا الموقع لتفعيل الطباعة المجمَّعة.",
-          variant: "destructive",
-        });
-        return;
-      }
-      w.document.open();
-      w.document.write(html);
-      w.document.close();
-      // Wait for fonts/layout, then print. The new window closes itself
-      // afterwards (or stays if the user cancels — that's a browser choice).
-      w.onload = () => {
-        setTimeout(() => {
-          try { w.focus(); w.print(); } catch { /* noop */ }
-        }, 250);
+      // Hidden same-origin iframe — Chrome popup-blocker safe (no
+      // user-gesture required, no separate window). We tear the iframe
+      // down ~2s after firing print() so the engine has time to capture
+      // the queued job before the document is removed.
+      const iframe = document.createElement("iframe");
+      iframe.setAttribute("aria-hidden", "true");
+      iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
+      iframe.srcdoc = html;
+      iframe.onload = () => {
+        try {
+          const win = iframe.contentWindow;
+          if (!win) {
+            toast({ title: "تعذَّر فتح معاينة الطباعة", variant: "destructive" });
+            return;
+          }
+          win.focus();
+          win.print();
+        } catch (err: any) {
+          toast({
+            title: "تعذَّر بدء الطباعة",
+            description: err?.message ?? String(err),
+            variant: "destructive",
+          });
+        } finally {
+          setTimeout(() => { try { iframe.remove(); } catch { /* noop */ } }, 2000);
+        }
       };
+      document.body.appendChild(iframe);
     } finally {
       setPrinting(false);
     }
+  }
+
+  // ── Excel / PDF export of the currently filtered list ─────────────────
+  // Mirrors `exportCsv`'s column set but routes through the shared
+  // `exportToExcel` / `exportToPDF` helpers so we get matching xlsx/PDF
+  // output across the app. Both export the FILTERED list (search +
+  // status + date + per-column filters honoured). Totals row sums the
+  // numeric columns so the file is self-describing.
+  function buildExportColumns(): ExportColumn[] {
+    return [
+      { header: "#",                 key: "_idx",         width: 5  },
+      { header: "رقم الفاتورة",      key: "docNumber",    width: 14 },
+      { header: "التاريخ",           key: "invoiceDate",  width: 12 },
+      { header: "العميل",            key: "customerName", width: 26 },
+      { header: "الرقم الضريبي",     key: "vat",          width: 16 },
+      { header: "هاتف العميل",       key: "phone",        width: 14 },
+      { header: "الفرع",             key: "branch",       width: 14 },
+      { header: "المندوب",           key: "rep",          width: 14 },
+      { header: "نوع الدفع",         key: "paymentLabel", width: 10 },
+      { header: "العملة",            key: "currencyCode", width: 8  },
+      { header: "المجموع",           key: "subtotal",     width: 12 },
+      { header: "الخصم",             key: "discount",     width: 10 },
+      { header: "الضريبة",           key: "vatAmount",    width: 12 },
+      { header: "الإجمالي",          key: "totalAmount",  width: 14 },
+      { header: "الحالة",            key: "statusLabel",  width: 10 },
+    ];
+  }
+  function buildExportRows() {
+    return filtered.map((inv: any, idx: number) => ({
+      _idx:         idx + 1,
+      docNumber:    inv.docNumber ?? `SI-${inv.id}`,
+      invoiceDate:  inv.invoiceDate ?? "",
+      customerName: cusMap[inv.customerId]?.name ?? "—",
+      vat:          cusMap[inv.customerId]?.vat ?? "",
+      phone:        cusMap[inv.customerId]?.phone ?? "",
+      branch:       branchMap[inv.branchId] ?? "",
+      rep:          repMap[inv.salesRepId] ?? "",
+      paymentLabel: inv.paymentType === "cash" ? "نقدي" : inv.paymentType === "bank" ? "بنكي" : "آجل",
+      currencyCode: inv.currencyCode ?? "SAR",
+      subtotal:     fmt(inv.subtotal),
+      discount:     fmt(inv.discountAmount),
+      vatAmount:    fmt(inv.vatAmount),
+      totalAmount:  fmt(inv.totalAmount),
+      statusLabel:  STATUS[inv.status]?.label ?? inv.status,
+    }));
+  }
+  function buildExportTotals() {
+    const sumSub = filtered.reduce((s: number, i: any) => s + Number(i.subtotal       || 0), 0);
+    const sumDis = filtered.reduce((s: number, i: any) => s + Number(i.discountAmount || 0), 0);
+    const sumVat = filtered.reduce((s: number, i: any) => s + Number(i.vatAmount      || 0), 0);
+    const sumTot = filtered.reduce((s: number, i: any) => s + Number(i.totalAmount    || 0), 0);
+    return {
+      _idx:         "",
+      docNumber:    "الإجمالي",
+      invoiceDate:  "",
+      customerName: `${filtered.length} فاتورة`,
+      vat:          "",
+      phone:        "",
+      branch:       "",
+      rep:          "",
+      paymentLabel: "",
+      currencyCode: "",
+      subtotal:     fmt(sumSub),
+      discount:     fmt(sumDis),
+      vatAmount:    fmt(sumVat),
+      totalAmount:  fmt(sumTot),
+      statusLabel:  "",
+    };
+  }
+  function exportFilenameBase() {
+    return `sales-audit-${new Date().toISOString().slice(0, 10)}`;
+  }
+  function exportXlsx() {
+    if (filtered.length === 0) {
+      toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
+      return;
+    }
+    exportToExcel(buildExportRows(), buildExportColumns(), exportFilenameBase(), "جرد فواتير المبيعات", buildExportTotals());
+    toast({ title: `تم تصدير ${filtered.length} فاتورة إلى Excel` });
+  }
+  function exportPdf() {
+    if (filtered.length === 0) {
+      toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
+      return;
+    }
+    exportToPDF(
+      buildExportRows(),
+      buildExportColumns(),
+      exportFilenameBase(),
+      "الجرد الخارجي لفواتير المبيعات",
+      `إجمالي السجلات: ${filtered.length}`,
+      true,
+      buildExportTotals(),
+      null,
+      (user as any)?.company?.logo ?? null,
+    );
+    toast({ title: `جارٍ فتح ${filtered.length} فاتورة بصيغة PDF` });
   }
 
   // ── Status & ZATCA pills ──────────────────────────────────────────────
@@ -1474,6 +1679,32 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
             >
               <FileSpreadsheet className="h-3.5 w-3.5" />
               تصدير CSV
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
+              onClick={exportXlsx}
+              disabled={filtered.length === 0}
+              title="تصدير الجرد الحالي إلى ملف Excel (xlsx)"
+              data-testid="button-audit-export-excel"
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+              تصدير Excel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
+              onClick={exportPdf}
+              disabled={filtered.length === 0}
+              title="تصدير الجرد الحالي إلى PDF"
+              data-testid="button-audit-export-pdf"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              تصدير PDF
             </Button>
             <Button
               type="button"
@@ -1932,6 +2163,17 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                               <Button
                                 variant="ghost"
                                 size="icon"
+                                className="h-6 w-6 text-slate-700 hover:text-primary hover:bg-muted"
+                                title="طباعة الفاتورة (اختر النموذج)"
+                                aria-label={`طباعة الفاتورة ${inv.docNumber ?? inv.id}`}
+                                data-testid={`button-print-invoice-${inv.id}`}
+                                onClick={(e) => { e.stopPropagation(); void openPrintFor(inv.id); }}
+                              >
+                                <Printer className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
                                 className={cn("h-6 w-6", canDelete ? "text-rose-600 hover:bg-rose-50 hover:text-rose-700" : "text-slate-300 cursor-not-allowed")}
                                 title={canDelete ? "حذف الفاتورة" : "لا يمكن حذف فاتورة مرحَّلة"}
                                 aria-label={canDelete ? `حذف الفاتورة ${inv.docNumber ?? inv.id}` : `لا يمكن حذف الفاتورة المرحَّلة ${inv.docNumber ?? inv.id}`}
@@ -2282,6 +2524,13 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           </div>
         </SheetContent>
       </Sheet>
+      <SalesPrintModal
+        open={printOpen}
+        onClose={() => { setPrintOpen(false); setPrintAuto(false); }}
+        data={printData}
+        defaultTemplate={printDefault}
+        autoPrintOnOpen={printAuto}
+      />
     </div>
   );
 }
