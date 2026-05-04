@@ -35,6 +35,18 @@ import {
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { cn } from "@/lib/utils";
 
+// Auth header helper — mirrors the pattern used by every other API client
+// in this app (journalEntriesApi.ts, salesAnalyticsApi.ts, etc.). The
+// session token is stored under "zatca_token" by AuthContext on login.
+// This file does NOT use the generated Orval hooks because the posting
+// center aggregates 13 disparate modules behind a single bespoke route.
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem("zatca_token");
+  return token
+    ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
+    : { "Content-Type": "application/json" };
+}
+
 // ─── Module options ────────────────────────────────────────────────────────
 // Each module is mapped to (1) its Arabic label for the dropdown, (2) the
 // REST path used to post / unpost a single document, and (3) the HTTP method
@@ -158,7 +170,7 @@ export default function PostingCenter() {
       if (cid) params.set("companyId", String(cid));
       if (dateFrom) params.set("dateFrom", dateFrom);
       if (dateTo) params.set("dateTo", dateTo);
-      const r = await fetch(`/api/posting-center/list?${params.toString()}`, { credentials: "include" });
+      const r = await fetch(`/api/posting-center/list?${params.toString()}`, { headers: authHeaders() });
       if (!r.ok) throw new Error("فشل جلب البيانات");
       return (await r.json()) as {
         items: PostingRow[];
@@ -271,8 +283,7 @@ export default function PostingCenter() {
         try {
           const r = await fetch(def.endpoint(id, action), {
             method: def.method,
-            credentials: "include",
-            headers: { "content-type": "application/json" },
+            headers: authHeaders(),
           });
           if (!r.ok) {
             const body = await r.json().catch(() => ({}));
@@ -325,7 +336,7 @@ export default function PostingCenter() {
     try {
       const params = new URLSearchParams({ module: selectedModule });
       if (cid) params.set("companyId", String(cid));
-      const r = await fetch(`/api/posting-center/ai-summary?${params.toString()}`, { credentials: "include" });
+      const r = await fetch(`/api/posting-center/ai-summary?${params.toString()}`, { headers: authHeaders() });
       if (!r.ok) throw new Error("فشل التحليل");
       setAiSummary(await r.json());
     } catch (e: any) {
