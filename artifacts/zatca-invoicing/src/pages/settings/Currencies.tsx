@@ -250,7 +250,17 @@ export default function Currencies() {
               </Select>
             </Field>
             <Field label={t("currencies.rate")} required>
-              <Input type="text" inputMode="decimal" value={rateForm.rate} onChange={e => { const v = e.target.value.replace(/[^0-9.]/g, ""); const parts = v.split("."); const clean = parts.length > 2 ? parts[0] + "." + parts.slice(1).join("") : v; setRateForm((p: any) => ({ ...p, rate: clean })); }} placeholder="3.7500" className="h-9 text-sm font-mono text-start" />
+              <Input type="text" inputMode="decimal" value={rateForm.rate} onChange={e => {
+                // Accept Western digits, Arabic-Indic digits (٠-٩), and either
+                // dot or comma as decimal separator. Normalize to "1234.5678".
+                const raw = e.target.value
+                  .replace(/[٠-٩]/g, d => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+                  .replace(/[٫,]/g, ".")
+                  .replace(/[^0-9.]/g, "");
+                const parts = raw.split(".");
+                const clean = parts.length > 2 ? parts[0] + "." + parts.slice(1).join("") : raw;
+                setRateForm((p: any) => ({ ...p, rate: clean }));
+              }} placeholder="3.7500" className="h-9 text-sm font-mono text-start" dir="ltr" />
             </Field>
             <Field label={<span className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />{t("currencies.effectiveDate")}</span>} required>
               <Input type="date" value={rateForm.effectiveDate} onChange={e => setRateForm((p: any) => ({ ...p, effectiveDate: e.target.value }))} className="h-9 text-sm" />
