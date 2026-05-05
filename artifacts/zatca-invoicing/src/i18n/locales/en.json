@@ -3869,6 +3869,7 @@
       "reopenConfirm": "Reopen this Letter of Credit? It will be recomputed from invoices.",
       "toastClosed": "LC closed",
       "toastReopened": "LC reopened",
+      "closedLockedTooltip": "LC is closed — reopen it first to edit",
       "transferTooltip": "Record bank/cash payment (LC or expense)",
       "transferTitle": "Record payment for LC {{lc}}",
       "transferHint": "Choose payment target: LC value (debits the LC settlement account) or one of the LC expenses (debits that expense's account). Credit side is always the chosen bank or cash box; the entry is balanced in base currency. The LC's drawn amount is NOT changed here — that is updated only by posted purchase invoices.",

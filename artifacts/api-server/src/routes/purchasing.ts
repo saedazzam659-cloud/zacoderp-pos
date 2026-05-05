@@ -351,6 +351,20 @@ router.put("/letters-of-credit/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
+    // Guard: closed LCs are sealed. Editing any field — including expense
+    // lines, settlement account, or amount — would silently invalidate
+    // already-posted journal entries that referenced the prior state.
+    // Admins must explicitly reopen the LC first (PATCH .../reopen).
+    const [existing] = await db.select({ status: lettersOfCreditTable.status })
+      .from(lettersOfCreditTable)
+      .where(and(eq(lettersOfCreditTable.id, id), eq(lettersOfCreditTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "الاعتماد غير موجود" }); return; }
+    if (existing.status === "closed") {
+      res.status(409).json({
+        error: "لا يمكن تعديل اعتماد مغلق. أعد فتحه أولاً ثم عدّله، أو أنشئ قيد تسوية يدوي إذا كان التعديل محاسبياً.",
+      });
+      return;
+    }
     const { lcNumber, lcDate, supplierId, bankName, currencyCode, exchangeRate,
             totalAmount, settlementAccountId, notes, expenses } = req.body;
     const [lc] = await db.update(lettersOfCreditTable).set({
@@ -385,6 +399,16 @@ router.delete("/letters-of-credit/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
+    // Guard: closed LCs cannot be deleted either. Admin must reopen first.
+    const [existing] = await db.select({ status: lettersOfCreditTable.status })
+      .from(lettersOfCreditTable)
+      .where(and(eq(lettersOfCreditTable.id, id), eq(lettersOfCreditTable.companyId, cid)));
+    if (existing?.status === "closed") {
+      res.status(409).json({
+        error: "لا يمكن حذف اعتماد مغلق. أعد فتحه أولاً ثم احذفه.",
+      });
+      return;
+    }
     // Guard: purchase_invoices.lc_id is a non-cascading FK. Block delete if
     // any invoice still references this LC and surface a clear, localized
     // message instead of a generic "Failed query" from the FK violation.

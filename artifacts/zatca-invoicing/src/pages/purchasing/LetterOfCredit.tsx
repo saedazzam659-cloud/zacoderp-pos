@@ -575,8 +575,8 @@ export default function LetterOfCredit() {
                           {aiLoading && aiLc?.id === lc.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                         </Button>
                         <Button variant="ghost" size="icon" className="h-7 w-7 text-emerald-600"
-                          title={tr("transferTooltip")}
-                          disabled={!lc.settlementAccountId}
+                          title={isClosed ? tr("closedLockedTooltip") : tr("transferTooltip")}
+                          disabled={!lc.settlementAccountId || isClosed}
                           onClick={() => openTransfer(lc)}>
                           <Banknote className="h-3.5 w-3.5" />
                         </Button>
@@ -590,8 +590,15 @@ export default function LetterOfCredit() {
                           }}>
                           {isClosed ? <Unlock className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleEdit(lc)}><Pencil className="h-3.5 w-3.5" /></Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7"
+                          title={isClosed ? tr("closedLockedTooltip") : undefined}
+                          disabled={isClosed}
+                          onClick={() => handleEdit(lc)}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
                         <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
+                          title={isClosed ? tr("closedLockedTooltip") : undefined}
+                          disabled={isClosed}
                           onClick={() => { if (confirm(tr("deleteConfirm"))) deleteMut.mutate(lc.id); }}>
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
