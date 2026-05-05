@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Pencil, Trash2, CreditCard, FileText, ListOrdered, Sparkles, Loader2, Lock, Unlock } from "lucide-react";
+import { Plus, Pencil, Trash2, CreditCard, FileText, ListOrdered, Sparkles, Loader2, Lock, Unlock, Banknote } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -50,6 +50,21 @@ export default function LetterOfCredit() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiSaving,  setAiSaving]  = useState(false);
 
+  // ─── Bank-transfer dialog state (records the funding of the LC) ─────
+  // Opens from the row's Banknote button. Posts a balanced JE:
+  //   Dr LC settlement account   (lcAmount × rate)
+  //   Cr Bank / Cash             (lcAmount × rate)
+  // The amount is in the LC's currency; the rate converts to base for the JE.
+  const [transferLc, setTransferLc] = useState<any | null>(null);
+  const [transferForm, setTransferForm] = useState<{
+    sourceType: "bank" | "cash";
+    sourceId: string;
+    date: string;
+    amount: string;
+    exchangeRate: string;
+    description: string;
+  }>({ sourceType: "bank", sourceId: "", date: today(), amount: "", exchangeRate: "1", description: "" });
+
   const { data: lcs = [], isLoading } = useQuery<any[]>({
     queryKey: ["lc", cid],
     queryFn: async () => {
@@ -81,6 +96,26 @@ export default function LetterOfCredit() {
     queryKey: ["currencies", cid],
     queryFn: async () => {
       const url = cid ? `${API}/api/currencies?companyId=${cid}` : `${API}/api/currencies`;
+      const res = await fetch(url, { headers: authH }); return res.json();
+    },
+    enabled: !!user,
+  });
+
+  // Bank accounts and cash boxes — used by the "Bank transfer to L/C"
+  // shortcut to debit the LC settlement account when funds are wired
+  // (or paid in cash) to open / fund the letter of credit.
+  const { data: bankAccounts = [] } = useQuery<any[]>({
+    queryKey: ["bank-accounts", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/bank-accounts?companyId=${cid}` : `${API}/api/bank-accounts`;
+      const res = await fetch(url, { headers: authH }); return res.json();
+    },
+    enabled: !!user,
+  });
+  const { data: cashBoxes = [] } = useQuery<any[]>({
+    queryKey: ["cash-boxes", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/cash-boxes?companyId=${cid}` : `${API}/api/cash-boxes`;
       const res = await fetch(url, { headers: authH }); return res.json();
     },
     enabled: !!user,
@@ -142,6 +177,73 @@ export default function LetterOfCredit() {
     onSuccess: () => { invalidate(); toast({ title: tr("toastDeleted") }); },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
+
+  // POSTs a balanced 2-line journal entry to record the LC funding:
+  //   Dr LC settlement account  (= amount × rate, in base currency)
+  //   Cr Bank / Cash             (= same)
+  // Tagged `entryType: "lc_funding"` so it is editable by an admin from the
+  // journal-entries page (not in LOCKED_ENTRY_TYPES). The LC's `usedAmount`
+  // is intentionally *not* touched — that field tracks only goods drawn
+  // down by posted purchase invoices, which is a separate accounting axis.
+  const fundMut = useMutation({
+    mutationFn: async () => {
+      if (!transferLc) throw new Error("LC missing");
+      const lc = transferLc;
+      const amt  = Number(transferForm.amount || 0);
+      const rate = Number(transferForm.exchangeRate || 1);
+      if (!(amt > 0)) throw new Error(tr("transferAmtRequired"));
+      if (!transferForm.sourceId) throw new Error(tr("transferSourceRequired"));
+      if (!lc.settlementAccountId) throw new Error(tr("transferLcMissingSettlement"));
+      // Resolve the credit-side account: the bank account's GL account, or
+      // the cash box's GL account. Both use the same `accountId` column.
+      const list = transferForm.sourceType === "bank" ? bankAccounts : cashBoxes;
+      const src  = list.find((b: any) => String(b.id) === String(transferForm.sourceId));
+      const sourceAccountId = src?.accountId;
+      if (!sourceAccountId) throw new Error(tr("transferSourceAccMissing"));
+      const baseAmt = +(amt * rate).toFixed(2);
+      const ccy     = lc.currencyCode ?? baseCode;
+      const desc    = transferForm.description?.trim() ||
+        tr("transferDefaultDesc", { lc: lc.lcNumber });
+      const body = {
+        companyId:   cid,
+        entryDate:   transferForm.date,
+        currency:    ccy,
+        exchangeRate: String(rate),
+        description: desc,
+        entryType:   "lc_funding",
+        lines: [
+          { accountId: lc.settlementAccountId, debit: baseAmt, credit: 0,
+            description: `${desc} — ${tr("fSettlementAccount")}` },
+          { accountId: sourceAccountId,        debit: 0,        credit: baseAmt,
+            description: `${desc} — ${pickName(src?.nameAr, src?.nameEn) ?? ""}` },
+        ],
+      };
+      const res = await fetch(`${API}/api/journal-entries`, {
+        method: "POST", headers, body: JSON.stringify(body),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error ?? tr("transferFailed"));
+      return j;
+    },
+    onSuccess: (j) => {
+      toast({ title: tr("transferDone"), description: tr("transferDoneDesc", { id: j.docNumber ?? j.id }) });
+      setTransferLc(null);
+      qc.invalidateQueries({ queryKey: ["journal-entries"] });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  function openTransfer(lc: any) {
+    setTransferLc(lc);
+    setTransferForm({
+      sourceType: "bank",
+      sourceId: "",
+      date: today(),
+      amount: String(lc.totalAmount ?? ""),                     // pre-fill with full LC value (the typical 100% deposit)
+      exchangeRate: String(lc.exchangeRate ?? "1"),
+      description: "",
+    });
+  }
 
   const toggleStatusMut = useMutation({
     mutationFn: async ({ id, action }: { id: number; action: "close" | "reopen" }) => {
@@ -443,6 +545,12 @@ export default function LetterOfCredit() {
                           onClick={() => runAiJournal(lc)} disabled={aiLoading && aiLc?.id === lc.id}>
                           {aiLoading && aiLc?.id === lc.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                         </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-emerald-600"
+                          title={tr("transferTooltip")}
+                          disabled={!lc.settlementAccountId}
+                          onClick={() => openTransfer(lc)}>
+                          <Banknote className="h-3.5 w-3.5" />
+                        </Button>
                         <Button variant="ghost" size="icon" className={cn("h-7 w-7", isClosed ? "text-emerald-600" : "text-amber-600")}
                           title={isClosed ? tr("reopenTooltip") : tr("closeTooltip")}
                           disabled={toggleStatusMut.isPending}
@@ -533,6 +641,101 @@ export default function LetterOfCredit() {
             <Button size="sm" className="gap-2" onClick={confirmAiJournal} disabled={!aiPreview || aiSaving}>
               {aiSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               {aiSaving ? tr("aiSaving") : tr("aiApprove")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Bank-transfer (LC funding) dialog ───────────────────────── */}
+      <Dialog open={!!transferLc} onOpenChange={(o) => { if (!o) setTransferLc(null); }}>
+        <DialogContent className="max-w-lg" dir={isRtl ? "rtl" : "ltr"}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Banknote className="h-5 w-5 text-emerald-600" />
+              {tr("transferTitle", { lc: transferLc?.lcNumber ?? "" })}
+            </DialogTitle>
+          </DialogHeader>
+          {transferLc && (() => {
+            const amt   = Number(transferForm.amount || 0);
+            const rate  = Number(transferForm.exchangeRate || 1);
+            const base  = +(amt * rate).toFixed(2);
+            const ccy   = transferLc.currencyCode ?? baseCode;
+            const isFx  = ccy !== baseCode;
+            const list  = transferForm.sourceType === "bank" ? bankAccounts : cashBoxes;
+            return (
+              <div className="space-y-3">
+                <div className="text-xs text-muted-foreground p-2 rounded bg-muted/40">
+                  {tr("transferHint")}
+                </div>
+                <FormGrid cols={2}>
+                  <Field label={tr("transferDate")}>
+                    <Input type="date" value={transferForm.date}
+                      onChange={(e) => setTransferForm(p => ({ ...p, date: e.target.value }))} />
+                  </Field>
+                  <Field label={tr("transferSourceType")}>
+                    <select className="h-9 px-2 rounded-md border bg-background text-sm w-full"
+                      value={transferForm.sourceType}
+                      onChange={(e) => setTransferForm(p => ({
+                        ...p, sourceType: e.target.value as "bank" | "cash", sourceId: "",
+                      }))}>
+                      <option value="bank">{tr("transferSrcBank")}</option>
+                      <option value="cash">{tr("transferSrcCash")}</option>
+                    </select>
+                  </Field>
+                  <Field label={transferForm.sourceType === "bank" ? tr("transferBankAcc") : tr("transferCashBox")}>
+                    <SearchCombobox
+                      value={transferForm.sourceId}
+                      onValueChange={(v) => setTransferForm(p => ({ ...p, sourceId: v }))}
+                      items={list.filter((s: any) => s.isActive !== false).map((s: any) => ({
+                        value: String(s.id),
+                        label: `${pickName(s.nameAr, s.nameEn)}${s.bankName ? ` — ${s.bankName}` : ""}`,
+                      }))}
+                      placeholder={tr("transferSourcePh")}
+                    />
+                  </Field>
+                  <Field label={tr("transferAmount", { ccy })}>
+                    <Input type="number" step="0.01" value={transferForm.amount}
+                      onChange={(e) => setTransferForm(p => ({ ...p, amount: e.target.value }))} />
+                  </Field>
+                  {isFx && (
+                    <Field label={tr("transferRate", { from: ccy, to: baseCode })}>
+                      <Input type="number" step="0.0001" value={transferForm.exchangeRate}
+                        onChange={(e) => setTransferForm(p => ({ ...p, exchangeRate: e.target.value }))} />
+                    </Field>
+                  )}
+                </FormGrid>
+                <Field label={tr("transferDesc")}>
+                  <Textarea rows={2} value={transferForm.description}
+                    placeholder={tr("transferDefaultDesc", { lc: transferLc.lcNumber })}
+                    onChange={(e) => setTransferForm(p => ({ ...p, description: e.target.value }))} />
+                </Field>
+                {/* JE preview — Dr LC settlement / Cr Bank or Cash, in base currency */}
+                <div className="rounded-lg border bg-emerald-50/50 border-emerald-200 p-3 text-xs space-y-1.5">
+                  <div className="font-semibold text-emerald-800 mb-1">{tr("transferPreview")}</div>
+                  <div className="grid grid-cols-3 gap-2 font-mono">
+                    <span className="text-muted-foreground">{tr("fSettlementAccount")}</span>
+                    <span className="text-rose-700 text-end">{fmt(base)} {baseCode}</span>
+                    <span className="text-muted-foreground text-end">{tr("transferDr")}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 font-mono">
+                    <span className="text-muted-foreground">
+                      {transferForm.sourceType === "bank" ? tr("transferSrcBank") : tr("transferSrcCash")}
+                    </span>
+                    <span className="text-emerald-700 text-end">{fmt(base)} {baseCode}</span>
+                    <span className="text-muted-foreground text-end">{tr("transferCr")}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="outline" size="sm" onClick={() => setTransferLc(null)} disabled={fundMut.isPending}>
+              {tr("aiCancel")}
+            </Button>
+            <Button size="sm" className="gap-2 bg-emerald-600 hover:bg-emerald-700"
+              onClick={() => fundMut.mutate()} disabled={fundMut.isPending}>
+              {fundMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Banknote className="h-4 w-4" />}
+              {tr("transferConfirm")}
             </Button>
           </DialogFooter>
         </DialogContent>
