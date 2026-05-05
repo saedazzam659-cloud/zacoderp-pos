@@ -3028,6 +3028,186 @@ ${JSON.stringify(safe)}
   }
 });
 
+/**
+ * POST /api/ai/period-insights
+ * Body: { periodId: number }
+ * Returns: { findings: string[], suggestions: string[], readyToClose: bool, metrics: {...} }
+ *
+ * Pulls a structured snapshot of the period (totals per account type, draft
+ * count, missing adjustments) and asks the LLM to surface anomalies +
+ * actionable suggestions in Arabic. Falls back to rule-based output if the
+ * AI proxy is misconfigured so the UI remains usable.
+ */
+router.post("/period-insights", requireModulePermission("accounts"), async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req as any, (req as any).authUser?.companyId ?? undefined);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const periodId = Number(req.body?.periodId);
+    if (!Number.isFinite(periodId)) { res.status(400).json({ error: "معرّف الفترة مطلوب" }); return; }
+
+    const {
+      fiscalPeriodsTable, journalEntriesTable, journalEntryLinesTable,
+      accountingAdjustmentsTable, accountingAdjustmentRunsTable,
+    } = await import("@workspace/db");
+    const { eq, and, gte, lte, sql } = await import("drizzle-orm");
+
+    const [period] = await db.select().from(fiscalPeriodsTable)
+      .where(and(eq(fiscalPeriodsTable.id, periodId), eq(fiscalPeriodsTable.companyId, cid)));
+    if (!period) { res.status(404).json({ error: "الفترة غير موجودة" }); return; }
+
+    // Collect totals per account type
+    const totalsRows = await db.select({
+      accountType: accountsTable.accountType,
+      debit:       sql<string>`coalesce(sum(${journalEntryLinesTable.debit}), 0)`,
+      credit:      sql<string>`coalesce(sum(${journalEntryLinesTable.credit}), 0)`,
+    })
+    .from(journalEntryLinesTable)
+    .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+    .innerJoin(accountsTable, eq(journalEntryLinesTable.accountId, accountsTable.id))
+    .where(and(
+      eq(journalEntriesTable.companyId, cid),
+      eq(journalEntriesTable.status, "posted"),
+      gte(journalEntriesTable.entryDate, period.startDate),
+      lte(journalEntriesTable.entryDate, period.endDate),
+    ))
+    .groupBy(accountsTable.accountType);
+
+    const totalsByType: Record<string, { debit: number; credit: number; balance: number }> = {};
+    for (const r of totalsRows) {
+      const d = parseFloat(r.debit || "0"), c = parseFloat(r.credit || "0");
+      totalsByType[r.accountType] = { debit: d, credit: c, balance: d - c };
+    }
+
+    // Draft / unbalanced counts
+    const [draftCount] = await db.select({ n: sql<number>`count(*)::int` })
+      .from(journalEntriesTable).where(and(
+        eq(journalEntriesTable.companyId, cid),
+        eq(journalEntriesTable.status, "draft"),
+        gte(journalEntriesTable.entryDate, period.startDate),
+        lte(journalEntriesTable.entryDate, period.endDate),
+      ));
+
+    // Missing adjustments
+    const adjustments = await db.select().from(accountingAdjustmentsTable).where(and(
+      eq(accountingAdjustmentsTable.companyId, cid),
+      eq(accountingAdjustmentsTable.status, "active"),
+    ));
+    const missingAdjustments: { name: string; missingMonths: string[] }[] = [];
+    for (const adj of adjustments) {
+      const adjStart = adj.startDate < period.startDate ? period.startDate : adj.startDate;
+      const adjEnd   = adj.endDate   > period.endDate   ? period.endDate   : adj.endDate;
+      if (adjStart > adjEnd) continue;
+      const monthsNeeded: string[] = [];
+      let [y, m] = adjStart.split("-").map(Number);
+      const [ey, em] = adjEnd.split("-").map(Number);
+      while (y < ey || (y === ey && m <= em)) {
+        monthsNeeded.push(`${y}-${String(m).padStart(2, "0")}`);
+        m++; if (m > 12) { m = 1; y++; }
+      }
+      const runs = await db.select({ ym: accountingAdjustmentRunsTable.periodMonth })
+        .from(accountingAdjustmentRunsTable).where(eq(accountingAdjustmentRunsTable.adjustmentId, adj.id));
+      const generatedSet = new Set(runs.map(r => r.ym));
+      const missing = monthsNeeded.filter(ym => !generatedSet.has(ym));
+      if (missing.length > 0) missingAdjustments.push({ name: adj.name, missingMonths: missing });
+    }
+
+    const revenue = -(totalsByType["revenue"]?.balance ?? 0); // Cr-normal → flip
+    const expense =   (totalsByType["expense"]?.balance ?? 0); // Dr-normal
+    const netIncome = revenue - expense;
+
+    const metrics = {
+      revenue, expense, netIncome,
+      assets:      totalsByType["asset"]?.balance ?? 0,
+      liabilities: -(totalsByType["liability"]?.balance ?? 0),
+      equity:      -(totalsByType["equity"]?.balance ?? 0),
+      draftCount: draftCount?.n ?? 0,
+      missingAdjustmentsCount: missingAdjustments.reduce((s, a) => s + a.missingMonths.length, 0),
+    };
+
+    // Rule-based baseline findings (always present)
+    const findings: string[] = [];
+    const suggestions: string[] = [];
+    if (metrics.draftCount > 0) {
+      findings.push(`يوجد ${metrics.draftCount} قيد بحالة مسودة لم يتم ترحيله`);
+      suggestions.push("راجع وارحّل القيود المعلّقة من «مركز الترحيل» قبل الإقفال");
+    }
+    if (metrics.missingAdjustmentsCount > 0) {
+      findings.push(`${metrics.missingAdjustmentsCount} قسط تسوية شهري لم يُولَّد بعد`);
+      suggestions.push("شغّل «توليد التسويات المستحقة» لإنشاء قيود الإيجار/المصاريف المقدمة والمستحقة");
+    }
+    if (revenue === 0 && expense === 0) {
+      findings.push("لا توجد إيرادات أو مصروفات مرحّلة في هذه الفترة");
+    }
+    if (netIncome < 0) {
+      findings.push(`صافي الفترة خسارة بقيمة ${Math.abs(netIncome).toFixed(2)}`);
+    } else if (netIncome > 0) {
+      findings.push(`صافي ربح الفترة ${netIncome.toFixed(2)}`);
+    }
+
+    // AI augmentation (best-effort)
+    let aiUsed = false;
+    let aiReadyToClose: boolean | null = null;
+    let aiRiskLevel: string | null = null;
+    if (OPENAI_BASE && OPENAI_KEY) {
+      try {
+        const userPrompt = `أنت محلل مالي خبير. حلل بيانات الفترة المالية أدناه واعطني ملاحظات وتوصيات للمحاسب قبل الإقفال.
+
+اسم الفترة: ${period.name}
+من ${period.startDate} إلى ${period.endDate}
+
+البيانات:
+${JSON.stringify({ metrics, missingAdjustments, totalsByType }, null, 2)}
+
+أعد JSON فقط بهذه الصيغة بدون أي شرح:
+{ "findings": ["...","..."], "suggestions": ["...","..."], "readyToClose": true|false, "riskLevel": "low"|"medium"|"high" }
+- findings: ملاحظات مالية بالعربية (مثال: انخفاض هامش الربح، نسبة مصروفات غير معتادة)
+- suggestions: خطوات عملية ينفذها المحاسب قبل الإقفال
+- readyToClose: true إذا لا يوجد دراف وتسويات ناقصة ومن الآمن الإقفال`;
+
+        const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+          body: JSON.stringify({
+            model: "gpt-5.4",
+            max_completion_tokens: 1500,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: "أنت محاسب قانوني سعودي خبير. ترد بـ JSON فقط بدون شرح." },
+              { role: "user", content: userPrompt },
+            ],
+          }),
+        });
+        if (r.ok) {
+          const data = await r.json();
+          const content = data?.choices?.[0]?.message?.content ?? "{}";
+          const parsed = JSON.parse(content);
+          if (Array.isArray(parsed.findings))    findings.push(...parsed.findings.map((s: any) => String(s).trim()).filter(Boolean));
+          if (Array.isArray(parsed.suggestions)) suggestions.push(...parsed.suggestions.map((s: any) => String(s).trim()).filter(Boolean));
+          if (typeof parsed.readyToClose === "boolean") aiReadyToClose = parsed.readyToClose;
+          if (typeof parsed.riskLevel === "string")    aiRiskLevel    = parsed.riskLevel;
+          aiUsed = true;
+        }
+      } catch { /* fall back to rules */ }
+    }
+
+    const ruleReadyToClose = metrics.draftCount === 0 && metrics.missingAdjustmentsCount === 0;
+    const readyToClose = aiReadyToClose ?? ruleReadyToClose;
+
+    res.json({
+      period: { id: period.id, name: period.name, status: period.status, startDate: period.startDate, endDate: period.endDate },
+      metrics,
+      findings: Array.from(new Set(findings)),
+      suggestions: Array.from(new Set(suggestions)),
+      missingAdjustments,
+      readyToClose,
+      riskLevel: aiRiskLevel,
+      source: aiUsed ? "ai+rules" : "rules",
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "فشل تحليل الفترة" });
+  }
+});
+
 export default router;
 
 // ═══════════════════════════════════════════════════════════════════

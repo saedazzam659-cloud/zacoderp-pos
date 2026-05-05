@@ -19,6 +19,7 @@ import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
+import { assertWritableForDate } from "../lib/periodGuard.js";
 
 // ─── Journal entry helper (mirrors purchasing.ts) ────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null };
@@ -58,12 +59,17 @@ async function createJournalEntry(opts: {
   if (Math.abs(totalDebit - totalCredit) > 0.01) {
     throw new Error(`القيد غير متوازن: مدين ${totalDebit.toFixed(2)} ≠ دائن ${totalCredit.toFixed(2)}`);
   }
+  // Period guard: never let a source document (invoice, return, settlement,
+  // etc.) post a journal entry into a soft/hard-closed fiscal period.
+  const writability = await assertWritableForDate(opts.companyId, opts.date);
+  if (!writability.ok) throw new Error(writability.reason);
   const [entry] = await db.insert(journalEntriesTable).values({
     companyId: opts.companyId, branchId: opts.branchId ?? null,
     docNumber: opts.docNumber ?? null, entryDate: opts.date,
     currency: "SAR", exchangeRate: opts.exchangeRate ?? "1",
     description: opts.description, entryType: opts.entryType ?? "general",
     status: "posted",
+    periodId: writability.period?.id ?? null,
   }).returning();
   await db.insert(journalEntryLinesTable).values(
     cleanLines.map((l, i) => ({

@@ -13,6 +13,9 @@ export const journalEntriesTable = pgTable("journal_entries", {
   description:  text("description"),
   entryType:    text("entry_type").notNull().default("general"),
   branchId:     integer("branch_id").references(() => branchesTable.id),
+  // Resolved fiscal period the entry falls into. Nullable so existing rows
+  // remain valid until backfilled; new rows are auto-resolved at write time.
+  periodId:     integer("period_id"),
   status:       text("status").notNull().default("draft"),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().notNull(),

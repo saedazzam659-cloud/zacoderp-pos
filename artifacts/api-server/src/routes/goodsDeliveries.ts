@@ -14,6 +14,7 @@ import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { loadMappings } from "../lib/accountingMappings.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
+import { assertWritableForDate } from "../lib/periodGuard.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -553,6 +554,9 @@ router.patch("/:id/post", async (req, res) => {
       // 2b. Insert journal entry + lines inside the same tx (only if cost > 0).
       let entryId: number | null = null;
       if (cleanJeLines.length >= 2 && totalCost > 0) {
+        // Period guard: block GD posting into a closed fiscal period.
+        const writability = await assertWritableForDate(cid, gd.deliveryDate);
+        if (!writability.ok) throw new Error(writability.reason);
         const [entry] = await tx.insert(journalEntriesTable).values({
           companyId:    cid,
           branchId:     gd.branchId ?? null,
@@ -563,6 +567,7 @@ router.patch("/:id/post", async (req, res) => {
           description,
           entryType:    "goods_delivery",
           status:       "posted",
+          periodId:     writability.period?.id ?? null,
         }).returning();
         entryId = entry.id;
         await tx.insert(journalEntryLinesTable).values(

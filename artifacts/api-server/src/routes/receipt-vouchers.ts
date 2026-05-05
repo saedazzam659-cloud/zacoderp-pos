@@ -12,6 +12,7 @@ import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, requireAdminRole } from "../middleware/permissions.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
+import { assertWritableForDate } from "../lib/periodGuard.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -83,11 +84,15 @@ async function buildReceiptJournal(cid: number, v: any): Promise<number> {
   }
 
   const desc = `سند قبض ${v.code}${v.description ? " - " + v.description : ""}`;
+  // Period guard: prevent receipt posting into a closed fiscal period.
+  const writability = await assertWritableForDate(cid, v.date);
+  if (!writability.ok) throw new Error(writability.reason);
   const [entry] = await db.insert(journalEntriesTable).values({
     companyId: cid, branchId: v.branchId ?? null,
     docNumber: v.code, entryDate: v.date,
     currency: "SAR", exchangeRate: String(v.exchangeRate ?? "1"),
     description: desc, entryType: "receipt", status: "posted",
+    periodId: writability.period?.id ?? null,
   }).returning();
   await db.insert(journalEntryLinesTable).values([
     { entryId: entry.id, accountId: drAccountId, debit: amount.toFixed(2), credit: "0.00", description: drLabel || desc, sortOrder: 0 },

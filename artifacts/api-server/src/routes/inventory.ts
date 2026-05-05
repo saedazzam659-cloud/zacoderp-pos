@@ -27,6 +27,7 @@ import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds }
 import { pathRbac, writeAudit } from "../middleware/permissions.js";
 import { ensureWarehouseAccount } from "../lib/entityAccounts.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
+import { assertWritableForDate } from "../lib/periodGuard.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -1015,10 +1016,14 @@ router.post("/stock-transfers/:id/post", async (req, res) => {
   const totalAmount = lines.reduce((s, l) => s + Number(l.qty) * Number(l.costPrice), 0);
   if (fromAcc && toAcc && fromAcc !== toAcc && totalAmount > 0) {
     const desc = `تحويل مخزني ${tr.transferNumber}${tr.notes ? " - " + tr.notes : ""}`;
+    // Period guard: block stock-transfer posting into a closed period.
+    const writability = await assertWritableForDate(cid, tr.transferDate);
+    if (!writability.ok) { res.status(423).json({ error: writability.reason }); return; }
     const [entry] = await db.insert(journalEntriesTable).values({
       companyId: cid, docNumber: tr.transferNumber, entryDate: tr.transferDate,
       currency: "SAR", exchangeRate: "1",
       description: desc, entryType: "stock_transfer", status: "posted",
+      periodId: writability.period?.id ?? null,
     }).returning();
     await db.insert(journalEntryLinesTable).values([
       { entryId: entry.id, accountId: toAcc,   debit: totalAmount.toFixed(2), credit: "0.00", description: `استلام بالمخزن (${tr.transferNumber})`, sortOrder: 0 },
@@ -1172,6 +1177,9 @@ router.post("/stock-adjustments/:id/post", async (req, res) => {
   const creditInv = Math.max(0, netCreditInv - netDebitInv);
   let journalEntryId: number | null = null;
   if (invAccId && adjAccId && (debitInv > 0 || creditInv > 0) && invAccId !== adjAccId) {
+    // Period guard: block stock-adjustment posting into a closed period.
+    const writability = await assertWritableForDate(cid, adj.adjustmentDate);
+    if (!writability.ok) { res.status(423).json({ error: writability.reason }); return; }
     const [je] = await db.insert(journalEntriesTable).values({
       companyId: cid,
       docNumber: `ADJ-JE-${adj.adjustmentNumber}`,
@@ -1179,6 +1187,7 @@ router.post("/stock-adjustments/:id/post", async (req, res) => {
       description: `قيد تسوية مخزنية: ${adj.adjustmentNumber}${adj.reason ? " — " + adj.reason : ""}`,
       entryType: "stock_adjustment",
       status: "posted",
+      periodId: writability.period?.id ?? null,
     }).returning();
     journalEntryId = je.id;
     if (debitInv > 0) {

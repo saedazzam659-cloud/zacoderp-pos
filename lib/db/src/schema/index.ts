@@ -17,6 +17,7 @@ export * from "./inventoryDeliveries";
 export * from "./sales";
 export * from "./cash";
 export * from "./fiscalPeriods";
+export * from "./accountingAdjustments";
 export * from "./costCenters";
 export * from "./hr";
 export * from "./pos";

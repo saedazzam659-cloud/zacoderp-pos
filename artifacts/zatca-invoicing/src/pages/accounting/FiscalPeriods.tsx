@@ -11,8 +11,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
-import { Plus, Pencil, Trash2, Calendar, Lock, Unlock, ShieldX, Clock, AlertCircle, Sparkles } from "lucide-react";
+import { Plus, Pencil, Trash2, Calendar, Lock, Unlock, ShieldX, Clock, AlertCircle, Sparkles, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PeriodClosingWizard } from "./PeriodClosingWizard";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -64,6 +65,7 @@ export default function FiscalPeriods() {
   const [yearForm, setYearForm] = useState(EMPTY_YEAR);
   const [selectedYearId, setSelectedYearId] = useState<number | null>(null);
   const [confirmDelId, setConfirmDelId] = useState<number | null>(null);
+  const [closingPeriod, setClosingPeriod] = useState<FiscalPeriod | null>(null);
 
   const { data: years = [], isLoading: yearsLoading } = useQuery<FiscalYear[]>({
     queryKey: ["fiscal-years", cid],
@@ -410,6 +412,12 @@ export default function FiscalPeriods() {
                           </Badge>
                           {editable ? (
                             <div className="flex items-center gap-1">
+                              <Button size="sm" variant="ghost" className="h-7 px-2 text-violet-700"
+                                onClick={() => setClosingPeriod(p)}
+                                title="معالج الإقفال + تحليل AI">
+                                <ShieldCheck className="h-3 w-3" />
+                                <span className={cn("text-[10px]", isRtl ? "mr-1" : "ml-1")}>إقفال</span>
+                              </Button>
                               {p.status === "open" && (
                                 <Button size="sm" variant="ghost" className="h-7 px-2 text-amber-700"
                                   onClick={() => updatePeriodStatusMut.mutate({ id: p.id, status: "closed" })}>
@@ -445,6 +453,18 @@ export default function FiscalPeriods() {
           )}
         </div>
       </div>
+
+      {closingPeriod && (
+        <PeriodClosingWizard
+          period={closingPeriod}
+          onClose={() => setClosingPeriod(null)}
+          onPeriodUpdated={() => {
+            qc.invalidateQueries({ queryKey: ["fiscal-periods", selectedYearId] });
+            qc.invalidateQueries({ queryKey: ["fiscal-years", cid] });
+            setClosingPeriod(null);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,0 +1,242 @@
+🚀 النظام الشامل: الشركات + الفترات المالية + الإقفال + التسويات
+
+---
+
+🧩 1. الهدف
+
+نظام احترافي يدير:
+
+- إنشاء الشركات
+- ربط كل شركة بفترات مالية
+- السماح باختيار الفترة أثناء الإنشاء
+- الإقفال المالي الكامل
+- التسويات (Prepaid / Accrued)
+- منع الأخطاء + دعم الذكاء الاصطناعي
+
+---
+
+🏗️ 2. هيكل البيانات
+
+Companies
+
+- id
+- name
+- start_date
+- fiscal_year_type (Calendar / Custom)
+
+---
+
+FiscalPeriods
+
+- id
+- company_id
+- name
+- start_date
+- end_date
+- status (Open / SoftClosed / HardClosed)
+- is_default
+
+---
+
+JournalEntries
+
+- id
+- company_id
+- period_id
+- date
+- status (Draft / Posted / Locked)
+
+---
+
+Accounts
+
+- id
+- name
+- type (Asset / Liability / Equity / Revenue / Expense)
+
+---
+
+Adjustments
+
+- id
+- company_id
+- type (Prepaid / Accrued)
+- account_id
+- total_amount
+- start_date
+- end_date
+- monthly_amount
+- auto_generate
+
+---
+
+---
+
+🖥️ 3. إنشاء شركة (من المستخدم أو السوبر أدمن)
+
+سيناريو الشاشة:
+
+المستخدم يختار:
+
+- اسم الشركة
+- تاريخ البداية
+- نوع السنة
+- 🔥 اختيار الفترة المالية:
+
+الخيارات:
+
+1. إنشاء تلقائي (Auto) ✅ (افتراضي)
+2. اختيار فترة موجودة
+3. إنشاء فترة مخصصة
+
+---
+
+---
+
+⚙️ 4. منطق إنشاء الشركة
+
+function createCompany(data):
+
+    company = insertCompany(data)
+
+    if data.period_option == "AUTO":
+        period = createFiscalPeriod({
+            company_id: company.id,
+            start_date: data.start_date,
+            end_date: endOfYear(data.start_date),
+            status: "Open",
+            is_default: true
+        })
+
+    if data.period_option == "CUSTOM":
+        period = createFiscalPeriod({
+            company_id: company.id,
+            start_date: data.custom_start,
+            end_date: data.custom_end,
+            status: "Open",
+            is_default: true
+        })
+
+    if data.period_option == "SELECT_EXISTING":
+        assignPeriodToCompany(data.period_id, company.id)
+
+    return company
+
+---
+
+🔴 5. قاعدة إلزامية
+
+❌ لا يمكن:
+
+- إنشاء شركة بدون فترة
+- تسجيل قيد بدون Period
+- تشغيل النظام بدون فترة Active
+
+---
+
+---
+
+🔍 6. التحقق قبل الإقفال
+
+function validatePeriod(periodId):
+
+    if existsDraftEntries(periodId):
+        return "❌ قيود غير مرحلة"
+
+    if existsUnbalancedEntries(periodId):
+        return "❌ قيود غير متوازنة"
+
+    if adjustmentsMissing(periodId):
+        return "⚠️ تسويات غير مكتملة"
+
+    return "OK"
+
+---
+
+---
+
+🤖 7. التسويات (الإيجار والمصروفات)
+
+✔️ إيجار مقدم
+
+عند الدفع:
+
+من ح/ مصروف مقدم
+   إلى ح/ البنك
+
+شهريًا:
+
+من ح/ مصروف الإيجار
+   إلى ح/ مصروف مقدم
+
+---
+
+✔️ إيجار مستحق
+
+من ح/ مصروف الإيجار
+   إلى ح/ إيجار مستحق
+
+---
+
+Auto Engine
+
+function generateAdjustments():
+
+    for each adjustment:
+
+        if type == "Prepaid":
+            createEntry(Expense → Prepaid)
+
+        if type == "Accrued":
+            createEntry(Expense → Accrued)
+
+---
+
+---
+
+🔴 8. تصفير الإيرادات والمصروفات
+
+function closePL(periodId):
+
+    revenue = sum(Revenue)
+    expenses = sum(Expenses)
+
+    createEntry(Revenue → ProfitLoss)
+    createEntry(ProfitLoss → Expenses)
+
+    return revenue - expenses
+
+---
+
+---
+
+💰 9. ترحيل الأرباح
+
+function transferProfit(net):
+
+    if net > 0:
+        createEntry(ProfitLoss → RetainedEarnings)
+    else:
+        createEntry(RetainedEarnings → ProfitLoss)
+
+---
+
+---
+
+🔒 10. الإقفال
+
+Soft Close
+
+function softClose(periodId):
+
+    return validatePeriod(periodId)
+
+---
+
+Hard Close
+
+function hardClose(periodId):
+
+    result = validatePeriod(periodId)
+
+    if

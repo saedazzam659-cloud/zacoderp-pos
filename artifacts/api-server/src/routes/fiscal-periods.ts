@@ -1,7 +1,11 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { fiscalYearsTable, fiscalPeriodsTable } from "@workspace/db";
-import { eq, and, asc, ne } from "drizzle-orm";
+import {
+  fiscalYearsTable, fiscalPeriodsTable,
+  journalEntriesTable, journalEntryLinesTable, accountsTable,
+  accountingAdjustmentsTable, accountingAdjustmentRunsTable,
+} from "@workspace/db";
+import { eq, and, asc, ne, gte, lte, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
@@ -256,6 +260,379 @@ router.patch("/years/:id/status", async (req, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err.message ?? "خطأ" });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+//   CLOSING ENGINE
+// ─────────────────────────────────────────────────────────────────────────
+// The closing flow follows the standard period-end sequence:
+//   1) validate         — surface draft/unbalanced/missing-adjustment issues
+//   2) close-pl         — zero out revenue & expenses into a PL summary account
+//   3) transfer-profit  — move the PL summary balance to retained earnings
+//   4) soft-close       — flip status open → closed (still re-openable)
+//   5) hard-close       — flip status closed → permanently_closed (final)
+// Each step is independently re-callable (idempotent where possible) so the
+// user can iterate on errors without rolling back the whole flow.
+
+async function fetchPeriod(cid: number, id: number) {
+  const [row] = await db.select().from(fiscalPeriodsTable)
+    .where(and(eq(fiscalPeriodsTable.id, id), eq(fiscalPeriodsTable.companyId, cid)));
+  return row ?? null;
+}
+
+/**
+ * Sum debit/credit per account across every JE line whose entry falls in the
+ * period's date range. Restricted to a specific account_type so the caller
+ * can build closing entries for revenue / expense / equity slices.
+ */
+async function balancesByType(
+  cid: number, startDate: string, endDate: string, accountType: "revenue" | "expense" | "equity",
+) {
+  const rows = await db.select({
+    accountId: journalEntryLinesTable.accountId,
+    debit:     sql<string>`coalesce(sum(${journalEntryLinesTable.debit}), 0)`,
+    credit:    sql<string>`coalesce(sum(${journalEntryLinesTable.credit}), 0)`,
+  })
+  .from(journalEntryLinesTable)
+  .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+  .innerJoin(accountsTable, eq(journalEntryLinesTable.accountId, accountsTable.id))
+  .where(and(
+    eq(journalEntriesTable.companyId, cid),
+    eq(journalEntriesTable.status, "posted"),
+    gte(journalEntriesTable.entryDate, startDate),
+    lte(journalEntriesTable.entryDate, endDate),
+    eq(accountsTable.accountType, accountType),
+  ))
+  .groupBy(journalEntryLinesTable.accountId);
+
+  return rows.map(r => ({
+    accountId: r.accountId!,
+    debit:     parseFloat(r.debit  || "0"),
+    credit:    parseFloat(r.credit || "0"),
+    balance:   parseFloat(r.debit || "0") - parseFloat(r.credit || "0"),
+  }));
+}
+
+// ─── GET /api/fiscal/periods/:id/validate — pre-close health check ──────
+router.get("/periods/:id/validate", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+    const period = await fetchPeriod(cid, id);
+    if (!period) { res.status(404).json({ error: "الفترة غير موجودة" }); return; }
+
+    // 1) Draft entries inside the period?
+    const drafts = await db.select({ id: journalEntriesTable.id, docNumber: journalEntriesTable.docNumber, entryDate: journalEntriesTable.entryDate })
+      .from(journalEntriesTable).where(and(
+        eq(journalEntriesTable.companyId, cid),
+        eq(journalEntriesTable.status, "draft"),
+        gte(journalEntriesTable.entryDate, period.startDate),
+        lte(journalEntriesTable.entryDate, period.endDate),
+      ));
+
+    // 2) Unbalanced posted entries?
+    const balRows = await db.select({
+      entryId: journalEntryLinesTable.entryId,
+      debit:   sql<string>`coalesce(sum(${journalEntryLinesTable.debit}), 0)`,
+      credit:  sql<string>`coalesce(sum(${journalEntryLinesTable.credit}), 0)`,
+    })
+    .from(journalEntryLinesTable)
+    .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+    .where(and(
+      eq(journalEntriesTable.companyId, cid),
+      eq(journalEntriesTable.status, "posted"),
+      gte(journalEntriesTable.entryDate, period.startDate),
+      lte(journalEntriesTable.entryDate, period.endDate),
+    ))
+    .groupBy(journalEntryLinesTable.entryId);
+    const unbalanced = balRows.filter(r => Math.abs(parseFloat(r.debit || "0") - parseFloat(r.credit || "0")) > 0.01);
+
+    // 3) Active adjustments missing a run for any month inside this period?
+    const ymOf = (d: string) => d.slice(0, 7);
+    const adjustments = await db.select().from(accountingAdjustmentsTable).where(and(
+      eq(accountingAdjustmentsTable.companyId, cid),
+      eq(accountingAdjustmentsTable.status, "active"),
+    ));
+    const missingAdjustments: { adjustmentId: number; name: string; missingMonths: string[] }[] = [];
+    for (const adj of adjustments) {
+      // Months where adj is active that fall within the period
+      const adjStart = adj.startDate < period.startDate ? period.startDate : adj.startDate;
+      const adjEnd   = adj.endDate   > period.endDate   ? period.endDate   : adj.endDate;
+      if (adjStart > adjEnd) continue;
+      const monthsNeeded: string[] = [];
+      let [y, m] = adjStart.split("-").map(Number);
+      const [ey, em] = adjEnd.split("-").map(Number);
+      while (y < ey || (y === ey && m <= em)) {
+        monthsNeeded.push(`${y}-${String(m).padStart(2, "0")}`);
+        m++; if (m > 12) { m = 1; y++; }
+      }
+      const runs = await db.select({ ym: accountingAdjustmentRunsTable.periodMonth })
+        .from(accountingAdjustmentRunsTable).where(eq(accountingAdjustmentRunsTable.adjustmentId, adj.id));
+      const generatedSet = new Set(runs.map(r => r.ym));
+      const missing = monthsNeeded.filter(ym => !generatedSet.has(ym));
+      if (missing.length > 0) missingAdjustments.push({ adjustmentId: adj.id, name: adj.name, missingMonths: missing });
+    }
+
+    const issues: string[] = [];
+    if (drafts.length > 0)             issues.push(`يوجد ${drafts.length} قيد غير مرحّل`);
+    if (unbalanced.length > 0)         issues.push(`يوجد ${unbalanced.length} قيد غير متوازن`);
+    if (missingAdjustments.length > 0) issues.push(`يوجد ${missingAdjustments.length} تسوية لم يتم توليد قيودها`);
+
+    res.json({
+      ok: issues.length === 0,
+      period: { id: period.id, name: period.name, status: period.status, startDate: period.startDate, endDate: period.endDate },
+      issues,
+      drafts: drafts.slice(0, 50),
+      unbalanced: unbalanced.slice(0, 50),
+      missingAdjustments,
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message ?? "خطأ" }); }
+});
+
+// ─── POST /api/fiscal/periods/:id/close-pl — zero out revenue & expense ──
+// Body: { plSummaryAccountId: number }
+// Creates 2 posted journal entries dated on period.endDate:
+//   (a) Dr each revenue account by its credit balance, Cr PL summary    (close revenue)
+//   (b) Dr PL summary, Cr each expense account by its debit balance     (close expenses)
+router.post("/periods/:id/close-pl", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const { plSummaryAccountId } = req.body ?? {};
+    if (!Number.isFinite(id) || !Number.isFinite(Number(plSummaryAccountId))) {
+      res.status(400).json({ error: "معرّف الفترة و حساب أرباح وخسائر مطلوبان" }); return;
+    }
+    const period = await fetchPeriod(cid, id);
+    if (!period) { res.status(404).json({ error: "الفترة غير موجودة" }); return; }
+    if (period.status !== "open") { res.status(400).json({ error: "الفترة ليست مفتوحة" }); return; }
+
+    const [pl] = await db.select().from(accountsTable).where(and(
+      eq(accountsTable.id, Number(plSummaryAccountId)), eq(accountsTable.companyId, cid),
+    ));
+    if (!pl) { res.status(400).json({ error: "حساب الأرباح والخسائر غير موجود" }); return; }
+    if (pl.accountType !== "equity") { res.status(400).json({ error: "حساب الأرباح والخسائر يجب أن يكون من نوع حقوق ملكية" }); return; }
+    if (!pl.isPosting) { res.status(400).json({ error: "حساب الأرباح والخسائر يجب أن يكون حساب ترحيل" }); return; }
+
+    const revenue  = await balancesByType(cid, period.startDate, period.endDate, "revenue");
+    const expenses = await balancesByType(cid, period.startDate, period.endDate, "expense");
+
+    // Filter out zero-balance lines
+    const revLines  = revenue.filter(r  => Math.abs(r.credit - r.debit)   > 0.005);
+    const expLines  = expenses.filter(e => Math.abs(e.debit  - e.credit) > 0.005);
+    if (revLines.length === 0 && expLines.length === 0) {
+      res.status(400).json({ error: "لا توجد إيرادات أو مصروفات لإقفالها في هذه الفترة" }); return;
+    }
+
+    const created: { type: "revenue" | "expense"; entryId: number; total: number }[] = [];
+
+    // (a) Close revenues — Dr each revenue (by its credit-balance), Cr PL summary
+    if (revLines.length > 0) {
+      const totalRev = revLines.reduce((s, r) => s + (r.credit - r.debit), 0);
+      const [revEntry] = await db.insert(journalEntriesTable).values({
+        companyId: cid, entryDate: period.endDate,
+        description: `قيد إقفال الإيرادات — ${period.name}`,
+        entryType: "closing_revenue", status: "posted", periodId: period.id,
+      }).returning();
+      const lines = [
+        ...revLines.map((r, i) => ({
+          entryId: revEntry.id, accountId: r.accountId,
+          debit: (r.credit - r.debit).toFixed(2), credit: "0",
+          description: "إقفال رصيد إيرادات", sortOrder: i,
+        })),
+        { entryId: revEntry.id, accountId: pl.id,
+          debit: "0", credit: totalRev.toFixed(2),
+          description: "إجمالي الإيرادات → الأرباح والخسائر", sortOrder: revLines.length },
+      ];
+      await db.insert(journalEntryLinesTable).values(lines);
+      created.push({ type: "revenue", entryId: revEntry.id, total: totalRev });
+    }
+
+    // (b) Close expenses — Dr PL summary, Cr each expense (by its debit-balance)
+    if (expLines.length > 0) {
+      const totalExp = expLines.reduce((s, e) => s + (e.debit - e.credit), 0);
+      const [expEntry] = await db.insert(journalEntriesTable).values({
+        companyId: cid, entryDate: period.endDate,
+        description: `قيد إقفال المصروفات — ${period.name}`,
+        entryType: "closing_expense", status: "posted", periodId: period.id,
+      }).returning();
+      const lines = [
+        { entryId: expEntry.id, accountId: pl.id,
+          debit: totalExp.toFixed(2), credit: "0",
+          description: "الأرباح والخسائر → إجمالي المصروفات", sortOrder: 0 },
+        ...expLines.map((e, i) => ({
+          entryId: expEntry.id, accountId: e.accountId,
+          debit: "0", credit: (e.debit - e.credit).toFixed(2),
+          description: "إقفال رصيد مصروفات", sortOrder: i + 1,
+        })),
+      ];
+      await db.insert(journalEntryLinesTable).values(lines);
+      created.push({ type: "expense", entryId: expEntry.id, total: totalExp });
+    }
+
+    const totalRev = created.find(c => c.type === "revenue")?.total ?? 0;
+    const totalExp = created.find(c => c.type === "expense")?.total ?? 0;
+    res.json({ ok: true, created, netIncome: totalRev - totalExp });
+  } catch (e: any) { res.status(500).json({ error: "فشل إقفال الأرباح والخسائر: " + (e.message ?? "خطأ") }); }
+});
+
+// ─── POST /api/fiscal/periods/:id/transfer-profit — PL → Retained ────────
+// Body: { plSummaryAccountId, retainedEarningsAccountId }
+// Reads the current balance of plSummaryAccountId across the period range
+// and transfers it to retained earnings (profit → credit RE; loss → debit RE).
+router.post("/periods/:id/transfer-profit", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const { plSummaryAccountId, retainedEarningsAccountId } = req.body ?? {};
+    if (!Number.isFinite(id)
+        || !Number.isFinite(Number(plSummaryAccountId))
+        || !Number.isFinite(Number(retainedEarningsAccountId))
+        || plSummaryAccountId === retainedEarningsAccountId) {
+      res.status(400).json({ error: "معرّفات الحسابات مطلوبة وغير متطابقة" }); return;
+    }
+
+    const period = await fetchPeriod(cid, id);
+    if (!period) { res.status(404).json({ error: "الفترة غير موجودة" }); return; }
+    if (period.status !== "open") { res.status(400).json({ error: "الفترة ليست مفتوحة" }); return; }
+
+    const accs = await db.select().from(accountsTable).where(and(
+      eq(accountsTable.companyId, cid),
+      inArray(accountsTable.id, [Number(plSummaryAccountId), Number(retainedEarningsAccountId)]),
+    ));
+    const pl = accs.find(a => a.id === Number(plSummaryAccountId));
+    const re = accs.find(a => a.id === Number(retainedEarningsAccountId));
+    if (!pl || !re) { res.status(400).json({ error: "الحسابات غير موجودة في هذه الشركة" }); return; }
+    if (pl.accountType !== "equity" || re.accountType !== "equity") {
+      res.status(400).json({ error: "كلا الحسابين يجب أن يكونا من نوع حقوق ملكية" }); return;
+    }
+
+    // Pull the current PL balance over the period date range (after close-pl ran)
+    const [agg] = await db.select({
+      debit:  sql<string>`coalesce(sum(${journalEntryLinesTable.debit}), 0)`,
+      credit: sql<string>`coalesce(sum(${journalEntryLinesTable.credit}), 0)`,
+    })
+    .from(journalEntryLinesTable)
+    .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+    .where(and(
+      eq(journalEntriesTable.companyId, cid),
+      eq(journalEntriesTable.status, "posted"),
+      gte(journalEntriesTable.entryDate, period.startDate),
+      lte(journalEntriesTable.entryDate, period.endDate),
+      eq(journalEntryLinesTable.accountId, pl.id),
+    ));
+    const debit  = parseFloat(agg?.debit  || "0");
+    const credit = parseFloat(agg?.credit || "0");
+    const net    = credit - debit; // positive → profit, negative → loss
+
+    if (Math.abs(net) < 0.005) {
+      res.status(400).json({ error: "رصيد الأرباح والخسائر صفر — لا يوجد ما يُرحّل" }); return;
+    }
+
+    const isProfit = net > 0;
+    const amount = Math.abs(net).toFixed(2);
+    const [entry] = await db.insert(journalEntriesTable).values({
+      companyId: cid, entryDate: period.endDate,
+      description: `ترحيل ${isProfit ? "أرباح" : "خسائر"} الفترة — ${period.name}`,
+      entryType: isProfit ? "closing_transfer_profit" : "closing_transfer_loss",
+      status: "posted", periodId: period.id,
+    }).returning();
+
+    // Profit: Dr PL summary, Cr Retained earnings
+    // Loss:   Dr Retained earnings, Cr PL summary
+    const lines = isProfit
+      ? [
+          { entryId: entry.id, accountId: pl.id, debit: amount, credit: "0",
+            description: "إقفال رصيد الأرباح والخسائر", sortOrder: 0 },
+          { entryId: entry.id, accountId: re.id, debit: "0", credit: amount,
+            description: "إضافة صافي الربح للأرباح المحتجزة", sortOrder: 1 },
+        ]
+      : [
+          { entryId: entry.id, accountId: re.id, debit: amount, credit: "0",
+            description: "تخفيض الأرباح المحتجزة بصافي الخسارة", sortOrder: 0 },
+          { entryId: entry.id, accountId: pl.id, debit: "0", credit: amount,
+            description: "إقفال رصيد الأرباح والخسائر", sortOrder: 1 },
+        ];
+    await db.insert(journalEntryLinesTable).values(lines);
+
+    res.json({ ok: true, entryId: entry.id, isProfit, amount: parseFloat(amount), net });
+  } catch (e: any) { res.status(500).json({ error: "فشل ترحيل الأرباح: " + (e.message ?? "خطأ") }); }
+});
+
+// ─── POST /api/fiscal/periods/:id/soft-close — open → closed ─────────────
+// Runs validate first; refuses if any blocker exists. The user can pass
+// `force: true` to override (logged but allowed).
+router.post("/periods/:id/soft-close", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+    const force = req.body?.force === true;
+
+    const period = await fetchPeriod(cid, id);
+    if (!period) { res.status(404).json({ error: "الفترة غير موجودة" }); return; }
+    if (period.status !== "open") { res.status(400).json({ error: "الفترة ليست مفتوحة" }); return; }
+
+    // Inline validation re-run (don't call the route handler — keep it pure)
+    const drafts = await db.select({ id: journalEntriesTable.id })
+      .from(journalEntriesTable).where(and(
+        eq(journalEntriesTable.companyId, cid),
+        eq(journalEntriesTable.status, "draft"),
+        gte(journalEntriesTable.entryDate, period.startDate),
+        lte(journalEntriesTable.entryDate, period.endDate),
+      ));
+    const balRows = await db.select({
+      entryId: journalEntryLinesTable.entryId,
+      debit:   sql<string>`coalesce(sum(${journalEntryLinesTable.debit}), 0)`,
+      credit:  sql<string>`coalesce(sum(${journalEntryLinesTable.credit}), 0)`,
+    })
+    .from(journalEntryLinesTable)
+    .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+    .where(and(
+      eq(journalEntriesTable.companyId, cid),
+      eq(journalEntriesTable.status, "posted"),
+      gte(journalEntriesTable.entryDate, period.startDate),
+      lte(journalEntriesTable.entryDate, period.endDate),
+    ))
+    .groupBy(journalEntryLinesTable.entryId);
+    const unbalanced = balRows.filter(r => Math.abs(parseFloat(r.debit || "0") - parseFloat(r.credit || "0")) > 0.01);
+
+    if (!force && (drafts.length > 0 || unbalanced.length > 0)) {
+      res.status(400).json({
+        error: "لا يمكن إقفال الفترة — يوجد قيود غير مرحلة أو غير متوازنة. استخدم force=true لتجاوز هذا التحذير",
+        drafts: drafts.length, unbalanced: unbalanced.length,
+      });
+      return;
+    }
+
+    const [updated] = await db.update(fiscalPeriodsTable)
+      .set({ status: "closed", updatedAt: new Date() })
+      .where(eq(fiscalPeriodsTable.id, id)).returning();
+    res.json({ ok: true, period: updated, forced: force });
+  } catch (e: any) { res.status(500).json({ error: e.message ?? "خطأ" }); }
+});
+
+// ─── POST /api/fiscal/periods/:id/hard-close — closed → permanently_closed ──
+router.post("/periods/:id/hard-close", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+    const period = await fetchPeriod(cid, id);
+    if (!period) { res.status(404).json({ error: "الفترة غير موجودة" }); return; }
+    if (period.status === "permanently_closed") { res.json({ ok: true, alreadyClosed: true }); return; }
+    if (period.status !== "closed") {
+      res.status(400).json({ error: "يجب إجراء الإقفال الناعم أولاً قبل الإقفال النهائي" });
+      return;
+    }
+
+    const [updated] = await db.update(fiscalPeriodsTable)
+      .set({ status: "permanently_closed", updatedAt: new Date() })
+      .where(eq(fiscalPeriodsTable.id, id)).returning();
+    res.json({ ok: true, period: updated });
+  } catch (e: any) { res.status(500).json({ error: e.message ?? "خطأ" }); }
 });
 
 export default router;

@@ -13,6 +13,7 @@ import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middle
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
+import { assertWritableForDate, assertWritableForPeriodId } from "../lib/periodGuard.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -227,6 +228,15 @@ router.post("/", async (req, res) => {
       return;
     }
 
+    // Period guard: refuse to write into a closed/permanently_closed fiscal
+    // period. Auto-resolves the period for the entry date so the row is
+    // linked at insert time (no later backfill needed).
+    const writability = await assertWritableForDate(cid, entryDate);
+    if (!writability.ok) {
+      res.status(423).json({ error: writability.reason });
+      return;
+    }
+
     const [entry] = await db.insert(journalEntriesTable).values({
       companyId:    cid,
       docNumber:    resolvedDocNumber,
@@ -236,6 +246,7 @@ router.post("/", async (req, res) => {
       description:  description || null,
       entryType:    entryType || "general",
       branchId:     resolvedBranchId,
+      periodId:     writability.period?.id ?? null,
       status:       "posted",
     }).returning();
 
@@ -318,6 +329,24 @@ router.put("/:id", async (req, res) => {
     const resolvedBranchId = await resolveBranchForWrite(req, res, cid, branchId);
     if (resolvedBranchId === "DENY") return;
 
+    // Period guard — verify both the existing entry's period AND the new
+    // target date's period are open. This protects against editing into or
+    // out of a closed period.
+    const [pre] = await db.select({ periodId: journalEntriesTable.periodId })
+      .from(journalEntriesTable)
+      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    if (pre) {
+      const oldGuard = await assertWritableForPeriodId(cid, pre.periodId);
+      if (!oldGuard.ok) { res.status(423).json({ error: oldGuard.reason }); return; }
+    }
+    const newDate = entryDate || undefined;
+    let resolvedPeriodId: number | null | undefined = undefined;
+    if (newDate) {
+      const newGuard = await assertWritableForDate(cid, newDate);
+      if (!newGuard.ok) { res.status(423).json({ error: newGuard.reason }); return; }
+      resolvedPeriodId = newGuard.period?.id ?? null;
+    }
+
     // docNumber is intentionally omitted — once assigned, it is immutable.
     const [entry] = await db.update(journalEntriesTable).set({
       entryDate:    entryDate || undefined,
@@ -326,6 +355,7 @@ router.put("/:id", async (req, res) => {
       description:  description || null,
       entryType:    entryType || "general",
       branchId:     resolvedBranchId,
+      ...(resolvedPeriodId !== undefined ? { periodId: resolvedPeriodId } : {}),
       updatedAt:    new Date(),
     }).where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid))).returning();
 
@@ -377,6 +407,10 @@ router.post("/:id/post", async (req, res) => {
     if (!existing) { res.status(404).json({ error: "القيد غير موجود" }); return; }
     if (existing.status === "posted") { res.json({ ok: true, alreadyPosted: true }); return; }
 
+    // Period guard — refuse to flip status when the entry's period is closed
+    const postGuard = await assertWritableForPeriodId(cid, existing.periodId);
+    if (!postGuard.ok) { res.status(423).json({ error: postGuard.reason }); return; }
+
     // Balance check — sum debit must equal sum credit. We pull the lines
     // raw (numeric → string) and parseFloat so the comparison is float-safe
     // up to two decimal places (Saudi accounting precision).
@@ -419,6 +453,10 @@ router.post("/:id/unpost", async (req, res) => {
     if (!existing) { res.status(404).json({ error: "القيد غير موجود" }); return; }
     if (existing.status !== "posted") { res.json({ ok: true, alreadyUnposted: true }); return; }
 
+    // Period guard — refuse to unpost from a closed period
+    const unpGuard = await assertWritableForPeriodId(cid, existing.periodId);
+    if (!unpGuard.ok) { res.status(423).json({ error: unpGuard.reason }); return; }
+
     await db.update(journalEntriesTable)
       .set({ status: "draft", updatedAt: new Date() })
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
@@ -436,6 +474,15 @@ router.delete("/:id", async (req, res) => {
     if (!lockCheck.ok) {
       res.status(403).json({ error: "هذا القيد تم إنشاؤه تلقائياً من مستند مصدر (فاتورة/سند) ولا يمكن حذفه مباشرة. لحذفه قم بفك ترحيل المستند الأصلي." });
       return;
+    }
+
+    // Period guard — refuse to delete entries inside a closed period
+    const [pre] = await db.select({ periodId: journalEntriesTable.periodId })
+      .from(journalEntriesTable)
+      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    if (pre) {
+      const delGuard = await assertWritableForPeriodId(cid, pre.periodId);
+      if (!delGuard.ok) { res.status(423).json({ error: delGuard.reason }); return; }
     }
 
     await db.delete(journalEntriesTable)

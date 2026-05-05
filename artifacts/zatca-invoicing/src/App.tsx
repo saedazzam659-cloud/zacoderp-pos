@@ -208,6 +208,7 @@ import TrialBalance     from "@/pages/accounting/reports/TrialBalance";
 import BalanceSheet     from "@/pages/accounting/reports/BalanceSheet";
 import IncomeStatement  from "@/pages/accounting/reports/IncomeStatement";
 import FiscalPeriods    from "@/pages/accounting/FiscalPeriods";
+import Adjustments      from "@/pages/accounting/Adjustments";
 import CostCenters     from "@/pages/accounting/CostCenters";
 // Purchasing
 import SupplierGroups       from "@/pages/purchasing/SupplierGroups";
@@ -643,6 +644,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/accounting/accounts"       module="accounts"        component={ChartOfAccounts} />}
             {!isSuperAdmin && <PermRoute path="/accounting/cost-centers"   module="accounts"        component={CostCenters} />}
             {!isSuperAdmin && <PermRoute path="/accounting/fiscal-periods" module="accounts"        component={FiscalPeriods} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/adjustments"    module="journal_entries" component={Adjustments} />}
             {!isSuperAdmin && <PermRoute path="/accounting/journals"       module="journal_entries" component={JournalEntries} />}
             {!isSuperAdmin && <PermRoute path="/accounting/posting-center" module="journal_entries" component={PostingCenter} />}
             {!isSuperAdmin && <PermRoute path="/accounting/journals/new"   module="journal_entries" action="create" component={JournalEntryForm} />}
