@@ -12,7 +12,8 @@ function authHeaders(): Record<string, string> {
 export type SequenceTxType =
   | "sales_quotation"
   | "sales_invoice" | "sales_return" | "sales_order"
-  | "purchase_invoice" | "purchase_return" | "purchase_order" | "goods_receipt"
+  | "purchase_invoice" | "purchase_return" | "purchase_order"
+  | "goods_receipt" | "goods_delivery"
   | "journal_entry"
   | "stock_transfer" | "stock_adjustment" | "stock_count"
   | "receipt_voucher" | "payment_voucher"
