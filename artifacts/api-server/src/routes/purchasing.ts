@@ -319,7 +319,7 @@ router.post("/letters-of-credit", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { lcNumber, lcDate, supplierId, bankName, currencyCode, exchangeRate,
-            totalAmount, notes, expenses } = req.body;
+            totalAmount, settlementAccountId, notes, expenses } = req.body;
     if (!lcNumber || !lcDate || !totalAmount) {
       res.status(400).json({ error: "رقم الاعتماد والتاريخ والقيمة مطلوبة" }); return;
     }
@@ -329,6 +329,7 @@ router.post("/letters-of-credit", async (req, res) => {
       bankName: bankName || null, currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate ?? "1"),
       totalAmount: String(totalAmount), usedAmount: "0",
+      settlementAccountId: settlementAccountId ? Number(settlementAccountId) : null,
       status: "open", notes: notes || null,
     }).returning();
     if (expenses?.length) {
@@ -351,13 +352,14 @@ router.put("/letters-of-credit/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const { lcNumber, lcDate, supplierId, bankName, currencyCode, exchangeRate,
-            totalAmount, notes, expenses } = req.body;
+            totalAmount, settlementAccountId, notes, expenses } = req.body;
     const [lc] = await db.update(lettersOfCreditTable).set({
       lcNumber, lcDate,
       supplierId: supplierId ? Number(supplierId) : null,
       bankName: bankName || null, currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate ?? "1"),
       totalAmount: String(totalAmount),
+      settlementAccountId: settlementAccountId ? Number(settlementAccountId) : null,
       notes: notes || null, updatedAt: new Date(),
     }).where(and(eq(lettersOfCreditTable.id, id), eq(lettersOfCreditTable.companyId, cid))).returning();
     if (!lc) { res.status(404).json({ error: "الاعتماد غير موجود" }); return; }
@@ -385,6 +387,88 @@ router.delete("/letters-of-credit/:id", async (req, res) => {
     const id = Number(req.params.id);
     await db.delete(lettersOfCreditTable).where(and(eq(lettersOfCreditTable.id, id), eq(lettersOfCreditTable.companyId, cid)));
     res.json({ ok: true });
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
+// ─── Recompute LC usage from posted purchase invoices ──────────────────────
+// Sums the GOODS portion (totalAmount - vatAmount - totalExpensesLoaded,
+// converted to LC base via the invoice's exchangeRate) of every POSTED
+// purchase invoice linked to this LC. Then auto-derives the status:
+//   used == 0                 → open
+//   0 < used < totalBase      → partial
+//   used >= totalBase         → closed
+// Status is NOT changed when the LC was manually closed/reopened by an
+// admin AND the auto-rule wouldn't change it back to "closed" — manual
+// override always wins for the closed→reopen transition since the user
+// explicitly took action.
+async function recomputeLcUsage(cid: number, lcId: number): Promise<void> {
+  const [lc] = await db.select().from(lettersOfCreditTable)
+    .where(and(eq(lettersOfCreditTable.id, lcId), eq(lettersOfCreditTable.companyId, cid)));
+  if (!lc) return;
+
+  const invoices = await db.select().from(purchaseInvoicesTable).where(and(
+    eq(purchaseInvoicesTable.companyId, cid),
+    eq(purchaseInvoicesTable.lcId, lcId),
+    eq(purchaseInvoicesTable.status, "posted"),
+  ));
+
+  // Goods portion in LC base currency. Each invoice carries its own
+  // exchangeRate which converts the invoice amount to the company base
+  // currency (same base as the LC's totalAmountBase).
+  let usedBase = 0;
+  for (const inv of invoices) {
+    const total       = Number(inv.totalAmount         || 0);
+    const expLoaded   = Number(inv.totalExpensesLoaded || 0);
+    // Mirror the JE credit posted to the LC settlement account
+    // (see post handler — `goodsPortion = totalAmount - expensesLoaded`),
+    // so usedAmount tracks the actual LC settlement clearing.
+    const goodsInvCur = total - expLoaded;
+    const rate        = Number(inv.exchangeRate || "1") || 1;
+    usedBase += goodsInvCur * rate;
+  }
+
+  const lcRate    = Number(lc.exchangeRate || "1") || 1;
+  const totalBase = (Number(lc.totalAmount || 0) || 0) * lcRate;
+
+  let status: "open" | "partial" | "closed" = "open";
+  if (usedBase >= totalBase - 0.01 && totalBase > 0) status = "closed";
+  else if (usedBase > 0.01) status = "partial";
+
+  await db.update(lettersOfCreditTable).set({
+    usedAmount: usedBase.toFixed(2),
+    status,
+    updatedAt: new Date(),
+  }).where(eq(lettersOfCreditTable.id, lcId));
+}
+
+// ─── Manual LC close / reopen (admin override) ───────────────────────────
+router.patch("/letters-of-credit/:id/close", requireAdminRole, async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [lc] = await db.update(lettersOfCreditTable)
+      .set({ status: "closed", updatedAt: new Date() })
+      .where(and(eq(lettersOfCreditTable.id, id), eq(lettersOfCreditTable.companyId, cid)))
+      .returning();
+    if (!lc) { res.status(404).json({ error: "الاعتماد غير موجود" }); return; }
+    res.json(lc);
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
+router.patch("/letters-of-credit/:id/reopen", requireAdminRole, async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    // Reopen falls back to the auto-derived status (open or partial) so the
+    // user does not get stuck with a stale "closed" state right after reopen.
+    await db.update(lettersOfCreditTable)
+      .set({ status: "open", updatedAt: new Date() })
+      .where(and(eq(lettersOfCreditTable.id, id), eq(lettersOfCreditTable.companyId, cid)));
+    await recomputeLcUsage(cid, id);
+    const [lc] = await db.select().from(lettersOfCreditTable)
+      .where(and(eq(lettersOfCreditTable.id, id), eq(lettersOfCreditTable.companyId, cid)));
+    if (!lc) { res.status(404).json({ error: "الاعتماد غير موجود" }); return; }
+    res.json(lc);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
@@ -702,15 +786,46 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     const taxAccId      = pickAccount(inv.taxAccountId,      mapPi("purchase_invoice", "vat_input"));
     const discountAccId = pickAccount(inv.discountAccountId, mapPi("purchase_invoice", "discount"));
 
-    const counterpartyAccountId =
-      inv.paymentType === "cash" ? await getCashBoxAccountId(cid, inv.cashBoxId)
+    // ─── LC-linked invoice: replace counterparty credit ──────────────────
+    // When an invoice is tied to a Letter of Credit, the supplier was
+    // already paid through the LC margin / bank transfer. So the credit
+    // side becomes:
+    //   Cr LC settlement account  (goods value, pre-tax, pre-expenses)
+    //   Cr each LC expense account (proportional to its share)
+    // This zeros-out the LC asset balance as goods are received and
+    // properly reverses the expense clearing entries created on payment.
+    let lcRow: any = null;
+    let lcExpenseRows: any[] = [];
+    if (inv.lcId) {
+      const [lcr] = await db.select().from(lettersOfCreditTable)
+        .where(and(eq(lettersOfCreditTable.id, inv.lcId), eq(lettersOfCreditTable.companyId, cid)));
+      if (!lcr) throw new Error("الاعتماد المستندي المرتبط بالفاتورة غير موجود");
+      lcRow = lcr;
+      lcExpenseRows = await db.select().from(lcExpensesTable)
+        .where(eq(lcExpensesTable.lcId, inv.lcId));
+    }
+
+    const counterpartyAccountId = inv.lcId
+      ? (lcRow?.settlementAccountId ?? null)
+      : inv.paymentType === "cash" ? await getCashBoxAccountId(cid, inv.cashBoxId)
       : inv.paymentType === "bank" ? await getBankAccountAccountId(cid, (inv as any).bankAccountId)
       : await getSupplierAccountId(cid, inv.supplierId);
 
     const missing: string[] = [];
     if (vatAmount > 0 && !taxAccId) missing.push("حساب الضرائب (مدخلات)");
     if (discountAmount > 0 && !discountAccId) missing.push("حساب الخصم المكتسب");
-    if (!counterpartyAccountId) missing.push(inv.paymentType === "cash" ? "حساب الخزنة" : inv.paymentType === "bank" ? "الحساب البنكي" : "حساب المورد");
+    if (!counterpartyAccountId) missing.push(
+      inv.lcId          ? "حساب تسوية الاعتماد المستندي (يُضبط من شاشة الاعتمادات)"
+      : inv.paymentType === "cash" ? "حساب الخزنة"
+      : inv.paymentType === "bank" ? "الحساب البنكي"
+      : "حساب المورد",
+    );
+    // Validate per-expense clearing accounts when posting an LC-linked invoice
+    if (inv.lcId) {
+      const missingExp = lcExpenseRows.filter(e => Number(e.amount) > 0 && !e.accountId)
+        .map(e => e.expenseType || "—");
+      if (missingExp.length) missing.push(`حساب مصروف الاعتماد لـ: ${missingExp.join("، ")}`);
+    }
 
     // GRN-sourced invoices DEBIT Receiving Clearing instead of Inventory.
     // For non-GRN invoices, derive Inventory from each warehouse's account.
@@ -762,6 +877,64 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
               description: `قيمة البضاعة — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
             };
           });
+    // Build credit lines. For LC-linked invoices, split the credit:
+    //   - Goods portion → LC settlement account (clears the LC asset)
+    //   - Expenses portion → each LC expense's clearing account
+    //     (proportional to the original expense amounts; in invoice currency
+    //     so the entry stays balanced)
+    const expensesLoaded = Number(inv.totalExpensesLoaded || 0);
+    // Credits must sum to (totalAmount + discountAmount) to balance debits
+    // (= inventoryDebit + vatAmount). We credit `expensesLoaded` to the LC
+    // expense clearing accounts and `discountAmount` to discount-earned, so
+    // the LC settlement account absorbs the rest:
+    //   goodsPortion = totalAmount - expensesLoaded
+    // This is the slice of the invoice the LC actually paid on behalf of the
+    // buyer (goods value plus any VAT charged by the foreign supplier — for
+    // typical KSA imports the supplier VAT is zero and this collapses to pure
+    // goods value). Using the same value for `recomputeLcUsage` keeps the LC
+    // settlement account perfectly zero when the LC is fully drawn.
+    const goodsPortion = totalAmount - expensesLoaded;
+    // Guard: invoice carries loaded expenses but the LC has no expense rows
+    // to credit against → JE would be unbalanced. Block with a clear message.
+    if (expensesLoaded > 0 && lcExpenseRows.length === 0) {
+      return res.status(400).json({
+        error: "هذه الفاتورة تحتوي مصاريف اعتماد محمّلة (totalExpensesLoaded > 0) لكن الاعتماد المستندي لا يتضمن أي بنود مصاريف. أضف بنود المصاريف للاعتماد قبل الترحيل.",
+      });
+    }
+    const creditLines: JLine[] = [];
+    if (inv.lcId) {
+      // Cr LC settlement account (goods portion)
+      creditLines.push({
+        accountId: counterpartyAccountId,
+        credit: goodsPortion,
+        description: `تسوية اعتماد مستندي رقم ${lcRow?.lcNumber ?? inv.lcId}`,
+      });
+      // Cr each LC expense's clearing account, proportional to its share
+      const totalExpOrig = lcExpenseRows.reduce(
+        (s, e) => s + (Number(e.amount) || 0) * (Number(e.exchangeRate) || 1),
+        0,
+      );
+      if (expensesLoaded > 0 && totalExpOrig > 0) {
+        let runningSum = 0;
+        const expCredits = lcExpenseRows.map((e, idx) => {
+          const baseAmt = (Number(e.amount) || 0) * (Number(e.exchangeRate) || 1);
+          const share   = baseAmt / totalExpOrig;
+          let portion   = +(expensesLoaded * share).toFixed(2);
+          // Drift fix on last row so credits sum exactly to expensesLoaded
+          if (idx === lcExpenseRows.length - 1) portion = +(expensesLoaded - runningSum).toFixed(2);
+          runningSum += portion;
+          return { accountId: e.accountId as number, credit: portion, description: `تسوية مصروف اعتماد — ${e.expenseType ?? ""}` };
+        }).filter(l => l.credit > 0);
+        creditLines.push(...expCredits);
+      }
+      creditLines.push({ accountId: discountAccId, credit: discountAmount, description: "خصم مكتسب" });
+    } else {
+      creditLines.push(
+        { accountId: counterpartyAccountId,  credit: totalAmount,    description: inv.paymentType === "cash" ? "صرف نقدي" : inv.paymentType === "bank" ? "صرف بنكي" : "مستحقات المورد" },
+        { accountId: discountAccId,          credit: discountAmount, description: "خصم مكتسب" },
+      );
+    }
+
     const journalId = await createJournalEntry({
       companyId:    cid,
       branchId:     inv.branchId,
@@ -772,9 +945,8 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       exchangeRate: inv.exchangeRate,
       lines: [
         ...debitLines,
-        { accountId: taxAccId,               debit:  vatAmount,      description: "ضريبة القيمة المضافة" },
-        { accountId: counterpartyAccountId,  credit: totalAmount,    description: inv.paymentType === "cash" ? "صرف نقدي" : inv.paymentType === "bank" ? "صرف بنكي" : "مستحقات المورد" },
-        { accountId: discountAccId,          credit: discountAmount, description: "خصم مكتسب" },
+        { accountId: taxAccId, debit: vatAmount, description: "ضريبة القيمة المضافة" },
+        ...creditLines,
       ],
     });
 
@@ -782,6 +954,9 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       .set({ status: "posted", journalEntryId: journalId, updatedAt: new Date() })
       .where(eq(purchaseInvoicesTable.id, id))
       .returning();
+
+    // Auto-update LC usedAmount + status based on this newly-posted invoice
+    if (inv.lcId) await recomputeLcUsage(cid, inv.lcId);
 
     res.json(updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
@@ -852,6 +1027,9 @@ router.patch("/purchase-invoices/:id/unpost", requireAdminRole, async (req, res)
       .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
       .where(eq(purchaseInvoicesTable.id, id))
       .returning();
+
+    // Reverse LC consumption when an LC-linked invoice is unposted
+    if (inv.lcId) await recomputeLcUsage(cid, inv.lcId);
 
     res.json(updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }

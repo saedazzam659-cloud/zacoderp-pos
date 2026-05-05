@@ -32,6 +32,13 @@ export const lettersOfCreditTable = pgTable("letters_of_credit", {
   exchangeRate: numeric("exchange_rate", { precision: 15, scale: 6 }).notNull().default("1"),
   totalAmount:  numeric("total_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   usedAmount:   numeric("used_amount",  { precision: 15, scale: 2 }).notNull().default("0"),
+  // ─── LC settlement (asset/clearing) account ──────────────────────────
+  // When a purchase invoice is linked to this LC and posted, the goods
+  // value is credited to this account instead of the supplier (because
+  // the supplier has already been paid through the LC margin/bank).
+  // Required at posting time, nullable for backward compatibility with
+  // legacy LCs created before this feature.
+  settlementAccountId: integer("settlement_account_id").references(() => accountsTable.id),
   status:       lcStatusEnum("status").notNull().default("open"),
   notes:        text("notes"),
   createdAt:    timestamp("created_at").defaultNow().notNull(),

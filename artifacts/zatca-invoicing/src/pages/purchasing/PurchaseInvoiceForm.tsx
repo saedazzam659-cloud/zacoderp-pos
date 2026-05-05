@@ -1052,15 +1052,30 @@ export default function PurchaseInvoiceForm() {
                 const lcBase    = Number(selectedLc.totalAmountBase   ?? selectedLc.totalAmount ?? 0);
                 const expBase   = Number(selectedLc.totalExpensesBase ?? 0);
                 const grandBase = lcBase + expBase;
+                const usedBase  = Number(selectedLc.usedAmount ?? 0);
+                const remGoods  = Math.max(0, lcBase - usedBase);
                 return (
-                  <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700">
-                    <AlertCircle className="h-4 w-4 shrink-0" />
-                    <span>
-                      {tr("lcInfo", { lc: selectedLc.lcNumber, remaining: `${fmt(grandBase)} ${baseCur}` })}
-                    </span>
-                    <Button type="button" size="sm" variant="outline" className={cn("h-6 text-xs border-blue-300 text-blue-700", isRtl ? "mr-auto" : "ml-auto")} onClick={distributeExpenses}>
-                      {tr("lcDistribute")}
-                    </Button>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      <span>
+                        {tr("lcInfo", { lc: selectedLc.lcNumber, remaining: `${fmt(grandBase)} ${baseCur}` })}
+                      </span>
+                      <Button type="button" size="sm" variant="outline" className={cn("h-6 text-xs border-blue-300 text-blue-700", isRtl ? "mr-auto" : "ml-auto")} onClick={distributeExpenses}>
+                        {tr("lcDistribute")}
+                      </Button>
+                    </div>
+                    {/* LC posting notice: explains that the supplier will NOT be
+                        credited at posting time — the LC settlement account is
+                        credited instead, and the LC usage is auto-updated. */}
+                    <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800 leading-relaxed">
+                      <strong className="block mb-1">{tr("lcPostingTitle")}</strong>
+                      {tr("lcPostingNote", {
+                        goods: `${fmt(remGoods)} ${baseCur}`,
+                        used:  `${fmt(usedBase)} ${baseCur}`,
+                        total: `${fmt(lcBase)} ${baseCur}`,
+                      })}
+                    </div>
                   </div>
                 );
               })()}

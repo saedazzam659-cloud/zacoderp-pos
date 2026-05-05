@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Pencil, Trash2, CreditCard, FileText, ListOrdered, Sparkles, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, CreditCard, FileText, ListOrdered, Sparkles, Loader2, Lock, Unlock } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -17,7 +17,7 @@ import { useTranslation } from "react-i18next";
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
-const EMPTY_LC  = { lcNumber: "", lcDate: today(), supplierId: "", bankName: "", currencyCode: "SAR", exchangeRate: "1", totalAmount: "", notes: "" };
+const EMPTY_LC  = { lcNumber: "", lcDate: today(), supplierId: "", bankName: "", currencyCode: "SAR", exchangeRate: "1", totalAmount: "", settlementAccountId: "", notes: "" };
 const EMPTY_EXP = { expenseType: "", accountId: "", amount: "", currencyCode: "SAR", exchangeRate: "1", notes: "" };
 
 export default function LetterOfCredit() {
@@ -143,6 +143,15 @@ export default function LetterOfCredit() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
+  const toggleStatusMut = useMutation({
+    mutationFn: async ({ id, action }: { id: number; action: "close" | "reopen" }) => {
+      const res = await fetch(`${API}/api/purchasing/letters-of-credit/${id}/${action}`, { method: "PATCH", headers });
+      const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
+    },
+    onSuccess: (_, vars) => { invalidate(); toast({ title: vars.action === "close" ? tr("toastClosed") : tr("toastReopened") }); },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
   function reset() { setForm(EMPTY_LC); setExpenses([]); setEditId(null); setShowForm(false); setActiveTab("info"); }
 
   async function handleEdit(lc: any) {
@@ -151,7 +160,9 @@ export default function LetterOfCredit() {
     setForm({ lcNumber: data.lcNumber, lcDate: data.lcDate, supplierId: data.supplierId ? String(data.supplierId) : "",
               bankName: data.bankName ?? "", currencyCode: data.currencyCode,
               exchangeRate: String(data.exchangeRate ?? "1"),
-              totalAmount: String(data.totalAmount), notes: data.notes ?? "" });
+              totalAmount: String(data.totalAmount),
+              settlementAccountId: data.settlementAccountId ? String(data.settlementAccountId) : "",
+              notes: data.notes ?? "" });
     setExpenses((data.expenses ?? []).map((e: any) => ({ ...e, exchangeRate: String(e.exchangeRate ?? "1") })));
     setEditId(lc.id); setShowForm(true); setActiveTab("info");
   }
@@ -284,6 +295,13 @@ export default function LetterOfCredit() {
                     </div>
                   </Field>
                 )}
+                <Field label={tr("fSettlementAccount")} required className="md:col-span-2">
+                  <SearchCombobox items={accountItems}
+                    value={String(form.settlementAccountId ?? "")}
+                    onValueChange={v => setForm((p: any) => ({ ...p, settlementAccountId: v }))}
+                    placeholder={tr("fSettlementAccountPh")} />
+                  <p className="text-[11px] text-muted-foreground mt-1">{tr("fSettlementAccountHint")}</p>
+                </Field>
                 <Field label={tr("fNotes")} className="md:col-span-2">
                   <Textarea rows={2} className="resize-none text-sm" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
                 </Field>
@@ -379,11 +397,16 @@ export default function LetterOfCredit() {
                 // Prefer the server-computed base amounts (IAS 21). Fall back gracefully
                 // for older rows that don't yet carry the conversion.
                 const lcBase   = Number(lc.totalAmountBase   ?? lc.totalAmount   ?? 0);
-                const expBase  = Number(lc.totalExpensesBase ?? lc.usedAmount    ?? 0);
-                const remBase  = Number(lc.remainingBase     ?? (lcBase - expBase));
+                // "Used" now reflects the GOODS consumed by posted purchase invoices
+                // linked to this LC (auto-maintained by the server). The expenses
+                // column shows the load-cost expenses recorded on the LC itself.
+                const usedBase = Number(lc.usedAmount ?? 0);
+                const expBase  = Number(lc.totalExpensesBase ?? 0);
+                const remBase  = lcBase - usedBase;
                 const rate     = Number(lc.exchangeRate ?? 1);
                 const isFx     = lc.currencyCode && lc.baseCurrency && lc.currencyCode !== lc.baseCurrency;
                 const st  = STATUS_MAP[lc.status] ?? STATUS_MAP.open;
+                const isClosed = lc.status === "closed";
                 return (
                   <tr key={lc.id} className="border-b hover:bg-muted/30 transition-colors">
                     <td className="px-3 py-2.5 font-mono text-xs font-semibold text-primary">{lc.lcNumber}</td>
@@ -402,7 +425,14 @@ export default function LetterOfCredit() {
                         {isFx && <span className="text-[10px] text-primary font-semibold">{fmt(lcBase)} {lc.baseCurrency}</span>}
                       </div>
                     </td>
-                    <td className="px-3 py-2.5 font-mono text-rose-700">{fmt(expBase)}{isFx && <span className="text-[10px] text-muted-foreground"> {lc.baseCurrency}</span>}</td>
+                    <td className="px-3 py-2.5 font-mono">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-rose-700">{fmt(usedBase)}{isFx && <span className="text-[10px] text-muted-foreground"> {lc.baseCurrency}</span>}</span>
+                        {expBase > 0 && (
+                          <span className="text-[10px] text-amber-700">+ {fmt(expBase)} {tr("expensesShort")}</span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-3 py-2.5 font-mono text-green-700">{fmt(remBase)}{isFx && <span className="text-[10px] text-muted-foreground"> {lc.baseCurrency}</span>}</td>
                     <td className="px-3 py-2.5">
                       <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border", st.cls)}>{st.label}</span>
@@ -412,6 +442,16 @@ export default function LetterOfCredit() {
                         <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" title={tr("aiTooltip")}
                           onClick={() => runAiJournal(lc)} disabled={aiLoading && aiLc?.id === lc.id}>
                           {aiLoading && aiLc?.id === lc.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                        </Button>
+                        <Button variant="ghost" size="icon" className={cn("h-7 w-7", isClosed ? "text-emerald-600" : "text-amber-600")}
+                          title={isClosed ? tr("reopenTooltip") : tr("closeTooltip")}
+                          disabled={toggleStatusMut.isPending}
+                          onClick={() => {
+                            const action: "close" | "reopen" = isClosed ? "reopen" : "close";
+                            const confirmKey = isClosed ? "reopenConfirm" : "closeConfirm";
+                            if (confirm(tr(confirmKey))) toggleStatusMut.mutate({ id: lc.id, action });
+                          }}>
+                          {isClosed ? <Unlock className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
                         </Button>
                         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleEdit(lc)}><Pencil className="h-3.5 w-3.5" /></Button>
                         <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
