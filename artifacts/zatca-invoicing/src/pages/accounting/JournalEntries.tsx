@@ -219,10 +219,26 @@ export default function JournalEntries() {
       async (id) => { await journalEntriesApi.post(id); },
     );
     if (failures.length > 0) {
-      window.alert(
-        `ترحيل القيود: ${ok}/${draftSelectedIds.length}\n` +
-        `${failures.length} قيد فشل:\n• ${failures.slice(0, 5).join("\n• ")}`,
+      // If every failure was a closed-period block, lead with the friendly
+      // headline so the user immediately understands the cause and the fix
+      // (re-open the fiscal period). Otherwise fall back to the generic list.
+      const periodLocked = failures.filter((m) =>
+        m.includes("لا يمكن الترحيل في فترة مقفلة") ||
+        m.includes("مقفلة") || m.includes("مغلقة")
       );
+      if (periodLocked.length === failures.length) {
+        window.alert(
+          `لا يمكن الترحيل في فترة مقفلة\n\n` +
+          `تم ترحيل ${ok} من ${draftSelectedIds.length} قيد. ` +
+          `${failures.length} قيد بتاريخ يقع داخل فترة مالية مقفلة (إقفال ناعم أو نهائي).\n\n` +
+          `للترحيل: افتح "الفترات المالية" وأعد فتح الفترة المعنيّة، ثم أعد المحاولة.`
+        );
+      } else {
+        window.alert(
+          `ترحيل القيود: ${ok}/${draftSelectedIds.length}\n` +
+          `${failures.length} قيد فشل:\n• ${failures.slice(0, 5).join("\n• ")}`,
+        );
+      }
     } else if (ok > 0) {
       window.alert(`تم ترحيل ${ok} قيد بنجاح`);
     }

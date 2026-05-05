@@ -563,6 +563,17 @@ export default function JournalEntryForm() {
       navigate("/accounting/journals");
     },
     onError: (e: any) => {
+      // 423 → period is locked. Show a dedicated, action-oriented title so
+      // the user immediately knows the date falls inside a closed fiscal
+      // period and what to do (re-open the period first).
+      if (e?.status === 423) {
+        toast({
+          title: "لا يمكن الترحيل في فترة مقفلة",
+          description: e.message ?? "هذا التاريخ يقع داخل فترة مالية مقفلة. أعد فتح الفترة من شاشة \"الفترات المالية\" ثم حاول مجدداً.",
+          variant: "destructive",
+        });
+        return;
+      }
       toast({ title: "خطأ", description: e.message, variant: "destructive" });
     },
   });

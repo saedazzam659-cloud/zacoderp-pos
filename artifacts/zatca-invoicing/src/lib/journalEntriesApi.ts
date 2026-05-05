@@ -7,24 +7,63 @@ function authHeaders(): Record<string, string> {
     : { "Content-Type": "application/json" };
 }
 
+/**
+ * Custom error thrown by every JE API helper. Carries the HTTP status so the
+ * UI can branch on well-known codes (423 = period locked, 409 = conflict, …)
+ * and always surfaces a clean Arabic `message` extracted from the server's
+ * JSON `{ error }` body — never the raw JSON envelope.
+ */
+export class JournalApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+    this.name = "JournalApiError";
+  }
+}
+
+async function readError(r: Response): Promise<JournalApiError> {
+  let serverMsg = "";
+  try {
+    const txt = await r.text();
+    if (txt) {
+      try {
+        const parsed = JSON.parse(txt);
+        serverMsg = (parsed && (parsed.error || parsed.message)) || txt;
+      } catch { serverMsg = txt; }
+    }
+  } catch { /* ignore body read errors */ }
+
+  // 423 Locked — fiscal period is closed. We always surface a clear, friendly
+  // Arabic message so the user immediately knows WHY the post was blocked and
+  // WHAT to do next, instead of seeing the raw server text.
+  if (r.status === 423) {
+    const friendly = serverMsg
+      ? `لا يمكن الترحيل في فترة مقفلة: ${serverMsg}`
+      : "لا يمكن الترحيل في فترة مقفلة. أعد فتح الفترة المالية أولاً ثم حاول مرة أخرى.";
+    return new JournalApiError(423, friendly);
+  }
+  return new JournalApiError(r.status, serverMsg || `HTTP ${r.status}`);
+}
+
 async function get<T>(path: string): Promise<T> {
   const r = await fetch(`${API}/api${path}`, { headers: authHeaders() });
-  if (!r.ok) throw new Error(await r.text());
+  if (!r.ok) throw await readError(r);
   return r.json();
 }
 async function post<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(`${API}/api${path}`, { method: "POST", headers: authHeaders(), body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(await r.text());
+  if (!r.ok) throw await readError(r);
   return r.json();
 }
 async function put<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(`${API}/api${path}`, { method: "PUT", headers: authHeaders(), body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(await r.text());
+  if (!r.ok) throw await readError(r);
   return r.json();
 }
 async function del(path: string): Promise<void> {
   const r = await fetch(`${API}/api${path}`, { method: "DELETE", headers: authHeaders() });
-  if (!r.ok) throw new Error(await r.text());
+  if (!r.ok) throw await readError(r);
 }
 
 export interface JournalValidationResult {
