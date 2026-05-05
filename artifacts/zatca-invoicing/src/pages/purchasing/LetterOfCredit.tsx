@@ -57,13 +57,19 @@ export default function LetterOfCredit() {
   // The amount is in the LC's currency; the rate converts to base for the JE.
   const [transferLc, setTransferLc] = useState<any | null>(null);
   const [transferForm, setTransferForm] = useState<{
+    target: "settlement" | "expense";  // what we are debiting
+    expenseId: string;                  // when target = "expense"
     sourceType: "bank" | "cash";
     sourceId: string;
     date: string;
     amount: string;
     exchangeRate: string;
     description: string;
-  }>({ sourceType: "bank", sourceId: "", date: today(), amount: "", exchangeRate: "1", description: "" });
+  }>({
+    target: "settlement", expenseId: "",
+    sourceType: "bank", sourceId: "",
+    date: today(), amount: "", exchangeRate: "1", description: "",
+  });
 
   const { data: lcs = [], isLoading } = useQuery<any[]>({
     queryKey: ["lc", cid],
@@ -193,28 +199,49 @@ export default function LetterOfCredit() {
       const rate = Number(transferForm.exchangeRate || 1);
       if (!(amt > 0)) throw new Error(tr("transferAmtRequired"));
       if (!transferForm.sourceId) throw new Error(tr("transferSourceRequired"));
-      if (!lc.settlementAccountId) throw new Error(tr("transferLcMissingSettlement"));
-      // Resolve the credit-side account: the bank account's GL account, or
+
+      // Resolve the DEBIT-side account based on target mode
+      let debitAccountId: number | null = null;
+      let debitLabel = "";
+      let entryType = "lc_funding";
+      if (transferForm.target === "settlement") {
+        if (!lc.settlementAccountId) throw new Error(tr("transferLcMissingSettlement"));
+        debitAccountId = Number(lc.settlementAccountId);
+        debitLabel = tr("fSettlementAccount");
+      } else {
+        const exp = (lc.expenses ?? []).find((e: any) => String(e.id) === String(transferForm.expenseId));
+        if (!exp) throw new Error(tr("transferExpenseRequired"));
+        if (!exp.accountId) throw new Error(tr("transferExpenseAccMissing"));
+        debitAccountId = Number(exp.accountId);
+        debitLabel = exp.expenseType ?? tr("transferExpenseLabel");
+        entryType = "lc_expense_payment";
+      }
+
+      // Resolve the CREDIT-side account: the bank account's GL account, or
       // the cash box's GL account. Both use the same `accountId` column.
       const list = transferForm.sourceType === "bank" ? bankAccounts : cashBoxes;
       const src  = list.find((b: any) => String(b.id) === String(transferForm.sourceId));
       const sourceAccountId = src?.accountId;
       if (!sourceAccountId) throw new Error(tr("transferSourceAccMissing"));
       const baseAmt = +(amt * rate).toFixed(2);
-      const ccy     = lc.currencyCode ?? baseCode;
-      const desc    = transferForm.description?.trim() ||
-        tr("transferDefaultDesc", { lc: lc.lcNumber });
+      const ccy     = (transferForm.target === "expense"
+        ? ((lc.expenses ?? []).find((e: any) => String(e.id) === String(transferForm.expenseId))?.currencyCode ?? lc.currencyCode)
+        : lc.currencyCode) ?? baseCode;
+      const defaultDesc = transferForm.target === "settlement"
+        ? tr("transferDefaultDesc", { lc: lc.lcNumber })
+        : tr("transferDefaultDescExp", { lc: lc.lcNumber, exp: debitLabel });
+      const desc = transferForm.description?.trim() || defaultDesc;
       const body = {
         companyId:   cid,
         entryDate:   transferForm.date,
         currency:    ccy,
         exchangeRate: String(rate),
         description: desc,
-        entryType:   "lc_funding",
+        entryType,
         lines: [
-          { accountId: lc.settlementAccountId, debit: baseAmt, credit: 0,
-            description: `${desc} — ${tr("fSettlementAccount")}` },
-          { accountId: sourceAccountId,        debit: 0,        credit: baseAmt,
+          { accountId: debitAccountId,  debit: baseAmt, credit: 0,
+            description: `${desc} — ${debitLabel}` },
+          { accountId: sourceAccountId, debit: 0,        credit: baseAmt,
             description: `${desc} — ${pickName(src?.nameAr, src?.nameEn) ?? ""}` },
         ],
       };
@@ -236,6 +263,8 @@ export default function LetterOfCredit() {
   function openTransfer(lc: any) {
     setTransferLc(lc);
     setTransferForm({
+      target: "settlement",
+      expenseId: "",
       sourceType: "bank",
       sourceId: "",
       date: today(),
@@ -656,17 +685,86 @@ export default function LetterOfCredit() {
             </DialogTitle>
           </DialogHeader>
           {transferLc && (() => {
-            const amt   = Number(transferForm.amount || 0);
-            const rate  = Number(transferForm.exchangeRate || 1);
-            const base  = +(amt * rate).toFixed(2);
-            const ccy   = transferLc.currencyCode ?? baseCode;
-            const isFx  = ccy !== baseCode;
-            const list  = transferForm.sourceType === "bank" ? bankAccounts : cashBoxes;
+            const amt    = Number(transferForm.amount || 0);
+            const rate   = Number(transferForm.exchangeRate || 1);
+            const base   = +(amt * rate).toFixed(2);
+            const lcExps = (transferLc.expenses ?? []) as any[];
+            const selExp = transferForm.target === "expense"
+              ? lcExps.find((e: any) => String(e.id) === String(transferForm.expenseId))
+              : null;
+            // Currency/rate context follows the chosen target: when paying an
+            // expense, the dialog speaks in the expense's own currency.
+            const ccy    = (transferForm.target === "expense"
+              ? (selExp?.currencyCode ?? transferLc.currencyCode)
+              : transferLc.currencyCode) ?? baseCode;
+            const isFx   = ccy !== baseCode;
+            const list   = transferForm.sourceType === "bank" ? bankAccounts : cashBoxes;
+            // Debit-side label shown in the JE preview.
+            const debitLbl = transferForm.target === "settlement"
+              ? tr("fSettlementAccount")
+              : (selExp?.expenseType ?? tr("transferExpenseLabel"));
+            const targetMissing =
+              (transferForm.target === "settlement" && !transferLc.settlementAccountId) ||
+              (transferForm.target === "expense" && (!selExp || !selExp.accountId));
             return (
               <div className="space-y-3">
                 <div className="text-xs text-muted-foreground p-2 rounded bg-muted/40">
                   {tr("transferHint")}
                 </div>
+                {/* Target picker — settlement (LC goods) vs a specific expense */}
+                <div className="flex gap-2 p-1 rounded-lg bg-muted/40 border">
+                  <button type="button"
+                    className={cn(
+                      "flex-1 text-xs font-medium py-2 px-3 rounded-md transition",
+                      transferForm.target === "settlement"
+                        ? "bg-emerald-600 text-white shadow"
+                        : "text-muted-foreground hover:bg-background",
+                    )}
+                    onClick={() => setTransferForm(p => ({
+                      ...p, target: "settlement", expenseId: "",
+                      amount: String(transferLc.totalAmount ?? ""),
+                      exchangeRate: String(transferLc.exchangeRate ?? "1"),
+                    }))}>
+                    {tr("transferTargetSettlement")}
+                  </button>
+                  <button type="button"
+                    disabled={lcExps.length === 0}
+                    className={cn(
+                      "flex-1 text-xs font-medium py-2 px-3 rounded-md transition disabled:opacity-50 disabled:cursor-not-allowed",
+                      transferForm.target === "expense"
+                        ? "bg-amber-600 text-white shadow"
+                        : "text-muted-foreground hover:bg-background",
+                    )}
+                    onClick={() => setTransferForm(p => ({
+                      ...p, target: "expense", expenseId: "", amount: "", exchangeRate: "1",
+                    }))}>
+                    {tr("transferTargetExpense")}
+                    {lcExps.length === 0 && <span className="text-[10px] block">({tr("transferNoExpenses")})</span>}
+                  </button>
+                </div>
+
+                {transferForm.target === "expense" && (
+                  <Field label={tr("transferExpensePick")}>
+                    <SearchCombobox
+                      value={transferForm.expenseId}
+                      onValueChange={(v) => {
+                        const e = lcExps.find((x: any) => String(x.id) === String(v));
+                        setTransferForm(p => ({
+                          ...p,
+                          expenseId: v,
+                          amount: e ? String(e.amount ?? "") : "",
+                          exchangeRate: e ? String(e.exchangeRate ?? "1") : "1",
+                        }));
+                      }}
+                      items={lcExps.map((e: any) => ({
+                        value: String(e.id),
+                        label: `${e.expenseType ?? "—"} • ${fmt(e.amount)} ${e.currencyCode ?? ""}`,
+                      }))}
+                      placeholder={tr("transferExpensePh")}
+                    />
+                  </Field>
+                )}
+
                 <FormGrid cols={2}>
                   <Field label={tr("transferDate")}>
                     <Input type="date" value={transferForm.date}
@@ -706,14 +804,25 @@ export default function LetterOfCredit() {
                 </FormGrid>
                 <Field label={tr("transferDesc")}>
                   <Textarea rows={2} value={transferForm.description}
-                    placeholder={tr("transferDefaultDesc", { lc: transferLc.lcNumber })}
+                    placeholder={transferForm.target === "settlement"
+                      ? tr("transferDefaultDesc", { lc: transferLc.lcNumber })
+                      : tr("transferDefaultDescExp", { lc: transferLc.lcNumber, exp: debitLbl })}
                     onChange={(e) => setTransferForm(p => ({ ...p, description: e.target.value }))} />
                 </Field>
-                {/* JE preview — Dr LC settlement / Cr Bank or Cash, in base currency */}
+
+                {targetMissing && (
+                  <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded p-2">
+                    {transferForm.target === "settlement"
+                      ? tr("transferLcMissingSettlement")
+                      : tr("transferExpenseAccMissing")}
+                  </div>
+                )}
+
+                {/* JE preview — Dr <target> / Cr Bank or Cash, in base currency */}
                 <div className="rounded-lg border bg-emerald-50/50 border-emerald-200 p-3 text-xs space-y-1.5">
                   <div className="font-semibold text-emerald-800 mb-1">{tr("transferPreview")}</div>
                   <div className="grid grid-cols-3 gap-2 font-mono">
-                    <span className="text-muted-foreground">{tr("fSettlementAccount")}</span>
+                    <span className="text-muted-foreground">{debitLbl}</span>
                     <span className="text-rose-700 text-end">{fmt(base)} {baseCode}</span>
                     <span className="text-muted-foreground text-end">{tr("transferDr")}</span>
                   </div>
