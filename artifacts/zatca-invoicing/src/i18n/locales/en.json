@@ -3855,6 +3855,7 @@
       "lcAmountBase": "LC amount",
       "totalExpensesBase": "Total expenses",
       "remainingBase": "Remaining",
+      "grandTotalBase": "Grand total (LC + expenses)",
       "rateColon": "Rate:",
       "title": "Letters of Credit (L/C)",
       "subtitle": "Manage letters of credit and import expenses",

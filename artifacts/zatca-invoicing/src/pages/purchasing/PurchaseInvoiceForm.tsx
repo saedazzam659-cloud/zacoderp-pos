@@ -532,13 +532,20 @@ export default function PurchaseInvoiceForm() {
       return;
     }
 
+    // Distribute the LC's expenses *in base currency*. Each expense row is
+    // converted via its own historical rate (IAS 21) on the server, so we sum
+    // the pre-computed `amountBase`/`totalExpensesBase` rather than raw amounts.
     let totalLcExpenses = 0;
+    let baseCur = defaultCurrency?.code ?? "SAR";
     try {
       const url = `${API}/api/purchasing/letters-of-credit/${selectedLc.id}${cid ? `?companyId=${cid}` : ""}`;
       const r = await fetch(url, { headers: authH });
       if (!r.ok) throw new Error(tr("lcLoadFail"));
       const detail = await r.json();
-      totalLcExpenses = (detail.expenses ?? []).reduce((s: number, e: any) => s + (Number(e.amount) || 0), 0);
+      baseCur = detail.baseCurrency ?? baseCur;
+      totalLcExpenses = Number(detail.totalExpensesBase ?? 0)
+        || (detail.expenses ?? []).reduce(
+            (s: number, e: any) => s + (Number(e.amountBase ?? e.amount) || 0), 0);
     } catch (err: any) {
       toast({ title: err.message || tr("lcLoadFail"), variant: "destructive" });
       return;
@@ -555,7 +562,7 @@ export default function PurchaseInvoiceForm() {
       const finalCost = Number(l.lineTotal) + share;
       return { ...l, expenseShare: share.toFixed(2), finalCost: finalCost.toFixed(2) };
     }));
-    toast({ title: tr("lcDistributed"), description: tr("lcDistributedDesc", { total: fmt(totalLcExpenses), cur: selectedLc.currencyCode ?? "" }) });
+    toast({ title: tr("lcDistributed"), description: tr("lcDistributedDesc", { total: fmt(totalLcExpenses), cur: baseCur }) });
   }
 
   const subtotal       = lines.reduce((s, l) => { const { subtotal } = calcLine(l, priceIncludesVat); return s + subtotal; }, 0);
@@ -634,11 +641,18 @@ export default function PurchaseInvoiceForm() {
     { value: "", label: tr("noSupplierOpt") },
     ...suppliers.map((s: any) => ({ value: String(s.id), label: supName(s) })),
   ];
+  // The dropdown label always shows the LC's GRAND TOTAL in the company's
+  // base currency (LC amount + expenses, both already converted via IAS 21
+  // historical rates by the server). For multi-currency LCs the user sees a
+  // single SAR figure they can reason about, not a mix of USD/SAR.
   const lcItems = [
     { value: "", label: tr("noLcOpt") },
-    ...lcs.filter((l: any) => l.status !== "closed").map((l: any) => ({
-      value: String(l.id), label: `${l.lcNumber} (${l.currencyCode} ${fmt(l.totalAmount)})`,
-    })),
+    ...lcs.filter((l: any) => l.status !== "closed").map((l: any) => {
+      const grand = Number(l.totalAmountBase ?? l.totalAmount ?? 0)
+                  + Number(l.totalExpensesBase ?? 0);
+      const cur   = l.baseCurrency ?? defaultCurrency?.code ?? "SAR";
+      return { value: String(l.id), label: `${l.lcNumber} (${cur} ${fmt(grand)})` };
+    }),
   ];
   const itemComboItems = [
     { value: "", label: tr("itemSearchPh") },
@@ -1030,17 +1044,26 @@ export default function PurchaseInvoiceForm() {
                 })()
               )}
 
-              {selectedLc && (
-                <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700">
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  <span>
-                    {tr("lcInfo", { lc: selectedLc.lcNumber, remaining: `${fmt(Number(selectedLc.totalAmount) - Number(selectedLc.usedAmount))} ${selectedLc.currencyCode}` })}
-                  </span>
-                  <Button type="button" size="sm" variant="outline" className={cn("h-6 text-xs border-blue-300 text-blue-700", isRtl ? "mr-auto" : "ml-auto")} onClick={distributeExpenses}>
-                    {tr("lcDistribute")}
-                  </Button>
-                </div>
-              )}
+              {selectedLc && (() => {
+                // Show the LC balance entirely in the company base currency:
+                // grand total (LC + expenses, both base) regardless of the LC's
+                // own currency. This is the figure the user will load and finance.
+                const baseCur   = selectedLc.baseCurrency ?? defaultCurrency?.code ?? "SAR";
+                const lcBase    = Number(selectedLc.totalAmountBase   ?? selectedLc.totalAmount ?? 0);
+                const expBase   = Number(selectedLc.totalExpensesBase ?? 0);
+                const grandBase = lcBase + expBase;
+                return (
+                  <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>
+                      {tr("lcInfo", { lc: selectedLc.lcNumber, remaining: `${fmt(grandBase)} ${baseCur}` })}
+                    </span>
+                    <Button type="button" size="sm" variant="outline" className={cn("h-6 text-xs border-blue-300 text-blue-700", isRtl ? "mr-auto" : "ml-auto")} onClick={distributeExpenses}>
+                      {tr("lcDistribute")}
+                    </Button>
+                  </div>
+                );
+              })()}
 
             </CardContent>
           </TabsContent>

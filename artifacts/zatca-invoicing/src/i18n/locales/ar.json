@@ -4053,6 +4053,7 @@
       "lcAmountBase": "قيمة الاعتماد",
       "totalExpensesBase": "إجمالي المصاريف",
       "remainingBase": "المتبقي",
+      "grandTotalBase": "الإجمالي الكلي (اعتماد + مصاريف)",
       "colTotalBase": "القيمة بالعملة الأساسية",
       "rateColon": "سعر الصرف:"
     }

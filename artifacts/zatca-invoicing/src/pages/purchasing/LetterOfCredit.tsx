@@ -338,11 +338,19 @@ export default function LetterOfCredit() {
                     <div><span className="text-muted-foreground block text-[10px] mb-1">{tr("remaining")}</span><span className={cn("font-semibold font-mono", remaining >= 0 ? "text-green-700" : "text-destructive")}>{fmt(remaining)}</span></div>
                   </div>
                   {/* Base-currency totals — the authoritative IAS 21 view */}
-                  <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-4 grid grid-cols-3 gap-4 text-sm text-center">
-                    <div className="col-span-3 text-xs text-primary font-semibold mb-1">{tr("totalsBase", { cur: baseCode })}</div>
-                    <div><span className="text-muted-foreground block text-xs mb-1">{tr("lcAmountBase")}</span><span className="font-bold font-mono">{fmt(lcAmountBase)}</span></div>
-                    <div><span className="text-muted-foreground block text-xs mb-1">{tr("totalExpensesBase")}</span><span className="font-bold font-mono text-amber-700">{fmt(totalExpBase)}</span></div>
-                    <div><span className="text-muted-foreground block text-xs mb-1">{tr("remainingBase")}</span><span className={cn("font-bold font-mono", remainingBase >= 0 ? "text-green-700" : "text-destructive")}>{fmt(remainingBase)}</span></div>
+                  <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-4 space-y-3 text-sm">
+                    <div className="text-xs text-primary font-semibold text-center">{tr("totalsBase", { cur: baseCode })}</div>
+                    <div className="grid grid-cols-3 gap-4 text-center">
+                      <div><span className="text-muted-foreground block text-xs mb-1">{tr("lcAmountBase")}</span><span className="font-bold font-mono">{fmt(lcAmountBase)}</span></div>
+                      <div><span className="text-muted-foreground block text-xs mb-1">{tr("totalExpensesBase")}</span><span className="font-bold font-mono text-amber-700">{fmt(totalExpBase)}</span></div>
+                      <div><span className="text-muted-foreground block text-xs mb-1">{tr("remainingBase")}</span><span className={cn("font-bold font-mono", remainingBase >= 0 ? "text-green-700" : "text-destructive")}>{fmt(remainingBase)}</span></div>
+                    </div>
+                    {/* Grand total = LC base + expenses base. This is the figure
+                        used when the LC is loaded into a purchase invoice. */}
+                    <div className="border-t border-primary/30 pt-3 flex items-center justify-between gap-3 px-2">
+                      <span className="text-sm font-semibold text-primary">{tr("grandTotalBase")}</span>
+                      <span className="font-bold font-mono text-base text-primary">{fmt(lcAmountBase + totalExpBase)} {baseCode}</span>
+                    </div>
                   </div>
                 </div>
               )}
