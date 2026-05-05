@@ -197,7 +197,7 @@ router.get("/", async (req, res) => {
       ))
       .orderBy(desc(goodsDeliveriesTable.deliveryDate), desc(goodsDeliveriesTable.id));
     res.json(rows);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.get("/:id", async (req, res) => {
@@ -212,7 +212,7 @@ router.get("/:id", async (req, res) => {
       .where(eq(goodsDeliveryLinesTable.deliveryId, id))
       .orderBy(asc(goodsDeliveryLinesTable.id));
     res.json({ ...gd, lines });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════
@@ -286,7 +286,7 @@ router.post("/", async (req, res) => {
       );
     }
     res.status(201).json(gd);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.put("/:id", async (req, res) => {
@@ -353,7 +353,7 @@ router.put("/:id", async (req, res) => {
       }
     }
     res.json(gd);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.delete("/:id", async (req, res) => {
@@ -371,7 +371,7 @@ router.delete("/:id", async (req, res) => {
       eq(goodsDeliveriesTable.id, id), eq(goodsDeliveriesTable.companyId, cid),
     ));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════
@@ -556,7 +556,11 @@ router.patch("/:id/post", async (req, res) => {
       if (cleanJeLines.length >= 2 && totalCost > 0) {
         // Period guard: block GD posting into a closed fiscal period.
         const writability = await assertWritableForDate(cid, gd.deliveryDate);
-        if (!writability.ok) throw new Error(writability.reason);
+        if (!writability.ok) {
+          const err: any = new Error(writability.reason);
+          err.status = 423;
+          throw err;
+        }
         const [entry] = await tx.insert(journalEntriesTable).values({
           companyId:    cid,
           branchId:     gd.branchId ?? null,

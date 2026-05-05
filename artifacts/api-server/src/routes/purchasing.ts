@@ -46,7 +46,11 @@ async function createJournalEntry(opts: {
   // Period guard: never let a source document (PO, GRN settlement, return, …)
   // post a journal entry into a soft/hard-closed fiscal period.
   const writability = await assertWritableForDate(opts.companyId, opts.date);
-  if (!writability.ok) throw new Error(writability.reason);
+  if (!writability.ok) {
+    const err: any = new Error(writability.reason);
+    err.status = 423;
+    throw err;
+  }
   const [entry] = await db.insert(journalEntriesTable).values({
     companyId:    opts.companyId,
     branchId:     opts.branchId ?? null,
@@ -199,7 +203,7 @@ router.get("/supplier-groups", async (req, res) => {
           .orderBy(asc(supplierGroupsTable.code))
       : [];
     res.json(rows);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.post("/supplier-groups", async (req, res) => {
@@ -213,7 +217,7 @@ router.post("/supplier-groups", async (req, res) => {
       isActive: isActive ?? true,
     }).returning();
     res.status(201).json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.put("/supplier-groups/:id", async (req, res) => {
@@ -227,7 +231,7 @@ router.put("/supplier-groups/:id", async (req, res) => {
     }).where(and(eq(supplierGroupsTable.id, id), eq(supplierGroupsTable.companyId, cid))).returning();
     if (!row) { res.status(404).json({ error: "المجموعة غير موجودة" }); return; }
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.delete("/supplier-groups/:id", async (req, res) => {
@@ -236,7 +240,7 @@ router.delete("/supplier-groups/:id", async (req, res) => {
     const id = Number(req.params.id);
     await db.delete(supplierGroupsTable).where(and(eq(supplierGroupsTable.id, id), eq(supplierGroupsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════
@@ -250,7 +254,7 @@ router.get("/letters-of-credit", async (req, res) => {
       .where(eq(lettersOfCreditTable.companyId, cid))
       .orderBy(desc(lettersOfCreditTable.lcDate));
     res.json(lcs);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.get("/letters-of-credit/:id", async (req, res) => {
@@ -264,7 +268,7 @@ router.get("/letters-of-credit/:id", async (req, res) => {
     const expenses = await db.select().from(lcExpensesTable)
       .where(eq(lcExpensesTable.lcId, id));
     res.json({ ...lc, expenses });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.post("/letters-of-credit", async (req, res) => {
@@ -292,7 +296,7 @@ router.post("/letters-of-credit", async (req, res) => {
       );
     }
     res.status(201).json(lc);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.put("/letters-of-credit/:id", async (req, res) => {
@@ -322,7 +326,7 @@ router.put("/letters-of-credit/:id", async (req, res) => {
       }
     }
     res.json(lc);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.delete("/letters-of-credit/:id", async (req, res) => {
@@ -331,7 +335,7 @@ router.delete("/letters-of-credit/:id", async (req, res) => {
     const id = Number(req.params.id);
     await db.delete(lettersOfCreditTable).where(and(eq(lettersOfCreditTable.id, id), eq(lettersOfCreditTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════
@@ -404,7 +408,7 @@ router.get("/purchase-invoices", async (req, res) => {
       };
     });
     res.json(enriched);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.get("/purchase-invoices/:id", async (req, res) => {
@@ -419,7 +423,7 @@ router.get("/purchase-invoices/:id", async (req, res) => {
       .where(eq(purchaseInvoiceLinesTable.invoiceId, id))
       .orderBy(asc(purchaseInvoiceLinesTable.id));
     res.json({ ...inv, lines });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.post("/purchase-invoices", async (req, res) => {
@@ -495,7 +499,7 @@ router.post("/purchase-invoices", async (req, res) => {
       );
     }
     res.status(201).json(inv);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.put("/purchase-invoices/:id", async (req, res) => {
@@ -569,7 +573,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
       }
     }
     res.json(inv);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.patch("/purchase-invoices/:id/post", async (req, res) => {
@@ -730,7 +734,7 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       .returning();
 
     res.json(updated);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ─── UNPOST purchase invoice (فك الترحيل) ───────────────────────────────────
@@ -800,7 +804,7 @@ router.patch("/purchase-invoices/:id/unpost", requireAdminRole, async (req, res)
       .returning();
 
     res.json(updated);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.delete("/purchase-invoices/:id", async (req, res) => {
@@ -842,7 +846,7 @@ router.delete("/purchase-invoices/:id", async (req, res) => {
 
     await db.delete(purchaseInvoicesTable).where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════
@@ -868,7 +872,7 @@ router.get("/purchase-orders", async (req, res) => {
       ))
       .orderBy(desc(purchaseOrdersTable.orderDate));
     res.json(rows);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.get("/purchase-orders/:id", async (req, res) => {
@@ -883,7 +887,7 @@ router.get("/purchase-orders/:id", async (req, res) => {
       .where(eq(purchaseOrderLinesTable.orderId, id))
       .orderBy(asc(purchaseOrderLinesTable.id));
     res.json({ ...ord, lines });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.post("/purchase-orders", async (req, res) => {
@@ -949,7 +953,7 @@ router.post("/purchase-orders", async (req, res) => {
       );
     }
     res.status(201).json(ord);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.put("/purchase-orders/:id", async (req, res) => {
@@ -1012,7 +1016,7 @@ router.put("/purchase-orders/:id", async (req, res) => {
       }
     }
     res.json(ord);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.patch("/purchase-orders/:id/status", async (req, res) => {
@@ -1038,7 +1042,7 @@ router.patch("/purchase-orders/:id/status", async (req, res) => {
       .where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid)))
       .returning();
     res.json(ord);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.post("/purchase-orders/:id/convert", async (req, res) => {
@@ -1124,7 +1128,7 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
       .where(eq(purchaseOrdersTable.id, id));
 
     res.status(201).json({ orderId: id, invoiceId: inv.id, invoice: inv });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.delete("/purchase-orders/:id", async (req, res) => {
@@ -1151,7 +1155,7 @@ router.delete("/purchase-orders/:id", async (req, res) => {
       eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid),
     ));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════
@@ -1168,7 +1172,7 @@ router.get("/purchase-returns", async (req, res) => {
       ))
       .orderBy(desc(purchaseReturnsTable.returnDate));
     res.json(rows);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.get("/purchase-returns/:id", async (req, res) => {
@@ -1182,7 +1186,7 @@ router.get("/purchase-returns/:id", async (req, res) => {
       .where(eq(purchaseReturnLinesTable.returnId, id))
       .orderBy(asc(purchaseReturnLinesTable.id));
     res.json({ ...ret, lines });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.post("/purchase-returns", async (req, res) => {
@@ -1248,7 +1252,7 @@ router.post("/purchase-returns", async (req, res) => {
       );
     }
     res.status(201).json(ret);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.put("/purchase-returns/:id", async (req, res) => {
@@ -1307,7 +1311,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
       }
     }
     res.json(ret);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.patch("/purchase-returns/:id/post", async (req, res) => {
@@ -1461,7 +1465,7 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       .returning();
 
     res.json(updated);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ─── UNPOST purchase return (فك الترحيل) ────────────────────────────────────
@@ -1519,7 +1523,7 @@ router.patch("/purchase-returns/:id/unpost", requireAdminRole, async (req, res) 
       .returning();
 
     res.json(updated);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.delete("/purchase-returns/:id", async (req, res) => {
@@ -1536,7 +1540,7 @@ router.delete("/purchase-returns/:id", async (req, res) => {
     await cleanupDocArtifacts({ companyId: cid, refType: "purchase_return", refId: id, journalEntryId: (ret as any).journalEntryId });
     await db.delete(purchaseReturnsTable).where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════
@@ -1550,7 +1554,7 @@ router.get("/supplier-settlements", async (req, res) => {
       .where(eq(supplierSettlementsTable.companyId, cid))
       .orderBy(desc(supplierSettlementsTable.settlementDate));
     res.json(rows);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.post("/supplier-settlements", async (req, res) => {
@@ -1571,7 +1575,7 @@ router.post("/supplier-settlements", async (req, res) => {
       status: "draft", notes: notes || null,
     }).returning();
     res.status(201).json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.patch("/supplier-settlements/:id/post", async (req, res) => {
@@ -1583,7 +1587,7 @@ router.patch("/supplier-settlements/:id/post", async (req, res) => {
       .where(and(eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid)))
       .returning();
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.delete("/supplier-settlements/:id", async (req, res) => {
@@ -1592,7 +1596,7 @@ router.delete("/supplier-settlements/:id", async (req, res) => {
     const id = Number(req.params.id);
     await db.delete(supplierSettlementsTable).where(and(eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ── AI-generated journal entry for a Letter of Credit ───────────────────
@@ -1743,7 +1747,7 @@ ${accountList}
       })),
     });
     res.json({ saved: true, entryId, description, reasoning, lines: linesOut, totalDebit, totalCredit });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ── AI explanation for Letters of Credit ───────────────────────────────
@@ -1833,7 +1837,7 @@ ${expList}
         ? parsed.recommendations.slice(0, 8).map((r: any) => String(r).slice(0, 500))
         : [],
     });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 export default router;

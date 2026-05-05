@@ -60,9 +60,16 @@ async function createJournalEntry(opts: {
     throw new Error(`القيد غير متوازن: مدين ${totalDebit.toFixed(2)} ≠ دائن ${totalCredit.toFixed(2)}`);
   }
   // Period guard: never let a source document (invoice, return, settlement,
-  // etc.) post a journal entry into a soft/hard-closed fiscal period.
+  // etc.) post a journal entry into a soft/hard-closed fiscal period. We
+  // tag the thrown Error with `.status = 423` so the route's catch handler
+  // surfaces a Locked response (instead of generic 500), letting the UI
+  // show its dedicated "لا يمكن الترحيل في فترة مقفلة" message.
   const writability = await assertWritableForDate(opts.companyId, opts.date);
-  if (!writability.ok) throw new Error(writability.reason);
+  if (!writability.ok) {
+    const err: any = new Error(writability.reason);
+    err.status = 423;
+    throw err;
+  }
   const [entry] = await db.insert(journalEntriesTable).values({
     companyId: opts.companyId, branchId: opts.branchId ?? null,
     docNumber: opts.docNumber ?? null, entryDate: opts.date,
@@ -344,7 +351,7 @@ router.get("/sales-invoices", async (req, res) => {
       };
     });
     res.json(enriched);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.get("/sales-invoices/:id", async (req, res) => {
@@ -380,7 +387,7 @@ router.get("/sales-invoices/:id", async (req, res) => {
       documentOfferName: inv.documentOfferId ? (offerNameById.get(inv.documentOfferId) ?? null) : null,
       lines: linesWithOfferName,
     });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 function mapInvoiceLine(l: any, invoiceId: number, cid: number) {
@@ -593,7 +600,7 @@ router.post("/sales-invoices", async (req, res) => {
       }
     }
     res.status(201).json(inv);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.put("/sales-invoices/:id", async (req, res) => {
@@ -699,7 +706,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
       await bumpOffersTimesUsed(cid, toBump);
     }
     res.json(inv);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.patch("/sales-invoices/:id/post", async (req, res) => {
@@ -975,7 +982,7 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     // القيد المحاسبي أعلاه يكفي لتسجيل الأثر النقدي؛ سند القبض يُنشأ يدوياً عند الحاجة.
 
     res.json(updated);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ─── UNPOST sales invoice (فك الترحيل) ──────────────────────────────────────
@@ -1039,7 +1046,7 @@ router.patch("/sales-invoices/:id/unpost", requireAdminRole, async (req, res) =>
       .returning();
 
     res.json(updated);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.delete("/sales-invoices/:id", async (req, res) => {
@@ -1110,7 +1117,7 @@ router.delete("/sales-invoices/:id", async (req, res) => {
       await db.delete(salesInvoicesTable).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
     }
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════
@@ -1142,7 +1149,7 @@ router.get("/sales-returns", async (req, res) => {
       ))
       .orderBy(desc(salesReturnsTable.returnDate));
     res.json(rows);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.get("/sales-returns/:id", async (req, res) => {
@@ -1156,7 +1163,7 @@ router.get("/sales-returns/:id", async (req, res) => {
       .where(eq(salesReturnLinesTable.returnId, id))
       .orderBy(asc(salesReturnLinesTable.id));
     res.json({ ...ret, lines });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.post("/sales-returns", async (req, res) => {
@@ -1240,7 +1247,7 @@ router.post("/sales-returns", async (req, res) => {
       );
     }
     res.status(201).json(ret);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.put("/sales-returns/:id", async (req, res) => {
@@ -1325,7 +1332,7 @@ router.put("/sales-returns/:id", async (req, res) => {
       );
     }
     res.json(ret);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.patch("/sales-returns/:id/post", async (req, res) => {
@@ -1515,7 +1522,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
     // القيد المحاسبي أعلاه يكفي لتسجيل الأثر النقدي؛ سند الصرف يُنشأ يدوياً عند الحاجة.
 
     res.json(updated);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ─── UNPOST sales return (فك الترحيل) ───────────────────────────────────────
@@ -1572,7 +1579,7 @@ router.patch("/sales-returns/:id/unpost", requireAdminRole, async (req, res) => 
       .returning();
 
     res.json(updated);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.delete("/sales-returns/:id", async (req, res) => {
@@ -1589,7 +1596,7 @@ router.delete("/sales-returns/:id", async (req, res) => {
     await cleanupDocArtifacts({ companyId: cid, refType: "sales_return", refId: id, journalEntryId: (ret as any).journalEntryId });
     await db.delete(salesReturnsTable).where(and(eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════
@@ -1603,7 +1610,7 @@ router.get("/sales-quotations", async (req, res) => {
       .where(eq(salesQuotationsTable.companyId, cid))
       .orderBy(desc(salesQuotationsTable.quotationDate));
     res.json(rows);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.get("/sales-quotations/:id", async (req, res) => {
@@ -1618,7 +1625,7 @@ router.get("/sales-quotations/:id", async (req, res) => {
       .where(eq(salesQuotationLinesTable.quotationId, id))
       .orderBy(asc(salesQuotationLinesTable.id));
     res.json({ ...q, lines });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 function mapQuotationLine(l: any, quotationId: number, cid: number) {
@@ -1661,7 +1668,7 @@ router.post("/sales-quotations", async (req, res) => {
       await db.insert(salesQuotationLinesTable).values(lines.map((l: any) => mapQuotationLine(l, q.id, cid)));
     }
     res.status(201).json(q);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.put("/sales-quotations/:id", async (req, res) => {
@@ -1691,7 +1698,7 @@ router.put("/sales-quotations/:id", async (req, res) => {
       }
     }
     res.json(q);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.patch("/sales-quotations/:id/status", async (req, res) => {
@@ -1724,7 +1731,7 @@ router.patch("/sales-quotations/:id/status", async (req, res) => {
       .where(and(eq(salesQuotationsTable.id, id), eq(salesQuotationsTable.companyId, cid)))
       .returning();
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // Convert quotation → sales invoice (draft)
@@ -1768,7 +1775,7 @@ router.post("/sales-quotations/:id/convert", async (req, res) => {
       .where(eq(salesQuotationsTable.id, id));
 
     res.json({ quotation: q, invoice: inv });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.delete("/sales-quotations/:id", async (req, res) => {
@@ -1777,7 +1784,7 @@ router.delete("/sales-quotations/:id", async (req, res) => {
     const id = Number(req.params.id);
     await db.delete(salesQuotationsTable).where(and(eq(salesQuotationsTable.id, id), eq(salesQuotationsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════
@@ -1824,7 +1831,7 @@ router.get("/sales-orders", async (req, res) => {
       .where(eq(salesOrdersTable.companyId, cid))
       .orderBy(desc(salesOrdersTable.orderDate), desc(salesOrdersTable.id));
     res.json(rows);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.get("/sales-orders/:id", async (req, res) => {
@@ -1839,7 +1846,7 @@ router.get("/sales-orders/:id", async (req, res) => {
       .where(eq(salesOrderLinesTable.orderId, id))
       .orderBy(asc(salesOrderLinesTable.id));
     res.json({ ...o, lines });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.post("/sales-orders", async (req, res) => {
@@ -1904,7 +1911,7 @@ router.post("/sales-orders", async (req, res) => {
     // INTENTIONALLY NO: journal entry, stock movement, receipt voucher,
     // ZATCA submission, or customer balance update.
     res.status(201).json(o);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.put("/sales-orders/:id", async (req, res) => {
@@ -1964,7 +1971,7 @@ router.put("/sales-orders/:id", async (req, res) => {
       }
     }
     res.json(o);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // Status transitions for sales orders. The "converted" status is set
@@ -1998,7 +2005,7 @@ router.patch("/sales-orders/:id/status", async (req, res) => {
       .where(and(eq(salesOrdersTable.id, id), eq(salesOrdersTable.companyId, cid)))
       .returning();
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // Convert sales order → DRAFT sales invoice.
@@ -2067,7 +2074,7 @@ router.post("/sales-orders/:id/convert", async (req, res) => {
       .where(eq(salesOrdersTable.id, id));
 
     res.json({ order: o, invoice: inv });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.delete("/sales-orders/:id", async (req, res) => {
@@ -2085,7 +2092,7 @@ router.delete("/sales-orders/:id", async (req, res) => {
     }
     await db.delete(salesOrdersTable).where(and(eq(salesOrdersTable.id, id), eq(salesOrdersTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════
@@ -2099,7 +2106,7 @@ router.get("/customer-settlements", async (req, res) => {
       .where(eq(customerSettlementsTable.companyId, cid))
       .orderBy(desc(customerSettlementsTable.settlementDate));
     res.json(rows);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.post("/customer-settlements", async (req, res) => {
@@ -2120,7 +2127,7 @@ router.post("/customer-settlements", async (req, res) => {
       status: "draft", notes: notes || null,
     }).returning();
     res.status(201).json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.patch("/customer-settlements/:id/post", async (req, res) => {
@@ -2132,7 +2139,7 @@ router.patch("/customer-settlements/:id/post", async (req, res) => {
       .where(and(eq(customerSettlementsTable.id, id), eq(customerSettlementsTable.companyId, cid)))
       .returning();
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.delete("/customer-settlements/:id", async (req, res) => {
@@ -2141,7 +2148,7 @@ router.delete("/customer-settlements/:id", async (req, res) => {
     const id = Number(req.params.id);
     await db.delete(customerSettlementsTable).where(and(eq(customerSettlementsTable.id, id), eq(customerSettlementsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2294,7 +2301,7 @@ router.get("/sales-invoices-zatca-bridge", async (req, res) => {
       ))
       .orderBy(desc(salesInvoicesTable.invoiceDate), desc(salesInvoicesTable.id));
     res.json(rows);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 export default router;

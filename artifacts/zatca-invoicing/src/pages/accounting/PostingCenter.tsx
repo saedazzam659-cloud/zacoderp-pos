@@ -341,7 +341,7 @@ export default function PostingCenter() {
 
     let cursor = 0;
     let failed = 0;
-    const failures: { id: number; error: string }[] = [];
+    const failures: { id: number; error: string; status: number }[] = [];
 
     async function worker() {
       while (cursor < eligible.length) {
@@ -355,11 +355,13 @@ export default function PostingCenter() {
           });
           if (!r.ok) {
             const body = await r.json().catch(() => ({}));
-            throw new Error(body?.error || `HTTP ${r.status}`);
+            const err: any = new Error(body?.error || `HTTP ${r.status}`);
+            err.status = r.status;
+            throw err;
           }
         } catch (e: any) {
           failed++;
-          failures.push({ id, error: e?.message || "خطأ" });
+          failures.push({ id, error: e?.message || "خطأ", status: e?.status ?? 0 });
         }
         setBulkProgress(p => ({ ...p, done: p.done + 1, failed }));
       }
@@ -382,11 +384,31 @@ export default function PostingCenter() {
         description: `${ok} عملية`,
       });
     } else {
-      toast({
-        title: "تمت العملية مع وجود أخطاء",
-        description: `نجح ${ok} — فشل ${failed}`,
-        variant: "destructive",
-      });
+      // Detect closed-period blocks (HTTP 423 from periodGuard, or any
+      // failure whose Arabic message clearly mentions a locked period) so
+      // the user gets a clear, action-oriented headline instead of the
+      // generic "نجح X — فشل Y" line.
+      const periodLocked = failures.filter(f =>
+        f.status === 423 ||
+        f.error.includes("مقفل") || f.error.includes("مغلق")
+      );
+      const allPeriodLocked = periodLocked.length === failures.length;
+      if (allPeriodLocked) {
+        toast({
+          title: "لا يمكن الترحيل في فترة مقفلة",
+          description:
+            `تم ترحيل ${ok} من ${eligible.length}. ` +
+            `${failed} عملية بتاريخ يقع داخل فترة مالية مقفلة. ` +
+            `افتح "الفترات المالية" وأعد فتح الفترة المعنيّة ثم حاول مجدداً.`,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "تمت العملية مع وجود أخطاء",
+          description: `نجح ${ok} — فشل ${failed}`,
+          variant: "destructive",
+        });
+      }
       // Log failures so the user can inspect them in devtools.
       console.warn("[posting-center] failures:", failures);
     }

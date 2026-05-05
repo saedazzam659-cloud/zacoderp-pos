@@ -86,7 +86,11 @@ async function buildReceiptJournal(cid: number, v: any): Promise<number> {
   const desc = `سند قبض ${v.code}${v.description ? " - " + v.description : ""}`;
   // Period guard: prevent receipt posting into a closed fiscal period.
   const writability = await assertWritableForDate(cid, v.date);
-  if (!writability.ok) throw new Error(writability.reason);
+  if (!writability.ok) {
+    const err: any = new Error(writability.reason);
+    err.status = 423;
+    throw err;
+  }
   const [entry] = await db.insert(journalEntriesTable).values({
     companyId: cid, branchId: v.branchId ?? null,
     docNumber: v.code, entryDate: v.date,
@@ -266,7 +270,7 @@ router.post("/:id/post", async (req, res) => {
       .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).returning();
     res.json(row);
   } catch (e: any) {
-    res.status(400).json({ error: e?.message || "تعذّر إنشاء القيد المحاسبي" });
+    res.status(e?.status ?? 400).json({ error: e?.message || "تعذّر إنشاء القيد المحاسبي" });
   }
 });
 
