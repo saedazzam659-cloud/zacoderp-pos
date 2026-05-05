@@ -385,7 +385,30 @@ router.delete("/letters-of-credit/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    await db.delete(lettersOfCreditTable).where(and(eq(lettersOfCreditTable.id, id), eq(lettersOfCreditTable.companyId, cid)));
+    // Guard: purchase_invoices.lc_id is a non-cascading FK. Block delete if
+    // any invoice still references this LC and surface a clear, localized
+    // message instead of a generic "Failed query" from the FK violation.
+    const linked = await db.select({
+      id: purchaseInvoicesTable.id,
+      docNumber: purchaseInvoicesTable.docNumber,
+      status: purchaseInvoicesTable.status,
+    }).from(purchaseInvoicesTable).where(and(
+      eq(purchaseInvoicesTable.companyId, cid),
+      eq(purchaseInvoicesTable.lcId, id),
+    ));
+    if (linked.length > 0) {
+      const sample = linked.slice(0, 5).map(r => r.docNumber ?? `#${r.id}`).join(", ");
+      const more = linked.length > 5 ? ` +${linked.length - 5}` : "";
+      res.status(409).json({
+        error: `لا يمكن حذف هذا الاعتماد — مرتبط بـ ${linked.length} فاتورة شراء (${sample}${more}). أزل الربط من الفواتير أولاً، أو احذف/الغِ الفواتير، ثم أعد المحاولة.`,
+      });
+      return;
+    }
+    // lc_expenses cascades automatically via FK onDelete: "cascade".
+    await db.delete(lettersOfCreditTable).where(and(
+      eq(lettersOfCreditTable.id, id),
+      eq(lettersOfCreditTable.companyId, cid),
+    ));
     res.json({ ok: true });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
