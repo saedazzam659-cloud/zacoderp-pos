@@ -91,6 +91,88 @@ router.delete("/:id", async (req, res) => {
 });
 
 // ════════════════════════════════════════════
+// RATE LOOKUP — multi-currency conversion helper
+// Used by anywhere that needs to convert a foreign-currency amount
+// into the company's base currency at a historical date (IAS 21).
+//
+// Strategy:
+//   1) If `fromCode === toCode` → rate is exactly 1.
+//   2) Find the most recent exchange_rates row with effective_date ≤ asOf
+//      AND from_currency = fromCode AND to_currency = toCode → return its rate.
+//   3) Try the inverse (toCode → fromCode) and return 1/rate.
+//   4) Otherwise return rate=1 with `fallback=true` so the UI can warn.
+// ════════════════════════════════════════════
+router.get("/lookup-rate", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const fromCode = String(req.query.fromCode ?? "").toUpperCase().trim();
+    const toCode   = String(req.query.toCode   ?? "").toUpperCase().trim();
+    const asOf     = String(req.query.asOf ?? new Date().toISOString().slice(0, 10));
+    if (!fromCode || !toCode) { res.status(400).json({ error: "fromCode و toCode مطلوبان" }); return; }
+
+    if (fromCode === toCode) {
+      res.json({ rate: "1", source: "identity", fromCode, toCode, asOf });
+      return;
+    }
+
+    const codes = await db.select().from(currenciesTable)
+      .where(eq(currenciesTable.companyId, cid));
+    const fromCur = codes.find(c => c.code.toUpperCase() === fromCode);
+    const toCur   = codes.find(c => c.code.toUpperCase() === toCode);
+    if (!fromCur || !toCur) {
+      res.json({ rate: "1", source: "missing-currency", fromCode, toCode, asOf, fallback: true });
+      return;
+    }
+
+    // IAS 21: only use rates with effective_date ≤ asOf (historical rate as
+    // at the transaction date). Never return a future rate — surface a
+    // fallback flag so the UI can warn the user to enter one manually.
+    const direct = await db.select().from(exchangeRatesTable)
+      .where(and(
+        eq(exchangeRatesTable.companyId, cid),
+        eq(exchangeRatesTable.fromCurrencyId, fromCur.id),
+        eq(exchangeRatesTable.toCurrencyId,   toCur.id),
+      ))
+      .orderBy(desc(exchangeRatesTable.effectiveDate))
+      .limit(20);
+    const direct1 = direct.find(r => r.effectiveDate <= asOf);
+    if (direct1) {
+      res.json({
+        rate: String(direct1.rate),
+        source: "direct",
+        effectiveDate: direct1.effectiveDate,
+        fromCode, toCode, asOf,
+      });
+      return;
+    }
+
+    const inverse = await db.select().from(exchangeRatesTable)
+      .where(and(
+        eq(exchangeRatesTable.companyId, cid),
+        eq(exchangeRatesTable.fromCurrencyId, toCur.id),
+        eq(exchangeRatesTable.toCurrencyId,   fromCur.id),
+      ))
+      .orderBy(desc(exchangeRatesTable.effectiveDate))
+      .limit(20);
+    const inv1 = inverse.find(r => r.effectiveDate <= asOf);
+    if (inv1) {
+      const r = Number(inv1.rate);
+      if (r > 0) {
+        res.json({
+          rate: (1 / r).toFixed(6),
+          source: "inverse",
+          effectiveDate: inv1.effectiveDate,
+          fromCode, toCode, asOf,
+        });
+        return;
+      }
+    }
+
+    res.json({ rate: "1", source: "no-rate", fromCode, toCode, asOf, fallback: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ════════════════════════════════════════════
 // EXCHANGE RATES
 // ════════════════════════════════════════════
 

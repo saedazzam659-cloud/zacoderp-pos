@@ -29,6 +29,7 @@ export const lettersOfCreditTable = pgTable("letters_of_credit", {
   supplierId:   integer("supplier_id").references(() => suppliersTable.id),
   bankName:     text("bank_name"),
   currencyCode: text("currency_code").notNull().default("SAR"),
+  exchangeRate: numeric("exchange_rate", { precision: 15, scale: 6 }).notNull().default("1"),
   totalAmount:  numeric("total_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   usedAmount:   numeric("used_amount",  { precision: 15, scale: 2 }).notNull().default("0"),
   status:       lcStatusEnum("status").notNull().default("open"),
@@ -46,6 +47,7 @@ export const lcExpensesTable = pgTable("lc_expenses", {
   accountId:    integer("account_id").references(() => accountsTable.id),
   amount:       numeric("amount", { precision: 15, scale: 2 }).notNull().default("0"),
   currencyCode: text("currency_code").notNull().default("SAR"),
+  exchangeRate: numeric("exchange_rate", { precision: 15, scale: 6 }).notNull().default("1"),
   notes:        text("notes"),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
 });

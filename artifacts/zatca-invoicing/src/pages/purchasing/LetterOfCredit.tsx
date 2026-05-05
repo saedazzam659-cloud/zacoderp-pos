@@ -17,8 +17,8 @@ import { useTranslation } from "react-i18next";
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
-const EMPTY_LC  = { lcNumber: "", lcDate: today(), supplierId: "", bankName: "", currencyCode: "SAR", totalAmount: "", notes: "" };
-const EMPTY_EXP = { expenseType: "", accountId: "", amount: "", currencyCode: "SAR", notes: "" };
+const EMPTY_LC  = { lcNumber: "", lcDate: today(), supplierId: "", bankName: "", currencyCode: "SAR", exchangeRate: "1", totalAmount: "", notes: "" };
+const EMPTY_EXP = { expenseType: "", accountId: "", amount: "", currencyCode: "SAR", exchangeRate: "1", notes: "" };
 
 export default function LetterOfCredit() {
   const { user, token } = useAuth() as any;
@@ -86,11 +86,41 @@ export default function LetterOfCredit() {
     enabled: !!user,
   });
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
+  const baseCode = defaultCurrency?.code ?? "SAR";
+
+  // Fetch the historical exchange rate for `code` → base on a given date.
+  // Updates the target field via setter; falls back to "1" with a toast warning
+  // when no rate is found, so users always know they should add one.
+  async function fetchRateInto(code: string, asOf: string, apply: (r: string) => void) {
+    if (!code || code === baseCode) { apply("1"); return; }
+    try {
+      const res = await fetch(`${API}/api/currencies/lookup-rate?fromCode=${encodeURIComponent(code)}&toCode=${encodeURIComponent(baseCode)}&asOf=${encodeURIComponent(asOf)}`, { headers: authH });
+      const j = await res.json();
+      const rate = j?.rate && Number(j.rate) > 0 ? String(j.rate) : "1";
+      apply(rate);
+      if (j?.fallback) toast({ title: tr("fetchRateMissing"), variant: "destructive" });
+    } catch { apply("1"); }
+  }
 
   useEffect(() => {
     if (editId || !defaultCurrency || !showForm) return;
-    setForm((p: any) => p.currencyCode && p.currencyCode !== "SAR" ? p : { ...p, currencyCode: defaultCurrency.code });
+    setForm((p: any) => p.currencyCode && p.currencyCode !== "SAR"
+      ? p
+      : { ...p, currencyCode: defaultCurrency.code, exchangeRate: "1" });
   }, [defaultCurrency?.code, showForm, editId]);
+
+  // When the LC currency changes (and it's not the base), auto-fetch a rate
+  // suggestion so the user does not have to think about it for the common case.
+  useEffect(() => {
+    if (!showForm || !form.currencyCode || !form.lcDate) return;
+    if (form.currencyCode === baseCode) {
+      if (form.exchangeRate !== "1") setForm((p: any) => ({ ...p, exchangeRate: "1" }));
+      return;
+    }
+    fetchRateInto(form.currencyCode, form.lcDate, (r) =>
+      setForm((p: any) => ({ ...p, exchangeRate: r })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.currencyCode, form.lcDate, showForm, baseCode]);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["lc"] });
 
@@ -119,19 +149,39 @@ export default function LetterOfCredit() {
     const res = await fetch(`${API}/api/purchasing/letters-of-credit/${lc.id}?companyId=${cid}`, { headers: authH });
     const data = await res.json();
     setForm({ lcNumber: data.lcNumber, lcDate: data.lcDate, supplierId: data.supplierId ? String(data.supplierId) : "",
-              bankName: data.bankName ?? "", currencyCode: data.currencyCode, totalAmount: String(data.totalAmount), notes: data.notes ?? "" });
-    setExpenses(data.expenses ?? []);
+              bankName: data.bankName ?? "", currencyCode: data.currencyCode,
+              exchangeRate: String(data.exchangeRate ?? "1"),
+              totalAmount: String(data.totalAmount), notes: data.notes ?? "" });
+    setExpenses((data.expenses ?? []).map((e: any) => ({ ...e, exchangeRate: String(e.exchangeRate ?? "1") })));
     setEditId(lc.id); setShowForm(true); setActiveTab("info");
   }
 
   function addExpense()    { setExpenses(prev => [...prev, { ...EMPTY_EXP, _id: Date.now() }]); }
   function removeExpense(idx: number) { setExpenses(prev => prev.filter((_, i) => i !== idx)); }
   function updateExpense(idx: number, field: string, value: string) {
-    setExpenses(prev => prev.map((e, i) => i === idx ? { ...e, [field]: value } : e));
+    setExpenses(prev => prev.map((e, i) => {
+      if (i !== idx) return e;
+      const next = { ...e, [field]: value };
+      // When the row's currency changes, snap the rate to 1 for base currency
+      // and trigger an async lookup for foreign currencies. Done here instead
+      // of in a useEffect to avoid stale-closure bugs across rows.
+      if (field === "currencyCode") {
+        if (value === baseCode) next.exchangeRate = "1";
+        else fetchRateInto(value, form.lcDate || today(), (r) =>
+          setExpenses(p => p.map((x, j) => j === idx ? { ...x, exchangeRate: r } : x)));
+      }
+      return next;
+    }));
   }
 
-  const totalExpenses = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
-  const remaining     = Number(form.totalAmount || 0) - totalExpenses;
+  // ─── Totals are always computed in the company's base/functional currency.
+  // For each row: amountBase = amount × exchangeRate. This is the IAS 21
+  // historical-rate approach used everywhere foreign currency is summed.
+  const lcAmountBase    = (Number(form.totalAmount || 0)) * (Number(form.exchangeRate || 1));
+  const totalExpenses   = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0); // original-currency mix (informational only)
+  const totalExpBase    = expenses.reduce((s, e) => s + (Number(e.amount) || 0) * (Number(e.exchangeRate) || 1), 0);
+  const remaining       = Number(form.totalAmount || 0) - totalExpenses;
+  const remainingBase   = lcAmountBase - totalExpBase;
 
   async function runAiJournal(lc: any) {
     setAiLc(lc); setAiPreview(null); setAiLoading(true);
@@ -220,6 +270,20 @@ export default function LetterOfCredit() {
                 <Field label={tr("fBank")}><Input placeholder={tr("fBankPh")} value={form.bankName} onChange={e => setForm((p: any) => ({ ...p, bankName: e.target.value }))} /></Field>
                 <Field label={tr("fAmount")} required><Input type="text" inputMode="decimal" placeholder="0.00" dir="ltr" className="text-left" value={form.totalAmount} onChange={e => setForm((p: any) => ({ ...p, totalAmount: e.target.value.replace(/[^0-9.]/g, "") }))} /></Field>
                 <Field label={tr("fCurrency")}><SearchCombobox items={currencyItems} value={form.currencyCode} onValueChange={v => setForm((p: any) => ({ ...p, currencyCode: v }))} placeholder={tr("fCurrencyPh")} /></Field>
+                {form.currencyCode && form.currencyCode !== baseCode && (
+                  <Field label={`${tr("fExchangeRate")} — ${tr("fExchangeRateHint", { from: form.currencyCode, to: baseCode })}`} className="md:col-span-2">
+                    <div className="flex gap-2">
+                      <Input type="text" inputMode="decimal" dir="ltr" className="text-left font-mono" placeholder="3.75"
+                        value={form.exchangeRate}
+                        onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} />
+                      <Button type="button" variant="outline" size="sm" className="shrink-0"
+                        onClick={() => fetchRateInto(form.currencyCode, form.lcDate || today(), (r) =>
+                          setForm((p: any) => ({ ...p, exchangeRate: r })))}>
+                        {tr("fetchRate")}
+                      </Button>
+                    </div>
+                  </Field>
+                )}
                 <Field label={tr("fNotes")} className="md:col-span-2">
                   <Textarea rows={2} className="resize-none text-sm" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
                 </Field>
@@ -241,14 +305,45 @@ export default function LetterOfCredit() {
                       </div>
                     </div>
                   </div>
+                  {exp.currencyCode && exp.currencyCode !== baseCode && (
+                    <div className="grid grid-cols-[1fr_auto] gap-3 items-end pt-1">
+                      <div className="space-y-1">
+                        <Label className="text-xs">{tr("fExchangeRate")} — {tr("fExchangeRateHint", { from: exp.currencyCode, to: baseCode })}</Label>
+                        <div className="flex gap-2">
+                          <Input className="h-8 text-xs font-mono" type="text" inputMode="decimal" dir="ltr" placeholder="3.75"
+                            value={exp.exchangeRate ?? "1"}
+                            onChange={e => updateExpense(idx, "exchangeRate", e.target.value.replace(/[^0-9.]/g, ""))} />
+                          <Button type="button" variant="outline" size="sm" className="h-8 shrink-0 text-xs"
+                            onClick={() => fetchRateInto(exp.currencyCode, form.lcDate || today(), (r) =>
+                              setExpenses(p => p.map((x, j) => j === idx ? { ...x, exchangeRate: r } : x)))}>
+                            {tr("fetchRate")}
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="text-xs text-muted-foreground pb-2 font-mono whitespace-nowrap">
+                        ≈ {fmt(Number(exp.amount || 0) * Number(exp.exchangeRate || 1))} {baseCode}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
               <Button type="button" variant="outline" size="sm" className="gap-2 w-full" onClick={addExpense}><Plus className="h-4 w-4" />{tr("addExpense")}</Button>
               {expenses.length > 0 && (
-                <div className="rounded-xl border bg-muted/40 p-4 grid grid-cols-3 gap-4 text-sm text-center">
-                  <div><span className="text-muted-foreground block text-xs mb-1">{tr("lcAmount")}</span><span className="font-bold font-mono">{fmt(form.totalAmount)}</span></div>
-                  <div><span className="text-muted-foreground block text-xs mb-1">{tr("totalExpenses")}</span><span className="font-bold font-mono text-amber-700">{fmt(totalExpenses)}</span></div>
-                  <div><span className="text-muted-foreground block text-xs mb-1">{tr("remaining")}</span><span className={cn("font-bold font-mono", remaining >= 0 ? "text-green-700" : "text-destructive")}>{fmt(remaining)}</span></div>
+                <div className="space-y-2">
+                  {/* Original-currency totals — informational only when amounts mix currencies */}
+                  <div className="rounded-xl border bg-muted/30 p-3 grid grid-cols-3 gap-3 text-xs text-center">
+                    <div className="col-span-3 text-[10px] text-muted-foreground font-semibold mb-1">{tr("totalsOriginal")}</div>
+                    <div><span className="text-muted-foreground block text-[10px] mb-1">{tr("lcAmount")} ({form.currencyCode})</span><span className="font-semibold font-mono">{fmt(form.totalAmount)}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] mb-1">{tr("totalExpenses")}</span><span className="font-semibold font-mono text-amber-700">{fmt(totalExpenses)}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] mb-1">{tr("remaining")}</span><span className={cn("font-semibold font-mono", remaining >= 0 ? "text-green-700" : "text-destructive")}>{fmt(remaining)}</span></div>
+                  </div>
+                  {/* Base-currency totals — the authoritative IAS 21 view */}
+                  <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-4 grid grid-cols-3 gap-4 text-sm text-center">
+                    <div className="col-span-3 text-xs text-primary font-semibold mb-1">{tr("totalsBase", { cur: baseCode })}</div>
+                    <div><span className="text-muted-foreground block text-xs mb-1">{tr("lcAmountBase")}</span><span className="font-bold font-mono">{fmt(lcAmountBase)}</span></div>
+                    <div><span className="text-muted-foreground block text-xs mb-1">{tr("totalExpensesBase")}</span><span className="font-bold font-mono text-amber-700">{fmt(totalExpBase)}</span></div>
+                    <div><span className="text-muted-foreground block text-xs mb-1">{tr("remainingBase")}</span><span className={cn("font-bold font-mono", remainingBase >= 0 ? "text-green-700" : "text-destructive")}>{fmt(remainingBase)}</span></div>
+                  </div>
                 </div>
               )}
             </TabsContent>
@@ -273,7 +368,13 @@ export default function LetterOfCredit() {
             <tbody>
               {lcs.map((lc: any) => {
                 const sup = suppliers.find((s: any) => s.id === lc.supplierId);
-                const rem = Number(lc.totalAmount || 0) - Number(lc.usedAmount || 0);
+                // Prefer the server-computed base amounts (IAS 21). Fall back gracefully
+                // for older rows that don't yet carry the conversion.
+                const lcBase   = Number(lc.totalAmountBase   ?? lc.totalAmount   ?? 0);
+                const expBase  = Number(lc.totalExpensesBase ?? lc.usedAmount    ?? 0);
+                const remBase  = Number(lc.remainingBase     ?? (lcBase - expBase));
+                const rate     = Number(lc.exchangeRate ?? 1);
+                const isFx     = lc.currencyCode && lc.baseCurrency && lc.currencyCode !== lc.baseCurrency;
                 const st  = STATUS_MAP[lc.status] ?? STATUS_MAP.open;
                 return (
                   <tr key={lc.id} className="border-b hover:bg-muted/30 transition-colors">
@@ -281,10 +382,20 @@ export default function LetterOfCredit() {
                     <td className="px-3 py-2.5">{lc.lcDate}</td>
                     <td className="px-3 py-2.5">{sup ? pickName(sup.nameAr, sup.nameEn) : "—"}</td>
                     <td className="px-3 py-2.5 text-muted-foreground">{lc.bankName ?? "—"}</td>
-                    <td className="px-3 py-2.5">{lc.currencyCode}</td>
-                    <td className="px-3 py-2.5 font-mono">{fmt(lc.totalAmount)}</td>
-                    <td className="px-3 py-2.5 font-mono text-rose-700">{fmt(lc.usedAmount)}</td>
-                    <td className="px-3 py-2.5 font-mono text-green-700">{fmt(rem)}</td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex flex-col gap-0.5">
+                        <span>{lc.currencyCode}</span>
+                        {isFx && <span className="text-[10px] text-muted-foreground font-mono">{tr("rateColon")} {rate}</span>}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 font-mono">
+                      <div className="flex flex-col gap-0.5">
+                        <span>{fmt(lc.totalAmount)}{isFx && <span className="text-[10px] text-muted-foreground"> {lc.currencyCode}</span>}</span>
+                        {isFx && <span className="text-[10px] text-primary font-semibold">{fmt(lcBase)} {lc.baseCurrency}</span>}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-rose-700">{fmt(expBase)}{isFx && <span className="text-[10px] text-muted-foreground"> {lc.baseCurrency}</span>}</td>
+                    <td className="px-3 py-2.5 font-mono text-green-700">{fmt(remBase)}{isFx && <span className="text-[10px] text-muted-foreground"> {lc.baseCurrency}</span>}</td>
                     <td className="px-3 py-2.5">
                       <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border", st.cls)}>{st.label}</span>
                     </td>

@@ -3846,6 +3846,16 @@
       "toastDeleted": "Deleted"
     },
     "lettersOfCredit": {
+      "fExchangeRate": "Exchange rate",
+      "fExchangeRateHint": "1 {{from}} = ? {{to}}",
+      "fetchRate": "Fetch latest",
+      "fetchRateMissing": "No rate on file — using 1",
+      "totalsOriginal": "In original currency",
+      "totalsBase": "In base currency ({{cur}})",
+      "lcAmountBase": "LC amount",
+      "totalExpensesBase": "Total expenses",
+      "remainingBase": "Remaining",
+      "rateColon": "Rate:",
       "title": "Letters of Credit (L/C)",
       "subtitle": "Manage letters of credit and import expenses",
       "addNew": "New Letter",

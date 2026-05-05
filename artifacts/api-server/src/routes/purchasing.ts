@@ -9,6 +9,7 @@ import {
   cashBoxesTable, bankAccountsTable, journalEntriesTable, journalEntryLinesTable,
   stockBalanceTable, stockLedgerTable, warehousesTable,
   receiptVouchersTable, paymentVouchersTable,
+  currenciesTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread } from "../middleware/auth.js";
@@ -246,14 +247,56 @@ router.delete("/supplier-groups/:id", async (req, res) => {
 // ═══════════════════════════════════════════════
 // LETTERS OF CREDIT
 // ═══════════════════════════════════════════════
+// ─── LC base-currency conversion helper (IAS 21 historical-rate) ───────
+// The company's "functional currency" (base) is whichever currency row
+// has isDefault=true. All LC totals/expenses are converted into this
+// currency for comparison and posting. The historical rate is the one
+// stored on the LC/expense at create time — it does NOT re-translate
+// when the spot rate changes later.
+async function getBaseCurrencyCode(cid: number): Promise<string> {
+  const rows = await db.select().from(currenciesTable)
+    .where(eq(currenciesTable.companyId, cid));
+  return rows.find(c => c.isDefault)?.code ?? rows[0]?.code ?? "SAR";
+}
+function enrichLcRow(lc: any, expenses: any[], baseCurrency: string) {
+  const lcRate    = Number(lc.exchangeRate ?? "1") || 1;
+  const totalAmt  = Number(lc.totalAmount  ?? "0") || 0;
+  const totalBase = totalAmt * lcRate;
+
+  const expEnriched = expenses.map((e) => {
+    const r = Number(e.exchangeRate ?? "1") || 1;
+    const a = Number(e.amount       ?? "0") || 0;
+    return { ...e, amountBase: (a * r).toFixed(2) };
+  });
+  const totalExpensesBase = expEnriched.reduce((s, e) => s + Number(e.amountBase), 0);
+  const remainingBase     = totalBase - totalExpensesBase;
+  return {
+    ...lc,
+    totalAmountBase:    totalBase.toFixed(2),
+    expenses:           expEnriched,
+    totalExpensesBase:  totalExpensesBase.toFixed(2),
+    remainingBase:      remainingBase.toFixed(2),
+    baseCurrency,
+  };
+}
+
 router.get("/letters-of-credit", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const baseCurrency = await getBaseCurrencyCode(cid);
     const lcs = await db.select().from(lettersOfCreditTable)
       .where(eq(lettersOfCreditTable.companyId, cid))
       .orderBy(desc(lettersOfCreditTable.lcDate));
-    res.json(lcs);
+    if (lcs.length === 0) { res.json([]); return; }
+    const expensesAll = await db.select().from(lcExpensesTable)
+      .where(eq(lcExpensesTable.companyId, cid));
+    const byLc = new Map<number, any[]>();
+    for (const e of expensesAll) {
+      const arr = byLc.get(e.lcId) ?? [];
+      arr.push(e); byLc.set(e.lcId, arr);
+    }
+    res.json(lcs.map(lc => enrichLcRow(lc, byLc.get(lc.id) ?? [], baseCurrency)));
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
@@ -267,14 +310,16 @@ router.get("/letters-of-credit/:id", async (req, res) => {
     if (!lc) { res.status(404).json({ error: "الاعتماد غير موجود" }); return; }
     const expenses = await db.select().from(lcExpensesTable)
       .where(eq(lcExpensesTable.lcId, id));
-    res.json({ ...lc, expenses });
+    const baseCurrency = await getBaseCurrencyCode(cid);
+    res.json(enrichLcRow(lc, expenses, baseCurrency));
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 router.post("/letters-of-credit", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { lcNumber, lcDate, supplierId, bankName, currencyCode, totalAmount, notes, expenses } = req.body;
+    const { lcNumber, lcDate, supplierId, bankName, currencyCode, exchangeRate,
+            totalAmount, notes, expenses } = req.body;
     if (!lcNumber || !lcDate || !totalAmount) {
       res.status(400).json({ error: "رقم الاعتماد والتاريخ والقيمة مطلوبة" }); return;
     }
@@ -282,6 +327,7 @@ router.post("/letters-of-credit", async (req, res) => {
       companyId: cid, lcNumber, lcDate,
       supplierId: supplierId ? Number(supplierId) : null,
       bankName: bankName || null, currencyCode: currencyCode || "SAR",
+      exchangeRate: String(exchangeRate ?? "1"),
       totalAmount: String(totalAmount), usedAmount: "0",
       status: "open", notes: notes || null,
     }).returning();
@@ -291,6 +337,7 @@ router.post("/letters-of-credit", async (req, res) => {
           lcId: lc.id, companyId: cid,
           expenseType: e.expenseType, accountId: e.accountId ? Number(e.accountId) : null,
           amount: String(e.amount), currencyCode: e.currencyCode || "SAR",
+          exchangeRate: String(e.exchangeRate ?? "1"),
           notes: e.notes || null,
         }))
       );
@@ -303,11 +350,13 @@ router.put("/letters-of-credit/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const { lcNumber, lcDate, supplierId, bankName, currencyCode, totalAmount, notes, expenses } = req.body;
+    const { lcNumber, lcDate, supplierId, bankName, currencyCode, exchangeRate,
+            totalAmount, notes, expenses } = req.body;
     const [lc] = await db.update(lettersOfCreditTable).set({
       lcNumber, lcDate,
       supplierId: supplierId ? Number(supplierId) : null,
       bankName: bankName || null, currencyCode: currencyCode || "SAR",
+      exchangeRate: String(exchangeRate ?? "1"),
       totalAmount: String(totalAmount),
       notes: notes || null, updatedAt: new Date(),
     }).where(and(eq(lettersOfCreditTable.id, id), eq(lettersOfCreditTable.companyId, cid))).returning();
@@ -320,6 +369,7 @@ router.put("/letters-of-credit/:id", async (req, res) => {
             lcId: id, companyId: cid,
             expenseType: e.expenseType, accountId: e.accountId ? Number(e.accountId) : null,
             amount: String(e.amount), currencyCode: e.currencyCode || "SAR",
+            exchangeRate: String(e.exchangeRate ?? "1"),
             notes: e.notes || null,
           }))
         );
@@ -1629,34 +1679,54 @@ router.post("/letters-of-credit/:id/ai-journal", async (req, res) => {
     const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
     if (!OPENAI_BASE || !OPENAI_KEY) { res.status(500).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" }); return; }
 
+    // Convert all amounts to the company's base/functional currency (IAS 21).
+    // The journal entry MUST be posted in the base currency only; the original
+    // foreign-currency values are kept as informational context for the AI.
+    const baseCurrency = await getBaseCurrencyCode(cid);
+    const lcRate       = Number(lc.exchangeRate ?? "1") || 1;
+    const lcTotalBase  = +(Number(lc.totalAmount ?? 0) * lcRate).toFixed(2);
+    const expensesBase = expenses.map(e => {
+      const r = Number(e.exchangeRate ?? "1") || 1;
+      const a = Number(e.amount       ?? "0") || 0;
+      return { ...e, amountBase: +(a * r).toFixed(2), rate: r };
+    });
+
     const accountList = postable.slice(0, 400).map(a =>
       `- id=${a.id} | ${a.code} | ${a.nameAr} | ${a.accountType}`
     ).join("\n");
-    const expList = expenses.length
-      ? expenses.map((e, i) => `  ${i + 1}) ${e.expenseType || "—"} — ${Number(e.amount || 0)} ${e.currencyCode || "SAR"}${e.accountId ? ` (حساب مقترح id=${e.accountId})` : ""}`).join("\n")
+    const expList = expensesBase.length
+      ? expensesBase.map((e, i) =>
+          `  ${i + 1}) ${e.expenseType || "—"} — ${Number(e.amount || 0)} ${e.currencyCode || baseCurrency} × ${e.rate} = ${e.amountBase} ${baseCurrency}${e.accountId ? ` (حساب مقترح id=${e.accountId})` : ""}`
+        ).join("\n")
       : "  (لا توجد مصاريف مسجلة)";
 
     const prompt = `أنت محاسب سعودي خبير. مطلوب إنشاء قيد محاسبي متوازن (debit = credit) يعكس فتح اعتماد مستندي وتسجيل مصاريف الاستيراد المرتبطة به.
+
+⚠️ مهم جداً: العملة الأساسية للشركة هي ${baseCurrency}. كل المبالغ في القيد يجب أن تكون بالعملة الأساسية ${baseCurrency} بعد التحويل بسعر الصرف. لا تستخدم المبالغ الأصلية بالعملة الأجنبية. (وفق IAS 21)
 
 بيانات الاعتماد:
 - رقم الاعتماد: ${lc.lcNumber}
 - التاريخ: ${lc.lcDate}
 - المورد: ${supplierName}${supplierAccountId ? ` (حساب مورد id=${supplierAccountId})` : ""}
 - البنك: ${lc.bankName || "—"}
-- العملة: ${lc.currencyCode}
-- قيمة الاعتماد: ${Number(lc.totalAmount)}
+- العملة الأصلية: ${lc.currencyCode}
+- سعر الصرف: ${lcRate}  (1 ${lc.currencyCode} = ${lcRate} ${baseCurrency})
+- قيمة الاعتماد الأصلية: ${Number(lc.totalAmount)} ${lc.currencyCode}
+- قيمة الاعتماد بالعملة الأساسية: ${lcTotalBase} ${baseCurrency}  ← استخدم هذه القيمة في القيد
 
-مصاريف الاستيراد:
+مصاريف الاستيراد (الأرقام بعد علامة "=" هي القيم بالعملة الأساسية ${baseCurrency} وهي التي تُستخدم في القيد):
 ${expList}
+
+إجمالي المصاريف بالعملة الأساسية: ${expensesBase.reduce((s, e) => s + e.amountBase, 0).toFixed(2)} ${baseCurrency}
 
 شجرة الحسابات المتاحة (استخدم id الرقمي فقط):
 ${accountList}
 
 المبادئ المحاسبية لفتح الاعتماد المستندي:
-1) عند فتح الاعتماد: مدين "اعتمادات مستندية" أو "بضاعة بالطريق" بقيمة الاعتماد، دائن "البنك" أو "هامش اعتماد" بنفس القيمة.
-2) كل مصروف استيراد: مدين الحساب المحدد له (أو حساب "مصاريف استيراد") بقيمة المصروف، دائن "البنك" أو "الموردون" بنفس القيمة.
+1) عند فتح الاعتماد: مدين "اعتمادات مستندية" أو "بضاعة بالطريق" بقيمة الاعتماد بالعملة الأساسية، دائن "البنك" أو "هامش اعتماد" بنفس القيمة.
+2) كل مصروف استيراد: مدين الحساب المحدد له (أو حساب "مصاريف استيراد") بقيمة المصروف بالعملة الأساسية، دائن "البنك" أو "الموردون" بنفس القيمة.
 3) اختر أنسب حساب موجود فعلياً في القائمة؛ لا تخترع أرقاماً.
-4) يجب أن يكون مجموع المدين = مجموع الدائن بالضبط.
+4) يجب أن يكون مجموع المدين = مجموع الدائن بالضبط، وكلها بالعملة الأساسية ${baseCurrency}.
 
 أرجع JSON فقط بالشكل التالي (بدون أي نص قبله أو بعده):
 {

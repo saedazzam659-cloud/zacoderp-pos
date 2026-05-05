@@ -4043,7 +4043,18 @@
       "toastEntryDesc": "رقم القيد: {{id}}",
       "aiFailed": "فشل الذكاء الاصطناعي",
       "saveFailed": "فشل حفظ القيد",
-      "currencyDefaultNone": "SAR — ريال سعودي"
+      "currencyDefaultNone": "SAR — ريال سعودي",
+      "fExchangeRate": "سعر الصرف",
+      "fExchangeRateHint": "1 {{from}} = ? {{to}}",
+      "fetchRate": "جلب آخر سعر",
+      "fetchRateMissing": "لا يوجد سعر مسجّل — تم استخدام 1",
+      "totalsOriginal": "بالعملة الأصلية",
+      "totalsBase": "بالعملة الأساسية ({{cur}})",
+      "lcAmountBase": "قيمة الاعتماد",
+      "totalExpensesBase": "إجمالي المصاريف",
+      "remainingBase": "المتبقي",
+      "colTotalBase": "القيمة بالعملة الأساسية",
+      "rateColon": "سعر الصرف:"
     }
   },
   "warehousePages": {
