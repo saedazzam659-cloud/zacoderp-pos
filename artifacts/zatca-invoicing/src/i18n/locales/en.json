@@ -3694,6 +3694,8 @@
       }
     },
     "purchaseInvoiceForm": {
+      "back": "Back",
+      "postedReadOnly": "This invoice is POSTED — read-only. To edit it, unpost it first from the invoice list (admin only).",
       "newTitle": "New Purchase Invoice",
       "editTitle": "Edit Invoice #{{id}}",
       "subtitle": "Create a purchase invoice with LC expense loading",

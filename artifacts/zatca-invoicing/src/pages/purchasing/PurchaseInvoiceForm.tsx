@@ -21,7 +21,7 @@ import { DiscountRow } from "@/components/DiscountRow";
 import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingCart, Plus, Trash2, FileText, ListOrdered, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingCart, Plus, Trash2, FileText, ListOrdered, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown, Lock } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -721,6 +721,13 @@ export default function PurchaseInvoiceForm() {
         />
       </div>
 
+      {!isNew && (existing as any)?.status === "posted" && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 text-sm flex items-center gap-2">
+          <Lock className="h-4 w-4" />
+          <span>{tr("postedReadOnly")}</span>
+        </div>
+      )}
+      <fieldset disabled={!isNew && (existing as any)?.status === "posted"} className="contents">
       <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
         <Card className="border-2">
           <CardHeader className="p-0">
@@ -1251,12 +1258,17 @@ export default function PurchaseInvoiceForm() {
           </TabsContent>
         </Card>
       </Tabs>
+      </fieldset>
 
       <div className="flex justify-end gap-2">
-        <Button variant="outline" data-enter-skip="true" onClick={() => navigate("/purchasing/invoices")}>{tr("cancel")}</Button>
-        <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending}>
-          {saveMut.isPending ? tr("saving") : isNew ? tr("saveInvoice") : tr("saveEdit")}
+        <Button variant="outline" data-enter-skip="true" onClick={() => navigate("/purchasing/invoices")}>
+          {!isNew && (existing as any)?.status === "posted" ? tr("back") : tr("cancel")}
         </Button>
+        {!(!isNew && (existing as any)?.status === "posted") && (
+          <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending}>
+            {saveMut.isPending ? tr("saving") : isNew ? tr("saveInvoice") : tr("saveEdit")}
+          </Button>
+        )}
       </div>
     </div>
   );

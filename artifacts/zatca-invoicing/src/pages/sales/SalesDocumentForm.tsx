@@ -28,7 +28,7 @@ import { CustomerVatControl } from "@/components/CustomerVatControl";
 import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock } from "lucide-react";
 import { offersApi } from "@/lib/offersApi";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -1758,6 +1758,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         />
       </div>
 
+      {isInvoice && !isNew && (existing as any)?.status === "posted" && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 text-sm flex items-center gap-2">
+          <Lock className="h-4 w-4" />
+          <span>{t("salesDocForm.postedReadOnly", "هذه الفاتورة مُرحَّلة — للعرض فقط. لتعديلها قم بفك الترحيل أولاً من شاشة قائمة الفواتير.")}</span>
+        </div>
+      )}
+      <fieldset disabled={isInvoice && !isNew && (existing as any)?.status === "posted"} className="contents">
       <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
         <Card className="border-2">
           <CardHeader className="p-0">
@@ -1967,9 +1974,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
         </Card>
       </Tabs>
+      </fieldset>
 
       <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={() => navigate(basePath)}>{t("common.cancel")}</Button>
+        <Button variant="outline" onClick={() => navigate(basePath)}>
+          {isInvoice && !isNew && (existing as any)?.status === "posted" ? t("common.back", "رجوع") : t("common.cancel")}
+        </Button>
         <Button
           variant="outline"
           onClick={() => {
@@ -2007,9 +2017,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <Printer className="h-4 w-4" />
           طباعة
         </Button>
-        <Button onClick={handleSave} disabled={saveMut.isPending}>
-          {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
-        </Button>
+        {!(isInvoice && !isNew && (existing as any)?.status === "posted") && (
+          <Button onClick={handleSave} disabled={saveMut.isPending}>
+            {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
+          </Button>
+        )}
       </div>
     </div>
   );
