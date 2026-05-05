@@ -7,11 +7,19 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { Input } from "@/components/ui/input";
 import {
   AlertCircle, CheckCircle2, X, Loader2, ShieldCheck,
   Calculator, ArrowRightLeft, Lock, ShieldX, Sparkles, Brain,
+  ArrowRightCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+type PendingCarry = {
+  id: number; name: string; type: "prepaid" | "accrued";
+  totalAmount: string; recognizedAmount: string; remainingAmount: string;
+  startDate: string; endDate: string;
+};
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -52,6 +60,15 @@ export function PeriodClosingWizard({ period, onClose, onPeriodUpdated }: Props)
   const [plAccountId, setPlAccountId] = useState("");
   const [retainedId,  setRetainedId]  = useState("");
   const [forceSoftClose, setForceSoftClose] = useState(false);
+  // Carry-forward step state — per-row dates so the user can stagger contracts
+  const [carryDates, setCarryDates] = useState<Record<number, { start: string; end: string }>>({});
+
+  const nextYearDates = (parentEndDate: string) => {
+    const [y] = parentEndDate.split("-").map(Number);
+    const ny = y + 1;
+    return { start: `${ny}-01-01`, end: `${ny}-12-31` };
+  };
+  const getCarry = (a: PendingCarry) => carryDates[a.id] ?? nextYearDates(a.endDate);
 
   const safeJson = async (r: Response, fallback: string) => {
     const ct = r.headers.get("content-type") || "";
@@ -69,6 +86,34 @@ export function PeriodClosingWizard({ period, onClose, onPeriodUpdated }: Props)
       });
       return safeJson(r, "تعذر التحقق من الفترة") as Promise<ValidateResp>;
     },
+  });
+
+  // ─── Pending carry-forward adjustments at this period's end-date ──
+  const carryQ = useQuery<{ candidates: PendingCarry[] }>({
+    queryKey: ["pending-carry", period.id, period.endDate],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/adjustments/pending-carry-forward?asOf=${period.endDate}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return safeJson(r, "تعذر جلب التسويات المرشحة للترحيل") as Promise<{ candidates: PendingCarry[] }>;
+    },
+  });
+
+  const carryMut = useMutation({
+    mutationFn: async (a: PendingCarry) => {
+      const d = getCarry(a);
+      const r = await fetch(`${API}/api/adjustments/${a.id}/carry-forward`, {
+        method: "POST", headers,
+        body: JSON.stringify({ newStartDate: d.start, newEndDate: d.end }),
+      });
+      return safeJson(r, "تعذر ترحيل المتبقي");
+    },
+    onSuccess: (_d, a) => {
+      toast({ title: "تم ترحيل المتبقي", description: `${a.name} — رُحِّل ${parseFloat(a.remainingAmount).toFixed(2)} للسنة الجديدة` });
+      carryQ.refetch();
+      qc.invalidateQueries({ queryKey: ["adjustments"] });
+    },
+    onError: (e: any) => toast({ title: "تعذر الترحيل", description: e.message, variant: "destructive" }),
   });
 
   // ─── AI insights ───────────────────────────────────────────────────
@@ -290,6 +335,77 @@ export function PeriodClosingWizard({ period, onClose, onPeriodUpdated }: Props)
               )}
             </CardContent>
           </Card>
+
+          {/* 2.5 Carry-forward of unfinished prepaids/accruals */}
+          {isOpen && (carryQ.data?.candidates?.length ?? 0) > 0 && (
+            <Card className="border-purple-200">
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="h-7 w-7 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-xs font-bold">
+                    <ArrowRightCircle className="h-3.5 w-3.5" />
+                  </div>
+                  <h3 className="font-semibold text-sm">ترحيل التسويات غير المكتملة للسنة الجديدة</h3>
+                  <Badge variant="outline" className="text-[10px] bg-purple-50 text-purple-700 border-purple-200 ml-auto">
+                    {carryQ.data!.candidates.length} تسوية
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  هذه التسويات انتهت ضمن هذه الفترة لكن بقي رصيد لم يُستحق. اضغط «ترحيل» لإنشاء تسوية فرعية تكمّل الاستحقاق في السنة الجديدة (نفس الحسابات، نفس الرصيد المتبقي).
+                </p>
+                <div className="space-y-2">
+                  {carryQ.data!.candidates.map((a) => {
+                    const d = getCarry(a);
+                    const datesValid = d.start > a.endDate && d.end >= d.start;
+                    return (
+                      <div key={a.id} className="rounded-md border bg-purple-50/30 p-3 space-y-2">
+                        <div className="flex items-start justify-between gap-2 flex-wrap">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-sm">{a.name}</div>
+                            <div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap mt-0.5">
+                              <span>الإجمالي: <strong>{parseFloat(a.totalAmount).toFixed(2)}</strong></span>
+                              <span className="text-emerald-700">مُحقّق: <strong>{parseFloat(a.recognizedAmount).toFixed(2)}</strong></span>
+                              <span className="text-purple-800 font-bold">متبقٍ للترحيل: {parseFloat(a.remainingAmount).toFixed(2)}</span>
+                              <span dir="ltr" className="text-muted-foreground">{a.startDate} → {a.endDate}</span>
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            onClick={() => carryMut.mutate(a)}
+                            disabled={carryMut.isPending || !datesValid}
+                            className="h-8 gap-1 bg-gradient-to-l from-purple-600 to-fuchsia-600 hover:from-purple-700 hover:to-fuchsia-700 text-white"
+                          >
+                            {carryMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowRightCircle className="h-3 w-3" />}
+                            ترحيل
+                          </Button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[10px] text-muted-foreground">بداية الترحيل</label>
+                            <Input
+                              type="date" className="h-8 text-xs"
+                              value={d.start}
+                              onChange={e => setCarryDates(p => ({ ...p, [a.id]: { start: e.target.value, end: p[a.id]?.end ?? d.end } }))}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-muted-foreground">نهاية الترحيل</label>
+                            <Input
+                              type="date" className="h-8 text-xs"
+                              value={d.end}
+                              onChange={e => setCarryDates(p => ({ ...p, [a.id]: { start: p[a.id]?.start ?? d.start, end: e.target.value } }))}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  ✦ بعد الترحيل: التسوية الأصلية تأخذ حالة «مُرحَّل» وتظهر تسوية فرعية جديدة في صفحة «التسويات». لا يُنشأ قيد محاسبي مباشر — رصيد الأصل/الالتزام في الميزان ينتقل تلقائياً للسنة الجديدة، والاستحقاق الشهري يكمل من خلالها.
+                </p>
+              </CardContent>
+            </Card>
+          )}
 
           {/* 3. Closing entries (only if open) */}
           {isOpen && (

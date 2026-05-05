@@ -4,7 +4,7 @@ import {
   accountingAdjustmentsTable, accountingAdjustmentRunsTable,
   accountsTable, journalEntriesTable, journalEntryLinesTable,
 } from "@workspace/db";
-import { and, eq, asc, desc } from "drizzle-orm";
+import { and, eq, asc, desc, inArray, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
@@ -50,6 +50,35 @@ function* monthsBetween(startISO: string, endISO: string): Generator<{ ym: strin
   }
 }
 
+// Compute recognized & remaining for a list of adjustments in one query.
+// Recognized = SUM(runs.amount), Remaining = totalAmount - recognized.
+async function enrichWithRecognition<T extends { id: number; totalAmount: string }>(rows: T[]):
+  Promise<(T & { recognizedAmount: string; remainingAmount: string; runCount: number })[]> {
+  if (rows.length === 0) return [] as any;
+  const ids = rows.map(r => r.id);
+  const sums = await db
+    .select({
+      adjustmentId: accountingAdjustmentRunsTable.adjustmentId,
+      total:        sql<string>`COALESCE(SUM(${accountingAdjustmentRunsTable.amount}), 0)`,
+      cnt:          sql<number>`COUNT(*)::int`,
+    })
+    .from(accountingAdjustmentRunsTable)
+    .where(inArray(accountingAdjustmentRunsTable.adjustmentId, ids))
+    .groupBy(accountingAdjustmentRunsTable.adjustmentId);
+  const map = new Map(sums.map(s => [s.adjustmentId, { sum: Number(s.total), cnt: Number(s.cnt) }]));
+  return rows.map(r => {
+    const m = map.get(r.id) ?? { sum: 0, cnt: 0 };
+    const total = Number(r.totalAmount);
+    const remaining = Math.max(0, total - m.sum);
+    return {
+      ...r,
+      recognizedAmount: m.sum.toFixed(2),
+      remainingAmount:  remaining.toFixed(2),
+      runCount:         m.cnt,
+    };
+  });
+}
+
 // ─── GET /api/adjustments — list all adjustments for the company ─────────
 router.get("/", async (req, res) => {
   try {
@@ -57,7 +86,33 @@ router.get("/", async (req, res) => {
     const rows = await db.select().from(accountingAdjustmentsTable)
       .where(eq(accountingAdjustmentsTable.companyId, cid))
       .orderBy(desc(accountingAdjustmentsTable.createdAt));
-    res.json(rows);
+    const enriched = await enrichWithRecognition(rows);
+    res.json(enriched);
+  } catch (e: any) { res.status(500).json({ error: e.message ?? "خطأ" }); }
+});
+
+// ─── GET /api/adjustments/pending-carry-forward?asOf=YYYY-MM-DD ──────────
+// Returns active adjustments whose end-date is <= cutoff AND have a positive
+// remaining balance — i.e. candidates for "carry forward to next year" at
+// period close. The wizard uses this to surface unfinished prepaids.
+router.get("/pending-carry-forward", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const asOf = String(req.query.asOf ?? "");
+    if (!isISO(asOf)) { res.status(400).json({ error: "asOf مطلوب (YYYY-MM-DD)" }); return; }
+
+    const rows = await db.select().from(accountingAdjustmentsTable).where(and(
+      eq(accountingAdjustmentsTable.companyId, cid),
+      eq(accountingAdjustmentsTable.status, "active"),
+      eq(accountingAdjustmentsTable.carryForwardEnabled, true),
+    ));
+    const enriched = await enrichWithRecognition(rows);
+    // Only those whose schedule does not extend past the cutoff but still
+    // carry a remaining balance > 0.01 (rounding tolerance).
+    const candidates = enriched.filter(r =>
+      r.endDate <= asOf && Number(r.remainingAmount) >= 0.01,
+    );
+    res.json({ asOf, candidates });
   } catch (e: any) { res.status(500).json({ error: e.message ?? "خطأ" }); }
 });
 
@@ -75,7 +130,16 @@ router.get("/:id", async (req, res) => {
     const runs = await db.select().from(accountingAdjustmentRunsTable)
       .where(eq(accountingAdjustmentRunsTable.adjustmentId, id))
       .orderBy(asc(accountingAdjustmentRunsTable.periodMonth));
-    res.json({ adjustment: row, runs });
+
+    // Children created via carry-forward
+    const children = await db.select().from(accountingAdjustmentsTable)
+      .where(and(
+        eq(accountingAdjustmentsTable.parentAdjustmentId, id),
+        eq(accountingAdjustmentsTable.companyId, cid),
+      ));
+
+    const [enriched] = await enrichWithRecognition([row]);
+    res.json({ adjustment: enriched, runs, children });
   } catch (e: any) { res.status(500).json({ error: e.message ?? "خطأ" }); }
 });
 
@@ -153,9 +217,11 @@ router.put("/:id", async (req, res) => {
     if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
     const { name, autoGenerate, status, notes } = req.body ?? {};
 
+    const { carryForwardEnabled } = req.body ?? {};
     const patch: any = { updatedAt: new Date() };
     if (typeof name === "string" && name.trim()) patch.name = name.trim();
     if (typeof autoGenerate === "boolean") patch.autoGenerate = autoGenerate;
+    if (typeof carryForwardEnabled === "boolean") patch.carryForwardEnabled = carryForwardEnabled;
     if (status && ["active", "completed", "cancelled"].includes(status)) patch.status = status;
     if (typeof notes === "string" || notes === null) patch.notes = notes;
 
@@ -345,6 +411,146 @@ router.post("/run-due", async (req, res) => {
 
     res.json({ ok: true, summary, total: summary.reduce((s, x) => s + x.created.length, 0) });
   } catch (e: any) { res.status(500).json({ error: "فشل التشغيل: " + (e.message ?? "خطأ") }); }
+});
+
+/**
+ * POST /api/adjustments/:id/carry-forward — roll the un-recognized portion of
+ * an adjustment into a brand-new "child" adjustment for the next fiscal year.
+ *
+ * Use case (per user requirement):
+ *   Prepaid rent of 2,000 — 1,600 already recognized over 8 months, contract
+ *   ends 31-12-2026 → at year-end close, the remaining 400 should not vanish.
+ *   It should roll into a new adjustment for 2027 covering the next 2 months
+ *   (or however long the user wants), keeping the same expense + asset
+ *   accounts so the BS balance amortizes cleanly into the new period.
+ *
+ * Mechanics:
+ *   1. Compute remaining = totalAmount - SUM(runs.amount). Refuse if <= 0.
+ *   2. Validate new dates (newStartDate must be after the parent's last
+ *      recognized month; newEndDate must be after newStartDate).
+ *   3. Create a new adjustments row:
+ *        parent_adjustment_id = id
+ *        total_amount         = remaining
+ *        monthly_amount       = remaining / months_in_new_window
+ *        status               = "active"
+ *        carry_forward_enabled inherited
+ *      (No JE is posted — the BS contra account naturally carries balance
+ *      across periods. The child's monthly /generate then continues
+ *      amortising the remaining 400 against that already-existing balance.)
+ *   4. Mark parent.status = "carried_forward" so it disappears from the
+ *      "due" run list but stays for audit reference.
+ */
+router.post("/:id/carry-forward", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+    const { newStartDate, newEndDate } = req.body ?? {};
+    if (!isISO(newStartDate) || !isISO(newEndDate)) {
+      res.status(400).json({ error: "تواريخ البداية والنهاية الجديدة مطلوبة (YYYY-MM-DD)" }); return;
+    }
+    if (newEndDate < newStartDate) {
+      res.status(400).json({ error: "تاريخ نهاية الترحيل يجب أن يكون بعد البداية" }); return;
+    }
+
+    // Compute new monthly = remaining / number of months in new window
+    let months = 0;
+    for (const _ of monthsBetween(newStartDate, newEndDate)) months++;
+    if (months <= 0) { res.status(400).json({ error: "النافذة الجديدة لا تحوي أشهر صالحة" }); return; }
+
+    // Wrap the entire compute-and-create flow in a transaction with a row
+    // lock on the parent adjustment. This prevents two concurrent
+    // carry-forward calls from racing, AND prevents a concurrent /generate
+    // request from booking a new run between our SUM and the parent close.
+    // The unique partial index `adj_one_child_per_parent_uq` is the
+    // belt-and-braces backstop in case the lock is somehow bypassed.
+    let result: { recognized: number; remaining: number; newMonthly: string; child: any };
+    try {
+      result = await db.transaction(async (tx) => {
+        const [parent] = await tx.execute(sql`
+          SELECT * FROM accounting_adjustments
+          WHERE id = ${id} AND company_id = ${cid}
+          FOR UPDATE
+        `).then((r: any) => r.rows ?? r);
+        if (!parent) throw Object.assign(new Error("التسوية الأصلية غير موجودة"), { status: 404 });
+        if (parent.status === "carried_forward")
+          throw Object.assign(new Error("هذه التسوية مُرحَّلة بالفعل — راجع التسوية الفرعية الناتجة"), { status: 400 });
+        if (parent.status === "cancelled")
+          throw Object.assign(new Error("لا يمكن ترحيل تسوية ملغاة"), { status: 400 });
+        if (parent.status === "completed")
+          throw Object.assign(new Error("هذه التسوية مكتملة — لا يوجد ما يُرحَّل"), { status: 400 });
+        if (parent.status !== "active")
+          throw Object.assign(new Error(`لا يمكن ترحيل تسوية بحالة ${parent.status}`), { status: 400 });
+        if (newStartDate <= parent.end_date)
+          throw Object.assign(new Error(
+            `تاريخ بداية الترحيل (${newStartDate}) يجب أن يكون بعد تاريخ نهاية التسوية الأصلية (${parent.end_date})`,
+          ), { status: 400 });
+
+        // Compute remaining via runs sum (under the parent's row lock so no
+        // /generate can sneak a run in between this SUM and the parent close)
+        const [agg] = await tx
+          .select({ total: sql<string>`COALESCE(SUM(${accountingAdjustmentRunsTable.amount}), 0)` })
+          .from(accountingAdjustmentRunsTable)
+          .where(eq(accountingAdjustmentRunsTable.adjustmentId, id));
+        const recognized = Number(agg?.total ?? 0);
+        const totalAmt   = Number(parent.total_amount);
+        const remaining  = totalAmt - recognized;
+        if (remaining < 0.01) {
+          throw Object.assign(new Error(
+            `لا يوجد رصيد متبقٍ للترحيل — تم استحقاق ${recognized.toFixed(2)} من أصل ${totalAmt.toFixed(2)}`,
+          ), { status: 400 });
+        }
+        const newMonthly = (remaining / months).toFixed(2);
+
+        // Create the child — onConflictDoNothing on the partial unique index
+        // catches the concurrency race that the row lock should already have
+        // prevented; we treat conflict as "another caller already did it".
+        const [child] = await tx.insert(accountingAdjustmentsTable).values({
+          companyId:           cid,
+          type:                parent.type,
+          name:                `${parent.name} — ترحيل ${newStartDate.slice(0, 4)}`,
+          expenseAccountId:    parent.expense_account_id,
+          contraAccountId:     parent.contra_account_id,
+          totalAmount:         remaining.toFixed(2),
+          startDate:           newStartDate,
+          endDate:             newEndDate,
+          monthlyAmount:       newMonthly,
+          autoGenerate:        parent.auto_generate,
+          carryForwardEnabled: parent.carry_forward_enabled,
+          parentAdjustmentId:  parent.id,
+          status:              "active",
+          notes:               `مُرحَّل من التسوية #${parent.id} — رصيد متبقٍ ${remaining.toFixed(2)} من أصل ${totalAmt.toFixed(2)}`,
+        }).onConflictDoNothing({ target: accountingAdjustmentsTable.parentAdjustmentId }).returning();
+
+        if (!child) {
+          throw Object.assign(new Error("تم ترحيل هذه التسوية للتو من جلسة أخرى — أعد التحميل لرؤية التسوية الفرعية"), { status: 409 });
+        }
+
+        await tx.update(accountingAdjustmentsTable)
+          .set({ status: "carried_forward", updatedAt: new Date() })
+          .where(eq(accountingAdjustmentsTable.id, parent.id));
+
+        return { recognized, remaining, newMonthly, child };
+      });
+    } catch (e: any) {
+      const status = e?.status ?? 500;
+      res.status(status).json({ error: status === 500 ? "فشل الترحيل: " + (e.message ?? "خطأ") : e.message });
+      return;
+    }
+
+    res.status(201).json({
+      ok: true,
+      parent: { id, status: "carried_forward" },
+      child: result.child,
+      summary: {
+        recognized:     result.recognized.toFixed(2),
+        carriedForward: result.remaining.toFixed(2),
+        newMonthly:     result.newMonthly,
+        months,
+      },
+    });
+  } catch (e: any) { res.status(500).json({ error: "فشل الترحيل: " + (e.message ?? "خطأ") }); }
 });
 
 export default router;
