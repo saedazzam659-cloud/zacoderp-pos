@@ -598,23 +598,23 @@ export default function LetterOfCredit() {
                       <div className="flex flex-col gap-0.5">
                         <span>{fmt(lc.totalAmount)}{isFx && <span className="text-[10px] text-muted-foreground"> {lc.currencyCode}</span>}</span>
                         {isFx && <span className="text-[10px] text-primary font-semibold">{fmt(lcBase)} {lc.baseCurrency}</span>}
+                        {expBase > 0 && (
+                          <span
+                            className="text-[10px] text-amber-700"
+                            title={tr("loadedCostTooltip", { lc: fmt(lcBase), exp: fmt(expBase), total: fmt(lcBase + expBase), cur: lc.baseCurrency || "" })}
+                          >
+                            + {fmt(expBase)} {tr("expensesShort")} = {fmt(lcBase + expBase)}
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-3 py-2.5 font-mono">
                       <span className="text-rose-700">{fmt(usedBase)}{isFx && <span className="text-[10px] text-muted-foreground"> {lc.baseCurrency}</span>}</span>
                     </td>
                     <td className="px-3 py-2.5 font-mono">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-green-700">{fmt(remBase)}{isFx && <span className="text-[10px] text-muted-foreground"> {lc.baseCurrency}</span>}</span>
-                        {expBase > 0 && (
-                          <span
-                            className="text-[10px] text-amber-700"
-                            title={tr("loadedCostTooltip", { lc: fmt(lcBase), exp: fmt(expBase), total: fmt(lcBase + expBase), cur: lc.baseCurrency || "" })}
-                          >
-                            + {fmt(expBase)} {tr("expensesShort")} → {fmt(lcBase + expBase)}
-                          </span>
-                        )}
-                      </div>
+                      <span className={cn(remBase < 0 ? "text-red-700" : "text-green-700")}>
+                        {fmt(remBase)}{isFx && <span className="text-[10px] text-muted-foreground"> {lc.baseCurrency}</span>}
+                      </span>
                     </td>
                     <td className="px-3 py-2.5">
                       <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border", st.cls)}>{st.label}</span>
