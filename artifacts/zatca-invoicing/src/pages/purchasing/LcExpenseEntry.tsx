@@ -114,15 +114,16 @@ export default function LcExpenseEntry() {
     } catch { apply("1"); }
   }
 
-  // When LC selected, prefill expense currency & rate from LC's currency
+  // When LC selected, default the expense to the COMPANY BASE currency (SAR)
+  // with rate = 1 — NOT to the LC's foreign currency.
+  // Reason: most LC expenses (shipping, customs, insurance, bank fees) are paid
+  // locally in SAR. Auto-flipping the form to USD with rate=3.756 caused users
+  // to type "10,000" thinking SAR, which got stored as 10,000 USD × 3.756 and
+  // double-counted in totals. The user can still pick USD manually if needed.
   useEffect(() => {
     if (!selectedLc) return;
-    setForm(p => ({
-      ...p,
-      currencyCode: p.currencyCode === "SAR" || p.currencyCode === baseCode ? selectedLc.currencyCode : p.currencyCode,
-      exchangeRate: String(selectedLc.exchangeRate ?? "1"),
-    }));
-  }, [selectedLc?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    setForm(p => ({ ...p, currencyCode: baseCode, exchangeRate: "1" }));
+  }, [selectedLc?.id, baseCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When expense currency changes, auto-fetch rate
   useEffect(() => {
@@ -388,7 +389,7 @@ export default function LcExpenseEntry() {
 
         <div className="flex justify-end gap-2 pt-2 border-t">
           <Button type="button" variant="outline" onClick={() => {
-            setForm({ expenseType: "", accountId: "", amount: "", currencyCode: selectedLc?.currencyCode ?? baseCode, exchangeRate: String(selectedLc?.exchangeRate ?? "1"), notes: "", date: today() });
+            setForm({ expenseType: "", accountId: "", amount: "", currencyCode: baseCode, exchangeRate: "1", notes: "", date: today() });
             setPaySource(p => ({ ...p, id: "" }));
           }}>{tr("clear")}</Button>
           <Button type="button" onClick={() => submitMut.mutate()} disabled={submitMut.isPending} className="gap-2">

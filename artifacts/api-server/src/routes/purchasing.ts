@@ -579,14 +579,20 @@ router.post("/letters-of-credit", async (req, res) => {
       status: "open", notes: notes || null,
     }).returning();
     if (expenses?.length) {
+      const baseCur = await getBaseCurrencyCode(cid);
       await db.insert(lcExpensesTable).values(
-        expenses.map((e: any) => ({
-          lcId: lc.id, companyId: cid,
-          expenseType: e.expenseType, accountId: e.accountId ? Number(e.accountId) : null,
-          amount: String(e.amount), currencyCode: e.currencyCode || "SAR",
-          exchangeRate: String(e.exchangeRate ?? "1"),
-          notes: e.notes || null,
-        }))
+        expenses.map((e: any) => {
+          const cur = e.currencyCode || "SAR";
+          // Defensive: same-currency rows must always have rate=1
+          const rate = cur === baseCur ? "1" : String(e.exchangeRate ?? "1");
+          return {
+            lcId: lc.id, companyId: cid,
+            expenseType: e.expenseType, accountId: e.accountId ? Number(e.accountId) : null,
+            amount: String(e.amount), currencyCode: cur,
+            exchangeRate: rate,
+            notes: e.notes || null,
+          };
+        })
       );
     }
     res.status(201).json(lc);
@@ -626,14 +632,19 @@ router.put("/letters-of-credit/:id", async (req, res) => {
     if (expenses !== undefined) {
       await db.delete(lcExpensesTable).where(eq(lcExpensesTable.lcId, id));
       if (expenses.length) {
+        const baseCur = await getBaseCurrencyCode(cid);
         await db.insert(lcExpensesTable).values(
-          expenses.map((e: any) => ({
-            lcId: id, companyId: cid,
-            expenseType: e.expenseType, accountId: e.accountId ? Number(e.accountId) : null,
-            amount: String(e.amount), currencyCode: e.currencyCode || "SAR",
-            exchangeRate: String(e.exchangeRate ?? "1"),
-            notes: e.notes || null,
-          }))
+          expenses.map((e: any) => {
+            const cur = e.currencyCode || "SAR";
+            const rate = cur === baseCur ? "1" : String(e.exchangeRate ?? "1");
+            return {
+              lcId: id, companyId: cid,
+              expenseType: e.expenseType, accountId: e.accountId ? Number(e.accountId) : null,
+              amount: String(e.amount), currencyCode: cur,
+              exchangeRate: rate,
+              notes: e.notes || null,
+            };
+          })
         );
       }
     }
@@ -675,13 +686,20 @@ router.post("/letters-of-credit/:id/expenses", async (req, res) => {
       if (!acc) { res.status(400).json({ error: "حساب المصروف غير صالح" }); return; }
       if (!acc.isPosting) { res.status(400).json({ error: "حساب المصروف يجب أن يكون حساب ترحيل" }); return; }
     }
+    // Defensive guard: if the expense currency equals the company base
+    // currency, force exchangeRate = 1. Prevents clients that mistakenly
+    // inherit the LC's foreign rate from inflating amountBase = amount × rate
+    // (which has previously caused expenses to be double-counted in totals).
+    const baseCurrency = await getBaseCurrencyCode(cid);
+    const expCur = currencyCode || lc.currencyCode || baseCurrency;
+    const expRate = expCur === baseCurrency ? "1" : String(exchangeRate ?? "1");
     const [created] = await db.insert(lcExpensesTable).values({
       lcId: id, companyId: cid,
       expenseType: String(expenseType),
       accountId: accountId ? Number(accountId) : null,
       amount: String(amount),
-      currencyCode: currencyCode || lc.currencyCode || "SAR",
-      exchangeRate: String(exchangeRate ?? "1"),
+      currencyCode: expCur,
+      exchangeRate: expRate,
       notes: notes || null,
     }).returning();
     res.status(201).json(created);
