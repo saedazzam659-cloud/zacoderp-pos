@@ -870,6 +870,7 @@ const purchasingReportsSubNav: NavDef[] = [
   { nameKey: "navExtra.purchasesByPeriod",      href: "/purchasing/reports/purchases-by-period",   icon: FileText, permKey: "purchase_invoices" },
   { nameKey: "navExtra.topSuppliers",           href: "/purchasing/reports/top-suppliers",         icon: FileText, permKey: "suppliers" },
   { nameKey: "navExtra.purchaseReturnsReport",  href: "/purchasing/reports/returns",               icon: FileText, permKey: "purchase_returns" },
+  { nameKey: "navExtra.lcStatement",            href: "/purchasing/reports/lc-statement",          icon: FileText, permKey: "purchase_invoices" },
 ];
 const purchasingReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/purchasing/reports", icon: BarChart2 };
 

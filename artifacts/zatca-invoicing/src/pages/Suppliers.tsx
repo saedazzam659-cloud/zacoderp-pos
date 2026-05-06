@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Plus, Search, Truck, Phone, Mail, MapPin, BadgeCheck, Building2, Package,
   Pencil, Trash2, TrendingUp, TrendingDown, Minus,
-  FileSpreadsheet, X,
+  FileSpreadsheet, X, CreditCard,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ExportButtons from "@/components/ExportButtons";
@@ -351,6 +351,11 @@ export default function Suppliers() {
             title={t("pages.suppliers.exportTitle")}
             subtitle={`${t("pages.suppliers.eInvoiceSystem")} — ${new Date().toLocaleDateString("ar-SA-u-nu-latn")}`}
           />
+          <Button asChild variant="outline" className="gap-2">
+            <a href="/suppliers/reports/lc-statement">
+              <CreditCard className="h-4 w-4" />{t("navExtra.lcStatement")}
+            </a>
+          </Button>
           <Button onClick={openCreate} className="gap-2">
             <Plus className="h-4 w-4" />{t("common.add")} {t("pages.suppliers.supplier")}
           </Button>

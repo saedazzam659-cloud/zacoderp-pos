@@ -2,7 +2,7 @@ import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import {
   ChevronLeft, ChevronRight, FileText, Wallet, AlertTriangle, Truck, Package,
-  CalendarRange, TrendingUp, RotateCcw, ShoppingCart,
+  CalendarRange, TrendingUp, RotateCcw, ShoppingCart, CreditCard,
 } from "lucide-react";
 
 export default function PurchaseReportsHub() {
@@ -18,6 +18,7 @@ export default function PurchaseReportsHub() {
     { href: "/purchasing/reports/purchases-by-period",    title: t("purchasingReports.hub.purchasesByPeriod"),     desc: t("purchasingReports.hub.purchasesByPeriodDesc"),     icon: CalendarRange,  color: "from-cyan-50 to-cyan-100/40 text-cyan-700 border-cyan-200" },
     { href: "/purchasing/reports/top-suppliers",          title: t("purchasingReports.hub.topSuppliers"),          desc: t("purchasingReports.hub.topSuppliersDesc"),          icon: TrendingUp,     color: "from-rose-50 to-rose-100/40 text-rose-700 border-rose-200" },
     { href: "/purchasing/reports/returns",                title: t("purchasingReports.hub.purchaseReturns"),       desc: t("purchasingReports.hub.purchaseReturnsDesc"),       icon: RotateCcw,      color: "from-orange-50 to-orange-100/40 text-orange-700 border-orange-200" },
+    { href: "/purchasing/reports/lc-statement",           title: t("purchasingReports.hub.lcStatement"),           desc: t("purchasingReports.hub.lcStatementDesc"),           icon: CreditCard,     color: "from-fuchsia-50 to-fuchsia-100/40 text-fuchsia-700 border-fuchsia-200" },
   ];
 
   return (

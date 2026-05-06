@@ -245,6 +245,7 @@ import PurchasesByItem         from "@/pages/purchasing/reports/PurchasesByItem"
 import PurchasesByPeriod       from "@/pages/purchasing/reports/PurchasesByPeriod";
 import TopSuppliers            from "@/pages/purchasing/reports/TopSuppliers";
 import PurchaseReturnsReport   from "@/pages/purchasing/reports/PurchaseReturnsReport";
+import LcStatement             from "@/pages/purchasing/reports/LcStatement";
 
 import CashReportsHub          from "@/pages/cash/reports/CashReportsHub";
 import CashBalances            from "@/pages/cash/reports/CashBalances";
@@ -719,6 +720,8 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/purchases-by-period"  module="purchase_invoices"  component={PurchasesByPeriod} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/top-suppliers"        module="suppliers"          component={TopSuppliers} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/returns"              module="purchase_returns"   component={PurchaseReturnsReport} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/reports/lc-statement"          module="purchase_invoices"  component={LcStatement} />}
+            {!isSuperAdmin && <PermRoute path="/suppliers/reports/lc-statement"           module="purchase_invoices"  component={LcStatement} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports"                      module="purchase_invoices"  component={PurchaseReportsHub} />}
 
             {!isSuperAdmin && <PermRoute path="/cash/reports/cash-balances"      module="cash_boxes"        component={CashBalances} />}

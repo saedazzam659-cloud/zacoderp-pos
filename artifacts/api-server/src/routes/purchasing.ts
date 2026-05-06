@@ -300,6 +300,131 @@ router.get("/letters-of-credit", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
+// NOTE: This route MUST be declared BEFORE `/letters-of-credit/:id` —
+// Express matches in registration order and `:id` would otherwise swallow
+// `/statement` as id="statement" and return 404.
+// ─── LC Statement (تقرير كشف حساب الاعتمادات) ─────────────────────────
+//   GET /letters-of-credit/statement
+//     ?from=YYYY-MM-DD          (filter by lcDate ≥ from)
+//     ?to=YYYY-MM-DD            (filter by lcDate ≤ to)
+//     ?supplierId=NN            (only LCs for this supplier)
+//     ?status=open|partial|closed
+// Returns one row per LC with full details + per-expense breakdown +
+// every linked posted purchase invoice, all converted to base currency
+// for grand-totals. Also includes top-level summary KPIs.
+router.get("/letters-of-credit/statement", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json({ rows: [], summary: null, baseCurrency: "SAR" }); return; }
+    const { from, to, supplierId, status } = req.query as Record<string, string>;
+    const baseCurrency = await getBaseCurrencyCode(cid);
+
+    const conds: any[] = [eq(lettersOfCreditTable.companyId, cid)];
+    if (from)       conds.push(sql`${lettersOfCreditTable.lcDate} >= ${from}`);
+    if (to)         conds.push(sql`${lettersOfCreditTable.lcDate} <= ${to}`);
+    if (supplierId) conds.push(eq(lettersOfCreditTable.supplierId, Number(supplierId)));
+    if (status && ["open","partial","closed"].includes(status)) {
+      conds.push(eq(lettersOfCreditTable.status, status as any));
+    }
+
+    const lcs = await db.select().from(lettersOfCreditTable)
+      .where(and(...conds))
+      .orderBy(desc(lettersOfCreditTable.lcDate), desc(lettersOfCreditTable.id));
+
+    if (lcs.length === 0) {
+      res.json({ rows: [], summary: { count: 0, totalBase: 0, expensesBase: 0, usedBase: 0, remainingBase: 0 }, baseCurrency });
+      return;
+    }
+
+    const lcIds = lcs.map(l => l.id);
+    const supplierIds = Array.from(new Set(lcs.map(l => l.supplierId).filter((v): v is number => v != null)));
+
+    const [allExpenses, allInvoices, allSuppliers] = await Promise.all([
+      db.select().from(lcExpensesTable)
+        .where(and(eq(lcExpensesTable.companyId, cid), inArray(lcExpensesTable.lcId, lcIds))),
+      db.select({
+          id:          purchaseInvoicesTable.id,
+          lcId:        purchaseInvoicesTable.lcId,
+          docNumber:   purchaseInvoicesTable.docNumber,
+          invoiceDate: purchaseInvoicesTable.invoiceDate,
+          totalAmount: purchaseInvoicesTable.totalAmount,
+          vatAmount:   purchaseInvoicesTable.vatAmount,
+          totalExpensesLoaded: purchaseInvoicesTable.totalExpensesLoaded,
+          currencyCode: purchaseInvoicesTable.currencyCode,
+          exchangeRate: purchaseInvoicesTable.exchangeRate,
+          status:      purchaseInvoicesTable.status,
+          supplierId:  purchaseInvoicesTable.supplierId,
+        })
+        .from(purchaseInvoicesTable)
+        .where(and(
+          eq(purchaseInvoicesTable.companyId, cid),
+          inArray(purchaseInvoicesTable.lcId, lcIds),
+        ))
+        .orderBy(asc(purchaseInvoicesTable.invoiceDate)),
+      supplierIds.length
+        ? db.select({ id: suppliersTable.id, nameAr: suppliersTable.nameAr, nameEn: suppliersTable.nameEn })
+            .from(suppliersTable)
+            .where(and(eq(suppliersTable.companyId, cid), inArray(suppliersTable.id, supplierIds)))
+        : Promise.resolve([] as any[]),
+    ]);
+
+    const expByLc = new Map<number, any[]>();
+    for (const e of allExpenses) {
+      const arr = expByLc.get(e.lcId) ?? [];
+      arr.push(e); expByLc.set(e.lcId, arr);
+    }
+    const invByLc = new Map<number, any[]>();
+    for (const i of allInvoices) {
+      if (i.lcId == null) continue;
+      const arr = invByLc.get(i.lcId) ?? [];
+      arr.push(i); invByLc.set(i.lcId, arr);
+    }
+    const supMap = new Map(allSuppliers.map(s => [s.id, s]));
+
+    const rows = lcs.map(lc => {
+      const enriched = enrichLcRow(lc, expByLc.get(lc.id) ?? [], baseCurrency);
+      const invs = invByLc.get(lc.id) ?? [];
+      const invoiceRows = invs.map(i => {
+        const total    = Number(i.totalAmount         || 0);
+        const vat      = Number(i.vatAmount           || 0);
+        const expLoad  = Number(i.totalExpensesLoaded || 0);
+        const goodsInv = total - expLoad;
+        const rate     = Number(i.exchangeRate || "1") || 1;
+        return {
+          ...i,
+          totalBase:        +(total    * rate).toFixed(2),
+          vatBase:          +(vat      * rate).toFixed(2),
+          expensesLoadedBase: +(expLoad  * rate).toFixed(2),
+          goodsBase:        +(goodsInv * rate).toFixed(2),
+        };
+      });
+      const usedBase     = invoiceRows
+        .filter(i => i.status === "posted")
+        .reduce((s, i) => s + i.goodsBase, 0);
+      const supplier = lc.supplierId ? supMap.get(lc.supplierId) ?? null : null;
+      return {
+        ...enriched,
+        supplierNameAr: supplier?.nameAr ?? null,
+        supplierNameEn: supplier?.nameEn ?? null,
+        invoices:       invoiceRows,
+        invoiceCount:   invoiceRows.length,
+        usedBaseFromInvoices: +usedBase.toFixed(2),
+      };
+    });
+
+    const summary = {
+      count:         rows.length,
+      totalBase:     +rows.reduce((s, r) => s + Number(r.totalAmountBase   || 0), 0).toFixed(2),
+      expensesBase:  +rows.reduce((s, r) => s + Number(r.totalExpensesBase || 0), 0).toFixed(2),
+      usedBase:      +rows.reduce((s, r) => s + Number(r.usedAmount        || 0), 0).toFixed(2),
+      remainingBase: +rows.reduce((s, r) => s + Number(r.remainingBase     || 0), 0).toFixed(2),
+      invoiceCount:  rows.reduce((s, r) => s + r.invoiceCount, 0),
+    };
+
+    res.json({ rows, summary, baseCurrency });
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
 router.get("/letters-of-credit/:id", async (req, res) => {
   try {
     const cid = getCid(req);
