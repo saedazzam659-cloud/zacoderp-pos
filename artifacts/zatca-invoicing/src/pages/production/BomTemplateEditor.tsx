@@ -68,7 +68,7 @@ export default function BomTemplateEditor() {
     (async () => {
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const itemsR = await fetch(`${API}/api/inventory/items?limit=5000`, { headers });
+        const itemsR = await fetch(`${API}/api/inventory/items?includeHidden=1&limit=5000`, { headers });
         const itemsJ = itemsR.ok ? await itemsR.json() : [];
         const all: Item[] = Array.isArray(itemsJ) ? itemsJ : (itemsJ.rows ?? []);
         if (!cancelled) setItems(all);
