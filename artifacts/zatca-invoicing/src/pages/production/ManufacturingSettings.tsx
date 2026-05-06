@@ -13,8 +13,9 @@ import { Settings2, Save, Warehouse, Calculator } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "";
 
-type Warehouse = { id: number; name: string };
+type Warehouse = { id: number; code?: string; nameAr?: string; nameEn?: string; name?: string };
 type Account = { id: number; code: string; nameAr: string };
+type CostCenter = { id: number; code: string; nameAr: string; isActive: boolean };
 type Settings = {
   defaultRawWarehouseId: number | null;
   defaultFinishedWarehouseId: number | null;
@@ -58,6 +59,7 @@ export default function ManufacturingSettings() {
   const [saving, setSaving] = useState(false);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [data, setData] = useState<Settings>(EMPTY);
 
   useEffect(() => {
@@ -67,17 +69,20 @@ export default function ManufacturingSettings() {
       setLoading(true);
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const [whR, acR, sR] = await Promise.all([
+        const [whR, acR, ccR, sR] = await Promise.all([
           fetch(`${API}/api/inventory/warehouses`, { headers }),
           fetch(`${API}/api/accounts?limit=2000`, { headers }),
+          fetch(`${API}/api/cost-centers`, { headers }),
           fetch(`${API}/api/production/manufacturing-settings`, { headers }),
         ]);
         const wh = whR.ok ? await whR.json() : [];
         const ac = acR.ok ? await acR.json() : [];
+        const cc = ccR.ok ? await ccR.json() : [];
         const s  = sR.ok  ? await sR.json()  : null;
         if (cancelled) return;
         setWarehouses(Array.isArray(wh) ? wh : (wh.rows ?? []));
         setAccounts(Array.isArray(ac) ? ac : (ac.rows ?? []));
+        setCostCenters(Array.isArray(cc) ? cc : (cc.rows ?? []));
         if (s) setData({ ...EMPTY, ...s });
       } catch (e: any) {
         toast({ title: "خطأ", description: e?.message, variant: "destructive" });
@@ -168,7 +173,7 @@ export default function ManufacturingSettings() {
             <NumSelect
               value={data.defaultRawWarehouseId}
               onChange={(v) => setData(d => ({ ...d, defaultRawWarehouseId: v }))}
-              options={warehouses.map(w => ({ value: String(w.id), label: w.name }))}
+              options={warehouses.map(w => ({ value: String(w.id), label: `${w.code ? w.code + " — " : ""}${w.nameAr || w.nameEn || w.name || `#${w.id}`}` }))}
             />
           </div>
           <div>
@@ -176,16 +181,30 @@ export default function ManufacturingSettings() {
             <NumSelect
               value={data.defaultFinishedWarehouseId}
               onChange={(v) => setData(d => ({ ...d, defaultFinishedWarehouseId: v }))}
-              options={warehouses.map(w => ({ value: String(w.id), label: w.name }))}
+              options={warehouses.map(w => ({ value: String(w.id), label: `${w.code ? w.code + " — " : ""}${w.nameAr || w.nameEn || w.name || `#${w.id}`}` }))}
             />
           </div>
           <div>
             <Label>مركز التكلفة الافتراضي</Label>
-            <Input
-              value={data.defaultCostCenter ?? ""}
-              onChange={(e) => setData(d => ({ ...d, defaultCostCenter: e.target.value || null }))}
-              placeholder="مثال: PROD-01"
-            />
+            <Select
+              value={data.defaultCostCenter == null || data.defaultCostCenter === "" ? "__none__" : data.defaultCostCenter}
+              onValueChange={(v) => setData(d => ({ ...d, defaultCostCenter: v === "__none__" ? null : v }))}
+            >
+              <SelectTrigger><SelectValue placeholder="— غير محدد —" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">— غير محدد —</SelectItem>
+                {costCenters
+                  .filter(c => c.isActive)
+                  .map(c => (
+                    <SelectItem key={c.id} value={c.code}>
+                      {c.code} — {c.nameAr}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            {costCenters.length === 0 && (
+              <p className="mt-1 text-xs text-amber-600">لا توجد مراكز تكلفة معرّفة بعد.</p>
+            )}
           </div>
         </CardContent>
       </Card>
