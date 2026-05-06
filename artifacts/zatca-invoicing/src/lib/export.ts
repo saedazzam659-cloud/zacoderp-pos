@@ -341,6 +341,293 @@ export function exportToPDF(
   }
 }
 
+// ─── Chart of Accounts External Print (Tree Style) ───────────────────────────
+// A specialized "external print" for the Chart of Accounts that renders a
+// rich, color-coded hierarchical tree instead of the generic table view.
+// Designed to look noticeably better than the standard sales/purchase
+// invoice prints — uses gradient header, summary cards per account type,
+// indented tree nodes with connectors, and per-type color borders.
+
+export interface CoaPrintAccount {
+  id: number;
+  parentId: number | null;
+  code: string;
+  nameAr: string;
+  nameEn?: string | null;
+  accountType: string;
+  level: number;
+  isPosting: boolean;
+  isActive: boolean;
+  balance: string; // pre-formatted by caller
+}
+
+export interface CoaPrintTypeMeta {
+  value: string;
+  label: string;
+  color: string;     // primary color for borders/text
+  bg: string;        // background tint for the type chip
+}
+
+export function printChartOfAccountsExternal(opts: {
+  accounts: CoaPrintAccount[];
+  types: CoaPrintTypeMeta[];
+  title: string;
+  subtitle?: string;
+  companyName?: string | null;
+  logo?: string | null;
+  autoPrint?: boolean;
+}) {
+  const { accounts, types, title, subtitle, companyName, logo, autoPrint = false } = opts;
+
+  const escape = (s: unknown) =>
+    String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+  const safeLogo = safeLogoSrc(logo);
+  const logoHtml = safeLogo
+    ? `<div class="logo-card"><img src="${safeLogo}" alt="" /></div>`
+    : "";
+
+  const today = new Date().toLocaleDateString("ar-SA-u-nu-latn", {
+    year: "numeric", month: "long", day: "numeric",
+  });
+
+  // ── Build hierarchy
+  const childrenIdx = new Map<number | null, CoaPrintAccount[]>();
+  for (const a of accounts) {
+    const k = a.parentId ?? null;
+    const arr = childrenIdx.get(k) || [];
+    arr.push(a);
+    childrenIdx.set(k, arr);
+  }
+  for (const [, arr] of childrenIdx) {
+    arr.sort((a, b) => a.code.localeCompare(b.code, "ar"));
+  }
+
+  const typeMap = new Map(types.map(t => [t.value, t]));
+
+  function renderNode(a: CoaPrintAccount, depth: number): string {
+    const meta = typeMap.get(a.accountType);
+    const color = meta?.color ?? "#64748b";
+    const bg = meta?.bg ?? "#f1f5f9";
+    const kids = childrenIdx.get(a.id) || [];
+    const indent = depth * 22;
+    const typeChip = meta
+      ? `<span class="type-chip" style="background:${bg};color:${color};border-color:${color}40;">${escape(meta.label)}</span>`
+      : "";
+    const postingBadge = a.isPosting
+      ? `<span class="badge badge-posting">ترحيل</span>`
+      : `<span class="badge badge-summary">إجمالي</span>`;
+    const activeDot = a.isActive
+      ? `<span class="dot dot-active" title="نشط"></span>`
+      : `<span class="dot dot-inactive" title="غير نشط"></span>`;
+
+    return `
+      <div class="node" style="margin-right:${indent}px;border-right:3px solid ${color};">
+        <div class="node-row">
+          <div class="node-left">
+            ${activeDot}
+            <span class="code">${escape(a.code)}</span>
+            <span class="name">${escape(a.nameAr)}</span>
+            ${a.nameEn ? `<span class="name-en">${escape(a.nameEn)}</span>` : ""}
+          </div>
+          <div class="node-right">
+            ${typeChip}
+            ${postingBadge}
+            <span class="balance">${escape(a.balance)}</span>
+          </div>
+        </div>
+        ${kids.map(c => renderNode(c, depth + 1)).join("")}
+      </div>`;
+  }
+
+  const roots = childrenIdx.get(null) || [];
+  // Accounts whose parent isn't in the visible set (e.g. when filtered) — surface as roots too.
+  const visibleIds = new Set(accounts.map(a => a.id));
+  const orphans = accounts.filter(a => a.parentId != null && !visibleIds.has(a.parentId));
+  const treeHtml = [...roots, ...orphans].map(r => renderNode(r, 0)).join("");
+
+  // ── Summary cards (one per account type)
+  const summaryCards = types.map(tp => {
+    const cnt = accounts.filter(a => a.accountType === tp.value).length;
+    return `
+      <div class="summary-card" style="border-color:${tp.color};background:${tp.bg};">
+        <div class="summary-label" style="color:${tp.color};">${escape(tp.label)}</div>
+        <div class="summary-value" style="color:${tp.color};">${cnt}</div>
+      </div>`;
+  }).join("");
+
+  const html = `<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="UTF-8"/>
+  <title>${escape(title)}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;600;700;800&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
+      direction: rtl;
+      font-size: 11pt;
+      color: #0f172a;
+      background: #f8fafc;
+    }
+    .header {
+      background: linear-gradient(135deg, #064e3b 0%, #166534 50%, #15803d 100%);
+      color: #fff;
+      padding: 22px 28px 18px;
+      text-align: center;
+      position: relative;
+      box-shadow: 0 4px 14px rgba(22, 101, 52, 0.25);
+    }
+    .header::after {
+      content: ""; position: absolute; left: 0; right: 0; bottom: 0;
+      height: 4px;
+      background: linear-gradient(90deg, #fbbf24, #f59e0b, #fbbf24);
+    }
+    .logo-card {
+      background: #fff; border-radius: 10px; padding: 6px 10px;
+      display: inline-block; margin-bottom: 10px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    }
+    .logo-card img { max-height: 56px; max-width: 180px; object-fit: contain; display: block; }
+    .header h1 { font-size: 20pt; font-weight: 800; margin-bottom: 4px; letter-spacing: 0.3px; }
+    .header .company { font-size: 12pt; font-weight: 600; opacity: 0.95; margin-bottom: 2px; }
+    .header .subtitle { font-size: 10pt; opacity: 0.85; }
+    .meta-bar {
+      background: #ecfdf5;
+      border-bottom: 1px solid #a7f3d0;
+      padding: 9px 28px;
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 9.5pt; color: #14532d; font-weight: 500;
+    }
+    .meta-bar .meta-item { display: inline-flex; align-items: center; gap: 6px; }
+    .summary-grid {
+      padding: 16px 24px 4px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+    }
+    .summary-card {
+      border: 1.5px solid;
+      border-radius: 8px;
+      padding: 10px 14px;
+      text-align: center;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .summary-label { font-size: 9.5pt; font-weight: 600; margin-bottom: 4px; }
+    .summary-value { font-size: 18pt; font-weight: 800; line-height: 1; }
+    .tree {
+      padding: 14px 24px 24px;
+      background: #fff;
+      margin: 8px 16px 16px;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    }
+    .node {
+      padding-right: 10px;
+      margin-bottom: 4px;
+      border-radius: 0 6px 6px 0;
+      background: #fafafa;
+    }
+    .node-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 10px;
+      gap: 10px;
+      border-bottom: 1px dashed #e2e8f0;
+    }
+    .node-left { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+    .node-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .code {
+      font-family: 'Courier New', monospace;
+      font-weight: 700; font-size: 10pt;
+      background: #f1f5f9; color: #334155;
+      padding: 2px 8px; border-radius: 4px;
+      direction: ltr;
+    }
+    .name { font-weight: 600; font-size: 10.5pt; color: #0f172a; }
+    .name-en { font-size: 9pt; color: #64748b; font-style: italic; direction: ltr; }
+    .type-chip {
+      font-size: 8.5pt; font-weight: 600;
+      padding: 2px 8px; border-radius: 10px;
+      border: 1px solid;
+    }
+    .badge {
+      font-size: 8pt; font-weight: 600;
+      padding: 2px 7px; border-radius: 10px;
+    }
+    .badge-posting { background: #dbeafe; color: #1d4ed8; }
+    .badge-summary { background: #fef3c7; color: #92400e; }
+    .balance {
+      font-family: 'Courier New', monospace;
+      font-weight: 700; font-size: 10pt;
+      color: #166534;
+      direction: ltr;
+      min-width: 90px; text-align: left;
+    }
+    .dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    }
+    .dot-active { background: #22c55e; box-shadow: 0 0 0 2px #bbf7d0; }
+    .dot-inactive { background: #cbd5e1; }
+    .footer {
+      text-align: center; padding: 12px 24px 20px;
+      font-size: 8.5pt; color: #64748b;
+    }
+    @media print {
+      body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .header, .meta-bar, .summary-card, .type-chip, .badge, .code, .dot {
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+      }
+      .tree { box-shadow: none; margin: 8px 0; }
+      .node { page-break-inside: avoid; break-inside: avoid; }
+    }
+    @page {
+      margin: 12mm 10mm 18mm 10mm;
+      size: A4 portrait;
+      @bottom-center {
+        content: "صفحة " counter(page) " من " counter(pages);
+        font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
+        font-size: 9pt;
+        color: #475569;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    ${logoHtml}
+    ${companyName ? `<div class="company">${escape(companyName)}</div>` : ""}
+    <h1>${escape(title)}</h1>
+    ${subtitle ? `<div class="subtitle">${escape(subtitle)}</div>` : ""}
+  </div>
+  <div class="meta-bar">
+    <span class="meta-item">📅 ${today}</span>
+    <span class="meta-item">📊 إجمالي الحسابات: <strong>${accounts.length}</strong></span>
+  </div>
+  <div class="summary-grid">${summaryCards}</div>
+  <div class="tree">
+    ${treeHtml || '<div style="text-align:center;padding:40px;color:#94a3b8;">لا توجد حسابات للعرض</div>'}
+  </div>
+  <div class="footer">
+    نظام الفاتورة الإلكترونية السعودية &nbsp;|&nbsp; ${escape(title)} &nbsp;|&nbsp; ${today}
+  </div>
+  <script>
+    ${autoPrint ? `window.onload = function() { setTimeout(function() { window.print(); }, 600); };` : ""}
+  </script>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, "_blank");
+  if (win) {
+    win.addEventListener("afterprint", () => URL.revokeObjectURL(url));
+  }
+}
+
 // ─── Print HTML Sections (for complex reports like VAT Declaration) ───────────
 
 export interface PrintSection {

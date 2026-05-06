@@ -14,8 +14,9 @@ import ExportButtons from "@/components/ExportButtons";
 import AccountsImportPanel from "@/components/AccountsImportPanel";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { TablePagination, usePagination } from "@/components/TablePagination";
-import { Plus, Pencil, Trash2, Copy, BookOpen, Search, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Pencil, Trash2, Copy, BookOpen, Search, ChevronLeft, ChevronRight, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { printChartOfAccountsExternal, type CoaPrintAccount, type CoaPrintTypeMeta } from "@/lib/export";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -41,11 +42,11 @@ export default function ChartOfAccounts() {
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
 
   const ACCOUNT_TYPES = [
-    { value: "asset",     label: t("chartOfAccounts.typeAsset"),     badgeClass: "bg-blue-50 text-blue-700 border-blue-200" },
-    { value: "liability", label: t("chartOfAccounts.typeLiability"), badgeClass: "bg-red-50 text-red-700 border-red-200" },
-    { value: "equity",    label: t("chartOfAccounts.typeEquity"),    badgeClass: "bg-purple-50 text-purple-700 border-purple-200" },
-    { value: "revenue",   label: t("chartOfAccounts.typeRevenue"),   badgeClass: "bg-green-50 text-green-700 border-green-200" },
-    { value: "expense",   label: t("chartOfAccounts.typeExpense"),   badgeClass: "bg-orange-50 text-orange-700 border-orange-200" },
+    { value: "asset",     label: t("chartOfAccounts.typeAsset"),     badgeClass: "bg-blue-50 text-blue-700 border-blue-200",       printColor: "#1d4ed8", printBg: "#eff6ff" },
+    { value: "liability", label: t("chartOfAccounts.typeLiability"), badgeClass: "bg-red-50 text-red-700 border-red-200",          printColor: "#dc2626", printBg: "#fef2f2" },
+    { value: "equity",    label: t("chartOfAccounts.typeEquity"),    badgeClass: "bg-purple-50 text-purple-700 border-purple-200", printColor: "#7c3aed", printBg: "#faf5ff" },
+    { value: "revenue",   label: t("chartOfAccounts.typeRevenue"),   badgeClass: "bg-green-50 text-green-700 border-green-200",    printColor: "#15803d", printBg: "#f0fdf4" },
+    { value: "expense",   label: t("chartOfAccounts.typeExpense"),   badgeClass: "bg-orange-50 text-orange-700 border-orange-200", printColor: "#ea580c", printBg: "#fff7ed" },
   ];
   const TYPE_MAP = Object.fromEntries(ACCOUNT_TYPES.map(t => [t.value, t]));
 
@@ -215,14 +216,57 @@ export default function ChartOfAccounts() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <BookOpen className="h-6 w-6 text-primary" />{t("chartOfAccounts.title")}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">{t("chartOfAccounts.subtitle")}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap items-center">
+          <Button
+            size="sm"
+            className="gap-2 bg-gradient-to-l from-emerald-700 to-green-600 hover:from-emerald-800 hover:to-green-700 text-white shadow-md hover:shadow-lg transition-all border-0"
+            onClick={() => {
+              const printAccounts: CoaPrintAccount[] = accounts.map((a: any) => {
+                const bal = computeBalance(a.id);
+                const balStr = Math.abs(bal) < 0.005
+                  ? "0.00"
+                  : `${fmt(Math.abs(bal))} ${bal < 0 ? t("accountingReports.creditShort") : t("accountingReports.debitShort")}`;
+                return {
+                  id: a.id,
+                  parentId: a.parentId ?? null,
+                  code: a.code,
+                  nameAr: a.nameAr,
+                  nameEn: a.nameEn,
+                  accountType: a.accountType,
+                  level: a.level,
+                  isPosting: !!a.isPosting,
+                  isActive: !!a.isActive,
+                  balance: balStr,
+                };
+              });
+              const printTypes: CoaPrintTypeMeta[] = ACCOUNT_TYPES.map(tp => ({
+                value: tp.value,
+                label: tp.label,
+                color: tp.printColor,
+                bg: tp.printBg,
+              }));
+              printChartOfAccountsExternal({
+                accounts: printAccounts,
+                types: printTypes,
+                title: t("chartOfAccounts.export_title"),
+                subtitle: t("chartOfAccounts.subtitle"),
+                companyName: user?.company?.name ?? null,
+                logo: user?.company?.logo ?? null,
+                autoPrint: true,
+              });
+            }}
+            title={t("chartOfAccounts.export_title")}
+          >
+            <Printer className="h-4 w-4" />
+            طباعة الجرد الخارجي
+          </Button>
           <ExportButtons rows={exportRows} columns={EXPORT_COLS} filename={`${t("chartOfAccounts.filename_prefix")}-${new Date().toISOString().slice(0,10)}`} title={t("chartOfAccounts.export_title")} />
           <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
             <Plus className="h-4 w-4" />{t("chartOfAccounts.newAccount")}
@@ -331,6 +375,7 @@ export default function ChartOfAccounts() {
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
             <tr>
+              <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-32 bg-primary/5 border-l-2 border-primary/20">{t("chartOfAccounts.actions")}</th>
               <th className="px-4 py-3 text-start font-semibold text-muted-foreground w-28">{t("chartOfAccounts.accountCode")}</th>
               <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("accountingReports.accountName")}</th>
               <th className="px-4 py-3 text-start font-semibold text-muted-foreground hidden md:table-cell">{t("chartOfAccounts.nameEnHeader")}</th>
@@ -340,7 +385,6 @@ export default function ChartOfAccounts() {
               <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-20 hidden sm:table-cell">{t("chartOfAccounts.posting")}</th>
               <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-20">{t("common.status")}</th>
               <th className="px-4 py-3 text-end font-semibold text-muted-foreground w-32">{t("accountingReports.balance")}</th>
-              <th className="px-4 py-3 w-24 font-semibold text-muted-foreground">{t("chartOfAccounts.actions")}</th>
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -363,6 +407,37 @@ export default function ChartOfAccounts() {
                   const parentDisplay = parentAcc ? (isRtl ? parentAcc.nameAr : (parentAcc.nameEn || parentAcc.nameAr)) : "";
                   return (
                     <tr key={a.id} className="hover:bg-muted/30">
+                      <td className="px-3 py-3 bg-primary/[0.03] border-l-2 border-primary/10">
+                        <div className="flex gap-1.5 justify-center">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8 bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 hover:text-blue-800 shadow-sm"
+                            onClick={() => handleEdit(a)}
+                            title={t("chartOfAccounts.editAccount")}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8 bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700 hover:text-amber-800 shadow-sm"
+                            onClick={() => handleCopy(a)}
+                            title={t("chartOfAccounts.copyAccount")}
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8 bg-red-50 hover:bg-red-100 border-red-200 text-red-700 hover:text-red-800 shadow-sm"
+                            onClick={() => { if (confirm(t("chartOfAccounts.confirmDelete"))) deleteMut.mutate(a.id); }}
+                            title={t("common.delete")}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </td>
                       <td className="px-4 py-3">
                         <span className="font-mono text-xs bg-muted px-2 py-0.5 rounded border">{a.code}</span>
                       </td>
@@ -404,21 +479,6 @@ export default function ChartOfAccounts() {
                             </span>
                           );
                         })()}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(a)} title={t("chartOfAccounts.editAccount")}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleCopy(a)} title={t("chartOfAccounts.copyAccount")}>
-                            <Copy className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive"
-                            onClick={() => { if (confirm(t("chartOfAccounts.confirmDelete"))) deleteMut.mutate(a.id); }}
-                            title={t("common.delete")}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
                       </td>
                     </tr>
                   );
