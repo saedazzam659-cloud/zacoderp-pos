@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Settings2, Save, Warehouse, Calculator } from "lucide-react";
+import { Settings2, Save, Warehouse, Calculator, Sparkles } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -61,6 +61,8 @@ export default function ManufacturingSettings() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [data, setData] = useState<Settings>(EMPTY);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiReasons, setAiReasons] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!token) return;
@@ -92,6 +94,41 @@ export default function ManufacturingSettings() {
     })();
     return () => { cancelled = true; };
   }, [token, toast]);
+
+  async function aiSuggest() {
+    setAiBusy(true);
+    try {
+      const r = await fetch(`${API}/api/production/manufacturing-settings/ai-suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({}),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      const sug = j.suggestions ?? {};
+      const patch: Partial<Settings> = {};
+      const reasons: Record<string, string> = {};
+      let filled = 0;
+      for (const f of ACCOUNT_FIELDS) {
+        const v = sug[f.key];
+        if (v && typeof v.id === "number") {
+          (patch as any)[f.key] = v.id;
+          filled++;
+        }
+        if (v?.reason) reasons[f.key] = v.reason;
+      }
+      setData(d => ({ ...d, ...patch }));
+      setAiReasons(reasons);
+      toast({
+        title: filled > 0 ? `✓ تم اقتراح ${filled} من ${ACCOUNT_FIELDS.length} حسابات` : "لم يتمكن الذكاء الاصطناعي من اقتراح حسابات",
+        description: filled > 0 ? "راجع الاقتراحات ثم اضغط حفظ." : "تأكد من وجود حسابات قابلة للترحيل في دليل الحسابات.",
+      });
+    } catch (e: any) {
+      toast({ title: "خطأ", description: e?.message, variant: "destructive" });
+    } finally {
+      setAiBusy(false);
+    }
+  }
 
   async function save() {
     setSaving(true);
@@ -156,10 +193,23 @@ export default function ManufacturingSettings() {
             </p>
           </div>
         </div>
-        <Button onClick={save} disabled={saving} data-testid="btn-save-mfg-settings">
-          <Save className="h-4 w-4 me-1" />
-          {saving ? "جاري الحفظ…" : "حفظ"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={aiSuggest}
+            disabled={aiBusy || saving || accounts.length === 0}
+            data-testid="btn-ai-suggest-mfg-accounts"
+            className="border-violet-300 text-violet-700 hover:bg-violet-50"
+          >
+            <Sparkles className={`h-4 w-4 me-1 ${aiBusy ? "animate-pulse" : ""}`} />
+            {aiBusy ? "يحلّل دليل الحسابات…" : "اقتراح الحسابات بالذكاء الاصطناعي"}
+          </Button>
+          <Button onClick={save} disabled={saving} data-testid="btn-save-mfg-settings">
+            <Save className="h-4 w-4 me-1" />
+            {saving ? "جاري الحفظ…" : "حفظ"}
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -217,13 +267,24 @@ export default function ManufacturingSettings() {
         <CardContent className="grid gap-4 md:grid-cols-2">
           {ACCOUNT_FIELDS.map(f => (
             <div key={String(f.key)}>
-              <Label>{f.label}</Label>
+              <Label className="flex items-center gap-1">
+                {f.label}
+                {aiReasons[f.key as string] && (
+                  <Sparkles className="h-3 w-3 text-violet-500" aria-label="مقترح بالذكاء الاصطناعي" />
+                )}
+              </Label>
               <NumSelect
                 value={(data[f.key] as number | null) ?? null}
                 onChange={(v) => setData(d => ({ ...d, [f.key]: v }))}
                 options={accountOptions}
               />
               <p className="mt-1 text-xs text-slate-500">{f.hint}</p>
+              {aiReasons[f.key as string] && (
+                <p className="mt-1 text-xs text-violet-600">
+                  <Sparkles className="inline h-3 w-3 me-1" />
+                  {aiReasons[f.key as string]}
+                </p>
+              )}
             </div>
           ))}
         </CardContent>

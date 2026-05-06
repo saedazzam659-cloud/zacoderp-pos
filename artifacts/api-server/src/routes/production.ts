@@ -1523,6 +1523,133 @@ router.get("/dashboard", async (req, res) => {
 // PHASE A — Manufacturing Settings (per-company defaults)
 // ═══════════════════════════════════════════════════════════════════════════
 
+// AI helper — given the company's chart of accounts, suggests the best
+// matching account for each of the 7 manufacturing GL roles. Returns IDs
+// (no auto-save: the UI applies them, user reviews & saves).
+router.post("/manufacturing-settings/ai-suggest", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+    const OPENAI_KEY = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+    if (!OPENAI_BASE || !OPENAI_KEY) {
+      res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير متاحة" });
+      return;
+    }
+    // Pull only postable, active accounts; cap to keep prompt small.
+    const accounts = await db
+      .select({
+        id: accountsTable.id,
+        code: accountsTable.code,
+        nameAr: accountsTable.nameAr,
+        nameEn: accountsTable.nameEn,
+        accountType: accountsTable.accountType,
+        isPosting: accountsTable.isPosting,
+        isActive: accountsTable.isActive,
+      })
+      .from(accountsTable)
+      .where(eq(accountsTable.companyId, cid))
+      .orderBy(asc(accountsTable.code));
+    const candidates = accounts
+      .filter((a) => a.isActive && a.isPosting)
+      .slice(0, 400);
+    if (candidates.length === 0) {
+      res.status(400).json({ error: "لا توجد حسابات قابلة للترحيل" });
+      return;
+    }
+    const list = candidates
+      .map(
+        (a) =>
+          `${a.id}|${a.code}|${a.accountType}|${a.nameAr}${a.nameEn ? ` / ${a.nameEn}` : ""}`,
+      )
+      .join("\n");
+
+    const ROLES: Array<{ key: string; label: string; hint: string }> = [
+      { key: "defaultWipAccountId",            label: "WIP — Work In Process",  hint: "أصل: إنتاج تحت التشغيل / بضاعة قيد الصنع" },
+      { key: "defaultRawInventoryAccountId",   label: "Raw Materials Inventory", hint: "أصل: مخزون خامات / مواد أولية" },
+      { key: "defaultFinishedGoodsAccountId",  label: "Finished Goods Inventory",hint: "أصل: مخزون البضاعة التامة / المنتجات الجاهزة" },
+      { key: "defaultLaborAccountId",          label: "Direct Labor",            hint: "مصروف: أجور إنتاج مباشرة" },
+      { key: "defaultOverheadAccountId",       label: "Manufacturing Overhead",  hint: "مصروف: تكاليف صناعية غير مباشرة" },
+      { key: "defaultVarianceAccountId",       label: "Production Variance",     hint: "مصروف/إيراد: فروق تكلفة الإنتاج" },
+      { key: "defaultWasteAccountId",          label: "Production Waste / Scrap",hint: "مصروف: هالك / فاقد إنتاج" },
+    ];
+
+    const systemPrompt = `أنت مستشار محاسبي خبير في ERP صناعي بالسعودية. ستحصل على دليل حسابات الشركة وقائمة بسبعة أدوار محاسبية للإنتاج. اختر أنسب حساب id من القائمة لكل دور. قواعد:
+- يجب أن يكون الـid من القائمة الفعلية المُعطاة (لا تخترع).
+- WIP/خامات/تامة يجب أن تكون نوع asset.
+- الأجور/الصناعية غير المباشرة/الفروق/الهالك يجب أن تكون نوع expense.
+- إن لم يوجد حساب مناسب لدور ما، أعد null لذلك الدور.
+- يمكن أن يتكرر نفس الـid في أكثر من دور إن كان مناسباً (نادر).
+ردّ بصيغة JSON فقط بهذا الشكل:
+{
+  "defaultWipAccountId":            { "id": <number|null>, "reason": "<سبب قصير بالعربية>" },
+  "defaultRawInventoryAccountId":   { "id": <number|null>, "reason": "..." },
+  "defaultFinishedGoodsAccountId":  { "id": <number|null>, "reason": "..." },
+  "defaultLaborAccountId":          { "id": <number|null>, "reason": "..." },
+  "defaultOverheadAccountId":       { "id": <number|null>, "reason": "..." },
+  "defaultVarianceAccountId":       { "id": <number|null>, "reason": "..." },
+  "defaultWasteAccountId":          { "id": <number|null>, "reason": "..." }
+}`;
+
+    const userMsg =
+      `الأدوار المطلوب اختيار حساب لكل منها:\n` +
+      ROLES.map((r) => `- ${r.key} → ${r.label} (${r.hint})`).join("\n") +
+      `\n\nدليل الحسابات (id|code|type|name):\n${list}`;
+
+    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        max_completion_tokens: 1500,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMsg },
+        ],
+      }),
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      res
+        .status(502)
+        .json({ error: `فشل الذكاء الاصطناعي: ${r.status} ${txt.slice(0, 200)}` });
+      return;
+    }
+    const data: any = await r.json();
+    const content: string = data?.choices?.[0]?.message?.content ?? "{}";
+    let parsed: any = {};
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      /* ignore */
+    }
+    // Validate every suggested id is actually one of our candidates (security
+    // + safety). Drop any hallucinated id.
+    const validIds = new Set(candidates.map((c) => c.id));
+    const out: Record<string, { id: number | null; reason: string; account?: any }> = {};
+    for (const role of ROLES) {
+      const v = parsed?.[role.key] ?? {};
+      const id = Number.isFinite(Number(v?.id)) ? Number(v.id) : null;
+      const okId = id && validIds.has(id) ? id : null;
+      const acc = okId ? candidates.find((c) => c.id === okId) : undefined;
+      out[role.key] = {
+        id: okId,
+        reason: String(v?.reason ?? ""),
+        account: acc
+          ? { id: acc.id, code: acc.code, nameAr: acc.nameAr, accountType: acc.accountType }
+          : undefined,
+      };
+    }
+    res.json({ suggestions: out, source: "ai" });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get("/manufacturing-settings", async (req, res) => {
   try {
     const cid = guard(req, res);
