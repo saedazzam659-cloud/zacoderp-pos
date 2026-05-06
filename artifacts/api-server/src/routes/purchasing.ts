@@ -11,7 +11,7 @@ import {
   receiptVouchersTable, paymentVouchersTable,
   currenciesTable,
 } from "@workspace/db";
-import { eq, and, asc, desc, sql } from "drizzle-orm";
+import { eq, and, asc, desc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread } from "../middleware/auth.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
@@ -1119,8 +1119,65 @@ router.delete("/purchase-invoices/:id", async (req, res) => {
         .where(and(eq(goodsReceiptsTable.id, grnId), eq(goodsReceiptsTable.companyId, cid)));
     }
 
+    // If this invoice was created by converting a purchase order, snap that
+    // PO back to "confirmed" and clear its convertedInvoiceId so it doesn't
+    // dangle pointing at a non-existent invoice. Without this fix the source
+    // PO is stuck in "converted" forever (status badge shows "محوّلة") even
+    // though no real invoice exists, blocking unconfirm / re-convert.
+    const sourcePOs = await db.select({ id: purchaseOrdersTable.id })
+      .from(purchaseOrdersTable)
+      .where(and(
+        eq(purchaseOrdersTable.companyId, cid),
+        eq(purchaseOrdersTable.convertedInvoiceId, id),
+      ));
+    if (sourcePOs.length) {
+      await db.update(purchaseOrdersTable)
+        .set({ status: "confirmed", convertedInvoiceId: null, updatedAt: new Date() })
+        .where(and(
+          eq(purchaseOrdersTable.companyId, cid),
+          eq(purchaseOrdersTable.convertedInvoiceId, id),
+        ));
+    }
+
     await db.delete(purchaseInvoicesTable).where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
-    res.json({ ok: true });
+    res.json({ ok: true, restoredPurchaseOrderIds: sourcePOs.map(p => p.id) });
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
+// One-shot self-heal endpoint: scans for purchase orders stuck in
+// status="converted" whose convertedInvoiceId no longer points to a real
+// purchase invoice (the invoice was deleted before the fix above shipped),
+// and snaps them back to "confirmed". Idempotent — safe to call repeatedly.
+router.post("/purchase-orders/heal-orphan-converted", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const candidates = await db.select({
+      id: purchaseOrdersTable.id,
+      convertedInvoiceId: purchaseOrdersTable.convertedInvoiceId,
+    }).from(purchaseOrdersTable).where(and(
+      eq(purchaseOrdersTable.companyId, cid),
+      eq(purchaseOrdersTable.status, "converted"),
+    ));
+    const orphanIds: number[] = [];
+    for (const po of candidates) {
+      if (!po.convertedInvoiceId) { orphanIds.push(po.id); continue; }
+      const [inv] = await db.select({ id: purchaseInvoicesTable.id })
+        .from(purchaseInvoicesTable)
+        .where(and(
+          eq(purchaseInvoicesTable.id, po.convertedInvoiceId),
+          eq(purchaseInvoicesTable.companyId, cid),
+        ));
+      if (!inv) orphanIds.push(po.id);
+    }
+    if (orphanIds.length) {
+      await db.update(purchaseOrdersTable)
+        .set({ status: "confirmed", convertedInvoiceId: null, updatedAt: new Date() })
+        .where(and(
+          eq(purchaseOrdersTable.companyId, cid),
+          inArray(purchaseOrdersTable.id, orphanIds),
+        ));
+    }
+    res.json({ healed: orphanIds.length, orderIds: orphanIds });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
