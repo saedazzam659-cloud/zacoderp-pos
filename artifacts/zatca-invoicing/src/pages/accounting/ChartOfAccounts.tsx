@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useFormatters } from "@/lib/format";
@@ -73,6 +73,7 @@ export default function ChartOfAccounts() {
   const [form, setForm]             = useState<any>(EMPTY);
   const [editId, setEditId]         = useState<number | null>(null);
   const [showForm, setShowForm]     = useState(false);
+  const codeInputRef                = useRef<HTMLInputElement | null>(null);
   const [viewMode, setViewMode]     = useState<"tree" | "table">(() => {
     if (typeof window === "undefined") return "tree";
     return (localStorage.getItem("coa.viewMode") as "tree" | "table") || "tree";
@@ -197,9 +198,49 @@ export default function ChartOfAccounts() {
     setShowForm(true);
   }
 
+  // Suggest the next code in the SAME sequence as the source account.
+  // Strategy:
+  //   1. Look at the source's prefix (everything except the trailing digits).
+  //   2. Among all sibling accounts (same parentId) that share that prefix,
+  //      find the highest trailing-numeric suffix.
+  //   3. Return prefix + (max+1) padded to the original suffix width
+  //      (so "1010001" → "1010002", "411-05" → "411-06").
+  //   4. If we land on something that already exists (siblings don't capture
+  //      cross-parent collisions, e.g. shared global codes), keep incrementing
+  //      until we find a free code or bail out after 1000 tries.
+  // Falls back to source code + "-1" if the source has no trailing digits.
+  function suggestNextCode(srcCode: string, parentId: number | null): string {
+    if (!srcCode) return "";
+    const m = String(srcCode).match(/^(.*?)(\d+)$/);
+    if (!m) return `${srcCode}-1`;
+    const [, prefix, digits] = m;
+    const width = digits.length;
+
+    // All taken codes — siblings AND the rest of the chart (defensive).
+    const allCodes  = new Set<string>(accounts.map((x: any) => String(x.code)));
+    const siblings  = accounts.filter((x: any) => (x.parentId ?? null) === parentId);
+
+    // Highest sibling suffix that shares our prefix.
+    let maxN = parseInt(digits, 10);
+    for (const s of siblings) {
+      const sm = String(s.code ?? "").match(/^(.*?)(\d+)$/);
+      if (!sm || sm[1] !== prefix) continue;
+      const n = parseInt(sm[2], 10);
+      if (Number.isFinite(n) && n > maxN) maxN = n;
+    }
+
+    for (let i = 1; i <= 1000; i++) {
+      const candidate = prefix + String(maxN + i).padStart(width, "0");
+      if (!allCodes.has(candidate)) return candidate;
+    }
+    return prefix + String(maxN + 1).padStart(width, "0");
+  }
+
   function handleCopy(a: any) {
+    const parentIdNum = a.parentId ?? null;
+    const nextCode    = suggestNextCode(a.code ?? "", parentIdNum);
     setForm({
-      code:            "",
+      code:            nextCode,
       nameAr:          a.nameAr ?? "",
       nameEn:          a.nameEn ?? "",
       accountType:     a.accountType ?? "asset",
@@ -213,6 +254,11 @@ export default function ChartOfAccounts() {
     });
     setEditId(null);
     setShowForm(true);
+    // Defer to next tick so the dialog has rendered the input before we focus.
+    setTimeout(() => {
+      const el = codeInputRef.current;
+      if (el) { el.focus(); el.select(); }
+    }, 80);
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -429,7 +475,7 @@ export default function ChartOfAccounts() {
         >
           <FormGrid>
             <Field label={t("chartOfAccounts.accountCode")} required>
-              <Input placeholder={t("chartOfAccounts.placeholderCode")} value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} />
+              <Input ref={codeInputRef} placeholder={t("chartOfAccounts.placeholderCode")} value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} />
             </Field>
             <Field label={t("chartOfAccounts.accountType")} required>
               <SearchCombobox
