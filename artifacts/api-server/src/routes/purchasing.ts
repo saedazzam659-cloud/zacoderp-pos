@@ -339,7 +339,7 @@ router.get("/letters-of-credit/statement", async (req, res) => {
     const lcIds = lcs.map(l => l.id);
     const supplierIds = Array.from(new Set(lcs.map(l => l.supplierId).filter((v): v is number => v != null)));
 
-    const [allExpenses, allInvoices, allSuppliers] = await Promise.all([
+    const [allExpenses, allInvoices, allSuppliers, allBanks, allCashBoxes, allTransferEntries] = await Promise.all([
       db.select().from(lcExpensesTable)
         .where(and(eq(lcExpensesTable.companyId, cid), inArray(lcExpensesTable.lcId, lcIds))),
       db.select({
@@ -366,7 +366,115 @@ router.get("/letters-of-credit/statement", async (req, res) => {
             .from(suppliersTable)
             .where(and(eq(suppliersTable.companyId, cid), inArray(suppliersTable.id, supplierIds)))
         : Promise.resolve([] as any[]),
+      // Bank accounts → keyed by their GL accountId so we can map
+      // a journal-entry-line's accountId back to "this is bank X".
+      db.select({ id: bankAccountsTable.id, accountId: bankAccountsTable.accountId,
+                  nameAr: bankAccountsTable.nameAr, nameEn: bankAccountsTable.nameEn,
+                  bankName: bankAccountsTable.bankName })
+        .from(bankAccountsTable)
+        .where(eq(bankAccountsTable.companyId, cid)),
+      db.select({ id: cashBoxesTable.id, accountId: cashBoxesTable.accountId,
+                  nameAr: cashBoxesTable.nameAr, nameEn: cashBoxesTable.nameEn })
+        .from(cashBoxesTable)
+        .where(eq(cashBoxesTable.companyId, cid)),
+      // LC funding / expense-payment journal entries — tagged in their
+      // description with [LC#<id>] and optionally [LCE#<expenseId>] by the
+      // LC funding mutation. We pull every such entry for this company,
+      // then filter in JS by the LC ids we actually need.
+      db.select({
+          id:          journalEntriesTable.id,
+          entryDate:   journalEntriesTable.entryDate,
+          description: journalEntriesTable.description,
+          entryType:   journalEntriesTable.entryType,
+          currency:    journalEntriesTable.currency,
+        })
+        .from(journalEntriesTable)
+        .where(and(
+          eq(journalEntriesTable.companyId, cid),
+          inArray(journalEntriesTable.entryType, ["lc_funding", "lc_expense_payment"]),
+        )),
     ]);
+
+    // ─── Resolve source bank/cash for each LC funding & expense payment ──
+    // Map GL accountId → { type, name } so a JE-line's accountId tells us
+    // which bank or cash-box was the source side of the transfer.
+    const sourceByAccount = new Map<number, { type: "bank" | "cash"; nameAr: string | null; nameEn: string | null; bankName?: string | null }>();
+    for (const b of allBanks) {
+      if (b.accountId) sourceByAccount.set(b.accountId, { type: "bank", nameAr: b.nameAr, nameEn: b.nameEn, bankName: b.bankName });
+    }
+    for (const c of allCashBoxes) {
+      if (c.accountId) sourceByAccount.set(c.accountId, { type: "cash", nameAr: c.nameAr, nameEn: c.nameEn });
+    }
+
+    // Filter JEs whose description tag points at one of our LC ids, then
+    // batch-load the credit-side line(s) to find the source accountId.
+    const lcIdSet = new Set(lcIds);
+    type Tagged = { lcId: number; expenseId: number | null; entryId: number; entryDate: string; description: string | null };
+    const tagged: Tagged[] = [];
+    for (const j of allTransferEntries) {
+      const m = /\[LC#(\d+)\]/.exec(j.description ?? "");
+      if (!m) continue;
+      const lcId = Number(m[1]);
+      if (!lcIdSet.has(lcId)) continue;
+      const me = /\[LCE#(\d+)\]/.exec(j.description ?? "");
+      tagged.push({ lcId, expenseId: me ? Number(me[1]) : null, entryId: j.id, entryDate: j.entryDate, description: j.description });
+    }
+    let lineRows: { entryId: number; accountId: number | null; credit: any; debit: any }[] = [];
+    if (tagged.length > 0) {
+      lineRows = await db.select({
+          entryId:   journalEntryLinesTable.entryId,
+          accountId: journalEntryLinesTable.accountId,
+          credit:    journalEntryLinesTable.credit,
+          debit:     journalEntryLinesTable.debit,
+        })
+        .from(journalEntryLinesTable)
+        .where(inArray(journalEntryLinesTable.entryId, tagged.map(t => t.entryId)));
+    }
+    const linesByEntry = new Map<number, typeof lineRows>();
+    for (const l of lineRows) {
+      const arr = linesByEntry.get(l.entryId) ?? [];
+      arr.push(l); linesByEntry.set(l.entryId, arr);
+    }
+
+    type Transfer = {
+      entryId: number; date: string;
+      amount: number;
+      sourceType: "bank" | "cash" | null;
+      sourceNameAr: string | null;
+      sourceNameEn: string | null;
+      sourceBankName: string | null;
+    };
+    const transfersByLc       = new Map<number, Transfer[]>();
+    const transfersByExpense  = new Map<number, Transfer[]>();
+    for (const t of tagged) {
+      const lines = linesByEntry.get(t.entryId) ?? [];
+      // Source = the line whose accountId matches a bank or cash GL
+      // (typically the credit side of the funding/payment entry).
+      let src: typeof lineRows[number] | undefined;
+      let srcInfo: ReturnType<typeof sourceByAccount.get> | undefined;
+      for (const ln of lines) {
+        if (ln.accountId == null) continue;
+        const info = sourceByAccount.get(ln.accountId);
+        if (info) { src = ln; srcInfo = info; break; }
+      }
+      const amount = src ? Number(src.credit ?? 0) || Number(src.debit ?? 0) : 0;
+      const transfer: Transfer = {
+        entryId: t.entryId,
+        date:    t.entryDate,
+        amount,
+        sourceType:     srcInfo?.type ?? null,
+        sourceNameAr:   srcInfo?.nameAr ?? null,
+        sourceNameEn:   srcInfo?.nameEn ?? null,
+        sourceBankName: srcInfo?.bankName ?? null,
+      };
+      if (t.expenseId != null) {
+        const arr = transfersByExpense.get(t.expenseId) ?? [];
+        arr.push(transfer); transfersByExpense.set(t.expenseId, arr);
+      } else {
+        const arr = transfersByLc.get(t.lcId) ?? [];
+        arr.push(transfer); transfersByLc.set(t.lcId, arr);
+      }
+    }
 
     const expByLc = new Map<number, any[]>();
     for (const e of allExpenses) {
@@ -382,7 +490,12 @@ router.get("/letters-of-credit/statement", async (req, res) => {
     const supMap = new Map(allSuppliers.map(s => [s.id, s]));
 
     const rows = lcs.map(lc => {
-      const enriched = enrichLcRow(lc, expByLc.get(lc.id) ?? [], baseCurrency);
+      const enriched: any = enrichLcRow(lc, expByLc.get(lc.id) ?? [], baseCurrency);
+      // Attach per-expense funding source(s) onto each enriched expense row.
+      enriched.expenses = (enriched.expenses ?? []).map((e: any) => ({
+        ...e,
+        fundingTransfers: transfersByExpense.get(e.id) ?? [],
+      }));
       const invs = invByLc.get(lc.id) ?? [];
       const invoiceRows = invs.map(i => {
         const total    = Number(i.totalAmount         || 0);
@@ -409,6 +522,8 @@ router.get("/letters-of-credit/statement", async (req, res) => {
         invoices:       invoiceRows,
         invoiceCount:   invoiceRows.length,
         usedBaseFromInvoices: +usedBase.toFixed(2),
+        // LC-value funding transfers (target=settlement, no expense tag).
+        fundingTransfers: transfersByLc.get(lc.id) ?? [],
       };
     });
 

@@ -4170,6 +4170,8 @@
         "remaining": "Remaining",
         "invoices": "Invoices",
         "status": "Status",
+        "fundedFrom": "Funded From",
+        "paidFrom": "Paid From",
         "expenseType": "Expense Type",
         "amount": "Amount",
         "amountBase": "Amount (Base)",

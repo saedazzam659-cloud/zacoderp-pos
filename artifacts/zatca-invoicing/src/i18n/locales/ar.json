@@ -4299,6 +4299,8 @@
         "remaining": "المتبقي",
         "invoices": "الفواتير",
         "status": "الحالة",
+        "fundedFrom": "تم التحويل من",
+        "paidFrom": "تم السداد من",
         "expenseType": "نوع المصروف",
         "amount": "المبلغ",
         "amountBase": "المبلغ بالعملة الأساسية",

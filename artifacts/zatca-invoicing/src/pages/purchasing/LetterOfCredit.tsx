@@ -230,7 +230,14 @@ export default function LetterOfCredit() {
       const defaultDesc = transferForm.target === "settlement"
         ? tr("transferDefaultDesc", { lc: lc.lcNumber })
         : tr("transferDefaultDescExp", { lc: lc.lcNumber, exp: debitLabel });
-      const desc = transferForm.description?.trim() || defaultDesc;
+      const userDesc = transferForm.description?.trim() || defaultDesc;
+      // Stable, machine-readable tags so the LC Statement report can link
+      // this funding/expense-payment JE back to its LC (and expense, if any)
+      // and show the source bank/cash. Format: [LC#<id>] and [LCE#<id>].
+      const tag = transferForm.target === "settlement"
+        ? `[LC#${lc.id}]`
+        : `[LC#${lc.id}][LCE#${transferForm.expenseId}]`;
+      const desc = `${userDesc} ${tag}`;
       const body = {
         companyId:   cid,
         entryDate:   transferForm.date,
