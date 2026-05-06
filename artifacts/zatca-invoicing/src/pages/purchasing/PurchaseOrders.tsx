@@ -635,6 +635,14 @@ ${sections}
             تأكيد ({selectedConfirmable.length})
           </Button>
           <Button type="button" size="sm" variant="outline"
+            className="h-7 px-3 text-xs gap-1 border-orange-400 text-orange-800 hover:bg-orange-50"
+            onClick={bulkUnconfirm}
+            disabled={bulkBusy || selectedUnconfirmable.length === 0}
+            title={selectedUnconfirmable.length === 0 ? t("purchasingPages.purchaseOrders.bulk.noUnconfirmable") : t("purchasingPages.purchaseOrders.tooltips.unconfirm")}>
+            <RotateCcw className="h-3.5 w-3.5" />
+            {t("purchasingPages.purchaseOrders.bulk.unconfirm")} ({selectedUnconfirmable.length})
+          </Button>
+          <Button type="button" size="sm" variant="outline"
             className="h-7 px-3 text-xs gap-1 border-blue-400 text-blue-800 hover:bg-blue-50"
             onClick={() => {
               if (layout.selected.size !== 1) { toast({ title: "حدِّد أمرًا واحدًا فقط للتعديل", variant: "destructive" }); return; }
@@ -655,14 +663,6 @@ ${sections}
             title={layout.selected.size === 1 ? "إنشاء نسخة مماثلة من الأمر المحدَّد" : "حدِّد أمرًا واحدًا فقط"}>
             <Copy className="h-3.5 w-3.5" />
             نسخة مماثلة
-          </Button>
-          <Button type="button" size="sm" variant="outline"
-            className="h-7 px-3 text-xs gap-1 border-orange-400 text-orange-800 hover:bg-orange-50"
-            onClick={bulkUnconfirm}
-            disabled={bulkBusy || selectedUnconfirmable.length === 0}
-            title={selectedUnconfirmable.length === 0 ? t("purchasingPages.purchaseOrders.bulk.noUnconfirmable") : t("purchasingPages.purchaseOrders.tooltips.unconfirm")}>
-            <RotateCcw className="h-3.5 w-3.5" />
-            {t("purchasingPages.purchaseOrders.bulk.unconfirm")} ({selectedUnconfirmable.length})
           </Button>
           <Button type="button" size="sm" variant="outline"
             className="h-7 px-3 text-xs gap-1 border-amber-400 text-amber-800 hover:bg-amber-50"
