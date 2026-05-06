@@ -236,6 +236,20 @@ export default function ChartOfAccounts() {
 
   const pager = usePagination(filtered);
 
+  // Tree-view pagination: paginate root-level accounts (and orphans whose parent isn't visible).
+  const treeRoots = (() => {
+    const visible = new Set<number>(filtered.map((a: any) => a.id));
+    for (const a of filtered) {
+      let cur: any = a;
+      while (cur) { visible.add(cur.id); cur = cur.parentId ? accounts.find((x: any) => x.id === cur.parentId) : null; }
+    }
+    const roots = accounts
+      .filter((a: any) => visible.has(a.id) && (!a.parentId || !accounts.find((x: any) => x.id === a.parentId)))
+      .sort((x: any, y: any) => String(x.code).localeCompare(String(y.code), undefined, { numeric: true }));
+    return roots;
+  })();
+  const treePager = usePagination(treeRoots);
+
   const exportRows = filtered.map((a: any) => ({
     code:        a.code,
     nameAr:      isRtl ? a.nameAr : (a.nameEn || a.nameAr),
@@ -594,9 +608,7 @@ export default function ChartOfAccounts() {
           );
         };
 
-        const roots = (childrenIdx.get(null) || []).filter(r => visibleSet.has(r.id));
-        // Orphans: items in visibleSet whose parent isn't in accounts list
-        const orphanRoots = filtered.filter((a: any) => a.parentId && !accounts.find((x: any) => x.id === a.parentId));
+        const pagedRoots = treePager.pagedItems as any[];
 
         return (
           <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
@@ -604,7 +616,7 @@ export default function ChartOfAccounts() {
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <FolderTree className="h-4 w-4" />
                 <span>عرض شجري للحسابات</span>
-                <span className="text-[11px] opacity-90 font-normal">({filtered.length} حساب{filtered.length !== accounts.length ? ` من ${accounts.length}` : ""})</span>
+                <span className="text-[11px] opacity-90 font-normal">({filtered.length} حساب{filtered.length !== accounts.length ? ` من ${accounts.length}` : ""} — {treeRoots.length} حساب رئيسي)</span>
               </div>
               <div className="flex gap-1.5">
                 <button onClick={expandAll} className="text-[11px] bg-white/15 hover:bg-white/25 px-2.5 py-1 rounded font-medium transition-colors">توسيع الكل</button>
@@ -621,12 +633,20 @@ export default function ChartOfAccounts() {
                   <p className="text-xs mt-1">{t("chartOfAccounts.addFirstHint")}</p>
                 </div>
               ) : (
-                <>
-                  {roots.map((r: any) => renderNode(r, 0))}
-                  {orphanRoots.map((r: any) => renderNode(r, 0))}
-                </>
+                pagedRoots.map((r: any) => renderNode(r, 0))
               )}
             </div>
+            {!isLoading && treeRoots.length > 0 && (
+              <TablePagination
+                page={treePager.page}
+                pageSize={treePager.pageSize}
+                pageCount={treePager.pageCount}
+                total={treePager.total}
+                onPageChange={treePager.setPage}
+                onPageSizeChange={treePager.setPageSize}
+                itemLabel="حساب رئيسي"
+              />
+            )}
           </div>
         );
       })()}
