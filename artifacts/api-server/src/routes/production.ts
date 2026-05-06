@@ -15,6 +15,9 @@ import {
   accountsTable,
   journalEntriesTable,
   journalEntryLinesTable,
+  bomTemplatesTable,
+  bomTemplateLinesTable,
+  manufacturingSettingsTable,
   PRODUCTION_ORDER_STATUSES,
   PRODUCTION_STATUS_TRANSITIONS,
   type ProductionOrderStatus,
@@ -162,6 +165,23 @@ async function validateAccount(cid: number, id: number | null | undefined) {
     .where(and(eq(accountsTable.id, id), eq(accountsTable.companyId, cid)));
   if (!a) {
     const err: any = new Error(`الحساب رقم ${id} لا ينتمي إلى هذه الشركة`);
+    err.status = 400;
+    throw err;
+  }
+  return id;
+}
+
+// PHASE A — per-tenant item validation for BOM lines / FG products. Same
+// rationale as validateAccount: prevents storing/exposing cross-tenant
+// item IDs through bom_template_lines.
+async function validateItem(cid: number, id: number | null | undefined) {
+  if (!id) return null;
+  const [it] = await db
+    .select({ id: itemsTable.id })
+    .from(itemsTable)
+    .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+  if (!it) {
+    const err: any = new Error(`الصنف رقم ${id} لا ينتمي إلى هذه الشركة`);
     err.status = 400;
     throw err;
   }
@@ -516,6 +536,15 @@ router.post("/orders", async (req, res) => {
 
     const explicitOrderNumber = typeof b.orderNumber === "string" && b.orderNumber.trim();
 
+    // ─── PHASE A: Pull manufacturing settings defaults for this company ──
+    // المعظم سيستخدم نفس المخازن/الحسابات بكل أمر، فنطبّقها تلقائياً عند
+    // عدم تمريرها في body. تُمرَّر `mfg` للأسطر التي تبني insert لاحقاً.
+    const [mfg] = await db
+      .select()
+      .from(manufacturingSettingsTable)
+      .where(eq(manufacturingSettingsTable.companyId, cid))
+      .limit(1);
+
     // MEDIUM fix #4 — retry on unique violation (companyId + orderNumber)
     // for the time-based fallback path so concurrent inserts don't 500.
     let row: any = null;
@@ -552,18 +581,18 @@ router.post("/orders", async (req, res) => {
             estimatedCost: String(num(b.estimatedCost)),
             actualCost: "0",
             // ─── SAP-style WIP fields (optional at create; user can fill on detail) ──
-            rawWarehouseId: await validateWarehouse(cid, b.rawWarehouseId ? Number(b.rawWarehouseId) : null),
-            finishedWarehouseId: await validateWarehouse(cid, b.finishedWarehouseId ? Number(b.finishedWarehouseId) : null),
+            rawWarehouseId: await validateWarehouse(cid, b.rawWarehouseId ? Number(b.rawWarehouseId) : (mfg?.defaultRawWarehouseId ?? null)),
+            finishedWarehouseId: await validateWarehouse(cid, b.finishedWarehouseId ? Number(b.finishedWarehouseId) : (mfg?.defaultFinishedWarehouseId ?? null)),
             laborCost: String(num(b.laborCost)),
             overheadCost: String(num(b.overheadCost)),
-            costCenter: typeof b.costCenter === "string" && b.costCenter.trim() ? b.costCenter.trim() : null,
-            wipAccountId: await validateAccount(cid, b.wipAccountId ? Number(b.wipAccountId) : null),
-            rawInventoryAccountId: await validateAccount(cid, b.rawInventoryAccountId ? Number(b.rawInventoryAccountId) : null),
-            finishedGoodsAccountId: await validateAccount(cid, b.finishedGoodsAccountId ? Number(b.finishedGoodsAccountId) : null),
-            laborAccountId: await validateAccount(cid, b.laborAccountId ? Number(b.laborAccountId) : null),
-            overheadAccountId: await validateAccount(cid, b.overheadAccountId ? Number(b.overheadAccountId) : null),
-            varianceAccountId: await validateAccount(cid, b.varianceAccountId ? Number(b.varianceAccountId) : null),
-            wasteAccountId: await validateAccount(cid, b.wasteAccountId ? Number(b.wasteAccountId) : null),
+            costCenter: typeof b.costCenter === "string" && b.costCenter.trim() ? b.costCenter.trim() : (mfg?.defaultCostCenter ?? null),
+            wipAccountId: await validateAccount(cid, b.wipAccountId ? Number(b.wipAccountId) : (mfg?.defaultWipAccountId ?? null)),
+            rawInventoryAccountId: await validateAccount(cid, b.rawInventoryAccountId ? Number(b.rawInventoryAccountId) : (mfg?.defaultRawInventoryAccountId ?? null)),
+            finishedGoodsAccountId: await validateAccount(cid, b.finishedGoodsAccountId ? Number(b.finishedGoodsAccountId) : (mfg?.defaultFinishedGoodsAccountId ?? null)),
+            laborAccountId: await validateAccount(cid, b.laborAccountId ? Number(b.laborAccountId) : (mfg?.defaultLaborAccountId ?? null)),
+            overheadAccountId: await validateAccount(cid, b.overheadAccountId ? Number(b.overheadAccountId) : (mfg?.defaultOverheadAccountId ?? null)),
+            varianceAccountId: await validateAccount(cid, b.varianceAccountId ? Number(b.varianceAccountId) : (mfg?.defaultVarianceAccountId ?? null)),
+            wasteAccountId: await validateAccount(cid, b.wasteAccountId ? Number(b.wasteAccountId) : (mfg?.defaultWasteAccountId ?? null)),
             notes: b.notes || null,
             meta: b.meta && typeof b.meta === "object" ? b.meta : {},
             createdBy: req.authUser!.id,
@@ -589,7 +618,95 @@ router.post("/orders", async (req, res) => {
       { orderNumber: row.orderNumber, title: row.title },
       req.authUser!.id,
     );
-    res.status(201).json(row);
+
+    // ─── PHASE A: Auto-load BOM template lines (if a template exists) ──
+    // إذا كان هناك قالب BOM نشط للمنتج النهائي، ننسخ سطوره مباشرة إلى
+    // أمر الإنتاج مع تكبير الكميات بنسبة (الكمية المطلوبة / مخرجات القالب).
+    // Wrapped in try/catch so a transient BOM-copy failure does NOT roll
+    // back the already-created order (user can re-add lines manually).
+    let bomLoaded = 0;
+    try {
+    if (row.productItemId) {
+      // Deterministic pick: most recently updated active template wins
+      // when multiple are active for the same product.
+      const [tmpl] = await db
+        .select()
+        .from(bomTemplatesTable)
+        .where(
+          and(
+            eq(bomTemplatesTable.companyId, cid),
+            eq(bomTemplatesTable.productItemId, row.productItemId),
+            eq(bomTemplatesTable.isActive, true),
+          ),
+        )
+        .orderBy(desc(bomTemplatesTable.updatedAt))
+        .limit(1);
+      if (tmpl) {
+        const lines = await db
+          .select()
+          .from(bomTemplateLinesTable)
+          .where(eq(bomTemplateLinesTable.templateId, tmpl.id));
+        if (lines.length > 0) {
+          const planned = Number(row.plannedQty) || 0;
+          const output = Number(tmpl.outputQty) || 1;
+          const scale = output > 0 ? planned / output : 1;
+          const inserts = await Promise.all(
+            lines.map(async (l) => {
+              // Pull current avg cost from any warehouse for the item to
+              // estimate unit cost. Fallback to 0 — accurate cost will be
+              // computed on issuance from FIFO/avg of the chosen warehouse.
+              let unitCost = 0;
+              if (l.itemId) {
+                const [bal] = await db
+                  .select({ avgCost: stockBalanceTable.avgCost })
+                  .from(stockBalanceTable)
+                  .where(
+                    and(
+                      eq(stockBalanceTable.companyId, cid),
+                      eq(stockBalanceTable.itemId, l.itemId),
+                    ),
+                  )
+                  .limit(1);
+                if (bal) unitCost = Number(bal.avgCost) || 0;
+              }
+              const qty = Number(l.quantity) * scale;
+              return {
+                orderId: row.id,
+                kind: "raw" as const,
+                itemId: l.itemId,
+                description: l.description,
+                quantity: String(qty),
+                unitCode: l.unitCode,
+                unitCost: String(unitCost),
+                totalCost: String((qty * unitCost).toFixed(2)),
+                meta: { fromBomTemplateId: tmpl.id } as Record<string, unknown>,
+              };
+            }),
+          );
+          await db.insert(productionOrderItemsTable).values(inserts);
+          bomLoaded = inserts.length;
+          await writeEvent(
+            cid,
+            row.id,
+            "bom_loaded",
+            { templateId: tmpl.id, lines: bomLoaded, scale },
+            req.authUser!.id,
+          );
+        }
+      }
+    }
+    } catch (bomErr: any) {
+      req.log?.warn?.({ err: bomErr, orderId: row.id }, "BOM auto-load failed");
+      await writeEvent(
+        cid,
+        row.id,
+        "bom_load_failed",
+        { error: bomErr?.message ?? String(bomErr) },
+        req.authUser!.id,
+      ).catch(() => {});
+    }
+
+    res.status(201).json({ ...row, bomLoaded });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -1399,6 +1516,364 @@ router.get("/dashboard", async (req, res) => {
     });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE A — Manufacturing Settings (per-company defaults)
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get("/manufacturing-settings", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const [row] = await db
+      .select()
+      .from(manufacturingSettingsTable)
+      .where(eq(manufacturingSettingsTable.companyId, cid))
+      .limit(1);
+    res.json(row ?? null);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put("/manufacturing-settings", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const b = req.body ?? {};
+    const numOrNull = (v: any) =>
+      v === null || v === undefined || v === "" ? null : Number(v);
+    const payload = {
+      companyId: cid,
+      defaultRawWarehouseId: await validateWarehouse(cid, numOrNull(b.defaultRawWarehouseId)),
+      defaultFinishedWarehouseId: await validateWarehouse(cid, numOrNull(b.defaultFinishedWarehouseId)),
+      defaultCostCenter:
+        typeof b.defaultCostCenter === "string" && b.defaultCostCenter.trim()
+          ? b.defaultCostCenter.trim()
+          : null,
+      defaultWipAccountId: await validateAccount(cid, numOrNull(b.defaultWipAccountId)),
+      defaultRawInventoryAccountId: await validateAccount(cid, numOrNull(b.defaultRawInventoryAccountId)),
+      defaultFinishedGoodsAccountId: await validateAccount(cid, numOrNull(b.defaultFinishedGoodsAccountId)),
+      defaultLaborAccountId: await validateAccount(cid, numOrNull(b.defaultLaborAccountId)),
+      defaultOverheadAccountId: await validateAccount(cid, numOrNull(b.defaultOverheadAccountId)),
+      defaultVarianceAccountId: await validateAccount(cid, numOrNull(b.defaultVarianceAccountId)),
+      defaultWasteAccountId: await validateAccount(cid, numOrNull(b.defaultWasteAccountId)),
+      updatedAt: new Date(),
+    };
+    // True upsert keyed on the unique companyId index, so concurrent first
+    // writes from two requests cannot collide on mfg_settings_company_uniq.
+    const { companyId: _omit, ...updateSet } = payload;
+    const [row] = await db
+      .insert(manufacturingSettingsTable)
+      .values(payload)
+      .onConflictDoUpdate({
+        target: manufacturingSettingsTable.companyId,
+        set: updateSet,
+      })
+      .returning();
+    res.json(row);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE A — BOM Templates
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get("/bom-templates", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const q = (req.query.q as string | undefined)?.trim();
+    const where = q
+      ? and(
+          eq(bomTemplatesTable.companyId, cid),
+          or(
+            ilike(bomTemplatesTable.nameAr, `%${q}%`),
+            ilike(bomTemplatesTable.nameEn, `%${q}%`),
+          ),
+        )
+      : eq(bomTemplatesTable.companyId, cid);
+    const rows = await db
+      .select({
+        id: bomTemplatesTable.id,
+        productItemId: bomTemplatesTable.productItemId,
+        nameAr: bomTemplatesTable.nameAr,
+        nameEn: bomTemplatesTable.nameEn,
+        outputQty: bomTemplatesTable.outputQty,
+        outputUnitCode: bomTemplatesTable.outputUnitCode,
+        isActive: bomTemplatesTable.isActive,
+        notes: bomTemplatesTable.notes,
+        updatedAt: bomTemplatesTable.updatedAt,
+        productNameAr: itemsTable.nameAr,
+        productNameEn: itemsTable.nameEn,
+        linesCount: sql<number>`(SELECT COUNT(*)::int FROM ${bomTemplateLinesTable} WHERE ${bomTemplateLinesTable.templateId} = ${bomTemplatesTable.id})`,
+      })
+      .from(bomTemplatesTable)
+      .leftJoin(itemsTable, eq(itemsTable.id, bomTemplatesTable.productItemId))
+      .where(where)
+      .orderBy(desc(bomTemplatesTable.updatedAt));
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/bom-templates/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const [tmpl] = await db
+      .select()
+      .from(bomTemplatesTable)
+      .where(
+        and(
+          eq(bomTemplatesTable.id, id),
+          eq(bomTemplatesTable.companyId, cid),
+        ),
+      )
+      .limit(1);
+    if (!tmpl) {
+      res.status(404).json({ error: "القالب غير موجود" });
+      return;
+    }
+    // SECURITY: join items with companyId predicate so a stale/cross-tenant
+    // item_id (defense in depth) cannot leak nameAr/nameEn from another
+    // company. New writes are blocked by validateItem; this protects reads.
+    const lines = await db
+      .select({
+        id: bomTemplateLinesTable.id,
+        itemId: bomTemplateLinesTable.itemId,
+        description: bomTemplateLinesTable.description,
+        quantity: bomTemplateLinesTable.quantity,
+        unitCode: bomTemplateLinesTable.unitCode,
+        notes: bomTemplateLinesTable.notes,
+        itemNameAr: itemsTable.nameAr,
+        itemNameEn: itemsTable.nameEn,
+      })
+      .from(bomTemplateLinesTable)
+      .leftJoin(
+        itemsTable,
+        and(
+          eq(itemsTable.id, bomTemplateLinesTable.itemId),
+          eq(itemsTable.companyId, cid),
+        ),
+      )
+      .where(eq(bomTemplateLinesTable.templateId, id));
+    res.json({ ...tmpl, lines });
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
+
+router.post("/bom-templates", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const b = req.body ?? {};
+    if (!b.productItemId) {
+      res.status(400).json({ error: "المنتج النهائي مطلوب" });
+      return;
+    }
+    if (!b.nameAr || typeof b.nameAr !== "string") {
+      res.status(400).json({ error: "اسم القالب مطلوب" });
+      return;
+    }
+    const outputQty = Number(b.outputQty) || 1;
+    if (outputQty <= 0) {
+      res.status(400).json({ error: "الكمية الناتجة يجب أن تكون أكبر من صفر" });
+      return;
+    }
+    // Validate product belongs to tenant (throws 400 if not)
+    await validateItem(cid, Number(b.productItemId));
+    // Pre-validate every line.itemId against this tenant BEFORE any insert,
+    // so a foreign id cannot land in bom_template_lines (security).
+    const rawLines = Array.isArray(b.lines)
+      ? b.lines.filter((l: any) => l && l.description)
+      : [];
+    const lineInserts: any[] = [];
+    for (const l of rawLines) {
+      const qty = Number(l.quantity) || 0;
+      if (qty <= 0) {
+        res.status(400).json({ error: "كمية كل مكوّن يجب أن تكون أكبر من صفر" });
+        return;
+      }
+      const itemId = l.itemId ? Number(l.itemId) : null;
+      if (itemId) await validateItem(cid, itemId);
+      lineInserts.push({
+        itemId,
+        description: String(l.description).trim(),
+        quantity: String(qty),
+        unitCode: l.unitCode || "PCE",
+        notes:
+          typeof l.notes === "string" && l.notes.trim() ? l.notes.trim() : null,
+      });
+    }
+    // Single transaction: header + lines so a partial create is impossible.
+    const tmpl = await db.transaction(async (tx) => {
+      const [t] = await tx
+        .insert(bomTemplatesTable)
+        .values({
+          companyId: cid,
+          productItemId: Number(b.productItemId),
+          nameAr: b.nameAr.trim(),
+          nameEn:
+            typeof b.nameEn === "string" && b.nameEn.trim() ? b.nameEn.trim() : null,
+          outputQty: String(outputQty),
+          outputUnitCode: b.outputUnitCode || "PCE",
+          isActive: b.isActive !== false,
+          notes:
+            typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null,
+        })
+        .returning();
+      if (lineInserts.length > 0) {
+        await tx
+          .insert(bomTemplateLinesTable)
+          .values(lineInserts.map((li) => ({ ...li, templateId: t.id })));
+      }
+      return t;
+    });
+    res.status(201).json(tmpl);
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
+
+router.patch("/bom-templates/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const b = req.body ?? {};
+    const [existing] = await db
+      .select({ id: bomTemplatesTable.id })
+      .from(bomTemplatesTable)
+      .where(
+        and(
+          eq(bomTemplatesTable.id, id),
+          eq(bomTemplatesTable.companyId, cid),
+        ),
+      )
+      .limit(1);
+    if (!existing) {
+      res.status(404).json({ error: "القالب غير موجود" });
+      return;
+    }
+    const patch: any = { updatedAt: new Date() };
+    if (typeof b.nameAr === "string" && b.nameAr.trim()) patch.nameAr = b.nameAr.trim();
+    if (b.nameEn !== undefined) patch.nameEn = b.nameEn || null;
+    if (b.outputQty !== undefined) {
+      const oq = Number(b.outputQty) || 1;
+      if (oq <= 0) {
+        res.status(400).json({ error: "الكمية الناتجة يجب أن تكون أكبر من صفر" });
+        return;
+      }
+      patch.outputQty = String(oq);
+    }
+    if (b.outputUnitCode !== undefined) patch.outputUnitCode = b.outputUnitCode || "PCE";
+    if (b.isActive !== undefined) patch.isActive = !!b.isActive;
+    if (b.notes !== undefined) patch.notes = b.notes || null;
+    const [row] = await db
+      .update(bomTemplatesTable)
+      .set(patch)
+      .where(eq(bomTemplatesTable.id, id))
+      .returning();
+    res.json(row);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete("/bom-templates/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const result = await db
+      .delete(bomTemplatesTable)
+      .where(
+        and(
+          eq(bomTemplatesTable.id, id),
+          eq(bomTemplatesTable.companyId, cid),
+        ),
+      )
+      .returning({ id: bomTemplatesTable.id });
+    if (result.length === 0) {
+      res.status(404).json({ error: "القالب غير موجود" });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Replace all lines (simpler than partial line CRUD for the UI). All
+// itemIds are pre-validated against this tenant, then delete + insert run
+// inside a single transaction so a failure cannot leave the template empty.
+router.put("/bom-templates/:id/lines", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const b = req.body ?? {};
+    if (!Array.isArray(b.lines)) {
+      res.status(400).json({ error: "lines يجب أن يكون مصفوفة" });
+      return;
+    }
+    const [existing] = await db
+      .select({ id: bomTemplatesTable.id })
+      .from(bomTemplatesTable)
+      .where(
+        and(
+          eq(bomTemplatesTable.id, id),
+          eq(bomTemplatesTable.companyId, cid),
+        ),
+      )
+      .limit(1);
+    if (!existing) {
+      res.status(404).json({ error: "القالب غير موجود" });
+      return;
+    }
+    const inserts: any[] = [];
+    for (const l of b.lines) {
+      if (!l || !l.description) continue;
+      const qty = Number(l.quantity) || 0;
+      if (qty <= 0) {
+        res.status(400).json({ error: "كمية كل مكوّن يجب أن تكون أكبر من صفر" });
+        return;
+      }
+      const itemId = l.itemId ? Number(l.itemId) : null;
+      if (itemId) await validateItem(cid, itemId);
+      inserts.push({
+        templateId: id,
+        itemId,
+        description: String(l.description).trim(),
+        quantity: String(qty),
+        unitCode: l.unitCode || "PCE",
+        notes:
+          typeof l.notes === "string" && l.notes.trim() ? l.notes.trim() : null,
+      });
+    }
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(bomTemplateLinesTable)
+        .where(eq(bomTemplateLinesTable.templateId, id));
+      if (inserts.length > 0) {
+        await tx.insert(bomTemplateLinesTable).values(inserts);
+      }
+      await tx
+        .update(bomTemplatesTable)
+        .set({ updatedAt: new Date() })
+        .where(eq(bomTemplatesTable.id, id));
+    });
+    res.json({ ok: true, count: inserts.length });
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 

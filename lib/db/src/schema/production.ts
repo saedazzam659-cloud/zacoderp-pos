@@ -243,6 +243,122 @@ export type InsertProductionOrderItem = z.infer<
 >;
 export type InsertProductionEvent = z.infer<typeof insertProductionEventSchema>;
 
+// ─── PHASE A — BOM Templates ──────────────────────────────────────────────
+// قائمة المكوّنات القياسية لكل منتج نهائي. عند إنشاء أمر إنتاج لمنتج
+// له قالب نشط، تُنسخ سطور المكوّنات تلقائياً إلى أمر الإنتاج بدل أن
+// يضطر المستخدم لإدخالها يدوياً في كل مرة.
+export const bomTemplatesTable = pgTable(
+  "bom_templates",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    productItemId: integer("product_item_id")
+      .notNull()
+      .references(() => itemsTable.id, { onDelete: "cascade" }),
+    nameAr: text("name_ar").notNull(),
+    nameEn: text("name_en"),
+    // Output produced per template execution (defaults to 1 unit). All
+    // raw line quantities are scaled by `desiredQty / outputQty` when
+    // applied to a production order.
+    outputQty: numeric("output_qty", { precision: 14, scale: 4 })
+      .notNull()
+      .default("1"),
+    outputUnitCode: text("output_unit_code").notNull().default("PCE"),
+    isActive: boolean("is_active").notNull().default(true),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byCompanyProduct: index("bom_tmpl_company_product_idx").on(
+      t.companyId,
+      t.productItemId,
+    ),
+  }),
+);
+
+export const bomTemplateLinesTable = pgTable(
+  "bom_template_lines",
+  {
+    id: serial("id").primaryKey(),
+    templateId: integer("template_id")
+      .notNull()
+      .references(() => bomTemplatesTable.id, { onDelete: "cascade" }),
+    itemId: integer("item_id").references(() => itemsTable.id, {
+      onDelete: "set null",
+    }),
+    description: text("description").notNull(),
+    quantity: numeric("quantity", { precision: 14, scale: 4 })
+      .notNull()
+      .default("0"),
+    unitCode: text("unit_code").notNull().default("PCE"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byTemplate: index("bom_tmpl_lines_tmpl_idx").on(t.templateId),
+  }),
+);
+
+// ─── PHASE A — Manufacturing Settings (per-company defaults) ──────────────
+// إعدادات التصنيع للشركة: المخازن والحسابات الافتراضية التي تُستخدم
+// تلقائياً عند إنشاء أمر إنتاج. تُختصر بذلك خطوة "إعداد WIP" في كل أمر،
+// لأن المعظم سيستخدم نفس الحسابات والمخازن دائماً.
+export const manufacturingSettingsTable = pgTable(
+  "manufacturing_settings",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    defaultRawWarehouseId: integer("default_raw_warehouse_id").references(
+      () => warehousesTable.id,
+      { onDelete: "set null" },
+    ),
+    defaultFinishedWarehouseId: integer(
+      "default_finished_warehouse_id",
+    ).references(() => warehousesTable.id, { onDelete: "set null" }),
+    defaultCostCenter: text("default_cost_center"),
+    // 7 default GL accounts mirroring the production order columns.
+    defaultWipAccountId: integer("default_wip_account_id").references(
+      () => accountsTable.id,
+      { onDelete: "set null" },
+    ),
+    defaultRawInventoryAccountId: integer(
+      "default_raw_inventory_account_id",
+    ).references(() => accountsTable.id, { onDelete: "set null" }),
+    defaultFinishedGoodsAccountId: integer(
+      "default_finished_goods_account_id",
+    ).references(() => accountsTable.id, { onDelete: "set null" }),
+    defaultLaborAccountId: integer("default_labor_account_id").references(
+      () => accountsTable.id,
+      { onDelete: "set null" },
+    ),
+    defaultOverheadAccountId: integer(
+      "default_overhead_account_id",
+    ).references(() => accountsTable.id, { onDelete: "set null" }),
+    defaultVarianceAccountId: integer(
+      "default_variance_account_id",
+    ).references(() => accountsTable.id, { onDelete: "set null" }),
+    defaultWasteAccountId: integer("default_waste_account_id").references(
+      () => accountsTable.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byCompany: uniqueIndex("mfg_settings_company_uniq").on(t.companyId),
+  }),
+);
+
+export type BomTemplate = typeof bomTemplatesTable.$inferSelect;
+export type BomTemplateLine = typeof bomTemplateLinesTable.$inferSelect;
+export type ManufacturingSettings =
+  typeof manufacturingSettingsTable.$inferSelect;
+
 // Allowed status transitions for production orders. Used by both backend
 // validation and frontend status-button rendering. Keep this in sync with
 // the workflow described in the manufacturing module spec.

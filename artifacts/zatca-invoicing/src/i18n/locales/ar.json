@@ -567,6 +567,8 @@
     "productionDashboard": "لوحة الإنتاج",
     "productionOrders": "أوامر الإنتاج",
     "productionResources": "الماكينات والموارد",
+    "bomTemplates": "قوالب المكوّنات (BOM)",
+    "manufacturingSettings": "إعدادات التصنيع",
     "contractingGroup": "إدارة المقاولات",
     "contractingDashboard": "لوحة المقاولات",
     "contractingProjects": "المشاريع",

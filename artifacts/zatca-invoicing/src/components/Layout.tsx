@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Building2, FileText, Users, Settings, Hotel, BedDouble, UserSquare2, BrushCleaning,
   Bell, Menu, Truck, LogOut, ChevronDown, ChevronRight, ShieldCheck,
   Package, PackagePlus, PackageMinus, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3,
-  Warehouse, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2,
+  Warehouse, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2, ListTree,
   Tag, Layers, BookMarked, MapPin, Building2 as BranchIcon, DollarSign,
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote, Wrench,
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
@@ -181,6 +181,8 @@ const productionSubNav: NavDef[] = [
   { nameKey: "nav.productionDashboard", href: "/production",           icon: BarChart3, permKey: "production", exact: true },
   { nameKey: "nav.productionOrders",    href: "/production/orders",    icon: ClipboardList, permKey: "production" },
   { nameKey: "nav.productionResources", href: "/production/resources", icon: Cog, permKey: "production" },
+  { nameKey: "nav.bomTemplates",        href: "/production/bom-templates", icon: ListTree, permKey: "production" },
+  { nameKey: "nav.manufacturingSettings", href: "/production/settings", icon: Settings2, permKey: "production" },
 ];
 const PRODUCTION_GROUP_PERMS = ["production"];
 // Contracting/Construction ERP — gated by a single `contracting` permission key

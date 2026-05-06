@@ -622,6 +622,8 @@
     "contractingTabsAi": "AI Insights",
     "productionOrders": "Production Orders",
     "productionResources": "Machines & Resources",
+    "bomTemplates": "BOM Templates",
+    "manufacturingSettings": "Manufacturing Settings",
     "dashboardGroup": "Control Panel",
     "aiToolsGroup": "AI Tools"
   },
