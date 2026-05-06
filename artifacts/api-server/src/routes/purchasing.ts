@@ -635,6 +635,53 @@ router.put("/letters-of-credit/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
+// Append a SINGLE expense to an existing LC.
+// Used by the standalone "Add LC Expense" screen so users can record
+// expenses incrementally as procedures complete (shipping → customs →
+// insurance, etc.) without reopening the full LC edit dialog every time.
+// Returns the created expense row. Blocks when the LC is closed.
+router.post("/letters-of-credit/:id/expenses", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [lc] = await db.select({
+      id: lettersOfCreditTable.id,
+      status: lettersOfCreditTable.status,
+      currencyCode: lettersOfCreditTable.currencyCode,
+    }).from(lettersOfCreditTable)
+      .where(and(eq(lettersOfCreditTable.id, id), eq(lettersOfCreditTable.companyId, cid)));
+    if (!lc) { res.status(404).json({ error: "الاعتماد غير موجود" }); return; }
+    if (lc.status === "closed") {
+      res.status(409).json({ error: "لا يمكن إضافة مصروف لاعتماد مغلق. أعد فتحه أولاً." });
+      return;
+    }
+    const { expenseType, accountId, amount, currencyCode, exchangeRate, notes } = req.body ?? {};
+    if (!expenseType || !(Number(amount) > 0)) {
+      res.status(400).json({ error: "نوع المصروف والمبلغ مطلوبان" }); return;
+    }
+    // Validate accountId belongs to this company and is a posting account
+    if (accountId) {
+      const { accountsTable } = await import("@workspace/db");
+      const [acc] = await db.select({
+        id: accountsTable.id, isPosting: accountsTable.isPosting,
+      }).from(accountsTable)
+        .where(and(eq(accountsTable.id, Number(accountId)), eq(accountsTable.companyId, cid)));
+      if (!acc) { res.status(400).json({ error: "حساب المصروف غير صالح" }); return; }
+      if (!acc.isPosting) { res.status(400).json({ error: "حساب المصروف يجب أن يكون حساب ترحيل" }); return; }
+    }
+    const [created] = await db.insert(lcExpensesTable).values({
+      lcId: id, companyId: cid,
+      expenseType: String(expenseType),
+      accountId: accountId ? Number(accountId) : null,
+      amount: String(amount),
+      currencyCode: currencyCode || lc.currencyCode || "SAR",
+      exchangeRate: String(exchangeRate ?? "1"),
+      notes: notes || null,
+    }).returning();
+    res.status(201).json(created);
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
 router.delete("/letters-of-credit/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;

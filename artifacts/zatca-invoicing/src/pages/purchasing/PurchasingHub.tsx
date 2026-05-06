@@ -9,6 +9,7 @@ const tiles: HubTile[] = [
   { nameKey: "nav.suppliers",            href: "/suppliers",                  icon: Truck,         tone: "orange",  permKey: "suppliers" },
   { nameKey: "nav.supplierGroups",       href: "/purchasing/supplier-groups", icon: Users,         tone: "blue",    permKey: "suppliers" },
   { nameKey: "nav.lc",                   href: "/purchasing/lc",              icon: CreditCard,    tone: "fuchsia", permKey: "purchase_invoices" },
+  { nameKey: "nav.lcExpenseEntry",       href: "/purchasing/lc-expense-entry",icon: CreditCard,    tone: "amber",   permKey: "purchase_invoices" },
   { nameKey: "nav.purchaseOrders",       href: "/purchasing/orders",          icon: ClipboardList, tone: "indigo",  permKey: "purchase_invoices" },
   { nameKey: "nav.purchaseInvoices",     href: "/purchasing/invoices",        icon: ShoppingCart,  tone: "amber",   permKey: "purchase_invoices" },
   { nameKey: "nav.purchaseReturns",      href: "/purchasing/returns",         icon: RotateCcw,     tone: "rose",    permKey: "purchase_returns" },

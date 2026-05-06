@@ -213,6 +213,7 @@ import CostCenters     from "@/pages/accounting/CostCenters";
 // Purchasing
 import SupplierGroups       from "@/pages/purchasing/SupplierGroups";
 import LetterOfCredit       from "@/pages/purchasing/LetterOfCredit";
+import LcExpenseEntry       from "@/pages/purchasing/LcExpenseEntry";
 import PurchaseInvoices     from "@/pages/purchasing/PurchaseInvoices";
 import PurchaseInvoiceForm  from "@/pages/purchasing/PurchaseInvoiceForm";
 import PurchaseOrders       from "@/pages/purchasing/PurchaseOrders";
@@ -669,6 +670,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/purchasing" component={PurchasingHub} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/supplier-groups" module="suppliers"             component={SupplierGroups} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/lc"              module="purchase_invoices"     component={LetterOfCredit} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/lc-expense-entry" module="purchase_invoices"    component={LcExpenseEntry} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/invoices/new"    module="purchase_invoices" action="create" component={PurchaseInvoiceForm} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/invoices/:id"    module="purchase_invoices"     component={PurchaseInvoiceForm} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/invoices"        module="purchase_invoices"     component={PurchaseInvoices} />}
