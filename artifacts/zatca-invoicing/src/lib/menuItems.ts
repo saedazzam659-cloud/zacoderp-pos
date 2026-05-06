@@ -65,6 +65,8 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "chat",               label: "الاتصال الداخلي",            section: "الاتصال الداخلي" },
 
+  { key: "installments",       label: "البيع بالتقسيط الذكي",       section: "البيع بالتقسيط" },
+
   { key: "zatca",              label: "ربط ZATCA",                   section: "النظام" },
 ];
 
@@ -115,6 +117,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   seo_dashboard:      null,           // SuperAdmin tool, not billed per-company
   online_store:       null,           // included for now (no separate billable module)
   ai_tools:           null,           // SuperAdmin tool, not billed per-company
+  installments:       "installments",
   zatca:              "zatca",
 };
 
@@ -154,4 +157,5 @@ export const SECTION_THEME: Record<string, { bg: string; text: string; border: s
   "أدوات الذكاء الاصطناعي": { bg: "bg-violet-50",   text: "text-violet-700",   border: "border-violet-200" },
   "النظام":               { bg: "bg-purple-50",   text: "text-purple-700",   border: "border-purple-200" },
   "الاتصال الداخلي":       { bg: "bg-green-50",    text: "text-green-700",    border: "border-green-200" },
+  "البيع بالتقسيط":         { bg: "bg-lime-50",     text: "text-lime-700",     border: "border-lime-200" },
 };

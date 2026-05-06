@@ -125,6 +125,12 @@ export const SYSTEM_MODULES: SystemModule[] = [
     monthlyPrice: 75,
     permissions: ["hotel"],
   },
+  {
+    key: "installments", nameAr: "البيع بالتقسيط الذكي", nameEn: "Smart Installment Sales", descAr: "عقود التقسيط، جداول الأقساط، التحصيل، التقارير وإعدادات الفائدة",
+    emoji: "💳", category: "finance", categoryAr: "المالية",
+    monthlyPrice: 45,
+    permissions: ["installments"],
+  },
 
   // ── Compliance ───────────────────────────────────────────────────
   {

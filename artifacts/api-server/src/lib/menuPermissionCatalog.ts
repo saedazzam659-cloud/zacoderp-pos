@@ -68,6 +68,8 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   "ai_tools",
   // ── الاتصال الداخلي ──
   "chat",
+  // ── البيع بالتقسيط الذكي ──
+  "installments",
   // ── النظام ──
   "zatca",
 ]);
