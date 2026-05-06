@@ -30,7 +30,8 @@ const DEFAULT_DIRECTION: Record<string, string> = {
 
 const EMPTY: any = {
   code: "", nameAr: "", nameEn: "", accountType: "asset",
-  reportDirection: "", parentId: "", level: 1, isPosting: true, isActive: true, notes: "",
+  reportDirection: "", parentId: "", level: 1, isPosting: true, isActive: true,
+  costCenterId: "", notes: "",
 };
 
 export default function ChartOfAccounts() {
@@ -80,6 +81,17 @@ export default function ChartOfAccounts() {
     queryFn: async () => {
       const url = cid ? `${API}/api/accounts?companyId=${cid}` : `${API}/api/accounts`;
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      return res.json();
+    },
+    enabled: !!user,
+  });
+
+  const { data: costCenters = [] } = useQuery<any[]>({
+    queryKey: ["cost-centers", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/cost-centers?companyId=${cid}` : `${API}/api/cost-centers`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return [];
       return res.json();
     },
     enabled: !!user,
@@ -158,7 +170,12 @@ export default function ChartOfAccounts() {
   function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); }
 
   function handleEdit(a: any) {
-    setForm({ ...a, parentId: a.parentId ? String(a.parentId) : "", reportDirection: a.reportDirection ?? "" });
+    setForm({
+      ...a,
+      parentId: a.parentId ? String(a.parentId) : "",
+      reportDirection: a.reportDirection ?? "",
+      costCenterId: a.costCenterId ? String(a.costCenterId) : "",
+    });
     setEditId(a.id);
     setShowForm(true);
   }
@@ -174,6 +191,7 @@ export default function ChartOfAccounts() {
       level:           a.level ?? 1,
       isPosting:       a.isPosting ?? true,
       isActive:        a.isActive ?? true,
+      costCenterId:    a.costCenterId ? String(a.costCenterId) : "",
       notes:           a.notes ?? "",
     });
     setEditId(null);
@@ -182,7 +200,12 @@ export default function ChartOfAccounts() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const payload = { ...form, parentId: form.parentId ? Number(form.parentId) : null, level: Number(form.level) || 1 };
+    const payload = {
+      ...form,
+      parentId: form.parentId ? Number(form.parentId) : null,
+      costCenterId: form.costCenterId ? Number(form.costCenterId) : null,
+      level: Number(form.level) || 1,
+    };
     if (editId) updateMut.mutate({ id: editId, data: payload });
     else        createMut.mutate(payload);
   }
@@ -347,6 +370,22 @@ export default function ChartOfAccounts() {
                 value={form.reportDirection ?? ""}
                 onValueChange={v => setForm((p: any) => ({ ...p, reportDirection: v }))}
                 placeholder={t("chartOfAccounts.reportAuto", { label: DEFAULT_DIRECTION[form.accountType] === "balance_sheet" ? t("chartOfAccounts.autoBs") : t("chartOfAccounts.autoIs") })}
+              />
+            </Field>
+            <Field label="مركز التكلفة (اختياري)" className="md:col-span-2">
+              <SearchCombobox
+                items={[
+                  { value: "", label: "بدون مركز تكلفة" },
+                  ...costCenters.map((c: any) => ({
+                    value: String(c.id),
+                    code: c.code,
+                    label: isRtl ? c.nameAr : (c.nameEn || c.nameAr),
+                  })),
+                ]}
+                value={form.costCenterId ?? ""}
+                onValueChange={v => setForm((p: any) => ({ ...p, costCenterId: v }))}
+                placeholder="اختياري — اختر مركز تكلفة افتراضي للحساب"
+                searchPlaceholder="ابحث عن مركز التكلفة..."
               />
             </Field>
             <Field label={t("chartOfAccounts.notes")} className="md:col-span-2">

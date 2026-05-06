@@ -19,6 +19,7 @@ export const accountsTable = pgTable("accounts", {
   level:           integer("level").notNull().default(1),
   isPosting:       boolean("is_posting").notNull().default(true),
   isActive:        boolean("is_active").notNull().default(true),
+  costCenterId:    integer("cost_center_id"),
   notes:           text("notes"),
   createdAt:       timestamp("created_at").defaultNow().notNull(),
   updatedAt:       timestamp("updated_at").defaultNow().notNull(),

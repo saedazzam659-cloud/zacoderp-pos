@@ -161,7 +161,7 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { code, nameAr, nameEn, accountType, parentId, level, isPosting, isActive, notes } = req.body;
+    const { code, nameAr, nameEn, accountType, parentId, level, isPosting, isActive, notes, costCenterId } = req.body;
     if (!code || !nameAr || !accountType) {
       res.status(400).json({ error: "كود الحساب واسمه ونوعه مطلوبة" }); return;
     }
@@ -170,6 +170,7 @@ router.post("/", async (req, res) => {
       accountType, parentId: parentId || null,
       reportDirection: req.body.reportDirection || null,
       level: level ?? 1, isPosting: isPosting ?? true, isActive: isActive ?? true,
+      costCenterId: costCenterId ? Number(costCenterId) : null,
       notes: notes || null,
     }).returning();
     res.status(201).json(row);
@@ -181,12 +182,13 @@ router.put("/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
-    const { code, nameAr, nameEn, accountType, parentId, level, isPosting, isActive, notes } = req.body;
+    const { code, nameAr, nameEn, accountType, parentId, level, isPosting, isActive, notes, costCenterId } = req.body;
     const [row] = await db.update(accountsTable).set({
       code, nameAr, nameEn: nameEn || null, accountType,
       parentId: parentId || null, level: level ?? 1,
       reportDirection: req.body.reportDirection || null,
       isPosting: isPosting ?? true, isActive: isActive ?? true,
+      costCenterId: costCenterId ? Number(costCenterId) : null,
       notes: notes || null, updatedAt: new Date(),
     }).where(and(eq(accountsTable.id, id), eq(accountsTable.companyId, cid))).returning();
     if (!row) { res.status(404).json({ error: "الحساب غير موجود" }); return; }
