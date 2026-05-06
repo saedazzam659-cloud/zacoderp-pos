@@ -1352,6 +1352,24 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
     } catch { invDocNumber = null; }
 
     const pType = ord.paymentType || "credit";
+
+    // Currency conversion: when the PO is in a foreign currency, materialise
+    // the resulting purchase invoice in the company's BASE currency by
+    // multiplying every monetary field by the PO's exchange rate. The
+    // resulting invoice carries currencyCode=base / exchangeRate=1 so all
+    // downstream reports, JEs, and totals show base-currency values
+    // (e.g. PO 100 USD × 3.75 ⇒ invoice subtotal 375 SAR).
+    const baseCurrency = await getBaseCurrencyCode(cid);
+    const fxRate = Number(ord.exchangeRate ?? "1") || 1;
+    const isForeign = !!ord.currencyCode && ord.currencyCode !== baseCurrency && fxRate !== 1;
+    const conv = (v: any): string => {
+      const n = Number(v ?? "0");
+      if (!isForeign) return String(v ?? "0");
+      // Round to 4 dp on line-level fields, 2 dp on totals — but use a single
+      // rounding here (4 dp) and let the form's display format handle the rest.
+      return (n * fxRate).toFixed(4);
+    };
+
     const [inv] = await db.insert(purchaseInvoicesTable).values({
       companyId: cid,
       branchId: ord.branchId ?? null,
@@ -1364,18 +1382,20 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
       paymentType: pType,
       cashBoxId: null,
       bankAccountId: null,
-      currencyCode: ord.currencyCode,
-      exchangeRate: ord.exchangeRate,
+      currencyCode: isForeign ? baseCurrency : ord.currencyCode,
+      exchangeRate: isForeign ? "1" : ord.exchangeRate,
       lcId: null,
       distributionMethod: "value",
-      subtotal: ord.subtotal,
-      vatAmount: ord.vatAmount,
-      discountAmount: ord.discountAmount,
+      subtotal: conv(ord.subtotal),
+      vatAmount: conv(ord.vatAmount),
+      discountAmount: conv(ord.discountAmount),
       totalExpensesLoaded: "0",
-      totalAmount: ord.totalAmount,
+      totalAmount: conv(ord.totalAmount),
       priceIncludesVat: ord.priceIncludesVat,
       status: "draft",
-      notes: ord.notes,
+      notes: isForeign
+        ? [ord.notes, `(محوَّل من أمر شراء بعملة ${ord.currencyCode} بسعر صرف ${fxRate} ⇒ ${baseCurrency})`].filter(Boolean).join("\n")
+        : ord.notes,
     }).returning();
     if (lines.length) {
       await db.insert(purchaseInvoiceLinesTable).values(
@@ -1385,10 +1405,10 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
           unit: l.unit, unitId: l.unitId,
           conversionFactor: l.conversionFactor ?? "1",
           qty: l.qty, weight: l.weight ?? "0",
-          unitPrice: l.unitPrice,
-          discount: l.discount ?? "0",
+          unitPrice: conv(l.unitPrice),
+          discount: conv(l.discount ?? "0"),
           vatRate: l.vatRate ?? "15",
-          lineTotal: l.lineTotal,
+          lineTotal: conv(l.lineTotal),
           expenseShare: "0",
           finalCost: "0",
           accountId: null,
