@@ -2,7 +2,8 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, Pencil, Cog, X } from "lucide-react";
+import { Plus, Trash2, Pencil, Cog, X, Factory } from "lucide-react";
+import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -173,17 +174,36 @@ export default function ProductionResources() {
             <p className="text-sm text-slate-500">{t("production.subtitle")}</p>
           </div>
         </div>
-        <Button
-          ref={triggerRef}
-          onClick={() => (open ? closePanel() : openCreate())}
-          data-testid="btn-new-resource"
-          variant={open ? "outline" : "default"}
-          aria-expanded={open}
-          aria-controls="panel-resource-form"
-        >
-          {open ? <X className="h-4 w-4 me-1" /> : <Plus className="h-4 w-4 me-1" />}
-          {open ? t("common.cancel") : t("production.addResource")}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Link href="/production/work-centers">
+            <Button variant="outline" data-testid="btn-go-work-centers">
+              <Factory className="h-4 w-4 me-1" />
+              مراكز العمل
+            </Button>
+          </Link>
+          <Button
+            ref={triggerRef}
+            onClick={() => (open ? closePanel() : openCreate())}
+            data-testid="btn-new-resource"
+            variant={open ? "outline" : "default"}
+            aria-expanded={open}
+            aria-controls="panel-resource-form"
+          >
+            {open ? <X className="h-4 w-4 me-1" /> : <Plus className="h-4 w-4 me-1" />}
+            {open ? t("common.cancel") : t("production.addResource")}
+          </Button>
+        </div>
+      </div>
+
+      {/* Phase B — Hint linking machines/lines to the new Work Centers page */}
+      <div className="rounded-md border border-violet-200 bg-violet-50/60 px-3 py-2 text-xs text-violet-900 dark:border-violet-900/50 dark:bg-violet-950/20 dark:text-violet-200 flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1">
+          <Factory className="h-3.5 w-3.5" />
+          الموارد هنا (ماكينات/خطوط/محطات) للتوثيق التشغيلي. لإسناد <strong>تكاليف الأجور والـOH</strong> لأوامر الإنتاج، استخدم <strong>مراكز العمل</strong> بمعدلات بالساعة.
+        </span>
+        <Link href="/production/work-centers" className="font-medium text-violet-700 underline-offset-2 hover:underline dark:text-violet-300">
+          فتح مراكز العمل ←
+        </Link>
       </div>
 
       {open && (
