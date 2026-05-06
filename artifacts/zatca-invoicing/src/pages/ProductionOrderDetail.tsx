@@ -717,6 +717,28 @@ function WipSetupPanel({
         )}
       </div>
 
+      {/* Phase A — context banner: explains where these defaults come from
+          and lets the user jump to the company-level settings page. */}
+      {locked ? (
+        <div className="flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+          <span>🔒 هذه القيم محفوظة في قيد الإنتاج المرحَّل ولا يمكن تعديلها بعد بدء الإنتاج.</span>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-violet-200 bg-violet-50/60 px-3 py-2 text-xs text-violet-900 dark:border-violet-900/50 dark:bg-violet-950/20 dark:text-violet-200">
+          <span className="flex items-center gap-1">
+            <Sparkles className="h-3.5 w-3.5" />
+            تم التعبئة تلقائياً من <strong>إعدادات التصنيع</strong> — يمكنك تعديل أي قيمة لهذا الأمر فقط دون التأثير على الافتراضيات.
+          </span>
+          <Link
+            href="/production/settings"
+            className="font-medium text-violet-700 underline-offset-2 hover:underline dark:text-violet-300"
+            data-testid="link-mfg-settings"
+          >
+            تعديل الإعدادات الافتراضية ←
+          </Link>
+        </div>
+      )}
+
       {/* المخازن + المنتج النهائي */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <Field label="مخزن صرف الخامات">
