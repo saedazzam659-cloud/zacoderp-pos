@@ -7367,6 +7367,8 @@
     "savedDesc": "رقم القيد: {{docNumber}}",
     "saveFailed": "فشل الحفظ",
     "errAtLeastTwo": "يجب إدخال سطرين على الأقل",
+    "confirmUnbalanced": "القيد غير متوازن — الفرق {{diff}}. هل تريد الحفظ كما هو؟",
+    "cancelledByUser": "تم إلغاء الحفظ",
     "lineMemo": "رصيد افتتاحي — {{code}} {{name}}",
     "help": {
       "title": "تعليمات تعبئة الأرصدة الافتتاحية",

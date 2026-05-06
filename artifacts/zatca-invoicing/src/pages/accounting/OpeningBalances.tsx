@@ -302,6 +302,16 @@ export default function OpeningBalances() {
         });
       }
       if (lines.length < 2) throw new Error(t("openingBalances.errAtLeastTwo"));
+      // Allow saving even if not balanced — warn the user once.
+      const totalD = lines.reduce((s, l) => s + Number(l.debit  || 0), 0);
+      const totalC = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
+      const diff   = totalD - totalC;
+      if (Math.abs(diff) > 0.005) {
+        const proceed = window.confirm(
+          t("openingBalances.confirmUnbalanced", { diff: diff.toFixed(2) }),
+        );
+        if (!proceed) throw new Error(t("openingBalances.cancelledByUser"));
+      }
       const payload = {
         entryDate,
         description: description || t("openingBalances.defaultDesc", { year: new Date(entryDate).getFullYear() }),
@@ -336,6 +346,7 @@ export default function OpeningBalances() {
   ];
 
   const balancedNow = totals.balanced && totals.filledRows >= 2;
+  const canSave     = totals.filledRows >= 2;
 
   return (
     <div className="space-y-6 pb-44">
@@ -530,7 +541,7 @@ export default function OpeningBalances() {
               size="lg"
               className="gap-2"
               onClick={() => saveMut.mutate()}
-              disabled={!balancedNow || saveMut.isPending}
+              disabled={!canSave || saveMut.isPending}
             >
               <Save className="h-4 w-4" />
               {saveMut.isPending ? t("openingBalances.saving") : t("openingBalances.saveEntry")}

@@ -7238,6 +7238,8 @@
     "savedDesc": "Entry number: {{docNumber}}",
     "saveFailed": "Save failed",
     "errAtLeastTwo": "At least two lines are required",
+    "confirmUnbalanced": "Entry is not balanced — difference {{diff}}. Save anyway?",
+    "cancelledByUser": "Save cancelled",
     "lineMemo": "Opening balance — {{code}} {{name}}",
     "help": {
       "title": "Opening balances template instructions",
