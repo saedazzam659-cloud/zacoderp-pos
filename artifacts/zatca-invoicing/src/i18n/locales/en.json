@@ -7211,6 +7211,8 @@
     "import": "Import from Excel",
     "importDone": "Import complete",
     "importStats": "{{matched}} accounts applied — {{unmatched}} codes not found in the chart",
+    "importStatsV2": "{{matched}} accounts applied — {{created}} new accounts created — {{unmatched}} rows skipped",
+    "missingNameOrType": "account not found and no Arabic name / type provided to create it",
     "importFailed": "Failed to read the file",
     "searchPlaceholder": "Search by code or name...",
     "col": {
@@ -7243,7 +7245,8 @@
       "l2": "2. For each account: enter EITHER a debit balance OR a credit balance (not both)",
       "l3": "3. Asset and expense accounts normally carry debit balances",
       "l4": "4. Liability, equity and revenue accounts normally carry credit balances",
-      "l5": "5. Total debit must equal total credit before saving"
+      "l5": "5. Total debit must equal total credit before saving",
+      "l6": "6. To add a brand-new account: fill in code + Arabic name + accountType (asset/liability/equity/revenue/expense). It will be created automatically on import."
     }
   },
   "trialBalanceMaintenance": {

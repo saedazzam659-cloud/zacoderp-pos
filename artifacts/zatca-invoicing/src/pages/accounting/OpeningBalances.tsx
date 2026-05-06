@@ -136,12 +136,12 @@ export default function OpeningBalances() {
   // ── EXPORT ────────────────────────────────────────────────────────────────
   function exportXlsx(includeAmounts: boolean) {
     const aoa: any[][] = [[
-      t("openingBalances.col.code"),
-      t("openingBalances.col.nameAr"),
-      t("openingBalances.col.nameEn"),
-      t("openingBalances.col.type"),
-      t("openingBalances.col.debit"),
-      t("openingBalances.col.credit"),
+      "code",
+      "nameAr",
+      "nameEn",
+      "accountType",
+      "debit",
+      "credit",
     ]];
     for (const a of postableAccounts.sort((x, y) => x.code.localeCompare(y.code, undefined, { numeric: true }))) {
       const row = amounts[a.id];
@@ -169,6 +169,7 @@ export default function OpeningBalances() {
       [t("openingBalances.help.l3")],
       [t("openingBalances.help.l4")],
       [t("openingBalances.help.l5")],
+      [t("openingBalances.help.l6")],
     ]);
     help["!cols"] = [{ wch: 80 }];
     XLSX.utils.book_append_sheet(wb, help, "تعليمات");
@@ -192,8 +193,18 @@ export default function OpeningBalances() {
       const ws  = wb.Sheets[wb.SheetNames[0]];
       const json: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
 
-      let matched = 0, unmatched = 0;
+      const TYPE_ALIASES: Record<string, Account["accountType"]> = {
+        asset: "asset", assets: "asset", "أصول": "asset", "اصول": "asset",
+        liability: "liability", liabilities: "liability", "خصوم": "liability", "التزامات": "liability",
+        equity: "equity", "حقوق ملكية": "equity", "حقوق الملكية": "equity",
+        revenue: "revenue", income: "revenue", "إيرادات": "revenue", "ايرادات": "revenue", "دخل": "revenue",
+        expense: "expense", expenses: "expense", "مصروفات": "expense", "مصاريف": "expense",
+      };
+
+      let matched = 0, unmatched = 0, created = 0, createFailed = 0;
       const next: Record<number, Amount> = { ...amounts };
+      const localIndex = new Map(codeIndex);
+      const errors: string[] = [];
 
       for (const row of json) {
         // Try common header names (Arabic + English)
@@ -201,18 +212,74 @@ export default function OpeningBalances() {
         const debit  = num(row.debit  ?? row.Debit  ?? row["مدين"]);
         const credit = num(row.credit ?? row.Credit ?? row["دائن"]);
         if (!code) continue;
-        const acc = codeIndex.get(code);
-        if (!acc) { unmatched++; continue; }
+
+        let acc = localIndex.get(code);
+
+        // ── Auto-create missing account in chart of accounts ────────────────
+        if (!acc) {
+          const nameAr = String(row.nameAr ?? row["الاسم"] ?? row["الاسم العربي"] ?? row["اسم الحساب"] ?? "").trim();
+          const nameEn = String(row.nameEn ?? row["Name"] ?? row["Name En"] ?? row["English Name"] ?? "").trim();
+          const typeRaw = String(row.accountType ?? row.type ?? row["النوع"] ?? row["نوع الحساب"] ?? "").trim().toLowerCase();
+          const accountType = TYPE_ALIASES[typeRaw];
+
+          if (!nameAr || !accountType) {
+            unmatched++;
+            errors.push(`${code}: ${t("openingBalances.missingNameOrType")}`);
+            continue;
+          }
+
+          try {
+            const createRes = await fetch(`${API}/api/accounts${cid ? `?companyId=${cid}` : ""}`, {
+              method: "POST", headers,
+              body: JSON.stringify({
+                code, nameAr, nameEn: nameEn || null,
+                accountType, parentId: null, level: 1,
+                isPosting: true, isActive: true,
+              }),
+            });
+            const createJson = await createRes.json();
+            if (!createRes.ok) {
+              createFailed++;
+              errors.push(`${code}: ${createJson?.error || createRes.statusText}`);
+              continue;
+            }
+            acc = {
+              id: createJson.id,
+              code: createJson.code,
+              nameAr: createJson.nameAr,
+              nameEn: createJson.nameEn,
+              accountType: createJson.accountType,
+              isPosting: true,
+              isActive: true,
+            };
+            localIndex.set(code, acc);
+            created++;
+          } catch (err: any) {
+            createFailed++;
+            errors.push(`${code}: ${err?.message || "create failed"}`);
+            continue;
+          }
+        }
+
         if (debit > 0) next[acc.id] = { debit: String(debit),  credit: "" };
         else if (credit > 0) next[acc.id] = { debit: "", credit: String(credit) };
         else next[acc.id] = { debit: "", credit: "" };
         matched++;
       }
       setAmounts(next);
+      // Refresh chart of accounts cache so newly created rows show up
+      if (created > 0) {
+        await qc.invalidateQueries({ queryKey: ["accounts", cid, "opening"] });
+        await qc.invalidateQueries({ queryKey: ["accounts"] });
+      }
       toast({
         title: t("openingBalances.importDone"),
-        description: t("openingBalances.importStats", { matched, unmatched }),
+        description: t("openingBalances.importStatsV2", { matched, created, unmatched: unmatched + createFailed }),
       });
+      if (errors.length > 0) {
+        // eslint-disable-next-line no-console
+        console.warn("[OpeningBalances import] issues:", errors);
+      }
     } catch (err: any) {
       toast({ title: t("openingBalances.importFailed"), description: err?.message, variant: "destructive" });
     }
