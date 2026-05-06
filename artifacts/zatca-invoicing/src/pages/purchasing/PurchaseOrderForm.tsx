@@ -40,7 +40,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
   ArrowRight, ArrowLeft, ClipboardList, Plus, Trash2, FileText, ListOrdered,
-  Wallet, CreditCard, CheckCircle, XCircle, FileCheck2,
+  Wallet, CreditCard, CheckCircle, XCircle, FileCheck2, RotateCcw,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -928,11 +928,19 @@ export default function PurchaseOrderForm() {
           </>
         )}
         {!isNew && orderStatus === "confirmed" && !convertedInvoiceId && (
-          <Button className="gap-1.5"
-            onClick={() => { if (confirm(tr("confirmConvert"))) convertMut.mutate(); }}
-            disabled={convertMut.isPending}>
-            <FileCheck2 className="h-4 w-4" />{convertMut.isPending ? tr("converting") : tr("convert")}
-          </Button>
+          <>
+            <Button variant="outline" className="gap-1.5 text-orange-700 border-orange-300 hover:bg-orange-50"
+              onClick={() => { if (confirm(t("purchasingPages.purchaseOrders.confirms.unconfirmOne"))) statusMut.mutate("draft"); }}
+              disabled={statusMut.isPending}
+              title={t("purchasingPages.purchaseOrders.tooltips.unconfirm")}>
+              <RotateCcw className="h-4 w-4" />{t("purchasingPages.purchaseOrders.bulk.unconfirm")}
+            </Button>
+            <Button className="gap-1.5"
+              onClick={() => { if (confirm(tr("confirmConvert"))) convertMut.mutate(); }}
+              disabled={convertMut.isPending}>
+              <FileCheck2 className="h-4 w-4" />{convertMut.isPending ? tr("converting") : tr("convert")}
+            </Button>
+          </>
         )}
         <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending || isLocked}>
           {saveMut.isPending ? tr("saving") : isNew ? tr("saveOrder") : tr("saveEdit")}
