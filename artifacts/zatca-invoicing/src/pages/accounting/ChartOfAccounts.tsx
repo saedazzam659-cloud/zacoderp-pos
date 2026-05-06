@@ -14,7 +14,7 @@ import ExportButtons from "@/components/ExportButtons";
 import AccountsImportPanel from "@/components/AccountsImportPanel";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { TablePagination, usePagination } from "@/components/TablePagination";
-import { Plus, Pencil, Trash2, Copy, BookOpen, Search, ChevronLeft, ChevronRight, Printer } from "lucide-react";
+import { Plus, Pencil, Trash2, Copy, BookOpen, Search, ChevronLeft, ChevronRight, Printer, LayoutGrid, ListTree, ChevronDown, FolderTree, CheckCircle2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { printChartOfAccountsExternal, type CoaPrintAccount, type CoaPrintTypeMeta } from "@/lib/export";
 
@@ -73,6 +73,23 @@ export default function ChartOfAccounts() {
   const [form, setForm]             = useState<any>(EMPTY);
   const [editId, setEditId]         = useState<number | null>(null);
   const [showForm, setShowForm]     = useState(false);
+  const [viewMode, setViewMode]     = useState<"tree" | "table">(() => {
+    if (typeof window === "undefined") return "tree";
+    return (localStorage.getItem("coa.viewMode") as "tree" | "table") || "tree";
+  });
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set());
+  const [allExpanded, setAllExpanded] = useState(true);
+  function toggleNode(id: number) {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function setView(v: "tree" | "table") {
+    setViewMode(v);
+    try { localStorage.setItem("coa.viewMode", v); } catch { /* ignore */ }
+  }
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -290,11 +307,73 @@ export default function ChartOfAccounts() {
             <Printer className="h-4 w-4" />
             طباعة الجرد الخارجي
           </Button>
+          <div className="inline-flex rounded-md border bg-background overflow-hidden shadow-sm">
+            <button
+              onClick={() => setView("tree")}
+              className={cn(
+                "px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors",
+                viewMode === "tree" ? "bg-emerald-600 text-white" : "bg-background text-muted-foreground hover:bg-muted"
+              )}
+              title="عرض شجري"
+            >
+              <ListTree className="h-3.5 w-3.5" />
+              شجري
+            </button>
+            <button
+              onClick={() => setView("table")}
+              className={cn(
+                "px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors border-r",
+                viewMode === "table" ? "bg-emerald-600 text-white" : "bg-background text-muted-foreground hover:bg-muted"
+              )}
+              title="عرض جدولي"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              جدول
+            </button>
+          </div>
           <ExportButtons rows={exportRows} columns={EXPORT_COLS} filename={`${t("chartOfAccounts.filename_prefix")}-${new Date().toISOString().slice(0,10)}`} title={t("chartOfAccounts.export_title")} />
           <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
             <Plus className="h-4 w-4" />{t("chartOfAccounts.newAccount")}
           </Button>
         </div>
+      </div>
+
+      {/* Summary cards — counts per account type, always visible */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <button
+          onClick={() => setFilterType("all")}
+          className={cn(
+            "rounded-xl border-2 px-4 py-3 text-center transition-all hover:shadow-md hover:-translate-y-0.5",
+            filterType === "all"
+              ? "bg-gradient-to-br from-slate-50 to-slate-100 border-slate-400 ring-2 ring-slate-300"
+              : "bg-white border-slate-200 hover:border-slate-300"
+          )}
+        >
+          <div className="text-[11px] font-semibold text-slate-600 mb-1">إجمالي الحسابات</div>
+          <div className="text-2xl font-extrabold text-slate-800">{accounts.length}</div>
+        </button>
+        {ACCOUNT_TYPES.map(tp => {
+          const cnt = accounts.filter((a: any) => a.accountType === tp.value).length;
+          const isActive = filterType === tp.value;
+          return (
+            <button
+              key={tp.value}
+              onClick={() => setFilterType(tp.value)}
+              className={cn(
+                "rounded-xl border-2 px-4 py-3 text-center transition-all hover:shadow-md hover:-translate-y-0.5",
+                isActive ? "ring-2 shadow-md" : "hover:border-opacity-80"
+              )}
+              style={{
+                backgroundColor: tp.printBg,
+                borderColor: isActive ? tp.printColor : `${tp.printColor}40`,
+                ['--tw-ring-color' as any]: tp.printColor,
+              }}
+            >
+              <div className="text-[11px] font-semibold mb-1" style={{ color: tp.printColor }}>{tp.label}</div>
+              <div className="text-2xl font-extrabold" style={{ color: tp.printColor }}>{cnt}</div>
+            </button>
+          );
+        })}
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -410,7 +489,149 @@ export default function ChartOfAccounts() {
         <Input className={isRtl ? "pr-9" : "pl-9"} placeholder={t("chartOfAccounts.searchPlaceholder")} value={search} onChange={e => setSearch(e.target.value)} />
       </div>
 
-      <div className="rounded-xl border bg-card overflow-hidden">
+      {viewMode === "tree" && (() => {
+        const visibleSet = new Set<number>();
+        for (const a of filtered) {
+          let cur: any = a;
+          while (cur) {
+            visibleSet.add(cur.id);
+            cur = cur.parentId ? accounts.find((x: any) => x.id === cur.parentId) : null;
+          }
+        }
+        const childrenIdx = new Map<number | null, any[]>();
+        for (const a of accounts) {
+          const k = a.parentId ?? null;
+          if (!childrenIdx.has(k)) childrenIdx.set(k, []);
+          childrenIdx.get(k)!.push(a);
+        }
+        for (const arr of childrenIdx.values()) {
+          arr.sort((x, y) => String(x.code).localeCompare(String(y.code), undefined, { numeric: true }));
+        }
+        const isExpanded = (id: number) =>
+          allExpanded ? !expandedIds.has(id) : expandedIds.has(id);
+        const expandAll = () => { setAllExpanded(true); setExpandedIds(new Set()); };
+        const collapseAll = () => { setAllExpanded(false); setExpandedIds(new Set()); };
+
+        const renderNode = (a: any, depth: number): any => {
+          if (!visibleSet.has(a.id)) return null;
+          const typeInfo = TYPE_MAP[a.accountType];
+          const kids = (childrenIdx.get(a.id) || []).filter(c => visibleSet.has(c.id));
+          const hasKids = kids.length > 0;
+          const expanded = isExpanded(a.id);
+          const displayName = isRtl ? a.nameAr : (a.nameEn || a.nameAr);
+          const altName = isRtl ? (a.nameEn || "") : a.nameAr;
+          const bal = computeBalance(a.id);
+          const Chev = isRtl ? ChevronLeft : ChevronRight;
+          return (
+            <div key={a.id}>
+              <div
+                className="group flex items-center gap-2 py-2 px-2 rounded-md hover:bg-muted/40 transition-colors border-r-4"
+                style={{
+                  borderColor: typeInfo?.printColor || "#94a3b8",
+                  backgroundColor: depth === 0 ? `${typeInfo?.printBg || "#f8fafc"}80` : undefined,
+                  marginInlineStart: `${depth * 22}px`,
+                }}
+              >
+                <button
+                  onClick={() => hasKids && toggleNode(a.id)}
+                  className={cn("h-5 w-5 flex items-center justify-center rounded text-muted-foreground", hasKids ? "hover:bg-muted cursor-pointer" : "opacity-30 cursor-default")}
+                  title={hasKids ? (expanded ? "طي" : "توسيع") : ""}
+                >
+                  {hasKids ? (expanded ? <ChevronDown className="h-4 w-4" /> : <Chev className="h-4 w-4" />) : <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30" />}
+                </button>
+                <span className="font-mono text-[11px] bg-white border px-2 py-0.5 rounded shadow-sm tabular-nums">{a.code}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={cn("font-medium truncate", depth === 0 ? "text-base" : "text-sm")}>{displayName}</span>
+                    {altName && <span className="text-[10px] text-muted-foreground truncate" dir={isRtl ? "ltr" : "rtl"}>{altName}</span>}
+                  </div>
+                </div>
+                {typeInfo && (
+                  <span
+                    className="text-[10px] font-semibold rounded-full px-2 py-0.5 border whitespace-nowrap"
+                    style={{ color: typeInfo.printColor, backgroundColor: typeInfo.printBg, borderColor: `${typeInfo.printColor}40` }}
+                  >
+                    {typeInfo.label}
+                  </span>
+                )}
+                <span
+                  className={cn(
+                    "text-[10px] rounded-full px-2 py-0.5 border whitespace-nowrap",
+                    a.isPosting ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-amber-50 text-amber-700 border-amber-200"
+                  )}
+                  title={a.isPosting ? t("chartOfAccounts.posting") : t("chartOfAccounts.header")}
+                >
+                  {a.isPosting ? t("chartOfAccounts.posting") : t("chartOfAccounts.header")}
+                </span>
+                {a.isActive
+                  ? <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-label={t("chartOfAccounts.active")} />
+                  : <XCircle className="h-4 w-4 text-red-500" aria-label={t("chartOfAccounts.inactive")} />}
+                <span className="hidden md:inline-block min-w-[110px] text-end font-mono text-xs tabular-nums" dir="ltr">
+                  {Math.abs(bal) < 0.005
+                    ? <span className="text-muted-foreground">0.00</span>
+                    : <span className={cn("font-medium", bal < 0 ? "text-red-600" : "text-foreground")}>
+                        {fmt(Math.abs(bal))} {bal < 0 ? t("accountingReports.creditShort") : t("accountingReports.debitShort")}
+                      </span>}
+                </span>
+                <div className="flex gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                  <Button variant="outline" size="icon" className="h-7 w-7 bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700" onClick={() => handleEdit(a)} title={t("chartOfAccounts.editAccount")}>
+                    <Pencil className="h-3 w-3" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-7 w-7 bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700" onClick={() => handleCopy(a)} title={t("chartOfAccounts.copyAccount")}>
+                    <Copy className="h-3 w-3" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-7 w-7 bg-red-50 hover:bg-red-100 border-red-200 text-red-700" onClick={() => { if (confirm(t("chartOfAccounts.confirmDelete"))) deleteMut.mutate(a.id); }} title={t("common.delete")}>
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+              {hasKids && expanded && (
+                <div className="mt-1 space-y-1">
+                  {kids.map((c: any) => renderNode(c, depth + 1))}
+                </div>
+              )}
+            </div>
+          );
+        };
+
+        const roots = (childrenIdx.get(null) || []).filter(r => visibleSet.has(r.id));
+        // Orphans: items in visibleSet whose parent isn't in accounts list
+        const orphanRoots = filtered.filter((a: any) => a.parentId && !accounts.find((x: any) => x.id === a.parentId));
+
+        return (
+          <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
+            <div className="bg-gradient-to-l from-emerald-700 to-green-600 text-white px-4 py-2.5 flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <FolderTree className="h-4 w-4" />
+                <span>عرض شجري للحسابات</span>
+                <span className="text-[11px] opacity-90 font-normal">({filtered.length} حساب{filtered.length !== accounts.length ? ` من ${accounts.length}` : ""})</span>
+              </div>
+              <div className="flex gap-1.5">
+                <button onClick={expandAll} className="text-[11px] bg-white/15 hover:bg-white/25 px-2.5 py-1 rounded font-medium transition-colors">توسيع الكل</button>
+                <button onClick={collapseAll} className="text-[11px] bg-white/15 hover:bg-white/25 px-2.5 py-1 rounded font-medium transition-colors">طي الكل</button>
+              </div>
+            </div>
+            <div className="p-3 space-y-1 max-h-[70vh] overflow-y-auto">
+              {isLoading ? (
+                [...Array(6)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)
+              ) : filtered.length === 0 ? (
+                <div className="px-4 py-12 text-center text-muted-foreground">
+                  <BookOpen className="h-10 w-10 mx-auto mb-2 opacity-20" />
+                  <p className="font-medium">{t("chartOfAccounts.noAccounts")}</p>
+                  <p className="text-xs mt-1">{t("chartOfAccounts.addFirstHint")}</p>
+                </div>
+              ) : (
+                <>
+                  {roots.map((r: any) => renderNode(r, 0))}
+                  {orphanRoots.map((r: any) => renderNode(r, 0))}
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {viewMode === "table" && (<div className="rounded-xl border bg-card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
             <tr>
@@ -535,7 +756,7 @@ export default function ChartOfAccounts() {
             itemLabel={t("chartOfAccounts.itemLabel", { defaultValue: "حساب" })}
           />
         )}
-      </div>
+      </div>)}
 
       <AccountsImportPanel />
 
