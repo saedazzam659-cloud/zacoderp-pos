@@ -12,9 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
 import UnitCodeSelect from "@/components/UnitCodeSelect";
 
@@ -503,14 +501,18 @@ export default function ProductionOrderDetail() {
                     <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
                       <div className="md:col-span-3">
                         <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.itemKind")}</Label>
-                        <Select value={itemForm.kind} onValueChange={(v: any) => setItemForm({ ...itemForm, kind: v })}>
-                          <SelectTrigger data-testid="select-item-kind" className="mt-1"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="raw">{t("production.kind_raw")}</SelectItem>
-                            <SelectItem value="product">{t("production.kind_product")}</SelectItem>
-                            <SelectItem value="byproduct">{t("production.kind_byproduct")}</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <div className="mt-1">
+                          <SearchCombobox
+                            value={itemForm.kind}
+                            onValueChange={(v) => setItemForm({ ...itemForm, kind: (v || "raw") as any })}
+                            items={[
+                              { value: "raw", label: t("production.kind_raw") },
+                              { value: "product", label: t("production.kind_product") },
+                              { value: "byproduct", label: t("production.kind_byproduct") },
+                            ]}
+                            searchPlaceholder="ابحث…"
+                          />
+                        </div>
                       </div>
                       <div className="md:col-span-9">
                         <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.description")}</Label>
@@ -899,16 +901,20 @@ function SelectId({
   disabled?: boolean;
   testid?: string;
 }) {
-  const v = value === "" || value == null ? "__none__" : String(value);
+  const v = value === "" || value == null ? "" : String(value);
   return (
-    <Select value={v} onValueChange={(s) => onChange(s === "__none__" ? "" : Number(s))} disabled={disabled}>
-      <SelectTrigger data-testid={testid}><SelectValue placeholder="—" /></SelectTrigger>
-      <SelectContent>
-        <SelectItem value="__none__">—</SelectItem>
-        {options.map((o) => (
-          <SelectItem key={o.value} value={String(o.value)}>{o.label}</SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <div data-testid={testid}>
+      <SearchCombobox
+        value={v}
+        onValueChange={(s) => onChange(s === "" ? "" : Number(s))}
+        disabled={disabled}
+        placeholder="—"
+        searchPlaceholder="ابحث…"
+        items={[
+          { value: "", label: "—" },
+          ...options.map((o) => ({ value: String(o.value), label: o.label })),
+        ]}
+      />
+    </div>
   );
 }

@@ -8,9 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
 
 const API = import.meta.env.VITE_API_URL || "";
@@ -246,25 +244,27 @@ export default function ProductionResources() {
               </div>
               <div>
                 <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.resourceType")}</Label>
-                <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
-                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {TYPES.map((tp) => (
-                      <SelectItem key={tp} value={tp}>{t(`production.type_${tp}`)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="mt-1">
+                  <SearchCombobox
+                    value={form.type}
+                    onValueChange={(v) => setForm({ ...form, type: v || form.type })}
+                    placeholder="—"
+                    searchPlaceholder="ابحث…"
+                    items={TYPES.map((tp) => ({ value: tp, label: t(`production.type_${tp}`) }))}
+                  />
+                </div>
               </div>
               <div>
                 <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.status")}</Label>
-                <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
-                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {STATUSES.map((s) => (
-                      <SelectItem key={s} value={s}>{t(`production.resourceStatus_${s}`)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="mt-1">
+                  <SearchCombobox
+                    value={form.status}
+                    onValueChange={(v) => setForm({ ...form, status: v || form.status })}
+                    placeholder="—"
+                    searchPlaceholder="ابحث…"
+                    items={STATUSES.map((s) => ({ value: s, label: t(`production.resourceStatus_${s}`) }))}
+                  />
+                </div>
               </div>
               <div>
                 <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.capacityPerHour")}</Label>

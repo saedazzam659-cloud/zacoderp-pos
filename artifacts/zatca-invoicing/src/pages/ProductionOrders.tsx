@@ -11,9 +11,7 @@ import { cn } from "@/lib/utils";
 import {
   rowToneFor, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Label } from "@/components/ui/label";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
 import UnitCodeSelect from "@/components/UnitCodeSelect";
@@ -287,19 +285,18 @@ export default function ProductionOrders() {
                 data-testid="input-search"
               />
             </div>
-            <Select value={statusFilter || "__all__"} onValueChange={(v) => setStatusFilter(v === "__all__" ? "" : v)}>
-              <SelectTrigger className="w-48" data-testid="select-status-filter">
-                <SelectValue placeholder={t("production.filterAll")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">{t("production.filterAll")}</SelectItem>
-                {STATUSES.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {t(`production.status_${s}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="w-48" data-testid="select-status-filter">
+              <SearchCombobox
+                value={statusFilter || ""}
+                onValueChange={(v) => setStatusFilter(v)}
+                placeholder={t("production.filterAll")}
+                searchPlaceholder="ابحث…"
+                items={[
+                  { value: "", label: t("production.filterAll") },
+                  ...STATUSES.map((s) => ({ value: s, label: t(`production.status_${s}`) })),
+                ]}
+              />
+            </div>
           </div>
 
           {(() => {

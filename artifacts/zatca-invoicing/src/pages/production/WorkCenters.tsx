@@ -10,9 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -270,62 +268,42 @@ export default function WorkCenters() {
 
             <div>
               <Label>مركز التكلفة الافتراضي</Label>
-              <Select
-                value={editing.costCenterCode ?? "__none__"}
-                onValueChange={(v) =>
-                  setEditing({ ...editing, costCenterCode: v === "__none__" ? null : v })
-                }
-              >
-                <SelectTrigger><SelectValue placeholder="— غير محدد —" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— غير محدد —</SelectItem>
-                  {costCenters.filter((c) => c.isActive).map((c) => (
-                    <SelectItem key={c.id} value={c.code}>
-                      {c.code} — {c.nameAr}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchCombobox
+                value={editing.costCenterCode ?? ""}
+                onValueChange={(v) => setEditing({ ...editing, costCenterCode: v === "" ? null : v })}
+                placeholder="— غير محدد —"
+                searchPlaceholder="ابحث بالكود أو الاسم…"
+                items={[
+                  { value: "", label: "— غير محدد —" },
+                  ...costCenters.filter((c) => c.isActive).map((c) => ({
+                    value: c.code, code: c.code, label: c.nameAr,
+                  })),
+                ]}
+              />
             </div>
             <div>
               <Label>حساب الأجور الافتراضي</Label>
-              <Select
-                value={editing.defaultLaborAccountId == null ? "__none__" : String(editing.defaultLaborAccountId)}
+              <SearchCombobox
+                value={editing.defaultLaborAccountId == null ? "" : String(editing.defaultLaborAccountId)}
                 onValueChange={(v) =>
-                  setEditing({
-                    ...editing,
-                    defaultLaborAccountId: v === "__none__" ? null : Number(v),
-                  })
+                  setEditing({ ...editing, defaultLaborAccountId: v === "" ? null : Number(v) })
                 }
-              >
-                <SelectTrigger><SelectValue placeholder="— غير محدد —" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— غير محدد —</SelectItem>
-                  {accountOptions.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                placeholder="— غير محدد —"
+                searchPlaceholder="ابحث بالكود أو اسم الحساب…"
+                items={[{ value: "", label: "— غير محدد —" }, ...accountOptions.map((o) => ({ value: o.value, label: o.label }))]}
+              />
             </div>
             <div>
               <Label>حساب التكاليف غير المباشرة الافتراضي</Label>
-              <Select
-                value={editing.defaultOverheadAccountId == null ? "__none__" : String(editing.defaultOverheadAccountId)}
+              <SearchCombobox
+                value={editing.defaultOverheadAccountId == null ? "" : String(editing.defaultOverheadAccountId)}
                 onValueChange={(v) =>
-                  setEditing({
-                    ...editing,
-                    defaultOverheadAccountId: v === "__none__" ? null : Number(v),
-                  })
+                  setEditing({ ...editing, defaultOverheadAccountId: v === "" ? null : Number(v) })
                 }
-              >
-                <SelectTrigger><SelectValue placeholder="— غير محدد —" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— غير محدد —</SelectItem>
-                  {accountOptions.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                placeholder="— غير محدد —"
+                searchPlaceholder="ابحث بالكود أو اسم الحساب…"
+                items={[{ value: "", label: "— غير محدد —" }, ...accountOptions.map((o) => ({ value: o.value, label: o.label }))]}
+              />
             </div>
 
             <div className="md:col-span-2 lg:col-span-3">

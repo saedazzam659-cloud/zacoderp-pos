@@ -8,9 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Skeleton } from "@/components/ui/skeleton";
 import UnitCodeSelect from "@/components/UnitCodeSelect";
 
@@ -205,19 +203,18 @@ export default function BomTemplateEditor() {
         <CardContent className="grid gap-4 md:grid-cols-2">
           <div className="md:col-span-2">
             <Label>المنتج النهائي *</Label>
-            <Select
+            <SearchCombobox
               value={productItemId == null ? "" : String(productItemId)}
               onValueChange={(v) => setProductItemId(v ? Number(v) : null)}
-            >
-              <SelectTrigger><SelectValue placeholder="اختر المنتج النهائي…" /></SelectTrigger>
-              <SelectContent>
-                {fgItems.map(i => (
-                  <SelectItem key={i.id} value={String(i.id)}>
-                    {i.nameAr || i.nameEn || `#${i.id}`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              placeholder="اختر المنتج النهائي…"
+              searchPlaceholder="ابحث بالاسم أو الكود…"
+              items={fgItems.map(i => ({
+                value: String(i.id),
+                code: (i as any).sku || (i as any).code,
+                label: i.nameAr || i.nameEn || `#${i.id}`,
+                labelEn: i.nameEn ?? undefined,
+              }))}
+            />
             <p className="mt-1 text-xs text-slate-500">يظهر فقط الأصناف من نوع "تام الصنع" أو "نصف مصنّع".</p>
           </div>
           <div>
@@ -277,19 +274,18 @@ export default function BomTemplateEditor() {
                   {lines.map((l, idx) => (
                     <tr key={idx} className="border-t align-top">
                       <td className="p-2">
-                        <Select
+                        <SearchCombobox
                           value={l.itemId == null ? "" : String(l.itemId)}
                           onValueChange={(v) => pickLineItem(idx, v ? Number(v) : null)}
-                        >
-                          <SelectTrigger><SelectValue placeholder="اختر صنف…" /></SelectTrigger>
-                          <SelectContent>
-                            {rawItems.map(i => (
-                              <SelectItem key={i.id} value={String(i.id)}>
-                                {i.nameAr || i.nameEn || `#${i.id}`}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          placeholder="اختر صنف…"
+                          searchPlaceholder="ابحث بالاسم أو الكود…"
+                          items={rawItems.map(i => ({
+                            value: String(i.id),
+                            code: (i as any).sku || (i as any).code,
+                            label: i.nameAr || i.nameEn || `#${i.id}`,
+                            labelEn: i.nameEn ?? undefined,
+                          }))}
+                        />
                       </td>
                       <td className="p-2">
                         <Input value={l.description}

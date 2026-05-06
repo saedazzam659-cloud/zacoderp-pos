@@ -6,9 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Settings2, Save, Warehouse, Calculator, Sparkles } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "";
@@ -162,16 +160,13 @@ export default function ManufacturingSettings() {
     placeholder?: string;
   }) {
     return (
-      <Select
-        value={value == null ? "__none__" : String(value)}
-        onValueChange={(v) => onChange(v === "__none__" ? null : Number(v))}
-      >
-        <SelectTrigger><SelectValue placeholder={placeholder} /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__none__">{placeholder}</SelectItem>
-          {options.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-        </SelectContent>
-      </Select>
+      <SearchCombobox
+        value={value == null ? "" : String(value)}
+        onValueChange={(v) => onChange(v === "" ? null : Number(v))}
+        placeholder={placeholder}
+        searchPlaceholder="ابحث…"
+        items={[{ value: "", label: placeholder }, ...options]}
+      />
     );
   }
 
@@ -236,22 +231,18 @@ export default function ManufacturingSettings() {
           </div>
           <div>
             <Label>مركز التكلفة الافتراضي</Label>
-            <Select
-              value={data.defaultCostCenter == null || data.defaultCostCenter === "" ? "__none__" : data.defaultCostCenter}
-              onValueChange={(v) => setData(d => ({ ...d, defaultCostCenter: v === "__none__" ? null : v }))}
-            >
-              <SelectTrigger><SelectValue placeholder="— غير محدد —" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— غير محدد —</SelectItem>
-                {costCenters
-                  .filter(c => c.isActive)
-                  .map(c => (
-                    <SelectItem key={c.id} value={c.code}>
-                      {c.code} — {c.nameAr}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
+            <SearchCombobox
+              value={data.defaultCostCenter ?? ""}
+              onValueChange={(v) => setData(d => ({ ...d, defaultCostCenter: v === "" ? null : v }))}
+              placeholder="— غير محدد —"
+              searchPlaceholder="ابحث بالكود أو الاسم…"
+              items={[
+                { value: "", label: "— غير محدد —" },
+                ...costCenters.filter(c => c.isActive).map(c => ({
+                  value: c.code, code: c.code, label: c.nameAr,
+                })),
+              ]}
+            />
             {costCenters.length === 0 && (
               <p className="mt-1 text-xs text-amber-600">لا توجد مراكز تكلفة معرّفة بعد.</p>
             )}
