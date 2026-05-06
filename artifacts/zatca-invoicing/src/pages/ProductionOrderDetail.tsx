@@ -52,7 +52,27 @@ type Order = {
   plannedEndDate: string | null;
   actualStartAt: string | null;
   actualEndAt: string | null;
+  // ─── SAP-style WIP fields (added in this iteration) ───
+  rawWarehouseId: number | null;
+  finishedWarehouseId: number | null;
+  productItemId: number | null;
+  laborCost: string;
+  overheadCost: string;
+  rawMaterialsCost: string;
+  costCenter: string | null;
+  wipAccountId: number | null;
+  rawInventoryAccountId: number | null;
+  finishedGoodsAccountId: number | null;
+  laborAccountId: number | null;
+  overheadAccountId: number | null;
+  varianceAccountId: number | null;
+  wasteAccountId: number | null;
+  issueJournalEntryId: number | null;
+  receiptJournalEntryId: number | null;
 };
+type Warehouse = { id: number; name: string };
+type Account = { id: number; code: string; nameAr: string; accountType: string };
+type ItemRef = { id: number; nameAr: string; code: string };
 
 // Status → list of allowed transitions, each rendered as a coloured action
 // button. Mirrors the server-side PRODUCTION_STATUS_TRANSITIONS map. Keep the
@@ -101,6 +121,12 @@ export default function ProductionOrderDetail() {
   const [openItem, setOpenItem] = useState(false);
   const [savingItem, setSavingItem] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
+  // ─── WIP setup state (warehouses, accounts, labor/overhead, completion) ──
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [itemRefs, setItemRefs] = useState<ItemRef[]>([]);
+  const [savingWip, setSavingWip] = useState(false);
+  const [completion, setCompletion] = useState({ producedQty: "", wasteQty: "" });
   const [itemForm, setItemForm] = useState({
     kind: "raw" as Item["kind"],
     description: "",
@@ -153,13 +179,38 @@ export default function ProductionOrderDetail() {
 
   useEffect(() => { void load(); }, [load]);
 
-  async function transitionTo(target: string) {
+  // Pull warehouses/accounts/items lookup once for the WIP setup panel.
+  useEffect(() => {
+    if (!token) return;
+    const h = { Authorization: `Bearer ${token}` };
+    void Promise.all([
+      fetch(`${API}/api/inventory/warehouses`, { headers: h }).then((r) => r.ok ? r.json() : []),
+      fetch(`${API}/api/accounts?limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
+      fetch(`${API}/api/inventory/items?limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
+    ]).then(([whs, accs, its]) => {
+      setWarehouses(Array.isArray(whs) ? whs : (whs?.rows ?? whs?.data ?? []));
+      setAccounts(Array.isArray(accs) ? accs : (accs?.rows ?? accs?.data ?? []));
+      setItemRefs(Array.isArray(its) ? its : (its?.rows ?? its?.data ?? []));
+    }).catch(() => {});
+  }, [token]);
+
+  // Initialize completion form when status reaches quality_check.
+  useEffect(() => {
+    if (order && order.status === "quality_check" && !completion.producedQty) {
+      setCompletion({
+        producedQty: order.producedQty && Number(order.producedQty) > 0 ? order.producedQty : order.plannedQty,
+        wasteQty: order.wasteQty || "0",
+      });
+    }
+  }, [order?.status]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function transitionTo(target: string, extra: Record<string, unknown> = {}) {
     setTransitioning(true);
     try {
       const r = await fetch(`${API}/api/production/orders/${orderId}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status: target }),
+        body: JSON.stringify({ status: target, ...extra }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
@@ -169,6 +220,26 @@ export default function ProductionOrderDetail() {
       toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
     } finally {
       setTransitioning(false);
+    }
+  }
+
+  // Save WIP setup (warehouses, accounts, labor/overhead, costCenter).
+  async function saveWipSetup(patch: Record<string, unknown>) {
+    setSavingWip(true);
+    try {
+      const r = await fetch(`${API}/api/production/orders/${orderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(patch),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      toast({ title: `✓ ${t("production.saved")}` });
+      void load();
+    } catch (e: any) {
+      toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
+    } finally {
+      setSavingWip(false);
     }
   }
 
@@ -256,7 +327,23 @@ export default function ProductionOrderDetail() {
           {transitions.map((tr) => (
             <Button
               key={tr.to}
-              onClick={() => transitionTo(tr.to)}
+              onClick={() => {
+                if (tr.to === "completed") {
+                  const pq = Number(completion.producedQty) || 0;
+                  const wq = Number(completion.wasteQty) || 0;
+                  if (!(pq > 0)) {
+                    toast({
+                      title: t("production.errorOccurred"),
+                      description: "أدخل كمية المنتج المنتَج قبل الإقفال",
+                      variant: "destructive",
+                    });
+                    return;
+                  }
+                  void transitionTo("completed", { producedQty: pq, wasteQty: wq });
+                } else {
+                  void transitionTo(tr.to);
+                }
+              }}
               disabled={transitioning}
               className={`${tr.tone} text-white`}
               data-testid={`btn-status-${tr.to}`}
@@ -275,7 +362,74 @@ export default function ProductionOrderDetail() {
             <Stat label={t("production.producedQty")} value={Number(order.producedQty).toLocaleString()} />
             <Stat label={t("production.wasteQty")} value={Number(order.wasteQty).toLocaleString()} />
             <Stat label={t("production.actualCost")} value={Number(order.actualCost).toLocaleString()} />
+            <Stat label="تكلفة الخامات" value={Number(order.rawMaterialsCost).toLocaleString()} />
+            <Stat label="أجور الإنتاج" value={Number(order.laborCost).toLocaleString()} />
+            <Stat label="تكاليف غير مباشرة" value={Number(order.overheadCost).toLocaleString()} />
+            <Stat
+              label="القيود المحاسبية"
+              value={
+                <div className="text-xs flex flex-col gap-0.5">
+                  {order.issueJournalEntryId ? (
+                    <Link href={`/accounting/journal-entries/${order.issueJournalEntryId}`}>
+                      <a className="text-violet-600 hover:underline" data-testid="link-issue-je">
+                        صرف #{order.issueJournalEntryId}
+                      </a>
+                    </Link>
+                  ) : (<span className="text-slate-400">لم يُرحّل</span>)}
+                  {order.receiptJournalEntryId ? (
+                    <Link href={`/accounting/journal-entries/${order.receiptJournalEntryId}`}>
+                      <a className="text-emerald-600 hover:underline" data-testid="link-receipt-je">
+                        إضافة #{order.receiptJournalEntryId}
+                      </a>
+                    </Link>
+                  ) : (<span className="text-slate-400">لم يُرحّل</span>)}
+                </div>
+              }
+            />
           </div>
+
+          {/* ─── SAP-style WIP setup panel — editable while pre-issue, locked after ─── */}
+          <WipSetupPanel
+            order={order}
+            warehouses={warehouses}
+            accounts={accounts}
+            itemRefs={itemRefs}
+            saving={savingWip}
+            onSave={saveWipSetup}
+          />
+
+          {/* ─── Completion qty form (visible when ready to close the order) ─── */}
+          {(order.status === "in_production" || order.status === "quality_check") && !order.receiptJournalEntryId && (
+            <div className="rounded-lg border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/50 dark:bg-emerald-950/10 p-4">
+              <div className="text-sm font-semibold text-emerald-700 dark:text-emerald-300 mb-2">
+                <Flag className="h-4 w-4 inline me-1" /> كميات الإقفال
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs">الكمية المنتَجة (تدخل لمخزن البضاعة التامة)</Label>
+                  <Input
+                    type="number" step="0.01"
+                    value={completion.producedQty}
+                    onChange={(e) => setCompletion({ ...completion, producedQty: e.target.value })}
+                    data-testid="input-produced-qty" className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">الهالك (تكلفته تذهب لحساب الهالك/الفروق)</Label>
+                  <Input
+                    type="number" step="0.01"
+                    value={completion.wasteQty}
+                    onChange={(e) => setCompletion({ ...completion, wasteQty: e.target.value })}
+                    data-testid="input-waste-qty" className="mt-1"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                عند الضغط على «إكمال»، توزَّع تكلفة WIP الإجمالية ({Number(order.actualCost).toLocaleString()})
+                على الكمية المنتَجة والهالك تناسبيًا.
+              </p>
+            </div>
+          )}
 
           <Tabs defaultValue="items">
             <TabsList>
@@ -473,5 +627,192 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
       <div className="text-xs text-slate-500">{label}</div>
       <div className="text-base font-semibold mt-0.5">{value}</div>
     </div>
+  );
+}
+
+// ─── WIP setup panel ────────────────────────────────────────────────────────
+// Lets the user pick the raw + finished warehouses, the 7 GL accounts that
+// drive the issue/receipt JEs, and the labor/overhead amounts. Everything
+// is locked once the order moves past "approved" because the issue JE has
+// already posted against these accounts. Saved via a single PATCH per change.
+function WipSetupPanel({
+  order, warehouses, accounts, itemRefs, saving, onSave,
+}: {
+  order: Order;
+  warehouses: Warehouse[];
+  accounts: Account[];
+  itemRefs: ItemRef[];
+  saving: boolean;
+  onSave: (patch: Record<string, unknown>) => void;
+}) {
+  const locked = ["in_production", "quality_check", "completed"].includes(order.status);
+  const [draft, setDraft] = useState({
+    rawWarehouseId: order.rawWarehouseId ?? "",
+    finishedWarehouseId: order.finishedWarehouseId ?? "",
+    productItemId: order.productItemId ?? "",
+    laborCost: order.laborCost ?? "0",
+    overheadCost: order.overheadCost ?? "0",
+    costCenter: order.costCenter ?? "",
+    wipAccountId: order.wipAccountId ?? "",
+    rawInventoryAccountId: order.rawInventoryAccountId ?? "",
+    finishedGoodsAccountId: order.finishedGoodsAccountId ?? "",
+    laborAccountId: order.laborAccountId ?? "",
+    overheadAccountId: order.overheadAccountId ?? "",
+    varianceAccountId: order.varianceAccountId ?? "",
+    wasteAccountId: order.wasteAccountId ?? "",
+  });
+  // Re-sync local form whenever the underlying order changes (e.g. after save).
+  useEffect(() => {
+    setDraft({
+      rawWarehouseId: order.rawWarehouseId ?? "",
+      finishedWarehouseId: order.finishedWarehouseId ?? "",
+      productItemId: order.productItemId ?? "",
+      laborCost: order.laborCost ?? "0",
+      overheadCost: order.overheadCost ?? "0",
+      costCenter: order.costCenter ?? "",
+      wipAccountId: order.wipAccountId ?? "",
+      rawInventoryAccountId: order.rawInventoryAccountId ?? "",
+      finishedGoodsAccountId: order.finishedGoodsAccountId ?? "",
+      laborAccountId: order.laborAccountId ?? "",
+      overheadAccountId: order.overheadAccountId ?? "",
+      varianceAccountId: order.varianceAccountId ?? "",
+      wasteAccountId: order.wasteAccountId ?? "",
+    });
+  }, [order.id, order.status, order.issueJournalEntryId, order.receiptJournalEntryId]);
+
+  const set = (k: string, v: unknown) => setDraft((d) => ({ ...d, [k]: v as any }));
+  const isExpense = (a: Account) => a.accountType === "expense" || a.accountType === "cost_of_sales";
+  const isAsset = (a: Account) => a.accountType === "asset";
+  const isLiab = (a: Account) => a.accountType === "liability";
+  const assetAccounts = accounts.filter(isAsset);
+  const expenseAccounts = accounts.filter(isExpense);
+  const liabAccounts = accounts.filter(isLiab);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const payload: Record<string, unknown> = {};
+    Object.entries(draft).forEach(([k, v]) => {
+      if (v === "" || v === null) payload[k] = null;
+      else if (k.endsWith("Cost")) payload[k] = Number(v);
+      else if (k.endsWith("Id")) payload[k] = Number(v);
+      else payload[k] = v;
+    });
+    onSave(payload);
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="rounded-lg border border-violet-200 dark:border-violet-900/50 bg-gradient-to-br from-violet-50/50 to-fuchsia-50/30 dark:from-violet-950/15 dark:to-fuchsia-950/10 p-4 space-y-3"
+      data-testid="panel-wip-setup"
+    >
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold text-violet-700 dark:text-violet-300">
+          إعداد دورة الإنتاج (WIP)
+        </div>
+        {locked && (
+          <span className="text-xs rounded bg-amber-100 text-amber-800 px-2 py-0.5">
+            مقفلة بعد بدء الإنتاج (ألغِ الأمر للتعديل)
+          </span>
+        )}
+      </div>
+
+      {/* المخازن + المنتج النهائي */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Field label="مخزن صرف الخامات">
+          <SelectId disabled={locked} value={draft.rawWarehouseId} onChange={(v) => set("rawWarehouseId", v)}
+            options={warehouses.map((w) => ({ value: w.id, label: w.name }))} testid="select-raw-warehouse" />
+        </Field>
+        <Field label="مخزن استلام البضاعة التامة">
+          <SelectId value={draft.finishedWarehouseId} onChange={(v) => set("finishedWarehouseId", v)}
+            options={warehouses.map((w) => ({ value: w.id, label: w.name }))} testid="select-fg-warehouse" />
+        </Field>
+        <Field label="صنف المنتج النهائي">
+          <SelectId value={draft.productItemId} onChange={(v) => set("productItemId", v)}
+            options={itemRefs.map((i) => ({ value: i.id, label: `${i.code} — ${i.nameAr}` }))} testid="select-fg-item" />
+        </Field>
+      </div>
+
+      {/* تكاليف رأسية + مركز التكلفة */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Field label="إجمالي أجور الإنتاج"><Input type="number" step="0.01" disabled={locked}
+          value={draft.laborCost} onChange={(e) => set("laborCost", e.target.value)} data-testid="input-labor-cost" /></Field>
+        <Field label="إجمالي التكاليف غير المباشرة"><Input type="number" step="0.01" disabled={locked}
+          value={draft.overheadCost} onChange={(e) => set("overheadCost", e.target.value)} data-testid="input-overhead-cost" /></Field>
+        <Field label="مركز التكلفة (يُطبَّق على القيود)"><Input
+          value={draft.costCenter} onChange={(e) => set("costCenter", e.target.value)}
+          placeholder="مثال: PROD-A" data-testid="input-cost-center" /></Field>
+      </div>
+
+      {/* الحسابات السبعة */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-2 border-t border-violet-200/50">
+        <Field label="WIP — إنتاج تحت التشغيل (أصول)">
+          <SelectId disabled={locked} value={draft.wipAccountId} onChange={(v) => set("wipAccountId", v)}
+            options={assetAccounts.map((a) => ({ value: a.id, label: `${a.code} — ${a.nameAr}` }))} testid="select-wip-acct" />
+        </Field>
+        <Field label="مخزون الخامات (أصول)">
+          <SelectId disabled={locked} value={draft.rawInventoryAccountId} onChange={(v) => set("rawInventoryAccountId", v)}
+            options={assetAccounts.map((a) => ({ value: a.id, label: `${a.code} — ${a.nameAr}` }))} testid="select-raw-acct" />
+        </Field>
+        <Field label="بضاعة تامة الصنع (أصول)">
+          <SelectId value={draft.finishedGoodsAccountId} onChange={(v) => set("finishedGoodsAccountId", v)}
+            options={assetAccounts.map((a) => ({ value: a.id, label: `${a.code} — ${a.nameAr}` }))} testid="select-fg-acct" />
+        </Field>
+        <Field label="أجور إنتاج مستحقة (التزامات)">
+          <SelectId disabled={locked} value={draft.laborAccountId} onChange={(v) => set("laborAccountId", v)}
+            options={liabAccounts.map((a) => ({ value: a.id, label: `${a.code} — ${a.nameAr}` }))} testid="select-labor-acct" />
+        </Field>
+        <Field label="تكاليف صناعية غير مباشرة (التزامات)">
+          <SelectId disabled={locked} value={draft.overheadAccountId} onChange={(v) => set("overheadAccountId", v)}
+            options={liabAccounts.map((a) => ({ value: a.id, label: `${a.code} — ${a.nameAr}` }))} testid="select-overhead-acct" />
+        </Field>
+        <Field label="فروق إنتاج / Variance (مصروفات)">
+          <SelectId value={draft.varianceAccountId} onChange={(v) => set("varianceAccountId", v)}
+            options={expenseAccounts.map((a) => ({ value: a.id, label: `${a.code} — ${a.nameAr}` }))} testid="select-variance-acct" />
+        </Field>
+        <Field label="هالك / Waste (مصروفات)">
+          <SelectId value={draft.wasteAccountId} onChange={(v) => set("wasteAccountId", v)}
+            options={expenseAccounts.map((a) => ({ value: a.id, label: `${a.code} — ${a.nameAr}` }))} testid="select-waste-acct" />
+        </Field>
+      </div>
+
+      <div className="flex justify-end pt-1">
+        <Button type="submit" disabled={saving} data-testid="btn-save-wip">
+          {saving ? "جارٍ الحفظ..." : "حفظ إعدادات WIP"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{label}</Label>
+      <div className="mt-1">{children}</div>
+    </div>
+  );
+}
+
+function SelectId({
+  value, onChange, options, disabled, testid,
+}: {
+  value: number | string;
+  onChange: (v: number | "") => void;
+  options: { value: number; label: string }[];
+  disabled?: boolean;
+  testid?: string;
+}) {
+  const v = value === "" || value == null ? "__none__" : String(value);
+  return (
+    <Select value={v} onValueChange={(s) => onChange(s === "__none__" ? "" : Number(s))} disabled={disabled}>
+      <SelectTrigger data-testid={testid}><SelectValue placeholder="—" /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__">—</SelectItem>
+        {options.map((o) => (
+          <SelectItem key={o.value} value={String(o.value)}>{o.label}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }

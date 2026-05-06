@@ -15,7 +15,8 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { companiesTable } from "./companies";
 import { branchesTable } from "./branches";
-import { itemsTable } from "./inventory";
+import { itemsTable, warehousesTable } from "./inventory";
+import { accountsTable } from "./accounts";
 import { usersTable } from "./users";
 
 export const productionResourcesTable = pgTable(
@@ -85,6 +86,59 @@ export const productionOrdersTable = pgTable(
     actualCost: numeric("actual_cost", { precision: 14, scale: 2 })
       .notNull()
       .default("0"),
+    // ─── SAP-style WIP cycle: header-level warehouses + cost allocation ────
+    // When the order moves to "in_production" the BOM raw lines are
+    // decremented from rawWarehouseId; on "completed" the produced qty is
+    // added to finishedWarehouseId. Header-level fields (header warehouses,
+    // labor/overhead totals, account ids, costCenter) propagate to the
+    // generated journal entries — mirrors how invoices/receipts post.
+    rawWarehouseId: integer("raw_warehouse_id").references(
+      () => warehousesTable.id,
+      { onDelete: "set null" },
+    ),
+    finishedWarehouseId: integer("finished_warehouse_id").references(
+      () => warehousesTable.id,
+      { onDelete: "set null" },
+    ),
+    laborCost: numeric("labor_cost", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    overheadCost: numeric("overhead_cost", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    rawMaterialsCost: numeric("raw_materials_cost", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    costCenter: text("cost_center"),
+    wipAccountId: integer("wip_account_id").references(() => accountsTable.id, {
+      onDelete: "set null",
+    }),
+    rawInventoryAccountId: integer("raw_inventory_account_id").references(
+      () => accountsTable.id,
+      { onDelete: "set null" },
+    ),
+    finishedGoodsAccountId: integer("finished_goods_account_id").references(
+      () => accountsTable.id,
+      { onDelete: "set null" },
+    ),
+    laborAccountId: integer("labor_account_id").references(
+      () => accountsTable.id,
+      { onDelete: "set null" },
+    ),
+    overheadAccountId: integer("overhead_account_id").references(
+      () => accountsTable.id,
+      { onDelete: "set null" },
+    ),
+    varianceAccountId: integer("variance_account_id").references(
+      () => accountsTable.id,
+      { onDelete: "set null" },
+    ),
+    wasteAccountId: integer("waste_account_id").references(
+      () => accountsTable.id,
+      { onDelete: "set null" },
+    ),
+    issueJournalEntryId: integer("issue_journal_entry_id"),
+    receiptJournalEntryId: integer("receipt_journal_entry_id"),
     notes: text("notes"),
     meta: jsonb("meta").$type<Record<string, unknown>>().default({}),
     createdBy: integer("created_by").references(() => usersTable.id, {

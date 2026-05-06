@@ -11,7 +11,7 @@ import { branchesTable } from "./branches";
 // ─── Enums ────────────────────────────────────────────────────────────────────
 export const itemTypeEnum       = pgEnum("item_type",        ["stock", "service"]);
 export const itemStatusEnum     = pgEnum("item_status",      ["active", "inactive"]);
-export const txTypeEnum         = pgEnum("inv_tx_type",      ["transfer_out", "transfer_in", "adjustment", "count_adj", "sale", "sales_return", "purchase", "purchase_return", "opening", "goods_receipt", "goods_delivery"]);
+export const txTypeEnum         = pgEnum("inv_tx_type",      ["transfer_out", "transfer_in", "adjustment", "count_adj", "sale", "sales_return", "purchase", "purchase_return", "opening", "goods_receipt", "goods_delivery", "production_issue", "production_receipt"]);
 export const docStatusEnum      = pgEnum("inv_doc_status",   ["draft", "posted", "cancelled"]);
 export const costMethodEnum     = pgEnum("cost_method",      ["weighted_avg", "last_cost"]);
 

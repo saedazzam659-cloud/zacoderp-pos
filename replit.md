@@ -30,6 +30,7 @@ _Populate as you build_
 - **ZATCA Compliance**: Deep integration for ZATCA e-invoicing, including CSR/CSID management, UBL 2.1 XML generation, and TLV QR codes.
 - **Strategic AI Integration**: AI is used for advanced analytics (e.g., sales reports, cost center analysis), content generation (e.g., product descriptions), and operational assistance with rule-based fallbacks.
 - **Realtime Session Synchronization**: Utilizes Server-Sent Events (SSE) for immediate propagation of critical SuperAdmin changes (e.g., subscription, company state) to logged-in users, enhancing responsiveness.
+- **SAP-style Production WIP Cycle**: Production orders post a full DR WIP / CR Raw inventory journal entry on `in_production` (with header‑level labor + overhead allocation), and DR Finished Goods (+ DR Variance/Waste) / CR WIP on `completed`. Finished‑goods unit cost is `wipBalance × producedQty / (producedQty + wasteQty)`. Cancelling an issued order auto‑reverses the issue. Header `costCenter` propagates to every JE line. Warehouse + account fields lock once issue is posted.
 
 ## Product
 
@@ -52,6 +53,7 @@ I prefer detailed explanations and a clear, concise communication style. I value
 - **Branch-Level Data Isolation**: For users with `view_all_branches=false`, data is scoped to assigned branches across `/api/org/branches`, `/api/cash-boxes`, `/api/bank-accounts`, and `/api/inventory/warehouses`. Shared rows (NULL `branch_id`) are read-only for restricted users.
 - **Posted Invoice Lock**: Sales and purchase invoice edit screens become read-only (`<fieldset disabled>`) when `existing.status === "posted"`. Modifications require unposting via specific API endpoints.
 - **LC Expense Currency Default**: When adding an expense to an LC, if the LC currency is not the company's base currency, the `currencyCode` for the new expense defaults to the **base currency (SAR) with rate=1**. Server-side guards enforce `exchangeRate=1` for base currency entries.
+- **Production Order Post-Issue Lock**: Once a production order moves to `in_production`, the WIP setup fields (raw warehouse, WIP/raw-inventory/labor/overhead accounts, labor & overhead amounts) become read-only via PATCH guard. Changing them after the issue JE has posted would corrupt the WIP balance because the receipt JE would credit a different WIP account than the issue debited. To change them, cancel the order (which auto-reverses the issue) and re-do the cycle. FG-side fields (FG warehouse, FG/variance/waste accounts, costCenter) remain editable until completion.
 
 ## Pointers
 
