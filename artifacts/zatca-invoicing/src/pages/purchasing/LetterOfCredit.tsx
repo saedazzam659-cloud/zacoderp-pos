@@ -332,8 +332,13 @@ export default function LetterOfCredit() {
   // portion already drawn down by linked posted purchase invoices), which
   // is shown in the LC list/grid below and in the LC Statement report.
   const lcAmountBase    = (Number(form.totalAmount || 0)) * (Number(form.exchangeRate || 1));
-  const totalExpenses   = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0); // original-currency mix (informational only)
+  const totalExpenses   = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0); // raw sum — only meaningful when all currencies are identical
   const totalExpBase    = expenses.reduce((s, e) => s + (Number(e.amount) || 0) * (Number(e.exchangeRate) || 1), 0);
+  // Detect mixed currencies: only when the LC and EVERY expense share the same
+  // currency code can we safely display a sum in the "original currency" box.
+  // Otherwise we hide the numeric total (USD + SAR has no meaning) and direct
+  // the user to the base-currency box, where everything is FX-converted.
+  const allSameCurrency = expenses.every(e => (e.currencyCode || form.currencyCode) === form.currencyCode);
 
   async function runAiJournal(lc: any) {
     setAiLc(lc); setAiPreview(null); setAiLoading(true);
@@ -494,9 +499,31 @@ export default function LetterOfCredit() {
                       `LC + expenses` as the loaded-cost total, not `LC − expenses`. */}
                   <div className="rounded-xl border bg-muted/30 p-3 grid grid-cols-3 gap-3 text-xs text-center">
                     <div className="col-span-3 text-[10px] text-muted-foreground font-semibold mb-1">{tr("totalsOriginal")}</div>
-                    <div><span className="text-muted-foreground block text-[10px] mb-1">{tr("lcAmount")} ({form.currencyCode})</span><span className="font-semibold font-mono">{fmt(form.totalAmount)}</span></div>
-                    <div><span className="text-muted-foreground block text-[10px] mb-1">{tr("totalExpenses")}</span><span className="font-semibold font-mono text-amber-700">+ {fmt(totalExpenses)}</span></div>
-                    <div><span className="text-muted-foreground block text-[10px] mb-1">{tr("loadedCostTotal")}</span><span className="font-semibold font-mono text-primary">{fmt(Number(form.totalAmount || 0) + totalExpenses)}</span></div>
+                    <div>
+                      <span className="text-muted-foreground block text-[10px] mb-1">{tr("lcAmount")} ({form.currencyCode})</span>
+                      <span className="font-semibold font-mono">{fmt(form.totalAmount)}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground block text-[10px] mb-1">{tr("totalExpenses")}</span>
+                      {allSameCurrency ? (
+                        <span className="font-semibold font-mono text-amber-700">+ {fmt(totalExpenses)} {form.currencyCode}</span>
+                      ) : (
+                        <span className="font-mono text-[11px] text-muted-foreground italic">{tr("mixedCurrencies")}</span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground block text-[10px] mb-1">{tr("loadedCostTotal")}</span>
+                      {allSameCurrency ? (
+                        <span className="font-semibold font-mono text-primary">{fmt(Number(form.totalAmount || 0) + totalExpenses)} {form.currencyCode}</span>
+                      ) : (
+                        <span className="font-mono text-[11px] text-muted-foreground italic">{tr("seeBaseTotal")}</span>
+                      )}
+                    </div>
+                    {!allSameCurrency && (
+                      <p className="col-span-3 text-[10px] text-muted-foreground italic mt-1 leading-relaxed">
+                        {tr("mixedCurrenciesHint", { cur: baseCode })}
+                      </p>
+                    )}
                   </div>
                   {/* Base-currency totals — the authoritative IAS 21 view.
                       Grand total = LC base + expenses base (landed cost) — this
