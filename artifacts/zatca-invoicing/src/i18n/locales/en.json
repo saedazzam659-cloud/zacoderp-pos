@@ -3266,6 +3266,7 @@
         "viewEdit": "View / Edit",
         "openInvoice": "Open generated invoice",
         "confirm": "Confirm order",
+        "unconfirm": "Unconfirm — revert to draft",
         "cancel": "Cancel order",
         "convert": "Convert to purchase invoice",
         "delete": "Delete order"
@@ -3273,12 +3274,20 @@
       "confirms": {
         "cancel": "This will cancel the purchase order. Continue?",
         "convert": "A draft purchase invoice will be created from this order. Continue?",
-        "delete": "Delete the purchase order?"
+        "delete": "Delete the purchase order?",
+        "unconfirmOne": "The order will be reverted to draft and become editable again. Continue?",
+        "unconfirm": "Revert {{count}} order(s) back to draft. Continue?"
+      },
+      "bulk": {
+        "unconfirm": "Unconfirm",
+        "noUnconfirmable": "No confirmed (un-converted) orders in selection"
       },
       "toasts": {
         "statusUpdated": "✓ Status updated",
         "converted": "✓ Order converted to draft invoice",
-        "deleted": "✓ Deleted"
+        "deleted": "✓ Deleted",
+        "unconfirmedBulk": "✓ {{count}} order(s) reverted to draft",
+        "unconfirmedBulkPartial": "Unconfirm: {{ok}} ok, {{failed}} failed"
       }
     },
     "purchaseOrderForm": {

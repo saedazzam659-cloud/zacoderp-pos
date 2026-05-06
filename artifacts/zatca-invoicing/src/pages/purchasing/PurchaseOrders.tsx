@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Plus, ClipboardList, Eye, Trash2, CheckCircle, XCircle, FileCheck2, Printer, Copy, Pencil,
-  FileSpreadsheet, FileDown, X, Loader2,
+  FileSpreadsheet, FileDown, X, Loader2, RotateCcw,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { cn } from "@/lib/utils";
@@ -457,9 +457,10 @@ ${sections}
     () => (orders as any[]).filter((r) => isSelected(Number(r.id))),
     [orders, isSelected],
   );
-  const selectedConfirmable = selectedRows.filter((r) => r.status === "draft");
-  const selectedCancellable = selectedRows.filter((r) => r.status === "draft");
-  const selectedDeletable   = selectedRows.filter((r) => r.status !== "converted" && r.status !== "cancelled");
+  const selectedConfirmable   = selectedRows.filter((r) => r.status === "draft");
+  const selectedUnconfirmable = selectedRows.filter((r) => r.status === "confirmed" && !r.convertedInvoiceId);
+  const selectedCancellable   = selectedRows.filter((r) => r.status === "draft");
+  const selectedDeletable     = selectedRows.filter((r) => r.status !== "converted" && r.status !== "cancelled");
 
   async function bulkConfirm() {
     const ids = selectedConfirmable.map((r) => Number(r.id));
@@ -473,6 +474,23 @@ ${sections}
       invalidate();
       if (failed.length === 0) toast({ title: `تم تأكيد ${ok} أمر شراء` });
       else toast({ title: `تأكيد: ${ok} نجح، ${failed.length} فشل`, description: failed.slice(0, 3).map(f => f.error).join("\n"), variant: "destructive" });
+      clearSelection();
+    } finally { setBulkBusy(false); }
+  }
+
+  async function bulkUnconfirm() {
+    const ids = selectedUnconfirmable.map((r) => Number(r.id));
+    if (ids.length === 0) { toast({ title: t("purchasingPages.purchaseOrders.bulk.noUnconfirmable"), variant: "destructive" }); return; }
+    if (!window.confirm(t("purchasingPages.purchaseOrders.confirms.unconfirm", { count: ids.length }))) return;
+    setBulkBusy(true);
+    try {
+      const { ok, failed } = await bulkRun(ids, async (id) => {
+        const res = await fetch(`${API}/api/purchasing/purchase-orders/${id}/status`, { method: "PATCH", headers, body: JSON.stringify({ status: "draft" }) });
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
+      });
+      invalidate();
+      if (failed.length === 0) toast({ title: t("purchasingPages.purchaseOrders.toasts.unconfirmedBulk", { count: ok }) });
+      else toast({ title: t("purchasingPages.purchaseOrders.toasts.unconfirmedBulkPartial", { ok, failed: failed.length }), description: failed.slice(0, 3).map(f => f.error).join("\n"), variant: "destructive" });
       clearSelection();
     } finally { setBulkBusy(false); }
   }
@@ -637,6 +655,14 @@ ${sections}
             title={layout.selected.size === 1 ? "إنشاء نسخة مماثلة من الأمر المحدَّد" : "حدِّد أمرًا واحدًا فقط"}>
             <Copy className="h-3.5 w-3.5" />
             نسخة مماثلة
+          </Button>
+          <Button type="button" size="sm" variant="outline"
+            className="h-7 px-3 text-xs gap-1 border-orange-400 text-orange-800 hover:bg-orange-50"
+            onClick={bulkUnconfirm}
+            disabled={bulkBusy || selectedUnconfirmable.length === 0}
+            title={selectedUnconfirmable.length === 0 ? t("purchasingPages.purchaseOrders.bulk.noUnconfirmable") : t("purchasingPages.purchaseOrders.tooltips.unconfirm")}>
+            <RotateCcw className="h-3.5 w-3.5" />
+            {t("purchasingPages.purchaseOrders.bulk.unconfirm")} ({selectedUnconfirmable.length})
           </Button>
           <Button type="button" size="sm" variant="outline"
             className="h-7 px-3 text-xs gap-1 border-amber-400 text-amber-800 hover:bg-amber-50"
@@ -814,6 +840,13 @@ ${sections}
                                   title={t("purchasingPages.purchaseOrders.tooltips.convert")}
                                   onClick={(e) => { e.stopPropagation(); if (confirm(t("purchasingPages.purchaseOrders.confirms.convert"))) convertMut.mutate(ord.id); }}>
                                   <FileCheck2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              {ord.status === "confirmed" && !ord.convertedInvoiceId && (
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-orange-700 hover:bg-orange-50"
+                                  title={t("purchasingPages.purchaseOrders.tooltips.unconfirm")}
+                                  onClick={(e) => { e.stopPropagation(); if (confirm(t("purchasingPages.purchaseOrders.confirms.unconfirmOne"))) statusMut.mutate({ id: ord.id, status: "draft" }); }}>
+                                  <RotateCcw className="h-3.5 w-3.5" />
                                 </Button>
                               )}
                               {ord.status !== "converted" && ord.status !== "cancelled" && (
