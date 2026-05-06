@@ -326,11 +326,14 @@ export default function LetterOfCredit() {
   // ─── Totals are always computed in the company's base/functional currency.
   // For each row: amountBase = amount × exchangeRate. This is the IAS 21
   // historical-rate approach used everywhere foreign currency is summed.
+  // NOTE: There is no "remaining = LC − expenses" because expenses are
+  // ADDITIONAL landed costs loaded on top of the LC value (not a deduction
+  // from it). The meaningful "remaining" is LC value − usedAmount (the
+  // portion already drawn down by linked posted purchase invoices), which
+  // is shown in the LC list/grid below and in the LC Statement report.
   const lcAmountBase    = (Number(form.totalAmount || 0)) * (Number(form.exchangeRate || 1));
   const totalExpenses   = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0); // original-currency mix (informational only)
   const totalExpBase    = expenses.reduce((s, e) => s + (Number(e.amount) || 0) * (Number(e.exchangeRate) || 1), 0);
-  const remaining       = Number(form.totalAmount || 0) - totalExpenses;
-  const remainingBase   = lcAmountBase - totalExpBase;
 
   async function runAiJournal(lc: any) {
     setAiLc(lc); setAiPreview(null); setAiLoading(true);
@@ -486,20 +489,24 @@ export default function LetterOfCredit() {
               <Button type="button" variant="outline" size="sm" className="gap-2 w-full" onClick={addExpense}><Plus className="h-4 w-4" />{tr("addExpense")}</Button>
               {expenses.length > 0 && (
                 <div className="space-y-2">
-                  {/* Original-currency totals — informational only when amounts mix currencies */}
+                  {/* Original-currency totals — informational only when amounts mix currencies.
+                      Expenses ADD to the LC value (landed-cost loading), so we show
+                      `LC + expenses` as the loaded-cost total, not `LC − expenses`. */}
                   <div className="rounded-xl border bg-muted/30 p-3 grid grid-cols-3 gap-3 text-xs text-center">
                     <div className="col-span-3 text-[10px] text-muted-foreground font-semibold mb-1">{tr("totalsOriginal")}</div>
                     <div><span className="text-muted-foreground block text-[10px] mb-1">{tr("lcAmount")} ({form.currencyCode})</span><span className="font-semibold font-mono">{fmt(form.totalAmount)}</span></div>
-                    <div><span className="text-muted-foreground block text-[10px] mb-1">{tr("totalExpenses")}</span><span className="font-semibold font-mono text-amber-700">{fmt(totalExpenses)}</span></div>
-                    <div><span className="text-muted-foreground block text-[10px] mb-1">{tr("remaining")}</span><span className={cn("font-semibold font-mono", remaining >= 0 ? "text-green-700" : "text-destructive")}>{fmt(remaining)}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] mb-1">{tr("totalExpenses")}</span><span className="font-semibold font-mono text-amber-700">+ {fmt(totalExpenses)}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] mb-1">{tr("loadedCostTotal")}</span><span className="font-semibold font-mono text-primary">{fmt(Number(form.totalAmount || 0) + totalExpenses)}</span></div>
                   </div>
-                  {/* Base-currency totals — the authoritative IAS 21 view */}
+                  {/* Base-currency totals — the authoritative IAS 21 view.
+                      Grand total = LC base + expenses base (landed cost) — this
+                      is the figure that flows into the linked purchase invoices. */}
                   <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-4 space-y-3 text-sm">
                     <div className="text-xs text-primary font-semibold text-center">{tr("totalsBase", { cur: baseCode })}</div>
                     <div className="grid grid-cols-3 gap-4 text-center">
                       <div><span className="text-muted-foreground block text-xs mb-1">{tr("lcAmountBase")}</span><span className="font-bold font-mono">{fmt(lcAmountBase)}</span></div>
-                      <div><span className="text-muted-foreground block text-xs mb-1">{tr("totalExpensesBase")}</span><span className="font-bold font-mono text-amber-700">{fmt(totalExpBase)}</span></div>
-                      <div><span className="text-muted-foreground block text-xs mb-1">{tr("remainingBase")}</span><span className={cn("font-bold font-mono", remainingBase >= 0 ? "text-green-700" : "text-destructive")}>{fmt(remainingBase)}</span></div>
+                      <div><span className="text-muted-foreground block text-xs mb-1">{tr("totalExpensesBase")}</span><span className="font-bold font-mono text-amber-700">+ {fmt(totalExpBase)}</span></div>
+                      <div><span className="text-muted-foreground block text-xs mb-1">{tr("loadedCostTotalBase")}</span><span className="font-bold font-mono text-primary">{fmt(lcAmountBase + totalExpBase)}</span></div>
                     </div>
                     {/* Grand total = LC base + expenses base. This is the figure
                         used when the LC is loaded into a purchase invoice. */}
@@ -507,6 +514,9 @@ export default function LetterOfCredit() {
                       <span className="text-sm font-semibold text-primary">{tr("grandTotalBase")}</span>
                       <span className="font-bold font-mono text-base text-primary">{fmt(lcAmountBase + totalExpBase)} {baseCode}</span>
                     </div>
+                    <p className="text-[11px] text-muted-foreground text-center leading-relaxed border-t border-primary/20 pt-2">
+                      {tr("expensesAddedHint")}
+                    </p>
                   </div>
                 </div>
               )}
