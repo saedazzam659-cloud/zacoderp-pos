@@ -36,14 +36,36 @@ router.get("/balances", async (req, res) => {
   const companyId = resolveCompanyId(req, rawCompanyId);
   if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
-  const [invRows, retRows, setRows] = await Promise.all([
+  const [invRows, lcInvRows, retRows, setRows] = await Promise.all([
+    // Regular (non-LC) posted invoices — these accrue against supplier balance.
     db
       .select({
         supplierId: purchaseInvoicesTable.supplierId,
         total: sql<string>`coalesce(sum(${purchaseInvoicesTable.totalAmount}),0)`,
       })
       .from(purchaseInvoicesTable)
-      .where(and(eq(purchaseInvoicesTable.companyId, companyId), eq(purchaseInvoicesTable.status, "posted")))
+      .where(and(
+        eq(purchaseInvoicesTable.companyId, companyId),
+        eq(purchaseInvoicesTable.status, "posted"),
+        sql`${purchaseInvoicesTable.lcId} IS NULL`,
+      ))
+      .groupBy(purchaseInvoicesTable.supplierId),
+
+    // LC-linked posted invoices — supplier was already paid through the
+    // Letter of Credit (margin / bank transfer), so they MUST NOT inflate
+    // the supplier's balance. We surface the total separately for the UI
+    // (informational column) but it does NOT enter the `balance` formula.
+    db
+      .select({
+        supplierId: purchaseInvoicesTable.supplierId,
+        total: sql<string>`coalesce(sum(${purchaseInvoicesTable.totalAmount}),0)`,
+      })
+      .from(purchaseInvoicesTable)
+      .where(and(
+        eq(purchaseInvoicesTable.companyId, companyId),
+        eq(purchaseInvoicesTable.status, "posted"),
+        sql`${purchaseInvoicesTable.lcId} IS NOT NULL`,
+      ))
       .groupBy(purchaseInvoicesTable.supplierId),
 
     db
@@ -65,19 +87,31 @@ router.get("/balances", async (req, res) => {
       .groupBy(supplierSettlementsTable.supplierId),
   ]);
 
-  const invMap  = Object.fromEntries(invRows.map(r => [r.supplierId, parseFloat(r.total)]));
-  const retMap  = Object.fromEntries(retRows.map(r => [r.supplierId, parseFloat(r.total)]));
-  const setMap  = Object.fromEntries(setRows.map(r => [r.supplierId, parseFloat(r.total)]));
+  const invMap   = Object.fromEntries(invRows.map(r   => [r.supplierId, parseFloat(r.total)]));
+  const lcInvMap = Object.fromEntries(lcInvRows.map(r => [r.supplierId, parseFloat(r.total)]));
+  const retMap   = Object.fromEntries(retRows.map(r   => [r.supplierId, parseFloat(r.total)]));
+  const setMap   = Object.fromEntries(setRows.map(r   => [r.supplierId, parseFloat(r.total)]));
 
   const suppliers = await db.select({ id: suppliersTable.id })
     .from(suppliersTable).where(eq(suppliersTable.companyId, companyId));
 
   const result = suppliers.map(s => {
-    const inv = invMap[s.id]  ?? 0;
-    const ret = retMap[s.id]  ?? 0;
-    const set = setMap[s.id]  ?? 0;
+    const inv   = invMap[s.id]   ?? 0;     // non-LC posted invoices
+    const lcInv = lcInvMap[s.id] ?? 0;     // LC-linked posted invoices (already paid via LC)
+    const ret   = retMap[s.id]   ?? 0;
+    const set   = setMap[s.id]   ?? 0;
+    // LC-linked invoices are excluded from the balance: the supplier was
+    // already paid through the Letter of Credit, so its dues are zeroed
+    // by the invoice amount on the suppliers screen.
     const balance = inv - ret - set;
-    return { supplierId: s.id, invoicesTotal: inv, returnsTotal: ret, settlementsTotal: set, balance };
+    return {
+      supplierId:        s.id,
+      invoicesTotal:     inv,
+      lcInvoicesTotal:   lcInv,
+      returnsTotal:      ret,
+      settlementsTotal:  set,
+      balance,
+    };
   });
 
   res.json(result);

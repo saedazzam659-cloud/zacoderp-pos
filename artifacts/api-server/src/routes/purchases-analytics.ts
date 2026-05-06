@@ -250,6 +250,8 @@ router.get("/supplier-statement", async (req, res) => {
           eq(purchaseInvoicesTable.supplierId, sid),
           eq(purchaseInvoicesTable.status, "posted"),
           eq(purchaseInvoicesTable.paymentType, "credit"),
+          // LC-linked invoices were paid by the Letter of Credit — exclude.
+          sql`${purchaseInvoicesTable.lcId} IS NULL`,
           sql`${purchaseInvoicesTable.invoiceDate} < ${date}`,
           ...branchScopeSpread(req, purchaseInvoicesTable.branchId, bid),
         ));
@@ -283,6 +285,8 @@ router.get("/supplier-statement", async (req, res) => {
       eq(purchaseInvoicesTable.supplierId, sid),
       eq(purchaseInvoicesTable.status, "posted"),
       eq(purchaseInvoicesTable.paymentType, "credit"),
+      // LC-linked invoices excluded from supplier statement (paid via LC).
+      sql`${purchaseInvoicesTable.lcId} IS NULL`,
     ];
     pushBranchScope(req, invConds, purchaseInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(purchaseInvoicesTable.invoiceDate, from));
@@ -361,6 +365,8 @@ router.get("/supplier-statement-detailed", async (req, res) => {
           eq(purchaseInvoicesTable.supplierId, sid),
           eq(purchaseInvoicesTable.status, "posted"),
           eq(purchaseInvoicesTable.paymentType, "credit"),
+          // LC-linked invoices excluded — supplier was paid via the LC.
+          sql`${purchaseInvoicesTable.lcId} IS NULL`,
           sql`${purchaseInvoicesTable.invoiceDate} < ${date}`,
           ...branchScopeSpread(req, purchaseInvoicesTable.branchId, bid),
         ));
@@ -396,6 +402,9 @@ router.get("/supplier-statement-detailed", async (req, res) => {
       eq(purchaseInvoicesTable.companyId, cid),
       eq(purchaseInvoicesTable.supplierId, sid),
       eq(purchaseInvoicesTable.status, "posted"),
+      // LC-linked invoices excluded — supplier was paid via the LC, so they
+      // must not appear in the supplier ledger.
+      sql`${purchaseInvoicesTable.lcId} IS NULL`,
     ];
     pushBranchScope(req, invConds, purchaseInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(purchaseInvoicesTable.invoiceDate, from));
@@ -617,6 +626,9 @@ router.get("/aging", async (req, res) => {
         eq(purchaseInvoicesTable.companyId, cid),
         eq(purchaseInvoicesTable.status, "posted"),
         eq(purchaseInvoicesTable.paymentType, "credit"),
+        // LC-linked invoices were paid by the Letter of Credit, not by the
+        // supplier's A/P, so they must NOT appear in aging.
+        sql`${purchaseInvoicesTable.lcId} IS NULL`,
         lte(purchaseInvoicesTable.invoiceDate, asOf),
         ...branchScopeSpread(req, purchaseInvoicesTable.branchId, bid),
       ))
