@@ -290,7 +290,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         qty:         String(l.qty),
         unitPrice:   String(l.unitPrice),
         discount:    String(l.discount ?? "0"),
-        vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
+        vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
         lineTotal:   String(l.lineTotal),
         notes:       l.notes ?? "",
         // Quotations don't carry offer-engine state — start with a clean
@@ -529,7 +529,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       qty:         String(l.qty),
       unitPrice:   String(l.unitPrice),
       discount:    String(l.discount ?? "0"),
-      vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
+      vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
       lineTotal:   String(l.lineTotal),
       notes:       l.notes ?? "",
       // Carry forward the historical offer link so the badge shows on edit.
@@ -602,7 +602,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           qty:         String(l.qty),
           unitPrice:   String(l.unitPrice),
           discount:    String(l.discount ?? "0"),
-          vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
+          vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
           lineTotal:   String(l.lineTotal),
           notes:       l.notes ?? "",
           // Don't carry the historical offer onto a duplicate — the new
@@ -728,7 +728,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         appliedOfferId:  null,
         appliedOfferName: null,
         discount:  "0",
-        vatRate:   (Number(item.vatRate) > 0 ? String(item.vatRate) : "15"),
+        vatRate:   (item.vatRate != null && item.vatRate !== "" ? String(item.vatRate) : "15"),
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };

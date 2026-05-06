@@ -337,7 +337,7 @@ export default function PurchaseReturns() {
         qty:         String(l.qty ?? "1"),
         unitPrice:   String(l.unitPrice ?? "0"),
         discount:    String(l.discount ?? "0"),
-        vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
+        vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
         lineTotal:   String(l.lineTotal ?? "0"),
         notes:       l.notes ?? "",
       })) : [newLine()]);
@@ -384,7 +384,7 @@ export default function PurchaseReturns() {
         qty:         String(l.qty ?? "1"),
         unitPrice:   String(l.unitPrice ?? "0"),
         discount:    String(l.discount ?? "0"),
-        vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
+        vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
         lineTotal:   String(l.lineTotal ?? "0"),
         notes:       l.notes ?? "",
       })) : [newLine()]);
@@ -470,7 +470,7 @@ export default function PurchaseReturns() {
           qty:         String(Math.round(Number(l.qty ?? 1))),
           unitPrice:   String(l.unitPrice ?? 0),
           discount:    String(l.discount  ?? "0"),
-          vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
+          vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
           lineTotal:   String(l.lineTotal ?? 0),
           notes:       l.notes ?? "",
         })));
@@ -590,7 +590,7 @@ export default function PurchaseReturns() {
         unit:      unitName(base?.unit) || unitName(fallbackUnit) || "",
         conversionFactor: String(base?.conversionFactor ?? "1"),
         unitPrice: chosenPrice,
-        vatRate:   (Number(item.vatRate) > 0 ? String(item.vatRate) : "15"),
+        vatRate:   (item.vatRate != null && item.vatRate !== "" ? String(item.vatRate) : "15"),
       };
       return { ...updated, lineTotal: calcLineTotal(updated, !!form.priceIncludesVat).toFixed(2) };
     }));

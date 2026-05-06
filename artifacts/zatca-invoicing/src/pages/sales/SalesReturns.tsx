@@ -405,7 +405,7 @@ export default function SalesReturns() {
             qty: String(l.qty ?? "1"),
             unitPrice: String(l.unitPrice ?? "0"),
             discount: String(l.discount ?? "0"),
-            vatRate: (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
+            vatRate: (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
             lineTotal: String(l.lineTotal ?? "0"),
             notes: l.notes ?? "",
           }))
@@ -456,7 +456,7 @@ export default function SalesReturns() {
             qty: String(l.qty ?? "1"),
             unitPrice: String(l.unitPrice ?? "0"),
             discount: String(l.discount ?? "0"),
-            vatRate: (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
+            vatRate: (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
             lineTotal: String(l.lineTotal ?? "0"),
             notes: l.notes ?? "",
           }))
@@ -504,7 +504,7 @@ export default function SalesReturns() {
           qty:         String(Math.round(Number(l.qty ?? 1))),
           unitPrice:   String(l.unitPrice ?? 0),
           discount:    String(l.discount  ?? "0"),
-          vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
+          vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
           lineTotal:   String(l.lineTotal ?? 0),
           notes:       l.notes ?? "",
         })));
