@@ -260,7 +260,6 @@ export default function LcExpenseEntry() {
           const lcBase  = Number(selectedLc.totalAmountBase   ?? selectedLc.totalAmount ?? 0);
           const usedBase = Number(selectedLc.usedAmount ?? 0);
           const expBase  = Number(selectedLc.totalExpensesBase ?? 0);
-          const remBase  = lcBase - usedBase;
           const isFx     = selectedLc.currencyCode && selectedLc.baseCurrency && selectedLc.currencyCode !== selectedLc.baseCurrency;
           return (
             <div className="rounded-lg border-2 border-emerald-200 bg-white p-4 grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
@@ -277,9 +276,10 @@ export default function LcExpenseEntry() {
                 <div className="font-mono font-bold">{fmt(selectedLc.totalAmount)}</div>
                 {isFx && <div className="text-[9px] text-muted-foreground font-mono">≈ {fmt(lcBase)} {selectedLc.baseCurrency}</div>}
               </div>
-              <div>
-                <div className="text-[10px] text-muted-foreground mb-0.5">{trLc("colRemaining")}</div>
-                <div className="font-mono font-bold text-green-700">{fmt(remBase)} {selectedLc.baseCurrency || baseCode}</div>
+              <div title={tr("usedHint")}>
+                <div className="text-[10px] text-muted-foreground mb-0.5">{tr("usedByInvoices")}</div>
+                <div className="font-mono font-bold text-blue-700">{fmt(usedBase)} {selectedLc.baseCurrency || baseCode}</div>
+                <div className="text-[9px] text-muted-foreground mt-0.5">{tr("usedPct", { pct: lcBase > 0 ? ((usedBase / lcBase) * 100).toFixed(0) : "0" })}</div>
               </div>
               <div>
                 <div className="text-[10px] text-muted-foreground mb-0.5">{tr("currentExpenses")}</div>
