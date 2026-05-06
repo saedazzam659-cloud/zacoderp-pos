@@ -261,31 +261,63 @@ export default function LcExpenseEntry() {
           const lcBase  = Number(selectedLc.totalAmountBase   ?? selectedLc.totalAmount ?? 0);
           const usedBase = Number(selectedLc.usedAmount ?? 0);
           const expBase  = Number(selectedLc.totalExpensesBase ?? 0);
-          const isFx     = selectedLc.currencyCode && selectedLc.baseCurrency && selectedLc.currencyCode !== selectedLc.baseCurrency;
+          const remBaseRaw = lcBase - usedBase;
+          const remBase    = Math.max(0, remBaseRaw);
+          const overBy     = remBaseRaw < 0 ? -remBaseRaw : 0;
+          const loaded     = lcBase + expBase;
+          const isFx       = selectedLc.currencyCode && selectedLc.baseCurrency && selectedLc.currencyCode !== selectedLc.baseCurrency;
+          const baseCur    = selectedLc.baseCurrency || baseCode;
           return (
-            <div className="rounded-lg border-2 border-emerald-200 bg-white p-4 grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
-              <div>
-                <div className="text-[10px] text-muted-foreground mb-0.5">{trLc("colNumber")}</div>
-                <div className="font-mono font-bold text-primary">{selectedLc.lcNumber}</div>
+            <div className="rounded-lg border-2 border-emerald-200 bg-white p-4 space-y-3">
+              {/* Row 1 — Identity + total LC value */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <div className="text-[10px] text-muted-foreground mb-0.5">{trLc("colNumber")}</div>
+                  <div className="font-mono font-bold text-primary">{selectedLc.lcNumber}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-muted-foreground mb-0.5">{trLc("colSupplier")}</div>
+                  <div className="font-semibold truncate">{sup ? pickName(sup.nameAr, sup.nameEn) : "—"}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-muted-foreground mb-0.5">{trLc("colTotal")} ({selectedLc.currencyCode})</div>
+                  <div className="font-mono font-bold">{fmt(selectedLc.totalAmount)}</div>
+                  {isFx && <div className="text-[9px] text-muted-foreground font-mono">≈ {fmt(lcBase)} {baseCur}</div>}
+                </div>
               </div>
-              <div>
-                <div className="text-[10px] text-muted-foreground mb-0.5">{trLc("colSupplier")}</div>
-                <div className="font-semibold truncate">{sup ? pickName(sup.nameAr, sup.nameEn) : "—"}</div>
+
+              {/* Row 2 — LC capacity breakdown (drawn + remaining = LC value, NOT additive to LC) */}
+              <div className="rounded-md bg-emerald-50/60 border border-emerald-100 p-2.5">
+                <div className="text-[10px] text-emerald-900 font-semibold mb-1.5">
+                  {trLc("colTotal")} = {fmt(lcBase)} {baseCur}  ({tr("usedByInvoices")} + {tr("remainingCapacity")})
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div title={tr("usedHint")}>
+                    <div className="text-[10px] text-muted-foreground mb-0.5">{tr("usedByInvoices")}</div>
+                    <div className="font-mono font-bold text-blue-700">{fmt(usedBase)} {baseCur}</div>
+                    <div className="text-[9px] text-muted-foreground mt-0.5">{tr("usedPct", { pct: lcBase > 0 ? ((usedBase / lcBase) * 100).toFixed(0) : "0" })}</div>
+                  </div>
+                  <div title={tr("remainingHint")}>
+                    <div className="text-[10px] text-muted-foreground mb-0.5">{tr("remainingCapacity")}</div>
+                    <div className={cn("font-mono font-bold", overBy > 0 ? "text-red-700" : "text-emerald-700")}>{fmt(remBase)} {baseCur}</div>
+                    {overBy > 0
+                      ? <div className="text-[9px] text-red-700 mt-0.5">{tr("overConsumedBy", { amount: fmt(overBy), cur: baseCur })}</div>
+                      : <div className="text-[9px] text-muted-foreground mt-0.5">{tr("usedPct", { pct: lcBase > 0 ? ((remBase / lcBase) * 100).toFixed(0) : "0" })}</div>}
+                  </div>
+                </div>
               </div>
-              <div>
-                <div className="text-[10px] text-muted-foreground mb-0.5">{trLc("colTotal")} ({selectedLc.currencyCode})</div>
-                <div className="font-mono font-bold">{fmt(selectedLc.totalAmount)}</div>
-                {isFx && <div className="text-[9px] text-muted-foreground font-mono">≈ {fmt(lcBase)} {selectedLc.baseCurrency}</div>}
-              </div>
-              <div title={tr("usedHint")}>
-                <div className="text-[10px] text-muted-foreground mb-0.5">{tr("usedByInvoices")}</div>
-                <div className="font-mono font-bold text-blue-700">{fmt(usedBase)} {selectedLc.baseCurrency || baseCode}</div>
-                <div className="text-[9px] text-muted-foreground mt-0.5">{tr("usedPct", { pct: lcBase > 0 ? ((usedBase / lcBase) * 100).toFixed(0) : "0" })}</div>
-              </div>
-              <div>
-                <div className="text-[10px] text-muted-foreground mb-0.5">{tr("currentExpenses")}</div>
-                <div className="font-mono font-bold text-amber-700">+ {fmt(expBase)} {selectedLc.baseCurrency || baseCode}</div>
-                <div className="text-[9px] text-primary mt-0.5">→ {tr("loadedCost")}: {fmt(lcBase + expBase)}</div>
+
+              {/* Row 3 — Expenses on TOP of LC value */}
+              <div className="rounded-md bg-amber-50/60 border border-amber-100 p-2.5 grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <div className="text-[10px] text-muted-foreground mb-0.5">{tr("currentExpenses")}</div>
+                  <div className="font-mono font-bold text-amber-700">+ {fmt(expBase)} {baseCur}</div>
+                </div>
+                <div title={tr("loadedCostHint")}>
+                  <div className="text-[10px] text-muted-foreground mb-0.5">{tr("loadedCost")}</div>
+                  <div className="font-mono font-bold text-primary">= {fmt(loaded)} {baseCur}</div>
+                  <div className="text-[9px] text-muted-foreground mt-0.5 font-mono">{fmt(lcBase)} + {fmt(expBase)}</div>
+                </div>
               </div>
             </div>
           );
