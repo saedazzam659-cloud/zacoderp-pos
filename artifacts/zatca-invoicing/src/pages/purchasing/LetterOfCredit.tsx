@@ -601,14 +601,21 @@ export default function LetterOfCredit() {
                       </div>
                     </td>
                     <td className="px-3 py-2.5 font-mono">
+                      <span className="text-rose-700">{fmt(usedBase)}{isFx && <span className="text-[10px] text-muted-foreground"> {lc.baseCurrency}</span>}</span>
+                    </td>
+                    <td className="px-3 py-2.5 font-mono">
                       <div className="flex flex-col gap-0.5">
-                        <span className="text-rose-700">{fmt(usedBase)}{isFx && <span className="text-[10px] text-muted-foreground"> {lc.baseCurrency}</span>}</span>
+                        <span className="text-green-700">{fmt(remBase)}{isFx && <span className="text-[10px] text-muted-foreground"> {lc.baseCurrency}</span>}</span>
                         {expBase > 0 && (
-                          <span className="text-[10px] text-amber-700">+ {fmt(expBase)} {tr("expensesShort")}</span>
+                          <span
+                            className="text-[10px] text-amber-700"
+                            title={tr("loadedCostTooltip", { lc: fmt(lcBase), exp: fmt(expBase), total: fmt(lcBase + expBase), cur: lc.baseCurrency || "" })}
+                          >
+                            + {fmt(expBase)} {tr("expensesShort")} → {fmt(lcBase + expBase)}
+                          </span>
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-2.5 font-mono text-green-700">{fmt(remBase)}{isFx && <span className="text-[10px] text-muted-foreground"> {lc.baseCurrency}</span>}</td>
                     <td className="px-3 py-2.5">
                       <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border", st.cls)}>{st.label}</span>
                     </td>
