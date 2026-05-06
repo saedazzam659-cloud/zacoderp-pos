@@ -269,7 +269,13 @@ function enrichLcRow(lc: any, expenses: any[], baseCurrency: string) {
     return { ...e, amountBase: (a * r).toFixed(2) };
   });
   const totalExpensesBase = expEnriched.reduce((s, e) => s + Number(e.amountBase), 0);
-  const remainingBase     = totalBase - totalExpensesBase;
+  // "Remaining" = unused LC capacity = LC face value (in base) minus the
+  // goods portion already drawn down by POSTED purchase invoices
+  // (`usedAmount`, maintained by recomputeLcUsage).
+  // It is NOT `totalBase - expenses` — expenses are loaded on top of goods,
+  // not deducted from the LC commitment to the supplier.
+  const usedBase          = Number(lc.usedAmount ?? "0") || 0;
+  const remainingBase     = Math.max(0, totalBase - usedBase);
   return {
     ...lc,
     totalAmountBase:    totalBase.toFixed(2),
