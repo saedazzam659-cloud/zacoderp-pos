@@ -39,6 +39,7 @@ interface FormState {
   refNumber: string;
   description: string;
   notes: string;
+  costCenter: string;
 }
 
 const EMPTY: FormState = {
@@ -56,6 +57,7 @@ const EMPTY: FormState = {
   refNumber: "",
   description: "",
   notes: "",
+  costCenter: "",
 };
 
 export default function ReceiptVoucherForm() {
@@ -116,6 +118,18 @@ export default function ReceiptVoucherForm() {
     enabled: !!cid,
     staleTime: 60_000,
   });
+  // Cost-centers list — used to populate the header-level "مركز التكلفة"
+  // select. Selected code propagates to every JE line on /post.
+  const { data: costCentersList = [] } = useQuery<any[]>({
+    queryKey: ["cost-centers", cid],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/cost-centers?companyId=${cid}`, { headers: h });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!cid,
+    staleTime: 60_000,
+  });
   const defaultCurrencyId =
     (currencies as any[]).find((c: any) => c.isDefault)?.id ??
     (currencies as any[])[0]?.id ?? null;
@@ -171,6 +185,7 @@ export default function ReceiptVoucherForm() {
       refNumber: existing.refNumber ?? "",
       description: existing.description ?? "",
       notes: existing.notes ?? "",
+      costCenter: existing.costCenter ?? "",
     });
     setLinkInvoice(!!existing.salesInvoiceId);
   }, [existing]);
@@ -861,6 +876,27 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">{t(`${NS}.description`)}</Label>
                   <Input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} placeholder={t(`${NS}.descriptionPh`)} className="h-9 text-sm" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium">مركز التكلفة</Label>
+                  <select
+                    value={form.costCenter}
+                    onChange={e => setForm(p => ({ ...p, costCenter: e.target.value }))}
+                    data-testid="rv-cost-center"
+                    className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                  >
+                    <option value="">— بدون مركز تكلفة —</option>
+                    {(costCentersList as any[])
+                      .filter((c: any) => c.isActive !== false)
+                      .map((c: any) => (
+                        <option key={c.id} value={c.code}>
+                          {c.code} — {c.nameAr}
+                        </option>
+                      ))}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground">
+                    سيُسند هذا المركز إلى كل سطور القيد عند الترحيل ليظهر في تقارير مراكز التكلفة.
+                  </p>
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">{t("cashCommon.notes")}</Label>

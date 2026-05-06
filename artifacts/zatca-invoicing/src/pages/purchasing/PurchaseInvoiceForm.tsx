@@ -109,6 +109,7 @@ export default function PurchaseInvoiceForm() {
   const [lcId,         setLcId]         = useState("");
   const [distMethod,   setDistMethod]   = useState("value");
   const [notes,        setNotes]        = useState("");
+  const [costCenter,   setCostCenter]   = useState("");
   const [docDiscount,  setDocDiscount]  = useState("0");
   // Sticky toggle — see SalesDocumentForm for behavior contract.
   const stickyPriceIncl = useStickyPriceIncludesVat();
@@ -232,6 +233,16 @@ export default function PurchaseInvoiceForm() {
     enabled: !!user && !!cid && paymentType === "credit",
   });
 
+  const { data: costCentersList = [] } = useQuery<any[]>({
+    queryKey: ["cost-centers", cid],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/cost-centers?companyId=${cid}`, { headers });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!cid,
+    staleTime: 60_000,
+  });
   const { data: cashBoxes = [] } = useQuery<any[]>({
     queryKey: ["cash-boxes", cid],
     queryFn: async () => { const r = await fetch(`${API}/api/cash-boxes?companyId=${cid}`, { headers: authH }); return r.json(); },
@@ -311,6 +322,7 @@ export default function PurchaseInvoiceForm() {
     setLcId(existing.lcId ? String(existing.lcId) : "");
     setDistMethod(existing.distributionMethod ?? "value");
     setNotes(existing.notes ?? "");
+    setCostCenter(existing.costCenter ?? "");
     setDocDiscount(String(existing.discountAmount ?? "0"));
     setPriceIncludesVat(!!existing.priceIncludesVat);
     setInventoryAccountId(existing.inventoryAccountId ? String(existing.inventoryAccountId) : "");
@@ -631,6 +643,9 @@ export default function PurchaseInvoiceForm() {
       totalAmount: (totalAmount + totalExpLoaded).toFixed(2),
       priceIncludesVat,
       notes: notes || null,
+      // Header-level cost center — when set, the /post handler tags every
+      // generated JE line with this code so cost-center reports pick it up.
+      costCenter: costCenter || null,
       lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
     });
   }
@@ -796,6 +811,25 @@ export default function PurchaseInvoiceForm() {
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.notes")}</Label>
                   <Input className="h-9 text-sm" value={notes} onChange={e => setNotes(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">مركز التكلفة</Label>
+                  <select
+                    value={costCenter}
+                    onChange={e => setCostCenter(e.target.value)}
+                    data-testid="purchase-cost-center"
+                    className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                  >
+                    <option value="">— بدون مركز تكلفة —</option>
+                    {(costCentersList as any[])
+                      .filter((c: any) => c.isActive !== false)
+                      .map((c: any) => (
+                        <option key={c.id} value={c.code}>
+                          {c.code} — {c.nameAr}
+                        </option>
+                      ))}
+                  </select>
+                  <p className="text-[10px] text-muted-foreground">يُسند تلقائياً إلى كل سطور القيد عند الترحيل.</p>
                 </div>
               </div>
 

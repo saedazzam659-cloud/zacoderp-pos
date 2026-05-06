@@ -76,6 +76,8 @@ export const receiptVouchersTable = pgTable("receipt_vouchers", {
   salesInvoiceId: integer("sales_invoice_id").references(() => salesInvoicesTable.id, { onDelete: "set null" }),
   description:   text("description"),
   notes:         text("notes"),
+  // Optional cost-center code propagated to JE lines on /post.
+  costCenter:    text("cost_center"),
   status:        cashVoucherStatusEnum("status").notNull().default("draft"),
   salesRepId:    integer("sales_rep_id"),
   journalEntryId: integer("journal_entry_id"),
@@ -109,6 +111,8 @@ export const paymentVouchersTable = pgTable("payment_vouchers", {
   purchaseInvoiceId: integer("purchase_invoice_id").references(() => purchaseInvoicesTable.id, { onDelete: "set null" }),
   description:   text("description"),
   notes:         text("notes"),
+  // Optional cost-center code propagated to JE lines on /post.
+  costCenter:    text("cost_center"),
   status:        cashVoucherStatusEnum("status").notNull().default("draft"),
   journalEntryId: integer("journal_entry_id"),
   // Manual (admin-created) session this voucher was recorded under, if any.

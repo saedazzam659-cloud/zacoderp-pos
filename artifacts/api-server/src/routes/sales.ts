@@ -22,7 +22,7 @@ import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 
 // ─── Journal entry helper (mirrors purchasing.ts) ────────────────────────────
-type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null };
+type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null; costCenter?: string | null };
 async function createJournalEntry(opts: {
   companyId: number;
   branchId?: number | null;
@@ -31,6 +31,10 @@ async function createJournalEntry(opts: {
   docNumber?: string | null;
   entryType?: string;
   exchangeRate?: string | null;
+  // Header-level cost-center code applied to every line that doesn't
+  // explicitly set its own. Lets a single field on the source document
+  // (sales invoice, sales return, …) tag the entire JE.
+  costCenter?: string | null;
   lines: JLine[];
 }): Promise<number> {
   const cleanLines = opts.lines.filter(l => l.accountId && ((l.debit ?? 0) > 0 || (l.credit ?? 0) > 0));
@@ -84,6 +88,9 @@ async function createJournalEntry(opts: {
       debit: String((l.debit ?? 0).toFixed(2)),
       credit: String((l.credit ?? 0).toFixed(2)),
       description: l.description ?? opts.description, sortOrder: i,
+      // Persist cost-center code (text) so cost-center reports pick it up.
+      // Per-line override wins; header-level value applies otherwise.
+      costCenter: l.costCenter ?? opts.costCenter ?? null,
     }))
   );
   return entry.id;
@@ -458,7 +465,7 @@ router.post("/sales-invoices", async (req, res) => {
     const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
-            posSessionId, salesRepId, documentOfferId, sourceQuotationId } = req.body;
+            posSessionId, salesRepId, documentOfferId, sourceQuotationId, costCenter } = req.body;
     // If the user picked an existing quotation as the source via the
     // "بناءً على عرض سعر" combobox on the new-invoice form, validate it
     // BEFORE we INSERT the invoice (rules mirror the /convert endpoint
@@ -543,6 +550,7 @@ router.post("/sales-invoices", async (req, res) => {
       commissionPct:      repInfo.commissionPct,
       commissionAmount:   repInfo.commissionAmount,
       documentOfferId:    documentOfferId ? Number(documentOfferId) : null,
+      costCenter:         costCenter ? String(costCenter).trim() || null : null,
     }).returning();
     // Validate posSessionId belongs to the same company before linking — prevents cross-tenant pollution.
     if (posSessionId) {
@@ -624,7 +632,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
     const { invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
-            documentOfferId } = req.body;
+            documentOfferId, costCenter } = req.body;
     // Snapshot offer ids that were already attached to this invoice BEFORE
     // we delete-and-reinsert lines, so we can bump times_used for the offers
     // that are NEW on this update (and not double-count the ones already
@@ -682,6 +690,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
       // would be safer but, since the form always sends it, an unconditional
       // write is fine here and keeps the audit trail honest.
       documentOfferId:    documentOfferId ? Number(documentOfferId) : null,
+      costCenter:         costCenter ? String(costCenter).trim() || null : null,
       ...repPatch,
     }).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid))).returning();
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
@@ -917,6 +926,8 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       docNumber: inv.docNumber,
       entryType: "sales_invoice",
       exchangeRate: inv.exchangeRate,
+      // Header-level cost center tags every JE line for cost-center reports.
+      costCenter: (inv as any).costCenter ?? null,
       description: `قيد فاتورة مبيعات رقم ${inv.docNumber || inv.id}`,
       lines: gdnSourced
         ? [
@@ -1490,6 +1501,9 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       docNumber: ret.docNumber,
       entryType: "sales_return",
       exchangeRate: ret.exchangeRate,
+      // Inherit cost center from the original invoice when set so the
+      // return tags the same CC as the sale it reverses.
+      costCenter: (ret as any).costCenter ?? null,
       description: `قيد مرتجع مبيعات رقم ${ret.docNumber || ret.id}`,
       lines: [
         // Debits (reversed from the original sale)

@@ -156,6 +156,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [currencyCode,setCurrencyCode]  = useState("");
   const [exchangeRate,setExchangeRate]  = useState("1");
   const [notes,     setNotes]           = useState("");
+  const [costCenter, setCostCenter]     = useState("");
   const [salesRepId, setSalesRepId]     = useState("");
   // The "السعر شامل الضريبة" toggle is sticky: it remembers the user's last
   // choice in localStorage so a new invoice opens with the same setting.
@@ -366,6 +367,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     queryFn: async () => { const r = await fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
+  const { data: costCentersList = [] } = useQuery<any[]>({
+    queryKey: ["cost-centers", cid],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/cost-centers?companyId=${cid}`, { headers });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!cid,
+    staleTime: 60_000,
+  });
   const { data: salesReps = [] } = useQuery<any[]>({
     queryKey: ["sales-reps", cid],
     queryFn: async () => {
@@ -507,6 +518,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setCurrencyCode(existing.currencyCode ?? "SAR");
     setExchangeRate(String(existing.exchangeRate ?? "1"));
     setNotes(existing.notes ?? "");
+    setCostCenter(existing.costCenter ?? "");
     if (usesOps) setSalesRepId(existing.salesRepId ? String(existing.salesRepId) : "");
     setPriceIncludesVat(!!existing.priceIncludesVat);
     setDocDiscount(String(existing.discountAmount ?? "0"));
@@ -1013,6 +1025,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       discountAmount: discountAmt.toFixed(2), totalAmount: totalAmount.toFixed(2),
       priceIncludesVat,
       notes: notes || null,
+      // Header-level cost center — when set, the /post handler tags every
+      // generated JE line with this code so cost-center reports pick it up.
+      costCenter: isInvoice ? (costCenter || null) : undefined,
       // Strip the local-only `_id` and `appliedOfferName` (display-only) but
       // keep `appliedOfferId` so the server persists the audit-trail FK.
       lines: lines.filter(l => l.itemName).map(l => ({
@@ -1962,6 +1977,27 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   <Label className="text-xs">{t("salesDocForm.notes")}</Label>
                   <Input className="h-9 text-sm" value={notes} onChange={e => setNotes(e.target.value)} />
                 </div>
+                {isInvoice && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">مركز التكلفة</Label>
+                    <select
+                      value={costCenter}
+                      onChange={e => setCostCenter(e.target.value)}
+                      data-testid="sales-cost-center"
+                      className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                    >
+                      <option value="">— بدون مركز تكلفة —</option>
+                      {(costCentersList as any[])
+                        .filter((c: any) => c.isActive !== false)
+                        .map((c: any) => (
+                          <option key={c.id} value={c.code}>
+                            {c.code} — {c.nameAr}
+                          </option>
+                        ))}
+                    </select>
+                    <p className="text-[10px] text-muted-foreground">يُسند تلقائياً إلى كل سطور القيد عند الترحيل.</p>
+                  </div>
+                )}
               </div>
 
               <div className="border-t pt-4 mt-2 flex items-center gap-2 text-sm font-semibold text-foreground/80">

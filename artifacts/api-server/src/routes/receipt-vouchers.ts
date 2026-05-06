@@ -98,9 +98,12 @@ async function buildReceiptJournal(cid: number, v: any): Promise<number> {
     description: desc, entryType: "receipt", status: "posted",
     periodId: writability.period?.id ?? null,
   }).returning();
+  // Header-level cost center propagates to BOTH JE lines so cost-center
+  // reports pick up the receipt activity.
+  const cc = v.costCenter ? String(v.costCenter).trim() || null : null;
   await db.insert(journalEntryLinesTable).values([
-    { entryId: entry.id, accountId: drAccountId, debit: amount.toFixed(2), credit: "0.00", description: drLabel || desc, sortOrder: 0 },
-    { entryId: entry.id, accountId: crAccountId, debit: "0.00", credit: amount.toFixed(2), description: crLabel || desc, sortOrder: 1 },
+    { entryId: entry.id, accountId: drAccountId, debit: amount.toFixed(2), credit: "0.00", description: drLabel || desc, sortOrder: 0, costCenter: cc },
+    { entryId: entry.id, accountId: crAccountId, debit: "0.00", credit: amount.toFixed(2), description: crLabel || desc, sortOrder: 1, costCenter: cc },
   ]);
   return entry.id;
 }
@@ -201,6 +204,7 @@ router.post("/", async (req, res) => {
     salesInvoiceId,
     description:   d.description   ?? null,
     notes:         d.notes         ?? null,
+    costCenter:    d.costCenter ? String(d.costCenter).trim() || null : null,
     status:        "draft",
     // Manual session (admin-created) the user is currently working under,
     // resolved by extractAuth from the trusted x-session-id header.
@@ -247,6 +251,7 @@ router.put("/:id", async (req, res) => {
     salesInvoiceId,
     description:   d.description   ?? null,
     notes:         d.notes         ?? null,
+    costCenter:    d.costCenter ? String(d.costCenter).trim() || null : null,
   }).where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).returning();
   res.json(row);
 });

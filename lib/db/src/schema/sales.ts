@@ -51,6 +51,10 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   zatcaErrorMessages:    text("zatca_error_messages"),
   zatcaWarningMessages:  text("zatca_warning_messages"),
   zatcaAiSuggestion:     text("zatca_ai_suggestion"),
+  // Optional cost-center code propagated to every JE line on /post.
+  // Stored as text to mirror the journal_entry_lines.cost_center convention
+  // (cost center CODE, not id) and to survive cost-center renames.
+  costCenter:     text("cost_center"),
   posSessionId:   integer("pos_session_id"),
   // Manual (admin-created) session this invoice was recorded under, if any.
   // Soft reference to sessions.id (kept nullable; no FK to allow purging).

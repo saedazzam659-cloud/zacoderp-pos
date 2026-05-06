@@ -22,7 +22,7 @@ import { goodsReceiptsTable } from "@workspace/db";
 import { getReceivingClearingAccountId } from "./goodsReceipts.js";
 
 // ─── Journal entry helper ────────────────────────────────────────────────────
-type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null };
+type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null; costCenter?: string | null };
 
 async function createJournalEntry(opts: {
   companyId: number;
@@ -32,6 +32,10 @@ async function createJournalEntry(opts: {
   docNumber?: string | null;
   entryType?: string;
   exchangeRate?: string | null;
+  // Header-level cost-center code applied to every line that doesn't
+  // explicitly set its own. Lets a single field on the source document
+  // (purchase invoice, purchase return, …) tag the entire JE.
+  costCenter?: string | null;
   lines: JLine[];
 }): Promise<number> {
   // Filter out lines with zero amount or no account
@@ -73,6 +77,9 @@ async function createJournalEntry(opts: {
       credit:      String((l.credit ?? 0).toFixed(2)),
       description: l.description ?? opts.description,
       sortOrder:   i,
+      // Persist cost-center code (text) so cost-center reports pick it up.
+      // Per-line override wins; header-level value applies otherwise.
+      costCenter:  l.costCenter ?? opts.costCenter ?? null,
     }))
   );
   return entry.id;
@@ -924,7 +931,7 @@ router.post("/purchase-invoices", async (req, res) => {
     const { docNumber, supplierInvoiceNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
-            inventoryAccountId, taxAccountId, discountAccountId } = req.body;
+            inventoryAccountId, taxAccountId, discountAccountId, costCenter } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
@@ -967,6 +974,7 @@ router.post("/purchase-invoices", async (req, res) => {
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      costCenter:         costCenter ? String(costCenter).trim() || null : null,
       status: "draft", notes: notes || null,
     }).returning();
     if (lines?.length) {
@@ -1012,7 +1020,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
     const { supplierInvoiceNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
-            inventoryAccountId, taxAccountId, discountAccountId } = req.body;
+            inventoryAccountId, taxAccountId, discountAccountId, costCenter } = req.body;
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند الدفع بنكياً" }); return; }
@@ -1037,6 +1045,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      costCenter:         costCenter ? String(costCenter).trim() || null : null,
       notes: notes || null, updatedAt: new Date(),
     }).where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid))).returning();
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
@@ -1301,6 +1310,8 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       description:  desc,
       entryType:    "purchase_invoice",
       exchangeRate: inv.exchangeRate,
+      // Header-level cost center tags every JE line for cost-center reports.
+      costCenter:   (inv as any).costCenter ?? null,
       lines: [
         ...debitLines,
         { accountId: taxAccId, debit: vatAmount, description: "ضريبة القيمة المضافة" },
@@ -2141,6 +2152,9 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       description:  desc,
       entryType:    "purchase_return",
       exchangeRate: ret.exchangeRate,
+      // Inherit cost center from the original invoice when set so the
+      // return tags the same CC as the purchase it reverses.
+      costCenter:   (ret as any).costCenter ?? null,
       lines: [
         { accountId: counterpartyAccountId,           debit:  totalAmount,    description: ret.paymentType === "cash" ? "استرداد نقدي" : ret.paymentType === "bank" ? "استرداد بنكي" : "تخفيض رصيد المورد" },
         { accountId: discountAccId,                   debit:  discountAmount, description: "إلغاء خصم مكتسب" },
