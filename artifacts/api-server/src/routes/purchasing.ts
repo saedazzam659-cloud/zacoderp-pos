@@ -1197,6 +1197,43 @@ router.get("/purchase-orders", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+
+    // Auto-heal orphan "converted" rows: any PO whose convertedInvoiceId is
+    // NULL or points to a deleted purchase invoice gets snapped back to
+    // "confirmed" before the listing is returned. Cheap, idempotent — no
+    // user action required, fixes legacy rows on first page load.
+    const stuck = await db.select({
+      id: purchaseOrdersTable.id,
+      convertedInvoiceId: purchaseOrdersTable.convertedInvoiceId,
+    }).from(purchaseOrdersTable).where(and(
+      eq(purchaseOrdersTable.companyId, cid),
+      eq(purchaseOrdersTable.status, "converted"),
+    ));
+    if (stuck.length) {
+      const refIds = Array.from(new Set(stuck.map(s => s.convertedInvoiceId).filter((v): v is number => v != null)));
+      const liveInvIds = new Set<number>();
+      if (refIds.length) {
+        const live = await db.select({ id: purchaseInvoicesTable.id })
+          .from(purchaseInvoicesTable)
+          .where(and(
+            eq(purchaseInvoicesTable.companyId, cid),
+            inArray(purchaseInvoicesTable.id, refIds),
+          ));
+        live.forEach(r => liveInvIds.add(r.id));
+      }
+      const orphanIds = stuck
+        .filter(s => s.convertedInvoiceId == null || !liveInvIds.has(s.convertedInvoiceId))
+        .map(s => s.id);
+      if (orphanIds.length) {
+        await db.update(purchaseOrdersTable)
+          .set({ status: "confirmed", convertedInvoiceId: null, updatedAt: new Date() })
+          .where(and(
+            eq(purchaseOrdersTable.companyId, cid),
+            inArray(purchaseOrdersTable.id, orphanIds),
+          ));
+      }
+    }
+
     const rows = await db.select().from(purchaseOrdersTable)
       .where(and(
         eq(purchaseOrdersTable.companyId, cid),
