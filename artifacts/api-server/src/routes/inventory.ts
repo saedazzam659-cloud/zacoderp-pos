@@ -562,7 +562,7 @@ function normalizeDiscount(rawType: unknown, rawValue: unknown): { type: "none"|
 
 router.post("/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم الصنف مطلوبان" }); return; }
   const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   if (existing.some(i => i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
@@ -602,6 +602,7 @@ router.post("/items", async (req, res) => {
   const [row] = await db.insert(itemsTable).values({
     companyId: cid, code, nameAr, nameEn, barcode,
     itemType: itemType || parentRowForVariant?.itemType || "stock",
+    itemNature: ["raw","semi","finished","consumable","merchandise"].includes(itemNature) ? itemNature : (parentRowForVariant?.itemNature || "merchandise"),
     groupId: groupId || parentRowForVariant?.groupId || null,
     unitId: unitId || parentRowForVariant?.unitId || null,
     costPrice: costPrice || parentRowForVariant?.costPrice || "0",
@@ -640,7 +641,7 @@ router.post("/items", async (req, res) => {
 router.put("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes, showInPos, expiryDate } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes, showInPos, expiryDate } = req.body;
   // PRO Extension #20 — variantAttributes is editable; parentItemId is
   // set-once at create time (re-parenting requires DELETE + recreate so
   // we don't have to reason about stock-balance migration).
@@ -676,6 +677,7 @@ router.put("/items/:id", async (req, res) => {
     : {};
   const [row] = await db.update(itemsTable).set({
     code, nameAr, nameEn, barcode, itemType: itemType || "stock",
+    ...(["raw","semi","finished","consumable","merchandise"].includes(itemNature) ? { itemNature } : {}),
     groupId: groupId || null, unitId: unitId || null,
     costPrice: costPrice || "0", salePrice: salePrice || "0", vatRate: vatRate || "15",
     reorderLevel: reorderLevel || "0", maxLevel: maxLevel || null,

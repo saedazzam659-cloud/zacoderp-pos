@@ -10,6 +10,11 @@ import { branchesTable } from "./branches";
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 export const itemTypeEnum       = pgEnum("item_type",        ["stock", "service"]);
+// "طبيعة الصنف" — distinguishes raw materials / semi-finished / finished
+// goods / consumables / merchandise so manufacturing screens can filter
+// the inventory item picker (e.g. show only raw materials when picking
+// BOM components) and reports can group by nature.
+export const itemNatureEnum     = pgEnum("item_nature",      ["raw", "semi", "finished", "consumable", "merchandise"]);
 export const itemStatusEnum     = pgEnum("item_status",      ["active", "inactive"]);
 export const txTypeEnum         = pgEnum("inv_tx_type",      ["transfer_out", "transfer_in", "adjustment", "count_adj", "sale", "sales_return", "purchase", "purchase_return", "opening", "goods_receipt", "goods_delivery", "production_issue", "production_receipt"]);
 export const docStatusEnum      = pgEnum("inv_doc_status",   ["draft", "posted", "cancelled"]);
@@ -77,6 +82,12 @@ export const itemsTable = pgTable("items", {
   nameEn:       text("name_en"),
   barcode:      text("barcode"),
   itemType:     itemTypeEnum("item_type").notNull().default("stock"),
+  // PRO Extension #28 — Item nature (raw / semi / finished / consumable /
+  // merchandise). Defaults to "merchandise" so existing rows keep
+  // current behavior. Used by manufacturing flows to scope item pickers
+  // (e.g. raw warehouses pick only raw/consumable; finished-goods only
+  // finished/semi).
+  itemNature:   itemNatureEnum("item_nature").notNull().default("merchandise"),
   costPrice:    numeric("cost_price",  { precision: 14, scale: 4 }).default("0").notNull(),
   salePrice:    numeric("sale_price",  { precision: 14, scale: 4 }).default("0").notNull(),
   vatRate:      numeric("vat_rate",    { precision: 5,  scale: 2  }).default("15").notNull(),

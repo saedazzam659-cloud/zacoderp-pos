@@ -40,7 +40,7 @@ import {
 } from "@/lib/docRowTone";
 
 const EMPTY = {
-  code: "", nameAr: "", nameEn: "", barcode: "", itemType: "stock",
+  code: "", nameAr: "", nameEn: "", barcode: "", itemType: "stock", itemNature: "merchandise",
   groupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15",
   reorderLevel: "0", maxLevel: "", costMethod: "weighted_avg", description: "", status: "active",
   costAccountId: "", revenueAccountId: "", imageUrl: "",
@@ -930,6 +930,7 @@ export default function Items() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState<"all" | "stock" | "service">("all");
+  const [filterNature, setFilterNature] = useState<"all" | "raw" | "semi" | "finished" | "consumable" | "merchandise">("all");
   const [form, setForm] = useState<any>(EMPTY);
   const [editId, setEditId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -1036,7 +1037,8 @@ export default function Items() {
       || (it.barcode ?? "").includes(search)
       || (it.tags ?? "").toLowerCase().includes(s);
     const matchType = filterType === "all" || it.itemType === filterType;
-    return matchText && matchType;
+    const matchNature = filterNature === "all" || (it.itemNature ?? "merchandise") === filterNature;
+    return matchText && matchType && matchNature;
   });
 
   const pager = usePagination(filtered);
@@ -1165,6 +1167,20 @@ export default function Items() {
                 <Field label={t("pages.items.barcode")}><Input placeholder="1234567890" dir="ltr" className="text-left" value={form.barcode} onChange={e => setForm((p: any) => ({ ...p, barcode: e.target.value }))} /></Field>
                 <Field label={t("pages.items.itemType")}>
                   <SearchCombobox items={[{ value: "stock", label: t("pages.items.stock") }, { value: "service", label: t("pages.items.service") }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v }))} placeholder={t("pages.items.itemType")} />
+                </Field>
+                <Field label="طبيعة الصنف" hint="يساعد في تمييز الخامات عن البضاعة الجاهزة في شاشات التصنيع">
+                  <SearchCombobox
+                    items={[
+                      { value: "raw",         label: "خامات (مواد أولية)" },
+                      { value: "semi",        label: "نصف مصنّع" },
+                      { value: "finished",    label: "تام الصنع" },
+                      { value: "consumable",  label: "مستهلكات" },
+                      { value: "merchandise", label: "بضاعة عادية" },
+                    ]}
+                    value={form.itemNature || "merchandise"}
+                    onValueChange={v => setForm((p: any) => ({ ...p, itemNature: v }))}
+                    placeholder="طبيعة الصنف"
+                  />
                 </Field>
                 <Field label={t("pages.items.group")}>
                   <SearchCombobox items={[{ value: "", label: t("pages.items.noGroup") }, ...(groups as any[]).map((g: any) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn }))]} value={form.groupId} onValueChange={v => setForm((p: any) => ({ ...p, groupId: v }))} placeholder={t("pages.items.chooseGroup")} />
@@ -1327,6 +1343,21 @@ export default function Items() {
             </button>
           ))}
         </div>
+        {/* Item nature filter — لتمييز الخامات / تام الصنع / المستهلكات بسرعة */}
+        <div className="flex gap-1 bg-muted/50 p-1 rounded-lg border" data-testid="filter-nature">
+          {([
+            { v: "all",         label: "الكل" },
+            { v: "raw",         label: "خامات" },
+            { v: "semi",        label: "نصف مصنّع" },
+            { v: "finished",    label: "تام الصنع" },
+            { v: "consumable",  label: "مستهلكات" },
+            { v: "merchandise", label: "بضاعة" },
+          ] as const).map(n => (
+            <button key={n.v} onClick={() => setFilterNature(n.v as any)} className={cn("px-3 py-1.5 rounded-md text-xs font-medium transition-all", filterNature === n.v ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")} data-testid={`filter-nature-${n.v}`}>
+              {n.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Table */}
@@ -1450,9 +1481,27 @@ export default function Items() {
                       <td className="px-4 py-3 hidden lg:table-cell tabular-nums text-xs">{fmt(it.costPrice)}</td>
                       <td className="px-4 py-3 hidden lg:table-cell tabular-nums text-xs font-medium">{fmt(it.salePrice)}</td>
                       <td className="px-4 py-3 text-center">
-                        <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", it.itemType === "stock" ? "bg-blue-50 text-blue-700" : "bg-purple-50 text-purple-700")}>
-                          {it.itemType === "stock" ? t("pages.items.stock") : t("pages.items.service")}
-                        </span>
+                        <div className="flex flex-col items-center gap-1">
+                          <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", it.itemType === "stock" ? "bg-blue-50 text-blue-700" : "bg-purple-50 text-purple-700")}>
+                            {it.itemType === "stock" ? t("pages.items.stock") : t("pages.items.service")}
+                          </span>
+                          {(() => {
+                            const nat = (it.itemNature ?? "merchandise") as string;
+                            if (nat === "merchandise") return null;
+                            const cls =
+                              nat === "raw"        ? "bg-amber-50 text-amber-700 border-amber-200"
+                            : nat === "semi"       ? "bg-orange-50 text-orange-700 border-orange-200"
+                            : nat === "finished"   ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : nat === "consumable" ? "bg-rose-50 text-rose-700 border-rose-200"
+                            : "bg-slate-50 text-slate-700 border-slate-200";
+                            const label =
+                              nat === "raw"        ? "خامات"
+                            : nat === "semi"       ? "نصف مصنّع"
+                            : nat === "finished"   ? "تام الصنع"
+                            : nat === "consumable" ? "مستهلكات" : "بضاعة";
+                            return <span className={cn("text-[9px] font-medium rounded-full px-2 py-0.5 border", cls)} data-testid={`badge-nature-${it.id}`}>{label}</span>;
+                          })()}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-center">
                         <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", it.status === "active" ? "bg-green-50 text-green-700" : "bg-slate-100 text-slate-500")}>
