@@ -18,6 +18,7 @@ import {
   bomTemplatesTable,
   bomTemplateLinesTable,
   manufacturingSettingsTable,
+  workCentersTable,
   PRODUCTION_ORDER_STATUSES,
   PRODUCTION_STATUS_TRANSITIONS,
   type ProductionOrderStatus,
@@ -169,6 +170,22 @@ async function validateAccount(cid: number, id: number | null | undefined) {
     throw err;
   }
   return id;
+}
+
+// PHASE B — per-tenant work-center validation. Returns the full row so
+// callers can read its rates / default accounts in one round-trip.
+async function loadWorkCenter(cid: number, id: number | null | undefined) {
+  if (!id) return null;
+  const [wc] = await db
+    .select()
+    .from(workCentersTable)
+    .where(and(eq(workCentersTable.id, id), eq(workCentersTable.companyId, cid)));
+  if (!wc) {
+    const err: any = new Error(`مركز العمل رقم ${id} لا ينتمي إلى هذه الشركة`);
+    err.status = 400;
+    throw err;
+  }
+  return wc;
 }
 
 // PHASE A — per-tenant item validation for BOM lines / FG products. Same
@@ -545,6 +562,17 @@ router.post("/orders", async (req, res) => {
       .where(eq(manufacturingSettingsTable.companyId, cid))
       .limit(1);
 
+    // ─── PHASE B: Optional work center auto-fill ────────────────────────
+    // إذا اختار المستخدم مركز عمل + مرّر ساعات مخططة، نحسب الأجور والـOH
+    // تلقائياً من معدلات المركز ونملأ حسابات الأجور/التكاليف ومركز التكلفة
+    // الافتراضية للمركز عند عدم تمريرها صراحةً.
+    const wc = b.workCenterId ? await loadWorkCenter(cid, Number(b.workCenterId)) : null;
+    const plannedHoursNum = num(b.plannedHours);
+    const wcLaborCost =
+      wc && plannedHoursNum > 0 ? plannedHoursNum * Number(wc.laborRatePerHour) : null;
+    const wcOverheadCost =
+      wc && plannedHoursNum > 0 ? plannedHoursNum * Number(wc.overheadRatePerHour) : null;
+
     // MEDIUM fix #4 — retry on unique violation (companyId + orderNumber)
     // for the time-based fallback path so concurrent inserts don't 500.
     let row: any = null;
@@ -583,14 +611,28 @@ router.post("/orders", async (req, res) => {
             // ─── SAP-style WIP fields (optional at create; user can fill on detail) ──
             rawWarehouseId: await validateWarehouse(cid, b.rawWarehouseId ? Number(b.rawWarehouseId) : (mfg?.defaultRawWarehouseId ?? null)),
             finishedWarehouseId: await validateWarehouse(cid, b.finishedWarehouseId ? Number(b.finishedWarehouseId) : (mfg?.defaultFinishedWarehouseId ?? null)),
-            laborCost: String(num(b.laborCost)),
-            overheadCost: String(num(b.overheadCost)),
-            costCenter: typeof b.costCenter === "string" && b.costCenter.trim() ? b.costCenter.trim() : (mfg?.defaultCostCenter ?? null),
+            laborCost: String(
+              b.laborCost !== undefined && b.laborCost !== null && b.laborCost !== ""
+                ? num(b.laborCost)
+                : (wcLaborCost ?? 0),
+            ),
+            overheadCost: String(
+              b.overheadCost !== undefined && b.overheadCost !== null && b.overheadCost !== ""
+                ? num(b.overheadCost)
+                : (wcOverheadCost ?? 0),
+            ),
+            workCenterId: wc?.id ?? null,
+            plannedHours: String(plannedHoursNum),
+            actualHours: "0",
+            costCenter:
+              typeof b.costCenter === "string" && b.costCenter.trim()
+                ? b.costCenter.trim()
+                : (wc?.costCenterCode ?? mfg?.defaultCostCenter ?? null),
             wipAccountId: await validateAccount(cid, b.wipAccountId ? Number(b.wipAccountId) : (mfg?.defaultWipAccountId ?? null)),
             rawInventoryAccountId: await validateAccount(cid, b.rawInventoryAccountId ? Number(b.rawInventoryAccountId) : (mfg?.defaultRawInventoryAccountId ?? null)),
             finishedGoodsAccountId: await validateAccount(cid, b.finishedGoodsAccountId ? Number(b.finishedGoodsAccountId) : (mfg?.defaultFinishedGoodsAccountId ?? null)),
-            laborAccountId: await validateAccount(cid, b.laborAccountId ? Number(b.laborAccountId) : (mfg?.defaultLaborAccountId ?? null)),
-            overheadAccountId: await validateAccount(cid, b.overheadAccountId ? Number(b.overheadAccountId) : (mfg?.defaultOverheadAccountId ?? null)),
+            laborAccountId: await validateAccount(cid, b.laborAccountId ? Number(b.laborAccountId) : (wc?.defaultLaborAccountId ?? mfg?.defaultLaborAccountId ?? null)),
+            overheadAccountId: await validateAccount(cid, b.overheadAccountId ? Number(b.overheadAccountId) : (wc?.defaultOverheadAccountId ?? mfg?.defaultOverheadAccountId ?? null)),
             varianceAccountId: await validateAccount(cid, b.varianceAccountId ? Number(b.varianceAccountId) : (mfg?.defaultVarianceAccountId ?? null)),
             wasteAccountId: await validateAccount(cid, b.wasteAccountId ? Number(b.wasteAccountId) : (mfg?.defaultWasteAccountId ?? null)),
             notes: b.notes || null,
@@ -823,6 +865,51 @@ router.patch("/orders/:id", async (req, res) => {
       updates.wasteAccountId = await validateAccount(cid, b.wasteAccountId ? Number(b.wasteAccountId) : null);
     if (b.notes !== undefined) updates.notes = b.notes || null;
     if (b.meta !== undefined && typeof b.meta === "object") updates.meta = b.meta;
+
+    // ─── PHASE B — work center + hours (locked after issue) ─────────────
+    // عند تغيير مركز العمل أو الساعات، نعيد حساب laborCost / overheadCost
+    // تلقائياً من معدلات المركز — إلا إذا مرّر المستخدم القيمة صراحةً في
+    // نفس الطلب (يدوي يتفوّق على المحسوب). actualHours غير مقفلة (تُحدَّث
+    // عند الإكمال) — أما workCenterId و plannedHours فمقفلتان بعد الإصدار.
+    let recomputeWc: any = null;
+    let recomputeHours: number | null = null;
+    if (b.workCenterId !== undefined && !lockedAfterIssue) {
+      const newWcId = b.workCenterId ? Number(b.workCenterId) : null;
+      updates.workCenterId = newWcId;
+      recomputeWc = newWcId ? await loadWorkCenter(cid, newWcId) : null;
+    }
+    if (b.plannedHours !== undefined && !lockedAfterIssue) {
+      recomputeHours = num(b.plannedHours);
+      updates.plannedHours = String(recomputeHours);
+    }
+    if (b.actualHours !== undefined)
+      updates.actualHours = String(num(b.actualHours));
+    // Auto-recompute labor/overhead when the user changed wc OR hours.
+    // Each cost field is recomputed independently — a user manual override
+    // on laborCost does NOT freeze overheadCost (and vice versa). When
+    // plannedHours becomes 0 (or wc cleared), recomputed values are 0.
+    if (
+      !lockedAfterIssue &&
+      (recomputeWc !== null || recomputeHours !== null)
+    ) {
+      // Need the *resulting* wcId + hours after this PATCH applies. Pull
+      // from updates (just set above) or fall back to existing order row.
+      const finalWcId =
+        updates.workCenterId !== undefined
+          ? (updates.workCenterId as number | null)
+          : (existing.workCenterId as number | null);
+      const finalHours =
+        updates.plannedHours !== undefined
+          ? Number(updates.plannedHours)
+          : Number(existing.plannedHours ?? 0);
+      const wc = finalWcId
+        ? (recomputeWc?.id === finalWcId ? recomputeWc : await loadWorkCenter(cid, finalWcId))
+        : null;
+      const computedLabor = wc && finalHours > 0 ? finalHours * Number(wc.laborRatePerHour) : 0;
+      const computedOverhead = wc && finalHours > 0 ? finalHours * Number(wc.overheadRatePerHour) : 0;
+      if (b.laborCost === undefined) updates.laborCost = String(computedLabor);
+      if (b.overheadCost === undefined) updates.overheadCost = String(computedOverhead);
+    }
 
     const [row] = await db
       .update(productionOrdersTable)
@@ -1703,6 +1790,235 @@ router.put("/manufacturing-settings", async (req, res) => {
     res.json(row);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE B — Work Centers (مراكز العمل)
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get("/work-centers", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const q = (req.query.q as string | undefined)?.trim();
+    const onlyActive = req.query.activeOnly === "1";
+    const conds = [eq(workCentersTable.companyId, cid)];
+    if (q)
+      conds.push(
+        or(
+          ilike(workCentersTable.code, `%${q}%`),
+          ilike(workCentersTable.nameAr, `%${q}%`),
+          ilike(workCentersTable.nameEn, `%${q}%`),
+        )!,
+      );
+    if (onlyActive) conds.push(eq(workCentersTable.isActive, true));
+    const rows = await db
+      .select()
+      .from(workCentersTable)
+      .where(and(...conds))
+      .orderBy(asc(workCentersTable.code))
+      .limit(500);
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/work-centers/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const wc = await loadWorkCenter(cid, id);
+    if (!wc) {
+      res.status(404).json({ error: "مركز العمل غير موجود" });
+      return;
+    }
+    res.json(wc);
+  } catch (e: any) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+router.post("/work-centers", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const b = req.body ?? {};
+    const code = typeof b.code === "string" ? b.code.trim() : "";
+    const nameAr = typeof b.nameAr === "string" ? b.nameAr.trim() : "";
+    if (!code) {
+      res.status(400).json({ error: "كود مركز العمل مطلوب" });
+      return;
+    }
+    if (!nameAr) {
+      res.status(400).json({ error: "اسم مركز العمل بالعربية مطلوب" });
+      return;
+    }
+    const laborRate = num(b.laborRatePerHour);
+    const overheadRate = num(b.overheadRatePerHour);
+    const capHours = num(b.capacityHoursPerDay, 8);
+    if (laborRate < 0 || overheadRate < 0 || capHours <= 0) {
+      res.status(400).json({
+        error: "المعدلات يجب أن تكون ≥ 0 وطاقة العمل اليومية > 0",
+      });
+      return;
+    }
+    try {
+      const [row] = await db
+        .insert(workCentersTable)
+        .values({
+          companyId: cid,
+          code,
+          nameAr,
+          nameEn: typeof b.nameEn === "string" && b.nameEn.trim() ? b.nameEn.trim() : null,
+          costCenterCode:
+            typeof b.costCenterCode === "string" && b.costCenterCode.trim()
+              ? b.costCenterCode.trim()
+              : null,
+          laborRatePerHour: String(laborRate),
+          overheadRatePerHour: String(overheadRate),
+          capacityHoursPerDay: String(capHours),
+          defaultLaborAccountId: await validateAccount(
+            cid,
+            b.defaultLaborAccountId ? Number(b.defaultLaborAccountId) : null,
+          ),
+          defaultOverheadAccountId: await validateAccount(
+            cid,
+            b.defaultOverheadAccountId ? Number(b.defaultOverheadAccountId) : null,
+          ),
+          isActive: b.isActive === false ? false : true,
+          notes: typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null,
+        })
+        .returning();
+      res.status(201).json(row);
+    } catch (insertErr: any) {
+      const code2 = insertErr?.code || insertErr?.cause?.code;
+      if (code2 === "23505") {
+        res.status(409).json({ error: `كود مركز العمل "${code}" مستخدم مسبقاً` });
+        return;
+      }
+      throw insertErr;
+    }
+  } catch (e: any) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+router.patch("/work-centers/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const existing = await loadWorkCenter(cid, id);
+    if (!existing) {
+      res.status(404).json({ error: "مركز العمل غير موجود" });
+      return;
+    }
+    const b = req.body ?? {};
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+    if (typeof b.code === "string" && b.code.trim()) updates.code = b.code.trim();
+    if (typeof b.nameAr === "string" && b.nameAr.trim()) updates.nameAr = b.nameAr.trim();
+    if (b.nameEn !== undefined)
+      updates.nameEn = typeof b.nameEn === "string" && b.nameEn.trim() ? b.nameEn.trim() : null;
+    if (b.costCenterCode !== undefined)
+      updates.costCenterCode =
+        typeof b.costCenterCode === "string" && b.costCenterCode.trim()
+          ? b.costCenterCode.trim()
+          : null;
+    if (b.laborRatePerHour !== undefined) {
+      const v = num(b.laborRatePerHour);
+      if (v < 0) {
+        res.status(400).json({ error: "معدل الأجور يجب أن يكون ≥ 0" });
+        return;
+      }
+      updates.laborRatePerHour = String(v);
+    }
+    if (b.overheadRatePerHour !== undefined) {
+      const v = num(b.overheadRatePerHour);
+      if (v < 0) {
+        res.status(400).json({ error: "معدل التكاليف غير المباشرة يجب أن يكون ≥ 0" });
+        return;
+      }
+      updates.overheadRatePerHour = String(v);
+    }
+    if (b.capacityHoursPerDay !== undefined) {
+      const v = num(b.capacityHoursPerDay);
+      if (v <= 0) {
+        res.status(400).json({ error: "طاقة العمل اليومية يجب أن تكون > 0" });
+        return;
+      }
+      updates.capacityHoursPerDay = String(v);
+    }
+    if (b.defaultLaborAccountId !== undefined)
+      updates.defaultLaborAccountId = await validateAccount(
+        cid,
+        b.defaultLaborAccountId ? Number(b.defaultLaborAccountId) : null,
+      );
+    if (b.defaultOverheadAccountId !== undefined)
+      updates.defaultOverheadAccountId = await validateAccount(
+        cid,
+        b.defaultOverheadAccountId ? Number(b.defaultOverheadAccountId) : null,
+      );
+    if (b.isActive !== undefined) updates.isActive = !!b.isActive;
+    if (b.notes !== undefined)
+      updates.notes = typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null;
+    try {
+      const [row] = await db
+        .update(workCentersTable)
+        .set(updates)
+        .where(and(eq(workCentersTable.id, id), eq(workCentersTable.companyId, cid)))
+        .returning();
+      res.json(row);
+    } catch (updateErr: any) {
+      const code2 = updateErr?.code || updateErr?.cause?.code;
+      if (code2 === "23505") {
+        res.status(409).json({ error: "كود مركز العمل مستخدم مسبقاً" });
+        return;
+      }
+      throw updateErr;
+    }
+  } catch (e: any) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+router.delete("/work-centers/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const existing = await loadWorkCenter(cid, id);
+    if (!existing) {
+      res.status(404).json({ error: "مركز العمل غير موجود" });
+      return;
+    }
+    // Refuse delete if any production order references it (preserve history).
+    // The user can deactivate instead via PATCH { isActive: false }.
+    const [used] = await db
+      .select({ id: productionOrdersTable.id })
+      .from(productionOrdersTable)
+      .where(
+        and(
+          eq(productionOrdersTable.companyId, cid),
+          eq(productionOrdersTable.workCenterId, id),
+        ),
+      )
+      .limit(1);
+    if (used) {
+      res.status(409).json({
+        error:
+          "لا يمكن حذف مركز عمل مرتبط بأوامر إنتاج سابقة. عطّله بدلاً من الحذف.",
+      });
+      return;
+    }
+    await db
+      .delete(workCentersTable)
+      .where(and(eq(workCentersTable.id, id), eq(workCentersTable.companyId, cid)));
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 

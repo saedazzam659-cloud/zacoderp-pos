@@ -139,6 +139,16 @@ export const productionOrdersTable = pgTable(
     ),
     issueJournalEntryId: integer("issue_journal_entry_id"),
     receiptJournalEntryId: integer("receipt_journal_entry_id"),
+    // ─── PHASE B — Work Center link ────────────────────────────────────────
+    // عند ضبط workCenterId + plannedHours، يُحسَب laborCost و overheadCost
+    // تلقائياً من معدلات المركز. actualHours تُسجَّل عند الإكمال للمراجعة.
+    workCenterId: integer("work_center_id"),
+    plannedHours: numeric("planned_hours", { precision: 14, scale: 4 })
+      .notNull()
+      .default("0"),
+    actualHours: numeric("actual_hours", { precision: 14, scale: 4 })
+      .notNull()
+      .default("0"),
     notes: text("notes"),
     meta: jsonb("meta").$type<Record<string, unknown>>().default({}),
     createdBy: integer("created_by").references(() => usersTable.id, {
@@ -353,6 +363,70 @@ export const manufacturingSettingsTable = pgTable(
     byCompany: uniqueIndex("mfg_settings_company_uniq").on(t.companyId),
   }),
 );
+
+// ─── PHASE B — Work Centers (مراكز العمل) ────────────────────────────────
+// مركز العمل = وحدة عمل/خط إنتاج له معدل أجور ساعي ومعدل تكاليف غير
+// مباشرة ساعي وحسابات GL افتراضية. عند ربط أمر إنتاج بمركز عمل + ساعات
+// مخططة، يُحسَب laborCost و overheadCost تلقائياً = ساعات × المعدل.
+// كذلك يُملأ تلقائياً حسابات الأجور/التكاليف ومركز التكلفة من المركز إذا
+// كانت فارغة على الأمر.
+export const workCentersTable = pgTable(
+  "work_centers",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    code: text("code").notNull(),
+    nameAr: text("name_ar").notNull(),
+    nameEn: text("name_en"),
+    costCenterCode: text("cost_center_code"),
+    laborRatePerHour: numeric("labor_rate_per_hour", {
+      precision: 14,
+      scale: 4,
+    })
+      .notNull()
+      .default("0"),
+    overheadRatePerHour: numeric("overhead_rate_per_hour", {
+      precision: 14,
+      scale: 4,
+    })
+      .notNull()
+      .default("0"),
+    capacityHoursPerDay: numeric("capacity_hours_per_day", {
+      precision: 14,
+      scale: 4,
+    })
+      .notNull()
+      .default("8"),
+    defaultLaborAccountId: integer("default_labor_account_id").references(
+      () => accountsTable.id,
+      { onDelete: "set null" },
+    ),
+    defaultOverheadAccountId: integer(
+      "default_overhead_account_id",
+    ).references(() => accountsTable.id, { onDelete: "set null" }),
+    isActive: boolean("is_active").notNull().default(true),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byCompanyCode: uniqueIndex("work_centers_company_code_uniq").on(
+      t.companyId,
+      t.code,
+    ),
+    byCompany: index("work_centers_company_idx").on(t.companyId),
+  }),
+);
+
+export const insertWorkCenterSchema = createInsertSchema(workCentersTable).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type WorkCenter = typeof workCentersTable.$inferSelect;
+export type InsertWorkCenter = z.infer<typeof insertWorkCenterSchema>;
 
 export type BomTemplate = typeof bomTemplatesTable.$inferSelect;
 export type BomTemplateLine = typeof bomTemplateLinesTable.$inferSelect;

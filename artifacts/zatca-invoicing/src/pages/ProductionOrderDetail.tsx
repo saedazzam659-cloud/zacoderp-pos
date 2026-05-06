@@ -69,10 +69,25 @@ type Order = {
   wasteAccountId: number | null;
   issueJournalEntryId: number | null;
   receiptJournalEntryId: number | null;
+  // ─── Phase B — work center link ───
+  workCenterId: number | null;
+  plannedHours: string;
+  actualHours: string;
 };
 type Warehouse = { id: number; name: string };
 type Account = { id: number; code: string; nameAr: string; accountType: string };
 type ItemRef = { id: number; nameAr: string; code: string };
+type WorkCenterRef = {
+  id: number;
+  code: string;
+  nameAr: string;
+  laborRatePerHour: string;
+  overheadRatePerHour: string;
+  costCenterCode: string | null;
+  defaultLaborAccountId: number | null;
+  defaultOverheadAccountId: number | null;
+  isActive: boolean;
+};
 
 // Status → list of allowed transitions, each rendered as a coloured action
 // button. Mirrors the server-side PRODUCTION_STATUS_TRANSITIONS map. Keep the
@@ -125,6 +140,7 @@ export default function ProductionOrderDetail() {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [itemRefs, setItemRefs] = useState<ItemRef[]>([]);
+  const [workCenters, setWorkCenters] = useState<WorkCenterRef[]>([]);
   const [savingWip, setSavingWip] = useState(false);
   const [completion, setCompletion] = useState({ producedQty: "", wasteQty: "" });
   const [itemForm, setItemForm] = useState({
@@ -187,10 +203,12 @@ export default function ProductionOrderDetail() {
       fetch(`${API}/api/inventory/warehouses`, { headers: h }).then((r) => r.ok ? r.json() : []),
       fetch(`${API}/api/accounts?limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
       fetch(`${API}/api/inventory/items?limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
-    ]).then(([whs, accs, its]) => {
+      fetch(`${API}/api/production/work-centers`, { headers: h }).then((r) => r.ok ? r.json() : []),
+    ]).then(([whs, accs, its, wcs]) => {
       setWarehouses(Array.isArray(whs) ? whs : (whs?.rows ?? whs?.data ?? []));
       setAccounts(Array.isArray(accs) ? accs : (accs?.rows ?? accs?.data ?? []));
       setItemRefs(Array.isArray(its) ? its : (its?.rows ?? its?.data ?? []));
+      setWorkCenters(Array.isArray(wcs) ? wcs : (wcs?.rows ?? []));
     }).catch(() => {});
   }, [token]);
 
@@ -394,6 +412,7 @@ export default function ProductionOrderDetail() {
             warehouses={warehouses}
             accounts={accounts}
             itemRefs={itemRefs}
+            workCenters={workCenters}
             saving={savingWip}
             onSave={saveWipSetup}
           />
@@ -636,20 +655,24 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
 // is locked once the order moves past "approved" because the issue JE has
 // already posted against these accounts. Saved via a single PATCH per change.
 function WipSetupPanel({
-  order, warehouses, accounts, itemRefs, saving, onSave,
+  order, warehouses, accounts, itemRefs, workCenters, saving, onSave,
 }: {
   order: Order;
   warehouses: Warehouse[];
   accounts: Account[];
   itemRefs: ItemRef[];
+  workCenters: WorkCenterRef[];
   saving: boolean;
   onSave: (patch: Record<string, unknown>) => void;
 }) {
   const locked = ["in_production", "quality_check", "completed"].includes(order.status);
-  const [draft, setDraft] = useState({
+  const initial = () => ({
     rawWarehouseId: order.rawWarehouseId ?? "",
     finishedWarehouseId: order.finishedWarehouseId ?? "",
     productItemId: order.productItemId ?? "",
+    workCenterId: order.workCenterId ?? "",
+    plannedHours: order.plannedHours ?? "0",
+    actualHours: order.actualHours ?? "0",
     laborCost: order.laborCost ?? "0",
     overheadCost: order.overheadCost ?? "0",
     costCenter: order.costCenter ?? "",
@@ -661,26 +684,39 @@ function WipSetupPanel({
     varianceAccountId: order.varianceAccountId ?? "",
     wasteAccountId: order.wasteAccountId ?? "",
   });
+  const [draft, setDraft] = useState(initial);
   // Re-sync local form whenever the underlying order changes (e.g. after save).
   useEffect(() => {
-    setDraft({
-      rawWarehouseId: order.rawWarehouseId ?? "",
-      finishedWarehouseId: order.finishedWarehouseId ?? "",
-      productItemId: order.productItemId ?? "",
-      laborCost: order.laborCost ?? "0",
-      overheadCost: order.overheadCost ?? "0",
-      costCenter: order.costCenter ?? "",
-      wipAccountId: order.wipAccountId ?? "",
-      rawInventoryAccountId: order.rawInventoryAccountId ?? "",
-      finishedGoodsAccountId: order.finishedGoodsAccountId ?? "",
-      laborAccountId: order.laborAccountId ?? "",
-      overheadAccountId: order.overheadAccountId ?? "",
-      varianceAccountId: order.varianceAccountId ?? "",
-      wasteAccountId: order.wasteAccountId ?? "",
-    });
+    setDraft(initial());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order.id, order.status, order.issueJournalEntryId, order.receiptJournalEntryId]);
 
   const set = (k: string, v: unknown) => setDraft((d) => ({ ...d, [k]: v as any }));
+
+  // ─── Phase B — auto-recompute labor/overhead when wc or hours change ──
+  // The user can still type-override afterwards (the inputs remain editable).
+  // Mirrors the server-side behaviour in PATCH /orders/:id.
+  function applyWorkCenter(wcId: number | "", hours: string) {
+    const wc = wcId === "" ? null : workCenters.find((w) => w.id === Number(wcId));
+    const h = Number(hours) || 0;
+    setDraft((d) => {
+      const next: any = { ...d, workCenterId: wcId, plannedHours: hours };
+      if (wc && h > 0) {
+        next.laborCost = String((h * Number(wc.laborRatePerHour)).toFixed(2));
+        next.overheadCost = String((h * Number(wc.overheadRatePerHour)).toFixed(2));
+      }
+      // Auto-fill defaults from the work center when current value is empty.
+      if (wc) {
+        if (!d.costCenter && wc.costCenterCode) next.costCenter = wc.costCenterCode;
+        if (!d.laborAccountId && wc.defaultLaborAccountId)
+          next.laborAccountId = wc.defaultLaborAccountId;
+        if (!d.overheadAccountId && wc.defaultOverheadAccountId)
+          next.overheadAccountId = wc.defaultOverheadAccountId;
+      }
+      return next;
+    });
+  }
+  const selectedWc = draft.workCenterId === "" ? null : workCenters.find((w) => w.id === Number(draft.workCenterId)) ?? null;
   const isExpense = (a: Account) => a.accountType === "expense" || a.accountType === "cost_of_sales";
   const isAsset = (a: Account) => a.accountType === "asset";
   const isLiab = (a: Account) => a.accountType === "liability";
@@ -693,7 +729,7 @@ function WipSetupPanel({
     const payload: Record<string, unknown> = {};
     Object.entries(draft).forEach(([k, v]) => {
       if (v === "" || v === null) payload[k] = null;
-      else if (k.endsWith("Cost")) payload[k] = Number(v);
+      else if (k.endsWith("Cost") || k.endsWith("Hours")) payload[k] = Number(v);
       else if (k.endsWith("Id")) payload[k] = Number(v);
       else payload[k] = v;
     });
@@ -752,6 +788,44 @@ function WipSetupPanel({
         <Field label="صنف المنتج النهائي">
           <SelectId value={draft.productItemId} onChange={(v) => set("productItemId", v)}
             options={itemRefs.map((i) => ({ value: i.id, label: `${i.code} — ${i.nameAr}` }))} testid="select-fg-item" />
+        </Field>
+      </div>
+
+      {/* Phase B — مركز العمل + الساعات (يحسب الأجور والـOH تلقائياً) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 border-t border-violet-200/50">
+        <Field label="مركز العمل (اختياري)">
+          <SelectId
+            disabled={locked}
+            value={draft.workCenterId}
+            onChange={(v) => applyWorkCenter(v as number | "", draft.plannedHours)}
+            options={workCenters
+              .filter((w) => w.isActive || Number(draft.workCenterId) === w.id)
+              .map((w) => ({ value: w.id, label: `${w.code} — ${w.nameAr}` }))}
+            testid="select-work-center"
+          />
+          {selectedWc && (
+            <p className="mt-1 text-xs text-violet-700 dark:text-violet-300">
+              معدل الأجور: {Number(selectedWc.laborRatePerHour).toLocaleString()} / ساعة
+              {" · "}
+              OH: {Number(selectedWc.overheadRatePerHour).toLocaleString()} / ساعة
+            </p>
+          )}
+        </Field>
+        <Field label="الساعات المخططة">
+          <Input
+            type="number" step="0.25" min={0} disabled={locked}
+            value={draft.plannedHours}
+            onChange={(e) => applyWorkCenter(draft.workCenterId as number | "", e.target.value)}
+            data-testid="input-planned-hours"
+          />
+        </Field>
+        <Field label="الساعات الفعلية (للمراجعة)">
+          <Input
+            type="number" step="0.25" min={0}
+            value={draft.actualHours}
+            onChange={(e) => set("actualHours", e.target.value)}
+            data-testid="input-actual-hours"
+          />
         </Field>
       </div>
 

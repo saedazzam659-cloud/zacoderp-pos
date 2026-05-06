@@ -568,6 +568,7 @@
     "productionOrders": "أوامر الإنتاج",
     "productionResources": "الماكينات والموارد",
     "bomTemplates": "قوالب المكوّنات (BOM)",
+    "workCenters": "مراكز العمل",
     "manufacturingSettings": "إعدادات التصنيع",
     "contractingGroup": "إدارة المقاولات",
     "contractingDashboard": "لوحة المقاولات",

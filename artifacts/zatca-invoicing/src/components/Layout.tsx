@@ -182,6 +182,7 @@ const productionSubNav: NavDef[] = [
   { nameKey: "nav.productionOrders",    href: "/production/orders",    icon: ClipboardList, permKey: "production" },
   { nameKey: "nav.productionResources", href: "/production/resources", icon: Cog, permKey: "production" },
   { nameKey: "nav.bomTemplates",        href: "/production/bom-templates", icon: ListTree, permKey: "production" },
+  { nameKey: "nav.workCenters",         href: "/production/work-centers", icon: Factory, permKey: "production" },
   { nameKey: "nav.manufacturingSettings", href: "/production/settings", icon: Settings2, permKey: "production" },
 ];
 const PRODUCTION_GROUP_PERMS = ["production"];
