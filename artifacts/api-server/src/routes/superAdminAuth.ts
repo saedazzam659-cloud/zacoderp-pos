@@ -181,19 +181,18 @@ router.post("/login", saLoginIpLimit, saLoginUsernameLimit, async (req, res) => 
   const hour = new Date().getHours();
   const risk = await assessRisk({ userId: user.id, ip, deviceFingerprint: fp, hour });
 
-  if (risk.level === "high" && !emergencyBypassEnabled()) {
+  // High-risk hard-block intentionally disabled by request: the SuperAdmin
+  // should never be locked out of the control panel by the risk score.
+  // OTP + device-approval challenges below still gate suspicious logins,
+  // and we still record the elevated risk in the audit trail + email alert
+  // so the activity remains visible in the Security Center.
+  if (risk.level === "high") {
     await recordAttempt({
       userId: user.id, username, ip, userAgent: ua, deviceFingerprint: fp,
-      success: false, outcome: "blocked_high_risk",
+      success: false, outcome: "high_risk_observed",
       riskScore: risk.score, riskLevel: risk.level, riskFactors: risk.factors,
     });
-    if (user.email) sendFailedLoginAlert(user.email, ip, `blocked_high_risk:${risk.factors.join(",")}`).catch(() => {});
-    res.status(403).json({
-      error: "تم منع تسجيل الدخول بسبب نشاط مشبوه. تواصل مع الدعم أو استخدم رابط الاسترجاع.",
-      blocked: true,
-      reasons: risk.factors,
-    });
-    return;
+    if (user.email) sendFailedLoginAlert(user.email, ip, `high_risk_observed:${risk.factors.join(",")}`).catch(() => {});
   }
 
   // ── Trusted device check
