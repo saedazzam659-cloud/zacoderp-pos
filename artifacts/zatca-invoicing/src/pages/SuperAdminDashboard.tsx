@@ -7,7 +7,7 @@ import {
   Building2, Clock, CheckCircle2, XCircle, Users, ArrowLeft, Plus, Package,
   TrendingUp, TrendingDown, AlertTriangle, ShieldCheck, ShieldAlert,
   HardDrive, ScrollText, Activity, LineChart as LineChartIcon, PieChart as PieChartIcon,
-  KeyRound, Inbox, BarChart3, Wrench, FileBarChart, Sparkles,
+  KeyRound, Inbox, BarChart3, Wrench, FileBarChart, Sparkles, Copy,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -416,6 +416,8 @@ export default function SuperAdminDashboard() {
               href: "/admin/ai-fix", icon: Sparkles, bg: "bg-violet-100", color: "text-violet-700" },
             { title: "صلاحيات القوائم", desc: "إظهار وإخفاء أقسام لكل شركة",
               href: "/admin/menu-permissions", icon: BarChart3, bg: "bg-slate-100", color: "text-slate-700" },
+            { title: "نسخ القيود بين الشركات", desc: "نقل قيود اليومية من شركة إلى أخرى مع إعادة ربط الحسابات والفروع",
+              href: "/admin/data-copy/journal-entries", icon: Copy, bg: "bg-blue-100", color: "text-blue-700" },
           ].map((qa: QuickLink, i) => {
             const inner = (
               <Card className={`border-dashed border-2 transition-colors h-full ${

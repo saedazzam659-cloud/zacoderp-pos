@@ -10,6 +10,7 @@ import SuperAdminDashboard from "@/pages/SuperAdminDashboard";
 import OrphanStockCleanup from "@/pages/admin/OrphanStockCleanup";
 import AICompanyFix from "@/pages/admin/AICompanyFix";
 import CompanyDataDoctor from "@/pages/admin/CompanyDataDoctor";
+import DataCopyJournalEntries from "@/pages/admin/DataCopyJournalEntries";
 import SupportInbox from "@/pages/admin/SupportInbox";
 import SupportSettings from "@/pages/admin/SupportSettings";
 import SupportCall from "@/pages/admin/SupportCall";
@@ -461,6 +462,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/orphan-stock" component={OrphanStockCleanup} />}
             {isSuperAdmin && <Route path="/admin/ai-fix" component={AICompanyFix} />}
             {isSuperAdmin && <Route path="/admin/data-doctor" component={CompanyDataDoctor} />}
+            {isSuperAdmin && <Route path="/admin/data-copy/journal-entries" component={DataCopyJournalEntries} />}
             {isSuperAdmin && <Route path="/admin/support" component={SupportInbox} />}
             {isSuperAdmin && <Route path="/admin/support-settings" component={SupportSettings} />}
             {isSuperAdmin && <Route path="/admin/support-call" component={SupportCall} />}
