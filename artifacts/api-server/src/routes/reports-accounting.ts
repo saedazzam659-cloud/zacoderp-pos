@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { accountsTable, journalEntriesTable, journalEntryLinesTable, salesInvoicesTable, purchaseInvoicesTable } from "@workspace/db";
-import { eq, and, sql, gte, lte, asc } from "drizzle-orm";
+import { accountsTable, journalEntriesTable, journalEntryLinesTable, salesInvoicesTable, purchaseInvoicesTable, trialBalancesTable, trialBalanceDetailsTable } from "@workspace/db";
+import { eq, and, sql, gte, lte, asc, desc, ne } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
 
 const router = Router();
@@ -39,7 +39,7 @@ function getBid(req: any): number | undefined {
 //   • closingDebit / closingCredit / closingBalance — opening +
 //     period movements. Useful for the trial-balance UI which needs
 //     the three sections side-by-side.
-async function getAccountBalances(req: Request, cid: number, fromDate?: string, toDate?: string, branchId?: number) {
+async function getAccountBalances(req: Request, cid: number, fromDate?: string, toDate?: string, branchId?: number, openingFromTrialBalance = false) {
   // Get all accounts for company
   const accounts = await db.select().from(accountsTable)
     .where(and(eq(accountsTable.companyId, cid), eq(accountsTable.isActive, true)))
@@ -56,6 +56,13 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
   const periodFilters = [...baseFilters];
   if (fromDate) periodFilters.push(gte(journalEntriesTable.entryDate, fromDate));
   if (toDate)   periodFilters.push(lte(journalEntriesTable.entryDate, toDate));
+  // When opening is sourced from the imported trial balance, exclude
+  // `trial_balance_adjustment` JEs from the period column to avoid
+  // double-counting (those adjustments are already reflected in the
+  // TB details rows, which feed the opening column).
+  if (openingFromTrialBalance) {
+    periodFilters.push(ne(journalEntriesTable.entryType, "trial_balance_adjustment"));
+  }
 
   // Helper to sum debit/credit per account under a set of filters.
   async function aggregate(filters: any[]) {
@@ -80,11 +87,35 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
 
   const periodMap = await aggregate(periodFilters);
 
-  // Opening balance is "everything strictly before fromDate". When no
-  // fromDate is supplied the trial balance is "since inception" and
-  // opening collapses to zero — we skip the extra query entirely.
+  // Opening balance:
+  //  • If `openingFromTrialBalance` is true → pull from the latest
+  //    imported trial balance (`trial_balance_details`). This matches
+  //    the user-facing semantic where the Excel-imported opening
+  //    balances populate the Opening column and only system-generated
+  //    JEs flow into the Period column.
+  //  • Otherwise (legacy callers like balance-sheet/income-statement)
+  //    → opening = sum of every JE strictly before `fromDate`.
   let openingMap: Map<number, { debit: number; credit: number }>;
-  if (fromDate) {
+  if (openingFromTrialBalance) {
+    openingMap = new Map();
+    const [latestTb] = await db.select({ id: trialBalancesTable.id }).from(trialBalancesTable)
+      .where(eq(trialBalancesTable.companyId, cid))
+      .orderBy(desc(trialBalancesTable.periodEnd), desc(trialBalancesTable.createdAt))
+      .limit(1);
+    if (latestTb) {
+      const tbRows = await db.select({
+        accountId: trialBalanceDetailsTable.accountId,
+        debit:     trialBalanceDetailsTable.debit,
+        credit:    trialBalanceDetailsTable.credit,
+      }).from(trialBalanceDetailsTable)
+        .where(eq(trialBalanceDetailsTable.trialBalanceId, latestTb.id));
+      for (const r of tbRows) {
+        if (r.accountId) {
+          openingMap.set(r.accountId, { debit: Number(r.debit || 0), credit: Number(r.credit || 0) });
+        }
+      }
+    }
+  } else if (fromDate) {
     const openingFilters = [...baseFilters, sql`${journalEntriesTable.entryDate} < ${fromDate}`];
     openingMap = await aggregate(openingFilters);
   } else {
@@ -97,15 +128,20 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
     const openingBalance = op.debit - op.credit;
     const balance        = pe.debit - pe.credit; // period movement balance
     const closingBalance = openingBalance + balance;
+    // For TB-imported opening, preserve the raw debit/credit values
+    // exactly as imported (typically only one side is non-zero per
+    // account). For legacy date-based opening, collapse to a single
+    // signed side so each account shows only debit OR credit.
+    const openingDebit  = openingFromTrialBalance ? op.debit  : (openingBalance > 0 ?  openingBalance : 0);
+    const openingCredit = openingFromTrialBalance ? op.credit : (openingBalance < 0 ? -openingBalance : 0);
     return {
       ...a,
       // Period movements (kept under the original names for callers)
       totalDebit:  pe.debit,
       totalCredit: pe.credit,
       balance,
-      // Opening (before fromDate). One side is zero by convention.
-      openingDebit:   openingBalance > 0 ?  openingBalance : 0,
-      openingCredit:  openingBalance < 0 ? -openingBalance : 0,
+      openingDebit,
+      openingCredit,
       openingBalance,
       // Closing = opening + period (signed)
       closingDebit:   closingBalance > 0 ?  closingBalance : 0,
@@ -122,7 +158,7 @@ router.get("/trial-balance", async (req, res) => {
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
     const { fromDate, toDate } = req.query as any;
-    const rows = await getAccountBalances(req, cid, fromDate, toDate, bid);
+    const rows = await getAccountBalances(req, cid, fromDate, toDate, bid, true);
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
