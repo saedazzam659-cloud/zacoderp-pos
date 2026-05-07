@@ -243,6 +243,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       es.addEventListener("company_changed", onRefresh);
       es.addEventListener("permissions_changed", onRefresh);
 
+      // Cobrowse invite push: agent invited THIS user to a co-browse session.
+      // We re-broadcast as a window event so the global CustomerCobrowseWidget
+      // (which doesn't have access to AuthContext internals) can react and
+      // open the consent dialog without a page reload.
+      es.addEventListener("cobrowse_invite", (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          window.dispatchEvent(new CustomEvent("cobrowse:invite", { detail: payload?.meta ?? payload }));
+        } catch { /* ignore malformed event */ }
+      });
+      es.addEventListener("cobrowse_invite_cancelled", (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          window.dispatchEvent(new CustomEvent("cobrowse:invite-cancelled", { detail: payload?.meta ?? payload }));
+        } catch { /* ignore */ }
+      });
+
       es.addEventListener("hello", () => {
         // Stream confirmed live → reset backoff for the next disconnect.
         retryDelay = 1000;

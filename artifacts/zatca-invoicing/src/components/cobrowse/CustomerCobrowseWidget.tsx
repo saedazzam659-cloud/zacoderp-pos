@@ -25,12 +25,35 @@ import { ShieldCheck, MonitorUp, X, MousePointer2 } from "lucide-react";
 
 type Phase = "idle" | "asking" | "active" | "ended";
 
+// We persist the invite token to sessionStorage as soon as we see it on
+// the URL. The customer may open the link while logged out (the auth
+// guard then redirects them to /login, which would strip the URL query
+// and lose the invite), or any other in-app navigation may scrub the
+// query string. Storing in sessionStorage means the consent dialog
+// survives until the customer either accepts or explicitly rejects.
+const SS_KEY = "cobrowse_invite_token";
+
 function readInviteFromUrl(): string | null {
   try {
     const u = new URL(window.location.href);
     const t = u.searchParams.get("cobrowse");
     return t && t.length >= 8 ? t : null;
   } catch { return null; }
+}
+
+function readPersistedInvite(): string | null {
+  try {
+    const t = window.sessionStorage.getItem(SS_KEY);
+    return t && t.length >= 8 ? t : null;
+  } catch { return null; }
+}
+
+function persistInvite(token: string) {
+  try { window.sessionStorage.setItem(SS_KEY, token); } catch { /* ignore */ }
+}
+
+function dropPersistedInvite() {
+  try { window.sessionStorage.removeItem(SS_KEY); } catch { /* ignore */ }
 }
 
 function clearInviteFromUrl() {
@@ -51,18 +74,56 @@ export default function CustomerCobrowseWidget() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const stopRecordRef = useRef<(() => void) | null>(null);
+  // Mirrors `phase` so async callbacks (SSE invite-cancelled handler) can
+  // read the latest value without re-subscribing on every state change.
+  const phaseRef = useRef<Phase>("idle");
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
 
-  // ── On mount: detect invite token ──────────────────────────────────
-  useEffect(() => {
-    const t = readInviteFromUrl();
-    if (!t) return;
+  // ── Pick up the invite token from any of three sources ────────────
+  //   1) URL query  ?cobrowse=<token>   (legacy copy-paste invite link)
+  //   2) sessionStorage                  (mid-consent refresh / bounce)
+  //   3) Live SSE push from AuthContext  (agent picked this user from the
+  //      "ادعُ مستخدم" picker — the dialog appears without any link click)
+  // The same handler accepts all three so the consent UX is identical.
+  const beginInvite = useCallback((t: string, fromAgent?: string) => {
+    if (!t || t.length < 8) return;
+    persistInvite(t);
+    clearInviteFromUrl();
     setToken(t);
     setPhase("asking");
-    fetchCobrowseSessionByToken(t).then((s) => {
-      if (!s) { setPhase("ended"); return; }
-      if (s.agentUsername) setAgentName(s.agentUsername);
-    });
+    if (fromAgent) setAgentName(fromAgent);
+    else {
+      fetchCobrowseSessionByToken(t).then((s) => {
+        if (!s || s.state === "ended") { dropPersistedInvite(); setPhase("ended"); return; }
+        if (s.agentUsername) setAgentName(s.agentUsername);
+      }).catch(() => { /* keep dialog open — server may be momentarily offline */ });
+    }
   }, []);
+
+  useEffect(() => {
+    const t = readInviteFromUrl() ?? readPersistedInvite();
+    if (t) beginInvite(t);
+
+    const onInvite = (e: Event) => {
+      const detail = (e as CustomEvent<any>).detail ?? {};
+      const tok = String(detail?.inviteToken ?? "");
+      const agent = detail?.agentUsername ? String(detail.agentUsername) : undefined;
+      if (tok) beginInvite(tok, agent);
+    };
+    const onCancel = () => {
+      // Agent withdrew the invite before we accepted — close the dialog.
+      if (phaseRef.current === "asking") {
+        setPhase("ended");
+        dropPersistedInvite();
+      }
+    };
+    window.addEventListener("cobrowse:invite", onInvite as EventListener);
+    window.addEventListener("cobrowse:invite-cancelled", onCancel as EventListener);
+    return () => {
+      window.removeEventListener("cobrowse:invite", onInvite as EventListener);
+      window.removeEventListener("cobrowse:invite-cancelled", onCancel as EventListener);
+    };
+  }, [beginInvite]);
 
   // ── Apply an incoming control event from the agent ─────────────────
   // SECURITY: keep this surface deliberately tiny. The agent gets to:
@@ -176,6 +237,13 @@ export default function CustomerCobrowseWidget() {
     setControlOn(false);
     setControlAsk(false);
     clearInviteFromUrl();
+    dropPersistedInvite();
+  }, []);
+
+  const reject = useCallback(() => {
+    setPhase("ended");
+    clearInviteFromUrl();
+    dropPersistedInvite();
   }, []);
 
   // Tear down on unmount.
@@ -185,9 +253,21 @@ export default function CustomerCobrowseWidget() {
 
   return (
     <>
-      {/* ── Initial consent dialog ─────────────────────────── */}
-      <Dialog open={phase === "asking"} onOpenChange={(o) => { if (!o) { setPhase("ended"); clearInviteFromUrl(); } }}>
-        <DialogContent dir="rtl" data-cobrowse-banner>
+      {/* ── Initial consent dialog ───────────────────────────
+          The dialog refuses to close on outside-click, Esc, or focus
+          changes — only the explicit "رفض" / "أوافق" buttons end this
+          flow. Without this, accidental clicks elsewhere on the page
+          (or routing-induced focus shifts) would dismiss the prompt
+          before the customer has time to read it. */}
+      <Dialog open={phase === "asking"} onOpenChange={() => { /* gated; see buttons */ }}>
+        <DialogContent
+          dir="rtl"
+          data-cobrowse-banner
+          data-cobrowse-no-control
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onInteractOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <MonitorUp className="h-5 w-5 text-emerald-600" />
@@ -204,7 +284,7 @@ export default function CustomerCobrowseWidget() {
             كلمات المرور وأي حقل عليه علامة سرية يتم إخفاؤه تلقائيًا عن الفني.
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => { setPhase("ended"); clearInviteFromUrl(); }}>رفض</Button>
+            <Button variant="outline" onClick={reject}>رفض</Button>
             <Button onClick={start} className="bg-emerald-600 hover:bg-emerald-500 text-white gap-1">
               <ShieldCheck className="h-4 w-4" /> أوافق وابدأ المشاركة
             </Button>
@@ -214,7 +294,14 @@ export default function CustomerCobrowseWidget() {
 
       {/* ── Control consent dialog ─────────────────────────── */}
       <Dialog open={controlAsk} onOpenChange={(o) => { if (!o) setControlAsk(false); }}>
-        <DialogContent dir="rtl" data-cobrowse-banner>
+        <DialogContent
+          dir="rtl"
+          data-cobrowse-banner
+          data-cobrowse-no-control
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onInteractOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <MousePointer2 className="h-5 w-5 text-amber-600" />

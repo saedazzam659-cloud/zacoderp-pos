@@ -1,8 +1,9 @@
 import { Router } from "express";
-import { db, cobrowseSessionsTable, auditLogTable } from "@workspace/db";
+import { db, cobrowseSessionsTable, auditLogTable, usersTable } from "@workspace/db";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { extractAuth } from "../middleware/auth.js";
 import { newInviteToken } from "../lib/cobrowseHub.js";
+import { emitToUser } from "../lib/sessionEvents.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Cobrowse REST endpoints (companion to the WS hub).
@@ -65,6 +66,29 @@ router.get("/sessions/by-token/:token", async (req, res) => {
 // Authenticated below.
 router.use(extractAuth);
 
+// Lite list of users in the agent's company — used by the agent UI to pick
+// who to push the invite to. Returns only id / username / display name and
+// is restricted to the same tenant as the caller. Available to ANY signed-
+// in user (the broader /api/users endpoint requires admin); we expose this
+// minimal projection so a support agent without admin role can still pick
+// a target.
+router.get("/eligible-users", async (req, res) => {
+  const u = req.authUser;
+  if (!u) { res.status(401).json({ error: "غير مصرح" }); return; }
+  if (u.companyId == null) { res.json([]); return; }
+  const rows = await db.select({
+    id: usersTable.id,
+    username: usersTable.username,
+    nameAr: usersTable.nameAr,
+    nameEn: usersTable.nameEn,
+    role: usersTable.role,
+    isActive: usersTable.isActive,
+  }).from(usersTable)
+    .where(and(eq(usersTable.companyId, u.companyId), eq(usersTable.isActive, true)));
+  // Exclude the agent themselves from the picker.
+  res.json(rows.filter(r => r.id !== u.id));
+});
+
 // Create a new session (agent).
 router.post("/sessions", async (req, res) => {
   const u = req.authUser;
@@ -72,21 +96,50 @@ router.post("/sessions", async (req, res) => {
 
   const customerLabel = typeof req.body?.customerLabel === "string"
     ? req.body.customerLabel.slice(0, 200) : null;
+  // Optional: when provided, we push the invite live to that specific
+  // signed-in user via SSE so the consent dialog appears on their screen
+  // without them having to click a link. Validated to be in the same tenant.
+  const targetUserIdRaw = req.body?.targetUserId;
+  const targetUserId = Number.isFinite(Number(targetUserIdRaw)) ? Number(targetUserIdRaw) : null;
+  let targetUser: { id: number; companyId: number | null; username: string } | null = null;
+  if (targetUserId != null) {
+    const [tu] = await db.select({
+      id: usersTable.id, companyId: usersTable.companyId, username: usersTable.username,
+    }).from(usersTable).where(eq(usersTable.id, targetUserId)).limit(1);
+    if (!tu) { res.status(404).json({ error: "المستخدم المستهدف غير موجود" }); return; }
+    if (u.role !== "superadmin" && tu.companyId !== u.companyId) {
+      res.status(403).json({ error: "لا يمكن دعوة مستخدم من شركة أخرى" }); return;
+    }
+    targetUser = tu;
+  }
 
   const inviteToken = newInviteToken();
   const [row] = await db.insert(cobrowseSessionsTable).values({
     inviteToken,
     agentUserId: u.id,
     agentUsername: u.username,
-    customerLabel,
+    customerUserId: targetUser?.id ?? null,
+    customerCompanyId: targetUser?.companyId ?? null,
+    customerLabel: customerLabel ?? targetUser?.username ?? null,
     state: "pending",
     controlState: "none",
   }).returning();
 
+  // Push the invite directly to the target user's SSE stream so the
+  // consent dialog appears on their screen without copy-pasting a link.
+  if (targetUser) {
+    emitToUser(targetUser.id, targetUser.companyId, "cobrowse_invite", {
+      sessionId: row!.id,
+      inviteToken,
+      agentUsername: u.username,
+      customerLabel: row!.customerLabel,
+    });
+  }
+
   await audit({
     userId: u.id, username: u.username, companyId: u.companyId ?? null,
     action: "create", sessionId: row!.id, statusCode: 201,
-    meta: { customerLabel },
+    meta: { customerLabel, targetUserId: targetUser?.id ?? null, pushed: !!targetUser },
     req: { ip: req.ip, method: req.method, originalUrl: req.originalUrl, headers: req.headers },
   });
 
@@ -141,6 +194,13 @@ router.post("/sessions/:id/end", async (req, res) => {
     controlState: "none",
     controlEndedAt: s.controlGrantedAt && !s.controlEndedAt ? new Date() : s.controlEndedAt,
   }).where(eq(cobrowseSessionsTable.id, id)).returning();
+  // If the invite was pushed but never accepted, dismiss the dialog on the
+  // target user's screen so they don't see a stale prompt.
+  if (s.customerUserId && s.state === "pending") {
+    emitToUser(s.customerUserId, s.customerCompanyId, "cobrowse_invite_cancelled", {
+      sessionId: id,
+    });
+  }
   await audit({
     userId: u.id, username: u.username, companyId: u.companyId ?? null,
     action: "end", sessionId: id, statusCode: 200,

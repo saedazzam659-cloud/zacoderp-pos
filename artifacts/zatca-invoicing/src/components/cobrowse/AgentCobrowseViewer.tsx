@@ -9,7 +9,10 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
-import { Eye, MonitorUp, MousePointer2, Copy, PhoneOff } from "lucide-react";
+import { Eye, MonitorUp, MousePointer2, Copy, PhoneOff, Send } from "lucide-react";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 
 // ─────────────────────────────────────────────────────────────────────────
 // AgentCobrowseViewer
@@ -32,6 +35,8 @@ interface SessionRow {
   state: string;
   controlState: ControlState | string;
   agentUsername: string | null;
+  customerUserId?: number | null;
+  customerLabel?: string | null;
 }
 
 function hasCobrowseControlPerm(user: any): boolean {
@@ -39,6 +44,14 @@ function hasCobrowseControlPerm(user: any): boolean {
   if (user.role === "superadmin" || user.role === "admin") return true;
   const p = user.permissions ?? {};
   return Boolean(p?.support_cobrowse?.control);
+}
+
+interface EligibleUser {
+  id: number;
+  username: string;
+  nameAr: string | null;
+  nameEn: string | null;
+  role: string;
 }
 
 export default function AgentCobrowseViewer() {
@@ -49,6 +62,24 @@ export default function AgentCobrowseViewer() {
   const [peerJoined, setPeerJoined] = useState(false);
   const [controlState, setControlState] = useState<ControlState>("none");
   const [busy, setBusy] = useState(false);
+  // Push-to-user picker. When set, the invite is delivered live to the
+  // signed-in user's screen via SSE — no copy/paste needed.
+  const [eligibleUsers, setEligibleUsers] = useState<EligibleUser[]>([]);
+  const [targetUserId, setTargetUserId] = useState<string>("");
+
+  // Load the picker list once when the panel mounts.
+  useEffect(() => {
+    let off = false;
+    apiCobrowse<EligibleUser[]>("/eligible-users")
+      .then((rows) => { if (!off) setEligibleUsers(Array.isArray(rows) ? rows : []); })
+      .catch(() => { /* silently fail — picker just won't populate */ });
+    return () => { off = true; };
+  }, []);
+
+  const targetUser = eligibleUsers.find(u => String(u.id) === targetUserId) ?? null;
+  const targetDisplay = targetUser
+    ? (targetUser.nameAr || targetUser.nameEn || targetUser.username)
+    : "";
 
   const wsRef = useRef<WebSocket | null>(null);
   const playerRef = useRef<any>(null);
@@ -79,10 +110,20 @@ export default function AgentCobrowseViewer() {
     if (busy) return;
     setBusy(true);
     try {
+      const tgt = targetUserId ? Number(targetUserId) : null;
       const row = await apiCobrowse<SessionRow>("/sessions", {
         method: "POST",
-        body: JSON.stringify({ customerLabel: customerLabel || null }),
+        body: JSON.stringify({
+          customerLabel: customerLabel || targetDisplay || null,
+          ...(tgt ? { targetUserId: tgt } : {}),
+        }),
       });
+      if (tgt) {
+        toast({
+          title: "تم إرسال الدعوة لشاشة العميل",
+          description: `${targetDisplay} — في انتظار الموافقة…`,
+        });
+      }
       setSession(row);
       setControlState("none");
       setPeerJoined(false);
@@ -110,7 +151,7 @@ export default function AgentCobrowseViewer() {
     } finally {
       setBusy(false);
     }
-  }, [busy, customerLabel, toast]);
+  }, [busy, customerLabel, targetUserId, targetDisplay, toast]);
 
   // ── Buffer rrweb events until the player is ready, then stream ─────
   const handleRrwebEvent = useCallback((event: any) => {
@@ -238,34 +279,76 @@ export default function AgentCobrowseViewer() {
       </CardHeader>
       <CardContent className="space-y-3">
         {!session ? (
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="flex-1 min-w-[200px]">
-              <Label className="text-xs">اسم العميل (اختياري — للتوثيق فقط)</Label>
-              <Input
-                value={customerLabel}
-                onChange={(e) => setCustomerLabel(e.target.value)}
-                placeholder="مثال: شركة ABC — محمد"
-                className="mt-1"
-              />
+          <div className="space-y-3">
+            <div className="rounded-md border border-emerald-200 bg-emerald-50/50 p-3 text-xs text-emerald-900">
+              <Send className="inline h-4 w-4 -mt-0.5 ml-1" />
+              اختر اسم المستخدم وستظهر له نافذة الموافقة مباشرة على شاشته دون الحاجة لإرسال أي رابط.
             </div>
-            <Button id="cobrowse-start-btn" onClick={startSession} disabled={busy} className="gap-1 bg-emerald-600 hover:bg-emerald-500">
-              <Eye className="h-4 w-4" /> ابدأ جلسة المشاركة
-            </Button>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex-1 min-w-[220px]">
+                <Label className="text-xs">المستخدم (سيتم دفع الدعوة لشاشته فوراً)</Label>
+                <Select value={targetUserId} onValueChange={setTargetUserId}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="اختر مستخدم من شركتك…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {eligibleUsers.length === 0 ? (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">لا يوجد مستخدمون متاحون</div>
+                    ) : eligibleUsers.map(u => (
+                      <SelectItem key={u.id} value={String(u.id)}>
+                        {(u.nameAr || u.nameEn || u.username)}
+                        <span className="text-[10px] text-muted-foreground mr-1">({u.username})</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex-1 min-w-[180px]">
+                <Label className="text-xs">ملاحظة (اختياري)</Label>
+                <Input
+                  value={customerLabel}
+                  onChange={(e) => setCustomerLabel(e.target.value)}
+                  placeholder="سبب الجلسة / ملاحظة للتوثيق"
+                  className="mt-1"
+                />
+              </div>
+              <Button
+                id="cobrowse-start-btn"
+                onClick={startSession}
+                disabled={busy}
+                className="gap-1 bg-emerald-600 hover:bg-emerald-500"
+              >
+                {targetUserId
+                  ? (<><Send className="h-4 w-4" /> أرسل الدعوة لشاشته</>)
+                  : (<><Eye className="h-4 w-4" /> ابدأ بدون مستخدم محدد</>)}
+              </Button>
+            </div>
           </div>
         ) : (
           <>
-            <div>
-              <Label className="text-xs">رابط دعوة العميل لمشاركة الشاشة</Label>
-              <div className="flex gap-2 mt-1">
-                <Input value={inviteUrl} readOnly dir="ltr" className="font-mono text-xs" />
-                <Button variant="outline" onClick={copyInvite} className="gap-1">
-                  <Copy className="h-4 w-4" /> نسخ
-                </Button>
+            {session.customerUserId ? (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50/60 p-3 text-xs text-emerald-900 flex items-center gap-2">
+                <Send className="h-4 w-4" />
+                <span>
+                  تم دفع الدعوة لشاشة المستخدم
+                  <strong className="mx-1">{session.customerLabel ?? ""}</strong>
+                  — بانتظار الموافقة على شاشته.
+                </span>
               </div>
-              <p className="text-[11px] text-muted-foreground mt-1">
-                أرسل هذا الرابط للعميل. عند فتحه ستظهر له رسالة موافقة، وعند قبولها ترى شاشته هنا.
-              </p>
-            </div>
+            ) : (
+              <div>
+                <Label className="text-xs">رابط احتياطي (لو لم يكن المستخدم في النظام)</Label>
+                <div className="flex gap-2 mt-1">
+                  <Input value={inviteUrl} readOnly dir="ltr" className="font-mono text-xs" />
+                  <Button variant="outline" onClick={copyInvite} className="gap-1">
+                    <Copy className="h-4 w-4" /> نسخ
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  لم يتم تحديد مستخدم — أرسل هذا الرابط يدويًا، وعند فتحه ستظهر للعميل رسالة الموافقة.
+                </p>
+              </div>
+            )}
 
             <div className="rounded-md border bg-muted/20" style={{ minHeight: 480 }}>
               <div ref={playerHostRef} className="w-full" style={{ minHeight: 480 }} />

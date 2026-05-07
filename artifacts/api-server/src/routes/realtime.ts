@@ -33,6 +33,7 @@ router.get("/session-events", async (req, res) => {
   }
 
   const userCompanyId = resolved.user.companyId;
+  const userId = resolved.user.id;
   const isSuperAdmin = resolved.user.role === "superadmin";
 
   res.set({
@@ -46,7 +47,13 @@ router.get("/session-events", async (req, res) => {
   res.write(`event: hello\ndata: {"ok":true}\n\n`);
 
   const onEvent = (evt: SessionEvent) => {
-    if (!isSuperAdmin && evt.companyId !== userCompanyId) return;
+    // Per-user targeted events: only the addressed user receives them
+    // (superadmins included only when explicitly addressed).
+    if (evt.userId != null) {
+      if (evt.userId !== userId) return;
+    } else {
+      if (!isSuperAdmin && evt.companyId !== userCompanyId) return;
+    }
     try {
       res.write(`event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`);
     } catch {
