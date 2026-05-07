@@ -56,12 +56,13 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
   const periodFilters = [...baseFilters];
   if (fromDate) periodFilters.push(gte(journalEntriesTable.entryDate, fromDate));
   if (toDate)   periodFilters.push(lte(journalEntriesTable.entryDate, toDate));
-  // When opening is sourced from the imported trial balance, exclude
-  // `trial_balance_adjustment` JEs from the period column to avoid
-  // double-counting (those adjustments are already reflected in the
-  // TB details rows, which feed the opening column).
+  // When opening is sourced from the imported trial balance / opening
+  // JEs, exclude both `trial_balance_adjustment` AND `opening` JEs
+  // from the period column to avoid double-counting (those entries
+  // feed the Opening column, not the Period column).
   if (openingFromTrialBalance) {
     periodFilters.push(ne(journalEntriesTable.entryType, "trial_balance_adjustment"));
+    periodFilters.push(ne(journalEntriesTable.entryType, "opening"));
   }
 
   // Helper to sum debit/credit per account under a set of filters.
@@ -98,6 +99,8 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
   let openingMap: Map<number, { debit: number; credit: number }>;
   if (openingFromTrialBalance) {
     openingMap = new Map();
+    // Source 1: latest imported trial balance details (Excel-imported
+    // opening balances).
     const [latestTb] = await db.select({ id: trialBalancesTable.id }).from(trialBalancesTable)
       .where(eq(trialBalancesTable.companyId, cid))
       .orderBy(desc(trialBalancesTable.periodEnd), desc(trialBalancesTable.createdAt))
@@ -111,9 +114,26 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
         .where(eq(trialBalanceDetailsTable.trialBalanceId, latestTb.id));
       for (const r of tbRows) {
         if (r.accountId) {
-          openingMap.set(r.accountId, { debit: Number(r.debit || 0), credit: Number(r.credit || 0) });
+          const cur = openingMap.get(r.accountId) ?? { debit: 0, credit: 0 };
+          openingMap.set(r.accountId, {
+            debit:  cur.debit  + Number(r.debit  || 0),
+            credit: cur.credit + Number(r.credit || 0),
+          });
         }
       }
+    }
+    // Source 2: journal entries flagged as opening (entryType='opening').
+    // These are opening-balance JEs entered directly through the JE
+    // workflow (not via the TB Excel import). They feed the Opening
+    // column and are excluded from the Period column above.
+    const openingJeFilters = [...baseFilters, eq(journalEntriesTable.entryType, "opening")];
+    const openingJeMap = await aggregate(openingJeFilters);
+    for (const [accountId, v] of openingJeMap) {
+      const cur = openingMap.get(accountId) ?? { debit: 0, credit: 0 };
+      openingMap.set(accountId, {
+        debit:  cur.debit  + v.debit,
+        credit: cur.credit + v.credit,
+      });
     }
   } else if (fromDate) {
     const openingFilters = [...baseFilters, sql`${journalEntriesTable.entryDate} < ${fromDate}`];
