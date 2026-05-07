@@ -70,7 +70,13 @@ export default function AccountStatement() {
     enabled: !!user,
   });
 
-  const { data: rows = [], isLoading, refetch } = useQuery<any[]>({
+  type StatementResponse = {
+    previousBalance: number;
+    previousDebit:   number;
+    previousCredit:  number;
+    rows: any[];
+  };
+  const { data, isLoading, refetch } = useQuery<StatementResponse>({
     queryKey: ["account-statement", cid, accountId, fromDate, toDate, branchId],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -86,20 +92,40 @@ export default function AccountStatement() {
     enabled: searched && !!accountId,
   });
 
+  const rows = data?.rows ?? [];
+  const previousBalance = data?.previousBalance ?? 0;
+  const previousDebit   = data?.previousDebit   ?? 0;
+  const previousCredit  = data?.previousCredit  ?? 0;
   const selectedAccount = accounts.find((a: any) => String(a.id) === accountId);
   const accountDisplayName = selectedAccount ? (isRtl ? selectedAccount.nameAr : (selectedAccount.nameEn || selectedAccount.nameAr)) : "";
   const totalDebit  = rows.reduce((s, r) => s + (r.debit  || 0), 0);
   const totalCredit = rows.reduce((s, r) => s + (r.credit || 0), 0);
-  const finalBalance = rows.length > 0 ? rows[rows.length - 1].balance : 0;
+  // Closing balance = previous balance + period movements. When there
+  // are no in-period rows, fall back to the previous balance itself
+  // so the SAP-style brought-forward figure is still reflected.
+  const finalBalance = rows.length > 0 ? rows[rows.length - 1].balance : previousBalance;
 
-  const exportRows = rows.map((r: any) => ({
-    entryDate:   r.entryDate,
-    docNumber:   r.docNumber,
-    description: r.description,
-    debit:       fmt(r.debit),
-    credit:      fmt(r.credit),
-    balance:     fmt(r.balance),
-  }));
+  // SAP-style brought-forward row prepended to the export so the
+  // ledger starts with "رصيد ما قبل" mirroring the on-screen table.
+  const previousBalanceRow = {
+    entryDate:   fromDate || "",
+    docNumber:   "",
+    description: t("accountStatement.previousBalance"),
+    debit:       fmt(previousDebit),
+    credit:      fmt(previousCredit),
+    balance:     `${fmt(Math.abs(previousBalance))} ${previousBalance >= 0 ? t("accountingReports.debit") : t("accountingReports.credit")}`,
+  };
+  const exportRows = [
+    previousBalanceRow,
+    ...rows.map((r: any) => ({
+      entryDate:   r.entryDate,
+      docNumber:   r.docNumber,
+      description: r.description,
+      debit:       fmt(r.debit),
+      credit:      fmt(r.credit),
+      balance:     fmt(r.balance),
+    })),
+  ];
 
   // Grand-totals row mirrored into the printed/exported tfoot so the
   // standard "الإجمالي" line appears at the bottom of the table.
@@ -141,7 +167,7 @@ export default function AccountStatement() {
           <p className="text-sm text-muted-foreground mt-1">{t("accountStatement.subtitle")}</p>
         </div>
         <div className="flex gap-2">
-          {rows.length > 0 && (
+          {(rows.length > 0 || previousBalance !== 0) && (
             <>
               <ExportButtons
                 rows={exportRows}
@@ -198,13 +224,13 @@ export default function AccountStatement() {
       </div>
 
       {/* Results */}
-      {searched && !isLoading && rows.length === 0 && (
+      {searched && !isLoading && rows.length === 0 && previousBalance === 0 && (
         <div className="rounded-xl border bg-card p-12 text-center text-muted-foreground">
           {t("accountStatement.noMovements")}
         </div>
       )}
 
-      {rows.length > 0 && (
+      {searched && (rows.length > 0 || previousBalance !== 0) && (
         <>
           {/* Account Info */}
           <div className="rounded-xl border bg-primary/5 p-4 flex flex-wrap gap-6">
@@ -240,6 +266,27 @@ export default function AccountStatement() {
                   </tr>
                 </thead>
                 <tbody>
+                  {/* SAP-style brought-forward row: shows the cumulative
+                      balance up to the day before fromDate so the ledger
+                      reads as a continuation of history, not from zero. */}
+                  <tr className="bg-muted/20 border-b font-semibold">
+                    <td className="px-4 py-2.5 text-muted-foreground text-xs">—</td>
+                    <td className="px-4 py-2.5">{fromDate || "—"}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">—</td>
+                    <td className="px-4 py-2.5 text-muted-foreground italic">{t("accountStatement.previousBalance")}</td>
+                    <td className="px-4 py-2.5 text-end font-mono text-blue-700">
+                      {previousDebit > 0 ? fmt(previousDebit) : ""}
+                    </td>
+                    <td className="px-4 py-2.5 text-end font-mono text-rose-700">
+                      {previousCredit > 0 ? fmt(previousCredit) : ""}
+                    </td>
+                    <td className={cn("px-4 py-2.5 text-end font-mono",
+                      previousBalance >= 0 ? "text-primary" : "text-destructive"
+                    )}>
+                      {fmt(Math.abs(previousBalance))}
+                      <span className={cn("text-xs font-normal", isRtl ? "mr-1" : "ml-1")}>{previousBalance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}</span>
+                    </td>
+                  </tr>
                   {rows.map((r, i) => {
                     const href = sourceLinkFor(r);
                     const label = r.docNumber || `JE-${r.entryId}`;

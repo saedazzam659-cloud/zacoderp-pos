@@ -2720,6 +2720,7 @@
     "period": "Period",
     "periodFromTo": "{{from}} to {{to}}",
     "closingBalance": "Closing Balance",
+    "previousBalance": "Previous Balance",
     "docNumber": "Doc #",
     "openSource": "Open source document",
     "description": "Description",

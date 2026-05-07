@@ -2774,6 +2774,7 @@
     "period": "الفترة",
     "periodFromTo": "{{from}} إلى {{to}}",
     "closingBalance": "الرصيد الختامي",
+    "previousBalance": "رصيد ما قبل",
     "docNumber": "رقم القيد",
     "openSource": "فتح المستند المصدر",
     "description": "البيان",

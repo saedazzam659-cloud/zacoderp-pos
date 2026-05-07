@@ -239,10 +239,35 @@ router.get("/income-statement", async (req, res) => {
 router.get("/account-statement", async (req, res) => {
   try {
     const cid = getCid(req);
-    if (!cid) { res.json([]); return; }
+    if (!cid) { res.json({ previousBalance: 0, previousDebit: 0, previousCredit: 0, rows: [] }); return; }
     const bid = getBid(req);
     const { accountId, fromDate, toDate } = req.query as any;
     if (!accountId) { res.status(400).json({ error: "accountId مطلوب" }); return; }
+
+    // ── Previous balance (رصيد ما قبل) ──────────────────────────────
+    // SAP-style "brought-forward" balance: sum every JE line for this
+    // account strictly BEFORE `fromDate` (no entry-type exclusions —
+    // includes opening JEs, trial-balance adjustments, and every prior
+    // movement). Initializes the running balance so the in-period
+    // movements continue from the historical position.
+    let previousDebit = 0;
+    let previousCredit = 0;
+    if (fromDate) {
+      const prevFilters: any[] = [eq(journalEntriesTable.companyId, cid)];
+      pushBranchScope(req, prevFilters, journalEntriesTable.branchId, bid);
+      prevFilters.push(sql`${journalEntriesTable.entryDate} < ${fromDate}`);
+      const [prev] = await db
+        .select({
+          debit:  sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}), 0)`,
+          credit: sql<string>`COALESCE(SUM(${journalEntryLinesTable.credit}), 0)`,
+        })
+        .from(journalEntryLinesTable)
+        .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+        .where(and(eq(journalEntryLinesTable.accountId, Number(accountId)), ...prevFilters));
+      previousDebit  = Number(prev?.debit  || 0);
+      previousCredit = Number(prev?.credit || 0);
+    }
+    const previousBalance = previousDebit - previousCredit;
 
     const entryFilters: any[] = [
       eq(journalEntriesTable.companyId, cid),
@@ -291,8 +316,10 @@ router.get("/account-statement", async (req, res) => {
       ))
       .orderBy(asc(journalEntriesTable.entryDate));
 
-    // Add running balance
-    let runningBalance = 0;
+    // Running balance starts from the historical previous balance
+    // (SAP-style brought-forward) so the in-period movements continue
+    // from the correct opening position rather than from zero.
+    let runningBalance = previousBalance;
     const withBalance = rows.map(r => {
       const d = Number(r.debit  || 0);
       const c = Number(r.credit || 0);
@@ -300,7 +327,7 @@ router.get("/account-statement", async (req, res) => {
       return { ...r, debit: d, credit: c, balance: runningBalance };
     });
 
-    res.json(withBalance);
+    res.json({ previousBalance, previousDebit, previousCredit, rows: withBalance });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
