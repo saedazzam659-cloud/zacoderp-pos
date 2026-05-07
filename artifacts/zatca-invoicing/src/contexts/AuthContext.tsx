@@ -181,14 +181,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Initial check
   useEffect(() => { checkSession(); }, [checkSession]);
 
-  // Poll every 10s for single-session enforcement and real-time permission updates
+  // Background safety-net poll. Real-time permission/subscription/company
+  // changes are now pushed instantly via the SSE channel below, so this
+  // poll only exists to (a) catch single-session takeovers when the SSE
+  // stream is temporarily down, and (b) refresh after the tab regains
+  // focus. We pace it to once per minute and skip ticks while the tab
+  // is hidden — this drops idle-tab API traffic by ~6× and keeps us well
+  // under Replit Deployments' per-minute request budget when many users
+  // have the app open.
   useEffect(() => {
-    if (user) {
-      pollRef.current = setInterval(checkSession, 10000);
-    } else {
-      if (pollRef.current) clearInterval(pollRef.current);
+    if (!user) {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      return;
     }
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void checkSession();
+    };
+    pollRef.current = setInterval(tick, 60_000);
+    const onVisible = () => {
+      if (typeof document !== "undefined" && !document.hidden) void checkSession();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [user, checkSession]);
 
   // Realtime push: open an SSE connection so any change made by SuperAdmin
@@ -321,6 +339,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     setManualSessions([]);
     persistManualSession(null);
+    // Drop module-level caches that hold per-user data so the next login
+    // starts fresh (currently: voice-assistant effective settings).
+    try { (globalThis as any).__clearVoiceSettingsCache?.(); } catch { /* ignore */ }
   };
 
   const register = async (data: RegisterData) => {

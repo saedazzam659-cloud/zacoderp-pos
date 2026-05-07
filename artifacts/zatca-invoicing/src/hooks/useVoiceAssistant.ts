@@ -110,6 +110,25 @@ export interface UseVoiceAssistantApi {
 const PARSE_URL  = "/api/voice-assistant/parse-command";
 const SETTINGS_URL = "/api/voice-assistant/settings/me/effective";
 
+// Module-level cache for the effective voice settings.
+//
+// Layout mounts on every authenticated route, and TanStack Query's user
+// object reference can change on each /auth/me refresh — without a cache
+// the hook would refetch SETTINGS_URL on every navigation and on every
+// background poll. Settings change rarely (admin toggle), so we hold the
+// last successful result in memory for the lifetime of the page and
+// dedupe concurrent fetches behind a single in-flight promise.
+let _settingsCache: EffectiveVoiceSettings | null = null;
+let _settingsInflight: Promise<EffectiveVoiceSettings | null> | null = null;
+let _settingsCacheUserId: number | null = null;
+function clearVoiceSettingsCache() {
+  _settingsCache = null;
+  _settingsInflight = null;
+  _settingsCacheUserId = null;
+}
+// Expose for logout flow if it ever needs to invalidate.
+(globalThis as any).__clearVoiceSettingsCache = clearVoiceSettingsCache;
+
 export function useVoiceAssistant(): UseVoiceAssistantApi {
   const [, navigate] = useLocation();
   const { user, logout } = useAuth();
@@ -126,27 +145,51 @@ export function useVoiceAssistant(): UseVoiceAssistantApi {
   const Ctor = getRecognitionCtor();
   const isSupported = !!Ctor;
 
-  // ─── Load per-company settings ──────────────────────────────────────────
+  // ─── Load per-company settings (cached at module scope) ────────────────
+  // We deliberately depend on `user?.id` (a primitive) instead of the whole
+  // `user` object so the effect doesn't re-run every time AuthContext
+  // refreshes the user reference (which happens on every poll/SSE tick).
+  const userId = user?.id ?? null;
   useEffect(() => {
-    if (!user) return;
+    if (!userId) return;
+    // If a cached value exists for the SAME signed-in user, use it without
+    // hitting the network. (Different user → drop cache and refetch.)
+    if (_settingsCacheUserId !== userId) clearVoiceSettingsCache();
+    if (_settingsCache) {
+      setSettings(_settingsCache);
+      settingsLoadedRef.current = true;
+      return;
+    }
     let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch(apiUrl(SETTINGS_URL), { credentials: "include", headers: authHeaders() });
-        if (!r.ok) return;
-        const j = await r.json();
-        if (cancelled) return;
-        setSettings({
-          enabled:              !!j.enabled,
-          autoActivateOnLogin:  !!j.autoActivateOnLogin,
-          language:             j.language ?? "ar-SA",
-          confidenceThreshold:  Number(j.confidenceThreshold ?? 50),
-        });
-        settingsLoadedRef.current = true;
-      } catch { /* keep defaults */ }
-    })();
+    if (!_settingsInflight) {
+      _settingsInflight = (async () => {
+        try {
+          const r = await fetch(apiUrl(SETTINGS_URL), { credentials: "include", headers: authHeaders() });
+          if (!r.ok) return null;
+          const j = await r.json();
+          const eff: EffectiveVoiceSettings = {
+            enabled:              !!j.enabled,
+            autoActivateOnLogin:  !!j.autoActivateOnLogin,
+            language:             j.language ?? "ar-SA",
+            confidenceThreshold:  Number(j.confidenceThreshold ?? 50),
+          };
+          _settingsCache = eff;
+          _settingsCacheUserId = userId;
+          return eff;
+        } catch {
+          return null;
+        } finally {
+          _settingsInflight = null;
+        }
+      })();
+    }
+    void _settingsInflight.then((eff) => {
+      if (cancelled || !eff) return;
+      setSettings(eff);
+      settingsLoadedRef.current = true;
+    });
     return () => { cancelled = true; };
-  }, [user]);
+  }, [userId]);
 
   // ─── Compute the current high-level state ──────────────────────────────
   const effectiveState: VoiceState =
