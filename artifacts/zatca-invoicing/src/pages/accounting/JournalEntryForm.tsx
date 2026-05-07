@@ -372,17 +372,29 @@ export default function JournalEntryForm() {
     // "ضريبة المدخلات 15% على 1000.00" sibling must NOT get another
     // 150 appended.
     const directionPrefix = direction === "input" ? "ضريبة المدخلات" : "ضريبة المخرجات";
-    const alreadyTaxedAmounts = new Set<string>();
+    // Count how many VAT lines already exist for each source amount.
+    // We use a multiset (Map<amountKey, count>) instead of a Set so
+    // that if the user has TWO source lines of 1000 but only ONE VAT
+    // line was generated previously, the second 1000 still gets its
+    // own VAT line on the next click. Bug fix: the old Set caused any
+    // line sharing an amount with a previously-taxed line to be
+    // silently skipped, even when it had no tax yet.
+    const alreadyTaxedCounts = new Map<string, number>();
     for (const ln of lines) {
       const d = (ln.description || "").trim();
       if (!d.startsWith(directionPrefix)) continue;
       const m = d.match(/على\s+([0-9]+(?:\.[0-9]+)?)/);
-      if (m) alreadyTaxedAmounts.add(Number(m[1]).toFixed(2));
+      if (m) {
+        const k = Number(m[1]).toFixed(2);
+        alreadyTaxedCounts.set(k, (alreadyTaxedCounts.get(k) ?? 0) + 1);
+      }
     }
 
     // Pick all lines with an account + a positive amount on the
-    // relevant side. Skip prior VAT lines themselves AND skip source
-    // lines whose tax was already generated.
+    // relevant side. Skip prior VAT lines themselves AND consume one
+    // unit from alreadyTaxedCounts per matching source line so the
+    // remainder still gets a fresh VAT line.
+    const remainingTaxed = new Map(alreadyTaxedCounts);
     const eligible = lines
       .map((ln, idx) => ({ ln, idx, amount: parseFloat(ln[sideField] || "0") || 0 }))
       .filter(({ ln, amount }) => {
@@ -390,7 +402,12 @@ export default function JournalEntryForm() {
         if (!ln.accountId) return false;
         const desc = (ln.description || "").trim();
         if (desc.startsWith("ضريبة المدخلات") || desc.startsWith("ضريبة المخرجات")) return false;
-        if (alreadyTaxedAmounts.has(amount.toFixed(2))) return false;
+        const k = amount.toFixed(2);
+        const left = remainingTaxed.get(k) ?? 0;
+        if (left > 0) {
+          remainingTaxed.set(k, left - 1);
+          return false;
+        }
         return true;
       });
 
