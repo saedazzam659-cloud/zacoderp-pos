@@ -248,7 +248,7 @@ export default function AgentCobrowseViewer() {
                 className="mt-1"
               />
             </div>
-            <Button onClick={startSession} disabled={busy} className="gap-1 bg-emerald-600 hover:bg-emerald-500">
+            <Button id="cobrowse-start-btn" onClick={startSession} disabled={busy} className="gap-1 bg-emerald-600 hover:bg-emerald-500">
               <Eye className="h-4 w-4" /> ابدأ جلسة المشاركة
             </Button>
           </div>

@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Video, Copy, ExternalLink, RefreshCw, Mic, Camera,
   MonitorUp, Users, ShieldCheck, MessageSquare, Phone,
-  PhoneOff, Radio, StickyNote, Send,
+  PhoneOff, Radio, StickyNote, Send, MousePointer2,
 } from "lucide-react";
 import AgentCobrowseViewer from "@/components/cobrowse/AgentCobrowseViewer";
 
@@ -377,16 +377,34 @@ export default function SupportCall() {
         </CardContent>
       </Card>
 
-      {/* Features grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* Features grid — Co-browse trigger sits directly next to the camera
+          chip so the agent can start screen-sharing without scrolling. */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <FeatureChip icon={Camera}        label="كاميرا" />
+        <FeatureChip
+          icon={MousePointer2}
+          label="تحكم بشاشة العميل"
+          highlight
+          onClick={() => {
+            const card = document.getElementById("cobrowse-card");
+            card?.scrollIntoView({ behavior: "smooth", block: "start" });
+            // Defer the click until after scrollIntoView begins so the
+            // Start button is on screen when the dialog logic fires.
+            setTimeout(() => {
+              const btn = document.getElementById("cobrowse-start-btn") as HTMLButtonElement | null;
+              btn?.click();
+            }, 250);
+          }}
+        />
         <FeatureChip icon={Mic}           label="صوت ثنائي الاتجاه" />
         <FeatureChip icon={MonitorUp}     label="مشاركة الشاشة" />
-        <FeatureChip icon={MessageSquare} label="دردشة نصية أثناء المكالمة" />
+        <FeatureChip icon={MessageSquare} label="دردشة نصية" />
       </div>
 
       {/* Co-browse panel — DOM mirror + optional control */}
-      <AgentCobrowseViewer />
+      <div id="cobrowse-card">
+        <AgentCobrowseViewer />
+      </div>
 
       {/* Meeting notes */}
       <Card>
@@ -424,9 +442,28 @@ export default function SupportCall() {
   );
 }
 
-function FeatureChip({ icon: Icon, label }: { icon: any; label: string }) {
+function FeatureChip({
+  icon: Icon, label, onClick, highlight = false,
+}: { icon: any; label: string; onClick?: () => void; highlight?: boolean }) {
+  const base = "flex items-center gap-2 rounded-md border px-3 py-2 text-sm";
+  // Clickable chip (e.g. Co-browse trigger) gets a button look + hover state.
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={`${base} ${highlight
+          ? "bg-amber-500 hover:bg-amber-400 border-amber-600 text-white font-medium"
+          : "bg-card hover:bg-accent"
+        } transition-colors text-right`}
+      >
+        <Icon className={`h-4 w-4 ${highlight ? "text-white" : "text-emerald-600"}`} />
+        <span>{label}</span>
+      </button>
+    );
+  }
   return (
-    <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 text-sm">
+    <div className={`${base} bg-card`}>
       <Icon className="h-4 w-4 text-emerald-600" />
       <span>{label}</span>
     </div>
