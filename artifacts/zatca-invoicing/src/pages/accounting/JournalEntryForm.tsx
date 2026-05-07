@@ -366,8 +366,23 @@ export default function JournalEntryForm() {
     }
     const sideField: "debit" | "credit" = direction === "input" ? "debit" : "credit";
 
+    // Pre-collect amounts that already have a generated VAT line for
+    // the SAME direction (input/output). Re-clicking the button must
+    // be fully idempotent: a source line of 1000 that already has a
+    // "ضريبة المدخلات 15% على 1000.00" sibling must NOT get another
+    // 150 appended.
+    const directionPrefix = direction === "input" ? "ضريبة المدخلات" : "ضريبة المخرجات";
+    const alreadyTaxedAmounts = new Set<string>();
+    for (const ln of lines) {
+      const d = (ln.description || "").trim();
+      if (!d.startsWith(directionPrefix)) continue;
+      const m = d.match(/على\s+([0-9]+(?:\.[0-9]+)?)/);
+      if (m) alreadyTaxedAmounts.add(Number(m[1]).toFixed(2));
+    }
+
     // Pick all lines with an account + a positive amount on the
-    // relevant side. Skip prior VAT lines so re-clicking is idempotent.
+    // relevant side. Skip prior VAT lines themselves AND skip source
+    // lines whose tax was already generated.
     const eligible = lines
       .map((ln, idx) => ({ ln, idx, amount: parseFloat(ln[sideField] || "0") || 0 }))
       .filter(({ ln, amount }) => {
@@ -375,6 +390,7 @@ export default function JournalEntryForm() {
         if (!ln.accountId) return false;
         const desc = (ln.description || "").trim();
         if (desc.startsWith("ضريبة المدخلات") || desc.startsWith("ضريبة المخرجات")) return false;
+        if (alreadyTaxedAmounts.has(amount.toFixed(2))) return false;
         return true;
       });
 
