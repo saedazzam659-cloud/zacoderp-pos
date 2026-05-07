@@ -192,6 +192,12 @@ export default function Register() {
   // Per-module checkbox state — keys from the live /api/admin/modules/public
   // catalog (sourced from the SuperAdmin-managed `modules` table).
   const [selectedModules, setSelectedModules] = useState<string[]>([]);
+  // Escape hatch: when the user has picked an industry we hide irrelevant
+  // modules by default (per spec — registration should only surface what
+  // belongs to that activity). This toggle lets a power-user override the
+  // filter and see the full system catalog if they need to add an
+  // unrelated module manually.
+  const [showAllModules, setShowAllModules] = useState(false);
 
   const [form, setForm] = useState<Partial<RegisterData>>(() => {
     const cycle = initialQuery.cycle ?? "monthly";
@@ -338,6 +344,62 @@ export default function Register() {
   // contribute nothing here — they're free.
   const unionBillableModulesLive = (industryCodes: string[]): string[] =>
     deriveModulesFromMenuKeys(unionMenuKeysLive(industryCodes));
+
+  // Industry-scoped module visibility (per spec):
+  //   • No industry picked  → show every active module (no signal to filter on yet)
+  //   • Industry picked     → show only modules whose key is in the union of
+  //                            recommended billable modules across the picked
+  //                            industries — this is what the user actually
+  //                            "belongs to" given their activity selection.
+  // The `showAllModules` toggle bypasses the filter so the user can still
+  // add a module that isn't part of their industry recommendation set
+  // (e.g., a hotel adding "online_store"). Already-selected modules are
+  // ALWAYS shown so toggling industries off can never silently hide a
+  // module the user has paid for. Computed against the live catalog so
+  // SuperAdmin edits in /admin/industries take effect immediately.
+  const allowedModuleKeys: Set<string> = useMemo(() => {
+    if (selectedIndustries.length === 0) return new Set(MODULES.map(m => m.key));
+    return new Set(unionBillableModulesLive(selectedIndustries));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIndustries, INDUSTRIES_LIVE, MODULES]);
+
+  const VISIBLE_MODULE_GROUPS = useMemo(() => {
+    if (showAllModules || selectedIndustries.length === 0) return MODULE_GROUPS;
+    return MODULE_GROUPS
+      .map(g => ({
+        name: g.name,
+        mods: g.mods.filter(m => allowedModuleKeys.has(m.key) || selectedModules.includes(m.key)),
+      }))
+      .filter(g => g.mods.length > 0);
+  }, [MODULE_GROUPS, allowedModuleKeys, selectedIndustries.length, showAllModules, selectedModules]);
+
+  // Total count of modules currently visible in the picker — used in the
+  // "محددة X من Y" badge so the denominator reflects what the user can
+  // actually see, not the full system catalog when industry-filtered.
+  const visibleModulesCount = useMemo(
+    () => VISIBLE_MODULE_GROUPS.reduce((acc, g) => acc + g.mods.length, 0),
+    [VISIBLE_MODULE_GROUPS],
+  );
+  const isFiltered = selectedIndustries.length > 0 && !showAllModules;
+  // Count of modules that *would* be hidden by the industry filter,
+  // independent of whether the user has currently toggled `showAllModules`
+  // on. We need this so the "show industry-only" / "show all" toggle stays
+  // visible even after the user expands to the full catalog — otherwise
+  // the button disappears the moment it's pressed and there's no way back.
+  const wouldHideCount = useMemo(() => {
+    if (selectedIndustries.length === 0) return 0;
+    let visibleIfFiltered = 0;
+    for (const m of MODULES) {
+      if (allowedModuleKeys.has(m.key) || selectedModules.includes(m.key)) visibleIfFiltered++;
+    }
+    return Math.max(0, MODULES.length - visibleIfFiltered);
+  }, [selectedIndustries.length, MODULES, allowedModuleKeys, selectedModules]);
+  // Reset to filtered view whenever the user clears all industries — keeps
+  // the default "industry-only" behavior consistent across cycles of
+  // adding / removing industry chips.
+  useEffect(() => {
+    if (selectedIndustries.length === 0 && showAllModules) setShowAllModules(false);
+  }, [selectedIndustries.length, showAllModules]);
 
   // Prune any selected module keys that are no longer in the live catalog.
   // This handles the case where an industry template auto-added a key
@@ -921,10 +983,31 @@ export default function Register() {
                       <Package className="h-4 w-4" />
                       وحدات النظام
                       <span className="text-xs font-normal text-muted-foreground">
-                        (محددة {selectedModules.length} من {MODULES.length})
+                        (محددة {selectedModules.length} من {isFiltered ? visibleModulesCount : MODULES.length})
                       </span>
                     </h4>
+                    {selectedIndustries.length > 0 && wouldHideCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllModules(s => !s)}
+                        data-testid="toggle-show-all-modules"
+                        className="text-xs text-primary hover:underline"
+                      >
+                        {showAllModules
+                          ? `عرض وحدات النشاط فقط`
+                          : `عرض كل الوحدات (${wouldHideCount} مخفية)`}
+                      </button>
+                    )}
                   </div>
+
+                  {isFiltered && visibleModulesCount > 0 && (
+                    <div
+                      data-testid="industry-filter-hint"
+                      className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] text-muted-foreground"
+                    >
+                      تُعرض فقط الوحدات الخاصة بالأنشطة المختارة. لإضافة وحدة خارج هذه الأنشطة استخدم زر «عرض كل الوحدات».
+                    </div>
+                  )}
 
                   {modulesQ.isLoading ? (
                     <div className="rounded-xl border border-dashed bg-muted/20 p-6 text-center text-xs text-muted-foreground">
@@ -941,7 +1024,14 @@ export default function Register() {
                     >
                       لا توجد وحدات إضافية متاحة حالياً.
                     </div>
-                  ) : MODULE_GROUPS.map(group => (
+                  ) : VISIBLE_MODULE_GROUPS.length === 0 ? (
+                    <div
+                      data-testid="modules-filtered-empty"
+                      className="rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 p-4 text-center text-xs text-amber-800"
+                    >
+                      لا توجد وحدات مرتبطة بالأنشطة المختارة. اضغط «عرض كل الوحدات» لاختيار وحدات إضافية.
+                    </div>
+                  ) : VISIBLE_MODULE_GROUPS.map(group => (
                     <div key={group.name} className="space-y-2">
                       <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                         {group.name}
