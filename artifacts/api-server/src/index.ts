@@ -1,6 +1,8 @@
+import http from "node:http";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { ensureSchemaUpToDate } from "./lib/ensureSchema";
+import { attachCobrowseHub } from "./lib/cobrowseHub";
 import { db } from "@workspace/db";
 import { usersTable, planConfigsTable, subscriptionsTable, companiesTable, systemSettingsTable, auditLogTable } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -319,7 +321,12 @@ async function bootstrap() {
     logger.warn({ err }, "warmEmailConfig failed at startup");
   }
 
-  app.listen(port, (err) => {
+  const httpServer = http.createServer(app);
+  // Attach the WebSocket signaling hub for the Co-browse feature. It hooks
+  // into the http upgrade event for path "/api/cobrowse/ws".
+  attachCobrowseHub(httpServer);
+
+  httpServer.listen(port, (err?: Error) => {
     if (err) {
       logger.error({ err }, "Error listening on port");
       process.exit(1);

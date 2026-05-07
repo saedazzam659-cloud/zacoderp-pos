@@ -1,5 +1,6 @@
 import { Switch, Route, Router as WouterRouter, useLocation, Redirect } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import CustomerCobrowseWidget from "@/components/cobrowse/CustomerCobrowseWidget";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
@@ -793,6 +794,7 @@ function App() {
           <AuthProvider>
             <ScreenActionsProvider>
               <AppRoutes />
+              <CustomerCobrowseWidget />
             </ScreenActionsProvider>
           </AuthProvider>
         </WouterRouter>

@@ -60,3 +60,4 @@ export * from "./securityActions";
 export * from "./installments";
 export * from "./onlineStore";
 export * from "./chat";
+export * from "./cobrowse";

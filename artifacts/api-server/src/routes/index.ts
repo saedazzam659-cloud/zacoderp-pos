@@ -88,6 +88,7 @@ import onlineStoreAiRouter from "./online-store-ai";
 import posOperationsRouter from "./pos-operations";
 import chatRouter from "./chat";
 import chatAiRouter from "./chat-ai";
+import cobrowseRouter from "./cobrowse";
 import posOperationsAiRouter from "./pos-operations-ai";
 import reportInvitationsRouter from "./report-invitations";
 import realtimeRouter from "./realtime";
@@ -189,5 +190,6 @@ router.use("/pos-operations", posOperationsRouter);
 router.use("/pos-operations-ai", posOperationsAiRouter);
 router.use("/chat", chatRouter);
 router.use("/chat-ai", chatAiRouter);
+router.use("/cobrowse", cobrowseRouter);
 
 export default router;

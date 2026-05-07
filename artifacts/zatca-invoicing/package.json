@@ -91,6 +91,8 @@
     "react-i18next": "^17.0.4",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "rrweb": "2.0.0-alpha.4",
+    "rrweb-player": "1.0.0-alpha.4",
     "xlsx": "^0.18.5"
   }
 }

@@ -12,6 +12,7 @@ import {
   MonitorUp, Users, ShieldCheck, MessageSquare, Phone,
   PhoneOff, Radio, StickyNote, Send,
 } from "lucide-react";
+import AgentCobrowseViewer from "@/components/cobrowse/AgentCobrowseViewer";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SupportCall — live audio/video/screen-share room for tech support.
@@ -383,6 +384,9 @@ export default function SupportCall() {
         <FeatureChip icon={MonitorUp}     label="مشاركة الشاشة" />
         <FeatureChip icon={MessageSquare} label="دردشة نصية أثناء المكالمة" />
       </div>
+
+      {/* Co-browse panel — DOM mirror + optional control */}
+      <AgentCobrowseViewer />
 
       {/* Meeting notes */}
       <Card>
