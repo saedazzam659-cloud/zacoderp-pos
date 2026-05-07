@@ -338,15 +338,20 @@ export default function JournalEntryForm() {
   }
 
   // ── قيد الضريبة (Tax Entry) ─────────────────────────────────────
-  // Splits 15% of the FIRST line into a new VAT line on the same side.
-  //   • "input"  → ضريبة المدخلات: deducts 15% from line-1's debit
-  //                 and adds a new Dr line with the input-VAT account.
-  //   • "output" → ضريبة المخرجات: deducts 15% from line-1's credit
-  //                 and adds a new Cr line with the output-VAT account.
-  // The chosen VAT account is picked by AI from the company's chart
-  // of accounts (with deterministic fallback). The entry remains
-  // balanced because we only redistribute the first line — total
-  // debits/credits don't change.
+  // Adds a 15% VAT line for EACH eligible existing line, on the same
+  // side, WITHOUT modifying any original amount.
+  //   • "input"  → ضريبة المدخلات: for every line with debit > 0,
+  //                 append a new Dr line of 15% × debit using the
+  //                 input-VAT account.
+  //   • "output" → ضريبة المخرجات: for every line with credit > 0,
+  //                 append a new Cr line of 15% × credit using the
+  //                 output-VAT account.
+  // Lines that are themselves previously-generated VAT lines (same
+  // VAT account or description starting with "ضريبة …") are skipped
+  // so re-clicking does not pyramid tax on tax.
+  // NOTE: the original amounts are intentionally left untouched, so
+  // the entry will become unbalanced by the total VAT amount — the
+  // user is expected to add the offsetting payable/receivable side.
   const VAT_RATE = 0.15;
   const taxEntryMutation = useMutation({
     mutationFn: (direction: "input" | "output") =>
@@ -359,30 +364,30 @@ export default function JournalEntryForm() {
       toast({ title: "لا توجد سطور", description: "أضف سطراً أولاً قبل توليد قيد الضريبة.", variant: "destructive" });
       return;
     }
-    const first = lines[0];
-    if (!first.accountId) {
-      toast({ title: "السطر الأول بدون حساب", description: "اختر الحساب في السطر الأول قبل توليد قيد الضريبة.", variant: "destructive" });
-      return;
-    }
     const sideField: "debit" | "credit" = direction === "input" ? "debit" : "credit";
-    const baseAmount = parseFloat(first[sideField] || "0") || 0;
-    if (baseAmount <= 0) {
+
+    // Pick all lines with an account + a positive amount on the
+    // relevant side. Skip prior VAT lines so re-clicking is idempotent.
+    const eligible = lines
+      .map((ln, idx) => ({ ln, idx, amount: parseFloat(ln[sideField] || "0") || 0 }))
+      .filter(({ ln, amount }) => {
+        if (amount <= 0) return false;
+        if (!ln.accountId) return false;
+        const desc = (ln.description || "").trim();
+        if (desc.startsWith("ضريبة المدخلات") || desc.startsWith("ضريبة المخرجات")) return false;
+        return true;
+      });
+
+    if (eligible.length === 0) {
       toast({
-        title: direction === "input" ? "السطر الأول لا يحتوي على مبلغ مدين" : "السطر الأول لا يحتوي على مبلغ دائن",
+        title: direction === "input" ? "لا توجد سطور مدينة صالحة" : "لا توجد سطور دائنة صالحة",
         description: direction === "input"
-          ? "أدخل مبلغاً في خانة المدين بالسطر الأول قبل توليد ضريبة المدخلات."
-          : "أدخل مبلغاً في خانة الدائن بالسطر الأول قبل توليد ضريبة المخرجات.",
+          ? "أضف على الأقل سطراً واحداً فيه حساب ومبلغ مدين قبل توليد ضريبة المدخلات."
+          : "أضف على الأقل سطراً واحداً فيه حساب ومبلغ دائن قبل توليد ضريبة المخرجات.",
         variant: "destructive",
       });
       return;
     }
-    // Round to 2 decimals to avoid floating-point dust.
-    const vatAmount = Math.round(baseAmount * VAT_RATE * 100) / 100;
-    if (vatAmount <= 0) {
-      toast({ title: "قيمة الضريبة صفر", description: "تحقّق من قيمة السطر الأول.", variant: "destructive" });
-      return;
-    }
-    const newFirstAmount = Math.round((baseAmount - vatAmount) * 100) / 100;
 
     let suggestion: { accountId: number | null; accountLabel: string; reasoning: string; source: "ai" | "rules" };
     try {
@@ -403,29 +408,42 @@ export default function JournalEntryForm() {
       });
       return;
     }
+    const vatAccountId = String(suggestion.accountId);
 
-    const vatLineDescription = direction === "input"
-      ? `ضريبة المدخلات 15% على ${vatAmount.toFixed(2)}`
-      : `ضريبة المخرجات 15% على ${vatAmount.toFixed(2)}`;
-    const vatLine: JournalLine = {
-      id: crypto.randomUUID(),
-      accountId: String(suggestion.accountId),
-      costCenter: "",
-      debit:  direction === "input"  ? vatAmount.toFixed(2) : "",
-      credit: direction === "output" ? vatAmount.toFixed(2) : "",
-      description: vatLineDescription,
-    };
+    // Build one VAT line per eligible source line, preserving the
+    // source's costCenter so the tax follows the same dimension.
+    const vatLines: JournalLine[] = [];
+    let totalVat = 0;
+    for (const { ln, amount } of eligible) {
+      // Skip lines that already use the chosen VAT account itself
+      // (defensive — covers the case where description was edited).
+      if (ln.accountId === vatAccountId) continue;
+      const vatAmount = Math.round(amount * VAT_RATE * 100) / 100;
+      if (vatAmount <= 0) continue;
+      totalVat += vatAmount;
+      vatLines.push({
+        id: crypto.randomUUID(),
+        accountId: vatAccountId,
+        costCenter: ln.costCenter ?? "",
+        debit:  direction === "input"  ? vatAmount.toFixed(2) : "",
+        credit: direction === "output" ? vatAmount.toFixed(2) : "",
+        description: direction === "input"
+          ? `ضريبة المدخلات 15% على ${amount.toFixed(2)}`
+          : `ضريبة المخرجات 15% على ${amount.toFixed(2)}`,
+      });
+    }
 
-    setLines(prev => {
-      if (prev.length === 0) return prev;
-      const head = { ...prev[0], [sideField]: newFirstAmount.toFixed(2) };
-      return [head, ...prev.slice(1), vatLine];
-    });
-    setFocusLineId(vatLine.id);
+    if (vatLines.length === 0) {
+      toast({ title: "قيمة الضريبة صفر", description: "تحقّق من قيم السطور.", variant: "destructive" });
+      return;
+    }
+
+    setLines(prev => [...prev, ...vatLines]);
+    setFocusLineId(vatLines[vatLines.length - 1].id);
 
     toast({
-      title: direction === "input" ? "تمت إضافة سطر ضريبة المدخلات" : "تمت إضافة سطر ضريبة المخرجات",
-      description: `${suggestion.accountLabel} • القيمة ${vatAmount.toFixed(2)} ${currency} • ${suggestion.source === "ai" ? "اقتراح ذكاء اصطناعي" : "قواعد محلية"}`,
+      title: direction === "input" ? "تمت إضافة سطور ضريبة المدخلات" : "تمت إضافة سطور ضريبة المخرجات",
+      description: `${vatLines.length} سطر • إجمالي الضريبة ${totalVat.toFixed(2)} ${currency} • ${suggestion.accountLabel} • ${suggestion.source === "ai" ? "اقتراح ذكاء اصطناعي" : "قواعد محلية"}`,
     });
   }
 
