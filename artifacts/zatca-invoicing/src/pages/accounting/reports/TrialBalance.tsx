@@ -35,10 +35,12 @@ export default function TrialBalance() {
     { key: "code",        header: t("accountingReports.code"),       width: 12 },
     { key: "nameAr",      header: t("accountingReports.accountName"), width: 36 },
     { key: "accountType", header: t("accountingReports.type"),        width: 14 },
-    { key: "totalDebit",  header: `${t("accountingReports.totalMovements")} - ${t("accountingReports.debit")}`, width: 16 },
-    { key: "totalCredit", header: `${t("accountingReports.totalMovements")} - ${t("accountingReports.credit")}`, width: 16 },
-    { key: "balDebit",    header: `${t("accountingReports.balance")} ${t("accountingReports.debit")}`, width: 16 },
-    { key: "balCredit",   header: `${t("accountingReports.balance")} ${t("accountingReports.credit")}`, width: 16 },
+    { key: "openDebit",   header: `${t("trialBalance.openingBalance")} - ${t("accountingReports.debit")}`, width: 16 },
+    { key: "openCredit",  header: `${t("trialBalance.openingBalance")} - ${t("accountingReports.credit")}`, width: 16 },
+    { key: "totalDebit",  header: `${t("trialBalance.periodBalance")} - ${t("accountingReports.debit")}`, width: 16 },
+    { key: "totalCredit", header: `${t("trialBalance.periodBalance")} - ${t("accountingReports.credit")}`, width: 16 },
+    { key: "closeDebit",  header: `${t("trialBalance.closingBalance")} - ${t("accountingReports.debit")}`, width: 16 },
+    { key: "closeCredit", header: `${t("trialBalance.closingBalance")} - ${t("accountingReports.credit")}`, width: 16 },
   ];
 
   const today = new Date().toISOString().slice(0, 10);
@@ -61,22 +63,33 @@ export default function TrialBalance() {
       return res.json();
     },
     enabled: searched,
-    select: (data) => data.filter((r: any) => r.totalDebit > 0 || r.totalCredit > 0),
+    // Show any account that had movement OR carried an opening/closing
+    // balance — pure-zero rows are hidden so the report stays compact.
+    select: (data) => data.filter((r: any) =>
+      r.totalDebit > 0 || r.totalCredit > 0 ||
+      (r.openingBalance ?? 0) !== 0 || (r.closingBalance ?? 0) !== 0
+    ),
   });
 
-  const totalDr  = rows.reduce((s, r) => s + r.totalDebit,  0);
-  const totalCr  = rows.reduce((s, r) => s + r.totalCredit, 0);
-  const balDrTot = rows.reduce((s, r) => s + Math.max(0,  r.balance), 0);
-  const balCrTot = rows.reduce((s, r) => s + Math.max(0, -r.balance), 0);
+  // Period movement totals (must match: ΣDr === ΣCr for a balanced book)
+  const totalDr  = rows.reduce((s, r) => s + (r.totalDebit  || 0), 0);
+  const totalCr  = rows.reduce((s, r) => s + (r.totalCredit || 0), 0);
+  // Opening + closing balance totals (sum of positive vs negative sides)
+  const openDrTot  = rows.reduce((s, r) => s + Math.max(0,  r.openingBalance ?? 0), 0);
+  const openCrTot  = rows.reduce((s, r) => s + Math.max(0, -(r.openingBalance ?? 0)), 0);
+  const closeDrTot = rows.reduce((s, r) => s + Math.max(0,  r.closingBalance ?? 0), 0);
+  const closeCrTot = rows.reduce((s, r) => s + Math.max(0, -(r.closingBalance ?? 0)), 0);
 
   const exportRows = rows.map((r: any) => ({
     code:        r.code,
     nameAr:      isRtl ? r.nameAr : (r.nameEn || r.nameAr),
     accountType: TYPE_LABELS[r.accountType] ?? r.accountType,
+    openDebit:   (r.openingBalance ?? 0) > 0 ? fmtAbs(r.openingBalance) : "",
+    openCredit:  (r.openingBalance ?? 0) < 0 ? fmtAbs(r.openingBalance) : "",
     totalDebit:  r.totalDebit  > 0 ? fmtAbs(r.totalDebit)  : "",
     totalCredit: r.totalCredit > 0 ? fmtAbs(r.totalCredit) : "",
-    balDebit:    r.balance > 0 ? fmtAbs(r.balance) : "",
-    balCredit:   r.balance < 0 ? fmtAbs(r.balance) : "",
+    closeDebit:  (r.closingBalance ?? 0) > 0 ? fmtAbs(r.closingBalance) : "",
+    closeCredit: (r.closingBalance ?? 0) < 0 ? fmtAbs(r.closingBalance) : "",
   }));
 
   return (
@@ -150,41 +163,54 @@ export default function TrialBalance() {
                   <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.code")}</th>
                   <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.accountName")}</th>
                   <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.type")}</th>
-                  <th className="text-center px-2 py-3 font-semibold text-muted-foreground" colSpan={2}>
-                    {t("trialBalance.totalMovements")}
+                  <th className="text-center px-2 py-3 font-semibold text-amber-700 border-x" colSpan={2}>
+                    {t("trialBalance.openingBalance")}
                   </th>
                   <th className="text-center px-2 py-3 font-semibold text-muted-foreground" colSpan={2}>
-                    {t("trialBalance.balances")}
+                    {t("trialBalance.periodBalance")}
+                  </th>
+                  <th className="text-center px-2 py-3 font-semibold text-emerald-700 border-x" colSpan={2}>
+                    {t("trialBalance.closingBalance")}
                   </th>
                 </tr>
                 <tr className="bg-muted/30 border-b text-xs">
                   <th colSpan={3} />
+                  <th className="text-end px-4 py-2 font-semibold text-blue-700 border-s">{t("accountingReports.debit")}</th>
+                  <th className="text-end px-4 py-2 font-semibold text-rose-700 border-e">{t("accountingReports.credit")}</th>
                   <th className="text-end px-4 py-2 font-semibold text-blue-700">{t("accountingReports.debit")}</th>
                   <th className="text-end px-4 py-2 font-semibold text-rose-700">{t("accountingReports.credit")}</th>
-                  <th className="text-end px-4 py-2 font-semibold text-blue-700">{t("accountingReports.debit")}</th>
-                  <th className="text-end px-4 py-2 font-semibold text-rose-700">{t("accountingReports.credit")}</th>
+                  <th className="text-end px-4 py-2 font-semibold text-blue-700 border-s">{t("accountingReports.debit")}</th>
+                  <th className="text-end px-4 py-2 font-semibold text-rose-700 border-e">{t("accountingReports.credit")}</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map(r => (
-                  <tr key={r.id} className="border-b hover:bg-muted/30 transition-colors">
-                    <td className="px-4 py-2.5 font-mono text-xs text-primary">{r.code}</td>
-                    <td className="px-4 py-2.5">{isRtl ? r.nameAr : (r.nameEn || r.nameAr)}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground text-xs">{TYPE_LABELS[r.accountType] ?? r.accountType}</td>
-                    <td className="px-4 py-2.5 text-end font-mono text-blue-700">{fmt(r.totalDebit)}</td>
-                    <td className="px-4 py-2.5 text-end font-mono text-rose-700">{fmt(r.totalCredit)}</td>
-                    <td className="px-4 py-2.5 text-end font-mono text-blue-700">{r.balance > 0 ? fmt(r.balance) : ""}</td>
-                    <td className="px-4 py-2.5 text-end font-mono text-rose-700">{r.balance < 0 ? fmt(-r.balance) : ""}</td>
-                  </tr>
-                ))}
+                {rows.map(r => {
+                  const op = r.openingBalance ?? 0;
+                  const cl = r.closingBalance ?? 0;
+                  return (
+                    <tr key={r.id} className="border-b hover:bg-muted/30 transition-colors">
+                      <td className="px-4 py-2.5 font-mono text-xs text-primary">{r.code}</td>
+                      <td className="px-4 py-2.5">{isRtl ? r.nameAr : (r.nameEn || r.nameAr)}</td>
+                      <td className="px-4 py-2.5 text-muted-foreground text-xs">{TYPE_LABELS[r.accountType] ?? r.accountType}</td>
+                      <td className="px-4 py-2.5 text-end font-mono text-blue-700 border-s bg-amber-50/40">{op > 0 ? fmt(op) : ""}</td>
+                      <td className="px-4 py-2.5 text-end font-mono text-rose-700 border-e bg-amber-50/40">{op < 0 ? fmt(-op) : ""}</td>
+                      <td className="px-4 py-2.5 text-end font-mono text-blue-700">{fmt(r.totalDebit)}</td>
+                      <td className="px-4 py-2.5 text-end font-mono text-rose-700">{fmt(r.totalCredit)}</td>
+                      <td className="px-4 py-2.5 text-end font-mono text-blue-700 border-s bg-emerald-50/40">{cl > 0 ? fmt(cl) : ""}</td>
+                      <td className="px-4 py-2.5 text-end font-mono text-rose-700 border-e bg-emerald-50/40">{cl < 0 ? fmt(-cl) : ""}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr className="bg-muted/60 font-bold border-t-2 text-sm">
                   <td colSpan={3} className="px-4 py-3">{t("accountingReports.total")}</td>
+                  <td className="px-4 py-3 text-end font-mono text-blue-700 border-s bg-amber-50/60">{fmtAbs(openDrTot)}</td>
+                  <td className="px-4 py-3 text-end font-mono text-rose-700 border-e bg-amber-50/60">{fmtAbs(openCrTot)}</td>
                   <td className="px-4 py-3 text-end font-mono text-blue-700">{fmtAbs(totalDr)}</td>
                   <td className="px-4 py-3 text-end font-mono text-rose-700">{fmtAbs(totalCr)}</td>
-                  <td className="px-4 py-3 text-end font-mono text-blue-700">{fmtAbs(balDrTot)}</td>
-                  <td className="px-4 py-3 text-end font-mono text-rose-700">{fmtAbs(balCrTot)}</td>
+                  <td className="px-4 py-3 text-end font-mono text-blue-700 border-s bg-emerald-50/60">{fmtAbs(closeDrTot)}</td>
+                  <td className="px-4 py-3 text-end font-mono text-rose-700 border-e bg-emerald-50/60">{fmtAbs(closeCrTot)}</td>
                 </tr>
               </tfoot>
             </table>

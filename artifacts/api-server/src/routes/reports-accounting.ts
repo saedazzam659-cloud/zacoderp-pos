@@ -26,47 +26,93 @@ function getBid(req: any): number | undefined {
 }
 
 // ─── helper: get account balances (aggregated from lines) ─────────────────────
+// Returns one row per active account with:
+//   • totalDebit / totalCredit / balance — movement totals inside the
+//     [fromDate..toDate] window (period movements). `balance` is the
+//     signed (debit − credit) movement balance for the period and is
+//     kept for backward compatibility with the balance sheet, income
+//     statement and chart-of-accounts callers.
+//   • openingDebit / openingCredit / openingBalance — sum of every
+//     line on entries STRICTLY BEFORE `fromDate`. When `fromDate` is
+//     omitted, opening is treated as zero (the report is "since
+//     inception"). `openingBalance = openingDebit − openingCredit`.
+//   • closingDebit / closingCredit / closingBalance — opening +
+//     period movements. Useful for the trial-balance UI which needs
+//     the three sections side-by-side.
 async function getAccountBalances(req: Request, cid: number, fromDate?: string, toDate?: string, branchId?: number) {
   // Get all accounts for company
   const accounts = await db.select().from(accountsTable)
     .where(and(eq(accountsTable.companyId, cid), eq(accountsTable.isActive, true)))
     .orderBy(asc(accountsTable.code));
 
-  // Build date filter for journal entries (per-user branch scope is enforced
-  // through pushBranchScope so a restricted user can only ever aggregate
-  // balances over the journal entries of their linked branches).
-  const entryFilters: any[] = [eq(journalEntriesTable.companyId, cid)];
-  if (pushBranchScope(req, entryFilters, journalEntriesTable.branchId, branchId) === "deny") {
+  // Per-user branch scope. If the caller has zero allowed branches
+  // we short-circuit to an empty array (no rows to aggregate).
+  const baseFilters: any[] = [eq(journalEntriesTable.companyId, cid)];
+  if (pushBranchScope(req, baseFilters, journalEntriesTable.branchId, branchId) === "deny") {
     return [] as any[];
   }
-  if (fromDate) entryFilters.push(gte(journalEntriesTable.entryDate, fromDate));
-  if (toDate)   entryFilters.push(lte(journalEntriesTable.entryDate, toDate));
 
-  // Get all entry lines with their account IDs
-  const lines = await db
-    .select({
-      accountId: journalEntryLinesTable.accountId,
-      debit:     sql<string>`SUM(${journalEntryLinesTable.debit})`,
-      credit:    sql<string>`SUM(${journalEntryLinesTable.credit})`,
-    })
-    .from(journalEntryLinesTable)
-    .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
-    .where(and(...entryFilters))
-    .groupBy(journalEntryLinesTable.accountId);
+  // Period filters: only entries inside [fromDate..toDate]
+  const periodFilters = [...baseFilters];
+  if (fromDate) periodFilters.push(gte(journalEntriesTable.entryDate, fromDate));
+  if (toDate)   periodFilters.push(lte(journalEntriesTable.entryDate, toDate));
 
-  const balMap = new Map<number, { debit: number; credit: number }>();
-  for (const l of lines) {
-    if (l.accountId) {
-      balMap.set(l.accountId, { debit: Number(l.debit || 0), credit: Number(l.credit || 0) });
+  // Helper to sum debit/credit per account under a set of filters.
+  async function aggregate(filters: any[]) {
+    const rows = await db
+      .select({
+        accountId: journalEntryLinesTable.accountId,
+        debit:     sql<string>`SUM(${journalEntryLinesTable.debit})`,
+        credit:    sql<string>`SUM(${journalEntryLinesTable.credit})`,
+      })
+      .from(journalEntryLinesTable)
+      .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+      .where(and(...filters))
+      .groupBy(journalEntryLinesTable.accountId);
+    const map = new Map<number, { debit: number; credit: number }>();
+    for (const l of rows) {
+      if (l.accountId) {
+        map.set(l.accountId, { debit: Number(l.debit || 0), credit: Number(l.credit || 0) });
+      }
     }
+    return map;
   }
 
-  return accounts.map(a => ({
-    ...a,
-    totalDebit:  balMap.get(a.id)?.debit  ?? 0,
-    totalCredit: balMap.get(a.id)?.credit ?? 0,
-    balance:     (balMap.get(a.id)?.debit ?? 0) - (balMap.get(a.id)?.credit ?? 0),
-  }));
+  const periodMap = await aggregate(periodFilters);
+
+  // Opening balance is "everything strictly before fromDate". When no
+  // fromDate is supplied the trial balance is "since inception" and
+  // opening collapses to zero — we skip the extra query entirely.
+  let openingMap: Map<number, { debit: number; credit: number }>;
+  if (fromDate) {
+    const openingFilters = [...baseFilters, sql`${journalEntriesTable.entryDate} < ${fromDate}`];
+    openingMap = await aggregate(openingFilters);
+  } else {
+    openingMap = new Map();
+  }
+
+  return accounts.map(a => {
+    const op = openingMap.get(a.id) ?? { debit: 0, credit: 0 };
+    const pe = periodMap.get(a.id)  ?? { debit: 0, credit: 0 };
+    const openingBalance = op.debit - op.credit;
+    const balance        = pe.debit - pe.credit; // period movement balance
+    const closingBalance = openingBalance + balance;
+    return {
+      ...a,
+      // Period movements (kept under the original names for callers)
+      totalDebit:  pe.debit,
+      totalCredit: pe.credit,
+      balance,
+      // Opening (before fromDate). One side is zero by convention.
+      openingDebit:   openingBalance > 0 ?  openingBalance : 0,
+      openingCredit:  openingBalance < 0 ? -openingBalance : 0,
+      openingBalance,
+      // Closing = opening + period (signed)
+      closingDebit:   closingBalance > 0 ?  closingBalance : 0,
+      closingCredit:  closingBalance < 0 ? -closingBalance : 0,
+      closingBalance,
+    };
+  });
 }
 
 // ─── TRIAL BALANCE ─────────────────────────────────────────────────────────────
