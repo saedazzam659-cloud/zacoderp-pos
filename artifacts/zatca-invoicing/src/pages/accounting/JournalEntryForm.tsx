@@ -6,6 +6,7 @@ import { journalEntriesApi } from "@/lib/journalEntriesApi";
 import { branchesApi } from "@/lib/branchesApi";
 import { safeLogoSrc } from "@/lib/export";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { JournalPartyPicker } from "@/components/JournalPartyPicker";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1177,7 +1178,29 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
 
               {/* Row 3 – description */}
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium">البيان العام</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="text-xs font-medium">البيان العام</Label>
+                  {/* Quick-pick: pull a customer or supplier and inject its
+                      key data (name, CR, VAT, national address) so the
+                      printed قيد carries a complete party reference for
+                      Zakat & Income Tax compliance. */}
+                  <JournalPartyPicker
+                    onInsert={(text) => {
+                      const prev = description;
+                      const next = prev.trim() ? `${prev.trimEnd()}\n${text}` : text;
+                      // Mirror into lines that still match the prev description
+                      // OR are empty — same behaviour as the manual textarea
+                      // above so the user gets a single source of truth.
+                      setLines(ls => ls.map(l => {
+                        if (!l.description || l.description === prev) {
+                          return { ...l, description: next };
+                        }
+                        return l;
+                      }));
+                      setDescription(next);
+                    }}
+                  />
+                </div>
                 <Textarea
                   value={description}
                   onChange={e => {
@@ -1197,7 +1220,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                   }}
                   placeholder="وصف القيد..."
                   className="text-sm resize-none"
-                  rows={2}
+                  rows={3}
                 />
               </div>
 
