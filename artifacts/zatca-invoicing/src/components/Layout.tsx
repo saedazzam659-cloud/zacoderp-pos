@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
+import { useIdleLogout } from "@/hooks/useIdleLogout";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -2372,6 +2373,9 @@ function TopBar({
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { user, logout } = useAuth();
+  // Auto-logout after a configurable idle period (set in General Settings).
+  // No-op when the setting is 0/disabled or no user is signed in.
+  useIdleLogout();
   const [mobileOpen, setMobileOpen]           = useState(false);
   const [dashboardOpen, setDashboardOpen]     = useState(() =>
     ["/org/", "/general-settings", "/settings/currencies", "/settings/accounting-mappings", "/vat-declaration"].some(p => location.startsWith(p))

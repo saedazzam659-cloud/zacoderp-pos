@@ -10,8 +10,10 @@ import {
   Settings2, Upload, Trash2, CheckCircle2, Image as ImageIcon,
   Hash, Building2, Loader2, Package, Boxes, Download, FileSpreadsheet,
   DatabaseBackup, DatabaseZap, Sparkles, FileJson, AlertTriangle,
-  Clock, Repeat, Trash, History, Play, Zap, Hand, Printer, Save
+  Clock, Repeat, Trash, History, Play, Zap, Hand, Printer, Save,
+  LogOut, Timer, ShieldCheck
 } from "lucide-react";
+import { getIdleLogoutMinutes, setIdleLogoutMinutes } from "@/hooks/useIdleLogout";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { getPreferredPrinter, setPreferredPrinter, openPrinterTestSheet, detectUsbPrinter, isWebUsbSupported } from "@/lib/preferredPrinter";
@@ -415,6 +417,13 @@ export default function GeneralSettings() {
           >
             <Printer className="h-4 w-4 shrink-0" />
             <span className="truncate">إعدادات الطباعة</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="autoLogout"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <LogOut className="h-4 w-4 shrink-0" />
+            <span className="truncate">تسجيل الخروج التلقائي</span>
           </TabsTrigger>
         </TabsList>
 
@@ -912,6 +921,11 @@ export default function GeneralSettings() {
         <TabsContent value="printPrefs" className="mt-5 space-y-6">
           <PrintPreferencesTab user={user} token={token} setUser={setUser} />
         </TabsContent>
+
+        {/* ═══ TAB 9: Auto Logout (idle timeout) ═══════════════════════════ */}
+        <TabsContent value="autoLogout" className="mt-5 space-y-6">
+          <AutoLogoutTab />
+        </TabsContent>
       </Tabs>
 
     </div>
@@ -1403,6 +1417,190 @@ function LocalPrinterCard() {
           <span className="font-semibold text-foreground">{saved}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Sub-component: Auto-Logout (idle timeout) tab ────────────────────────
+//
+// Lets the user enable an idle-timeout that automatically signs them out of
+// the system after a configurable number of minutes with no activity. The
+// setting is stored in localStorage (per-browser, per-device) so each
+// workstation can have its own policy — a cashier on a shared POS machine
+// can use 5 minutes while an accountant on a private laptop can disable it.
+//
+// The actual timer logic lives in `useIdleLogout` which is mounted in the
+// global Layout. This component only edits the setting and previews how it
+// will behave.
+const PRESETS = [5, 10, 15, 30, 60, 120];
+
+function AutoLogoutTab() {
+  const { toast } = useToast();
+  const [enabled, setEnabled] = useState<boolean>(() => getIdleLogoutMinutes() > 0);
+  const [minutes, setMinutes] = useState<number>(() => {
+    const m = getIdleLogoutMinutes();
+    return m > 0 ? m : 15;
+  });
+  const [savedMinutes, setSavedMinutes] = useState<number>(() => getIdleLogoutMinutes());
+
+  const onSave = () => {
+    if (!enabled) {
+      setIdleLogoutMinutes(0);
+      setSavedMinutes(0);
+      toast({ title: "تم الحفظ", description: "تم تعطيل تسجيل الخروج التلقائي." });
+      return;
+    }
+    const m = Math.max(1, Math.min(720, Math.floor(Number(minutes) || 0)));
+    setIdleLogoutMinutes(m);
+    setMinutes(m);
+    setSavedMinutes(m);
+    toast({
+      title: "تم الحفظ",
+      description: `سيتم تسجيل خروجك تلقائياً بعد ${m} دقيقة من عدم النشاط.`,
+    });
+  };
+
+  const isActive = savedMinutes > 0;
+
+  return (
+    <div className="space-y-6">
+      {/* ─── Hero / Status card ──────────────────────────────────────────── */}
+      <div
+        className={cn(
+          "relative overflow-hidden rounded-2xl border p-6 shadow-sm transition-colors",
+          isActive
+            ? "bg-gradient-to-br from-emerald-50 via-emerald-50/40 to-transparent border-emerald-200 dark:from-emerald-950/40 dark:via-emerald-950/20 dark:border-emerald-900/60"
+            : "bg-gradient-to-br from-muted/40 to-transparent",
+        )}
+      >
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex items-start gap-3">
+            <div
+              className={cn(
+                "h-12 w-12 rounded-xl flex items-center justify-center shrink-0 shadow-inner",
+                isActive ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground",
+              )}
+            >
+              <ShieldCheck className="h-6 w-6" />
+            </div>
+            <div>
+              <h2 className="font-semibold text-lg leading-tight">تسجيل الخروج التلقائي عند عدم النشاط</h2>
+              <p className="text-sm text-muted-foreground mt-1 max-w-xl">
+                أداة أمان تُسجّل خروجك تلقائياً من النظام عند عدم استخدام الفأرة أو لوحة المفاتيح لمدة محددة،
+                لحماية بياناتك إذا تركت الجهاز مفتوحاً.
+              </p>
+              <div className="mt-3 inline-flex items-center gap-2 text-xs">
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium",
+                    isActive
+                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                      : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  <span className={cn("h-1.5 w-1.5 rounded-full", isActive ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground/50")} />
+                  {isActive ? `مفعّل — كل ${savedMinutes} دقيقة` : "معطّل"}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Label htmlFor="idle-toggle" className="text-sm font-medium">
+              {enabled ? "مفعّل" : "معطّل"}
+            </Label>
+            <Switch id="idle-toggle" checked={enabled} onCheckedChange={setEnabled} />
+          </div>
+        </div>
+      </div>
+
+      {/* ─── Configuration card ──────────────────────────────────────────── */}
+      <div
+        className={cn(
+          "rounded-xl border bg-card p-5 space-y-5 transition-opacity",
+          !enabled && "opacity-60 pointer-events-none",
+        )}
+      >
+        <div className="flex items-center gap-2">
+          <Timer className="h-4 w-4 text-muted-foreground" />
+          <h3 className="font-semibold text-base">مدة عدم النشاط قبل تسجيل الخروج</h3>
+        </div>
+
+        {/* Quick presets */}
+        <div>
+          <Label className="text-xs text-muted-foreground mb-2 block">اختر مدة سريعة</Label>
+          <div className="flex flex-wrap gap-2">
+            {PRESETS.map((p) => {
+              const selected = minutes === p;
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setMinutes(p)}
+                  className={cn(
+                    "px-4 py-2 rounded-lg border text-sm font-medium transition-all",
+                    selected
+                      ? "bg-primary text-primary-foreground border-primary shadow-sm scale-[1.03]"
+                      : "bg-background hover:bg-muted/60 border-border",
+                  )}
+                >
+                  {p} دقيقة
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Custom input */}
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-end">
+          <div>
+            <Label htmlFor="idle-minutes" className="text-xs text-muted-foreground mb-1.5 block">
+              أو أدخل مدة مخصّصة (بالدقائق، من 1 إلى 720)
+            </Label>
+            <div className="relative">
+              <Input
+                id="idle-minutes"
+                type="number"
+                min={1}
+                max={720}
+                step={1}
+                value={minutes}
+                onChange={(e) => setMinutes(Math.max(1, Math.min(720, Math.floor(Number(e.target.value) || 0))))}
+                className="pe-20"
+              />
+              <span className="absolute inset-y-0 end-3 flex items-center text-xs text-muted-foreground pointer-events-none">
+                دقيقة
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Info notice */}
+        <div className="flex gap-3 items-start text-xs text-muted-foreground bg-muted/40 rounded-lg p-3">
+          <Clock className="h-4 w-4 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p>سيظهر لك تنبيه قبل 30 ثانية من تسجيل الخروج لمنحك فرصة للاستمرار.</p>
+            <p>الإعداد يُحفظ على هذا الجهاز/المتصفح فقط، ويمكن لكل موظف ضبط مدة مختلفة على جهازه.</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-end gap-2">
+        <Button
+          variant="outline"
+          onClick={() => {
+            setEnabled(false);
+            setIdleLogoutMinutes(0);
+            setSavedMinutes(0);
+            toast({ title: "تم الإلغاء", description: "تم تعطيل تسجيل الخروج التلقائي." });
+          }}
+        >
+          تعطيل
+        </Button>
+        <Button onClick={onSave} className="gap-2">
+          <Save className="h-4 w-4" />
+          حفظ الإعداد
+        </Button>
+      </div>
     </div>
   );
 }
