@@ -21,6 +21,7 @@ import { useTranslation } from "react-i18next";
 import { getSaveToastTitle } from "@/lib/saveToast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { Sparkles, AlertTriangle, CheckCircle2, Receipt } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import {
   Plus, Trash2, ArrowRight, BookOpen, AlertCircle,
@@ -354,6 +355,17 @@ export default function JournalEntryForm() {
   // the entry will become unbalanced by the total VAT amount — the
   // user is expected to add the offsetting payable/receivable side.
   const VAT_RATE = 0.15;
+  // When true, "قيد الضريبة" treats source amounts as VAT-INCLUSIVE
+  // (gross). For a 1000 line: VAT = 1000×15/115 = 130.43, source line
+  // is rewritten down to the net 869.57 and a sibling VAT line of 130.43
+  // is appended → entry stays balanced. When false (default) the
+  // existing exclusive behaviour is kept: source unchanged, VAT added
+  // on top, user adds the offsetting payable/receivable side manually.
+  const [vatInclusive, setVatInclusive] = useState(false);
+  // Marker appended to the source line description after it has been
+  // split into its net component, so a re-click of "قيد الضريبة" does
+  // not extract VAT a second time from the already-net amount.
+  const NET_MARKER = " (صافٍ من ضريبة 15%)";
   const taxEntryMutation = useMutation({
     mutationFn: (direction: "input" | "output") =>
       journalEntriesApi.suggestVatAccount({ direction, companyId: cid }),
@@ -403,6 +415,9 @@ export default function JournalEntryForm() {
         if (!ln.accountId) return false;
         const desc = (ln.description || "").trim();
         if (desc.startsWith("ضريبة المدخلات") || desc.startsWith("ضريبة المخرجات")) return false;
+        // Inclusive mode marks net-extracted lines with NET_MARKER —
+        // skip them on subsequent clicks so we don't re-tax the net.
+        if (desc.endsWith(NET_MARKER.trim()) || desc.includes(NET_MARKER)) return false;
         const k = amount.toFixed(2);
         const left = remainingTaxed.get(k) ?? 0;
         if (left > 0) {
@@ -446,15 +461,43 @@ export default function JournalEntryForm() {
 
     // Build one VAT line per eligible source line, preserving the
     // source's costCenter so the tax follows the same dimension.
+    // In INCLUSIVE mode we additionally rewrite the source line's
+    // amount down to the net (gross − VAT) so the journal stays
+    // balanced — exactly the way invoice "السعر شامل الضريبة"
+    // behaves on sales/purchase screens.
     const vatLines: JournalLine[] = [];
+    const sourceUpdates = new Map<string, { amount: string; description: string }>();
     let totalVat = 0;
     for (const { ln, amount } of eligible) {
       // Skip lines that already use the chosen VAT account itself
       // (defensive — covers the case where description was edited).
       if (ln.accountId === vatAccountId) continue;
-      const vatAmount = Math.round(amount * VAT_RATE * 100) / 100;
+
+      let vatAmount: number;
+      let baseForLabel: number;
+      let pendingNet: number | null = null;
+      if (vatInclusive) {
+        // amount is the GROSS, extract VAT from inside it
+        vatAmount = Math.round(amount * (VAT_RATE / (1 + VAT_RATE)) * 100) / 100;
+        baseForLabel = amount;
+        pendingNet = Math.round((amount - vatAmount) * 100) / 100;
+      } else {
+        // amount is the NET, add VAT on top (existing behaviour)
+        vatAmount = Math.round(amount * VAT_RATE * 100) / 100;
+        baseForLabel = amount;
+      }
       if (vatAmount <= 0) continue;
+      // Only mark the source line as net-extracted AFTER we are sure
+      // a VAT line will actually be emitted — otherwise sub-cent rows
+      // would be tagged with NET_MARKER and become non-taxable later.
+      if (vatInclusive && pendingNet !== null) {
+        sourceUpdates.set(ln.id, {
+          amount: pendingNet.toFixed(2),
+          description: ((ln.description || "") + NET_MARKER).trim(),
+        });
+      }
       totalVat += vatAmount;
+      const incTag = vatInclusive ? " (شاملة)" : "";
       vatLines.push({
         id: crypto.randomUUID(),
         accountId: vatAccountId,
@@ -462,8 +505,8 @@ export default function JournalEntryForm() {
         debit:  direction === "input"  ? vatAmount.toFixed(2) : "",
         credit: direction === "output" ? vatAmount.toFixed(2) : "",
         description: direction === "input"
-          ? `ضريبة المدخلات 15% على ${amount.toFixed(2)}`
-          : `ضريبة المخرجات 15% على ${amount.toFixed(2)}`,
+          ? `ضريبة المدخلات 15%${incTag} ${vatInclusive ? "من" : "على"} ${baseForLabel.toFixed(2)}`
+          : `ضريبة المخرجات 15%${incTag} ${vatInclusive ? "من" : "على"} ${baseForLabel.toFixed(2)}`,
       });
     }
 
@@ -472,7 +515,14 @@ export default function JournalEntryForm() {
       return;
     }
 
-    setLines(prev => [...prev, ...vatLines]);
+    setLines(prev => {
+      const updated = prev.map(l => {
+        const u = sourceUpdates.get(l.id);
+        if (!u) return l;
+        return { ...l, [sideField]: u.amount, description: u.description };
+      });
+      return [...updated, ...vatLines];
+    });
     setFocusLineId(vatLines[vatLines.length - 1].id);
 
     toast({
@@ -1232,13 +1282,30 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
             <CardContent className="p-0">
               {/* Toolbar */}
               <div className="flex items-center justify-end gap-2 px-4 py-2 border-b bg-muted/10">
+                {/* المبلغ شامل الضريبة — when checked, "قيد الضريبة"
+                    extracts 15% from inside each source amount instead
+                    of adding it on top. Mirrors invoice behaviour. */}
+                <label
+                  className="flex items-center gap-1.5 text-xs cursor-pointer select-none ml-1"
+                  title="عند التفعيل، يتم استخراج 15% من المبلغ الأصلي بدل إضافتها فوقه — مماثل لخيار (السعر شامل الضريبة) في الفواتير."
+                >
+                  <Checkbox
+                    checked={vatInclusive}
+                    onCheckedChange={(v) => setVatInclusive(v === true)}
+                    disabled={isLockedSourceEntry || taxEntryMutation.isPending}
+                    className="h-3.5 w-3.5"
+                  />
+                  <span className="font-medium">المبلغ شامل الضريبة</span>
+                </label>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
                       variant="outline" size="sm"
                       disabled={isLockedSourceEntry || taxEntryMutation.isPending}
                       className="h-7 gap-1 text-xs shrink-0"
-                      title="إضافة سطر ضريبة قيمة مضافة (15%) إلى السطر الأول"
+                      title={vatInclusive
+                        ? "استخراج 15% ضريبة من داخل مبلغ السطر (المبلغ شامل الضريبة)"
+                        : "إضافة 15% ضريبة قيمة مضافة فوق مبلغ السطر"}
                     >
                       <Receipt className="h-3.5 w-3.5" />
                       {taxEntryMutation.isPending ? "جارٍ التحليل..." : "قيد الضريبة"}
@@ -1253,14 +1320,22 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                       className="text-xs flex flex-col items-start gap-0.5"
                     >
                       <span className="font-semibold">مدين — ضريبة المدخلات</span>
-                      <span className="text-[10px] text-muted-foreground">يُخصم 15% من السطر الأول (مدين)</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {vatInclusive
+                          ? "استخراج 15% من داخل كل مبلغ مدين (شامل الضريبة)"
+                          : "إضافة 15% فوق كل مبلغ مدين"}
+                      </span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onSelect={() => applyTaxEntry("output")}
                       className="text-xs flex flex-col items-start gap-0.5"
                     >
                       <span className="font-semibold">دائن — ضريبة المخرجات</span>
-                      <span className="text-[10px] text-muted-foreground">يُخصم 15% من السطر الأول (دائن)</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {vatInclusive
+                          ? "استخراج 15% من داخل كل مبلغ دائن (شامل الضريبة)"
+                          : "إضافة 15% فوق كل مبلغ دائن"}
+                      </span>
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
