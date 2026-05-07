@@ -3086,6 +3086,16 @@
       "receipt_voucher": "Receipt Voucher",
       "payment_voucher": "Payment Voucher",
       "pos_receipt": "POS Receipt",
+      "cost_center": "Cost Center",
+      "fixed_asset": "Fixed Asset",
+      "maintenance_order": "Maintenance Order",
+      "crm_lead": "CRM Lead",
+      "hotel_booking": "Hotel Booking",
+      "installment_contract": "Installment Contract",
+      "cash_transfer": "Cash Transfer",
+      "offer": "Offer",
+      "employee": "Employee",
+      "hr_contract": "HR Contract",
       "__reset__": "Reset"
     }
   },

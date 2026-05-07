@@ -11,6 +11,7 @@ import {
 } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
@@ -137,7 +138,12 @@ router.post("/assets", async (req, res) => {
     const b = req.body ?? {};
     const nameAr = String(b.nameAr ?? "").trim();
     if (!nameAr) { res.status(400).json({ error: "اسم الأصل مطلوب" }); return; }
-    const code = String(b.code ?? "").trim() || await nextCode(cid, fixedAssetsTable, "AST");
+    const code = String(b.code ?? "").trim() || await nextSequenceOrFallback(
+      cid,
+      "fixed_asset",
+      { userId: (req as any).authUser?.id ?? null, refTable: "fixed_assets", branchId: b.branchId ? Number(b.branchId) : null },
+      () => nextCode(cid, fixedAssetsTable, "AST"),
+    );
     const status = (STATUSES as readonly string[]).includes(b.status) ? b.status : "active";
     const method = (DEP_METHODS as readonly string[]).includes(b.depreciationMethod) ? b.depreciationMethod : "straight_line";
     const purchaseValue = String(b.purchaseValue ?? "0");

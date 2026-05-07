@@ -6,6 +6,7 @@ import {
 } from "@workspace/db";
 import { eq, and, asc, gte, lte, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeFilter } from "../middleware/auth.js";
+import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
@@ -90,7 +91,12 @@ router.post("/", async (req, res) => {
     // pass through verbatim so semantic naming (e.g. "ADMIN") keeps working.
     const finalCode = (code && String(code).trim())
       ? String(code).trim()
-      : await nextDefaultCode(cid);
+      : await nextSequenceOrFallback(
+          cid,
+          "cost_center",
+          { userId: (req as any).authUser?.id ?? null, refTable: "cost_centers" },
+          () => nextDefaultCode(cid),
+        );
 
     // Uniqueness check (code per company)
     const [dup] = await db.select().from(costCentersTable)

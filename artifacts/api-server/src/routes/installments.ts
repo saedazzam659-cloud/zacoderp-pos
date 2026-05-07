@@ -15,6 +15,7 @@ import {
 } from "@workspace/db";
 import { and, desc, eq, sql, lte, gte } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
@@ -316,7 +317,12 @@ router.post("/contracts", async (req, res) => {
       installmentCount:   n,
     });
 
-    const contractNumber = String(b.contractNumber ?? "").trim() || await nextContractNumber(cid);
+    const contractNumber = String(b.contractNumber ?? "").trim() || await nextSequenceOrFallback(
+      cid,
+      "installment_contract",
+      { userId: (req as any).authUser?.id ?? null, refTable: "installment_contracts", branchId: b.branchId ? Number(b.branchId) : null },
+      () => nextContractNumber(cid),
+    );
 
     const [row] = await db.insert(installmentContractsTable).values({
       companyId:            cid,

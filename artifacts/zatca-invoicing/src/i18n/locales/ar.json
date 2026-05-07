@@ -3140,6 +3140,16 @@
       "production_order": "أمر إنتاج",
       "contracting_project": "مشروع مقاولات",
       "contracting_bill": "مستخلص مقاولات",
+      "cost_center": "مركز تكلفة",
+      "fixed_asset": "أصل ثابت",
+      "maintenance_order": "أمر صيانة",
+      "crm_lead": "عميل محتمل (CRM)",
+      "hotel_booking": "حجز فندقي",
+      "installment_contract": "عقد تقسيط",
+      "cash_transfer": "تحويل نقدي",
+      "offer": "عرض",
+      "employee": "موظف",
+      "hr_contract": "عقد موظف",
       "__reset__": "إعادة تصفير"
     }
   },

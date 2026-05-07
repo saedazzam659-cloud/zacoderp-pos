@@ -15,6 +15,7 @@ import {
 } from "@workspace/db";
 import { and, desc, eq, sql, inArray, gte, lte, ne } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
@@ -444,7 +445,12 @@ router.post("/bookings", async (req, res) => {
       ));
     if (conflict) { res.status(409).json({ error: "الغرفة محجوزة في الفترة المحددة" }); return; }
 
-    const docNumber = String(b.docNumber ?? "").trim() || await nextCode(cid, hotelBookingsTable, "BK", "docNumber");
+    const docNumber = String(b.docNumber ?? "").trim() || await nextSequenceOrFallback(
+      cid,
+      "hotel_booking",
+      { userId: (req as any).authUser?.id ?? null, refTable: "hotel_bookings" },
+      () => nextCode(cid, hotelBookingsTable, "BK", "docNumber"),
+    );
     const nights = nightsBetween(String(b.checkIn), String(b.checkOut));
     const nightly = Number(b.nightlyRate ?? 0);
     const total = b.totalPrice != null ? Number(b.totalPrice) : nightly * nights;

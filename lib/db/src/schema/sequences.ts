@@ -30,6 +30,20 @@ export const SEQUENCE_TX_TYPES = [
   // Contracting Management — project codes and progress-bill numbers.
   "contracting_project",
   "contracting_bill",
+  // Master data & operational documents wired through nextSequenceOrFallback.
+  // Each entry below maps to an existing route's auto-code generator and falls
+  // back to the legacy CC-####/EMP-####/INS#####/etc. pattern when no admin
+  // sequence is configured — see artifacts/api-server/src/routes/* for wiring.
+  "cost_center",
+  "fixed_asset",
+  "maintenance_order",
+  "crm_lead",
+  "hotel_booking",
+  "installment_contract",
+  "cash_transfer",
+  "offer",
+  "employee",
+  "hr_contract",
 ] as const;
 
 export type SequenceTxType = typeof SEQUENCE_TX_TYPES[number];

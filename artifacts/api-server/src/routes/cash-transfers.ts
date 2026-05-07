@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { cashTransfersTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
@@ -32,9 +33,16 @@ router.post("/", async (req, res) => {
   const cid = resolveCompanyId(req, d.companyId ? parseInt(d.companyId) : undefined);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
-  const existing = await db.select({ id: cashTransfersTable.id })
-    .from(cashTransfersTable).where(eq(cashTransfersTable.companyId, cid));
-  const code = d.code || `TR-${String(existing.length + 1).padStart(4, "0")}`;
+  const code = d.code || await nextSequenceOrFallback(
+    cid,
+    "cash_transfer",
+    { userId: (req as any).authUser?.id ?? null, refTable: "cash_transfers" },
+    async () => {
+      const existing = await db.select({ id: cashTransfersTable.id })
+        .from(cashTransfersTable).where(eq(cashTransfersTable.companyId, cid));
+      return `TR-${String(existing.length + 1).padStart(4, "0")}`;
+    },
+  );
 
   const [row] = await db.insert(cashTransfersTable).values({
     companyId:     cid,

@@ -19,7 +19,10 @@ export type SequenceTxType =
   | "receipt_voucher" | "payment_voucher"
   | "pos_receipt"
   | "production_order"
-  | "contracting_project" | "contracting_bill";
+  | "contracting_project" | "contracting_bill"
+  | "cost_center" | "fixed_asset" | "maintenance_order"
+  | "crm_lead" | "hotel_booking" | "installment_contract"
+  | "cash_transfer" | "offer" | "employee" | "hr_contract";
 
 export interface PeekResult {
   number: string | null;

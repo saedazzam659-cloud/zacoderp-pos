@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, branchesTable } from "@workspace/db";
 import { and, eq, asc, desc, sql, lte, gte, or, isNotNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middleware/auth.js";
+import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { requireAdminRole } from "../middleware/permissions.js";
 import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal } from "../lib/hr-journals.js";
 import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
@@ -113,9 +114,16 @@ router.post("/", async (req, res) => {
     }
     let code = String(b.code || "").trim();
     if (!code) {
-      const [{ c }] = await db.select({ c: sql<number>`count(*)::int` })
-        .from(employeesTable).where(eq(employeesTable.companyId, cid));
-      code = `EMP-${String((c ?? 0) + 1).padStart(4, "0")}`;
+      code = await nextSequenceOrFallback(
+        cid,
+        "employee",
+        { userId: (req as any).authUser?.id ?? null, refTable: "employees", branchId: N(b.branchId) ? Number(b.branchId) : null },
+        async () => {
+          const [{ c }] = await db.select({ c: sql<number>`count(*)::int` })
+            .from(employeesTable).where(eq(employeesTable.companyId, cid));
+          return `EMP-${String((c ?? 0) + 1).padStart(4, "0")}`;
+        },
+      );
     }
     if (b.idNumber) {
       const dup = await db.select({ id: employeesTable.id }).from(employeesTable)
@@ -230,9 +238,16 @@ router.post("/:id/contracts", async (req, res) => {
 
     let cn = String(b.contractNumber || "").trim();
     if (!cn) {
-      const [{ c }] = await db.select({ c: sql<number>`count(*)::int` })
-        .from(employeeContractsTable).where(eq(employeeContractsTable.companyId, cid));
-      cn = `CON-${String((c ?? 0) + 1).padStart(5, "0")}`;
+      cn = await nextSequenceOrFallback(
+        cid,
+        "hr_contract",
+        { userId: (req as any).authUser?.id ?? null, refTable: "employee_contracts" },
+        async () => {
+          const [{ c }] = await db.select({ c: sql<number>`count(*)::int` })
+            .from(employeeContractsTable).where(eq(employeeContractsTable.companyId, cid));
+          return `CON-${String((c ?? 0) + 1).padStart(5, "0")}`;
+        },
+      );
     }
 
     const [row] = await db.insert(employeeContractsTable).values({
@@ -272,9 +287,16 @@ router.post("/:id/contracts/:contractId/renew", async (req, res) => {
     await db.update(employeeContractsTable).set({ status: "renewed", updatedAt: new Date() })
       .where(eq(employeeContractsTable.id, cnId));
 
-    const [{ c }] = await db.select({ c: sql<number>`count(*)::int` })
-      .from(employeeContractsTable).where(eq(employeeContractsTable.companyId, cid));
-    const cn = `CON-${String((c ?? 0) + 1).padStart(5, "0")}`;
+    const cn = await nextSequenceOrFallback(
+      cid,
+      "hr_contract",
+      { userId: (req as any).authUser?.id ?? null, refTable: "employee_contracts" },
+      async () => {
+        const [{ c }] = await db.select({ c: sql<number>`count(*)::int` })
+          .from(employeeContractsTable).where(eq(employeeContractsTable.companyId, cid));
+        return `CON-${String((c ?? 0) + 1).padStart(5, "0")}`;
+      },
+    );
 
     const [row] = await db.insert(employeeContractsTable).values({
       companyId: cid,

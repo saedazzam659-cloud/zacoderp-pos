@@ -14,6 +14,7 @@ import {
 } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
@@ -82,7 +83,12 @@ router.post("/leads", async (req, res) => {
     const b = req.body ?? {};
     const name = String(b.name ?? "").trim();
     if (!name) { res.status(400).json({ error: "اسم العميل المحتمل مطلوب" }); return; }
-    const code = String(b.code ?? "").trim() || await nextCode(cid, crmLeadsTable, "LD");
+    const code = String(b.code ?? "").trim() || await nextSequenceOrFallback(
+      cid,
+      "crm_lead",
+      { userId: (req as any).authUser?.id ?? null, refTable: "crm_leads", branchId: b.branchId ? Number(b.branchId) : null },
+      () => nextCode(cid, crmLeadsTable, "LD"),
+    );
     const status   = (LEAD_STATUSES   as readonly string[]).includes(b.status)        ? b.status        : "new";
     const interest = (INTEREST_LEVELS as readonly string[]).includes(b.interestLevel) ? b.interestLevel : "warm";
     const [row] = await db.insert(crmLeadsTable).values({

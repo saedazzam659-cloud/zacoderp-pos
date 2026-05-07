@@ -14,6 +14,7 @@ import {
 } from "@workspace/db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
@@ -309,7 +310,12 @@ router.post("/orders", async (req, res) => {
     if (!b.reportedDate)       { res.status(400).json({ error: "تاريخ البلاغ مطلوب" }); return; }
 
     const docNumber = String(b.docNumber ?? "").trim()
-      || await nextCode(cid, maintenanceOrdersTable, "MO", "docNumber");
+      || await nextSequenceOrFallback(
+        cid,
+        "maintenance_order",
+        { userId: (req as any).authUser?.id ?? null, refTable: "maintenance_orders", branchId: b.branchId ? Number(b.branchId) : null },
+        () => nextCode(cid, maintenanceOrdersTable, "MO", "docNumber"),
+      );
 
     const totals = recomputeTotals(b);
     const [row] = await db.insert(maintenanceOrdersTable).values({

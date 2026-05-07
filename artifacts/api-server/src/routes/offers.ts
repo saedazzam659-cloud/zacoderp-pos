@@ -28,6 +28,7 @@ import {
 } from "@workspace/db";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
@@ -311,7 +312,12 @@ router.post("/", async (req, res) => {
     if (ownErr) { res.status(400).json({ error: ownErr }); return; }
 
     const status = b.status === "active" ? "active" : "draft";
-    const offerNumber = String(b.offerNumber ?? "").trim() || await nextOfferNumber(cid);
+    const offerNumber = String(b.offerNumber ?? "").trim() || await nextSequenceOrFallback(
+      cid,
+      "offer",
+      { userId: (req as any).authUser?.id ?? null, refTable: "offers" },
+      () => nextOfferNumber(cid),
+    );
     const extras = buildExtras(b);
 
     // Wrap everything in one transaction so a failure on the junctions rolls
