@@ -124,6 +124,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.industries",           href: "/admin/industries",         icon: Briefcase },
   { nameKey: "nav.menuPermissions",      href: "/admin/menu-permissions",   icon: SlidersHorizontal },
   { nameKey: "nav.orphanStock",          href: "/admin/orphan-stock",       icon: AlertTriangle },
+  { nameKey: "nav.databaseStats",        href: "/admin/db-stats",           icon: Database },
   { nameKey: "nav.aiCompanyFix",         href: "/admin/ai-fix",             icon: Sparkles },
   { nameKey: "nav.dataDoctor",           href: "/admin/data-doctor",        icon: Stethoscope },
   { nameKey: "nav.supportInbox",         href: "/admin/support",            icon: Inbox },

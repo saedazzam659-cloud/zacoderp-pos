@@ -459,6 +459,7 @@
     "industries": "Activity Types",
     "menuPermissions": "Menu Permissions",
     "orphanStock": "Orphan Stock Cleanup",
+    "databaseStats": "Database Statistics",
     "aiCompanyFix": "AI Company Issue Fixer",
     "dataDoctor": "Company Data Doctor",
     "supportInbox": "Support Inbox",

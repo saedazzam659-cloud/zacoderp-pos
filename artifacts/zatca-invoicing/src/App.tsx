@@ -9,6 +9,7 @@ import PermRoute from "@/components/PermRoute";
 import Dashboard from "@/pages/Dashboard";
 import SuperAdminDashboard from "@/pages/SuperAdminDashboard";
 import OrphanStockCleanup from "@/pages/admin/OrphanStockCleanup";
+import DatabaseStats from "@/pages/admin/DatabaseStats";
 import AICompanyFix from "@/pages/admin/AICompanyFix";
 import CompanyDataDoctor from "@/pages/admin/CompanyDataDoctor";
 import DataCopyJournalEntries from "@/pages/admin/DataCopyJournalEntries";
@@ -461,6 +462,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/reports/revenue-by-plan" component={RevenueByPlanReport} />}
             {isSuperAdmin && <Route path="/admin/backups" component={BackupOperations} />}
             {isSuperAdmin && <Route path="/admin/orphan-stock" component={OrphanStockCleanup} />}
+            {isSuperAdmin && <Route path="/admin/db-stats" component={DatabaseStats} />}
             {isSuperAdmin && <Route path="/admin/ai-fix" component={AICompanyFix} />}
             {isSuperAdmin && <Route path="/admin/data-doctor" component={CompanyDataDoctor} />}
             {isSuperAdmin && <Route path="/admin/data-copy/journal-entries" component={DataCopyJournalEntries} />}
