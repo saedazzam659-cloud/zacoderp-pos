@@ -142,6 +142,7 @@ export function JournalPartyPicker({ onInsert, className }: Props) {
   const create = useMutation({
     mutationFn: async () => {
       if (nName.trim().length < 2) throw new Error("الاسم مطلوب");
+      if (!companyId) throw new Error("يجب اختيار شركة قبل إضافة طرف جديد");
       const body: any = {
         companyId,
         nameAr:               nName.trim(),
@@ -171,7 +172,13 @@ export function JournalPartyPicker({ onInsert, className }: Props) {
     },
     onSuccess: (row) => {
       toast({ title: kind === "customer" ? "تم إضافة العميل" : "تم إضافة المورد" });
+      // Invalidate BOTH the scoped list (this dialog) and the root key
+      // ([customers]/[suppliers]) used by other screens like
+      // CustomerVatControl/SupplierVatControl so the new row appears
+      // app-wide without forcing a manual refresh.
+      const rootKey = kind === "customer" ? ["customers"] : ["suppliers"];
       qc.invalidateQueries({ queryKey: listKey });
+      qc.invalidateQueries({ queryKey: rootKey });
       resetCreate();
       setMode("pick");
       // pre-select the new row so the user can immediately insert it
@@ -252,6 +259,8 @@ export function JournalPartyPicker({ onInsert, className }: Props) {
                       type="button" size="sm" variant="secondary"
                       onClick={() => { resetCreate(); setMode("create"); }}
                       className="h-9 gap-1 text-xs shrink-0"
+                      disabled={!companyId}
+                      title={companyId ? undefined : "يجب اختيار شركة محددة لإضافة طرف جديد"}
                     >
                       <Plus className="h-3.5 w-3.5" />
                       {k === "customer" ? "عميل جديد" : "مورد جديد"}
@@ -377,7 +386,7 @@ export function JournalPartyPicker({ onInsert, className }: Props) {
               <Button
                 type="button"
                 onClick={() => create.mutate()}
-                disabled={create.isPending || nName.trim().length < 2}
+                disabled={create.isPending || nName.trim().length < 2 || !companyId}
                 className="gap-1"
               >
                 <Save className="h-4 w-4" />
