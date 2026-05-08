@@ -47,7 +47,14 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
 
   // Per-user branch scope. If the caller has zero allowed branches
   // we short-circuit to an empty array (no rows to aggregate).
-  const baseFilters: any[] = [eq(journalEntriesTable.companyId, cid)];
+  // CRITICAL: only `posted` entries feed financial reports. Draft entries
+  // are work-in-progress and must NOT affect trial balance, balance sheet,
+  // income statement, or any account-level aggregation. Unposting an entry
+  // (status: posted → draft) instantly removes its impact from all reports.
+  const baseFilters: any[] = [
+    eq(journalEntriesTable.companyId, cid),
+    eq(journalEntriesTable.status, "posted"),
+  ];
   if (pushBranchScope(req, baseFilters, journalEntriesTable.branchId, branchId) === "deny") {
     return [] as any[];
   }
@@ -253,7 +260,10 @@ router.get("/account-statement", async (req, res) => {
     let previousDebit = 0;
     let previousCredit = 0;
     if (fromDate) {
-      const prevFilters: any[] = [eq(journalEntriesTable.companyId, cid)];
+      const prevFilters: any[] = [
+        eq(journalEntriesTable.companyId, cid),
+        eq(journalEntriesTable.status, "posted"),
+      ];
       pushBranchScope(req, prevFilters, journalEntriesTable.branchId, bid);
       prevFilters.push(sql`${journalEntriesTable.entryDate} < ${fromDate}`);
       const [prev] = await db
@@ -271,6 +281,7 @@ router.get("/account-statement", async (req, res) => {
 
     const entryFilters: any[] = [
       eq(journalEntriesTable.companyId, cid),
+      eq(journalEntriesTable.status, "posted"),
     ];
     pushBranchScope(req, entryFilters, journalEntriesTable.branchId, bid);
     if (fromDate) entryFilters.push(gte(journalEntriesTable.entryDate, fromDate));
