@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowRight, Save, Building2, MapPin, Settings, Info, AlertCircle, CheckCircle2, Hash, Cpu, ScanSearch, Loader2, Monitor, HardDrive, Server, User, Package, Eye, EyeOff, Globe2 } from "lucide-react";
+import { ArrowRight, Save, Building2, MapPin, Settings, Info, AlertCircle, CheckCircle2, Hash, Cpu, ScanSearch, Loader2, Monitor, HardDrive, Server, User, Package, Eye, EyeOff, Globe2, Briefcase } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { COUNTRIES } from "@/lib/countries";
@@ -41,6 +41,18 @@ const COUNTRY_OPTIONS: ComboboxItem[] = COUNTRIES.map(c => ({
   label:       c.nameAr,
   description: `${c.nameEn} • ${c.currency.code}`,
 }));
+
+// Mirrors the row shape returned by GET /api/admin/industries/public
+// so the picker below can light up the SuperAdmin-managed catalog
+// (configured in /admin/industries) instead of a hard-coded fallback.
+type LiveIndustry = {
+  code:                  string;
+  nameAr:                string;
+  nameEn:                string;
+  emoji:                 string;
+  recommendedModuleKeys: string[];
+  sortOrder:             number;
+};
 
 interface DeviceInfo {
   manufacturer: string;
@@ -137,6 +149,28 @@ export default function CompanyNew() {
   const [scanning, setScanning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [showPass, setShowPass] = useState(false);
+  // Industry codes selected by the SuperAdmin. We send these as
+  // `selectedIndustries` to /api/auth/register so the backend can
+  // merge each industry's `recommendedModuleKeys` into the new
+  // company's menuPermissions (otherwise the schema default leaves
+  // every other module visible — see issue raised by the user).
+  const [selectedIndustries, setSelectedIndustries] = useState<string[]>([]);
+
+  // Live industry catalog from the SuperAdmin-managed table.
+  // Falls back to an empty list on error so the rest of the page
+  // still renders — the manual `industryName` text field below remains
+  // available either way.
+  const industriesQ = useQuery<LiveIndustry[]>({
+    queryKey: ["industries-public-companynew"],
+    queryFn: async () => {
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const r = await fetch(`${BASE}/api/admin/industries/public`);
+      if (!r.ok) throw new Error("failed");
+      return r.json();
+    },
+    staleTime: 5 * 60_000,
+  });
+  const INDUSTRIES_LIVE: LiveIndustry[] = industriesQ.data ?? [];
 
   const today = new Date().toISOString().split("T")[0];
   const in30Days = new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0];
@@ -192,10 +226,28 @@ export default function CompanyNew() {
         : values.serialNumber;
 
       const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      // Derive a human-readable `industryName` from the picked codes
+      // when the SuperAdmin hasn't typed one explicitly. This keeps
+      // the legacy free-text field useful (it's what gets stored on
+      // the company row + appears in printouts) while
+      // `selectedIndustries` drives the menuPermissions merge on the
+      // server.
+      const industryName =
+        values.industryName?.trim() ||
+        (selectedIndustries.length > 0
+          ? selectedIndustries
+              .map(c => INDUSTRIES_LIVE.find(i => i.code === c)?.nameAr ?? c)
+              .join("، ")
+          : undefined);
       const res = await fetch(`${BASE}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ...values, serialNumber: combinedSerial }),
+        body: JSON.stringify({
+          ...values,
+          industryName,
+          serialNumber: combinedSerial,
+          selectedIndustries,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "حدث خطأ");
@@ -345,18 +397,101 @@ export default function CompanyNew() {
                   name="industryName"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>مجال الصناعة / النشاط <span className="text-muted-foreground text-xs">(اختياري)</span></FormLabel>
+                      <FormLabel>مجال الصناعة / النشاط (نص حر) <span className="text-muted-foreground text-xs">(اختياري)</span></FormLabel>
                       <FormControl>
                         <Input placeholder="تقنية المعلومات" {...field} />
                       </FormControl>
                       <FormDescription>
-                        النشاط التجاري الرئيسي للمنشأة
-                        <br /><ExampleBadge text="التجزئة / الخدمات المهنية / المقاولات" />
+                        يُكتب يدوياً فقط لو ما اخترت من القائمة أدناه. لو تركته فارغاً، يُعبَّأ تلقائياً من الأنشطة المختارة.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
+              </div>
+
+              {/* ─── Industry multi-select (drives menu permissions) ───
+                  Each chip toggle below adds the industry's
+                  recommendedModuleKeys (configured in /admin/industries)
+                  into the new company's menuPermissions. Without picking
+                  at least one industry here the company falls back to
+                  the schema default — that's why the SuperAdmin used to
+                  see every module enabled regardless of the industry
+                  they meant. */}
+              <div className="border-t pt-5 space-y-3">
+                <div className="flex items-start gap-2">
+                  <Briefcase className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <h4 className="text-sm font-semibold">أنواع النشاط للشركة</h4>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      اختر نشاطاً واحداً أو أكثر — كل نشاط يفعّل الموديولات المرتبطة به (مثل: <span className="font-medium text-foreground">تجاري</span> ⇐ المبيعات + المخزون + المحاسبة).
+                      الإعدادات تُدار من <code className="bg-muted px-1 rounded">/admin/industries</code>.
+                    </p>
+                  </div>
+                </div>
+
+                {industriesQ.isLoading && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> جارِ تحميل قائمة الأنشطة...
+                  </div>
+                )}
+                {industriesQ.isError && (
+                  <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+                    تعذّر تحميل قائمة الأنشطة. تابع باستخدام حقل النص الحر أعلاه — يمكنك ضبط الموديولات لاحقاً من صفحة <strong>صلاحيات القوائم</strong>.
+                  </div>
+                )}
+
+                {INDUSTRIES_LIVE.length > 0 && (
+                  <>
+                    <div className="flex flex-wrap gap-2">
+                      {INDUSTRIES_LIVE.map(ind => {
+                        const active = selectedIndustries.includes(ind.code);
+                        return (
+                          <button
+                            key={ind.code}
+                            type="button"
+                            onClick={() =>
+                              setSelectedIndustries(prev =>
+                                active ? prev.filter(c => c !== ind.code) : [...prev, ind.code]
+                              )
+                            }
+                            className={
+                              "flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all " +
+                              (active
+                                ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                                : "bg-background hover:bg-muted border-input")
+                            }
+                          >
+                            <span>{ind.emoji}</span>
+                            <span>{ind.nameAr}</span>
+                            {active && <CheckCircle2 className="h-3.5 w-3.5" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {selectedIndustries.length === 0 && (
+                      <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 flex items-start gap-2">
+                        <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                        <span>
+                          لو ما اخترت أي نشاط، الشركة الجديدة ستحصل على القائمة الكاملة من الموديولات افتراضياً.
+                          اختر نشاطاً ليتم تفعيل موديولاته فقط.
+                        </span>
+                      </div>
+                    )}
+
+                    {selectedIndustries.length > 0 && (
+                      <div className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-2">
+                        <strong>سيتم تفعيل الموديولات التالية:</strong>{" "}
+                        {Array.from(new Set(
+                          selectedIndustries.flatMap(code =>
+                            INDUSTRIES_LIVE.find(i => i.code === code)?.recommendedModuleKeys ?? []
+                          )
+                        )).join("، ") || "(لا يوجد موديولات مرتبطة بهذه الأنشطة بعد — اضبطها من /admin/industries)"}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </CardContent>
           </Card>
