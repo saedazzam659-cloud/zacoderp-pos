@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { Link, useLocation } from "wouter";
 import { Plus, Search, Factory, ArrowRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -64,17 +65,38 @@ export default function ProductionOrders() {
   const nextCode = useNextSequenceNumber("production_order", openCreate);
   const [form, setForm] = useState({
     title: "",
+    productItemId: "" as number | "",
     plannedQty: "",
     unitCode: "PCE",
     notes: "",
   });
+  // Manufactured items (finished + semi) used as the FG product picker.
+  // BOM templates auto-copy raw lines to the order based on this id.
+  const [items, setItems] = useState<{ id: number; code: string; nameAr: string; itemNature?: string | null; unitCode?: string | null }[]>([]);
+  const loadItems = useCallback(async () => {
+    if (!token) return;
+    try {
+      const r = await fetch(`${API}/api/inventory/items?includeHidden=1&limit=5000`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) return;
+      const j = await r.json();
+      setItems(Array.isArray(j) ? j : (j.rows ?? []));
+    } catch { /* silent */ }
+  }, [token]);
+  useEffect(() => { void loadItems(); }, [loadItems]);
+  useRefetchOnFocus(loadItems);
+  const fgItems = useMemo(
+    () => items.filter((i) => !i.itemNature || i.itemNature === "finished" || i.itemNature === "semi"),
+    [items],
+  );
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const firstFieldRef = useRef<HTMLInputElement>(null);
 
   function closePanel() {
     setOpenCreate(false);
-    setForm({ title: "", plannedQty: "", unitCode: "PCE", notes: "" });
+    setForm({ title: "", productItemId: "", plannedQty: "", unitCode: "PCE", notes: "" });
     requestAnimationFrame(() => triggerRef.current?.focus());
   }
 
@@ -136,6 +158,7 @@ export default function ProductionOrders() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           title: form.title.trim(),
+          productItemId: form.productItemId === "" ? null : Number(form.productItemId),
           plannedQty: Number(form.plannedQty) || 0,
           unitCode: form.unitCode || "PCE",
           notes: form.notes || null,
@@ -145,7 +168,7 @@ export default function ProductionOrders() {
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       toast({ title: `✓ ${t("production.saved")}` });
       setOpenCreate(false);
-      setForm({ title: "", plannedQty: "", unitCode: "PCE", notes: "" });
+      setForm({ title: "", productItemId: "", plannedQty: "", unitCode: "PCE", notes: "" });
       navigate(`/production/orders/${j.id}`);
     } catch (e: any) {
       toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
@@ -218,7 +241,7 @@ export default function ProductionOrders() {
                   data-testid="input-order-number"
                 />
               </div>
-              <div className="md:col-span-2">
+              <div className="md:col-span-3">
                 <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.title_field")}</Label>
                 <Input
                   ref={firstFieldRef}
@@ -227,6 +250,31 @@ export default function ProductionOrders() {
                   required
                   data-testid="input-title"
                   className="mt-1"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                  صنف المنتج النهائي <span className="text-slate-400">(لتعبئة الخامات تلقائياً من قالب المكونات)</span>
+                </Label>
+                <SearchCombobox
+                  value={form.productItemId === "" ? "" : String(form.productItemId)}
+                  onValueChange={(v) => {
+                    const idNum = v === "" ? "" : Number(v);
+                    const it = idNum === "" ? undefined : fgItems.find((x) => x.id === idNum);
+                    setForm((f) => ({
+                      ...f,
+                      productItemId: idNum,
+                      // Auto-fill unit + a default title from the picked item
+                      unitCode: it?.unitCode || f.unitCode,
+                      title: f.title.trim() ? f.title : (it?.nameAr ?? f.title),
+                    }));
+                  }}
+                  placeholder="—"
+                  searchPlaceholder="ابحث بالاسم أو الكود…"
+                  items={[
+                    { value: "", label: "—" },
+                    ...fgItems.map((i) => ({ value: String(i.id), label: `${i.code} — ${i.nameAr}` })),
+                  ]}
                 />
               </div>
               <div>
