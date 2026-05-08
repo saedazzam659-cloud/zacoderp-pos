@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation, useRoute, Link } from "wouter";
 import { ArrowRight, Plus, Save, Trash2, ListTree } from "lucide-react";
@@ -58,6 +59,23 @@ export default function BomTemplateEditor() {
   const [isActive, setIsActive] = useState(true);
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
+
+  // Reusable items fetcher — called on mount AND whenever the user
+  // returns to this tab (so a newly-added item from another screen
+  // appears in the picker without manual refresh).
+  const loadItems = useCallback(async () => {
+    if (!token) return;
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      const itemsR = await fetch(`${API}/api/inventory/items?includeHidden=1&limit=5000`, { headers });
+      const itemsJ = itemsR.ok ? await itemsR.json() : [];
+      const all: Item[] = Array.isArray(itemsJ) ? itemsJ : (itemsJ.rows ?? []);
+      setItems(all);
+    } catch {
+      /* silent — initial load handles user-facing error */
+    }
+  }, [token]);
+  useRefetchOnFocus(loadItems);
 
   // Load items + (optionally) the existing template
   useEffect(() => {
