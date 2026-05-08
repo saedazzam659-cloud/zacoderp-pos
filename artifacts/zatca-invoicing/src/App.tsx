@@ -286,7 +286,32 @@ import FinancialTransactions    from "@/pages/cash/FinancialTransactions";
 import FinancialTransactionForm from "@/pages/cash/FinancialTransactionForm";
 import { useEnterAdvances } from "@/hooks/useEnterAdvances";
 
-const queryClient = new QueryClient();
+// Global React Query defaults tuned for an ERP where reference data
+// (items, customers, suppliers, accounts, warehouses…) can be added
+// from one screen and must appear in every other open screen without
+// a manual refresh.
+//
+// • staleTime: 0          → every query is considered stale immediately
+// • refetchOnMount: "always" → re-fetch whenever a screen is mounted/visited
+// • refetchOnWindowFocus: true (default) → re-fetch when the user
+//   switches back to the tab
+// • gcTime: 5 minutes (default) → cached data is shown instantly while
+//   the refetch happens in the background, so the UI never feels empty
+//
+// Net effect: open a sales invoice in tab A, add an item from the
+// Items screen in tab B, switch back to tab A → the new item appears
+// in the picker automatically. Same for navigating between screens
+// inside a single tab.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 0,
+      refetchOnMount: "always",
+      refetchOnWindowFocus: true,
+      retry: 1,
+    },
+  },
+});
 
 function LoadingScreen() {
   return (
