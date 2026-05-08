@@ -73,7 +73,7 @@ type Order = {
   plannedHours: string;
   actualHours: string;
 };
-type Warehouse = { id: number; name: string };
+type Warehouse = { id: number; code?: string | null; nameAr: string; nameEn?: string | null };
 type Account = { id: number; code: string; nameAr: string; accountType: string };
 type ItemRef = { id: number; nameAr: string; code: string };
 type WorkCenterRef = {
@@ -789,11 +789,11 @@ function WipSetupPanel({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <Field label="مخزن صرف الخامات">
           <SelectId disabled={locked} value={draft.rawWarehouseId} onChange={(v) => set("rawWarehouseId", v)}
-            options={warehouses.map((w) => ({ value: w.id, label: w.name }))} testid="select-raw-warehouse" />
+            options={warehouses.map((w) => ({ value: w.id, label: w.code ? `${w.code} — ${w.nameAr}` : w.nameAr }))} testid="select-raw-warehouse" />
         </Field>
         <Field label="مخزن استلام البضاعة التامة">
           <SelectId value={draft.finishedWarehouseId} onChange={(v) => set("finishedWarehouseId", v)}
-            options={warehouses.map((w) => ({ value: w.id, label: w.name }))} testid="select-fg-warehouse" />
+            options={warehouses.map((w) => ({ value: w.id, label: w.code ? `${w.code} — ${w.nameAr}` : w.nameAr }))} testid="select-fg-warehouse" />
         </Field>
         <Field label="صنف المنتج النهائي">
           <SelectId value={draft.productItemId} onChange={(v) => set("productItemId", v)}
