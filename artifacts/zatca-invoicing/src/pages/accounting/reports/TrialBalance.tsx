@@ -156,31 +156,58 @@ export default function TrialBalance() {
             </span>
           </div>
 
+          {/* ── Group separators ──
+              Three balance groups are visually distinguished by:
+              1. A colored top border on the group header (amber / slate / emerald)
+              2. A subtle tinted background that runs continuously through
+                 the body rows, footer, and both DR/CR sub-columns of the group
+              3. A 3px colored vertical "gutter" column (`<td className="w-1 ...">`)
+                 on each side of the group — replaces the harsh red borders
+                 the user complained about and gives a soft, consistent gap
+              The DR sub-column reads left→right blue; the CR reads rose. */}
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm border-separate border-spacing-0">
               <thead>
-                <tr className="bg-muted/50 border-b">
-                  <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.code")}</th>
-                  <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.accountName")}</th>
-                  <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.type")}</th>
-                  <th className="text-center px-2 py-3 font-semibold text-amber-700 border-x" colSpan={2}>
+                <tr className="bg-muted/50">
+                  <th className="text-start px-4 py-3 font-semibold text-muted-foreground border-b">{t("accountingReports.code")}</th>
+                  <th className="text-start px-4 py-3 font-semibold text-muted-foreground border-b">{t("accountingReports.accountName")}</th>
+                  <th className="text-start px-4 py-3 font-semibold text-muted-foreground border-b">{t("accountingReports.type")}</th>
+
+                  {/* gutter before opening group */}
+                  <th className="w-1 p-0 bg-gradient-to-b from-amber-200 to-amber-400 border-b border-amber-300" />
+                  <th className="text-center px-2 py-3 font-semibold text-amber-700 bg-amber-50 border-b-2 border-amber-300" colSpan={2}>
                     {t("trialBalance.openingBalance")}
                   </th>
-                  <th className="text-center px-2 py-3 font-semibold text-muted-foreground" colSpan={2}>
+                  {/* gutter between opening & period */}
+                  <th className="w-1 p-0 bg-gradient-to-b from-amber-300 to-slate-300 border-b border-slate-300" />
+
+                  <th className="text-center px-2 py-3 font-semibold text-slate-700 bg-slate-50 border-b-2 border-slate-300" colSpan={2}>
                     {t("trialBalance.periodBalance")}
                   </th>
-                  <th className="text-center px-2 py-3 font-semibold text-emerald-700 border-x" colSpan={2}>
+
+                  {/* gutter between period & closing */}
+                  <th className="w-1 p-0 bg-gradient-to-b from-slate-300 to-emerald-300 border-b border-emerald-300" />
+                  <th className="text-center px-2 py-3 font-semibold text-emerald-700 bg-emerald-50 border-b-2 border-emerald-300" colSpan={2}>
                     {t("trialBalance.closingBalance")}
                   </th>
+                  {/* gutter after closing group */}
+                  <th className="w-1 p-0 bg-gradient-to-b from-emerald-400 to-emerald-200 border-b border-emerald-300" />
                 </tr>
-                <tr className="bg-muted/30 border-b text-xs">
-                  <th colSpan={3} />
-                  <th className="text-end px-4 py-2 font-semibold text-blue-700 border-s">{t("accountingReports.debit")}</th>
-                  <th className="text-end px-4 py-2 font-semibold text-rose-700 border-e">{t("accountingReports.credit")}</th>
-                  <th className="text-end px-4 py-2 font-semibold text-blue-700">{t("accountingReports.debit")}</th>
-                  <th className="text-end px-4 py-2 font-semibold text-rose-700">{t("accountingReports.credit")}</th>
-                  <th className="text-end px-4 py-2 font-semibold text-blue-700 border-s">{t("accountingReports.debit")}</th>
-                  <th className="text-end px-4 py-2 font-semibold text-rose-700 border-e">{t("accountingReports.credit")}</th>
+                <tr className="bg-muted/30 text-xs">
+                  <th colSpan={3} className="border-b" />
+
+                  <th className="w-1 p-0 bg-amber-100 border-b" />
+                  <th className="text-end px-4 py-2 font-semibold text-blue-700 bg-amber-50/60 border-b">{t("accountingReports.debit")}</th>
+                  <th className="text-end px-4 py-2 font-semibold text-rose-700 bg-amber-50/60 border-b">{t("accountingReports.credit")}</th>
+                  <th className="w-1 p-0 bg-slate-100 border-b" />
+
+                  <th className="text-end px-4 py-2 font-semibold text-blue-700 bg-slate-50/60 border-b">{t("accountingReports.debit")}</th>
+                  <th className="text-end px-4 py-2 font-semibold text-rose-700 bg-slate-50/60 border-b">{t("accountingReports.credit")}</th>
+
+                  <th className="w-1 p-0 bg-emerald-100 border-b" />
+                  <th className="text-end px-4 py-2 font-semibold text-blue-700 bg-emerald-50/60 border-b">{t("accountingReports.debit")}</th>
+                  <th className="text-end px-4 py-2 font-semibold text-rose-700 bg-emerald-50/60 border-b">{t("accountingReports.credit")}</th>
+                  <th className="w-1 p-0 bg-emerald-100 border-b" />
                 </tr>
               </thead>
               <tbody>
@@ -188,29 +215,43 @@ export default function TrialBalance() {
                   const op = r.openingBalance ?? 0;
                   const cl = r.closingBalance ?? 0;
                   return (
-                    <tr key={r.id} className="border-b hover:bg-muted/30 transition-colors">
-                      <td className="px-4 py-2.5 font-mono text-xs text-primary">{r.code}</td>
-                      <td className="px-4 py-2.5">{isRtl ? r.nameAr : (r.nameEn || r.nameAr)}</td>
-                      <td className="px-4 py-2.5 text-muted-foreground text-xs">{TYPE_LABELS[r.accountType] ?? r.accountType}</td>
-                      <td className="px-4 py-2.5 text-end font-mono text-blue-700 border-s bg-amber-50/40">{op > 0 ? fmt(op) : ""}</td>
-                      <td className="px-4 py-2.5 text-end font-mono text-rose-700 border-e bg-amber-50/40">{op < 0 ? fmt(-op) : ""}</td>
-                      <td className="px-4 py-2.5 text-end font-mono text-blue-700">{fmt(r.totalDebit)}</td>
-                      <td className="px-4 py-2.5 text-end font-mono text-rose-700">{fmt(r.totalCredit)}</td>
-                      <td className="px-4 py-2.5 text-end font-mono text-blue-700 border-s bg-emerald-50/40">{cl > 0 ? fmt(cl) : ""}</td>
-                      <td className="px-4 py-2.5 text-end font-mono text-rose-700 border-e bg-emerald-50/40">{cl < 0 ? fmt(-cl) : ""}</td>
+                    <tr key={r.id} className="hover:bg-muted/30 transition-colors group">
+                      <td className="px-4 py-2.5 font-mono text-xs text-primary border-b">{r.code}</td>
+                      <td className="px-4 py-2.5 border-b">{isRtl ? r.nameAr : (r.nameEn || r.nameAr)}</td>
+                      <td className="px-4 py-2.5 text-muted-foreground text-xs border-b">{TYPE_LABELS[r.accountType] ?? r.accountType}</td>
+
+                      <td className="w-1 p-0 bg-amber-200/70 border-b border-amber-200 group-hover:bg-amber-300" />
+                      <td className="px-4 py-2.5 text-end font-mono text-blue-700 bg-amber-50/40 border-b">{op > 0 ? fmt(op) : ""}</td>
+                      <td className="px-4 py-2.5 text-end font-mono text-rose-700 bg-amber-50/40 border-b">{op < 0 ? fmt(-op) : ""}</td>
+                      <td className="w-1 p-0 bg-slate-200/70 border-b border-slate-200 group-hover:bg-slate-300" />
+
+                      <td className="px-4 py-2.5 text-end font-mono text-blue-700 bg-slate-50/40 border-b">{fmt(r.totalDebit)}</td>
+                      <td className="px-4 py-2.5 text-end font-mono text-rose-700 bg-slate-50/40 border-b">{fmt(r.totalCredit)}</td>
+
+                      <td className="w-1 p-0 bg-emerald-200/70 border-b border-emerald-200 group-hover:bg-emerald-300" />
+                      <td className="px-4 py-2.5 text-end font-mono text-blue-700 bg-emerald-50/40 border-b">{cl > 0 ? fmt(cl) : ""}</td>
+                      <td className="px-4 py-2.5 text-end font-mono text-rose-700 bg-emerald-50/40 border-b">{cl < 0 ? fmt(-cl) : ""}</td>
+                      <td className="w-1 p-0 bg-emerald-200/70 border-b border-emerald-200 group-hover:bg-emerald-300" />
                     </tr>
                   );
                 })}
               </tbody>
               <tfoot>
-                <tr className="bg-muted/60 font-bold border-t-2 text-sm">
-                  <td colSpan={3} className="px-4 py-3">{t("accountingReports.total")}</td>
-                  <td className="px-4 py-3 text-end font-mono text-blue-700 border-s bg-amber-50/60">{fmtAbs(openDrTot)}</td>
-                  <td className="px-4 py-3 text-end font-mono text-rose-700 border-e bg-amber-50/60">{fmtAbs(openCrTot)}</td>
-                  <td className="px-4 py-3 text-end font-mono text-blue-700">{fmtAbs(totalDr)}</td>
-                  <td className="px-4 py-3 text-end font-mono text-rose-700">{fmtAbs(totalCr)}</td>
-                  <td className="px-4 py-3 text-end font-mono text-blue-700 border-s bg-emerald-50/60">{fmtAbs(closeDrTot)}</td>
-                  <td className="px-4 py-3 text-end font-mono text-rose-700 border-e bg-emerald-50/60">{fmtAbs(closeCrTot)}</td>
+                <tr className="bg-muted/60 font-bold text-sm">
+                  <td colSpan={3} className="px-4 py-3 border-t-2 border-slate-400">{t("accountingReports.total")}</td>
+
+                  <td className="w-1 p-0 bg-gradient-to-t from-amber-300 to-amber-400 border-t-2 border-amber-400" />
+                  <td className="px-4 py-3 text-end font-mono text-blue-700 bg-amber-100/70 border-t-2 border-amber-400">{fmtAbs(openDrTot)}</td>
+                  <td className="px-4 py-3 text-end font-mono text-rose-700 bg-amber-100/70 border-t-2 border-amber-400">{fmtAbs(openCrTot)}</td>
+                  <td className="w-1 p-0 bg-gradient-to-t from-amber-300 via-slate-300 to-slate-400 border-t-2 border-slate-400" />
+
+                  <td className="px-4 py-3 text-end font-mono text-blue-700 bg-slate-100/70 border-t-2 border-slate-400">{fmtAbs(totalDr)}</td>
+                  <td className="px-4 py-3 text-end font-mono text-rose-700 bg-slate-100/70 border-t-2 border-slate-400">{fmtAbs(totalCr)}</td>
+
+                  <td className="w-1 p-0 bg-gradient-to-t from-slate-300 via-emerald-300 to-emerald-400 border-t-2 border-emerald-400" />
+                  <td className="px-4 py-3 text-end font-mono text-blue-700 bg-emerald-100/70 border-t-2 border-emerald-400">{fmtAbs(closeDrTot)}</td>
+                  <td className="px-4 py-3 text-end font-mono text-rose-700 bg-emerald-100/70 border-t-2 border-emerald-400">{fmtAbs(closeCrTot)}</td>
+                  <td className="w-1 p-0 bg-gradient-to-t from-emerald-300 to-emerald-400 border-t-2 border-emerald-400" />
                 </tr>
               </tfoot>
             </table>
