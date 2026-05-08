@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Search, Factory, Edit3, Trash2, Save, X, Power, PowerOff,
@@ -70,19 +71,30 @@ export default function WorkCenters() {
     }
   }
 
+  // Lookups (accounts, cost-centers) come from other screens — refresh on focus
+  // so newly-created entries show up without manual refresh.
+  const loadLookups = useCallback(async () => {
+    if (!token) return;
+    const h = { Authorization: `Bearer ${token}` };
+    try {
+      const [ac, cc] = await Promise.all([
+        fetch(`${API}/api/accounts?limit=2000`, { headers: h }).then((r) => (r.ok ? r.json() : [])),
+        fetch(`${API}/api/cost-centers`, { headers: h }).then((r) => (r.ok ? r.json() : [])),
+      ]);
+      setAccounts(Array.isArray(ac) ? ac : ac?.rows ?? []);
+      setCostCenters(Array.isArray(cc) ? cc : cc?.rows ?? []);
+    } catch {
+      /* silent */
+    }
+  }, [token]);
+  useRefetchOnFocus(loadLookups);
+
   useEffect(() => {
     if (!token) return;
     void load();
-    const h = { Authorization: `Bearer ${token}` };
-    void Promise.all([
-      fetch(`${API}/api/accounts?limit=2000`, { headers: h }).then((r) => (r.ok ? r.json() : [])),
-      fetch(`${API}/api/cost-centers`, { headers: h }).then((r) => (r.ok ? r.json() : [])),
-    ]).then(([ac, cc]) => {
-      setAccounts(Array.isArray(ac) ? ac : ac?.rows ?? []);
-      setCostCenters(Array.isArray(cc) ? cc : cc?.rows ?? []);
-    }).catch(() => {});
+    void loadLookups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, loadLookups]);
 
   useEffect(() => {
     const id = setTimeout(() => { if (token) void load(); }, 300);

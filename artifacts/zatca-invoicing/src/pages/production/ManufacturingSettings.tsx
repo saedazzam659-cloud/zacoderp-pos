@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,6 +63,31 @@ export default function ManufacturingSettings() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiReasons, setAiReasons] = useState<Record<string, string>>({});
 
+  // Lookups (warehouses, accounts, cost-centers) come from other screens.
+  // Wrapped in useCallback so `useRefetchOnFocus` can re-run them when the
+  // tab regains focus → newly-added accounts/warehouses appear here without
+  // a manual refresh.
+  const loadLookups = useCallback(async () => {
+    if (!token) return;
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      const [whR, acR, ccR] = await Promise.all([
+        fetch(`${API}/api/inventory/warehouses`, { headers }),
+        fetch(`${API}/api/accounts?limit=2000`, { headers }),
+        fetch(`${API}/api/cost-centers`, { headers }),
+      ]);
+      const wh = whR.ok ? await whR.json() : [];
+      const ac = acR.ok ? await acR.json() : [];
+      const cc = ccR.ok ? await ccR.json() : [];
+      setWarehouses(Array.isArray(wh) ? wh : (wh.rows ?? []));
+      setAccounts(Array.isArray(ac) ? ac : (ac.rows ?? []));
+      setCostCenters(Array.isArray(cc) ? cc : (cc.rows ?? []));
+    } catch {
+      /* silent — initial mount surfaces errors */
+    }
+  }, [token]);
+  useRefetchOnFocus(loadLookups);
+
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
@@ -69,20 +95,11 @@ export default function ManufacturingSettings() {
       setLoading(true);
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const [whR, acR, ccR, sR] = await Promise.all([
-          fetch(`${API}/api/inventory/warehouses`, { headers }),
-          fetch(`${API}/api/accounts?limit=2000`, { headers }),
-          fetch(`${API}/api/cost-centers`, { headers }),
-          fetch(`${API}/api/production/manufacturing-settings`, { headers }),
-        ]);
-        const wh = whR.ok ? await whR.json() : [];
-        const ac = acR.ok ? await acR.json() : [];
-        const cc = ccR.ok ? await ccR.json() : [];
-        const s  = sR.ok  ? await sR.json()  : null;
+        await loadLookups();
         if (cancelled) return;
-        setWarehouses(Array.isArray(wh) ? wh : (wh.rows ?? []));
-        setAccounts(Array.isArray(ac) ? ac : (ac.rows ?? []));
-        setCostCenters(Array.isArray(cc) ? cc : (cc.rows ?? []));
+        const sR = await fetch(`${API}/api/production/manufacturing-settings`, { headers });
+        const s = sR.ok ? await sR.json() : null;
+        if (cancelled) return;
         if (s) setData({ ...EMPTY, ...s });
       } catch (e: any) {
         toast({ title: "خطأ", description: e?.message, variant: "destructive" });
@@ -91,7 +108,7 @@ export default function ManufacturingSettings() {
       }
     })();
     return () => { cancelled = true; };
-  }, [token, toast]);
+  }, [token, toast, loadLookups]);
 
   async function aiSuggest() {
     setAiBusy(true);
