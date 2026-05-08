@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { useParams, Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -193,22 +194,29 @@ export default function ProductionOrderDetail() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Pull warehouses/accounts/items lookup once for the WIP setup panel.
-  useEffect(() => {
+  // Pull warehouses/accounts/items/work-centers lookup for the WIP setup panel.
+  // Wrapped in useCallback + useRefetchOnFocus so newly-added items, warehouses
+  // or accounts from other screens appear here without a manual refresh.
+  const loadLookups = useCallback(async () => {
     if (!token) return;
     const h = { Authorization: `Bearer ${token}` };
-    void Promise.all([
-      fetch(`${API}/api/inventory/warehouses`, { headers: h }).then((r) => r.ok ? r.json() : []),
-      fetch(`${API}/api/accounts?limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
-      fetch(`${API}/api/inventory/items?limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
-      fetch(`${API}/api/production/work-centers`, { headers: h }).then((r) => r.ok ? r.json() : []),
-    ]).then(([whs, accs, its, wcs]) => {
+    try {
+      const [whs, accs, its, wcs] = await Promise.all([
+        fetch(`${API}/api/inventory/warehouses`, { headers: h }).then((r) => r.ok ? r.json() : []),
+        fetch(`${API}/api/accounts?limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
+        fetch(`${API}/api/inventory/items?limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
+        fetch(`${API}/api/production/work-centers`, { headers: h }).then((r) => r.ok ? r.json() : []),
+      ]);
       setWarehouses(Array.isArray(whs) ? whs : (whs?.rows ?? whs?.data ?? []));
       setAccounts(Array.isArray(accs) ? accs : (accs?.rows ?? accs?.data ?? []));
       setItemRefs(Array.isArray(its) ? its : (its?.rows ?? its?.data ?? []));
       setWorkCenters(Array.isArray(wcs) ? wcs : (wcs?.rows ?? []));
-    }).catch(() => {});
+    } catch {
+      /* silent */
+    }
   }, [token]);
+  useEffect(() => { void loadLookups(); }, [loadLookups]);
+  useRefetchOnFocus(loadLookups);
 
   // Initialize completion form when status reaches quality_check.
   useEffect(() => {

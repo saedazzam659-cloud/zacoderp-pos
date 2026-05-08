@@ -77,17 +77,16 @@ export default function BomTemplateEditor() {
   }, [token]);
   useRefetchOnFocus(loadItems);
 
-  // Load items + (optionally) the existing template
+  // Load items + (optionally) the existing template — reuses `loadItems`
+  // so item-fetch logic lives in exactly one place.
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
     (async () => {
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const itemsR = await fetch(`${API}/api/inventory/items?includeHidden=1&limit=5000`, { headers });
-        const itemsJ = itemsR.ok ? await itemsR.json() : [];
-        const all: Item[] = Array.isArray(itemsJ) ? itemsJ : (itemsJ.rows ?? []);
-        if (!cancelled) setItems(all);
+        await loadItems();
+        if (cancelled) return;
 
         if (!isNew && id) {
           const tR = await fetch(`${API}/api/production/bom-templates/${id}`, { headers });
@@ -119,7 +118,7 @@ export default function BomTemplateEditor() {
       }
     })();
     return () => { cancelled = true; };
-  }, [token, id, isNew, toast]);
+  }, [token, id, isNew, toast, loadItems]);
 
   const fgItems = useMemo(
     () => items.filter(i => !i.itemNature || FG_NATURES.has(i.itemNature)),
