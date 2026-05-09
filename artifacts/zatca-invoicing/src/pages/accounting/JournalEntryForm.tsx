@@ -996,9 +996,41 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
               <BookOpen className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-lg font-bold">{isNew ? "قيد جديد" : "تعديل القيد"}</h1>
+              <h1 className="text-lg font-bold flex items-center gap-2">
+                {isNew ? "قيد جديد" : "تعديل القيد"}
+                {/* Prominent doc-number badge — shown for both new and
+                    existing entries so the user always knows which
+                    document they're working on without hunting in the
+                    fields. For new entries it shows the upcoming
+                    sequence number (peeked, not consumed). */}
+                {(() => {
+                  const num = !isNew
+                    ? (existing?.docNumber ?? (editId ? `#${editId}` : null))
+                    : (docNumber || (seqPeek.loading ? "…" : null));
+                  if (!num) return null;
+                  return (
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-sm font-mono font-semibold tabular-nums",
+                        isNew
+                          ? "bg-gradient-to-l from-emerald-50 to-teal-50 border-emerald-300 text-emerald-700 dark:from-emerald-950/30 dark:to-teal-950/30 dark:border-emerald-800 dark:text-emerald-300"
+                          : "bg-gradient-to-l from-blue-50 to-indigo-50 border-blue-300 text-blue-700 dark:from-blue-950/30 dark:to-indigo-950/30 dark:border-blue-800 dark:text-blue-300",
+                      )}
+                      title={isNew ? "الرقم القادم — سيُحجز عند الحفظ" : "رقم القيد الحالي"}
+                      data-testid="badge-doc-number"
+                    >
+                      {isNew && <Sparkles className="h-3 w-3" />}
+                      {num}
+                    </span>
+                  );
+                })()}
+              </h1>
               <p className="text-xs text-muted-foreground">
-                {isNew ? "إنشاء قيد يومية جديد" : `تعديل القيد رقم ${existing?.docNumber ?? editId}`}
+                {isNew
+                  ? (seqPeek.hasSequence && docNumber
+                      ? `الرقم القادم تلقائياً: ${docNumber} — سيُحجز عند الحفظ`
+                      : "إنشاء قيد يومية جديد")
+                  : `تعديل القيد رقم ${existing?.docNumber ?? editId}`}
               </p>
             </div>
           </div>
