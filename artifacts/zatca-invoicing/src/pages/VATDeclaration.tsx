@@ -708,20 +708,37 @@ export default function VATDeclaration() {
                     <th className="px-5 py-2.5 text-right">{t("vatDeclaration.colDescription")}</th>
                     <th className="px-5 py-2.5 text-left w-40 border-r border-border/50">{t("vatDeclaration.colJEOutputVat")}</th>
                     <th className="px-5 py-2.5 text-left w-40">{t("vatDeclaration.colJEInputVat")}</th>
+                    <th className="w-12 px-2 py-2.5 no-print"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {data.journalAdjustments.entries.map((e, idx) => (
-                    <tr key={e.id} className="border-b border-border/40 text-sm hover:bg-muted/30">
+                    <tr key={e.id} className="border-b border-border/40 text-sm hover:bg-muted/30 group">
                       <td className="w-10 px-3 py-3 text-center text-xs text-muted-foreground font-medium">{idx + 1}</td>
                       <td className="px-5 py-3 tabular-nums">{fmtDate(e.entryDate)}</td>
-                      <td className="px-5 py-3 font-mono text-xs">{e.docNumber ?? "—"}</td>
+                      <td className="px-5 py-3 font-mono text-xs">
+                        <Link href={`/accounting/journals/${e.id}`}>
+                          <a className="text-primary hover:underline decoration-dotted underline-offset-4" title="فتح القيد المحاسبي">
+                            {e.docNumber ?? `#${e.id}`}
+                          </a>
+                        </Link>
+                      </td>
                       <td className="px-5 py-3 text-muted-foreground">{e.description ?? "—"}</td>
                       <td className="px-5 py-3 text-left border-r border-border/40 tabular-nums font-mono text-sm">
                         {Math.abs(e.outputVat) > 0.005 ? fmtNum(e.outputVat) : <span className="text-muted-foreground">—</span>}
                       </td>
                       <td className="px-5 py-3 text-left tabular-nums font-mono text-sm">
                         {Math.abs(e.inputVat) > 0.005 ? fmtNum(e.inputVat) : <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className="px-2 py-3 text-center no-print">
+                        <Link href={`/accounting/journals/${e.id}`}>
+                          <a
+                            className="inline-flex h-7 w-7 items-center justify-center rounded text-primary/60 hover:text-primary hover:bg-primary/10 transition-colors"
+                            title="فتح القيد المحاسبي"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        </Link>
                       </td>
                     </tr>
                   ))}
@@ -734,6 +751,7 @@ export default function VATDeclaration() {
                     <td className="px-5 py-3 text-left tabular-nums font-mono">
                       {fmtNum(data.journalAdjustments.inputVat)}
                     </td>
+                    <td className="px-2 py-3 no-print" />
                   </tr>
                 </tbody>
               </table>
