@@ -334,7 +334,10 @@ export default function JournalEntryForm() {
     setLines(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l));
   }
   function addLine() {
-    const l = newLine();
+    // Inherit the general description so a newly-added line is consistent
+    // with all the others — the user explicitly asked the البيان العام to
+    // appear on every row, even when adding more rows after the fact.
+    const l = { ...newLine(), description: description || "" };
     setLines(prev => [...prev, l]);
     setFocusLineId(l.id);
   }
@@ -648,21 +651,31 @@ export default function JournalEntryForm() {
   const saveMutation = useMutation({
     mutationFn: (data: any) =>
       isNew ? journalEntriesApi.create(data) : journalEntriesApi.update(editId!, data),
-    onSuccess: () => {
+    onSuccess: (saved: any) => {
       qc.invalidateQueries({ queryKey: ["journal-entries", cid] });
-      // The toast title reflects whether the auto-print preference for
-      // journal entries actually fires below. Posting is not part of
-      // the JE save flow (handled separately from the list), so we
-      // never set `posted: true` here.
-      toast({ title: getSaveToastTitle(t, { posted: false, printed: autoPrintJournal }) });
+      // Show the freshly-issued doc number prominently in the toast so the
+      // user sees confirmation of what was created without leaving the form.
+      const savedDoc = saved?.docNumber ?? docNumber;
+      const baseTitle = getSaveToastTitle(t, { posted: false, printed: autoPrintJournal });
+      toast({
+        title: baseTitle,
+        description: savedDoc ? `رقم القيد: ${savedDoc}` : undefined,
+      });
       if (autoPrintJournal) {
         // Fire the print popup synchronously off the user-initiated save
         // click so the browser's pop-up blocker still treats it as
-        // user-allowed. We do this *before* navigating away so the
-        // entry's lines are still in scope for the HTML builder.
+        // user-allowed. We do this *before* navigating so the entry's
+        // lines are still in scope for the HTML builder.
         try { openEntryPrintWindow(journalTemplate); } catch { /* swallow popup-blocker noise */ }
       }
-      navigate("/accounting/journals");
+      // Keep the form open after save instead of going back to the list.
+      // For a brand-new entry, switch to the saved entry's edit URL so the
+      // newly-issued doc number, id and any server-side defaults become
+      // visible — the user can keep working (edit, print, post) without
+      // an extra round-trip through the list page.
+      if (isNew && saved?.id) {
+        navigate(`/accounting/journals/${saved.id}`, { replace: true });
+      }
     },
     onError: (e: any) => {
       // 423 → period is locked. Show a dedicated, action-oriented title so
