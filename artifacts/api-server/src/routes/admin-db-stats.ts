@@ -130,20 +130,20 @@ router.get("/by-company", requireSuperAdmin, async (_req, res) => {
     const tables = tablesRes.rows.map((r) => r.table_name);
 
     // 2) Get per-table total size + total row count (live count via reltuples).
-    const sizesRes = await db.execute<{
-      table_name: string;
-      total_bytes: string;
-      total_rows: string;
-    }>(sql`
-      SELECT relname                        AS table_name,
-             pg_total_relation_size(c.oid)  AS total_bytes,
-             reltuples::bigint              AS total_rows
-        FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE c.relkind = 'r'
-         AND n.nspname = 'public'
-         AND relname = ANY(${tables})
-    `);
+    // Build IN (...) via sql.join — drizzle's tag spreads JS arrays into
+    // separate $1,$2,... params, so ANY($1) on a text[] won't work.
+    const sizesRes = tables.length === 0
+      ? { rows: [] as { table_name: string; total_bytes: string; total_rows: string }[] }
+      : await db.execute<{ table_name: string; total_bytes: string; total_rows: string }>(sql`
+          SELECT relname                        AS table_name,
+                 pg_total_relation_size(c.oid)  AS total_bytes,
+                 reltuples::bigint              AS total_rows
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE c.relkind = 'r'
+             AND n.nspname = 'public'
+             AND relname IN (${sql.join(tables.map((t) => sql`${t}`), sql`, `)})
+        `);
     const sizeByTable = new Map<string, { bytes: number; rows: number }>();
     for (const r of sizesRes.rows) {
       sizeByTable.set(r.table_name, {
