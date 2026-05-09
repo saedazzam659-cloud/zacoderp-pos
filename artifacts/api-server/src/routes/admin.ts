@@ -752,7 +752,11 @@ router.post("/licenses", requireSuperAdmin, async (req, res) => {
     if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
 
     const plan         = body.plan          ?? "professional";
-    const billingCycle = body.billingCycle  ?? "monthly";
+    // Accept legacy "annual" from older subscriptions and normalize to
+    // "yearly" — matches PUT /subscriptions/:id behavior. Without this,
+    // editing any old license stored with billingCycle="annual" would 400
+    // even when the user didn't change the cycle.
+    const billingCycle = (body.billingCycle === "annual" ? "yearly" : (body.billingCycle ?? "monthly"));
     if (!ALLOWED_PLANS.has(plan))    { res.status(400).json({ error: "باقة غير معروفة" }); return; }
     if (!ALLOWED_CYCLES.has(billingCycle)) { res.status(400).json({ error: "دورة فوترة غير صالحة" }); return; }
 
