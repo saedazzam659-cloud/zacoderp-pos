@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,9 +10,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
   FileText, Printer, CalendarRange, Building2, AlertCircle,
   Hash, BadgePercent, ReceiptText, ArrowDownToLine, ArrowUpFromLine,
-  Scale, BookOpen, Search, Sparkles, History,
+  Scale, BookOpen, Search, Sparkles, History, ExternalLink, Eye, Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
