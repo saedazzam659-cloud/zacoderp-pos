@@ -767,7 +767,24 @@ export default function JournalEntryForm() {
     String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 
   const printableLines = lines.filter(l => l.accountId);
-  const docLabel = existing?.docNumber ?? (editId ? `QYD-${String(editId).padStart(4, "0")}` : "—");
+  // For new (unsaved) entries we still want a meaningful label on the
+  // printout — fall back to the manually-typed docNumber, the central
+  // sequence peek, or the predicted QYD-XXXX from the loaded list, in
+  // that order. Only when none of these exist do we show "(غير محفوظ)".
+  const _maxNavId = navList.reduce(
+    (m: number, e: any) => Math.max(m, Number(e?.id) || 0), 0,
+  );
+  const _predictedQyd = _maxNavId > 0 ? `QYD-${String(_maxNavId + 1).padStart(4, "0")}` : null;
+  const docLabel =
+    existing?.docNumber
+    ?? (editId ? `QYD-${String(editId).padStart(4, "0")}` : null)
+    ?? (docNumber || null)
+    ?? _predictedQyd
+    ?? "(غير محفوظ)";
+  // Visual marker so the printed copy clearly says it's a draft when
+  // the JE hasn't been saved yet — protects against using it as a
+  // formal accounting record before it's persisted.
+  const isDraftPrint = isNew;
   const typeLabel = ENTRY_TYPES.find(t => t.value === entryType)?.label ?? entryType;
   const branchLabel = branches.find((b: any) => String(b.id) === String(branchId))?.nameAr ?? "—";
 
@@ -846,7 +863,7 @@ body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#000
 <button class="print-btn" onclick="window.print()">طباعة / حفظ PDF</button>
 ${logoHtml}
 ${user?.company?.nameAr ? `<div class="center bold" style="font-size:13px;">${escapeHtml(user.company.nameAr)}</div>` : ""}
-<div class="h2">قيد محاسبي</div>
+<div class="h2">قيد محاسبي${isDraftPrint ? " — مسودة" : ""}</div>
 <div class="row"><span>رقم القيد</span><span class="bold">${escapeHtml(docLabel)}</span></div>
 <div class="row"><span>التاريخ</span><span class="bold">${escapeHtml(entryDate)}</span></div>
 <div class="row"><span>النوع</span><span class="bold">${escapeHtml(typeLabel)}</span></div>
@@ -928,8 +945,9 @@ tfoot td { background:#eef2ff; font-weight:700; padding:8px; border:1px solid #1
   ${logoHtml}
   ${companyNameHtml}
   <h1>قيد محاسبي — ${escapeHtml(docLabel)}</h1>
-  <div class="meta">طُبع في ${today}</div>
+  <div class="meta">طُبع في ${today}${isDraftPrint ? " — <span style=\"color:#b91c1c;font-weight:700;\">مسودة (غير محفوظ)</span>" : ""}</div>
 </div>
+${isDraftPrint ? `<div style="position:fixed;top:40%;left:0;right:0;text-align:center;font-size:90px;font-weight:900;color:rgba(185,28,28,0.10);transform:rotate(-22deg);pointer-events:none;letter-spacing:8px;z-index:0;">مسودة • DRAFT</div>` : ""}
 <div class="info">
   <div><div class="lbl">رقم القيد</div><div class="val">${escapeHtml(docLabel)}</div></div>
   <div><div class="lbl">التاريخ</div><div class="val">${escapeHtml(entryDate)}</div></div>
@@ -1651,12 +1669,15 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
           variant="outline"
           onClick={() => {
             // Print-only path: never touches saveMutation. The print
-            // window builds its layout from the loaded `existing` row,
-            // so a brand-new (unsaved) entry has nothing to print yet.
-            if (isNew) {
+            // window builds its layout from current form state, so it
+            // works for unsaved entries too — a "مسودة" watermark is
+            // added so the user can't mistake it for a posted record.
+            // We only require at least one line with an account.
+            if (printableLines.length === 0) {
               toast({
-                title: "احفظ القيد أولاً قبل الطباعة",
-                description: "يصبح زر الطباعة فعّالاً بعد حفظ القيد مرة واحدة.",
+                title: "لا يمكن الطباعة",
+                description: "أضف سطراً واحداً على الأقل واختر له حساباً قبل الطباعة.",
+                variant: "destructive",
               });
               return;
             }
