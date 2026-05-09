@@ -1011,12 +1011,24 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
               This is what the user references when transcribing
               the JE number onto paper documents. */}
           {(() => {
+            // Predict the next QYD-XXXX from the loaded entry list when
+            // no central sequence is configured — that mirrors the
+            // server-side fallback (`QYD-${id}`) so the user sees a
+            // realistic upcoming number instead of a generic "تلقائي".
+            const maxId = navList.reduce(
+              (m: number, e: any) => Math.max(m, Number(e?.id) || 0), 0,
+            );
+            const predictedQyd = maxId > 0 ? `QYD-${String(maxId + 1).padStart(4, "0")}` : null;
             const num = !isNew
               ? (existing?.docNumber ?? (editId ? `QYD-${String(editId).padStart(4, "0")}` : null))
               : (docNumber
                   || (seqPeek.loading ? "…" : null)
+                  || predictedQyd
                   || (seqPeek.hasSequence ? "…" : "تلقائي"));
             if (!num) return null;
+            // Mark predicted numbers visually so the user knows it's an
+            // estimate (the server has the final word at save time).
+            const isPredicted = isNew && !docNumber && num === predictedQyd;
             const copyable = num !== "…" && num !== "تلقائي";
             const onCopy = async () => {
               if (!copyable) return;
@@ -1050,7 +1062,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                     isNew ? "text-emerald-600 dark:text-emerald-400"
                           : "text-blue-600 dark:text-blue-400",
                   )}>
-                    {isNew ? "الرقم القادم" : "رقم القيد"}
+                    {isNew ? (isPredicted ? "الرقم القادم (تقديري)" : "الرقم القادم") : "رقم القيد"}
                   </span>
                   <span
                     className={cn(
