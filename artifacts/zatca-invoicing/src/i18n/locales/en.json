@@ -4920,7 +4920,14 @@
       "toastError": "Save failed",
       "errLoadCompanies": "Failed to load companies",
       "errLoadSettings": "Failed to load POS settings",
-      "errSave": "Failed to save"
+      "errSave": "Failed to save",
+      "aiSuggest": "AI Suggest",
+      "aiBusy": "Analyzing…",
+      "aiToastTitle": "Suggested {{count}} of {{total}} payment methods",
+      "aiToastDesc": "Review the suggestions below then click Save.",
+      "aiNoSuggestions": "AI couldn't suggest any values",
+      "aiNoSuggestionsDesc": "Add cash boxes and bank accounts first, then retry.",
+      "aiReasonsTitle": "Suggestion Reasons"
     }
   },
   "inventoryMaster": {

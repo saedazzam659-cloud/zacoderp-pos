@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Banknote, CreditCard, Smartphone, Wallet, Save, Loader2, Building2, Info, Check, ChevronsUpDown, X } from "lucide-react";
+import { Banknote, CreditCard, Smartphone, Wallet, Save, Loader2, Building2, Info, Check, ChevronsUpDown, X, Sparkles } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -177,9 +177,41 @@ export default function PosSettings() {
   const [draft, setDraft] = useState<Settings>({
     posCashCashBoxId: null, posCardBankAccountId: null, posAppleBankAccountId: null, posWalletBankAccountId: null,
   });
+  const [aiReasons, setAiReasons] = useState<Record<string, string>>({});
   useEffect(() => {
     if (settingsQ.data) setDraft(settingsQ.data);
   }, [settingsQ.data]);
+
+  const aiSuggestMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API}/api/companies/${companyId}/pos-settings/ai-suggest`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      return j.suggestions ?? {};
+    },
+    onSuccess: (sug: any) => {
+      const patch: Partial<Settings> = {};
+      const reasons: Record<string, string> = {};
+      let filled = 0;
+      const KEYS = ["posCashCashBoxId", "posCardBankAccountId", "posAppleBankAccountId", "posWalletBankAccountId"] as const;
+      for (const k of KEYS) {
+        const v = sug[k];
+        if (v && typeof v.id === "number") { (patch as any)[k] = v.id; filled++; }
+        if (v?.reason) reasons[k] = v.reason;
+      }
+      setDraft(d => ({ ...d, ...patch }));
+      setAiReasons(reasons);
+      toast({
+        title: filled > 0 ? `✓ ${tr("aiToastTitle", { count: filled, total: KEYS.length })}` : tr("aiNoSuggestions"),
+        description: filled > 0 ? tr("aiToastDesc") : tr("aiNoSuggestionsDesc"),
+      });
+    },
+    onError: (e: any) => toast({ title: tr("toastError"), description: e?.message, variant: "destructive" }),
+  });
 
   const saveMut = useMutation({
     mutationFn: async () => {
@@ -345,11 +377,33 @@ export default function PosSettings() {
           </Card>
 
           <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => aiSuggestMut.mutate()}
+              disabled={aiSuggestMut.isPending || saveMut.isPending || ((cashBoxesQ.data?.length ?? 0) + (bankAccountsQ.data?.length ?? 0) === 0)}
+              data-testid="btn-ai-suggest-pos"
+              className="border-violet-300 text-violet-700 hover:bg-violet-50"
+            >
+              <Sparkles className={`w-4 h-4 me-1 ${aiSuggestMut.isPending ? "animate-pulse" : ""}`} />
+              {aiSuggestMut.isPending ? tr("aiBusy") : tr("aiSuggest")}
+            </Button>
             <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending} data-testid="btn-save">
               {saveMut.isPending ? <Loader2 className="w-4 h-4 animate-spin me-1" /> : <Save className="w-4 h-4 me-1" />}
               {tr("saveSettings")}
             </Button>
           </div>
+          {Object.keys(aiReasons).length > 0 && (
+            <Card className="border-violet-200 bg-violet-50">
+              <CardContent className="p-4 text-sm text-violet-900 space-y-1">
+                <div className="font-bold flex items-center gap-1"><Sparkles className="w-4 h-4" />{tr("aiReasonsTitle")}</div>
+                {aiReasons.posCashCashBoxId       && <div>• <strong>{tr("methodCashTitle")}:</strong> {aiReasons.posCashCashBoxId}</div>}
+                {aiReasons.posCardBankAccountId   && <div>• <strong>{tr("methodCardTitle")}:</strong> {aiReasons.posCardBankAccountId}</div>}
+                {aiReasons.posAppleBankAccountId  && <div>• <strong>{tr("methodAppleTitle")}:</strong> {aiReasons.posAppleBankAccountId}</div>}
+                {aiReasons.posWalletBankAccountId && <div>• <strong>{tr("methodWalletTitle")}:</strong> {aiReasons.posWalletBankAccountId}</div>}
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
     </div>

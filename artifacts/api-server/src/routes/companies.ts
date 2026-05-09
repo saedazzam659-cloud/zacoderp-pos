@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable } from "@workspace/db";
-import { eq, and, isNull } from "drizzle-orm";
+import { companiesTable, usersTable, subscriptionsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, cashBoxesTable, bankAccountsTable, accountsTable } from "@workspace/db";
+import { eq, and, isNull, asc } from "drizzle-orm";
 import { CreateCompanyBody, UpdateCompanyBody } from "@workspace/api-zod";
 import { extractAuth } from "../middleware/auth.js";
 import { requirePermission, audit } from "../middleware/permissions.js";
@@ -336,6 +336,121 @@ router.patch("/:id/pos-settings", extractAuth, async (req, res) => {
     posAppleBankAccountId:  company.posAppleBankAccountId,
     posWalletBankAccountId: company.posWalletBankAccountId,
   });
+});
+
+// POST /:id/pos-settings/ai-suggest — AI suggests cashbox + bank accounts for each POS payment method.
+router.post("/:id/pos-settings/ai-suggest", extractAuth, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) { res.status(400).json({ error: "معرّف الشركة غير صالح" }); return; }
+  if (!authorizePosSettings(req, res, id)) return;
+
+  const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+  const OPENAI_KEY = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+  if (!OPENAI_BASE || !OPENAI_KEY) {
+    res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير متاحة" });
+    return;
+  }
+
+  try {
+    const [cashBoxes, bankAccounts, accounts] = await Promise.all([
+      db.select({
+        id: cashBoxesTable.id, code: cashBoxesTable.code, nameAr: cashBoxesTable.nameAr,
+        nameEn: cashBoxesTable.nameEn, accountId: cashBoxesTable.accountId, isActive: cashBoxesTable.isActive,
+      }).from(cashBoxesTable).where(eq(cashBoxesTable.companyId, id)).orderBy(asc(cashBoxesTable.code)),
+      db.select({
+        id: bankAccountsTable.id, code: bankAccountsTable.code, nameAr: bankAccountsTable.nameAr,
+        nameEn: bankAccountsTable.nameEn, bankName: bankAccountsTable.bankName,
+        accountId: bankAccountsTable.accountId, isActive: bankAccountsTable.isActive,
+      }).from(bankAccountsTable).where(eq(bankAccountsTable.companyId, id)).orderBy(asc(bankAccountsTable.code)),
+      db.select({
+        id: accountsTable.id, code: accountsTable.code, nameAr: accountsTable.nameAr,
+      }).from(accountsTable).where(eq(accountsTable.companyId, id)),
+    ]);
+
+    const cbs = cashBoxes.filter((c) => c.isActive).slice(0, 80);
+    const bas = bankAccounts.filter((b) => b.isActive).slice(0, 80);
+    if (cbs.length === 0 && bas.length === 0) {
+      res.status(400).json({ error: "لا توجد صناديق نقدية أو حسابات بنكية معرّفة" });
+      return;
+    }
+    const accMap = new Map(accounts.map((a) => [a.id, a]));
+    const fmt = (ar: string, en: string | null | undefined) => en ? ar + " / " + en : ar;
+    const accLabel = (accId: number | null | undefined) => {
+      if (!accId) return "(بدون حساب محاسبي)";
+      const a = accMap.get(accId);
+      return a ? a.code + " — " + a.nameAr : "(بدون حساب محاسبي)";
+    };
+
+    const cbList = cbs.length
+      ? cbs.map((c) => c.id + "|" + c.code + "|" + fmt(c.nameAr, c.nameEn) + "|" + accLabel(c.accountId)).join("\n")
+      : "(لا توجد صناديق نقدية)";
+    const baList = bas.length
+      ? bas.map((b) => b.id + "|" + b.code + "|" + fmt(b.nameAr, b.nameEn) + (b.bankName ? " (" + b.bankName + ")" : "") + "|" + accLabel(b.accountId)).join("\n")
+      : "(لا توجد حسابات بنكية)";
+
+    const systemPrompt = "أنت خبير عمليات نقاط البيع في السعودية. ستحصل على قائمة الصناديق النقدية والحسابات البنكية للشركة. مهمتك: اختيار أنسب وجهة لكل طريقة دفع POS. قواعد:\n" +
+      "- posCashCashBoxId: id من قائمة الصناديق النقدية فقط (للنقد المباشر).\n" +
+      "- posCardBankAccountId / posAppleBankAccountId / posWalletBankAccountId: id من قائمة الحسابات البنكية فقط (مدى/فيزا/Apple Pay/STC Pay).\n" +
+      "- فضّل الحسابات التي اسمها يدل على نقاط البيع/الشبكة/Apple Pay/المحفظة. إن لم يوجد تطابق واضح، اختر أول حساب بنكي عام نشط.\n" +
+      "- إن لم توجد قائمة (فارغة)، أعد null.\n" +
+      "ردّ بصيغة JSON فقط بهذا الشكل:\n" +
+      "{\n" +
+      '  "posCashCashBoxId":       { "id": <number|null>, "reason": "<سبب قصير بالعربية>" },\n' +
+      '  "posCardBankAccountId":   { "id": <number|null>, "reason": "..." },\n' +
+      '  "posAppleBankAccountId":  { "id": <number|null>, "reason": "..." },\n' +
+      '  "posWalletBankAccountId": { "id": <number|null>, "reason": "..." }\n' +
+      "}";
+    const userMsg =
+      "الصناديق النقدية (id|code|name|account):\n" + cbList +
+      "\n\nالحسابات البنكية (id|code|name|account):\n" + baList;
+
+    const r = await fetch(OPENAI_BASE + "/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + OPENAI_KEY },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        max_completion_tokens: 800,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMsg },
+        ],
+      }),
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      res.status(502).json({ error: "فشل الذكاء الاصطناعي: " + r.status + " " + txt.slice(0, 200) });
+      return;
+    }
+    const data: any = await r.json();
+    const content: string = data?.choices?.[0]?.message?.content ?? "{}";
+    let parsed: any = {};
+    try { parsed = JSON.parse(content); } catch { /* ignore */ }
+
+    const validCb = new Set(cbs.map((c) => c.id));
+    const validBa = new Set(bas.map((b) => b.id));
+    const out: Record<string, { id: number | null; reason: string; label?: string }> = {};
+
+    const pickFrom = (key: string, validSet: Set<number>, list: typeof cbs | typeof bas) => {
+      const v = parsed?.[key] ?? {};
+      const numId = Number.isFinite(Number(v?.id)) ? Number(v.id) : null;
+      const okId = numId && validSet.has(numId) ? numId : null;
+      const row = okId ? list.find((x) => x.id === okId) : undefined;
+      out[key] = {
+        id: okId,
+        reason: String(v?.reason ?? ""),
+        label: row ? fmt(row.nameAr, row.nameEn) : undefined,
+      };
+    };
+    pickFrom("posCashCashBoxId",       validCb, cbs);
+    pickFrom("posCardBankAccountId",   validBa, bas);
+    pickFrom("posAppleBankAccountId",  validBa, bas);
+    pickFrom("posWalletBankAccountId", validBa, bas);
+
+    res.json({ suggestions: out, source: "ai" });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "AI suggestion failed" });
+  }
 });
 
 // DELETE /:id — SOFT delete. Sets companies.deletedAt and deactivates every

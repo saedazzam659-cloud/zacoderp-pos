@@ -5049,7 +5049,14 @@
       "toastError": "خطأ في الحفظ",
       "errLoadCompanies": "فشل تحميل الشركات",
       "errLoadSettings": "فشل تحميل إعدادات نقاط البيع",
-      "errSave": "فشل الحفظ"
+      "errSave": "فشل الحفظ",
+      "aiSuggest": "اقتراح بالذكاء الاصطناعي",
+      "aiBusy": "يحلّل…",
+      "aiToastTitle": "تم اقتراح {{count}} من {{total}} طرق دفع",
+      "aiToastDesc": "راجع الاقتراحات أدناه ثم اضغط حفظ.",
+      "aiNoSuggestions": "لم يتمكن الذكاء الاصطناعي من اقتراح قيم",
+      "aiNoSuggestionsDesc": "أضف صناديق نقدية وحسابات بنكية أولاً ثم أعد المحاولة.",
+      "aiReasonsTitle": "أسباب الاقتراحات"
     }
   },
   "inventoryMaster": {

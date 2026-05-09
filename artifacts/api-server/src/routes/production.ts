@@ -19,6 +19,7 @@ import {
   bomTemplateLinesTable,
   manufacturingSettingsTable,
   workCentersTable,
+  costCentersTable,
   PRODUCTION_ORDER_STATUSES,
   PRODUCTION_STATUS_TRANSITIONS,
   type ProductionOrderStatus,
@@ -1623,33 +1624,36 @@ router.post("/manufacturing-settings/ai-suggest", async (req, res) => {
       res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير متاحة" });
       return;
     }
-    // Pull only postable, active accounts; cap to keep prompt small.
-    const accounts = await db
-      .select({
-        id: accountsTable.id,
-        code: accountsTable.code,
-        nameAr: accountsTable.nameAr,
-        nameEn: accountsTable.nameEn,
-        accountType: accountsTable.accountType,
-        isPosting: accountsTable.isPosting,
-        isActive: accountsTable.isActive,
-      })
-      .from(accountsTable)
-      .where(eq(accountsTable.companyId, cid))
-      .orderBy(asc(accountsTable.code));
-    const candidates = accounts
-      .filter((a) => a.isActive && a.isPosting)
-      .slice(0, 400);
+    // Pull only postable, active accounts + active warehouses + posting cost centers; cap to keep prompt small.
+    const [accounts, warehousesRows, costCentersRows] = await Promise.all([
+      db.select({
+        id: accountsTable.id, code: accountsTable.code, nameAr: accountsTable.nameAr, nameEn: accountsTable.nameEn,
+        accountType: accountsTable.accountType, isPosting: accountsTable.isPosting, isActive: accountsTable.isActive,
+      }).from(accountsTable).where(eq(accountsTable.companyId, cid)).orderBy(asc(accountsTable.code)),
+      db.select({
+        id: warehousesTable.id, code: warehousesTable.code, nameAr: warehousesTable.nameAr,
+        nameEn: warehousesTable.nameEn, isActive: warehousesTable.isActive,
+      }).from(warehousesTable).where(eq(warehousesTable.companyId, cid)).orderBy(asc(warehousesTable.code)),
+      db.select({
+        id: costCentersTable.id, code: costCentersTable.code, nameAr: costCentersTable.nameAr,
+        nameEn: costCentersTable.nameEn, isActive: costCentersTable.isActive, isPosting: costCentersTable.isPosting,
+      }).from(costCentersTable).where(eq(costCentersTable.companyId, cid)).orderBy(asc(costCentersTable.code)),
+    ]);
+    const candidates = accounts.filter((a) => a.isActive && a.isPosting).slice(0, 400);
     if (candidates.length === 0) {
       res.status(400).json({ error: "لا توجد حسابات قابلة للترحيل" });
       return;
     }
-    const list = candidates
-      .map(
-        (a) =>
-          `${a.id}|${a.code}|${a.accountType}|${a.nameAr}${a.nameEn ? ` / ${a.nameEn}` : ""}`,
-      )
-      .join("\n");
+    const whCandidates = warehousesRows.filter((w) => w.isActive).slice(0, 100);
+    const ccCandidates = costCentersRows.filter((c) => c.isActive && c.isPosting).slice(0, 100);
+    const fmtName = (ar: string, en: string | null) => en ? ar + " / " + en : ar;
+    const list = candidates.map((a) => a.id + "|" + a.code + "|" + a.accountType + "|" + fmtName(a.nameAr, a.nameEn)).join("\n");
+    const whList = whCandidates.length
+      ? whCandidates.map((w) => w.id + "|" + w.code + "|" + fmtName(w.nameAr, w.nameEn)).join("\n")
+      : "(لا توجد مخازن)";
+    const ccList = ccCandidates.length
+      ? ccCandidates.map((c) => c.code + "|" + fmtName(c.nameAr, c.nameEn)).join("\n")
+      : "(لا توجد مراكز تكلفة)";
 
     const ROLES: Array<{ key: string; label: string; hint: string }> = [
       { key: "defaultWipAccountId",            label: "WIP — Work In Process",  hint: "أصل: إنتاج تحت التشغيل / بضاعة قيد الصنع" },
@@ -1667,6 +1671,7 @@ router.post("/manufacturing-settings/ai-suggest", async (req, res) => {
 - الأجور/الصناعية غير المباشرة/الفروق/الهالك يجب أن تكون نوع expense.
 - إن لم يوجد حساب مناسب لدور ما، أعد null لذلك الدور.
 - يمكن أن يتكرر نفس الـid في أكثر من دور إن كان مناسباً (نادر).
+- بالإضافة للحسابات، اختر أيضاً: مخزن الخامات (id من قائمة المخازن)، مخزن البضاعة التامة (id من قائمة المخازن)، ومركز التكلفة الافتراضي (code نصي من قائمة مراكز التكلفة) — اختر ما يدل على الإنتاج/التصنيع/المصنع، وأعد null إن لم يوجد مرشح ملائم.
 ردّ بصيغة JSON فقط بهذا الشكل:
 {
   "defaultWipAccountId":            { "id": <number|null>, "reason": "<سبب قصير بالعربية>" },
@@ -1675,13 +1680,18 @@ router.post("/manufacturing-settings/ai-suggest", async (req, res) => {
   "defaultLaborAccountId":          { "id": <number|null>, "reason": "..." },
   "defaultOverheadAccountId":       { "id": <number|null>, "reason": "..." },
   "defaultVarianceAccountId":       { "id": <number|null>, "reason": "..." },
-  "defaultWasteAccountId":          { "id": <number|null>, "reason": "..." }
+  "defaultWasteAccountId":          { "id": <number|null>, "reason": "..." },
+  "defaultRawWarehouseId":          { "id": <number|null>, "reason": "..." },
+  "defaultFinishedWarehouseId":     { "id": <number|null>, "reason": "..." },
+  "defaultCostCenter":              { "code": <string|null>, "reason": "..." }
 }`;
 
     const userMsg =
-      `الأدوار المطلوب اختيار حساب لكل منها:\n` +
-      ROLES.map((r) => `- ${r.key} → ${r.label} (${r.hint})`).join("\n") +
-      `\n\nدليل الحسابات (id|code|type|name):\n${list}`;
+      "الأدوار المحاسبية المطلوبة:\n" +
+      ROLES.map((r) => "- " + r.key + " → " + r.label + " (" + r.hint + ")").join("\n") +
+      "\n\nدليل الحسابات (id|code|type|name):\n" + list +
+      "\n\nالمخازن (id|code|name):\n" + whList +
+      "\n\nمراكز التكلفة (code|name):\n" + ccList;
 
     const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
       method: "POST",
@@ -1717,7 +1727,9 @@ router.post("/manufacturing-settings/ai-suggest", async (req, res) => {
     // Validate every suggested id is actually one of our candidates (security
     // + safety). Drop any hallucinated id.
     const validIds = new Set(candidates.map((c) => c.id));
-    const out: Record<string, { id: number | null; reason: string; account?: any }> = {};
+    const validWhIds = new Set(whCandidates.map((w) => w.id));
+    const validCcCodes = new Set(ccCandidates.map((c) => c.code));
+    const out: Record<string, { id: number | null; code?: string | null; reason: string; account?: any; warehouse?: any; costCenter?: any }> = {};
     for (const role of ROLES) {
       const v = parsed?.[role.key] ?? {};
       const id = Number.isFinite(Number(v?.id)) ? Number(v.id) : null;
@@ -1729,6 +1741,31 @@ router.post("/manufacturing-settings/ai-suggest", async (req, res) => {
         account: acc
           ? { id: acc.id, code: acc.code, nameAr: acc.nameAr, accountType: acc.accountType }
           : undefined,
+      };
+    }
+    // Warehouses
+    for (const whKey of ["defaultRawWarehouseId", "defaultFinishedWarehouseId"] as const) {
+      const v = parsed?.[whKey] ?? {};
+      const id = Number.isFinite(Number(v?.id)) ? Number(v.id) : null;
+      const okId = id && validWhIds.has(id) ? id : null;
+      const wh = okId ? whCandidates.find((w) => w.id === okId) : undefined;
+      out[whKey] = {
+        id: okId,
+        reason: String(v?.reason ?? ""),
+        warehouse: wh ? { id: wh.id, code: wh.code, nameAr: wh.nameAr } : undefined,
+      };
+    }
+    // Cost center (by code)
+    {
+      const v = parsed?.defaultCostCenter ?? {};
+      const code = typeof v?.code === "string" && v.code.trim() ? v.code.trim() : null;
+      const okCode = code && validCcCodes.has(code) ? code : null;
+      const cc = okCode ? ccCandidates.find((c) => c.code === okCode) : undefined;
+      out.defaultCostCenter = {
+        id: null,
+        code: okCode,
+        reason: String(v?.reason ?? ""),
+        costCenter: cc ? { code: cc.code, nameAr: cc.nameAr } : undefined,
       };
     }
     res.json({ suggestions: out, source: "ai" });

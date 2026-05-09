@@ -132,11 +132,24 @@ export default function ManufacturingSettings() {
         }
         if (v?.reason) reasons[f.key] = v.reason;
       }
+      // Warehouses + cost center (extended AI suggestions)
+      for (const whKey of ["defaultRawWarehouseId", "defaultFinishedWarehouseId"] as const) {
+        const v = sug[whKey];
+        if (v && typeof v.id === "number") { (patch as any)[whKey] = v.id; filled++; }
+        if (v?.reason) reasons[whKey] = v.reason;
+      }
+      const cc = sug.defaultCostCenter;
+      if (cc && typeof cc.code === "string" && cc.code) {
+        (patch as any).defaultCostCenter = cc.code;
+        filled++;
+      }
+      if (cc?.reason) reasons["defaultCostCenter"] = cc.reason;
       setData(d => ({ ...d, ...patch }));
       setAiReasons(reasons);
+      const totalRoles = ACCOUNT_FIELDS.length + 3;
       toast({
-        title: filled > 0 ? `✓ تم اقتراح ${filled} من ${ACCOUNT_FIELDS.length} حسابات` : "لم يتمكن الذكاء الاصطناعي من اقتراح حسابات",
-        description: filled > 0 ? "راجع الاقتراحات ثم اضغط حفظ." : "تأكد من وجود حسابات قابلة للترحيل في دليل الحسابات.",
+        title: filled > 0 ? `✓ تم اقتراح ${filled} من ${totalRoles} حقول` : "لم يتمكن الذكاء الاصطناعي من اقتراح أي قيم",
+        description: filled > 0 ? "راجع الاقتراحات (المخازن، مركز التكلفة، الحسابات) ثم اضغط حفظ." : "تأكد من وجود حسابات قابلة للترحيل ومخازن ومراكز تكلفة معرّفة.",
       });
     } catch (e: any) {
       toast({ title: "خطأ", description: e?.message, variant: "destructive" });
@@ -231,23 +244,38 @@ export default function ManufacturingSettings() {
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-3">
           <div>
-            <Label>مخزن الخامات الافتراضي</Label>
+            <Label className="flex items-center gap-1">
+              مخزن الخامات الافتراضي
+              {aiReasons["defaultRawWarehouseId"] && <Sparkles className="h-3 w-3 text-violet-500" />}
+            </Label>
             <NumSelect
               value={data.defaultRawWarehouseId}
               onChange={(v) => setData(d => ({ ...d, defaultRawWarehouseId: v }))}
               options={warehouses.map(w => ({ value: String(w.id), label: `${w.code ? w.code + " — " : ""}${w.nameAr || w.nameEn || w.name || `#${w.id}`}` }))}
             />
+            {aiReasons["defaultRawWarehouseId"] && (
+              <p className="mt-1 text-xs text-violet-600"><Sparkles className="inline h-3 w-3 me-1" />{aiReasons["defaultRawWarehouseId"]}</p>
+            )}
           </div>
           <div>
-            <Label>مخزن البضاعة التامة الافتراضي</Label>
+            <Label className="flex items-center gap-1">
+              مخزن البضاعة التامة الافتراضي
+              {aiReasons["defaultFinishedWarehouseId"] && <Sparkles className="h-3 w-3 text-violet-500" />}
+            </Label>
             <NumSelect
               value={data.defaultFinishedWarehouseId}
               onChange={(v) => setData(d => ({ ...d, defaultFinishedWarehouseId: v }))}
               options={warehouses.map(w => ({ value: String(w.id), label: `${w.code ? w.code + " — " : ""}${w.nameAr || w.nameEn || w.name || `#${w.id}`}` }))}
             />
+            {aiReasons["defaultFinishedWarehouseId"] && (
+              <p className="mt-1 text-xs text-violet-600"><Sparkles className="inline h-3 w-3 me-1" />{aiReasons["defaultFinishedWarehouseId"]}</p>
+            )}
           </div>
           <div>
-            <Label>مركز التكلفة الافتراضي</Label>
+            <Label className="flex items-center gap-1">
+              مركز التكلفة الافتراضي
+              {aiReasons["defaultCostCenter"] && <Sparkles className="h-3 w-3 text-violet-500" />}
+            </Label>
             <SearchCombobox
               value={data.defaultCostCenter ?? ""}
               onValueChange={(v) => setData(d => ({ ...d, defaultCostCenter: v === "" ? null : v }))}
@@ -262,6 +290,9 @@ export default function ManufacturingSettings() {
             />
             {costCenters.length === 0 && (
               <p className="mt-1 text-xs text-amber-600">لا توجد مراكز تكلفة معرّفة بعد.</p>
+            )}
+            {aiReasons["defaultCostCenter"] && (
+              <p className="mt-1 text-xs text-violet-600"><Sparkles className="inline h-3 w-3 me-1" />{aiReasons["defaultCostCenter"]}</p>
             )}
           </div>
         </CardContent>
