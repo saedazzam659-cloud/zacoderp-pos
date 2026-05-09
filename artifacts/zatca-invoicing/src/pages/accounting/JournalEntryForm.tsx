@@ -1645,7 +1645,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                 open={accountBrowserOpen}
                 onOpenChange={setAccountBrowserOpen}
                 onPick={pickAccountFromBrowser}
-                initialType="expense"
+                initialType="all"
               />
 
               {/* Column headers — same grid template as line rows */}
