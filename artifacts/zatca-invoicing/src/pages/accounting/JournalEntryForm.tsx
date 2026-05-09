@@ -1004,9 +1004,16 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                     fields. For new entries it shows the upcoming
                     sequence number (peeked, not consumed). */}
                 {(() => {
+                  // Always show the badge for new entries so the number
+                  // never "disappears": during the brief gap right after
+                  // save (state reset → seqPeek refetch) we fall back to
+                  // "…", and when no sequence is configured we show
+                  // "تلقائي" instead of hiding the chip entirely.
                   const num = !isNew
                     ? (existing?.docNumber ?? (editId ? `#${editId}` : null))
-                    : (docNumber || (seqPeek.loading ? "…" : null));
+                    : (docNumber
+                        || (seqPeek.loading ? "…" : null)
+                        || (seqPeek.hasSequence ? "…" : "تلقائي"));
                   if (!num) return null;
                   return (
                     <span
