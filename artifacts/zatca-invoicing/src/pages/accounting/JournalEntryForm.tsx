@@ -653,8 +653,8 @@ export default function JournalEntryForm() {
       isNew ? journalEntriesApi.create(data) : journalEntriesApi.update(editId!, data),
     onSuccess: (saved: any) => {
       qc.invalidateQueries({ queryKey: ["journal-entries", cid] });
-      // Show the freshly-issued doc number prominently in the toast so the
-      // user sees confirmation of what was created without leaving the form.
+      // Show the JUST-saved doc number prominently in the toast so the user
+      // sees confirmation of what was just created/updated.
       const savedDoc = saved?.docNumber ?? docNumber;
       const baseTitle = getSaveToastTitle(t, { posted: false, printed: autoPrintJournal });
       toast({
@@ -664,17 +664,24 @@ export default function JournalEntryForm() {
       if (autoPrintJournal) {
         // Fire the print popup synchronously off the user-initiated save
         // click so the browser's pop-up blocker still treats it as
-        // user-allowed. We do this *before* navigating so the entry's
-        // lines are still in scope for the HTML builder.
+        // user-allowed.
         try { openEntryPrintWindow(journalTemplate); } catch { /* swallow popup-blocker noise */ }
       }
-      // Keep the form open after save instead of going back to the list.
-      // For a brand-new entry, switch to the saved entry's edit URL so the
-      // newly-issued doc number, id and any server-side defaults become
-      // visible — the user can keep working (edit, print, post) without
-      // an extra round-trip through the list page.
-      if (isNew && saved?.id) {
-        navigate(`/accounting/journals/${saved.id}`, { replace: true });
+      // Stay on the form and reset to a brand-new draft so the user can
+      // immediately start the next entry. The next sequence number is
+      // re-peeked from the server and shown in رقم المستند.
+      if (isNew) {
+        setDescription("");
+        setEntryDate(today());
+        setExchangeRate("1");
+        setEntryType("general");
+        if (defaultCurrency?.code) setCurrency(defaultCurrency.code);
+        setLines([newLine(), newLine()]);
+        setActiveTab("header");
+        setDocNumber("");
+        // Pull the freshly-incremented next number from the sequence engine
+        // so رقم المستند shows the upcoming code immediately.
+        seqPeek.refetch();
       }
     },
     onError: (e: any) => {
