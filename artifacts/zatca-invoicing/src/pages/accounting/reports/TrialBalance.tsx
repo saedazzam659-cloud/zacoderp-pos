@@ -1,21 +1,35 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { useFormatters } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from "@/components/ui/popover";
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
 import {
   Scale, Search, Printer, Eye, ExternalLink, Loader2, AlertCircle, FileText,
+  Columns3, RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// ─── Column visibility model ───────────────────────────────────────────
+type ColKey = "type" | "openDr" | "openCr" | "periodDr" | "periodCr" | "closeDr" | "closeCr";
+const COL_DEFAULTS: Record<ColKey, boolean> = {
+  type: true, openDr: true, openCr: true,
+  periodDr: true, periodCr: true, closeDr: true, closeCr: true,
+};
+const COL_STORAGE_KEY = "trial-balance:visible-cols:v1";
 
 // Map a journal-entry row coming back from /account-statement to the URL of
 // the document that produced it.
@@ -46,8 +60,39 @@ export default function TrialBalance() {
   const { user, token } = useAuth() as any;
   const { t } = useTranslation();
   const { fmt: fmtRaw, isRtl } = useFormatters();
+  const { toast } = useToast();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const headers = { Authorization: `Bearer ${token}` };
+
+  // ── Column visibility (Excel-style show/hide) ─────────────────────────
+  // Persisted in localStorage so user's column layout survives reloads.
+  const [visibleCols, setVisibleCols] = useState<Record<ColKey, boolean>>(() => {
+    try {
+      const raw = typeof window !== "undefined" ? window.localStorage.getItem(COL_STORAGE_KEY) : null;
+      if (raw) return { ...COL_DEFAULTS, ...JSON.parse(raw) };
+    } catch { /* ignore corrupt storage */ }
+    return COL_DEFAULTS;
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem(COL_STORAGE_KEY, JSON.stringify(visibleCols)); } catch { /* noop */ }
+  }, [visibleCols]);
+  const toggleCol = (k: ColKey) => setVisibleCols(prev => ({ ...prev, [k]: !prev[k] }));
+  const resetCols = () => setVisibleCols(COL_DEFAULTS);
+  const hiddenCount = (Object.keys(COL_DEFAULTS) as ColKey[]).filter(k => !visibleCols[k]).length;
+
+  // Group visibility — gutters & group header collapse when both sides off
+  const showOpening = visibleCols.openDr  || visibleCols.openCr;
+  const showPeriod  = visibleCols.periodDr || visibleCols.periodCr;
+  const showClosing = visibleCols.closeDr  || visibleCols.closeCr;
+
+  // Hide a column from the table header via double-click (Excel-style)
+  const hideCol = (k: ColKey, label: string) => {
+    setVisibleCols(prev => ({ ...prev, [k]: false }));
+    toast({
+      title: `تم إخفاء العمود: ${label}`,
+      description: "يمكنك إعادة إظهار الأعمدة من زر «الأعمدة».",
+    });
+  };
 
   const fmt    = (n: number) => n === 0 ? "" : fmtRaw(n);
   const fmtAbs = (n: number) => fmtRaw(Math.abs(n));
@@ -60,17 +105,33 @@ export default function TrialBalance() {
     expense: t("accountingReports.typeExpense"),
   };
 
-  const EXPORT_COLS = [
-    { key: "code",        header: t("accountingReports.code"),       width: 12 },
-    { key: "nameAr",      header: t("accountingReports.accountName"), width: 36 },
-    { key: "accountType", header: t("accountingReports.type"),        width: 14 },
-    { key: "openDebit",   header: `${t("trialBalance.openingBalance")} - ${t("accountingReports.debit")}`, width: 16 },
-    { key: "openCredit",  header: `${t("trialBalance.openingBalance")} - ${t("accountingReports.credit")}`, width: 16 },
-    { key: "totalDebit",  header: `${t("trialBalance.periodBalance")} - ${t("accountingReports.debit")}`, width: 16 },
-    { key: "totalCredit", header: `${t("trialBalance.periodBalance")} - ${t("accountingReports.credit")}`, width: 16 },
-    { key: "closeDebit",  header: `${t("trialBalance.closingBalance")} - ${t("accountingReports.debit")}`, width: 16 },
-    { key: "closeCredit", header: `${t("trialBalance.closingBalance")} - ${t("accountingReports.credit")}`, width: 16 },
+  // Export columns mirror the on-screen visibility so Excel/PDF reflect
+  // exactly what the user sees.
+  const ALL_EXPORT_COLS = [
+    { key: "code",        header: t("accountingReports.code"),       width: 12, colKey: null as ColKey | null },
+    { key: "nameAr",      header: t("accountingReports.accountName"), width: 36, colKey: null },
+    { key: "accountType", header: t("accountingReports.type"),        width: 14, colKey: "type" as ColKey },
+    { key: "openDebit",   header: `${t("trialBalance.openingBalance")} - ${t("accountingReports.debit")}`, width: 16, colKey: "openDr" as ColKey },
+    { key: "openCredit",  header: `${t("trialBalance.openingBalance")} - ${t("accountingReports.credit")}`, width: 16, colKey: "openCr" as ColKey },
+    { key: "totalDebit",  header: `${t("trialBalance.periodBalance")} - ${t("accountingReports.debit")}`, width: 16, colKey: "periodDr" as ColKey },
+    { key: "totalCredit", header: `${t("trialBalance.periodBalance")} - ${t("accountingReports.credit")}`, width: 16, colKey: "periodCr" as ColKey },
+    { key: "closeDebit",  header: `${t("trialBalance.closingBalance")} - ${t("accountingReports.debit")}`, width: 16, colKey: "closeDr" as ColKey },
+    { key: "closeCredit", header: `${t("trialBalance.closingBalance")} - ${t("accountingReports.credit")}`, width: 16, colKey: "closeCr" as ColKey },
   ];
+  const EXPORT_COLS = ALL_EXPORT_COLS
+    .filter(c => c.colKey === null || visibleCols[c.colKey])
+    .map(({ key, header, width }) => ({ key, header, width }));
+
+  // Labels for the column popover + double-click toast
+  const COL_LABELS: Record<ColKey, string> = {
+    type:     t("accountingReports.type"),
+    openDr:   `${t("trialBalance.openingBalance")} – ${t("accountingReports.debit")}`,
+    openCr:   `${t("trialBalance.openingBalance")} – ${t("accountingReports.credit")}`,
+    periodDr: `${t("trialBalance.periodBalance")} – ${t("accountingReports.debit")}`,
+    periodCr: `${t("trialBalance.periodBalance")} – ${t("accountingReports.credit")}`,
+    closeDr:  `${t("trialBalance.closingBalance")} – ${t("accountingReports.debit")}`,
+    closeCr:  `${t("trialBalance.closingBalance")} – ${t("accountingReports.credit")}`,
+  };
 
   const today = new Date().toISOString().slice(0, 10);
   const firstOfYear = today.slice(0, 4) + "-01-01";
@@ -135,6 +196,47 @@ export default function TrialBalance() {
         <div className="flex gap-2">
           {rows.length > 0 && (
             <>
+              {/* Excel-style column visibility manager */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-2 relative no-print">
+                    <Columns3 className="h-4 w-4" />
+                    الأعمدة
+                    {hiddenCount > 0 && (
+                      <span className="absolute -top-1 -end-1 h-4 min-w-4 px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
+                        {hiddenCount}
+                      </span>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-72 p-0">
+                  <div className="px-3 py-2.5 border-b flex items-center justify-between bg-muted/40">
+                    <p className="text-xs font-semibold">إظهار/إخفاء الأعمدة</p>
+                    <button
+                      type="button"
+                      className="text-[11px] text-primary hover:underline inline-flex items-center gap-1"
+                      onClick={resetCols}
+                    >
+                      <RotateCcw className="h-3 w-3" /> إعادة تعيين
+                    </button>
+                  </div>
+                  <div className="p-2 max-h-72 overflow-y-auto space-y-0.5">
+                    <ColCheckRow label={COL_LABELS.type}     checked={visibleCols.type}     onToggle={() => toggleCol("type")} dot="slate" />
+                    <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-amber-700 font-semibold">{t("trialBalance.openingBalance")}</div>
+                    <ColCheckRow label={COL_LABELS.openDr}   checked={visibleCols.openDr}   onToggle={() => toggleCol("openDr")}   dot="blue" />
+                    <ColCheckRow label={COL_LABELS.openCr}   checked={visibleCols.openCr}   onToggle={() => toggleCol("openCr")}   dot="rose" />
+                    <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-slate-700 font-semibold">{t("trialBalance.periodBalance")}</div>
+                    <ColCheckRow label={COL_LABELS.periodDr} checked={visibleCols.periodDr} onToggle={() => toggleCol("periodDr")} dot="blue" />
+                    <ColCheckRow label={COL_LABELS.periodCr} checked={visibleCols.periodCr} onToggle={() => toggleCol("periodCr")} dot="rose" />
+                    <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-emerald-700 font-semibold">{t("trialBalance.closingBalance")}</div>
+                    <ColCheckRow label={COL_LABELS.closeDr}  checked={visibleCols.closeDr}  onToggle={() => toggleCol("closeDr")}  dot="blue" />
+                    <ColCheckRow label={COL_LABELS.closeCr}  checked={visibleCols.closeCr}  onToggle={() => toggleCol("closeCr")}  dot="rose" />
+                  </div>
+                  <div className="px-3 py-2 text-[10px] text-muted-foreground border-t bg-muted/20 leading-relaxed">
+                    💡 نصيحة: انقر مزدوجًا على رأس أي عمود في الجدول لإخفائه فورًا.
+                  </div>
+                </PopoverContent>
+              </Popover>
               <ExportButtons rows={exportRows} columns={EXPORT_COLS}
                 filename={`${t("trialBalance.filename_prefix")}-${fromDate}-${toDate}`}
                 title={t("trialBalance.title_with", { from: fromDate, to: toDate })} />
@@ -201,43 +303,105 @@ export default function TrialBalance() {
                 <tr className="bg-muted/50">
                   <th className="text-start px-4 py-3 font-semibold text-muted-foreground border-b">{t("accountingReports.code")}</th>
                   <th className="text-start px-4 py-3 font-semibold text-muted-foreground border-b">{t("accountingReports.accountName")}</th>
-                  <th className="text-start px-4 py-3 font-semibold text-muted-foreground border-b">{t("accountingReports.type")}</th>
+                  {visibleCols.type && (
+                    <th
+                      className="text-start px-4 py-3 font-semibold text-muted-foreground border-b cursor-pointer select-none hover:bg-muted/80 transition-colors"
+                      title="انقر مزدوجًا لإخفاء العمود"
+                      onDoubleClick={() => hideCol("type", COL_LABELS.type)}
+                    >{t("accountingReports.type")}</th>
+                  )}
 
-                  {/* gutter before opening group */}
-                  <th className="w-1 p-0 bg-gradient-to-b from-amber-200 to-amber-400 border-b border-amber-300" />
-                  <th className="text-center px-2 py-3 font-semibold text-amber-700 bg-amber-50 border-b-2 border-amber-300" colSpan={2}>
-                    {t("trialBalance.openingBalance")}
-                  </th>
-                  {/* gutter between opening & period */}
-                  <th className="w-1 p-0 bg-gradient-to-b from-amber-300 to-slate-300 border-b border-slate-300" />
+                  {/* opening group */}
+                  {showOpening && (
+                    <>
+                      <th className="w-1 p-0 bg-gradient-to-b from-amber-200 to-amber-400 border-b border-amber-300" />
+                      <th
+                        className="text-center px-2 py-3 font-semibold text-amber-700 bg-amber-50 border-b-2 border-amber-300"
+                        colSpan={(visibleCols.openDr ? 1 : 0) + (visibleCols.openCr ? 1 : 0)}
+                      >
+                        {t("trialBalance.openingBalance")}
+                      </th>
+                    </>
+                  )}
+                  {(showOpening || showPeriod) && (
+                    <th className="w-1 p-0 bg-gradient-to-b from-amber-300 to-slate-300 border-b border-slate-300" />
+                  )}
 
-                  <th className="text-center px-2 py-3 font-semibold text-slate-700 bg-slate-50 border-b-2 border-slate-300" colSpan={2}>
-                    {t("trialBalance.periodBalance")}
-                  </th>
+                  {showPeriod && (
+                    <th
+                      className="text-center px-2 py-3 font-semibold text-slate-700 bg-slate-50 border-b-2 border-slate-300"
+                      colSpan={(visibleCols.periodDr ? 1 : 0) + (visibleCols.periodCr ? 1 : 0)}
+                    >
+                      {t("trialBalance.periodBalance")}
+                    </th>
+                  )}
 
-                  {/* gutter between period & closing */}
-                  <th className="w-1 p-0 bg-gradient-to-b from-slate-300 to-emerald-300 border-b border-emerald-300" />
-                  <th className="text-center px-2 py-3 font-semibold text-emerald-700 bg-emerald-50 border-b-2 border-emerald-300" colSpan={2}>
-                    {t("trialBalance.closingBalance")}
-                  </th>
-                  {/* gutter after closing group */}
-                  <th className="w-1 p-0 bg-gradient-to-b from-emerald-400 to-emerald-200 border-b border-emerald-300" />
+                  {(showPeriod || showClosing) && (
+                    <th className="w-1 p-0 bg-gradient-to-b from-slate-300 to-emerald-300 border-b border-emerald-300" />
+                  )}
+                  {showClosing && (
+                    <>
+                      <th
+                        className="text-center px-2 py-3 font-semibold text-emerald-700 bg-emerald-50 border-b-2 border-emerald-300"
+                        colSpan={(visibleCols.closeDr ? 1 : 0) + (visibleCols.closeCr ? 1 : 0)}
+                      >
+                        {t("trialBalance.closingBalance")}
+                      </th>
+                      <th className="w-1 p-0 bg-gradient-to-b from-emerald-400 to-emerald-200 border-b border-emerald-300" />
+                    </>
+                  )}
                 </tr>
                 <tr className="bg-muted/30 text-xs">
-                  <th colSpan={3} className="border-b" />
+                  <th colSpan={2 + (visibleCols.type ? 1 : 0)} className="border-b" />
 
-                  <th className="w-1 p-0 bg-amber-100 border-b" />
-                  <th className="text-end px-4 py-2 font-semibold text-blue-700 bg-amber-50/60 border-b">{t("accountingReports.debit")}</th>
-                  <th className="text-end px-4 py-2 font-semibold text-rose-700 bg-amber-50/60 border-b">{t("accountingReports.credit")}</th>
-                  <th className="w-1 p-0 bg-slate-100 border-b" />
+                  {showOpening && <th className="w-1 p-0 bg-amber-100 border-b" />}
+                  {visibleCols.openDr && (
+                    <th
+                      className="text-end px-4 py-2 font-semibold text-blue-700 bg-amber-50/60 border-b cursor-pointer select-none hover:bg-amber-100 transition-colors"
+                      title="انقر مزدوجًا لإخفاء العمود"
+                      onDoubleClick={() => hideCol("openDr", COL_LABELS.openDr)}
+                    >{t("accountingReports.debit")}</th>
+                  )}
+                  {visibleCols.openCr && (
+                    <th
+                      className="text-end px-4 py-2 font-semibold text-rose-700 bg-amber-50/60 border-b cursor-pointer select-none hover:bg-amber-100 transition-colors"
+                      title="انقر مزدوجًا لإخفاء العمود"
+                      onDoubleClick={() => hideCol("openCr", COL_LABELS.openCr)}
+                    >{t("accountingReports.credit")}</th>
+                  )}
+                  {(showOpening || showPeriod) && <th className="w-1 p-0 bg-slate-100 border-b" />}
 
-                  <th className="text-end px-4 py-2 font-semibold text-blue-700 bg-slate-50/60 border-b">{t("accountingReports.debit")}</th>
-                  <th className="text-end px-4 py-2 font-semibold text-rose-700 bg-slate-50/60 border-b">{t("accountingReports.credit")}</th>
+                  {visibleCols.periodDr && (
+                    <th
+                      className="text-end px-4 py-2 font-semibold text-blue-700 bg-slate-50/60 border-b cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                      title="انقر مزدوجًا لإخفاء العمود"
+                      onDoubleClick={() => hideCol("periodDr", COL_LABELS.periodDr)}
+                    >{t("accountingReports.debit")}</th>
+                  )}
+                  {visibleCols.periodCr && (
+                    <th
+                      className="text-end px-4 py-2 font-semibold text-rose-700 bg-slate-50/60 border-b cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                      title="انقر مزدوجًا لإخفاء العمود"
+                      onDoubleClick={() => hideCol("periodCr", COL_LABELS.periodCr)}
+                    >{t("accountingReports.credit")}</th>
+                  )}
 
-                  <th className="w-1 p-0 bg-emerald-100 border-b" />
-                  <th className="text-end px-4 py-2 font-semibold text-blue-700 bg-emerald-50/60 border-b">{t("accountingReports.debit")}</th>
-                  <th className="text-end px-4 py-2 font-semibold text-rose-700 bg-emerald-50/60 border-b">{t("accountingReports.credit")}</th>
-                  <th className="w-1 p-0 bg-emerald-100 border-b" />
+                  {(showPeriod || showClosing) && <th className="w-1 p-0 bg-emerald-100 border-b" />}
+                  {visibleCols.closeDr && (
+                    <th
+                      className="text-end px-4 py-2 font-semibold text-blue-700 bg-emerald-50/60 border-b cursor-pointer select-none hover:bg-emerald-100 transition-colors"
+                      title="انقر مزدوجًا لإخفاء العمود"
+                      onDoubleClick={() => hideCol("closeDr", COL_LABELS.closeDr)}
+                    >{t("accountingReports.debit")}</th>
+                  )}
+                  {visibleCols.closeCr && (
+                    <th
+                      className="text-end px-4 py-2 font-semibold text-rose-700 bg-emerald-50/60 border-b cursor-pointer select-none hover:bg-emerald-100 transition-colors"
+                      title="انقر مزدوجًا لإخفاء العمود"
+                      onDoubleClick={() => hideCol("closeCr", COL_LABELS.closeCr)}
+                    >{t("accountingReports.credit")}</th>
+                  )}
+                  {showClosing && <th className="w-1 p-0 bg-emerald-100 border-b" />}
                 </tr>
               </thead>
               <tbody>
@@ -260,40 +424,42 @@ export default function TrialBalance() {
                       <td className="px-4 py-2.5 border-b group-hover:text-primary group-hover:underline decoration-dotted underline-offset-4">
                         {isRtl ? r.nameAr : (r.nameEn || r.nameAr)}
                       </td>
-                      <td className="px-4 py-2.5 text-muted-foreground text-xs border-b">{TYPE_LABELS[r.accountType] ?? r.accountType}</td>
+                      {visibleCols.type && (
+                        <td className="px-4 py-2.5 text-muted-foreground text-xs border-b">{TYPE_LABELS[r.accountType] ?? r.accountType}</td>
+                      )}
 
-                      <td className="w-1 p-0 bg-amber-200/70 border-b border-amber-200 group-hover:bg-amber-300" />
-                      <td className="px-4 py-2.5 text-end font-mono text-blue-700 bg-amber-50/40 border-b">{op > 0 ? fmt(op) : ""}</td>
-                      <td className="px-4 py-2.5 text-end font-mono text-rose-700 bg-amber-50/40 border-b">{op < 0 ? fmt(-op) : ""}</td>
-                      <td className="w-1 p-0 bg-slate-200/70 border-b border-slate-200 group-hover:bg-slate-300" />
+                      {showOpening && <td className="w-1 p-0 bg-amber-200/70 border-b border-amber-200 group-hover:bg-amber-300" />}
+                      {visibleCols.openDr && <td className="px-4 py-2.5 text-end font-mono text-blue-700 bg-amber-50/40 border-b">{op > 0 ? fmt(op) : ""}</td>}
+                      {visibleCols.openCr && <td className="px-4 py-2.5 text-end font-mono text-rose-700 bg-amber-50/40 border-b">{op < 0 ? fmt(-op) : ""}</td>}
+                      {(showOpening || showPeriod) && <td className="w-1 p-0 bg-slate-200/70 border-b border-slate-200 group-hover:bg-slate-300" />}
 
-                      <td className="px-4 py-2.5 text-end font-mono text-blue-700 bg-slate-50/40 border-b">{fmt(r.totalDebit)}</td>
-                      <td className="px-4 py-2.5 text-end font-mono text-rose-700 bg-slate-50/40 border-b">{fmt(r.totalCredit)}</td>
+                      {visibleCols.periodDr && <td className="px-4 py-2.5 text-end font-mono text-blue-700 bg-slate-50/40 border-b">{fmt(r.totalDebit)}</td>}
+                      {visibleCols.periodCr && <td className="px-4 py-2.5 text-end font-mono text-rose-700 bg-slate-50/40 border-b">{fmt(r.totalCredit)}</td>}
 
-                      <td className="w-1 p-0 bg-emerald-200/70 border-b border-emerald-200 group-hover:bg-emerald-300" />
-                      <td className="px-4 py-2.5 text-end font-mono text-blue-700 bg-emerald-50/40 border-b">{cl > 0 ? fmt(cl) : ""}</td>
-                      <td className="px-4 py-2.5 text-end font-mono text-rose-700 bg-emerald-50/40 border-b">{cl < 0 ? fmt(-cl) : ""}</td>
-                      <td className="w-1 p-0 bg-emerald-200/70 border-b border-emerald-200 group-hover:bg-emerald-300" />
+                      {(showPeriod || showClosing) && <td className="w-1 p-0 bg-emerald-200/70 border-b border-emerald-200 group-hover:bg-emerald-300" />}
+                      {visibleCols.closeDr && <td className="px-4 py-2.5 text-end font-mono text-blue-700 bg-emerald-50/40 border-b">{cl > 0 ? fmt(cl) : ""}</td>}
+                      {visibleCols.closeCr && <td className="px-4 py-2.5 text-end font-mono text-rose-700 bg-emerald-50/40 border-b">{cl < 0 ? fmt(-cl) : ""}</td>}
+                      {showClosing && <td className="w-1 p-0 bg-emerald-200/70 border-b border-emerald-200 group-hover:bg-emerald-300" />}
                     </tr>
                   );
                 })}
               </tbody>
               <tfoot>
                 <tr className="bg-muted/60 font-bold text-sm">
-                  <td colSpan={3} className="px-4 py-3 border-t-2 border-slate-400">{t("accountingReports.total")}</td>
+                  <td colSpan={2 + (visibleCols.type ? 1 : 0)} className="px-4 py-3 border-t-2 border-slate-400">{t("accountingReports.total")}</td>
 
-                  <td className="w-1 p-0 bg-gradient-to-t from-amber-300 to-amber-400 border-t-2 border-amber-400" />
-                  <td className="px-4 py-3 text-end font-mono text-blue-700 bg-amber-100/70 border-t-2 border-amber-400">{fmtAbs(openDrTot)}</td>
-                  <td className="px-4 py-3 text-end font-mono text-rose-700 bg-amber-100/70 border-t-2 border-amber-400">{fmtAbs(openCrTot)}</td>
-                  <td className="w-1 p-0 bg-gradient-to-t from-amber-300 via-slate-300 to-slate-400 border-t-2 border-slate-400" />
+                  {showOpening && <td className="w-1 p-0 bg-gradient-to-t from-amber-300 to-amber-400 border-t-2 border-amber-400" />}
+                  {visibleCols.openDr && <td className="px-4 py-3 text-end font-mono text-blue-700 bg-amber-100/70 border-t-2 border-amber-400">{fmtAbs(openDrTot)}</td>}
+                  {visibleCols.openCr && <td className="px-4 py-3 text-end font-mono text-rose-700 bg-amber-100/70 border-t-2 border-amber-400">{fmtAbs(openCrTot)}</td>}
+                  {(showOpening || showPeriod) && <td className="w-1 p-0 bg-gradient-to-t from-amber-300 via-slate-300 to-slate-400 border-t-2 border-slate-400" />}
 
-                  <td className="px-4 py-3 text-end font-mono text-blue-700 bg-slate-100/70 border-t-2 border-slate-400">{fmtAbs(totalDr)}</td>
-                  <td className="px-4 py-3 text-end font-mono text-rose-700 bg-slate-100/70 border-t-2 border-slate-400">{fmtAbs(totalCr)}</td>
+                  {visibleCols.periodDr && <td className="px-4 py-3 text-end font-mono text-blue-700 bg-slate-100/70 border-t-2 border-slate-400">{fmtAbs(totalDr)}</td>}
+                  {visibleCols.periodCr && <td className="px-4 py-3 text-end font-mono text-rose-700 bg-slate-100/70 border-t-2 border-slate-400">{fmtAbs(totalCr)}</td>}
 
-                  <td className="w-1 p-0 bg-gradient-to-t from-slate-300 via-emerald-300 to-emerald-400 border-t-2 border-emerald-400" />
-                  <td className="px-4 py-3 text-end font-mono text-blue-700 bg-emerald-100/70 border-t-2 border-emerald-400">{fmtAbs(closeDrTot)}</td>
-                  <td className="px-4 py-3 text-end font-mono text-rose-700 bg-emerald-100/70 border-t-2 border-emerald-400">{fmtAbs(closeCrTot)}</td>
-                  <td className="w-1 p-0 bg-gradient-to-t from-emerald-300 to-emerald-400 border-t-2 border-emerald-400" />
+                  {(showPeriod || showClosing) && <td className="w-1 p-0 bg-gradient-to-t from-slate-300 via-emerald-300 to-emerald-400 border-t-2 border-emerald-400" />}
+                  {visibleCols.closeDr && <td className="px-4 py-3 text-end font-mono text-blue-700 bg-emerald-100/70 border-t-2 border-emerald-400">{fmtAbs(closeDrTot)}</td>}
+                  {visibleCols.closeCr && <td className="px-4 py-3 text-end font-mono text-rose-700 bg-emerald-100/70 border-t-2 border-emerald-400">{fmtAbs(closeCrTot)}</td>}
+                  {showClosing && <td className="w-1 p-0 bg-gradient-to-t from-emerald-300 to-emerald-400 border-t-2 border-emerald-400" />}
                 </tr>
               </tfoot>
             </table>
@@ -315,6 +481,22 @@ export default function TrialBalance() {
         fmtRaw={fmtRaw}
       />
     </div>
+  );
+}
+
+// ─── Column-visibility checkbox row used in the «الأعمدة» popover ───────
+function ColCheckRow({
+  label, checked, onToggle, dot,
+}: { label: string; checked: boolean; onToggle: () => void; dot: "blue" | "rose" | "slate" }) {
+  const dotClass = dot === "blue"  ? "bg-blue-500"
+                 : dot === "rose"  ? "bg-rose-500"
+                 :                    "bg-slate-400";
+  return (
+    <label className="flex items-center gap-2.5 px-2 py-1.5 rounded hover:bg-muted/60 cursor-pointer text-sm">
+      <Checkbox checked={checked} onCheckedChange={onToggle} />
+      <span className={cn("inline-block w-1.5 h-1.5 rounded-full", dotClass)} />
+      <span className="flex-1">{label}</span>
+    </label>
   );
 }
 
