@@ -245,14 +245,103 @@ export default function JournalEntryForm() {
     navigate(`/accounting/journals/${hit.id}`);
   }
 
+  // ── Number reservation ────────────────────────────────────────
+  // For new entries we IMMEDIATELY reserve a docNumber (and a row id)
+  // from the server when the form opens — this guarantees the number
+  // shown to the user is the EXACT one that will be saved, even when
+  // multiple users start a new entry simultaneously. The reserved
+  // draft is finalized on save (PUT + /post) or deleted on cancel /
+  // navigate-away. See journalEntries.ts → POST /reserve.
+  const [reservedId, setReservedId] = useState<number | null>(null);
+  // True when the reserve request to the server failed (e.g. period
+  // locked). We surface a warning in the badge so the user KNOWS the
+  // displayed number is not guaranteed and avoids writing it down.
+  const [reserveFailed, setReserveFailed] = useState(false);
+  // Ref mirrors used by cleanup handlers that fire after the component
+  // unmounts (no closures over stale state). `saving` blocks cleanup
+  // from deleting a row that is mid-save (PUT in flight, POST pending).
+  const reservedRef = useRef<{ id: number | null; saved: boolean; saving: boolean }>({
+    id: null, saved: false, saving: false,
+  });
+  const reservingRef = useRef(false);
+  const [reserveTick, setReserveTick] = useState(0);
+
   // Pull next entry number from the central sequence engine (مسلسل الحركات)
-  // when creating new. Falls back to free-typed input when no sequence is
-  // configured for "journal_entry".
-  const seqPeek = useNextSequenceNumber("journal_entry", isNew);
+  // when creating new — used as a *fallback* display when reservation
+  // hasn't completed yet. Reservation overrides the peeked value the
+  // moment it returns.
+  const seqPeek = useNextSequenceNumber("journal_entry", isNew && !reservedId);
   useEffect(() => {
     if (!isNew) return;
+    if (reservedRef.current.id) return; // reserved value wins
     if (seqPeek.hasSequence && seqPeek.number) setDocNumber(seqPeek.number);
   }, [isNew, seqPeek.hasSequence, seqPeek.number]);
+
+  // Reserve once on mount (and again after each save, via reserveTick).
+  useEffect(() => {
+    if (!isNew || !user) return;
+    if (reservedRef.current.id || reservingRef.current) return;
+    reservingRef.current = true;
+    journalEntriesApi.reserve({
+      entryDate,
+      branchId: branchId ? Number(branchId) : null,
+      currency,
+      exchangeRate,
+      entryType,
+    })
+      .then(r => {
+        reservedRef.current = { id: r.id, saved: false, saving: false };
+        setReservedId(r.id);
+        setReserveFailed(false);
+        setDocNumber(r.docNumber);
+      })
+      .catch(() => {
+        // Server rejected the reservation (e.g. period locked, auth).
+        // We do NOT silently fall back: surface a visible warning so
+        // the user knows the displayed number is provisional.
+        setReserveFailed(true);
+      })
+      .finally(() => { reservingRef.current = false; });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew, !!user, reserveTick]);
+
+  // Cleanup: delete the reserved draft if the user navigates away
+  // without saving (component unmount). Uses fetch+keepalive so the
+  // request survives even hard navigations.
+  useEffect(() => {
+    return () => {
+      const r = reservedRef.current;
+      // Skip cleanup when saved OR mid-save — deleting an in-flight
+      // row would race with the PUT/POST and erase user work.
+      if (!r.id || r.saved || r.saving) return;
+      const tok = localStorage.getItem("zatca_token");
+      try {
+        fetch(`${API}/api/journal-entries/${r.id}`, {
+          method:    "DELETE",
+          headers:   tok ? { Authorization: `Bearer ${tok}` } : {},
+          keepalive: true,
+        }).catch(() => {});
+      } catch { /* swallow */ }
+    };
+  }, []);
+
+  // Same cleanup on tab close / browser refresh.
+  useEffect(() => {
+    const onUnload = () => {
+      const r = reservedRef.current;
+      if (!r.id || r.saved || r.saving) return;
+      const tok = localStorage.getItem("zatca_token");
+      try {
+        fetch(`${API}/api/journal-entries/${r.id}`, {
+          method:    "DELETE",
+          headers:   tok ? { Authorization: `Bearer ${tok}` } : {},
+          keepalive: true,
+        });
+      } catch { /* swallow */ }
+    };
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, []);
 
   const { data: accountsList = [] } = useQuery<any[]>({
     queryKey: ["accounts-flat", cid],
@@ -674,8 +763,26 @@ export default function JournalEntryForm() {
     ((user as any)?.company?.printTemplateJournal === "thermal") ? "thermal" : "a4";
 
   const saveMutation = useMutation({
-    mutationFn: (data: any) =>
-      isNew ? journalEntriesApi.create(data) : journalEntriesApi.update(editId!, data),
+    mutationFn: async (data: any) => {
+      // New entry with a reserved draft → finalize it: update the
+      // header/lines on the existing row, then flip status to posted.
+      // The docNumber stays the one we showed the user from the start.
+      if (isNew && reservedRef.current.id) {
+        const rid = reservedRef.current.id;
+        // Mark as saving so the unmount/beforeunload cleanup hooks
+        // do NOT race-delete the row while PUT/POST are in flight.
+        reservedRef.current.saving = true;
+        try {
+          const updated = await journalEntriesApi.update(rid, data);
+          await journalEntriesApi.post(rid);
+          reservedRef.current.saved = true;
+          return { ...updated, status: "posted" };
+        } finally {
+          reservedRef.current.saving = false;
+        }
+      }
+      return isNew ? journalEntriesApi.create(data) : journalEntriesApi.update(editId!, data);
+    },
     onSuccess: (saved: any) => {
       qc.invalidateQueries({ queryKey: ["journal-entries", cid] });
       // Show the JUST-saved doc number prominently in the toast so the user
@@ -704,8 +811,14 @@ export default function JournalEntryForm() {
         setLines([newLine(), newLine()]);
         setActiveTab("header");
         setDocNumber("");
-        // Pull the freshly-incremented next number from the sequence engine
-        // so رقم المستند shows the upcoming code immediately.
+        // Clear the previous reservation (already saved) and trigger a
+        // fresh one so the badge instantly shows the NEXT locked number
+        // for the user's next entry.
+        reservedRef.current = { id: null, saved: false, saving: false };
+        setReservedId(null);
+        setReserveFailed(false);
+        setReserveTick(t => t + 1);
+        // Also re-peek the sequence as a fallback display source.
         seqPeek.refetch();
       }
     },
@@ -1080,7 +1193,13 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                     isNew ? "text-emerald-600 dark:text-emerald-400"
                           : "text-blue-600 dark:text-blue-400",
                   )}>
-                    {isNew ? (isPredicted ? "الرقم القادم (تقديري)" : "الرقم القادم") : "رقم القيد"}
+                    {isNew
+                      ? (reservedId
+                          ? "الرقم المحجوز ✓"
+                          : reserveFailed
+                              ? "⚠ تعذّر حجز الرقم — قد يتغير عند الحفظ"
+                              : (isPredicted ? "الرقم القادم (تقديري)" : "الرقم القادم"))
+                      : "رقم القيد"}
                   </span>
                   <span
                     className={cn(

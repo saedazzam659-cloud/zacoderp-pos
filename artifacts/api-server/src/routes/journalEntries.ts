@@ -189,6 +189,76 @@ router.get("/:id", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── RESERVE ─────────────────────────────────────────────────────────────────
+// Atomically allocates a docNumber (and a primary-key id) for a new journal
+// entry, returning a *draft* row the client can later finalize via PUT
+// + /:id/post. This guarantees the user sees the SAME number they'll save
+// even when multiple users open "new entry" simultaneously:
+//   • If a central sequence is configured for "journal_entry", we consume
+//     one number from it (atomic) — concurrent calls always get distinct
+//     values. Cancelling the draft leaves a numbering gap (acceptable
+//     per Saudi accounting practice for internal entries).
+//   • If NOT configured, we insert the draft first so Postgres allocates
+//     a unique serial id, then back-fill `docNumber = QYD-{id}` so other
+//     parts of the UI display a consistent label.
+// The draft is essentially empty (no lines) and `status='draft'`, so it
+// has zero impact on financial reports per the "Posted-Only" rule.
+router.post("/reserve", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const { entryDate, branchId, currency, exchangeRate, entryType } = req.body ?? {};
+
+    const today = entryDate || new Date().toISOString().slice(0, 10);
+
+    const resolvedBranchId = await resolveBranchForWrite(req, res, cid, branchId);
+    if (resolvedBranchId === "DENY") return;
+
+    // Period guard — refuse to reserve in a closed period to mirror
+    // the create-time behaviour. Reservation must produce a row that
+    // is writable on save.
+    const writability = await assertWritableForDate(cid, today);
+    if (!writability.ok) { res.status(423).json({ error: writability.reason }); return; }
+
+    let resolvedDocNumber: string | null;
+    try {
+      const fromSeq = await nextSequenceNumber(cid, "journal_entry", {
+        userId:   (req as any).authUser?.id ?? null,
+        refTable: "journal_entries",
+        branchId: resolvedBranchId,
+      });
+      resolvedDocNumber = fromSeq ?? null;
+    } catch (seqErr: any) {
+      res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم القيد" });
+      return;
+    }
+
+    const [entry] = await db.insert(journalEntriesTable).values({
+      companyId:    cid,
+      docNumber:    resolvedDocNumber,
+      entryDate:    today,
+      currency:     currency || "SAR",
+      exchangeRate: exchangeRate ?? "1",
+      description:  null,
+      entryType:    entryType || "general",
+      branchId:     resolvedBranchId,
+      periodId:     writability.period?.id ?? null,
+      status:       "draft",
+    }).returning();
+
+    // No central sequence → compose a stable QYD-XXXX label from the
+    // freshly-allocated id and persist it so list views, navigation and
+    // print-outs all reference the same string.
+    if (!resolvedDocNumber) {
+      resolvedDocNumber = `QYD-${String(entry.id).padStart(4, "0")}`;
+      await db.update(journalEntriesTable)
+        .set({ docNumber: resolvedDocNumber })
+        .where(eq(journalEntriesTable.id, entry.id));
+    }
+
+    res.json({ id: entry.id, docNumber: resolvedDocNumber, reserved: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── CREATE ───────────────────────────────────────────────────────────────────
 router.post("/", async (req, res) => {
   try {

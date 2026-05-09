@@ -90,6 +90,12 @@ export const journalEntriesApi = {
   create: (data: any) => post<any>("/journal-entries", data),
   update: (id: number, data: any) => put<any>(`/journal-entries/${id}`, data),
   remove: (id: number) => del(`/journal-entries/${id}`),
+  // Reserve a docNumber + id atomically for a new entry. Returns the
+  // locked number that the user can rely on (display, print, share)
+  // before the entry is actually saved. Cancelling leaves a numbering
+  // gap, which is acceptable for internal journal entries.
+  reserve: (data?: { entryDate?: string; branchId?: number | null; currency?: string; exchangeRate?: string; entryType?: string }) =>
+    post<{ id: number; docNumber: string; reserved: true }>("/journal-entries/reserve", data ?? {}),
   // Manual post: flips a draft entry to "posted". Server enforces balance,
   // auto-lock and period guards — a non-2xx surfaces a friendly Arabic error.
   post:   (id: number) => post<{ ok: true; alreadyPosted?: boolean }>(`/journal-entries/${id}/post`, {}),
