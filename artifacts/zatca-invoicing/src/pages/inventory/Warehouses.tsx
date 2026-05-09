@@ -30,6 +30,7 @@ export default function Warehouses() {
   const [editId, setEditId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [activeTab, setActiveTab] = useState("basic");
+  const [errors, setErrors] = useState<{ nameAr?: string }>({});
 
   const { data: warehouses = [], isLoading } = useQuery({
     queryKey: ["warehouses", cid],
@@ -48,16 +49,67 @@ export default function Warehouses() {
   const updateMut = useMutation({ mutationFn: ({ id, data }: any) => inventoryApi.updateWarehouse(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.warehouses.messages.updated") }); } });
   const deleteMut = useMutation({ mutationFn: inventoryApi.deleteWarehouse, onSuccess: () => { invalidate(); toast({ title: t("pages.warehouses.messages.deleted") }); } });
 
-  function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); setActiveTab("basic"); }
+  function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); setActiveTab("basic"); setErrors({}); }
   function handleEdit(w: any) {
     setForm({ ...w, groupId: w.groupId ?? "", branchId: w.branchId ? String(w.branchId) : "", negativeLimit: w.negativeLimit ?? "", accountId: w.accountId ? String(w.accountId) : "" });
     setEditId(w.id);
     setShowForm(true);
+    setErrors({});
   }
+
+  // Auto-generate the next sequential warehouse code based on existing codes.
+  // Detects the dominant prefix (e.g. "WH-") and numeric width (e.g. 2 digits)
+  // from existing warehouses and produces the next number. Falls back to
+  // "WH-01" when there are no warehouses yet.
+  function generateNextCode(): string {
+    const existing = (warehouses as any[]).map(w => String(w.code || "")).filter(Boolean);
+    if (existing.length === 0) return "WH-01";
+    const re = /^(.*?)(\d+)$/;
+    let bestPrefix = "WH-";
+    let bestWidth = 2;
+    let maxNum = 0;
+    const prefixCounts: Record<string, number> = {};
+    for (const c of existing) {
+      const m = c.match(re);
+      if (!m) continue;
+      const [, prefix, num] = m;
+      prefixCounts[prefix] = (prefixCounts[prefix] || 0) + 1;
+    }
+    bestPrefix = Object.entries(prefixCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "WH-";
+    for (const c of existing) {
+      const m = c.match(re);
+      if (!m) continue;
+      const [, prefix, num] = m;
+      if (prefix === bestPrefix) {
+        const n = parseInt(num, 10);
+        if (n > maxNum) maxNum = n;
+        if (num.length > bestWidth) bestWidth = num.length;
+      }
+    }
+    const next = maxNum + 1;
+    return `${bestPrefix}${String(next).padStart(bestWidth, "0")}`;
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Validate required: nameAr only. Code is auto-generated when missing
+    // so it does not need to be validated — preventing an unnecessary block
+    // on the user.
+    const newErrors: { nameAr?: string } = {};
+    const nameAr = String(form.nameAr || "").trim();
+    if (!nameAr) newErrors.nameAr = t("pages.warehouses.validation.nameRequired", { defaultValue: "الاسم العربي مطلوب" });
+    if (Object.keys(newErrors).length) {
+      setErrors(newErrors);
+      if (newErrors.nameAr) setActiveTab("basic");
+      toast({ title: t("common.validationError", { defaultValue: "تحقق من البيانات" }), description: Object.values(newErrors)[0], variant: "destructive" });
+      return;
+    }
+    setErrors({});
+    const codeFinal = String(form.code || "").trim() || generateNextCode();
     const payload = {
       ...form,
+      code:          codeFinal,
+      nameAr,
       groupId:       form.groupId  ? Number(form.groupId)  : null,
       branchId:      form.branchId ? Number(form.branchId) : null,
       negativeLimit: form.negativeLimit || null,
@@ -94,7 +146,7 @@ export default function Warehouses() {
           onClose={reset}
           onSave={() => handleSubmit({ preventDefault() {} } as any)}
           saving={createMut.isPending || updateMut.isPending}
-          saveDisabled={!form.code || !form.nameAr}
+          saveDisabled={false}
           saveLabel={editId ? t("pages.warehouses.saveEdit") : t("common.new")}
         >
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -107,8 +159,9 @@ export default function Warehouses() {
             <TabsContent value="basic" className="mt-0">
               <div className="grid md:grid-cols-2 gap-x-4 gap-y-4">
                 <div className="space-y-1.5">
-                  <Label>{t("pages.warehouses.fields.code")} <span className="text-destructive">*</span></Label>
-                  <Input placeholder="WH-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} />
+                  <Label>{t("pages.warehouses.fields.code")}</Label>
+                  <Input placeholder={t("pages.warehouses.placeholders.codeAuto", { defaultValue: "اتركه فارغاً للتوليد التلقائي" })} value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} />
+                  <p className="text-[10px] text-muted-foreground">{t("pages.warehouses.fields.codeHint", { defaultValue: "إذا تركته فارغاً سيتم توليده تلقائياً بالتسلسل" })}</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("pages.warehouses.fields.group")}</Label>
@@ -121,7 +174,14 @@ export default function Warehouses() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("pages.warehouses.fields.nameAr")} <span className="text-destructive">*</span></Label>
-                  <Input placeholder={t("pages.warehouses.placeholders.mainWarehouse")} value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} />
+                  <Input
+                    placeholder={t("pages.warehouses.placeholders.mainWarehouse")}
+                    value={form.nameAr}
+                    onChange={e => { setForm((p: any) => ({ ...p, nameAr: e.target.value })); if (errors.nameAr) setErrors(p => ({ ...p, nameAr: undefined })); }}
+                    className={errors.nameAr ? "border-destructive focus-visible:ring-destructive" : ""}
+                    aria-invalid={!!errors.nameAr}
+                  />
+                  {errors.nameAr && <p className="text-[11px] text-destructive">{errors.nameAr}</p>}
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("pages.warehouses.fields.nameEn")}</Label>
