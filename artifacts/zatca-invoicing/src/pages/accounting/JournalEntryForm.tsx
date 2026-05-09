@@ -21,7 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "react-i18next";
 import { getSaveToastTitle } from "@/lib/saveToast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
-import { Sparkles, AlertTriangle, CheckCircle2, Receipt } from "lucide-react";
+import { Sparkles, AlertTriangle, CheckCircle2, Receipt, Copy, Check } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import {
@@ -351,6 +351,8 @@ export default function JournalEntryForm() {
   // focused line — or a new line is created if every line already
   // has an account.
   const [accountBrowserOpen, setAccountBrowserOpen] = useState(false);
+  // Copy-feedback state for the doc-number badge.
+  const [docNumCopied, setDocNumCopied] = useState(false);
   function pickAccountFromBrowser(a: { id: number }) {
     // Find a target line: prefer the focused one if it's still empty,
     // otherwise the first empty line, otherwise append a new one.
@@ -996,51 +998,93 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
               <BookOpen className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-lg font-bold flex items-center gap-2">
-                {isNew ? "قيد جديد" : "تعديل القيد"}
-                {/* Prominent doc-number badge — shown for both new and
-                    existing entries so the user always knows which
-                    document they're working on without hunting in the
-                    fields. For new entries it shows the upcoming
-                    sequence number (peeked, not consumed). */}
-                {(() => {
-                  // Always show the badge for new entries so the number
-                  // never "disappears": during the brief gap right after
-                  // save (state reset → seqPeek refetch) we fall back to
-                  // "…", and when no sequence is configured we show
-                  // "تلقائي" instead of hiding the chip entirely.
-                  const num = !isNew
-                    ? (existing?.docNumber ?? (editId ? `#${editId}` : null))
-                    : (docNumber
-                        || (seqPeek.loading ? "…" : null)
-                        || (seqPeek.hasSequence ? "…" : "تلقائي"));
-                  if (!num) return null;
-                  return (
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-sm font-mono font-semibold tabular-nums",
-                        isNew
-                          ? "bg-gradient-to-l from-emerald-50 to-teal-50 border-emerald-300 text-emerald-700 dark:from-emerald-950/30 dark:to-teal-950/30 dark:border-emerald-800 dark:text-emerald-300"
-                          : "bg-gradient-to-l from-blue-50 to-indigo-50 border-blue-300 text-blue-700 dark:from-blue-950/30 dark:to-indigo-950/30 dark:border-blue-800 dark:text-blue-300",
-                      )}
-                      title={isNew ? "الرقم القادم — سيُحجز عند الحفظ" : "رقم القيد الحالي"}
-                      data-testid="badge-doc-number"
-                    >
-                      {isNew && <Sparkles className="h-3 w-3" />}
-                      {num}
-                    </span>
-                  );
-                })()}
-              </h1>
+              <h1 className="text-lg font-bold">{isNew ? "قيد جديد" : "تعديل القيد"}</h1>
               <p className="text-xs text-muted-foreground">
-                {isNew
-                  ? (seqPeek.hasSequence && docNumber
-                      ? `الرقم القادم تلقائياً: ${docNumber} — سيُحجز عند الحفظ`
-                      : "إنشاء قيد يومية جديد")
-                  : `تعديل القيد رقم ${existing?.docNumber ?? editId}`}
+                {isNew ? "إنشاء قيد يومية جديد" : `تعديل القيد رقم ${existing?.docNumber ?? editId}`}
               </p>
             </div>
           </div>
+
+          {/* ── Big doc-number panel ─────────────────────────────
+              Always-visible, prominent display of the current /
+              upcoming journal-entry number with one-click copy.
+              This is what the user references when transcribing
+              the JE number onto paper documents. */}
+          {(() => {
+            const num = !isNew
+              ? (existing?.docNumber ?? (editId ? `QYD-${String(editId).padStart(4, "0")}` : null))
+              : (docNumber
+                  || (seqPeek.loading ? "…" : null)
+                  || (seqPeek.hasSequence ? "…" : "تلقائي"));
+            if (!num) return null;
+            const copyable = num !== "…" && num !== "تلقائي";
+            const onCopy = async () => {
+              if (!copyable) return;
+              try {
+                await navigator.clipboard.writeText(num);
+                setDocNumCopied(true);
+                setTimeout(() => setDocNumCopied(false), 1800);
+                toast({ title: "✓ تم النسخ", description: `رقم القيد: ${num}` });
+              } catch { /* ignore */ }
+            };
+            return (
+              <div
+                className={cn(
+                  "flex items-center gap-2 rounded-xl border-2 px-3 py-2 shadow-sm",
+                  isNew
+                    ? "bg-gradient-to-l from-emerald-50 via-teal-50 to-cyan-50 border-emerald-300 dark:from-emerald-950/40 dark:via-teal-950/40 dark:to-cyan-950/40 dark:border-emerald-800"
+                    : "bg-gradient-to-l from-blue-50 via-indigo-50 to-violet-50 border-blue-300 dark:from-blue-950/40 dark:via-indigo-950/40 dark:to-violet-950/40 dark:border-blue-800",
+                )}
+                data-testid="panel-doc-number"
+              >
+                <div className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-lg",
+                  isNew ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                        : "bg-blue-500/15 text-blue-700 dark:text-blue-300",
+                )}>
+                  {isNew ? <Sparkles className="h-4 w-4" /> : <BookOpen className="h-4 w-4" />}
+                </div>
+                <div className="flex flex-col leading-tight">
+                  <span className={cn(
+                    "text-[10px] font-medium uppercase tracking-wide",
+                    isNew ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-blue-600 dark:text-blue-400",
+                  )}>
+                    {isNew ? "الرقم القادم" : "رقم القيد"}
+                  </span>
+                  <span
+                    className={cn(
+                      "font-mono text-base font-bold tabular-nums leading-tight",
+                      isNew ? "text-emerald-800 dark:text-emerald-200"
+                            : "text-blue-800 dark:text-blue-200",
+                    )}
+                    data-testid="text-doc-number"
+                  >
+                    {num}
+                  </span>
+                </div>
+                {copyable && (
+                  <button
+                    type="button"
+                    onClick={onCopy}
+                    className={cn(
+                      "ms-1 rounded-md p-1.5 transition-colors print:hidden",
+                      isNew
+                        ? "hover:bg-emerald-200/60 text-emerald-700 dark:hover:bg-emerald-800/40 dark:text-emerald-300"
+                        : "hover:bg-blue-200/60 text-blue-700 dark:hover:bg-blue-800/40 dark:text-blue-300",
+                    )}
+                    title="نسخ رقم القيد"
+                    aria-label="نسخ رقم القيد"
+                    data-testid="btn-copy-doc-number"
+                  >
+                    {docNumCopied
+                      ? <Check className="h-4 w-4 text-emerald-600" />
+                      : <Copy className="h-4 w-4" />}
+                  </button>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         <div className="flex items-center gap-2">
