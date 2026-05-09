@@ -425,6 +425,13 @@ export default function GeneralSettings() {
             <LogOut className="h-4 w-4 shrink-0" />
             <span className="truncate">تسجيل الخروج التلقائي</span>
           </TabsTrigger>
+          <TabsTrigger
+            value="journalEntryMode"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <Save className="h-4 w-4 shrink-0" />
+            <span className="truncate">نظام إدخال القيود</span>
+          </TabsTrigger>
         </TabsList>
 
         {/* ═══ TAB 1: General (Logo + Decimals + Save) ═══════════════════════ */}
@@ -925,6 +932,102 @@ export default function GeneralSettings() {
         {/* ═══ TAB 9: Auto Logout (idle timeout) ═══════════════════════════ */}
         <TabsContent value="autoLogout" className="mt-5 space-y-6">
           <AutoLogoutTab />
+        </TabsContent>
+
+        {/* ═══ TAB 10: Journal-Entry Form Mode (Auto vs Manual) ═════════════ */}
+        <TabsContent value="journalEntryMode" className="mt-5 space-y-6">
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <h2 className="font-semibold text-base flex items-center gap-2">
+              <Save className="h-4 w-4 text-muted-foreground" />
+              نظام إدخال القيود المحاسبية
+            </h2>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              تحكّم في سلوك شاشة "قيد جديد" بعد حفظ القيد بنجاح.
+              {" "}<span className="font-medium text-foreground">آلي (الافتراضي):</span> تبقى الشاشة مفتوحة وتُجهَّز تلقائياً لإدخال القيد التالي بأسرع ما يمكن.
+              {" "}<span className="font-medium text-foreground">يدوي (النظام القديم):</span> تُغلق الشاشة تلقائياً وترجع لقائمة القيود المحاسبية بعد كل حفظ.
+            </p>
+
+            {(() => {
+              const mode = (user?.company?.journalEntryFormMode === "manual") ? "manual" : "auto";
+              const isAuto = mode === "auto";
+              return (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {/* AUTO card */}
+                    <button
+                      type="button"
+                      disabled={postingSaving}
+                      onClick={() => togglePostingMode({ journalEntryFormMode: "auto" })}
+                      className={cn(
+                        "flex flex-col items-start gap-2 rounded-xl border-2 p-4 text-right transition-all",
+                        isAuto
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-border bg-background hover:border-primary/40"
+                      )}
+                      data-testid="card-journal-mode-auto"
+                    >
+                      <div className="flex items-center gap-2 w-full">
+                        <div className={cn(
+                          "h-8 w-8 rounded-md flex items-center justify-center",
+                          isAuto ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        )}>
+                          <Zap className="h-4 w-4" />
+                        </div>
+                        <span className="font-semibold text-sm">آلي (الحالي)</span>
+                        {isAuto && (
+                          <span className="ms-auto text-[10.5px] font-semibold rounded px-1.5 py-0.5 border bg-emerald-50 text-emerald-700 border-emerald-200">
+                            مفعَّل
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                        تبقى شاشة القيد مفتوحة بعد الحفظ، وتُفرَّغ الحقول تلقائياً مع حجز الرقم التسلسلي التالي — مثالي للإدخال المتسلسل السريع.
+                      </p>
+                    </button>
+
+                    {/* MANUAL card */}
+                    <button
+                      type="button"
+                      disabled={postingSaving}
+                      onClick={() => togglePostingMode({ journalEntryFormMode: "manual" })}
+                      className={cn(
+                        "flex flex-col items-start gap-2 rounded-xl border-2 p-4 text-right transition-all",
+                        !isAuto
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-border bg-background hover:border-primary/40"
+                      )}
+                      data-testid="card-journal-mode-manual"
+                    >
+                      <div className="flex items-center gap-2 w-full">
+                        <div className={cn(
+                          "h-8 w-8 rounded-md flex items-center justify-center",
+                          !isAuto ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        )}>
+                          <Hand className="h-4 w-4" />
+                        </div>
+                        <span className="font-semibold text-sm">يدوي (النظام القديم)</span>
+                        {!isAuto && (
+                          <span className="ms-auto text-[10.5px] font-semibold rounded px-1.5 py-0.5 border bg-amber-50 text-amber-700 border-amber-200">
+                            مفعَّل
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                        تُغلق شاشة القيد بعد الحفظ مباشرة وترجع لقائمة القيود المحاسبية — السلوك القديم قبل التحديث.
+                      </p>
+                    </button>
+                  </div>
+
+                  {postingSaving && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-2">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      جارٍ الحفظ…
+                    </p>
+                  )}
+                </>
+              );
+            })()}
+          </div>
         </TabsContent>
       </Tabs>
 

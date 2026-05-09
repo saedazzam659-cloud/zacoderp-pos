@@ -41,6 +41,13 @@ export const companiesTable = pgTable("companies", {
   // below. When a per-doc-type flag is NULL (legacy rows) the form falls back to
   // this global value so existing tenants keep their current behavior.
   autoPostingEnabled: boolean("auto_posting_enabled").notNull().default(true),
+  // Journal-entry form behavior after a successful save:
+  //   "auto"   → keep the form open and reset to a fresh draft so the user can
+  //              keep typing the next entry (current default behavior).
+  //   "manual" → navigate back to the journal-entries list (legacy/old
+  //              behavior some accountants prefer).
+  // Defaults to "auto" so existing tenants keep the modern flow.
+  journalEntryFormMode: text("journal_entry_form_mode").notNull().default("auto"),
   // ─── Per-document-type auto-posting toggles ───────────────────────────
   // Each flag controls whether saving a document of that type immediately
   // posts the resulting journal entry (true) or leaves it as a draft for

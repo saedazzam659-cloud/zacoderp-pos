@@ -112,6 +112,16 @@ router.put("/:id", async (req, res) => {
 // PATCH /:id/general-settings — update logo + decimal places + auto-posting toggle
 router.patch("/:id/general-settings", async (req, res) => {
   const id = parseInt(req.params.id);
+  // Authorization: only a SuperAdmin or an admin of THIS company may change
+  // tenant-wide settings. Without this guard, any authenticated user (even
+  // from a different company) could PATCH another tenant's logo, decimals,
+  // posting flags, or journalEntryFormMode.
+  const u = (req as any).authUser;
+  if (!u) { res.status(401).json({ error: "غير مصرّح" }); return; }
+  if (u.role !== "superadmin" && !(u.companyId === id && u.role === "admin")) {
+    res.status(403).json({ error: "ليست لديك صلاحية لتعديل إعدادات هذه الشركة" });
+    return;
+  }
   const {
     logo, decimalPlaces, autoPostingEnabled,
     // Per-doc-type auto-posting toggles. Each one independently decides
@@ -128,6 +138,10 @@ router.patch("/:id/general-settings", async (req, res) => {
     printAutoAfterSavePayment, printAutoAfterSaveJournal,
     printTemplateSales, printTemplateReceipt,
     printTemplatePayment, printTemplateJournal,
+    // Journal-entry form behavior: "auto" (keep form open + fresh draft) or
+    // "manual" (navigate back to entries list after save). See companies
+    // schema for the full semantics.
+    journalEntryFormMode,
   } = req.body as {
     logo?: string; decimalPlaces?: number; autoPostingEnabled?: boolean;
     autoPostSales?: boolean; autoPostPurchase?: boolean;
@@ -140,6 +154,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     printAutoAfterSavePayment?: boolean; printAutoAfterSaveJournal?: boolean;
     printTemplateSales?: string; printTemplateReceipt?: string;
     printTemplatePayment?: string; printTemplateJournal?: string;
+    journalEntryFormMode?: string;
   };
   const updates: Record<string, any> = { updatedAt: new Date() };
   if (logo !== undefined) updates.logo = logo;
@@ -199,6 +214,15 @@ router.patch("/:id/general-settings", async (req, res) => {
       }
       updates[key] = val;
     }
+  }
+  // Journal-entry form mode — restrict to the two values the form actually
+  // honors so a typo doesn't silently leave the field in an unknown state.
+  if (journalEntryFormMode !== undefined) {
+    if (journalEntryFormMode !== "auto" && journalEntryFormMode !== "manual") {
+      res.status(400).json({ error: "journalEntryFormMode يجب أن يكون 'auto' أو 'manual'" });
+      return;
+    }
+    updates.journalEntryFormMode = journalEntryFormMode;
   }
   const [company] = await db.update(companiesTable).set(updates)
     .where(eq(companiesTable.id, id)).returning();

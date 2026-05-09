@@ -786,9 +786,20 @@ export default function JournalEntryForm() {
         // user-allowed.
         try { openEntryPrintWindow(journalTemplate); } catch { /* swallow popup-blocker noise */ }
       }
-      // Stay on the form and reset to a brand-new draft so the user can
-      // immediately start the next entry. The next sequence number is
-      // re-peeked from the server and shown in رقم المستند.
+      // Per-company form-mode preference (set in General Settings → "نظام
+      // إدخال القيود"):
+      //   "manual" → close the form and go back to the journal-entries list
+      //              (legacy behavior some accountants prefer).
+      //   "auto"   → stay on the form and reset to a fresh draft so the user
+      //              can immediately start the next entry (default).
+      const formMode = (user as any)?.company?.journalEntryFormMode === "manual"
+        ? "manual" : "auto";
+      if (isNew && formMode === "manual") {
+        navigate("/accounting/journals");
+        return;
+      }
+      // AUTO mode: stay on the form and reset to a brand-new draft. The next
+      // sequence number is re-peeked from the server and shown in رقم المستند.
       if (isNew) {
         setDescription("");
         setEntryDate(today());
