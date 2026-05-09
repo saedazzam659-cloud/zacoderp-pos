@@ -212,6 +212,7 @@ import SalesReps from "@/pages/sales/SalesReps";
 // Accounting Reports
 import AccountStatement from "@/pages/accounting/reports/AccountStatement";
 import TrialBalance     from "@/pages/accounting/reports/TrialBalance";
+import TaxDeclaration   from "@/pages/accounting/reports/TaxDeclaration";
 import BalanceSheet     from "@/pages/accounting/reports/BalanceSheet";
 import IncomeStatement  from "@/pages/accounting/reports/IncomeStatement";
 import FiscalPeriods    from "@/pages/accounting/FiscalPeriods";
@@ -698,6 +699,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/accounting/reports/trial-balance"     module="accounting_reports" component={TrialBalance} />}
             {!isSuperAdmin && <PermRoute path="/accounting/reports/balance-sheet"     module="accounting_reports" component={BalanceSheet} />}
             {!isSuperAdmin && <PermRoute path="/accounting/reports/income-statement"  module="accounting_reports" component={IncomeStatement} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/reports/tax-declaration"   module="accounting_reports" component={TaxDeclaration} />}
 
             {/* Org routes */}
             {!isSuperAdmin && <Route path="/org"><Redirect to="/org/branches" /></Route>}

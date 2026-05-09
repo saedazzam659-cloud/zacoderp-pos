@@ -12,7 +12,7 @@ import {
   Search, Home, HelpCircle, ChevronLeft, Mic,
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck, Stethoscope, Video,
-  ScrollText, Database, ListOrdered, HardDrive, Trash2,
+  ScrollText, Database, ListOrdered, HardDrive, Trash2, BadgePercent,
   Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat, Boxes, Megaphone,
   Server, Camera, Monitor,
   X,
@@ -377,6 +377,7 @@ const reportsSubNav: NavDef[] = [
   { nameKey: "nav.trialBalance",     href: "/accounting/reports/trial-balance",     icon: Scale,      permKey: "accounting_reports" },
   { nameKey: "nav.balanceSheet",     href: "/accounting/reports/balance-sheet",     icon: PieChart,   permKey: "accounting_reports" },
   { nameKey: "nav.incomeStatement",  href: "/accounting/reports/income-statement",  icon: TrendingUp, permKey: "accounting_reports" },
+  { nameKey: "nav.taxDeclaration",   href: "/accounting/reports/tax-declaration",   icon: BadgePercent, permKey: "accounting_reports" },
 ];
 const cashSubNav: NavDef[] = [
   { nameKey: "nav.cashBoxes",        href: "/cash/boxes",            icon: Wallet,          permKey: "cash_boxes" },
