@@ -36,6 +36,16 @@ export default function Warehouses() {
     queryKey: ["warehouses", cid],
     queryFn: () => inventoryApi.getWarehouses(cid),
   });
+  // Plan-based quota — refetched on focus and on `subscription_changed` SSE
+  // (handled globally by AuthContext via qc.invalidateQueries()) so that any
+  // SuperAdmin upgrade/downgrade reflects without a re-login.
+  const { data: quota } = useQuery({
+    queryKey: ["warehouses-quota", cid],
+    queryFn: () => inventoryApi.getWarehouseQuota(cid),
+    enabled: !!cid,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+  });
   const { data: groups = [] } = useQuery({
     queryKey: ["warehouse-groups", cid],
     queryFn: () => inventoryApi.getWarehouseGroups(cid),
@@ -44,9 +54,30 @@ export default function Warehouses() {
   // by /api/org/branches based on viewAllBranches / user_branches).
   const { data: branches = [] } = useBranches();
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["warehouses"] });
-  const createMut = useMutation({ mutationFn: inventoryApi.createWarehouse, onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.warehouses.messages.saved") }); } });
-  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => inventoryApi.updateWarehouse(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.warehouses.messages.updated") }); } });
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["warehouses"] });
+    qc.invalidateQueries({ queryKey: ["warehouses-quota"] });
+  };
+  // Parse the API error body — server returns JSON like
+  // `{ error, code: "WAREHOUSE_LIMIT_REACHED", limit, used }` for plan caps.
+  // Falls back to the raw message for other errors.
+  const extractApiError = (err: any): string => {
+    const raw = String(err?.message ?? err ?? "");
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed.error || parsed.message || raw;
+    } catch { return raw; }
+  };
+  const createMut = useMutation({
+    mutationFn: inventoryApi.createWarehouse,
+    onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.warehouses.messages.saved") }); },
+    onError: (err: any) => { toast({ title: t("common.error", { defaultValue: "خطأ" }), description: extractApiError(err), variant: "destructive" }); qc.invalidateQueries({ queryKey: ["warehouses-quota"] }); },
+  });
+  const updateMut = useMutation({
+    mutationFn: ({ id, data }: any) => inventoryApi.updateWarehouse(id, data),
+    onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.warehouses.messages.updated") }); },
+    onError: (err: any) => { toast({ title: t("common.error", { defaultValue: "خطأ" }), description: extractApiError(err), variant: "destructive" }); },
+  });
   const deleteMut = useMutation({ mutationFn: inventoryApi.deleteWarehouse, onSuccess: () => { invalidate(); toast({ title: t("pages.warehouses.messages.deleted") }); } });
 
   function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); setActiveTab("basic"); setErrors({}); }
@@ -132,9 +163,41 @@ export default function Warehouses() {
           <h1 className="text-2xl font-bold flex items-center gap-2"><Warehouse className="h-6 w-6 text-primary" />{t("pages.warehouses.title")}</h1>
           <p className="text-muted-foreground text-sm mt-1">{t("pages.warehouses.description")}</p>
         </div>
-        <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
-          <Plus className="h-4 w-4" />{t("pages.warehouses.addWarehouse")}
-        </Button>
+        <div className="flex items-center gap-3">
+          {quota && (
+            <div
+              className={
+                "rounded-lg border px-3 py-1.5 text-xs font-medium tabular-nums " +
+                (quota.remaining === 0
+                  ? "border-destructive/40 bg-destructive/10 text-destructive"
+                  : quota.remaining <= Math.max(1, Math.floor(quota.limit * 0.2))
+                    ? "border-amber-300 bg-amber-50 text-amber-800"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-800")
+              }
+              title={quota.remaining === 0 ? "وصلت إلى الحد الأقصى لخطتك" : `يمكنك إضافة ${quota.remaining} مخزن إضافي`}
+            >
+              {t("pages.warehouses.quota", { defaultValue: "المستخدم" })}: <span className="font-bold">{quota.used}</span> / {quota.limit}
+            </div>
+          )}
+          <Button
+            size="sm"
+            className="gap-2"
+            onClick={() => {
+              if (quota && quota.remaining === 0) {
+                toast({
+                  title: t("pages.warehouses.limitReachedTitle", { defaultValue: "وصلت للحد الأقصى" }),
+                  description: `خطتك تسمح بـ ${quota.limit} مخزن فقط. يرجى ترقية الخطة لإضافة المزيد.`,
+                  variant: "destructive",
+                });
+                return;
+              }
+              reset();
+              setShowForm(true);
+            }}
+          >
+            <Plus className="h-4 w-4" />{t("pages.warehouses.addWarehouse")}
+          </Button>
+        </div>
       </div>
 
       {showForm && (

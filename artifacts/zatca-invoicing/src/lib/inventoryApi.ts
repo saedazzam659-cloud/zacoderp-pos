@@ -102,6 +102,7 @@ export const inventoryApi = {
   deleteWarehouseGroup: (id: number)   => del(`/warehouse-groups/${id}`),
   // Warehouses
   getWarehouses:   (cid?: number) => get<any[]>(`/warehouses${cid ? `?companyId=${cid}` : ""}`),
+  getWarehouseQuota: (cid?: number) => get<{ limit: number; used: number; remaining: number; hasSubscription: boolean }>(`/warehouses/quota${cid ? `?companyId=${cid}` : ""}`),
   createWarehouse: (data: any)    => post<any>("/warehouses", data),
   updateWarehouse: (id: number, data: any) => put<any>(`/warehouses/${id}`, data),
   deleteWarehouse: (id: number)   => del(`/warehouses/${id}`),

@@ -20,8 +20,9 @@ import {
   branchesTable,
   currenciesTable,
   notificationsTable,
+  subscriptionsTable,
 } from "@workspace/db";
-import { eq, and, sql, desc, asc, gte, lte, lt, inArray, isNull, or } from "drizzle-orm";
+import { eq, and, sql, desc, asc, gte, lte, lt, inArray, isNull, or, count } from "drizzle-orm";
 import { aliasedTable } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
 import { pathRbac, writeAudit } from "../middleware/permissions.js";
@@ -161,6 +162,39 @@ async function assertWarehouseBranchWritable(req: any, rawBranchId: any, cid: nu
   return { ok: true, branchId };
 }
 
+// Resolve the *currently effective* warehouse cap for a company by reading
+// the latest subscription row (most-recent end_date wins, then highest id).
+// Falls back to a generous unlimited-ish cap when no subscription exists so
+// the system never blocks legitimate use due to missing billing data.
+// No caching — every call hits the DB so SuperAdmin plan edits apply on the
+// very next request without forcing the user to re-login or refresh.
+async function getWarehouseQuota(companyId: number): Promise<{ limit: number; used: number; remaining: number; hasSubscription: boolean }> {
+  const [sub] = await db
+    .select({ maxWarehouses: subscriptionsTable.maxWarehouses })
+    .from(subscriptionsTable)
+    .where(eq(subscriptionsTable.companyId, companyId))
+    .orderBy(desc(subscriptionsTable.endDate), desc(subscriptionsTable.id))
+    .limit(1);
+  const limit = sub?.maxWarehouses ?? 1_000_000;
+  const [{ n }] = await db
+    .select({ n: count() })
+    .from(warehousesTable)
+    .where(eq(warehousesTable.companyId, companyId));
+  const used = Number(n ?? 0);
+  return { limit, used, remaining: Math.max(0, limit - used), hasSubscription: !!sub };
+}
+
+// GET /warehouses/quota — surfaces "X of Y" to the UI so the user knows
+// where they stand BEFORE attempting to add a new warehouse. The frontend
+// invalidates this on `subscription_changed` SSE so SuperAdmin upgrades
+// reflect instantly.
+router.get("/warehouses/quota", async (req, res) => {
+  const cid = getCompanyId(req);
+  if (!cid) { res.status(400).json({ error: "company_id مطلوب" }); return; }
+  const q = await getWarehouseQuota(cid);
+  res.json(q);
+});
+
 router.get("/warehouses", async (req, res) => {
   const cid = getCompanyId(req);
   const branchCond = warehouseBranchScope(req);
@@ -184,6 +218,19 @@ router.post("/warehouses", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const { code, nameAr, nameEn, groupId, branchId, city, region, allowNegative, negativeLimit, accountId } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم المخزن مطلوبان" }); return; }
+  // Plan-based cap. Re-checked on every POST so SuperAdmin upgrades take
+  // effect immediately. Returns the limit + used count in the body so the
+  // frontend can render an actionable message instead of a generic error.
+  const quota = await getWarehouseQuota(cid);
+  if (quota.used >= quota.limit) {
+    res.status(403).json({
+      error: `وصلت إلى الحد الأقصى للمخازن المسموح به في خطتك (${quota.limit} ${quota.limit === 1 ? "مخزن" : "مخازن"}). يرجى ترقية الخطة لإضافة المزيد.`,
+      code: "WAREHOUSE_LIMIT_REACHED",
+      limit: quota.limit,
+      used: quota.used,
+    });
+    return;
+  }
   // Branch-level write guard: restricted users can only create warehouses
   // for their own branch(es); admin/viewAll users can create shared (NULL)
   // warehouses but the branchId (if any) must belong to the same company.
