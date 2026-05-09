@@ -305,43 +305,12 @@ export default function JournalEntryForm() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew, !!user, reserveTick]);
 
-  // Cleanup: delete the reserved draft if the user navigates away
-  // without saving (component unmount). Uses fetch+keepalive so the
-  // request survives even hard navigations.
-  useEffect(() => {
-    return () => {
-      const r = reservedRef.current;
-      // Skip cleanup when saved OR mid-save — deleting an in-flight
-      // row would race with the PUT/POST and erase user work.
-      if (!r.id || r.saved || r.saving) return;
-      const tok = localStorage.getItem("zatca_token");
-      try {
-        fetch(`${API}/api/journal-entries/${r.id}`, {
-          method:    "DELETE",
-          headers:   tok ? { Authorization: `Bearer ${tok}` } : {},
-          keepalive: true,
-        }).catch(() => {});
-      } catch { /* swallow */ }
-    };
-  }, []);
-
-  // Same cleanup on tab close / browser refresh.
-  useEffect(() => {
-    const onUnload = () => {
-      const r = reservedRef.current;
-      if (!r.id || r.saved || r.saving) return;
-      const tok = localStorage.getItem("zatca_token");
-      try {
-        fetch(`${API}/api/journal-entries/${r.id}`, {
-          method:    "DELETE",
-          headers:   tok ? { Authorization: `Bearer ${tok}` } : {},
-          keepalive: true,
-        });
-      } catch { /* swallow */ }
-    };
-    window.addEventListener("beforeunload", onUnload);
-    return () => window.removeEventListener("beforeunload", onUnload);
-  }, []);
+  // NOTE: We deliberately do NOT delete the reserved draft on unmount or
+  // tab-close. The user explicitly asked that any reserved number be
+  // PERSISTED as a draft in every exit path (cancel, navigate away, tab
+  // close, save-empty) so sequence numbers are never silently consumed
+  // and forgotten. The draft remains visible in the journal entries list
+  // and the user can complete it later, or delete it explicitly.
 
   const { data: accountsList = [] } = useQuery<any[]>({
     queryKey: ["accounts-flat", cid],
@@ -764,19 +733,30 @@ export default function JournalEntryForm() {
 
   const saveMutation = useMutation({
     mutationFn: async (data: any) => {
-      // New entry with a reserved draft → finalize it: update the
-      // header/lines on the existing row, then flip status to posted.
-      // The docNumber stays the one we showed the user from the start.
+      // New entry with a reserved draft → update the header/lines on the
+      // existing row. We ONLY flip to "posted" when the entry is balanced
+      // AND has at least 2 valid lines. Otherwise the row stays as a
+      // draft holding the reserved docNumber, so the sequence is never
+      // wasted even if the user saves an empty/unbalanced entry.
       if (isNew && reservedRef.current.id) {
         const rid = reservedRef.current.id;
-        // Mark as saving so the unmount/beforeunload cleanup hooks
-        // do NOT race-delete the row while PUT/POST are in flight.
         reservedRef.current.saving = true;
         try {
           const updated = await journalEntriesApi.update(rid, data);
-          await journalEntriesApi.post(rid);
+          const validLines = (data.lines ?? []).filter((l: any) => l?.accountId);
+          const td = validLines.reduce((s: number, l: any) => s + (parseFloat(l.debit  || "0") || 0), 0);
+          const tc = validLines.reduce((s: number, l: any) => s + (parseFloat(l.credit || "0") || 0), 0);
+          const balanced = Math.abs(td - tc) < 0.001 && (td > 0 || tc > 0);
+          const canPost  = balanced && validLines.length >= 2;
+          if (canPost) {
+            await journalEntriesApi.post(rid);
+            reservedRef.current.saved = true;
+            return { ...updated, status: "posted", _posted: true };
+          }
+          // Saved as draft — keep reservation "open" but mark saved so
+          // unmount cleanup (none today) wouldn't delete it either.
           reservedRef.current.saved = true;
-          return { ...updated, status: "posted" };
+          return { ...updated, status: "draft", _posted: false };
         } finally {
           reservedRef.current.saving = false;
         }
@@ -788,12 +768,19 @@ export default function JournalEntryForm() {
       // Show the JUST-saved doc number prominently in the toast so the user
       // sees confirmation of what was just created/updated.
       const savedDoc = saved?.docNumber ?? docNumber;
-      const baseTitle = getSaveToastTitle(t, { posted: false, printed: autoPrintJournal });
+      const wasPosted = saved?._posted !== false; // legacy paths assumed posted
+      const baseTitle = wasPosted
+        ? getSaveToastTitle(t, { posted: false, printed: autoPrintJournal })
+        : "تم الحفظ كمسودة";
       toast({
         title: baseTitle,
-        description: savedDoc ? `رقم القيد: ${savedDoc}` : undefined,
+        description: savedDoc
+          ? (wasPosted
+              ? `رقم القيد: ${savedDoc}`
+              : `رقم القيد ${savedDoc} محفوظ كمسودة — أكمل البيانات لاحقاً وقم بترحيله`)
+          : undefined,
       });
-      if (autoPrintJournal) {
+      if (wasPosted && autoPrintJournal) {
         // Fire the print popup synchronously off the user-initiated save
         // click so the browser's pop-up blocker still treats it as
         // user-allowed.
@@ -850,11 +837,17 @@ export default function JournalEntryForm() {
     if (!entryDate) {
       toast({ title: "التاريخ مطلوب", variant: "destructive" }); return;
     }
-    if (!isBalanced) {
+    // For new entries we ALWAYS allow save — even empty/unbalanced — so
+    // the reserved sequence number is preserved as a draft holding row.
+    // For edits of existing entries we still block unbalanced posts via
+    // the /post endpoint server-side. Here we only require balance when
+    // editing an entry that is already posted (handled by the legacy
+    // paths below). Drafts can always be saved unbalanced.
+    if (!isNew && !isBalanced) {
       toast({ title: "القيد غير متوازن", description: `الفرق: ${diff.toFixed(2)}`, variant: "destructive" }); return;
     }
     const validLines = lines.filter(l => l.accountId);
-    if (validLines.length < 2) {
+    if (!isNew && validLines.length < 2) {
       toast({ title: "يجب أن يحتوي القيد على سطرين على الأقل", variant: "destructive" }); return;
     }
     saveMutation.mutate({
@@ -1770,18 +1763,22 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
       <div className="flex flex-wrap gap-3 justify-start items-center pb-4">
         <Button
           onClick={handleSave}
-          disabled={saveMutation.isPending || !isBalanced || isLockedSourceEntry}
+          disabled={saveMutation.isPending || isLockedSourceEntry || (!isNew && !isBalanced)}
           className="min-w-[120px]"
           data-testid="button-save"
           title={
             isLockedSourceEntry
               ? `لا يمكن تعديل هذا القيد — مُولَّد تلقائياً من ${lockInfo!.source}`
-              : (!isBalanced
-                  ? `لا يمكن الحفظ — القيد غير متوازن (الفرق ${diff.toFixed(2)} ${currency})`
-                  : undefined)
+              : (isNew && !isBalanced
+                  ? `سيتم الحفظ كمسودة — القيد غير متوازن (الفرق ${diff.toFixed(2)} ${currency})`
+                  : (!isNew && !isBalanced
+                      ? `لا يمكن الحفظ — القيد غير متوازن (الفرق ${diff.toFixed(2)} ${currency})`
+                      : undefined))
           }
         >
-          {saveMutation.isPending ? "جارٍ الحفظ..." : "حفظ"}
+          {saveMutation.isPending
+            ? "جارٍ الحفظ..."
+            : (isNew && !isBalanced ? "حفظ كمسودة" : "حفظ")}
         </Button>
         <Button
           type="button"
