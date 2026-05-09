@@ -6,6 +6,7 @@ import { journalEntriesApi } from "@/lib/journalEntriesApi";
 import { branchesApi } from "@/lib/branchesApi";
 import { safeLogoSrc } from "@/lib/export";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import AccountBrowserDialog from "@/components/AccountBrowserDialog";
 import { JournalPartyPicker } from "@/components/JournalPartyPicker";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Button } from "@/components/ui/button";
@@ -340,6 +341,28 @@ export default function JournalEntryForm() {
     const l = { ...newLine(), description: description || "" };
     setLines(prev => [...prev, l]);
     setFocusLineId(l.id);
+    return l;
+  }
+
+  // ── Smart Account Browser ───────────────────────────────────────
+  // Opens a polished modal that lets the user discover accounts by
+  // category (مصروفات / إيرادات / أصول…) when they don't remember the
+  // exact name. The picked account is dropped into the currently
+  // focused line — or a new line is created if every line already
+  // has an account.
+  const [accountBrowserOpen, setAccountBrowserOpen] = useState(false);
+  function pickAccountFromBrowser(a: { id: number }) {
+    // Find a target line: prefer the focused one if it's still empty,
+    // otherwise the first empty line, otherwise append a new one.
+    const empty = lines.find(l => !l.accountId);
+    const focused = lines.find(l => l.id === focusLineId);
+    let targetId: string;
+    if (focused && !focused.accountId) targetId = focused.id;
+    else if (empty)                     targetId = empty.id;
+    else                                targetId = addLine().id;
+    setLines(prev => prev.map(l => l.id === targetId ? { ...l, accountId: String(a.id) } : l));
+    setFocusLineId(targetId);
+    toast({ title: "✓ تم إدراج الحساب", description: "يمكنك الآن إدخال المبلغ في العمود المناسب." });
   }
 
   // ── قيد الضريبة (Tax Entry) ─────────────────────────────────────
@@ -1360,6 +1383,19 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <Button
+                  type="button"
+                  variant="outline" size="sm"
+                  onClick={() => setAccountBrowserOpen(true)}
+                  disabled={isLockedSourceEntry}
+                  className="h-7 gap-1 text-xs shrink-0 border-violet-300 bg-gradient-to-br from-violet-50 to-fuchsia-50 hover:from-violet-100 hover:to-fuchsia-100 text-violet-700 dark:from-violet-950/30 dark:to-fuchsia-950/30 dark:border-violet-800 dark:text-violet-300"
+                  title="استكشف الحسابات حسب الفئة (مصروفات/إيرادات/أصول…) — مفيد عندما لا تتذكر الاسم بالضبط"
+                  data-testid="btn-account-browser"
+                >
+                  <Search className="h-3.5 w-3.5" />
+                  بحث ذكي
+                  <Sparkles className="h-3 w-3 text-fuchsia-500" />
+                </Button>
+                <Button
                   variant="outline" size="sm"
                   onClick={addLine}
                   className="h-7 gap-1 text-xs shrink-0"
@@ -1368,6 +1404,13 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                   إضافة سطر
                 </Button>
               </div>
+
+              <AccountBrowserDialog
+                open={accountBrowserOpen}
+                onOpenChange={setAccountBrowserOpen}
+                onPick={pickAccountFromBrowser}
+                initialType="expense"
+              />
 
               {/* Column headers — same grid template as line rows */}
               <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px] gap-2 px-4 py-2 border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
