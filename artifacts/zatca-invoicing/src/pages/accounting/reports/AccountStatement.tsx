@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import { useFormatters } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -50,6 +50,25 @@ export default function AccountStatement() {
   const [toDate, setToDate]       = useState(today);
   const [branchId, setBranchId]   = useState<number | undefined>(undefined);
   const [searched, setSearched]   = useState(false);
+
+  // Deep-link support: when navigated from another report (e.g. trial
+  // balance drill-down) with ?accountId=&fromDate=&toDate=, pre-fill the
+  // form and auto-trigger the search so the statement is shown immediately.
+  const searchString = useSearch();
+  useEffect(() => {
+    if (!searchString) return;
+    const params = new URLSearchParams(searchString);
+    const a = params.get("accountId");
+    const f = params.get("fromDate");
+    const tt = params.get("toDate");
+    const b = params.get("branchId");
+    if (a) setAccountId(a);
+    if (f) setFromDate(f);
+    if (tt) setToDate(tt);
+    if (b) setBranchId(Number(b));
+    if (a) setSearched(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchString]);
 
   const EXPORT_COLS = [
     { key: "entryDate",   header: t("accountingReports.fromDate"), width: 14 },

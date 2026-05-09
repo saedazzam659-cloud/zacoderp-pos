@@ -1,15 +1,44 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { Link } from "wouter";
 import { useFormatters } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
-import { Scale, Search, Printer } from "lucide-react";
+import {
+  Scale, Search, Printer, Eye, ExternalLink, Loader2, AlertCircle, FileText,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// Map a journal-entry row coming back from /account-statement to the URL of
+// the document that produced it.
+function sourceLinkFor(row: any): string | null {
+  if (row.entryType === "sales_invoice" && row.salesInvoiceId)       return `/sales/invoices/${row.salesInvoiceId}`;
+  if (row.entryType === "purchase_invoice" && row.purchaseInvoiceId) return `/purchasing/invoices/${row.purchaseInvoiceId}`;
+  if (row.entryId) return `/accounting/journals/${row.entryId}`;
+  return null;
+}
+
+const ENTRY_TYPE_LABELS: Record<string, { ar: string; color: string }> = {
+  sales_invoice:    { ar: "فاتورة بيع",    color: "bg-emerald-100 text-emerald-700" },
+  purchase_invoice: { ar: "فاتورة شراء",   color: "bg-blue-100 text-blue-700" },
+  sales_return:     { ar: "مرتجع بيع",     color: "bg-amber-100 text-amber-700" },
+  purchase_return:  { ar: "مرتجع شراء",    color: "bg-amber-100 text-amber-700" },
+  payment_voucher:  { ar: "سند صرف",       color: "bg-rose-100 text-rose-700" },
+  receipt_voucher:  { ar: "سند قبض",       color: "bg-emerald-100 text-emerald-700" },
+  general:          { ar: "قيد يدوي",      color: "bg-slate-100 text-slate-700" },
+  payroll:          { ar: "رواتب",          color: "bg-violet-100 text-violet-700" },
+  pos_session:      { ar: "نقطة بيع",      color: "bg-emerald-100 text-emerald-700" },
+  production_issue: { ar: "إصدار إنتاج",    color: "bg-blue-100 text-blue-700" },
+  production_receipt: { ar: "استلام إنتاج", color: "bg-blue-100 text-blue-700" },
+};
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -50,6 +79,7 @@ export default function TrialBalance() {
   const [toDate, setToDate]     = useState(today);
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
   const [searched, setSearched] = useState(false);
+  const [drillRow, setDrillRow] = useState<any | null>(null);
 
   const { data: rows = [], isLoading, refetch } = useQuery<any[]>({
     queryKey: ["trial-balance", cid, fromDate, toDate, branchId],
@@ -215,9 +245,21 @@ export default function TrialBalance() {
                   const op = r.openingBalance ?? 0;
                   const cl = r.closingBalance ?? 0;
                   return (
-                    <tr key={r.id} className="hover:bg-muted/30 transition-colors group">
-                      <td className="px-4 py-2.5 font-mono text-xs text-primary border-b">{r.code}</td>
-                      <td className="px-4 py-2.5 border-b">{isRtl ? r.nameAr : (r.nameEn || r.nameAr)}</td>
+                    <tr
+                      key={r.id}
+                      className="hover:bg-primary/5 transition-colors group cursor-pointer"
+                      onClick={() => setDrillRow(r)}
+                      title="اعرض حركات هذا الحساب خلال الفترة"
+                    >
+                      <td className="px-4 py-2.5 font-mono text-xs text-primary border-b">
+                        <span className="inline-flex items-center gap-1.5">
+                          {r.code}
+                          <Eye className="h-3 w-3 text-primary/30 group-hover:text-primary transition-colors no-print" />
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 border-b group-hover:text-primary group-hover:underline decoration-dotted underline-offset-4">
+                        {isRtl ? r.nameAr : (r.nameEn || r.nameAr)}
+                      </td>
                       <td className="px-4 py-2.5 text-muted-foreground text-xs border-b">{TYPE_LABELS[r.accountType] ?? r.accountType}</td>
 
                       <td className="w-1 p-0 bg-amber-200/70 border-b border-amber-200 group-hover:bg-amber-300" />
@@ -258,6 +300,232 @@ export default function TrialBalance() {
           </div>
         </div>
       )}
+
+      {/* ── DRILL-DOWN MODAL ─────────────────────────────────────────────── */}
+      <AccountLedgerDialog
+        open={!!drillRow}
+        onOpenChange={(v) => { if (!v) setDrillRow(null); }}
+        account={drillRow}
+        fromDate={fromDate}
+        toDate={toDate}
+        branchId={branchId}
+        token={token}
+        cid={cid}
+        isRtl={isRtl}
+        fmtRaw={fmtRaw}
+      />
     </div>
+  );
+}
+
+// ─── Drill-down ledger dialog ────────────────────────────────────────────
+interface LedgerRow {
+  lineId: number; entryId: number; entryType: string;
+  docNumber: string | null; entryDate: string; description: string | null;
+  debit: number; credit: number; balance: number;
+  salesInvoiceId: number | null; purchaseInvoiceId: number | null;
+}
+interface LedgerResp {
+  previousBalance: number;
+  previousDebit: number;
+  previousCredit: number;
+  rows: LedgerRow[];
+}
+
+function AccountLedgerDialog({
+  open, onOpenChange, account, fromDate, toDate, branchId, token, cid, isRtl, fmtRaw,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  account: any | null;
+  fromDate: string;
+  toDate: string;
+  branchId: number | undefined;
+  token: string | null;
+  cid: number | undefined;
+  isRtl: boolean;
+  fmtRaw: (n: number) => string;
+}) {
+  const fmt = (n: number) => Number(n || 0) === 0 ? "" : fmtRaw(Number(n));
+  const fmtAbs = (n: number) => fmtRaw(Math.abs(Number(n || 0)));
+
+  const { data, isLoading, error } = useQuery<LedgerResp>({
+    queryKey: ["trial-balance-drill", cid, account?.id, fromDate, toDate, branchId],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (cid)       params.set("companyId", String(cid));
+      params.set("accountId", String(account.id));
+      if (fromDate)  params.set("fromDate", fromDate);
+      if (toDate)    params.set("toDate", toDate);
+      if (branchId !== undefined) params.set("branchId", String(branchId));
+      const r = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/accounting-reports/account-statement?${params}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        credentials: "include",
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error ?? "تعذر جلب الحركات");
+      return r.json();
+    },
+    enabled: !!account && open,
+  });
+
+  const ledgerRows = data?.rows ?? [];
+  const totalDr = useMemo(() => ledgerRows.reduce((s, r) => s + Number(r.debit  || 0), 0), [ledgerRows]);
+  const totalCr = useMemo(() => ledgerRows.reduce((s, r) => s + Number(r.credit || 0), 0), [ledgerRows]);
+  const closing = ledgerRows.length > 0 ? ledgerRows[ledgerRows.length - 1].balance : (data?.previousBalance ?? 0);
+  const accountName = account ? (isRtl ? account.nameAr : (account.nameEn || account.nameAr)) : "";
+
+  const fullStatementHref = account
+    ? `/accounting/reports/account-statement?accountId=${account.id}&fromDate=${fromDate}&toDate=${toDate}${branchId !== undefined ? `&branchId=${branchId}` : ""}`
+    : "#";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-5xl max-h-[88vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-lg">
+            <FileText className="h-5 w-5 text-primary" />
+            حركات الحساب:
+            <span className="font-mono text-sm text-primary">{account?.code}</span>
+            <span className="text-primary">{accountName}</span>
+          </DialogTitle>
+          <DialogDescription className="text-xs flex items-center gap-3">
+            <span>من {fromDate} إلى {toDate}</span>
+            <span>·</span>
+            <span>{ledgerRows.length} حركة</span>
+            {account && (
+              <>
+                <span>·</span>
+                <Link
+                  href={fullStatementHref}
+                  className="text-primary hover:underline inline-flex items-center gap-1 cursor-pointer"
+                  onClick={() => onOpenChange(false)}
+                >
+                  فتح كشف الحساب الكامل <ExternalLink className="h-3 w-3" />
+                </Link>
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* KPI strip */}
+        {data && (
+          <div className="grid grid-cols-4 gap-3 px-1">
+            <div className="rounded-lg border bg-amber-50/60 dark:bg-amber-950/20 p-3">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">رصيد ما قبل</p>
+              <p className="text-lg font-bold tabular-nums text-amber-700 dark:text-amber-400">
+                {fmtAbs(data.previousBalance)} <span className="text-[10px] font-normal">{data.previousBalance >= 0 ? "مدين" : "دائن"}</span>
+              </p>
+            </div>
+            <div className="rounded-lg border bg-blue-50/60 dark:bg-blue-950/20 p-3">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">إجمالي مدين الفترة</p>
+              <p className="text-lg font-bold tabular-nums text-blue-700 dark:text-blue-400">{fmtAbs(totalDr)}</p>
+            </div>
+            <div className="rounded-lg border bg-rose-50/60 dark:bg-rose-950/20 p-3">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">إجمالي دائن الفترة</p>
+              <p className="text-lg font-bold tabular-nums text-rose-700 dark:text-rose-400">{fmtAbs(totalCr)}</p>
+            </div>
+            <div className="rounded-lg border bg-emerald-50/60 dark:bg-emerald-950/20 p-3">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">رصيد الإقفال</p>
+              <p className="text-lg font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                {fmtAbs(closing)} <span className="text-[10px] font-normal">{Number(closing) >= 0 ? "مدين" : "دائن"}</span>
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Ledger list */}
+        <div className="flex-1 overflow-y-auto rounded-lg border">
+          {isLoading && (
+            <div className="flex items-center justify-center py-12 text-muted-foreground gap-2">
+              <Loader2 className="h-5 w-5 animate-spin" /> جارِ التحميل...
+            </div>
+          )}
+          {error && (
+            <div className="flex items-center gap-2 p-4 text-destructive text-sm">
+              <AlertCircle className="h-4 w-4" /> {(error as Error).message}
+            </div>
+          )}
+          {!isLoading && !error && ledgerRows.length === 0 && (
+            <p className="text-center text-sm text-muted-foreground py-12">
+              لا توجد حركات على هذا الحساب خلال الفترة.
+            </p>
+          )}
+          {!isLoading && ledgerRows.length > 0 && (
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-muted/80 backdrop-blur z-10">
+                <tr className="text-xs text-muted-foreground">
+                  <th className="px-3 py-2 text-right font-semibold">النوع</th>
+                  <th className="px-3 py-2 text-right font-semibold">رقم المستند</th>
+                  <th className="px-3 py-2 text-right font-semibold">التاريخ</th>
+                  <th className="px-3 py-2 text-right font-semibold">البيان</th>
+                  <th className="px-3 py-2 text-left font-semibold w-24">مدين</th>
+                  <th className="px-3 py-2 text-left font-semibold w-24">دائن</th>
+                  <th className="px-3 py-2 text-left font-semibold w-28">الرصيد</th>
+                  <th className="w-12 px-2 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {data && Math.abs(Number(data.previousBalance)) > 0.005 && (
+                  <tr className="border-t border-border/40 bg-amber-50/40 dark:bg-amber-950/10">
+                    <td className="px-3 py-2.5" colSpan={3}>
+                      <span className="inline-block px-2 py-0.5 rounded text-[11px] font-medium bg-amber-100 text-amber-800">رصيد سابق</span>
+                    </td>
+                    <td className="px-3 py-2.5 text-muted-foreground italic">رصيد ما قبل الفترة</td>
+                    <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs text-blue-700">{fmt(data.previousDebit)}</td>
+                    <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs text-rose-700">{fmt(data.previousCredit)}</td>
+                    <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs font-semibold">
+                      {fmtAbs(data.previousBalance)} {data.previousBalance >= 0 ? "م" : "د"}
+                    </td>
+                    <td />
+                  </tr>
+                )}
+                {ledgerRows.map((r) => {
+                  const meta = ENTRY_TYPE_LABELS[r.entryType] ?? { ar: r.entryType, color: "bg-gray-100 text-gray-700" };
+                  const link = sourceLinkFor(r);
+                  return (
+                    <tr key={r.lineId} className="border-t border-border/40 hover:bg-muted/30">
+                      <td className="px-3 py-2.5">
+                        <span className={cn("inline-block px-2 py-0.5 rounded text-[11px] font-medium", meta.color)}>{meta.ar}</span>
+                      </td>
+                      <td className="px-3 py-2.5 font-mono text-xs">{r.docNumber ?? `#${r.entryId}`}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground tabular-nums">{r.entryDate}</td>
+                      <td className="px-3 py-2.5 truncate max-w-[260px]">{r.description ?? <span className="text-muted-foreground">—</span>}</td>
+                      <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs text-blue-700">{fmt(r.debit)}</td>
+                      <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs text-rose-700">{fmt(r.credit)}</td>
+                      <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs font-semibold">
+                        {fmtAbs(r.balance)} <span className="text-muted-foreground text-[10px]">{r.balance >= 0 ? "م" : "د"}</span>
+                      </td>
+                      <td className="px-2 py-2.5 text-center">
+                        {link && (
+                          <Link
+                            href={link}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded hover:bg-primary/10 text-primary cursor-pointer"
+                            title="فتح المستند"
+                            onClick={() => onOpenChange(false)}
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </Link>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="sticky bottom-0 bg-slate-100 dark:bg-slate-800/80 backdrop-blur font-bold">
+                <tr className="border-t-2 border-slate-400">
+                  <td className="px-3 py-2.5" colSpan={4}>الإجمالي</td>
+                  <td className="px-3 py-2.5 text-left font-mono tabular-nums text-blue-700">{fmtAbs(totalDr)}</td>
+                  <td className="px-3 py-2.5 text-left font-mono tabular-nums text-rose-700">{fmtAbs(totalCr)}</td>
+                  <td className="px-3 py-2.5 text-left font-mono tabular-nums">
+                    {fmtAbs(closing)} <span className="text-muted-foreground text-[10px] font-normal">{Number(closing) >= 0 ? "م" : "د"}</span>
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
