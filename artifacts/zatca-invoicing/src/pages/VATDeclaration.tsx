@@ -359,10 +359,12 @@ function VatDrilldownDialog({
                       <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs font-semibold">{fmtNum(d.total)}</td>
                       <td className="px-2 py-2.5 text-center">
                         {d.link && (
-                          <Link href={d.link}>
-                            <a className="inline-flex h-7 w-7 items-center justify-center rounded hover:bg-primary/10 text-primary" title="فتح المستند">
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </a>
+                          <Link
+                            href={d.link}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded hover:bg-primary/10 text-primary cursor-pointer"
+                            title="فتح المستند"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
                           </Link>
                         )}
                       </td>
@@ -717,10 +719,12 @@ export default function VATDeclaration() {
                       <td className="w-10 px-3 py-3 text-center text-xs text-muted-foreground font-medium">{idx + 1}</td>
                       <td className="px-5 py-3 tabular-nums">{fmtDate(e.entryDate)}</td>
                       <td className="px-5 py-3 font-mono text-xs">
-                        <Link href={`/accounting/journals/${e.id}`}>
-                          <a className="text-primary hover:underline decoration-dotted underline-offset-4" title="فتح القيد المحاسبي">
-                            {e.docNumber ?? `#${e.id}`}
-                          </a>
+                        <Link
+                          href={`/accounting/journals/${e.id}`}
+                          className="text-primary hover:underline decoration-dotted underline-offset-4 cursor-pointer"
+                          title="فتح القيد المحاسبي"
+                        >
+                          {e.docNumber ?? `#${e.id}`}
                         </Link>
                       </td>
                       <td className="px-5 py-3 text-muted-foreground">{e.description ?? "—"}</td>
@@ -731,13 +735,12 @@ export default function VATDeclaration() {
                         {Math.abs(e.inputVat) > 0.005 ? fmtNum(e.inputVat) : <span className="text-muted-foreground">—</span>}
                       </td>
                       <td className="px-2 py-3 text-center no-print">
-                        <Link href={`/accounting/journals/${e.id}`}>
-                          <a
-                            className="inline-flex h-7 w-7 items-center justify-center rounded text-primary/60 hover:text-primary hover:bg-primary/10 transition-colors"
-                            title="فتح القيد المحاسبي"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                          </a>
+                        <Link
+                          href={`/accounting/journals/${e.id}`}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded text-primary/60 hover:text-primary hover:bg-primary/10 transition-colors cursor-pointer"
+                          title="فتح القيد المحاسبي"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
                         </Link>
                       </td>
                     </tr>
