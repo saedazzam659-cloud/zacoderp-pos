@@ -72,6 +72,38 @@ export default function SalesInvoices() {
     enabled: !!user,
   });
 
+  // Plan-based monthly invoice quota — invalidated on `subscription_changed`
+  // SSE (handled globally by AuthContext) so SuperAdmin upgrades reflect
+  // without a re-login. Counts only the current calendar month so the badge
+  // resets automatically at month-rollover.
+  const { data: invQuota } = useQuery<{ limit: number; used: number; remaining: number; hasSubscription: boolean }>({
+    queryKey: ["sales-invoices-quota", cid],
+    enabled: !!user && !!cid,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/sales/sales-invoices/quota?companyId=${cid}`, { headers: authH });
+      if (!r.ok) return { limit: 0, used: 0, remaining: 0, hasSubscription: false };
+      return r.json();
+    },
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+  });
+
+  // Click-guard helper for both "new invoice" entry points: blocks
+  // navigation to the form when the monthly cap is exhausted and toasts
+  // an actionable upgrade message instead of letting the user fill in
+  // the whole form just to be rejected at save-time.
+  const guardedNewInvoice = () => {
+    if (invQuota && invQuota.remaining === 0) {
+      toast({
+        title: "وصلت للحد الأقصى",
+        description: `خطتك تسمح بـ ${invQuota.limit} فاتورة شهرياً فقط. يرجى ترقية الخطة لإضافة المزيد.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    navigate("/sales/invoices/new");
+  };
+
   // Pick up the auto-print hint planted by SalesDocumentForm via
   // sessionStorage when redirecting back here after save. We wait
   // until invoices and customers have loaded so the invoice lookup
@@ -274,7 +306,22 @@ export default function SalesInvoices() {
             <FileDown className="h-4 w-4" />
             تصدير PDF
           </Button>
-          <Button size="sm" className="gap-2" onClick={() => navigate("/sales/invoices/new")}>
+          {invQuota && (
+            <div
+              className={
+                "rounded-lg border px-3 py-1.5 text-xs font-medium tabular-nums " +
+                (invQuota.remaining === 0
+                  ? "border-destructive/40 bg-destructive/10 text-destructive"
+                  : invQuota.remaining <= Math.max(1, Math.floor(invQuota.limit * 0.2))
+                    ? "border-amber-300 bg-amber-50 text-amber-800"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-800")
+              }
+              title={invQuota.remaining === 0 ? "وصلت إلى الحد الأقصى الشهري لخطتك" : `يمكنك إصدار ${invQuota.remaining} فاتورة إضافية هذا الشهر`}
+            >
+              فواتير الشهر: <span className="font-bold">{invQuota.used}</span> / {invQuota.limit}
+            </div>
+          )}
+          <Button size="sm" className="gap-2" onClick={guardedNewInvoice}>
             <Plus className="h-4 w-4" />{t("salesInvoices.newInvoice")}
           </Button>
         </div>
@@ -318,7 +365,7 @@ export default function SalesInvoices() {
           <div className="p-12 text-center">
             <FileText className="h-10 w-10 text-muted-foreground mx-auto mb-3 opacity-40" />
             <p className="text-muted-foreground text-sm">{t("salesInvoices.noInvoices")}</p>
-            <Button size="sm" className="mt-4 gap-2" onClick={() => navigate("/sales/invoices/new")}>
+            <Button size="sm" className="mt-4 gap-2" onClick={guardedNewInvoice}>
               <Plus className="h-4 w-4" />{t("salesInvoices.createFirst")}
             </Button>
           </div>

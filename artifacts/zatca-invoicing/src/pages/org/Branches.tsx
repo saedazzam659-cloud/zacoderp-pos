@@ -67,12 +67,38 @@ export default function Branches() {
     queryFn:  () => branchesApi.getBranches(cid),
   });
 
+  // Plan-based branch quota — invalidated on `subscription_changed` SSE
+  // (handled globally by AuthContext) so SuperAdmin upgrades reflect
+  // without a re-login.
+  const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const { token: authToken } = useAuth();
+  const { data: branchQuota } = useQuery<{ limit: number; used: number; remaining: number; hasSubscription: boolean }>({
+    queryKey: ["branches-quota", cid],
+    enabled: !!cid,
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE}/api/org/branches/quota?companyId=${cid}`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!r.ok) return { limit: 0, used: 0, remaining: 0, hasSubscription: false };
+      return r.json();
+    },
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+  });
+
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["branches"] });
     qc.invalidateQueries({ queryKey: ["regions"] });
+    qc.invalidateQueries({ queryKey: ["branches-quota"] });
   };
 
-  const errToast = (title: string) => (e: any) => toast({ title, description: parseError(e), variant: "destructive" });
+  // parseError already digs the JSON `error` field out of the API
+  // response body, so plan-cap messages render correctly without extra
+  // post-processing here.
+  const errToast = (title: string) => (e: any) => {
+    toast({ title, description: parseError(e), variant: "destructive" });
+    qc.invalidateQueries({ queryKey: ["branches-quota"] });
+  };
   const createMut = useMutation({ mutationFn: branchesApi.createBranch, onSuccess: () => { invalidate(); reset(); toast({ title: t("branches.addedToast") }); }, onError: errToast(t("branches.errSave")) });
   const updateMut = useMutation({ mutationFn: ({ id, data }: any) => branchesApi.updateBranch(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: t("branches.updatedToast") }); }, onError: errToast(t("branches.errUpdate")) });
   const deleteMut = useMutation({ mutationFn: branchesApi.deleteBranch, onSuccess: () => { invalidate(); toast({ title: t("branches.deletedToast") }); }, onError: errToast(t("branches.errDelete")) });
@@ -109,7 +135,37 @@ export default function Branches() {
           <Link href="/org/regions">
             <Button variant="outline" size="sm" className="gap-2"><MapPin className="h-4 w-4" />{t("branches.regionsLink")}</Button>
           </Link>
-          <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
+          {branchQuota && (
+            <div
+              className={
+                "rounded-lg border px-3 py-1.5 text-xs font-medium tabular-nums " +
+                (branchQuota.remaining === 0
+                  ? "border-destructive/40 bg-destructive/10 text-destructive"
+                  : branchQuota.remaining <= Math.max(1, Math.floor(branchQuota.limit * 0.2))
+                    ? "border-amber-300 bg-amber-50 text-amber-800"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-800")
+              }
+              title={branchQuota.remaining === 0 ? "وصلت إلى الحد الأقصى لخطتك" : `يمكنك إضافة ${branchQuota.remaining} فرع إضافي`}
+            >
+              الفروع: <span className="font-bold">{branchQuota.used}</span> / {branchQuota.limit}
+            </div>
+          )}
+          <Button
+            size="sm"
+            className="gap-2"
+            onClick={() => {
+              if (branchQuota && branchQuota.remaining === 0) {
+                toast({
+                  title: "وصلت للحد الأقصى",
+                  description: `خطتك تسمح بـ ${branchQuota.limit} فرع فقط. يرجى ترقية الخطة لإضافة المزيد.`,
+                  variant: "destructive",
+                });
+                return;
+              }
+              reset();
+              setShowForm(true);
+            }}
+          >
             <Plus className="h-4 w-4" />{t("branches.addBranch")}
           </Button>
         </div>

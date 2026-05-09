@@ -11,9 +11,10 @@ import {
   receiptVouchersTable, paymentVouchersTable,
   salesRepsTable, offersTable,
   goodsDeliveriesTable,
+  subscriptionsTable,
 } from "@workspace/db";
 import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
-import { eq, and, asc, desc, sql, inArray, isNull } from "drizzle-orm";
+import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter } from "../middleware/auth.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
@@ -361,6 +362,19 @@ router.get("/sales-invoices", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
+// GET /sales-invoices/quota — surfaces "X of Y this month" so the user
+// knows where they stand BEFORE creating a new invoice. Frontend
+// invalidates this on `subscription_changed` SSE.
+// IMPORTANT: must be registered BEFORE `/sales-invoices/:id`, otherwise
+// Express matches "quota" as the :id param and the handler is never hit.
+// `getInvoiceQuota` is a hoisted function declaration defined later in
+// this file, which is why the forward reference here is safe.
+router.get("/sales-invoices/quota", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const q = await getInvoiceQuota(cid);
+  res.json(q);
+});
+
 router.get("/sales-invoices/:id", async (req, res) => {
   try {
     const cid = getCid(req);
@@ -459,9 +473,55 @@ function collectInvoiceOfferIds(documentOfferId: any, lines: any[] | undefined):
   return [...ids];
 }
 
+// ─── Plan-based monthly invoice quota ────────────────────────────
+// Counts sales invoices created in the current calendar month against
+// the company's max_invoices subscription cap. No caching so SuperAdmin
+// plan edits apply on the very next request.
+async function getInvoiceQuota(companyId: number): Promise<{ limit: number; used: number; remaining: number; hasSubscription: boolean; periodStart: string; periodEnd: string }> {
+  const [sub] = await db
+    .select({ maxInvoices: subscriptionsTable.maxInvoices })
+    .from(subscriptionsTable)
+    .where(eq(subscriptionsTable.companyId, companyId))
+    .orderBy(desc(subscriptionsTable.endDate), desc(subscriptionsTable.id))
+    .limit(1);
+  const limit = sub?.maxInvoices ?? 1_000_000;
+  // Month boundaries in Asia/Riyadh local time (UTC+3, no DST). Using
+  // UTC here would shift the cutoff by 3 hours and falsely roll the
+  // month over for invoices issued late at night in KSA.
+  const nowKsa = new Date(Date.now() + 3 * 60 * 60 * 1000);
+  const yyyy = nowKsa.getUTCFullYear();
+  const mm = String(nowKsa.getUTCMonth() + 1).padStart(2, "0");
+  const periodStart = `${yyyy}-${mm}-01`;
+  const lastDay = new Date(Date.UTC(yyyy, nowKsa.getUTCMonth() + 1, 0)).getUTCDate();
+  const periodEnd = `${yyyy}-${mm}-${String(lastDay).padStart(2, "0")}`;
+  const [{ n }] = await db
+    .select({ n: count() })
+    .from(salesInvoicesTable)
+    .where(and(
+      eq(salesInvoicesTable.companyId, companyId),
+      gte(salesInvoicesTable.invoiceDate, periodStart),
+      lte(salesInvoicesTable.invoiceDate, periodEnd),
+    ));
+  const used = Number(n ?? 0);
+  return { limit, used, remaining: Math.max(0, limit - used), hasSubscription: !!sub, periodStart, periodEnd };
+}
+
 router.post("/sales-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    // Plan-based monthly cap. Re-checked on every POST so SuperAdmin
+    // upgrades take effect immediately. Returns the limit + used count
+    // so the frontend can render an actionable message.
+    const invQuota = await getInvoiceQuota(cid);
+    if (invQuota.used >= invQuota.limit) {
+      res.status(403).json({
+        error: `وصلت إلى الحد الأقصى للفواتير الشهرية المسموح به في خطتك (${invQuota.limit} فاتورة/شهر). يرجى ترقية الخطة لإضافة المزيد.`,
+        code: "INVOICE_LIMIT_REACHED",
+        limit: invQuota.limit,
+        used: invQuota.used,
+      });
+      return;
+    }
     const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,

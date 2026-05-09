@@ -1,12 +1,46 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, userBranchesTable, branchesTable } from "@workspace/db";
-import { eq, and, asc, ne, inArray } from "drizzle-orm";
+import { usersTable, userBranchesTable, branchesTable, subscriptionsTable } from "@workspace/db";
+import { eq, and, asc, ne, inArray, desc, count } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 
 const router = Router();
 router.use(extractAuth);
+
+// ─── Plan-based user quota ───────────────────────────────────────
+// Mirrors the warehouse-quota pattern in inventory.ts: resolves the
+// most recent subscription for the company (latest end_date wins, then
+// highest id) and reads max_users. No caching — every call hits the DB
+// so SuperAdmin plan edits apply on the very next request without
+// forcing the user to re-login. Returns a generous unlimited-ish cap
+// when no subscription exists so legitimate use isn't blocked.
+async function getUserQuota(companyId: number): Promise<{ limit: number; used: number; remaining: number; hasSubscription: boolean }> {
+  const [sub] = await db
+    .select({ maxUsers: subscriptionsTable.maxUsers })
+    .from(subscriptionsTable)
+    .where(eq(subscriptionsTable.companyId, companyId))
+    .orderBy(desc(subscriptionsTable.endDate), desc(subscriptionsTable.id))
+    .limit(1);
+  const limit = sub?.maxUsers ?? 1_000_000;
+  const [{ n }] = await db
+    .select({ n: count() })
+    .from(usersTable)
+    .where(eq(usersTable.companyId, companyId));
+  const used = Number(n ?? 0);
+  return { limit, used, remaining: Math.max(0, limit - used), hasSubscription: !!sub };
+}
+
+// GET /users/quota — surfaces "X of Y" to the UI so the admin knows
+// where they stand BEFORE attempting to add a new user. The frontend
+// invalidates this on `subscription_changed` SSE so SuperAdmin
+// upgrades reflect instantly.
+router.get("/quota", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const cid = guard(req, res); if (!cid) return;
+  const q = await getUserQuota(cid);
+  res.json(q);
+});
 
 function guard(req: any, res: any): number | null {
   // For superadmin, prefer the explicit ?companyId=N query (or body) so they
@@ -104,6 +138,20 @@ router.post("/", async (req, res) => {
     } = req.body ?? {};
     if (!username || !password) { res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" }); return; }
     if (String(password).length < 6) { res.status(400).json({ error: "كلمة المرور يجب أن تكون 6 أحرف على الأقل" }); return; }
+
+    // Plan-based cap. Re-checked on every POST so SuperAdmin upgrades take
+    // effect immediately. Returns the limit + used count so the frontend
+    // can render an actionable message instead of a generic error.
+    const quota = await getUserQuota(cid);
+    if (quota.used >= quota.limit) {
+      res.status(403).json({
+        error: `وصلت إلى الحد الأقصى للمستخدمين المسموح به في خطتك (${quota.limit} ${quota.limit === 1 ? "مستخدم" : "مستخدمين"}). يرجى ترقية الخطة لإضافة المزيد.`,
+        code: "USER_LIMIT_REACHED",
+        limit: quota.limit,
+        used: quota.used,
+      });
+      return;
+    }
 
     // Username uniqueness is scoped to THIS company (April 2026 redesign):
     // the partial UNIQUE index on (company_id, username) lets two different

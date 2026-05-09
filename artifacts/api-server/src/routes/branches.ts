@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { regionsTable, branchesTable, userBranchesTable } from "@workspace/db";
-import { eq, and, asc, sql, inArray } from "drizzle-orm";
+import { regionsTable, branchesTable, userBranchesTable, subscriptionsTable } from "@workspace/db";
+import { eq, and, asc, sql, inArray, desc, count } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, getAllowedBranchIds } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
@@ -9,6 +9,25 @@ const router = Router();
 router.use(extractAuth);
 router.use(requireModulePermission("branches"));
 router.use(moduleAudit("branches"));
+
+// ─── Plan-based branch quota ─────────────────────────────────────
+// Mirrors the warehouse-quota pattern in inventory.ts. No caching so
+// SuperAdmin plan edits apply on the very next request.
+async function getBranchQuota(companyId: number): Promise<{ limit: number; used: number; remaining: number; hasSubscription: boolean }> {
+  const [sub] = await db
+    .select({ maxBranches: subscriptionsTable.maxBranches })
+    .from(subscriptionsTable)
+    .where(eq(subscriptionsTable.companyId, companyId))
+    .orderBy(desc(subscriptionsTable.endDate), desc(subscriptionsTable.id))
+    .limit(1);
+  const limit = sub?.maxBranches ?? 1_000_000;
+  const [{ n }] = await db
+    .select({ n: count() })
+    .from(branchesTable)
+    .where(eq(branchesTable.companyId, companyId));
+  const used = Number(n ?? 0);
+  return { limit, used, remaining: Math.max(0, limit - used), hasSubscription: !!sub };
+}
 
 function guard(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);
@@ -170,12 +189,33 @@ router.get("/branches", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /branches/quota — surfaces "X of Y" so the admin knows where they
+// stand before adding. Frontend invalidates on `subscription_changed` SSE.
+router.get("/branches/quota", async (req, res) => {
+  const cid = getCompanyId(req);
+  if (!cid) { res.status(400).json({ error: "company_id مطلوب" }); return; }
+  const q = await getBranchQuota(cid);
+  res.json(q);
+});
+
 // CREATE branch
 router.post("/branches", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { nameAr, nameEn, regionId, city, address, phone, email, isMain, status, notes } = req.body;
     if (!nameAr) { res.status(400).json({ error: "الاسم مطلوب" }); return; }
+    // Plan-based cap. Re-checked on every POST so SuperAdmin upgrades take
+    // effect immediately.
+    const quota = await getBranchQuota(cid);
+    if (quota.used >= quota.limit) {
+      res.status(403).json({
+        error: `وصلت إلى الحد الأقصى للفروع المسموح به في خطتك (${quota.limit} ${quota.limit === 1 ? "فرع" : "فروع"}). يرجى ترقية الخطة لإضافة المزيد.`,
+        code: "BRANCH_LIMIT_REACHED",
+        limit: quota.limit,
+        used: quota.used,
+      });
+      return;
+    }
     const existing = await db.select().from(branchesTable).where(eq(branchesTable.companyId, cid));
     const code = (req.body.code && String(req.body.code).trim()) ? String(req.body.code).trim() : await nextCode("BR", branchesTable, cid);
     if (existing.some(b => b.code?.trim().toLowerCase() === code.toLowerCase())) {

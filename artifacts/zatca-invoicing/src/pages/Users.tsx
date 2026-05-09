@@ -126,6 +126,28 @@ export default function Users() {
     },
   });
 
+  // Plan-based user quota — refetched on focus and on `subscription_changed`
+  // SSE (handled globally by AuthContext via qc.invalidateQueries()) so any
+  // SuperAdmin upgrade/downgrade reflects without a re-login.
+  const { data: userQuota } = useQuery<{ limit: number; used: number; remaining: number; hasSubscription: boolean }>({
+    queryKey: ["users-quota", cid],
+    enabled: fetchEnabled && !!cid,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/users/quota?companyId=${cid}`, { headers: authH });
+      if (!r.ok) return { limit: 0, used: 0, remaining: 0, hasSubscription: false };
+      return r.json();
+    },
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+  });
+  // Parse the JSON error body the API returns for plan-cap responses
+  // (`{ error, code: "USER_LIMIT_REACHED", limit, used }`) so the toast
+  // shows the actionable message instead of the raw stringified payload.
+  const extractApiError = (raw: any): string => {
+    const s = String(raw?.message ?? raw ?? "");
+    try { const p = JSON.parse(s); return p.error || p.message || s; } catch { return s; }
+  };
+
   // Companies dropdown for superadmin (small list — fine to keep cached).
   interface CompanyMin { id: number; nameAr: string; nameEn?: string | null }
   const { data: companiesList = [] } = useQuery<CompanyMin[]>({
@@ -275,9 +297,13 @@ export default function Users() {
     onSuccess: () => {
       toast({ title: t("users.savedTitle"), description: editingId == null ? t("users.savedAdd") : t("users.savedUpdate") });
       qc.invalidateQueries({ queryKey: ["users", cid] });
+      qc.invalidateQueries({ queryKey: ["users-quota", cid] });
       closeForm();
     },
-    onError: (e: any) => toast({ title: t("users.error"), description: e.message, variant: "destructive" }),
+    onError: (e: any) => {
+      toast({ title: t("users.error"), description: extractApiError(e), variant: "destructive" });
+      qc.invalidateQueries({ queryKey: ["users-quota", cid] });
+    },
   });
 
   const deleteMut = useMutation({
@@ -359,8 +385,36 @@ export default function Users() {
               </SelectContent>
             </Select>
           )}
+          {userQuota && fetchEnabled && (
+            <div
+              className={
+                "rounded-lg border px-3 py-1.5 text-xs font-medium tabular-nums " +
+                (userQuota.remaining === 0
+                  ? "border-destructive/40 bg-destructive/10 text-destructive"
+                  : userQuota.remaining <= Math.max(1, Math.floor(userQuota.limit * 0.2))
+                    ? "border-amber-300 bg-amber-50 text-amber-800"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-800")
+              }
+              title={userQuota.remaining === 0 ? "وصلت إلى الحد الأقصى لخطتك" : `يمكنك إضافة ${userQuota.remaining} مستخدم إضافي`}
+            >
+              المستخدمون: <span className="font-bold">{userQuota.used}</span> / {userQuota.limit}
+            </div>
+          )}
           {!openForm && fetchEnabled && (
-            <Button onClick={openCreate} className={cn("gap-2 hover:from-cyan-700 hover:to-blue-700", isRtl ? "bg-gradient-to-l from-cyan-600 to-blue-600" : "bg-gradient-to-r from-cyan-600 to-blue-600")}>
+            <Button
+              onClick={() => {
+                if (userQuota && userQuota.remaining === 0) {
+                  toast({
+                    title: "وصلت للحد الأقصى",
+                    description: `خطتك تسمح بـ ${userQuota.limit} مستخدم فقط. يرجى ترقية الخطة لإضافة المزيد.`,
+                    variant: "destructive",
+                  });
+                  return;
+                }
+                openCreate();
+              }}
+              className={cn("gap-2 hover:from-cyan-700 hover:to-blue-700", isRtl ? "bg-gradient-to-l from-cyan-600 to-blue-600" : "bg-gradient-to-r from-cyan-600 to-blue-600")}
+            >
               <Plus className="h-4 w-4" />
               {t("users.addUser")}
             </Button>
