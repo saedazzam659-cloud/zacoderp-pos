@@ -12,8 +12,10 @@ import {
   accountsTable,
   accountingMappingsTable,
 } from "@workspace/db";
-import { eq, and, gte, lte, inArray, notInArray } from "drizzle-orm";
+import { eq, and, gte, lte, inArray, notInArray, sql as dsql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { customersTable } from "@workspace/db";
+import { suppliersTable } from "@workspace/db";
 
 // Entry types created automatically by source documents (sales/purchase
 // invoices, vouchers, payroll, stock moves). Their VAT impact is ALREADY
@@ -371,6 +373,193 @@ router.get("/vat-declaration", async (req, res) => {
     // what came from a journal-level correction.
     journalAdjustments,
   });
+});
+
+// GET /api/reports/vat-declaration/details?from=&to=&bucket=<key>
+// Drill-down: returns the underlying invoices/returns that produced the
+// given bucket value on the VAT declaration. Buckets:
+//   sales_standard | sales_zero | sales_exempt
+//   purchases_standard | purchases_zero | purchases_exempt
+//   sales_returns | purchase_returns
+type Bucket3 = "standard" | "zero" | "exempt";
+function classifyOne(base: number, vat: number): Bucket3 {
+  if (vat > 0) return "standard";
+  if (base > 0) return "zero";
+  return "exempt";
+}
+
+router.get("/vat-declaration/details", async (req, res) => {
+  const { from, to, bucket } = req.query as { from?: string; to?: string; bucket?: string };
+  if (!from || !to || !bucket) { res.status(400).json({ error: "from و to و bucket مطلوبة" }); return; }
+  if (!validIsoDate(from) || !validIsoDate(to)) { res.status(400).json({ error: "صيغة التاريخ غير صحيحة" }); return; }
+  const companyId = resolveCompanyId(req, undefined);
+  if (!companyId) { res.status(400).json({ error: "الشركة غير محددة" }); return; }
+
+  type DocRow = {
+    id: number; source: string; docNumber: string | null; date: string;
+    partyName: string | null; base: number; vat: number; total: number; link: string | null;
+  };
+  const out: DocRow[] = [];
+
+  const want = bucket; // sales_standard | sales_zero | sales_exempt | purchases_* | sales_returns | purchase_returns
+
+  if (want.startsWith("sales_") && want !== "sales_returns") {
+    const target: Bucket3 = want === "sales_standard" ? "standard" : want === "sales_zero" ? "zero" : "exempt";
+    // sales_invoices left-join customers
+    const rows = await db
+      .select({
+        id: salesInvoicesTable.id,
+        docNumber: salesInvoicesTable.docNumber,
+        date: salesInvoicesTable.invoiceDate,
+        subtotal: salesInvoicesTable.subtotal,
+        discountAmount: salesInvoicesTable.discountAmount,
+        vat: salesInvoicesTable.vatAmount,
+        total: salesInvoicesTable.totalAmount,
+        custAr: customersTable.nameAr,
+        custEn: customersTable.nameEn,
+      })
+      .from(salesInvoicesTable)
+      .leftJoin(customersTable, eq(customersTable.id, salesInvoicesTable.customerId))
+      .where(and(
+        eq(salesInvoicesTable.companyId, companyId),
+        eq(salesInvoicesTable.status, "posted"),
+        gte(salesInvoicesTable.invoiceDate, from),
+        lte(salesInvoicesTable.invoiceDate, to),
+      ));
+    for (const r of rows) {
+      const base = Math.max(0, Number(r.subtotal) - Number(r.discountAmount));
+      const vat  = Number(r.vat);
+      if (classifyOne(base, vat) !== target) continue;
+      out.push({
+        id: r.id, source: "sales_invoice",
+        docNumber: r.docNumber, date: r.date,
+        partyName: r.custAr ?? r.custEn ?? null,
+        base, vat, total: Number(r.total),
+        link: `/sales/invoices/${r.id}`,
+      });
+    }
+    // legacy invoices
+    const legacy = await db.select().from(invoicesTable).where(and(
+      eq(invoicesTable.companyId, companyId),
+      eq(invoicesTable.status, "issued"),
+      gte(invoicesTable.issueDate, from),
+      lte(invoicesTable.issueDate, to),
+    ));
+    for (const r of legacy) {
+      const base = Math.max(0, Number(r.subtotal) - Number(r.discountTotal));
+      const vat  = Number(r.vatTotal);
+      if (classifyOne(base, vat) !== target) continue;
+      out.push({
+        id: r.id, source: "legacy_invoice",
+        docNumber: r.invoiceNumber, date: String(r.issueDate),
+        partyName: (r as any).customerName ?? null,
+        base, vat, total: base + vat,
+        link: `/invoices/${r.id}`,
+      });
+    }
+  } else if (want.startsWith("purchases_") && want !== "purchases_returns") {
+    const target: Bucket3 = want === "purchases_standard" ? "standard" : want === "purchases_zero" ? "zero" : "exempt";
+    const rows = await db
+      .select({
+        id: purchaseInvoicesTable.id,
+        docNumber: purchaseInvoicesTable.docNumber,
+        date: purchaseInvoicesTable.invoiceDate,
+        subtotal: purchaseInvoicesTable.subtotal,
+        discountAmount: purchaseInvoicesTable.discountAmount,
+        vat: purchaseInvoicesTable.vatAmount,
+        total: purchaseInvoicesTable.totalAmount,
+        supAr: suppliersTable.nameAr,
+        supEn: suppliersTable.nameEn,
+      })
+      .from(purchaseInvoicesTable)
+      .leftJoin(suppliersTable, eq(suppliersTable.id, purchaseInvoicesTable.supplierId))
+      .where(and(
+        eq(purchaseInvoicesTable.companyId, companyId),
+        eq(purchaseInvoicesTable.status, "posted"),
+        gte(purchaseInvoicesTable.invoiceDate, from),
+        lte(purchaseInvoicesTable.invoiceDate, to),
+      ));
+    for (const r of rows) {
+      const base = Math.max(0, Number(r.subtotal) - Number(r.discountAmount));
+      const vat  = Number(r.vat);
+      if (classifyOne(base, vat) !== target) continue;
+      out.push({
+        id: r.id, source: "purchase_invoice",
+        docNumber: r.docNumber, date: r.date,
+        partyName: r.supAr ?? r.supEn ?? null,
+        base, vat, total: Number(r.total),
+        link: `/purchasing/invoices/${r.id}`,
+      });
+    }
+  } else if (want === "sales_returns") {
+    const rows = await db
+      .select({
+        id: salesReturnsTable.id,
+        docNumber: salesReturnsTable.docNumber,
+        date: salesReturnsTable.returnDate,
+        total: salesReturnsTable.totalAmount,
+        vat: salesReturnsTable.vatAmount,
+        custAr: customersTable.nameAr,
+        custEn: customersTable.nameEn,
+      })
+      .from(salesReturnsTable)
+      .leftJoin(customersTable, eq(customersTable.id, salesReturnsTable.customerId))
+      .where(and(
+        eq(salesReturnsTable.companyId, companyId),
+        eq(salesReturnsTable.status, "posted"),
+        gte(salesReturnsTable.returnDate, from),
+        lte(salesReturnsTable.returnDate, to),
+      ));
+    for (const r of rows) {
+      const vat = Number(r.vat);
+      const base = Math.max(0, Number(r.total) - vat);
+      out.push({
+        id: r.id, source: "sales_return", docNumber: r.docNumber, date: r.date,
+        partyName: r.custAr ?? r.custEn ?? null,
+        base, vat, total: Number(r.total), link: `/sales/returns`,
+      });
+    }
+  } else if (want === "purchase_returns" || want === "purchases_returns") {
+    const rows = await db
+      .select({
+        id: purchaseReturnsTable.id,
+        docNumber: purchaseReturnsTable.docNumber,
+        date: purchaseReturnsTable.returnDate,
+        total: purchaseReturnsTable.totalAmount,
+        vat: purchaseReturnsTable.vatAmount,
+        supAr: suppliersTable.nameAr,
+        supEn: suppliersTable.nameEn,
+      })
+      .from(purchaseReturnsTable)
+      .leftJoin(suppliersTable, eq(suppliersTable.id, purchaseReturnsTable.supplierId))
+      .where(and(
+        eq(purchaseReturnsTable.companyId, companyId),
+        eq(purchaseReturnsTable.status, "posted"),
+        gte(purchaseReturnsTable.returnDate, from),
+        lte(purchaseReturnsTable.returnDate, to),
+      ));
+    for (const r of rows) {
+      const vat = Number(r.vat);
+      const base = Math.max(0, Number(r.total) - vat);
+      out.push({
+        id: r.id, source: "purchase_return", docNumber: r.docNumber, date: r.date,
+        partyName: r.supAr ?? r.supEn ?? null,
+        base, vat, total: Number(r.total), link: `/purchasing/returns`,
+      });
+    }
+  } else {
+    res.status(400).json({ error: "bucket غير معروف" });
+    return;
+  }
+
+  out.sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
+  const totals = out.reduce(
+    (s, r) => ({ base: s.base + r.base, vat: s.vat + r.vat, total: s.total + r.total, count: s.count + 1 }),
+    { base: 0, vat: 0, total: 0, count: 0 },
+  );
+  // dsql import retained for future filters; suppress lint if unused.
+  void dsql;
+  res.json({ bucket: want, period: { from, to }, items: out, totals });
 });
 
 export default router;

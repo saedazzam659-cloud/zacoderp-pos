@@ -15,8 +15,12 @@ import {
   AlertCircle, Hash, BadgePercent, ReceiptText,
   ArrowDownToLine, ArrowUpFromLine, Scale,
   Download, FileSpreadsheet, ChevronDown, BookOpen,
+  ExternalLink, Eye, Loader2, Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Link } from "wouter";
 import { useFmt } from "@/hooks/use-fmt";
 import { exportToExcel, printSectionsAsPDF } from "@/lib/export";
 
@@ -141,7 +145,7 @@ function TableHeader({ t }: { t: (k: string) => string }) {
 }
 
 function TRow({
-  num, label, base, vat, highlight, subtext,
+  num, label, base, vat, highlight, subtext, bucket, onDrillDown,
 }: {
   num: string;
   label: string;
@@ -149,7 +153,10 @@ function TRow({
   vat: number | null;
   highlight?: "green" | "blue" | "total";
   subtext?: string;
+  bucket?: string;
+  onDrillDown?: (bucket: string, label: string) => void;
 }) {
+  const clickable = !!bucket && !!onDrillDown;
   const rowClass = highlight
     ? ({
         green: "bg-emerald-50/70 dark:bg-emerald-950/20 font-semibold",
@@ -158,20 +165,216 @@ function TRow({
       } as const)[highlight]
     : "hover:bg-muted/30";
 
+  const handleClick = () => { if (clickable) onDrillDown!(bucket!, label); };
   return (
-    <tr className={cn("border-b border-border/40 text-sm transition-colors", rowClass)}>
+    <tr
+      className={cn(
+        "border-b border-border/40 text-sm transition-colors",
+        rowClass,
+        clickable && "cursor-pointer hover:bg-primary/5 group",
+      )}
+      onClick={handleClick}
+      title={clickable ? "اعرض العمليات الناتج عنها هذه القيمة" : undefined}
+    >
       <td className="w-10 px-3 py-3 text-center text-xs text-muted-foreground font-medium">{num}</td>
       <td className="px-5 py-3">
-        <span>{label}</span>
+        <span className="inline-flex items-center gap-1.5">
+          {label}
+          {clickable && (
+            <Eye className="h-3.5 w-3.5 text-primary/40 group-hover:text-primary transition-colors no-print" />
+          )}
+        </span>
         {subtext && <span className="block text-xs text-muted-foreground mt-0.5">{subtext}</span>}
       </td>
-      <td className="px-5 py-3 text-left border-r border-border/40 tabular-nums font-mono text-sm">
+      <td
+        className={cn(
+          "px-5 py-3 text-left border-r border-border/40 tabular-nums font-mono text-sm",
+          clickable && "group-hover:text-primary group-hover:underline decoration-dotted underline-offset-4",
+        )}
+      >
         {base !== null ? fmtNum(base) : <span className="text-muted-foreground">—</span>}
       </td>
-      <td className="px-5 py-3 text-left tabular-nums font-mono text-sm">
+      <td
+        className={cn(
+          "px-5 py-3 text-left tabular-nums font-mono text-sm",
+          clickable && "group-hover:text-primary group-hover:underline decoration-dotted underline-offset-4",
+        )}
+      >
         {vat !== null ? fmtNum(vat) : <span className="text-muted-foreground">—</span>}
       </td>
     </tr>
+  );
+}
+
+// ── Drill-down modal ──────────────────────────────────────────────────
+interface DetailDoc {
+  id: number;
+  source: string;
+  docNumber: string | null;
+  date: string;
+  partyName: string | null;
+  base: number;
+  vat: number;
+  total: number;
+  link: string | null;
+}
+interface DetailResp {
+  bucket: string;
+  period: { from: string; to: string };
+  items: DetailDoc[];
+  totals: { base: number; vat: number; total: number; count: number };
+}
+
+const SOURCE_LABELS: Record<string, { label: string; color: string }> = {
+  sales_invoice:    { label: "فاتورة بيع",      color: "bg-emerald-100 text-emerald-700" },
+  legacy_invoice:   { label: "فاتورة (قديمة)",  color: "bg-emerald-100 text-emerald-700" },
+  sales_return:     { label: "مرتجع بيع",       color: "bg-amber-100 text-amber-700" },
+  purchase_invoice: { label: "فاتورة شراء",     color: "bg-blue-100 text-blue-700" },
+  purchase_return:  { label: "مرتجع شراء",      color: "bg-amber-100 text-amber-700" },
+};
+
+function VatDrilldownDialog({
+  open, onOpenChange, bucket, label, from, to, token,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  bucket: string | null;
+  label: string;
+  from: string;
+  to: string;
+  token: string | null;
+}) {
+  const [search, setSearch] = useState("");
+  const { data, isLoading, error } = useQuery<DetailResp>({
+    queryKey: ["vat-declaration-details", from, to, bucket],
+    queryFn: async () => {
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const r = await fetch(`${API}/api/reports/vat-declaration/details?from=${from}&to=${to}&bucket=${bucket}`, {
+        headers, credentials: "include",
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error ?? "تعذر جلب التفاصيل");
+      return r.json();
+    },
+    enabled: !!bucket && open,
+  });
+
+  const items = data?.items ?? [];
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((d) =>
+      (d.docNumber ?? "").toLowerCase().includes(q) ||
+      (d.partyName ?? "").toLowerCase().includes(q) ||
+      d.date.includes(q),
+    );
+  }, [items, search]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-lg">
+            <FileText className="h-5 w-5 text-primary" />
+            العمليات الناتج عنها: <span className="text-primary">{label}</span>
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            من {from} إلى {to} · {data ? `${data.totals.count} عملية` : "..."}
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* KPI strip */}
+        {data && (
+          <div className="grid grid-cols-3 gap-3 px-1">
+            <div className="rounded-lg border bg-emerald-50/60 dark:bg-emerald-950/20 p-3">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">عدد المستندات</p>
+              <p className="text-xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{data.totals.count}</p>
+            </div>
+            <div className="rounded-lg border bg-blue-50/60 dark:bg-blue-950/20 p-3">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">إجمالي الوعاء</p>
+              <p className="text-xl font-bold tabular-nums text-blue-700 dark:text-blue-400">{fmtNum(data.totals.base)}</p>
+            </div>
+            <div className="rounded-lg border bg-violet-50/60 dark:bg-violet-950/20 p-3">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">إجمالي الضريبة</p>
+              <p className="text-xl font-bold tabular-nums text-violet-700 dark:text-violet-400">{fmtNum(data.totals.vat)}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="ابحث برقم المستند، الاسم، أو التاريخ..."
+            className="pr-10"
+          />
+        </div>
+
+        {/* List */}
+        <div className="flex-1 overflow-y-auto rounded-lg border">
+          {isLoading && (
+            <div className="flex items-center justify-center py-12 text-muted-foreground gap-2">
+              <Loader2 className="h-5 w-5 animate-spin" /> جارِ التحميل...
+            </div>
+          )}
+          {error && (
+            <div className="flex items-center gap-2 p-4 text-destructive text-sm">
+              <AlertCircle className="h-4 w-4" /> {(error as Error).message}
+            </div>
+          )}
+          {!isLoading && !error && filtered.length === 0 && (
+            <p className="text-center text-sm text-muted-foreground py-12">
+              {items.length === 0 ? "لا توجد عمليات في هذه الفئة." : "لا توجد نتائج مطابقة."}
+            </p>
+          )}
+          {!isLoading && filtered.length > 0 && (
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-muted/80 backdrop-blur z-10">
+                <tr className="text-xs text-muted-foreground">
+                  <th className="px-3 py-2 text-right font-semibold">النوع</th>
+                  <th className="px-3 py-2 text-right font-semibold">رقم المستند</th>
+                  <th className="px-3 py-2 text-right font-semibold">التاريخ</th>
+                  <th className="px-3 py-2 text-right font-semibold">العميل / المورد</th>
+                  <th className="px-3 py-2 text-left font-semibold">الوعاء</th>
+                  <th className="px-3 py-2 text-left font-semibold">الضريبة</th>
+                  <th className="px-3 py-2 text-left font-semibold">الإجمالي</th>
+                  <th className="w-12 px-2 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((d) => {
+                  const meta = SOURCE_LABELS[d.source] ?? { label: d.source, color: "bg-gray-100 text-gray-700" };
+                  return (
+                    <tr key={`${d.source}-${d.id}`} className="border-t border-border/40 hover:bg-muted/30">
+                      <td className="px-3 py-2.5">
+                        <span className={cn("inline-block px-2 py-0.5 rounded text-[11px] font-medium", meta.color)}>{meta.label}</span>
+                      </td>
+                      <td className="px-3 py-2.5 font-mono text-xs">{d.docNumber ?? `#${d.id}`}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground tabular-nums">{d.date}</td>
+                      <td className="px-3 py-2.5 truncate max-w-[180px]">{d.partyName ?? <span className="text-muted-foreground">—</span>}</td>
+                      <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs">{fmtNum(d.base)}</td>
+                      <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs">{fmtNum(d.vat)}</td>
+                      <td className="px-3 py-2.5 text-left font-mono tabular-nums text-xs font-semibold">{fmtNum(d.total)}</td>
+                      <td className="px-2 py-2.5 text-center">
+                        {d.link && (
+                          <Link href={d.link}>
+                            <a className="inline-flex h-7 w-7 items-center justify-center rounded hover:bg-primary/10 text-primary" title="فتح المستند">
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          </Link>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -189,6 +392,8 @@ export default function VATDeclaration() {
   const { user, token } = useAuth();
   const { t, i18n } = useTranslation();
   const [selectedKey, setSelectedKey] = useState<PeriodKey>("this_month");
+  const [drill, setDrill] = useState<{ bucket: string; label: string } | null>(null);
+  const openDrill = (bucket: string, label: string) => setDrill({ bucket, label });
 
   const isAr = i18n.language?.startsWith("ar");
   const dateLocale = isAr ? "ar-SA-u-nu-latn" : "en-US";
@@ -398,6 +603,8 @@ export default function VATDeclaration() {
                   subtext={`${t("vatDeclaration.ratePrefix")}: ${t("vatDeclaration.rate15")}`}
                   base={data.outputTax.standardRated.base}
                   vat={data.outputTax.standardRated.vat}
+                  bucket="sales_standard"
+                  onDrillDown={openDrill}
                 />
                 <TRow
                   num="2"
@@ -405,12 +612,16 @@ export default function VATDeclaration() {
                   subtext={`${t("vatDeclaration.ratePrefix")}: ${t("vatDeclaration.rate0")}`}
                   base={data.outputTax.zeroRated.base}
                   vat={data.outputTax.zeroRated.vat}
+                  bucket="sales_zero"
+                  onDrillDown={openDrill}
                 />
                 <TRow
                   num="3"
                   label={t("vatDeclaration.rowSalesExempt")}
                   base={data.outputTax.exempt.base}
                   vat={null}
+                  bucket="sales_exempt"
+                  onDrillDown={openDrill}
                 />
                 {data.discountTotal > 0 && (
                   <TRow
@@ -446,6 +657,8 @@ export default function VATDeclaration() {
                   subtext={`${t("vatDeclaration.ratePrefix")}: ${t("vatDeclaration.rate15")}`}
                   base={data.inputTax.standardRated.base}
                   vat={data.inputTax.standardRated.vat}
+                  bucket="purchases_standard"
+                  onDrillDown={openDrill}
                 />
                 <TRow
                   num="6"
@@ -453,12 +666,16 @@ export default function VATDeclaration() {
                   subtext={`${t("vatDeclaration.ratePrefix")}: ${t("vatDeclaration.rate0")}`}
                   base={data.inputTax.zeroRated.base}
                   vat={data.inputTax.zeroRated.vat}
+                  bucket="purchases_zero"
+                  onDrillDown={openDrill}
                 />
                 <TRow
                   num="7"
                   label={t("vatDeclaration.rowPurchaseExempt")}
                   base={data.inputTax.exempt.base}
                   vat={null}
+                  bucket="purchases_exempt"
+                  onDrillDown={openDrill}
                 />
                 <TRow
                   num="8"
@@ -606,6 +823,17 @@ export default function VATDeclaration() {
           .shadow-sm { box-shadow: none !important; }
         }
       `}</style>
+
+      {/* ── DRILL-DOWN MODAL ────────────────────────────────────────────── */}
+      <VatDrilldownDialog
+        open={!!drill}
+        onOpenChange={(v) => { if (!v) setDrill(null); }}
+        bucket={drill?.bucket ?? null}
+        label={drill?.label ?? ""}
+        from={period.from}
+        to={period.to}
+        token={token}
+      />
     </div>
   );
 }
