@@ -111,4 +111,138 @@ router.get("/", requireSuperAdmin, async (_req, res) => {
   }
 });
 
+// GET /api/admin/db-stats/by-company
+// Returns per-company storage usage estimates by aggregating row counts
+// across every public table that has a `company_id` column. Bytes are
+// estimated as (table_total_size / table_row_count) * company_row_count
+// — this is approximate but good enough for a SuperAdmin dashboard that
+// shows who is consuming the most database space.
+router.get("/by-company", requireSuperAdmin, async (_req, res) => {
+  try {
+    // 1) Discover every public table that has a company_id column.
+    const tablesRes = await db.execute<{ table_name: string }>(sql`
+      SELECT table_name
+        FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND column_name  = 'company_id'
+       ORDER BY table_name
+    `);
+    const tables = tablesRes.rows.map((r) => r.table_name);
+
+    // 2) Get per-table total size + total row count (live count via reltuples).
+    const sizesRes = await db.execute<{
+      table_name: string;
+      total_bytes: string;
+      total_rows: string;
+    }>(sql`
+      SELECT relname                        AS table_name,
+             pg_total_relation_size(c.oid)  AS total_bytes,
+             reltuples::bigint              AS total_rows
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE c.relkind = 'r'
+         AND n.nspname = 'public'
+         AND relname = ANY(${tables})
+    `);
+    const sizeByTable = new Map<string, { bytes: number; rows: number }>();
+    for (const r of sizesRes.rows) {
+      sizeByTable.set(r.table_name, {
+        bytes: Number(r.total_bytes) || 0,
+        rows:  Number(r.total_rows)  || 0,
+      });
+    }
+
+    // 3) Companies map (id → name). Soft-deleted included so we can still
+    // attribute orphan rows; the UI flags them.
+    const companiesRes = await db.execute<{
+      id: string; name_ar: string; name_en: string | null; deleted_at: string | null;
+    }>(sql`SELECT id, name_ar, name_en, deleted_at FROM companies`);
+    const companies = new Map<number, { id: number; nameAr: string; nameEn: string | null; isDeleted: boolean }>();
+    for (const c of companiesRes.rows) {
+      const cid = Number(c.id);
+      companies.set(cid, {
+        id: cid, nameAr: c.name_ar ?? `#${cid}`, nameEn: c.name_en, isDeleted: !!c.deleted_at,
+      });
+    }
+
+    // 4) For each table, run "SELECT company_id, COUNT(*) FROM t GROUP BY 1"
+    // in parallel. Wrap each in try/catch so one bad table doesn't kill it.
+    type CompanyAgg = {
+      companyId: number;
+      companyName: string;
+      isDeleted: boolean;
+      totalRows: number;
+      estimatedBytes: number;
+      byTable: Record<string, { rows: number; bytes: number }>;
+    };
+    const aggByCompany = new Map<number, CompanyAgg>();
+    const ensureAgg = (cid: number): CompanyAgg => {
+      const existing = aggByCompany.get(cid);
+      if (existing) return existing;
+      const meta = companies.get(cid);
+      const fresh: CompanyAgg = {
+        companyId: cid,
+        companyName: meta?.nameAr ?? `#${cid} (محذوفة)`,
+        isDeleted: meta?.isDeleted ?? !meta,
+        totalRows: 0,
+        estimatedBytes: 0,
+        byTable: {},
+      };
+      aggByCompany.set(cid, fresh);
+      return fresh;
+    };
+
+    await Promise.all(tables.map(async (t) => {
+      try {
+        const counts = await db.execute<{ company_id: string; rows: string }>(
+          sql.raw(`SELECT company_id::text AS company_id, COUNT(*)::text AS rows FROM "${t}" WHERE company_id IS NOT NULL GROUP BY company_id`),
+        );
+        const tSize = sizeByTable.get(t) ?? { bytes: 0, rows: 0 };
+        const bytesPerRow = tSize.rows > 0 ? tSize.bytes / tSize.rows : 0;
+        for (const row of counts.rows) {
+          const cid = Number(row.company_id);
+          if (!Number.isFinite(cid)) continue;
+          const rowCount = Number(row.rows) || 0;
+          const bytesEst = Math.round(rowCount * bytesPerRow);
+          const agg = ensureAgg(cid);
+          agg.byTable[t] = { rows: rowCount, bytes: bytesEst };
+          agg.totalRows      += rowCount;
+          agg.estimatedBytes += bytesEst;
+        }
+      } catch {
+        /* skip unreadable tables (e.g. permissions / migration races) */
+      }
+    }));
+
+    const list = Array.from(aggByCompany.values())
+      .sort((a, b) => b.estimatedBytes - a.estimatedBytes);
+
+    // Aggregate stats for dashboard widgets.
+    const totalCompanies = list.length;
+    const totalBytes = list.reduce((s, c) => s + c.estimatedBytes, 0);
+    const totalRows  = list.reduce((s, c) => s + c.totalRows,      0);
+    const avgBytes   = totalCompanies > 0 ? Math.round(totalBytes / totalCompanies) : 0;
+    const avgRows    = totalCompanies > 0 ? Math.round(totalRows  / totalCompanies) : 0;
+    const top        = list[0] ?? null;
+    const bottom     = list[list.length - 1] ?? null;
+
+    res.json({
+      tables,
+      companies: list,
+      summary: {
+        totalCompanies,
+        totalBytes,
+        totalRows,
+        avgBytes,
+        avgRows,
+        topCompany:    top    ? { id: top.companyId, name: top.companyName, bytes: top.estimatedBytes, rows: top.totalRows } : null,
+        bottomCompany: bottom ? { id: bottom.companyId, name: bottom.companyName, bytes: bottom.estimatedBytes, rows: bottom.totalRows } : null,
+      },
+      capturedAt: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "تعذر جلب استهلاك الشركات" });
+  }
+});
+
 export default router;
