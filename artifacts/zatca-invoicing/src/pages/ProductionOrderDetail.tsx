@@ -695,13 +695,79 @@ function WipSetupPanel({
     wasteAccountId: order.wasteAccountId ?? "",
   });
   const [draft, setDraft] = useState(initial);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiReasons, setAiReasons] = useState<Record<string, string>>({});
+  const { token: aiToken } = useAuth() as any;
+  const { toast: aiToast } = useToast();
   // Re-sync local form whenever the underlying order changes (e.g. after save).
   useEffect(() => {
     setDraft(initial());
+    setAiReasons({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order.id, order.status, order.issueJournalEntryId, order.receiptJournalEntryId]);
 
   const set = (k: string, v: unknown) => setDraft((d) => ({ ...d, [k]: v as any }));
+
+  // ─── AI auto-fill: pulls suggestions from /manufacturing-settings/ai-suggest
+  // and fills only the fields that are still empty (never overrides user input
+  // or locked values). Mirrors the patterns used on /production/settings.
+  async function aiFill() {
+    if (locked || aiBusy) return;
+    setAiBusy(true);
+    try {
+      const r = await fetch(`${API}/api/production/manufacturing-settings/ai-suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${aiToken}` },
+        body: JSON.stringify({}),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      const sug = j.suggestions ?? {};
+      const reasons: Record<string, string> = {};
+      let filled = 0;
+      // Map AI keys → draft keys (only fill empty draft slots)
+      const accountMap: Array<[string, string]> = [
+        ["defaultWipAccountId", "wipAccountId"],
+        ["defaultRawInventoryAccountId", "rawInventoryAccountId"],
+        ["defaultFinishedGoodsAccountId", "finishedGoodsAccountId"],
+        ["defaultLaborAccountId", "laborAccountId"],
+        ["defaultOverheadAccountId", "overheadAccountId"],
+        ["defaultVarianceAccountId", "varianceAccountId"],
+        ["defaultWasteAccountId", "wasteAccountId"],
+        ["defaultRawWarehouseId", "rawWarehouseId"],
+        ["defaultFinishedWarehouseId", "finishedWarehouseId"],
+      ];
+      setDraft((d) => {
+        const next: any = { ...d };
+        for (const [aiKey, draftKey] of accountMap) {
+          const v = sug[aiKey];
+          if (v?.reason) reasons[draftKey] = v.reason;
+          if (v && typeof v.id === "number" && (next[draftKey] === "" || next[draftKey] == null)) {
+            next[draftKey] = v.id;
+            filled++;
+          }
+        }
+        const cc = sug.defaultCostCenter;
+        if (cc?.reason) reasons.costCenter = cc.reason;
+        if (cc && typeof cc.code === "string" && cc.code && !next.costCenter) {
+          next.costCenter = cc.code;
+          filled++;
+        }
+        return next;
+      });
+      setAiReasons(reasons);
+      aiToast({
+        title: filled > 0 ? `✓ تم تعبئة ${filled} حقول بالذكاء الاصطناعي` : "كل الحقول معبّأة مسبقاً",
+        description: filled > 0
+          ? "راجع القيم المقترحة ثم اضغط (حفظ إعدادات WIP)."
+          : "لم يبقَ أي حقل فارغ ليتم تعبئته. عدّل يدوياً ثم احفظ.",
+      });
+    } catch (e: any) {
+      aiToast({ title: "خطأ", description: e?.message ?? "فشل اقتراح الذكاء الاصطناعي", variant: "destructive" });
+    } finally {
+      setAiBusy(false);
+    }
+  }
 
   // ─── Phase B — auto-recompute labor/overhead when wc or hours change ──
   // The user can still type-override afterwards (the inputs remain editable).
@@ -752,16 +818,44 @@ function WipSetupPanel({
       className="rounded-lg border border-violet-200 dark:border-violet-900/50 bg-gradient-to-br from-violet-50/50 to-fuchsia-50/30 dark:from-violet-950/15 dark:to-fuchsia-950/10 p-4 space-y-3"
       data-testid="panel-wip-setup"
     >
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <div className="text-sm font-semibold text-violet-700 dark:text-violet-300">
           إعداد دورة الإنتاج (WIP)
         </div>
-        {locked && (
-          <span className="text-xs rounded bg-amber-100 text-amber-800 px-2 py-0.5">
-            مقفلة بعد بدء الإنتاج (ألغِ الأمر للتعديل)
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {!locked && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={aiFill}
+              disabled={aiBusy || saving}
+              data-testid="btn-ai-fill-wip"
+              className="border-violet-300 text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-300"
+            >
+              <Sparkles className={`h-3.5 w-3.5 me-1 ${aiBusy ? "animate-pulse" : ""}`} />
+              {aiBusy ? "جارٍ التحليل…" : "املأ بالذكاء الاصطناعي"}
+            </Button>
+          )}
+          {locked && (
+            <span className="text-xs rounded bg-amber-100 text-amber-800 px-2 py-0.5">
+              مقفلة بعد بدء الإنتاج (ألغِ الأمر للتعديل)
+            </span>
+          )}
+        </div>
       </div>
+      {Object.keys(aiReasons).length > 0 && !locked && (
+        <details className="rounded-md border border-violet-200 bg-violet-50/60 px-3 py-2 text-xs text-violet-900 dark:border-violet-900/50 dark:bg-violet-950/20 dark:text-violet-200" open>
+          <summary className="cursor-pointer font-medium flex items-center gap-1">
+            <Sparkles className="h-3 w-3" /> أسباب اقتراحات الذكاء الاصطناعي
+          </summary>
+          <ul className="mt-2 space-y-1 list-disc ps-5">
+            {Object.entries(aiReasons).map(([k, v]) => (
+              <li key={k}><span className="font-semibold">{k}:</span> {v}</li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       {/* Phase A — context banner: explains where these defaults come from
           and lets the user jump to the company-level settings page. */}
