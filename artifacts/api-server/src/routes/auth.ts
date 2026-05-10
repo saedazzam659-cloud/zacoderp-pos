@@ -838,8 +838,23 @@ router.post("/register", async (req, res) => {
       if (!perms) continue;
       for (const p of perms) out[p] = true;
     }
+    // Explicit-deny fill — see industry-merge block below for rationale.
+    // Without this, the legacy "missing key = allowed" gate semantics
+    // would let a freshly-registered company access modules it never
+    // selected (e.g. production, hotel, hospital, contracting…).
+    for (const k of CANONICAL_KEYS_FOR_FILL) {
+      if (out[k] !== true) out[k] = false;
+    }
     return JSON.stringify(out);
   };
+  // Snapshot the canonical key universe once for the explicit-deny fill
+  // used by both `buildMenuPermissionsJson` and the industry-merge block.
+  // Imported eagerly so both code paths agree on the same set even if
+  // the dynamic import inside the industry merge later fails for some
+  // unrelated reason.
+  const { CANONICAL_MENU_PERMISSION_KEYS: CANONICAL_KEYS_FOR_FILL } =
+    await import("../lib/menuPermissionCatalog.js");
+
   let resolvedMenuPermissions = buildMenuPermissionsJson(selectedModules);
 
   // ── INDUSTRY-DRIVEN MENU PERMISSIONS ────────────────────────────────
@@ -871,10 +886,20 @@ router.post("/register", async (req, res) => {
       // go through the same canonical filter (see `routes/adminIndustries.ts`),
       // we re-filter here as defense-in-depth — guards against legacy rows
       // written before the whitelist existed and against any direct DB edits.
-      const { filterCanonicalKeys } = await import("../lib/menuPermissionCatalog.js");
+      const { filterCanonicalKeys, CANONICAL_MENU_PERMISSION_KEYS } =
+        await import("../lib/menuPermissionCatalog.js");
       for (const r of rows) {
         const safeKeys = filterCanonicalKeys((r.keys ?? []) as unknown[]);
         for (const k of safeKeys) granted[k] = true;
+      }
+      // Explicit-deny fill: write every canonical key the company did NOT
+      // get as `false`, so the gate `parsed[k] !== false` correctly DENIES
+      // them instead of falling back to the legacy "missing = allowed"
+      // default. Without this, registering as "commercial" would still
+      // show production/hotel/contracting/hospital/fixed_assets/… in the
+      // sidebar because their keys were merely absent rather than denied.
+      for (const k of CANONICAL_MENU_PERMISSION_KEYS) {
+        if (granted[k] !== true) granted[k] = false;
       }
       resolvedMenuPermissions = JSON.stringify(granted);
     }
