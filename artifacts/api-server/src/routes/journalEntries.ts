@@ -211,15 +211,26 @@ router.post("/", async (req, res) => {
       }
     }
 
-    // Central sequence engine is authoritative when an active sequence
-    // exists for "journal_entry"; otherwise fall back to client-supplied
-    // value or null (legacy behavior). Server allocation is atomic so
-    // concurrent submits can never persist the same number.
     // Authorize + validate the requested branch BEFORE we burn a sequence
     // number, so a 403/400 doesn't waste a journal-entry sequence value.
     const resolvedBranchId = await resolveBranchForWrite(req, res, cid, branchId);
     if (resolvedBranchId === "DENY") return;
 
+    // Period guard runs BEFORE sequence allocation: writing into a closed
+    // period is a 423 reject, and burning a sequence number on a request we
+    // already know will fail would leave a permanent gap in the document
+    // numbering. Resolve the fiscal period here so we (a) reject early and
+    // (b) reuse the resolved period when inserting the entry below.
+    const writability = await assertWritableForDate(cid, entryDate);
+    if (!writability.ok) {
+      res.status(423).json({ error: writability.reason });
+      return;
+    }
+
+    // Central sequence engine is authoritative when an active sequence
+    // exists for "journal_entry"; otherwise fall back to client-supplied
+    // value or null (legacy behavior). Server allocation is atomic so
+    // concurrent submits can never persist the same number.
     let resolvedDocNumber: string | null;
     try {
       const fromSeq = await nextSequenceNumber(cid, "journal_entry", {
@@ -230,15 +241,6 @@ router.post("/", async (req, res) => {
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {
       res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم القيد" });
-      return;
-    }
-
-    // Period guard: refuse to write into a closed/permanently_closed fiscal
-    // period. Auto-resolves the period for the entry date so the row is
-    // linked at insert time (no later backfill needed).
-    const writability = await assertWritableForDate(cid, entryDate);
-    if (!writability.ok) {
-      res.status(423).json({ error: writability.reason });
       return;
     }
 
