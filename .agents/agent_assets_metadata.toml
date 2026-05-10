@@ -137,3 +137,9 @@ id = "aLfUOiAeIBhB9b6c4hMIe"
 uri = "file://.local/sql/backfill_qyd_gaps_company10.sql.txt"
 type = "text"
 title = "backfill_qyd_gaps_company10.sql — جاهز للإنتاج"
+
+[[outputs]]
+id = "waC7awRBRhEamitg3kmwR"
+uri = "file://.local/sql/backfill_qyd_0594_0653_company10.sql.txt"
+type = "text"
+title = "backfill_qyd_0594_0653_company10.sql — 60 رقمًا"
