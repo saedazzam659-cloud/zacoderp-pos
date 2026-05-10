@@ -273,6 +273,19 @@ router.post("/", async (req, res) => {
       status:       canPost ? "posted" : "draft",
     }).returning();
 
+    // Legacy QYD fallback: when no central sequence is configured AND the
+    // client didn't supply a docNumber, compose a stable QYD-XXXX label
+    // from the freshly-allocated id so the response carries a usable,
+    // persisted document number (list views, prints, navigation all
+    // assume docNumber is non-null after save).
+    if (!resolvedDocNumber) {
+      resolvedDocNumber = `QYD-${String(entry.id).padStart(4, "0")}`;
+      await db.update(journalEntriesTable)
+        .set({ docNumber: resolvedDocNumber })
+        .where(eq(journalEntriesTable.id, entry.id));
+      entry.docNumber = resolvedDocNumber;
+    }
+
     if (Array.isArray(lines) && lines.length > 0) {
       await db.insert(journalEntryLinesTable).values(
         lines.map((l: any, i: number) => ({
@@ -436,11 +449,24 @@ router.post("/:id/post", async (req, res) => {
 
     // Balance check — sum debit must equal sum credit. We pull the lines
     // raw (numeric → string) and parseFloat so the comparison is float-safe
-    // up to two decimal places (Saudi accounting precision).
+    // up to two decimal places (Saudi accounting precision). We also
+    // require at least 2 valid posting lines (each with an accountId AND a
+    // non-zero debit OR credit) so the posted path mirrors the create-time
+    // dual-status decision (a one-line entry can never be balanced).
     const lines = await db.select({
-      debit:  journalEntryLinesTable.debit,
-      credit: journalEntryLinesTable.credit,
+      accountId: journalEntryLinesTable.accountId,
+      debit:     journalEntryLinesTable.debit,
+      credit:    journalEntryLinesTable.credit,
     }).from(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, id));
+    const validLines = lines.filter(l => {
+      const d = parseFloat(l.debit  || "0") || 0;
+      const c = parseFloat(l.credit || "0") || 0;
+      return l.accountId != null && (d > 0 || c > 0);
+    });
+    if (validLines.length < 2) {
+      res.status(400).json({ error: "يجب أن يحتوي القيد على سطرين فعّالين على الأقل قبل الترحيل" });
+      return;
+    }
     const totalDebit  = lines.reduce((s, l) => s + parseFloat(l.debit  || "0"), 0);
     const totalCredit = lines.reduce((s, l) => s + parseFloat(l.credit || "0"), 0);
     if (Math.abs(totalDebit - totalCredit) > 0.01) {
