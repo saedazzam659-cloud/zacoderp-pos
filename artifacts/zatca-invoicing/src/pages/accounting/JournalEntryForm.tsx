@@ -808,10 +808,16 @@ export default function JournalEntryForm() {
   // printout — fall back to the manually-typed docNumber, the central
   // sequence peek, or the predicted QYD-XXXX from the loaded list, in
   // that order. Only when none of these exist do we show "(غير محفوظ)".
-  const _maxNavId = navList.reduce(
-    (m: number, e: any) => Math.max(m, Number(e?.id) || 0), 0,
-  );
-  const _predictedQyd = _maxNavId > 0 ? `QYD-${String(_maxNavId + 1).padStart(4, "0")}` : null;
+  // Predict from MAX(numeric part of docNumber) — NOT from MAX(id) — so
+  // backfilled placeholder rows (with low QYD numbers but freshly-allocated
+  // global ids) don't push the prediction into a wrong high range.
+  const _maxQydNum = navList.reduce((m: number, e: any) => {
+    const dn = String(e?.docNumber ?? "");
+    const match = dn.match(/^QYD-(\d+)$/);
+    const n = match ? Number(match[1]) : 0;
+    return n > m ? n : m;
+  }, 0);
+  const _predictedQyd = _maxQydNum > 0 ? `QYD-${String(_maxQydNum + 1).padStart(4, "0")}` : null;
   const docLabel =
     existing?.docNumber
     ?? (editId ? `QYD-${String(editId).padStart(4, "0")}` : null)
@@ -1067,13 +1073,16 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
               the JE number onto paper documents. */}
           {(() => {
             // Predict the next QYD-XXXX from the loaded entry list when
-            // no central sequence is configured — that mirrors the
-            // server-side fallback (`QYD-${id}`) so the user sees a
-            // realistic upcoming number instead of a generic "تلقائي".
-            const maxId = navList.reduce(
-              (m: number, e: any) => Math.max(m, Number(e?.id) || 0), 0,
-            );
-            const predictedQyd = maxId > 0 ? `QYD-${String(maxId + 1).padStart(4, "0")}` : null;
+            // no central sequence is configured. Use MAX(numeric part of
+            // docNumber) instead of MAX(id) so backfilled placeholder rows
+            // (low QYD number but high global id) do not skew the
+            // prediction into the wrong range.
+            const maxQyd = navList.reduce((m: number, e: any) => {
+              const match = String(e?.docNumber ?? "").match(/^QYD-(\d+)$/);
+              const n = match ? Number(match[1]) : 0;
+              return n > m ? n : m;
+            }, 0);
+            const predictedQyd = maxQyd > 0 ? `QYD-${String(maxQyd + 1).padStart(4, "0")}` : null;
             const num = !isNew
               ? (existing?.docNumber ?? (editId ? `QYD-${String(editId).padStart(4, "0")}` : null))
               : (docNumber
