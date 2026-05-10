@@ -526,7 +526,7 @@
     "customerSettlements": "Customer Collections",
     "zatcaBridge": "ZATCA Bridge",
     "zatcaReport": "ZATCA Invoices Report",
-    "accountingGroup": "Accounting",
+    "accountingGroup": "General Accounts",
     "chartOfAccounts": "Chart of Accounts",
     "costCenters": "Cost Centers",
     "fiscalPeriods": "Fiscal Periods",
@@ -927,7 +927,7 @@
   "navExtra": {
     "inventoryModule": "Inventory Module",
     "inventoryRoot": "Inventory",
-    "accountingRoot": "Accounting",
+    "accountingRoot": "General Accounts",
     "accountingReports": "Accounting Reports",
     "salesReportsGroup": "Sales Reports",
     "purchaseReportsGroup": "Purchasing Reports",

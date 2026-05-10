@@ -527,7 +527,7 @@
     "customerSettlements": "تحصيل العملاء",
     "zatcaBridge": "جسر ZATCA",
     "zatcaReport": "تقرير فواتير ZATCA",
-    "accountingGroup": "المحاسبة",
+    "accountingGroup": "الحسابات العامة",
     "chartOfAccounts": "شجرة الحسابات",
     "costCenters": "مراكز التكلفة",
     "fiscalPeriods": "الفترات المالية",
@@ -973,7 +973,7 @@
   "navExtra": {
     "inventoryModule": "موديل المخازن",
     "inventoryRoot": "المخزون",
-    "accountingRoot": "المحاسبة",
+    "accountingRoot": "الحسابات العامة",
     "accountingReports": "التقارير المحاسبية",
     "salesReportsGroup": "تقارير العملاء والمبيعات",
     "purchaseReportsGroup": "تقارير الموردين والمشتريات",
