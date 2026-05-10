@@ -284,7 +284,7 @@ router.post("/", async (req, res) => {
     // company B never sees, so company B's per-company QYD sequence would
     // skip numbers it never used.
     if (!resolvedDocNumber) {
-      const [{ next }] = await db.execute<{ next: number }>(sql`
+      const result = await db.execute<{ next: number }>(sql`
         SELECT COALESCE(MAX(
           CASE
             WHEN doc_number ~ '^QYD-[0-9]+$'
@@ -295,7 +295,8 @@ router.post("/", async (req, res) => {
         FROM journal_entries
         WHERE company_id = ${cid}
           AND id <> ${entry.id}
-      `) as unknown as Array<{ next: number }>;
+      `);
+      const next = Number((result as any).rows?.[0]?.next ?? 1);
       resolvedDocNumber = `QYD-${String(next).padStart(4, "0")}`;
       await db.update(journalEntriesTable)
         .set({ docNumber: resolvedDocNumber })
