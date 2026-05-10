@@ -14,7 +14,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  Plus, Pencil, Trash2, BookOpen, ArrowUpDown, CheckCircle2, FileText, Printer, Copy,
+  Plus, Pencil, Trash2, BookOpen, ArrowUpDown, ArrowUp, ArrowDown, CheckCircle2, FileText, Printer, Copy,
   FileSpreadsheet, FileDown, X, Calendar, Loader2, ChevronDown, Receipt, LayoutGrid, Award,
 } from "lucide-react";
 import {
@@ -127,6 +127,16 @@ export default function JournalEntries() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "posted" | "voided">("all");
   const [deleteId, setDeleteId] = useState<number | null>(null);
+
+  /* ── Per-column sort (cycles asc → desc → none on header click) ───────── */
+  const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
+  const cycleSort = (key: string) => {
+    setSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: "asc" };
+      if (prev.dir === "asc")        return { key, dir: "desc" };
+      return null;
+    });
+  };
 
   const layout = useAuditGridLayout({
     screenSlug: "journalEntriesAuditGrid",
@@ -264,7 +274,7 @@ export default function JournalEntries() {
   /* ── Filtering ── */
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return (entries as any[]).filter((e) => {
+    const rows = (entries as any[]).filter((e) => {
       if (statusFilter !== "all" && e.status !== statusFilter) return false;
       if (q) {
         const hay = [
@@ -280,7 +290,25 @@ export default function JournalEntries() {
       }
       return true;
     });
-  }, [entries, search, statusFilter, layout.colFilters, ctx, COLUMNS]);
+
+    // Sort by the chosen column. Numeric columns use numeric compare; text
+    // columns use Arabic-aware locale compare so "QYD-0408" < "QYD-0420" and
+    // Arabic descriptions sort alphabetically by Arabic letter order.
+    if (sort) {
+      const col = COLUMNS.find((c) => c.key === sort.key);
+      if (col && col.type !== "none") {
+        const cmp = col.type === "num"
+          ? (a: any, b: any) => (Number(col.valueOf(a, ctx)) || 0) - (Number(col.valueOf(b, ctx)) || 0)
+          : (a: any, b: any) => String(col.valueOf(a, ctx) ?? "").localeCompare(
+              String(col.valueOf(b, ctx) ?? ""),
+              isRtl ? "ar" : "en",
+              { numeric: true, sensitivity: "base" },
+            );
+        rows.sort((a, b) => sort.dir === "asc" ? cmp(a, b) : cmp(b, a));
+      }
+    }
+    return rows;
+  }, [entries, search, statusFilter, layout.colFilters, ctx, COLUMNS, sort, isRtl]);
 
   /* ── Pagination ── */
   const { pageSize, page, setPage } = layout;
@@ -1231,16 +1259,32 @@ ${sections}
                         </th>
                       );
                     }
+                    const sortable = col.type !== "none";
+                    const isSorted  = sort?.key === col.key;
+                    const SortIcon  = !sortable ? null
+                      : isSorted ? (sort!.dir === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
                     return (
                       <th
                         key={col.key}
                         data-col-key={col.key}
                         style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
-                        className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]"
+                        className={cn(
+                          "relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]",
+                          sortable && "cursor-pointer hover:bg-slate-200 select-none",
+                          isSorted && "bg-blue-100 text-blue-900",
+                        )}
+                        onClick={sortable ? () => cycleSort(col.key) : undefined}
+                        title={sortable ? "اضغط للترتيب — تصاعدي / تنازلي / إلغاء" : undefined}
                       >
-                        {col.label}
+                        <span className="inline-flex items-center justify-center gap-1">
+                          {col.label}
+                          {SortIcon && (
+                            <SortIcon className={cn("h-3 w-3", isSorted ? "text-blue-700" : "text-slate-400 opacity-60")} />
+                          )}
+                        </span>
                         <span
                           {...gripProps(col.key, idx)}
+                          onClick={(e) => e.stopPropagation()}
                           className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
                           style={{ insetInlineEnd: -4 }}
                         />
