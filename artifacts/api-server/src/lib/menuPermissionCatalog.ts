@@ -52,6 +52,15 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   "contracting",
   // ── الإنتاج والتصنيع ──
   "production",
+  // ── إدارة الصيانة ──
+  // Backend gate key for the Maintenance ERP (assets, technicians, work
+  // orders, spare parts). Mirrors the `maintenance` entry in the web
+  // artifact's MENU_ITEMS catalog. Was previously missing here, which
+  // meant the registration explicit-deny fill skipped it and the
+  // sidebar Proxy defaulted the missing key to "allowed" — so freshly
+  // registered tenants saw the maintenance group even when the chosen
+  // industry preset never granted it.
+  "maintenance",
   // ── إدارة الفنادق الذكية ──
   "hotel",
   // ── إدارة المستشفيات والمستوصفات ──
