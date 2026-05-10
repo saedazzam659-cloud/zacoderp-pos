@@ -143,3 +143,9 @@ id = "waC7awRBRhEamitg3kmwR"
 uri = "file://.local/sql/backfill_qyd_0594_0653_company10.sql.txt"
 type = "text"
 title = "backfill_qyd_0594_0653_company10.sql — 60 رقمًا"
+
+[[outputs]]
+id = "CqjxnKlIdtjV4cwhICFsQ"
+uri = "file://.local/sql/backfill_qyd_0251_0281_company10.sql.txt"
+type = "text"
+title = "backfill_qyd_0251_0281_company10.sql — رقمان فقط"
