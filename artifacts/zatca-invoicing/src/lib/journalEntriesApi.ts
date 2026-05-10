@@ -90,6 +90,13 @@ export const journalEntriesApi = {
   create: (data: any) => post<any>("/journal-entries", data),
   update: (id: number, data: any) => put<any>(`/journal-entries/${id}`, data),
   remove: (id: number) => del(`/journal-entries/${id}`),
+  // Discard an empty draft (no description, no meaningful lines) AND release
+  // its sequence number so the next reservation reuses it. Server returns 409
+  // if the row has any meaningful data — the form treats that as "keep it".
+  discardEmpty: (id: number) =>
+    post<{ ok: true; releasedSequence?: boolean; resetSerial?: boolean; alreadyGone?: boolean }>(
+      `/journal-entries/${id}/discard-empty`, {},
+    ),
   // Reserve a docNumber + id atomically for a new entry. Returns the
   // locked number that the user can rely on (display, print, share)
   // before the entry is actually saved. Cancelling leaves a numbering

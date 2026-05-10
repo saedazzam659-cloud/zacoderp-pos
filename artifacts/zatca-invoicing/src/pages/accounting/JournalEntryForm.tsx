@@ -305,12 +305,95 @@ export default function JournalEntryForm() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew, !!user, reserveTick]);
 
-  // NOTE: We deliberately do NOT delete the reserved draft on unmount or
-  // tab-close. The user explicitly asked that any reserved number be
-  // PERSISTED as a draft in every exit path (cancel, navigate away, tab
-  // close, save-empty) so sequence numbers are never silently consumed
-  // and forgotten. The draft remains visible in the journal entries list
-  // and the user can complete it later, or delete it explicitly.
+  // ─── Empty-draft cleanup ─────────────────────────────────────────────
+  // When the user opens a fresh JE, the form reserves a docNumber + row up
+  // front so the locked number is visible. If the user then exits without
+  // typing anything (cancel, back-arrow, prev/next nav, route change, tab
+  // close), we DELETE that empty draft AND release its sequence number so
+  // the next reservation reuses the SAME number — no gaps in the journal
+  // numbering. The server enforces the "truly empty" check; we just send
+  // the request from every exit path.
+  //
+  // `linesRef` and `descriptionRef` mirror the latest state so the
+  // unmount/beforeunload handlers (which capture stale closures) can read
+  // current values without re-subscribing to every keystroke.
+  const linesRef       = useRef(lines);
+  const descriptionRef = useRef(description);
+  useEffect(() => { linesRef.current = lines; }, [lines]);
+  useEffect(() => { descriptionRef.current = description; }, [description]);
+
+  // Returns true when the reserved draft has NO meaningful content.
+  // Mirrors the server-side check so we don't spam the discard endpoint
+  // for entries the server would reject anyway.
+  function isReservedDraftEmpty(): boolean {
+    if (!isNew) return false;
+    const r = reservedRef.current;
+    if (!r.id || r.saved || r.saving) return false;
+    const desc = (descriptionRef.current ?? "").trim();
+    if (desc) return false;
+    const meaningful = (linesRef.current ?? []).some(l => {
+      const d = parseFloat(l.debit  || "0") || 0;
+      const c = parseFloat(l.credit || "0") || 0;
+      return l.accountId && (d > 0 || c > 0);
+    });
+    return !meaningful;
+  }
+
+  // Async discard via fetch — used on user-driven navigation (cancel/back).
+  // Awaits the response so we don't race the navigation that follows.
+  async function discardIfEmpty(): Promise<void> {
+    if (!isReservedDraftEmpty()) return;
+    const rid = reservedRef.current.id!;
+    // Mark as "saved" up-front so concurrent paths (unmount cleanup,
+    // beforeunload) don't double-fire the same delete.
+    reservedRef.current.saved = true;
+    try { await journalEntriesApi.discardEmpty(rid); }
+    catch { /* best-effort cleanup — never block navigation */ }
+  }
+
+  // Synchronous beacon — used on tab close (browsers terminate before
+  // async fetches resolve). sendBeacon is fire-and-forget but reliably
+  // delivered during page-unload.
+  function discardIfEmptyBeacon(): void {
+    if (!isReservedDraftEmpty()) return;
+    const rid = reservedRef.current.id!;
+    reservedRef.current.saved = true;
+    try {
+      const url = `${API}/api/journal-entries/${rid}/discard-empty`;
+      const token = localStorage.getItem("zatca_token") ?? "";
+      // sendBeacon doesn't accept Authorization headers — fall back to
+      // a keepalive fetch which DOES carry headers AND survives unload.
+      fetch(url, {
+        method: "POST",
+        keepalive: true,
+        headers: token
+          ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
+          : { "Content-Type": "application/json" },
+        body: "{}",
+      }).catch(() => {});
+    } catch { /* swallow — last-ditch cleanup */ }
+  }
+
+  // Component-unmount cleanup (route change via React Router, etc.) +
+  // tab-close listener. Both run only while the reservation is still
+  // "open" — the helpers above are no-ops once the user typed anything
+  // meaningful or successfully saved.
+  useEffect(() => {
+    if (!isNew) return;
+    const onBeforeUnload = () => { discardIfEmptyBeacon(); };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      // Best-effort fire-and-forget on unmount. Don't await — the
+      // component is already gone.
+      if (isReservedDraftEmpty()) {
+        const rid = reservedRef.current.id!;
+        reservedRef.current.saved = true;
+        journalEntriesApi.discardEmpty(rid).catch(() => {});
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew]);
 
   const { data: accountsList = [] } = useQuery<any[]>({
     queryKey: ["accounts-flat", cid],
@@ -1125,7 +1208,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
       {/* ─── Page title ─────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/accounting/journals")} className="h-8 w-8">
+          <Button variant="ghost" size="icon" onClick={async () => { await discardIfEmpty(); navigate("/accounting/journals"); }} className="h-8 w-8">
             <ArrowRight className="h-4 w-4" />
           </Button>
           <div className="flex items-center gap-2.5">
@@ -1256,7 +1339,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                 type="button" variant="ghost" size="sm"
                 className="h-7 px-2 gap-1 text-xs"
                 disabled={!prevEntry}
-                onClick={() => prevEntry && navigate(`/accounting/journals/${prevEntry.id}`)}
+                onClick={async () => { if (prevEntry) { await discardIfEmpty(); navigate(`/accounting/journals/${prevEntry.id}`); } }}
                 title={prevEntry ? `الانتقال إلى ${prevEntry.docNumber ?? `#${prevEntry.id}`}` : "لا يوجد قيد سابق"}
                 data-testid="button-doc-prev"
               >
@@ -1272,7 +1355,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                 type="button" variant="ghost" size="sm"
                 className="h-7 px-2 gap-1 text-xs"
                 disabled={!nextEntry}
-                onClick={() => nextEntry && navigate(`/accounting/journals/${nextEntry.id}`)}
+                onClick={async () => { if (nextEntry) { await discardIfEmpty(); navigate(`/accounting/journals/${nextEntry.id}`); } }}
                 title={nextEntry ? `الانتقال إلى ${nextEntry.docNumber ?? `#${nextEntry.id}`}` : "لا يوجد قيد تالٍ"}
                 data-testid="button-doc-next"
               >
@@ -1678,36 +1761,52 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                       autoFocus={line.id === focusLineId}
                     />
 
+                    {/* Debit / Credit inputs use type="text" with a strict
+                        decimal sanitizer instead of type="number". The native
+                        number input snaps to `step` on blur/scroll/arrow-keys,
+                        which produced floating-point artifacts (e.g. 1000 →
+                        999.99 → "999.9" after trailing-zero stripping). The
+                        text+inputMode="decimal" combo keeps the mobile decimal
+                        keypad and forbids non-numeric chars while preserving
+                        the EXACT digits the user typed. */}
                     <Input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       value={line.debit}
                       onChange={e => {
-                        updateLine(line.id, "debit", e.target.value);
-                        if (e.target.value) updateLine(line.id, "credit", "");
+                        const v = e.target.value
+                          .replace(/[٠-٩]/g, d => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+                          .replace(/[^0-9.]/g, "")
+                          .replace(/^(\d*\.?\d*).*/, "$1");
+                        updateLine(line.id, "debit", v);
+                        if (v) updateLine(line.id, "credit", "");
                       }}
                       placeholder="0.00"
                       className={cn(
                         "h-8 text-sm text-left font-mono",
                         parseFloat(line.debit) > 0 && "border-green-400 bg-green-50/50"
                       )}
-                      min="0"
-                      step="0.01"
+                      dir="ltr"
                     />
 
                     <Input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       value={line.credit}
                       onChange={e => {
-                        updateLine(line.id, "credit", e.target.value);
-                        if (e.target.value) updateLine(line.id, "debit", "");
+                        const v = e.target.value
+                          .replace(/[٠-٩]/g, d => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+                          .replace(/[^0-9.]/g, "")
+                          .replace(/^(\d*\.?\d*).*/, "$1");
+                        updateLine(line.id, "credit", v);
+                        if (v) updateLine(line.id, "debit", "");
                       }}
                       placeholder="0.00"
                       className={cn(
                         "h-8 text-sm text-left font-mono",
                         parseFloat(line.credit) > 0 && "border-red-400 bg-red-50/50"
                       )}
-                      min="0"
-                      step="0.01"
+                      dir="ltr"
                     />
 
                     <Input
@@ -1826,7 +1925,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
           <Sparkles className="h-4 w-4" />
           {validateMutation.isPending ? "جارٍ الفحص..." : "فحص بالذكاء الاصطناعي"}
         </Button>
-        <Button variant="outline" onClick={() => navigate("/accounting/journals")}>
+        <Button variant="outline" onClick={async () => { await discardIfEmpty(); navigate("/accounting/journals"); }}>
           إلغاء
         </Button>
         {!isBalanced && (

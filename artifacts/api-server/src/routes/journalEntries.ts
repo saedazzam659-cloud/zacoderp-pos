@@ -253,6 +253,24 @@ router.post("/reserve", async (req, res) => {
       await db.update(journalEntriesTable)
         .set({ docNumber: resolvedDocNumber })
         .where(eq(journalEntriesTable.id, entry.id));
+    } else {
+      // Central-sequence path: backfill `sequence_logs.ref_id` for the
+      // row we JUST issued so the discard-empty endpoint can release the
+      // correct log unambiguously (multiple branches can share the same
+      // generated_number, so matching by number alone is unsafe).
+      await db.execute(sql`
+        UPDATE sequence_logs
+        SET ref_id = ${String(entry.id)}
+        WHERE id = (
+          SELECT id FROM sequence_logs
+          WHERE company_id = ${cid}
+            AND transaction_type = 'journal_entry'
+            AND generated_number = ${resolvedDocNumber}
+            AND ref_id IS NULL
+          ORDER BY id DESC
+          LIMIT 1
+        )
+      `);
     }
 
     res.json({ id: entry.id, docNumber: resolvedDocNumber, reserved: true });
@@ -531,6 +549,144 @@ router.post("/:id/unpost", async (req, res) => {
       .set({ status: "draft", updatedAt: new Date() })
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
     res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── DISCARD EMPTY DRAFT ──────────────────────────────────────────────────────
+// Called by the JE form on cancel/back/exit when the user opened a fresh
+// reservation and never typed anything meaningful. The endpoint deletes the
+// draft AND releases its sequence number so the next reservation reuses the
+// SAME number — no gaps in the journal-entry numbering.
+//
+// Safety: the row MUST be:
+//   • status = 'draft'
+//   • description IS NULL or empty
+//   • have ZERO non-empty lines (a "non-empty" line has an account_id AND a
+//     non-zero debit OR credit)
+// Anything else returns 409 so a real edit can never be wiped by mistake.
+//
+// Sequence release strategy:
+//   1. If a sequence_logs row exists for (companyId, journal_entry, docNumber)
+//      → look up the matching counter (sequenceId, branchId derived from the
+//      entry's branch_id, or 0 sentinel). If the counter is exactly one ahead
+//      of the issued number, decrement it and delete the log row.
+//      We do NOT release if other numbers were issued AFTER this one — that
+//      would risk reusing an in-use number.
+//   2. Otherwise (legacy QYD-XXXX path with no central sequence) → reset the
+//      Postgres serial on journal_entries.id to MAX(id), so the very next
+//      INSERT lands on the freed id and produces the same QYD-XXXX label.
+router.post("/:id/discard-empty", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id  = Number(req.params.id);
+
+    // Load the candidate row + its lines in one shot.
+    const [existing] = await db.select().from(journalEntriesTable)
+      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    if (!existing) { res.json({ ok: true, alreadyGone: true }); return; }
+    if (existing.status !== "draft") {
+      res.status(409).json({ error: "لا يمكن حذف قيد مرحَّل" });
+      return;
+    }
+    if (existing.description && String(existing.description).trim().length > 0) {
+      res.status(409).json({ error: "القيد يحتوي على بيانات — لا يمكن حذفه تلقائياً" });
+      return;
+    }
+
+    const lineRows = await db.execute<{
+      id: number; account_id: number | null; debit: string | null; credit: string | null;
+    }>(sql`
+      SELECT id, account_id, debit, credit
+      FROM journal_entry_lines
+      WHERE entry_id = ${id}
+    `);
+    const hasMeaningful = (lineRows.rows ?? []).some(l => {
+      const d = Number(l.debit  ?? 0) || 0;
+      const c = Number(l.credit ?? 0) || 0;
+      return l.account_id != null && (d > 0 || c > 0);
+    });
+    if (hasMeaningful) {
+      res.status(409).json({ error: "القيد يحتوي على سطور — لا يمكن حذفه تلقائياً" });
+      return;
+    }
+
+    const docNumber = existing.docNumber;
+    const branchKey = existing.branchId != null && Number(existing.branchId) > 0
+      ? Number(existing.branchId) : 0;
+
+    let releasedSequence = false;
+    let resetSerial      = false;
+
+    await db.transaction(async (tx) => {
+      // 1. Drop the (empty) lines first to satisfy any FK.
+      await tx.execute(sql`DELETE FROM journal_entry_lines WHERE entry_id = ${id}`);
+
+      // 2. Try sequence-engine release path.
+      // Look up the log row by the deterministic linkage we set at reserve
+      // time (`ref_id = entry.id`). This avoids the "same generated_number
+      // exists in multiple branches" ambiguity that would arise from
+      // matching by generated_number alone.
+      if (docNumber) {
+        const logRows = await tx.execute<{
+          id: number; sequence_id: number; generated_number: string;
+        }>(sql`
+          SELECT id, sequence_id, generated_number
+          FROM sequence_logs
+          WHERE company_id = ${cid}
+            AND transaction_type = 'journal_entry'
+            AND ref_id = ${String(id)}
+            AND generated_number = ${docNumber}
+          LIMIT 1
+        `);
+        const log = logRows.rows?.[0];
+        if (log) {
+          // Lock the counter row for this (sequence, branch) and verify it is
+          // exactly one ahead of the issued number — i.e. nothing was issued
+          // after this one. Only then is it safe to roll back.
+          const counterRows = await tx.execute<{ id: number; current_number: number }>(sql`
+            SELECT id, current_number
+            FROM sequence_counters
+            WHERE sequence_id = ${log.sequence_id} AND branch_id = ${branchKey}
+            FOR UPDATE
+          `);
+          const counter = counterRows.rows?.[0];
+          // Parse the trailing integer from the generated number.
+          const m = String(log.generated_number).match(/(\d+)\s*$/);
+          const issuedNum = m ? Number(m[1]) : NaN;
+          if (counter && Number.isFinite(issuedNum) && counter.current_number === issuedNum + 1) {
+            await tx.execute(sql`
+              UPDATE sequence_counters
+              SET current_number = ${issuedNum}, updated_at = NOW()
+              WHERE id = ${counter.id}
+            `);
+            await tx.execute(sql`DELETE FROM sequence_logs WHERE id = ${log.id}`);
+            releasedSequence = true;
+          }
+        }
+      }
+
+      // 3. Delete the entry row itself.
+      await tx.execute(sql`
+        DELETE FROM journal_entries
+        WHERE id = ${id} AND company_id = ${cid}
+      `);
+
+      // 4. Legacy QYD-XXXX path: docNumber matches QYD-{padded id} AND no
+      //    central sequence released the number. Re-anchor the postgres
+      //    serial so the freed id is reused on the next INSERT.
+      if (!releasedSequence && docNumber && /^QYD-\d+$/.test(docNumber)) {
+        await tx.execute(sql`
+          SELECT setval(
+            pg_get_serial_sequence('journal_entries','id'),
+            GREATEST(COALESCE((SELECT MAX(id) FROM journal_entries), 0), 1),
+            true
+          )
+        `);
+        resetSerial = true;
+      }
+    });
+
+    res.json({ ok: true, releasedSequence, resetSerial });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
