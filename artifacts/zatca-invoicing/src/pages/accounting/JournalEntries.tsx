@@ -126,6 +126,33 @@ export default function JournalEntries() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "posted" | "voided">("all");
+  // Date-range filter (inclusive). Compared against `entryDate` in the
+  // entries list, which is stored as YYYY-MM-DD so plain string compare is
+  // safe and avoids any timezone shifting issues.
+  const [dateFrom, setDateFrom] = useState<string>("");
+  const [dateTo, setDateTo] = useState<string>("");
+  const applyDatePreset = (preset: "today" | "week" | "month" | "year") => {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const todayStr = fmt(now);
+    if (preset === "today") {
+      setDateFrom(todayStr);
+      setDateTo(todayStr);
+    } else if (preset === "week") {
+      const start = new Date(now);
+      start.setDate(now.getDate() - 6);
+      setDateFrom(fmt(start));
+      setDateTo(todayStr);
+    } else if (preset === "month") {
+      setDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), 1)));
+      setDateTo(todayStr);
+    } else if (preset === "year") {
+      setDateFrom(fmt(new Date(now.getFullYear(), 0, 1)));
+      setDateTo(todayStr);
+    }
+  };
+  const clearDateRange = () => { setDateFrom(""); setDateTo(""); };
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
   /* ── Per-column sort (cycles asc → desc → none on header click) ───────── */
@@ -276,6 +303,10 @@ export default function JournalEntries() {
     const q = search.trim().toLowerCase();
     const rows = (entries as any[]).filter((e) => {
       if (statusFilter !== "all" && e.status !== statusFilter) return false;
+      // Date-range filter — entryDate stored as YYYY-MM-DD, lexicographic
+      // compare matches chronological order so we don't need Date parsing.
+      if (dateFrom && String(e.entryDate ?? "") < dateFrom) return false;
+      if (dateTo   && String(e.entryDate ?? "") > dateTo)   return false;
       if (q) {
         const hay = [
           e.docNumber, `QYD-${String(e.id).padStart(4, "0")}`,
@@ -308,7 +339,7 @@ export default function JournalEntries() {
       }
     }
     return rows;
-  }, [entries, search, statusFilter, layout.colFilters, ctx, COLUMNS, sort, isRtl]);
+  }, [entries, search, statusFilter, dateFrom, dateTo, layout.colFilters, ctx, COLUMNS, sort, isRtl]);
 
   /* ── Pagination ── */
   const { pageSize, page, setPage } = layout;
@@ -1048,6 +1079,71 @@ ${sections}
               مسح فلاتر الأعمدة
             </Button>
           )}
+          {/* ── Date-range filter ─────────────────────────────────────────
+              Compact, attractive picker: a calendar icon, two date inputs
+              labelled "من / إلى", and four quick-preset chips (today,
+              7-day, this-month, this-year). Active range gets a soft
+              blue gradient highlight + clear button so it's obvious a
+              date filter is engaged. */}
+          <div className={cn(
+            "flex items-center gap-1.5 rounded-lg border px-2 py-1 transition-all",
+            (dateFrom || dateTo)
+              ? "bg-gradient-to-l from-blue-50 via-indigo-50 to-violet-50 border-blue-300 shadow-sm dark:from-blue-950/40 dark:via-indigo-950/40 dark:to-violet-950/40 dark:border-blue-800"
+              : "bg-white border-slate-300",
+          )}>
+            <Calendar className={cn(
+              "h-3.5 w-3.5",
+              (dateFrom || dateTo) ? "text-blue-700" : "text-slate-500",
+            )} />
+            <span className="text-[11px] text-slate-600 font-medium">من</span>
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              max={dateTo || undefined}
+              className="h-6 text-[11px] w-[115px] px-1.5 border-slate-300 bg-white"
+              data-testid="filter-date-from"
+            />
+            <span className="text-[11px] text-slate-600 font-medium">إلى</span>
+            <Input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              min={dateFrom || undefined}
+              className="h-6 text-[11px] w-[115px] px-1.5 border-slate-300 bg-white"
+              data-testid="filter-date-to"
+            />
+            {/* Preset chips — single click to fill both ends */}
+            <div className="flex items-center gap-0.5 ms-1 ps-1.5 border-s border-slate-300">
+              {([
+                { k: "today", label: "اليوم" },
+                { k: "week",  label: "٧ أيام" },
+                { k: "month", label: "الشهر" },
+                { k: "year",  label: "السنة" },
+              ] as const).map((p) => (
+                <button
+                  key={p.k}
+                  type="button"
+                  onClick={() => applyDatePreset(p.k)}
+                  className="px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-600 hover:bg-blue-100 hover:text-blue-800 transition-colors"
+                  data-testid={`filter-date-preset-${p.k}`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            {(dateFrom || dateTo) && (
+              <button
+                type="button"
+                onClick={clearDateRange}
+                className="flex items-center justify-center h-5 w-5 rounded text-rose-600 hover:bg-rose-100 transition-colors"
+                title="مسح فلتر التاريخ"
+                data-testid="filter-date-clear"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
           <div className="flex-1" />
           <span className="text-slate-700 font-medium">
             {filtered.length} {t("journalEntries.itemLabel", { defaultValue: "قيد" })}
