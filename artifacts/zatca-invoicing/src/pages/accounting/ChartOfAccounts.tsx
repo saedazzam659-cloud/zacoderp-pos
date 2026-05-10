@@ -193,8 +193,8 @@ export default function ChartOfAccounts() {
     queryKey: ["accounts-balances", cid],
     queryFn: async () => {
       const url = cid
-        ? `${API}/api/reports-accounting/trial-balance?companyId=${cid}`
-        : `${API}/api/reports-accounting/trial-balance`;
+        ? `${API}/api/accounting-reports/trial-balance?companyId=${cid}`
+        : `${API}/api/accounting-reports/trial-balance`;
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) return [];
       return res.json();
