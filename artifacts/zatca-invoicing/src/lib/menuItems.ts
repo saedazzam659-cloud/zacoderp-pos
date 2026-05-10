@@ -33,11 +33,11 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "pos",                label: "نقاط البيع",                  section: "نقاط البيع" },
 
-  { key: "cash_module",        label: "النقد والبنوك",              section: "المحاسبة" },
-  { key: "cash_reports",       label: "تقارير النقد والبنوك",       section: "المحاسبة" },
-  { key: "accounts",           label: "الحسابات العامة",            section: "المحاسبة" },
-  { key: "accounting_reports", label: "التقارير المحاسبية",         section: "المحاسبة" },
-  { key: "accounting_maintenance", label: "الصيانة المحاسبية وميزان المراجعة", section: "المحاسبة" },
+  { key: "cash_module",        label: "النقد والبنوك",              section: "الحسابات العامة" },
+  { key: "cash_reports",       label: "تقارير النقد والبنوك",       section: "الحسابات العامة" },
+  { key: "accounts",           label: "الحسابات العامة",            section: "الحسابات العامة" },
+  { key: "accounting_reports", label: "التقارير المحاسبية",         section: "الحسابات العامة" },
+  { key: "accounting_maintenance", label: "الصيانة المحاسبية وميزان المراجعة", section: "صيانة الحسابات" },
 
   { key: "hr_module",          label: "شؤون الموظفين",              section: "شؤون الموظفين" },
 
@@ -143,7 +143,8 @@ export const SECTION_THEME: Record<string, { bg: string; text: string; border: s
   "المبيعات":             { bg: "bg-cyan-50",     text: "text-cyan-700",     border: "border-cyan-200" },
   "المشتريات":            { bg: "bg-orange-50",   text: "text-orange-700",   border: "border-orange-200" },
   "نقاط البيع":           { bg: "bg-teal-50",     text: "text-teal-700",     border: "border-teal-200" },
-  "المحاسبة":             { bg: "bg-indigo-50",   text: "text-indigo-700",   border: "border-indigo-200" },
+  "الحسابات العامة":       { bg: "bg-indigo-50",   text: "text-indigo-700",   border: "border-indigo-200" },
+  "صيانة الحسابات":        { bg: "bg-violet-50",   text: "text-violet-700",   border: "border-violet-200" },
   "شؤون الموظفين":         { bg: "bg-rose-50",     text: "text-rose-700",     border: "border-rose-200" },
   "إدارة المقاولات":       { bg: "bg-yellow-50",   text: "text-yellow-700",   border: "border-yellow-200" },
   "الإنتاج والتصنيع":      { bg: "bg-stone-50",    text: "text-stone-700",    border: "border-stone-200" },

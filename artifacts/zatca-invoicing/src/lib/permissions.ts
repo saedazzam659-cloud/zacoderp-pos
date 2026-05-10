@@ -22,6 +22,7 @@ const G = {
   purchasing:  "perms.groups.purchasing",
   inventory:   "perms.groups.inventory",
   accounting:  "perms.groups.accounting",
+  accountingMaintenance: "perms.groups.accountingMaintenance",
   tax:         "perms.groups.tax",
   pos:         "perms.groups.pos",
   hr:          "perms.groups.hr",
@@ -76,7 +77,7 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "receipt_vouchers",     label: "perms.modules.receipt_vouchers",     group: G.accounting, actions: ALL },
   { key: "payment_vouchers",     label: "perms.modules.payment_vouchers",     group: G.accounting, actions: ALL },
   { key: "accounting_reports",   label: "perms.modules.accounting_reports",   group: G.accounting, actions: ["view", "export"] },
-  { key: "accounting_maintenance", label: "perms.modules.accounting_maintenance", group: G.accounting, actions: ALL },
+  { key: "accounting_maintenance", label: "perms.modules.accounting_maintenance", group: G.accountingMaintenance, actions: ALL },
 
   { key: "vat_declaration",      label: "perms.modules.vat_declaration",      group: G.tax,        actions: ["view", "export"] },
 
