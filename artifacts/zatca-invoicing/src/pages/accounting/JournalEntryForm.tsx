@@ -245,155 +245,20 @@ export default function JournalEntryForm() {
     navigate(`/accounting/journals/${hit.id}`);
   }
 
-  // ── Number reservation ────────────────────────────────────────
-  // For new entries we IMMEDIATELY reserve a docNumber (and a row id)
-  // from the server when the form opens — this guarantees the number
-  // shown to the user is the EXACT one that will be saved, even when
-  // multiple users start a new entry simultaneously. The reserved
-  // draft is finalized on save (PUT + /post) or deleted on cancel /
-  // navigate-away. See journalEntries.ts → POST /reserve.
-  const [reservedId, setReservedId] = useState<number | null>(null);
-  // True when the reserve request to the server failed (e.g. period
-  // locked). We surface a warning in the badge so the user KNOWS the
-  // displayed number is not guaranteed and avoids writing it down.
-  const [reserveFailed, setReserveFailed] = useState(false);
-  // Ref mirrors used by cleanup handlers that fire after the component
-  // unmounts (no closures over stale state). `saving` blocks cleanup
-  // from deleting a row that is mid-save (PUT in flight, POST pending).
-  const reservedRef = useRef<{ id: number | null; saved: boolean; saving: boolean }>({
-    id: null, saved: false, saving: false,
-  });
-  const reservingRef = useRef(false);
-  const [reserveTick, setReserveTick] = useState(0);
-
-  // Pull next entry number from the central sequence engine (مسلسل الحركات)
-  // when creating new — used as a *fallback* display when reservation
-  // hasn't completed yet. Reservation overrides the peeked value the
-  // moment it returns.
-  const seqPeek = useNextSequenceNumber("journal_entry", isNew && !reservedId);
+  // ── Document number (next-estimated peek) ────────────────────
+  // For new entries we PEEK the next number from the central sequence
+  // engine (مسلسل الحركات) and show it in the badge so the user knows
+  // what number THIS save will get. Nothing is consumed until the user
+  // actually clicks Save — closing/cancelling the form leaves no row
+  // and no number gap by design.
+  //
+  // The peek is read-only and is recomputed after each save so the badge
+  // immediately advances to the next number for the user's next entry.
+  const seqPeek = useNextSequenceNumber("journal_entry", isNew);
   useEffect(() => {
     if (!isNew) return;
-    if (reservedRef.current.id) return; // reserved value wins
     if (seqPeek.hasSequence && seqPeek.number) setDocNumber(seqPeek.number);
   }, [isNew, seqPeek.hasSequence, seqPeek.number]);
-
-  // Reserve once on mount (and again after each save, via reserveTick).
-  useEffect(() => {
-    if (!isNew || !user) return;
-    if (reservedRef.current.id || reservingRef.current) return;
-    reservingRef.current = true;
-    journalEntriesApi.reserve({
-      entryDate,
-      branchId: branchId ? Number(branchId) : null,
-      currency,
-      exchangeRate,
-      entryType,
-    })
-      .then(r => {
-        reservedRef.current = { id: r.id, saved: false, saving: false };
-        setReservedId(r.id);
-        setReserveFailed(false);
-        setDocNumber(r.docNumber);
-      })
-      .catch(() => {
-        // Server rejected the reservation (e.g. period locked, auth).
-        // We do NOT silently fall back: surface a visible warning so
-        // the user knows the displayed number is provisional.
-        setReserveFailed(true);
-      })
-      .finally(() => { reservingRef.current = false; });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isNew, !!user, reserveTick]);
-
-  // ─── Empty-draft cleanup ─────────────────────────────────────────────
-  // When the user opens a fresh JE, the form reserves a docNumber + row up
-  // front so the locked number is visible. If the user then exits without
-  // typing anything (cancel, back-arrow, prev/next nav, route change, tab
-  // close), we DELETE that empty draft AND release its sequence number so
-  // the next reservation reuses the SAME number — no gaps in the journal
-  // numbering. The server enforces the "truly empty" check; we just send
-  // the request from every exit path.
-  //
-  // `linesRef` and `descriptionRef` mirror the latest state so the
-  // unmount/beforeunload handlers (which capture stale closures) can read
-  // current values without re-subscribing to every keystroke.
-  const linesRef       = useRef(lines);
-  const descriptionRef = useRef(description);
-  useEffect(() => { linesRef.current = lines; }, [lines]);
-  useEffect(() => { descriptionRef.current = description; }, [description]);
-
-  // Returns true when the reserved draft has NO meaningful content.
-  // Mirrors the server-side check so we don't spam the discard endpoint
-  // for entries the server would reject anyway.
-  function isReservedDraftEmpty(): boolean {
-    if (!isNew) return false;
-    const r = reservedRef.current;
-    if (!r.id || r.saved || r.saving) return false;
-    const desc = (descriptionRef.current ?? "").trim();
-    if (desc) return false;
-    const meaningful = (linesRef.current ?? []).some(l => {
-      const d = parseFloat(l.debit  || "0") || 0;
-      const c = parseFloat(l.credit || "0") || 0;
-      return l.accountId && (d > 0 || c > 0);
-    });
-    return !meaningful;
-  }
-
-  // Async discard via fetch — used on user-driven navigation (cancel/back).
-  // Awaits the response so we don't race the navigation that follows.
-  async function discardIfEmpty(): Promise<void> {
-    if (!isReservedDraftEmpty()) return;
-    const rid = reservedRef.current.id!;
-    // Mark as "saved" up-front so concurrent paths (unmount cleanup,
-    // beforeunload) don't double-fire the same delete.
-    reservedRef.current.saved = true;
-    try { await journalEntriesApi.discardEmpty(rid); }
-    catch { /* best-effort cleanup — never block navigation */ }
-  }
-
-  // Synchronous beacon — used on tab close (browsers terminate before
-  // async fetches resolve). sendBeacon is fire-and-forget but reliably
-  // delivered during page-unload.
-  function discardIfEmptyBeacon(): void {
-    if (!isReservedDraftEmpty()) return;
-    const rid = reservedRef.current.id!;
-    reservedRef.current.saved = true;
-    try {
-      const url = `${API}/api/journal-entries/${rid}/discard-empty`;
-      const token = localStorage.getItem("zatca_token") ?? "";
-      // sendBeacon doesn't accept Authorization headers — fall back to
-      // a keepalive fetch which DOES carry headers AND survives unload.
-      fetch(url, {
-        method: "POST",
-        keepalive: true,
-        headers: token
-          ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
-          : { "Content-Type": "application/json" },
-        body: "{}",
-      }).catch(() => {});
-    } catch { /* swallow — last-ditch cleanup */ }
-  }
-
-  // Component-unmount cleanup (route change via React Router, etc.) +
-  // tab-close listener. Both run only while the reservation is still
-  // "open" — the helpers above are no-ops once the user typed anything
-  // meaningful or successfully saved.
-  useEffect(() => {
-    if (!isNew) return;
-    const onBeforeUnload = () => { discardIfEmptyBeacon(); };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => {
-      window.removeEventListener("beforeunload", onBeforeUnload);
-      // Best-effort fire-and-forget on unmount. Don't await — the
-      // component is already gone.
-      if (isReservedDraftEmpty()) {
-        const rid = reservedRef.current.id!;
-        reservedRef.current.saved = true;
-        journalEntriesApi.discardEmpty(rid).catch(() => {});
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isNew]);
 
   const { data: accountsList = [] } = useQuery<any[]>({
     queryKey: ["accounts-flat", cid],
@@ -816,34 +681,10 @@ export default function JournalEntryForm() {
 
   const saveMutation = useMutation({
     mutationFn: async (data: any) => {
-      // New entry with a reserved draft → update the header/lines on the
-      // existing row. We ONLY flip to "posted" when the entry is balanced
-      // AND has at least 2 valid lines. Otherwise the row stays as a
-      // draft holding the reserved docNumber, so the sequence is never
-      // wasted even if the user saves an empty/unbalanced entry.
-      if (isNew && reservedRef.current.id) {
-        const rid = reservedRef.current.id;
-        reservedRef.current.saving = true;
-        try {
-          const updated = await journalEntriesApi.update(rid, data);
-          const validLines = (data.lines ?? []).filter((l: any) => l?.accountId);
-          const td = validLines.reduce((s: number, l: any) => s + (parseFloat(l.debit  || "0") || 0), 0);
-          const tc = validLines.reduce((s: number, l: any) => s + (parseFloat(l.credit || "0") || 0), 0);
-          const balanced = Math.abs(td - tc) < 0.001 && (td > 0 || tc > 0);
-          const canPost  = balanced && validLines.length >= 2;
-          if (canPost) {
-            await journalEntriesApi.post(rid);
-            reservedRef.current.saved = true;
-            return { ...updated, status: "posted", _posted: true };
-          }
-          // Saved as draft — keep reservation "open" but mark saved so
-          // unmount cleanup (none today) wouldn't delete it either.
-          reservedRef.current.saved = true;
-          return { ...updated, status: "draft", _posted: false };
-        } finally {
-          reservedRef.current.saving = false;
-        }
-      }
+      // Single-shot create on Save for new entries. The server consumes the
+      // sequence number atomically here — no number is reserved beforehand —
+      // and decides status='posted' vs 'draft' based on balance + line count.
+      // Closing the form without saving leaves no row and no number gap.
       return isNew ? journalEntriesApi.create(data) : journalEntriesApi.update(editId!, data);
     },
     onSuccess: (saved: any) => {
@@ -851,7 +692,9 @@ export default function JournalEntryForm() {
       // Show the JUST-saved doc number prominently in the toast so the user
       // sees confirmation of what was just created/updated.
       const savedDoc = saved?.docNumber ?? docNumber;
-      const wasPosted = saved?._posted !== false; // legacy paths assumed posted
+      const wasPosted = saved?.status
+        ? saved.status === "posted"
+        : true; // legacy update paths return no status — assume posted
       const baseTitle = wasPosted
         ? getSaveToastTitle(t, { posted: false, printed: autoPrintJournal })
         : "تم الحفظ كمسودة";
@@ -892,14 +735,8 @@ export default function JournalEntryForm() {
         setLines([newLine(), newLine()]);
         setActiveTab("header");
         setDocNumber("");
-        // Clear the previous reservation (already saved) and trigger a
-        // fresh one so the badge instantly shows the NEXT locked number
-        // for the user's next entry.
-        reservedRef.current = { id: null, saved: false, saving: false };
-        setReservedId(null);
-        setReserveFailed(false);
-        setReserveTick(t => t + 1);
-        // Also re-peek the sequence as a fallback display source.
+        // Re-peek the next sequence number so the badge instantly shows
+        // the NEXT number the user's next save will consume.
         seqPeek.refetch();
       }
     },
@@ -1208,7 +1045,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
       {/* ─── Page title ─────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={async () => { await discardIfEmpty(); navigate("/accounting/journals"); }} className="h-8 w-8">
+          <Button variant="ghost" size="icon" onClick={() => navigate("/accounting/journals")} className="h-8 w-8">
             <ArrowRight className="h-4 w-4" />
           </Button>
           <div className="flex items-center gap-2.5">
@@ -1281,11 +1118,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                           : "text-blue-600 dark:text-blue-400",
                   )}>
                     {isNew
-                      ? (reservedId
-                          ? "الرقم المحجوز ✓"
-                          : reserveFailed
-                              ? "⚠ تعذّر حجز الرقم — قد يتغير عند الحفظ"
-                              : (isPredicted ? "الرقم القادم (تقديري)" : "الرقم القادم"))
+                      ? (isPredicted ? "الرقم القادم (تقديري)" : "الرقم القادم")
                       : "رقم القيد"}
                   </span>
                   <span
@@ -1339,7 +1172,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                 type="button" variant="ghost" size="sm"
                 className="h-7 px-2 gap-1 text-xs"
                 disabled={!prevEntry}
-                onClick={async () => { if (prevEntry) { await discardIfEmpty(); navigate(`/accounting/journals/${prevEntry.id}`); } }}
+                onClick={() => { if (prevEntry) navigate(`/accounting/journals/${prevEntry.id}`); }}
                 title={prevEntry ? `الانتقال إلى ${prevEntry.docNumber ?? `#${prevEntry.id}`}` : "لا يوجد قيد سابق"}
                 data-testid="button-doc-prev"
               >
@@ -1355,7 +1188,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                 type="button" variant="ghost" size="sm"
                 className="h-7 px-2 gap-1 text-xs"
                 disabled={!nextEntry}
-                onClick={async () => { if (nextEntry) { await discardIfEmpty(); navigate(`/accounting/journals/${nextEntry.id}`); } }}
+                onClick={() => { if (nextEntry) navigate(`/accounting/journals/${nextEntry.id}`); }}
                 title={nextEntry ? `الانتقال إلى ${nextEntry.docNumber ?? `#${nextEntry.id}`}` : "لا يوجد قيد تالٍ"}
                 data-testid="button-doc-next"
               >
@@ -1925,7 +1758,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
           <Sparkles className="h-4 w-4" />
           {validateMutation.isPending ? "جارٍ الفحص..." : "فحص بالذكاء الاصطناعي"}
         </Button>
-        <Button variant="outline" onClick={async () => { await discardIfEmpty(); navigate("/accounting/journals"); }}>
+        <Button variant="outline" onClick={() => navigate("/accounting/journals")}>
           إلغاء
         </Button>
         {!isBalanced && (
