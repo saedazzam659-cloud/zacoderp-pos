@@ -153,6 +153,38 @@ export default function JournalEntries() {
     }
   };
   const clearDateRange = () => { setDateFrom(""); setDateTo(""); };
+
+  /* ── Month color accent ────────────────────────────────────────────────
+     A subtle 4px coloured border on the leading edge of each row, keyed
+     to the month of `entryDate`. Lets the eye group entries by month at
+     a glance without competing with the status-tone background or the
+     selection highlight. Twelve hand-picked Tailwind tones that read well
+     against both the slate body and amber/blue row tints. */
+  const MONTH_BORDERS: Record<number, string> = {
+    1:  "border-s-4 border-s-rose-400",      // يناير
+    2:  "border-s-4 border-s-pink-400",      // فبراير
+    3:  "border-s-4 border-s-fuchsia-400",   // مارس
+    4:  "border-s-4 border-s-purple-400",    // أبريل
+    5:  "border-s-4 border-s-violet-400",    // مايو
+    6:  "border-s-4 border-s-indigo-400",    // يونيو
+    7:  "border-s-4 border-s-blue-400",      // يوليو
+    8:  "border-s-4 border-s-sky-400",       // أغسطس
+    9:  "border-s-4 border-s-teal-400",      // سبتمبر
+    10: "border-s-4 border-s-emerald-400",   // أكتوبر
+    11: "border-s-4 border-s-amber-500",     // نوفمبر
+    12: "border-s-4 border-s-orange-500",    // ديسمبر
+  };
+  const MONTH_NAMES_AR: Record<number, string> = {
+    1: "يناير", 2: "فبراير", 3: "مارس", 4: "أبريل", 5: "مايو", 6: "يونيو",
+    7: "يوليو", 8: "أغسطس", 9: "سبتمبر", 10: "أكتوبر", 11: "نوفمبر", 12: "ديسمبر",
+  };
+  const monthAccentFor = (entryDate: string | null | undefined): string => {
+    const m = String(entryDate ?? "").match(/^(\d{4})-(\d{2})/);
+    if (!m) return "";
+    const month = Number(m[2]);
+    return MONTH_BORDERS[month] ?? "";
+  };
+
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
   /* ── Per-column sort (cycles asc → desc → none on header click) ─────────
@@ -1534,6 +1566,7 @@ ${sections}
                       className={cn(
                         "transition-colors cursor-pointer",
                         isSel ? SEL_TONE : rowToneFor({ status: entry.status }),
+                        monthAccentFor(entry.entryDate),
                       )}
                       onClick={(e) => {
                         const tag = (e.target as HTMLElement).tagName;
@@ -1541,7 +1574,12 @@ ${sections}
                         layout.toggleRow(rid);
                       }}
                       onDoubleClick={() => navigate(`/accounting/journals/${entry.id}?tab=lines`)}
-                      title={buildToneTooltip({ status: entry.status })}
+                      title={(() => {
+                        const m = String(entry.entryDate ?? "").match(/^(\d{4})-(\d{2})/);
+                        const monthLabel = m ? `${MONTH_NAMES_AR[Number(m[2])]} ${m[1]}` : "";
+                        const statusTip = buildToneTooltip({ status: entry.status });
+                        return monthLabel ? `${monthLabel} • ${statusTip}` : statusTip;
+                      })()}
                     >
                       {visibleColumns.map(renderCell)}
                     </tr>
