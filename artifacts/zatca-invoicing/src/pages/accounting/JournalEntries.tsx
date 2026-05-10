@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
@@ -155,8 +155,45 @@ export default function JournalEntries() {
   const clearDateRange = () => { setDateFrom(""); setDateTo(""); };
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
-  /* ── Per-column sort (cycles asc → desc → none on header click) ───────── */
-  const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
+  /* ── Per-column sort (cycles asc → desc → none on header click) ─────────
+     Persisted per-tenant in localStorage so the chosen column + direction
+     survives page refreshes, navigation away, and re-opening the screen.
+     Key mirrors the auditGridLayout pattern: `<screenSlug>.sort.v1.c<cid>`. */
+  const SORT_LS_KEY = `journalEntriesAuditGrid.sort.v1.c${cid ?? "anon"}`;
+  const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(() => {
+    try {
+      const raw = localStorage.getItem(SORT_LS_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.key === "string" && (parsed.dir === "asc" || parsed.dir === "desc")) {
+        return { key: parsed.key, dir: parsed.dir };
+      }
+    } catch { /* ignore corrupt LS */ }
+    return null;
+  });
+  // Persist on change; remove the key entirely when sort is cleared so the
+  // grid returns to its natural (server) order on next visit.
+  useEffect(() => {
+    try {
+      if (sort) localStorage.setItem(SORT_LS_KEY, JSON.stringify(sort));
+      else      localStorage.removeItem(SORT_LS_KEY);
+    } catch { /* ignore quota */ }
+  }, [sort, SORT_LS_KEY]);
+  // Re-hydrate when tenant changes — different companies should have their
+  // own preferred sort (matches how layout/colWidths/etc. behave).
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SORT_LS_KEY);
+      if (!raw) { setSort(null); return; }
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.key === "string" && (parsed.dir === "asc" || parsed.dir === "desc")) {
+        setSort({ key: parsed.key, dir: parsed.dir });
+      } else {
+        setSort(null);
+      }
+    } catch { setSort(null); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cid]);
   const cycleSort = (key: string) => {
     setSort((prev) => {
       if (!prev || prev.key !== key) return { key, dir: "asc" };
