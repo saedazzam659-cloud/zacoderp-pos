@@ -136,4 +136,4 @@ title = "قاعدة البيانات مضغوطة (215KB — فكّ الضغط �
 id = "aLfUOiAeIBhB9b6c4hMIe"
 uri = "file://.local/sql/backfill_qyd_gaps_company10.sql.txt"
 type = "text"
-title = "backfill_qyd_gaps_company10.sql"
+title = "backfill_qyd_gaps_company10.sql — جاهز للإنتاج"
