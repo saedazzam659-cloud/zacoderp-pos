@@ -262,47 +262,57 @@ router.post("/", async (req, res) => {
     const isBalanced  = Math.abs(totalDebit - totalCredit) < 0.001 && hasMovement;
     const canPost     = isBalanced && validLines.length >= 2;
 
-    const [entry] = await db.insert(journalEntriesTable).values({
-      companyId:    cid,
-      docNumber:    resolvedDocNumber,
-      entryDate,
-      currency:     currency || "SAR",
-      exchangeRate: exchangeRate ?? "1",
-      description:  description || null,
-      entryType:    entryType || "general",
-      branchId:     resolvedBranchId,
-      periodId:     writability.period?.id ?? null,
-      status:       canPost ? "posted" : "draft",
-    }).returning();
+    // Wrap the INSERT + (optional) QYD fallback assignment in a single
+    // transaction guarded by a per-company advisory lock. Without the lock,
+    // two concurrent saves can both read the same MAX(QYD-XXXX) before
+    // either has updated, then both write the SAME doc_number — producing
+    // duplicates (e.g. two rows both labeled QYD-0722). The advisory lock
+    // serializes assignment per company while leaving other tenants
+    // unaffected. Lock is held until COMMIT/ROLLBACK.
+    const entry = await db.transaction(async (tx) => {
+      if (!resolvedDocNumber) {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, 1001)`);
+      }
+      const [e] = await tx.insert(journalEntriesTable).values({
+        companyId:    cid,
+        docNumber:    resolvedDocNumber,
+        entryDate,
+        currency:     currency || "SAR",
+        exchangeRate: exchangeRate ?? "1",
+        description:  description || null,
+        entryType:    entryType || "general",
+        branchId:     resolvedBranchId,
+        periodId:     writability.period?.id ?? null,
+        status:       canPost ? "posted" : "draft",
+      }).returning();
 
-    // Legacy QYD fallback: when no central sequence is configured AND the
-    // client didn't supply a docNumber, compose a stable QYD-XXXX label.
-    // Compute the next number PER COMPANY by taking MAX(numeric part of
-    // existing QYD-XXXX docNumbers for this company) + 1. Using the global
-    // entry.id would create artificial gaps because ids are interleaved
-    // across all tenants — company A creating an entry burns an id that
-    // company B never sees, so company B's per-company QYD sequence would
-    // skip numbers it never used.
-    if (!resolvedDocNumber) {
-      const result = await db.execute<{ next: number }>(sql`
-        SELECT COALESCE(MAX(
-          CASE
-            WHEN doc_number ~ '^QYD-[0-9]+$'
-            THEN (regexp_replace(doc_number, '^QYD-', ''))::int
-            ELSE 0
-          END
-        ), 0) + 1 AS next
-        FROM journal_entries
-        WHERE company_id = ${cid}
-          AND id <> ${entry.id}
-      `);
-      const next = Number((result as any).rows?.[0]?.next ?? 1);
-      resolvedDocNumber = `QYD-${String(next).padStart(4, "0")}`;
-      await db.update(journalEntriesTable)
-        .set({ docNumber: resolvedDocNumber })
-        .where(eq(journalEntriesTable.id, entry.id));
-      entry.docNumber = resolvedDocNumber;
-    }
+      // Legacy QYD fallback: when no central sequence is configured AND the
+      // client didn't supply a docNumber, compose a stable QYD-XXXX label.
+      // Compute next number PER COMPANY = MAX(numeric part of QYD-XXXX) + 1.
+      // Using global entry.id would interleave ids across tenants and create
+      // artificial gaps in each company's view of its own numbering.
+      if (!resolvedDocNumber) {
+        const result = await tx.execute<{ next: number }>(sql`
+          SELECT COALESCE(MAX(
+            CASE
+              WHEN doc_number ~ '^QYD-[0-9]+$'
+              THEN (regexp_replace(doc_number, '^QYD-', ''))::int
+              ELSE 0
+            END
+          ), 0) + 1 AS next
+          FROM journal_entries
+          WHERE company_id = ${cid}
+            AND id <> ${e.id}
+        `);
+        const next = Number((result as any).rows?.[0]?.next ?? 1);
+        resolvedDocNumber = `QYD-${String(next).padStart(4, "0")}`;
+        await tx.update(journalEntriesTable)
+          .set({ docNumber: resolvedDocNumber })
+          .where(eq(journalEntriesTable.id, e.id));
+        e.docNumber = resolvedDocNumber;
+      }
+      return e;
+    });
 
     if (Array.isArray(lines) && lines.length > 0) {
       await db.insert(journalEntryLinesTable).values(

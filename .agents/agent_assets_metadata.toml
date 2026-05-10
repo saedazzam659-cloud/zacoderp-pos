@@ -155,3 +155,9 @@ id = "3cQbM9SGL1izeUuDqKFCn"
 uri = "file://.local/sql/reset_journal_seq_company10_to_655.sql.txt"
 type = "text"
 title = "reset_journal_seq_company10_to_655.sql — إرجاع العداد إلى 655"
+
+[[outputs]]
+id = "oXCjAmuHGeZ3aSbQI7npP"
+uri = "file://.local/sql/fix_duplicate_qyd_0722_company18.sql.txt"
+type = "text"
+title = "fix_duplicate_qyd_0722_company18.sql — إصلاح التكرار"
