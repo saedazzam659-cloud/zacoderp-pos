@@ -14,7 +14,8 @@ import ExportButtons from "@/components/ExportButtons";
 import AccountsImportPanel from "@/components/AccountsImportPanel";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { TablePagination, usePagination } from "@/components/TablePagination";
-import { Plus, Pencil, Trash2, Copy, BookOpen, Search, ChevronLeft, ChevronRight, Printer, LayoutGrid, ListTree, ChevronDown, FolderTree, CheckCircle2, XCircle } from "lucide-react";
+import { Plus, Pencil, Trash2, Copy, BookOpen, Search, ChevronLeft, ChevronRight, Printer, LayoutGrid, ListTree, ChevronDown, FolderTree, CheckCircle2, XCircle, ExternalLink, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { printChartOfAccountsExternal, type CoaPrintAccount, type CoaPrintTypeMeta } from "@/lib/export";
 
@@ -41,6 +42,79 @@ export default function ChartOfAccounts() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const [, navigate] = useLocation();
+
+  /* ── Drill into account statement (same UX as Trial Balance) ──────────
+     Default range = first day of current year → today, so the user sees a
+     comprehensive ledger immediately. Posting accounts only — header rows
+     have aggregated children balances and don't have their own movements. */
+  const drillToStatement = (accountId: number) => {
+    const today = new Date();
+    const fromDate = `${today.getFullYear()}-01-01`;
+    const toDate   = today.toISOString().slice(0, 10);
+    navigate(`/accounting/reports/account-statement?accountId=${accountId}&fromDate=${fromDate}&toDate=${toDate}`);
+  };
+
+  /* ── Attractive balance pill ──────────────────────────────────────────
+     Single source of truth used in both tree & table views. Renders the
+     balance as a colored pill with a side-icon (arrow up = debit-side,
+     arrow down = credit-side, dash = zero) and the value + DR/CR label.
+     If the account is a posting leaf, the pill becomes a clickable button
+     that drills down into the account statement, with an external-link
+     hint icon revealed on hover (matching the Trial Balance pattern). */
+  function BalancePill({ account, balance }: { account: any; balance: number }) {
+    const isZero  = Math.abs(balance) < 0.005;
+    const isCr    = balance < 0;
+    const value   = fmt(Math.abs(balance));
+    const drCrLbl = isCr ? t("accountingReports.creditShort") : t("accountingReports.debitShort");
+    const tone    = isZero
+      ? "bg-slate-50 text-slate-500 border-slate-200"
+      : isCr
+        ? "bg-rose-50 text-rose-700 border-rose-200 group-hover:bg-rose-100 group-hover:border-rose-300"
+        : "bg-emerald-50 text-emerald-700 border-emerald-200 group-hover:bg-emerald-100 group-hover:border-emerald-300";
+    const Icon    = isZero ? Minus : (isCr ? TrendingDown : TrendingUp);
+    const clickable = account.isPosting && !isZero;
+    const inner = (
+      <span
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 transition-all shadow-sm",
+          tone,
+          clickable && "cursor-pointer hover:shadow-md",
+        )}
+        dir="ltr"
+        title={
+          clickable
+            ? t("chartOfAccounts.drillBalance", { defaultValue: "اعرض الحركات التي كوّنت هذا الرصيد" })
+            : isZero
+              ? t("chartOfAccounts.balanceZero", { defaultValue: "لا توجد حركات" })
+              : t("chartOfAccounts.balanceAggregated", { defaultValue: "رصيد مُجمَّع من الحسابات الفرعية" })
+        }
+      >
+        <Icon className="h-3 w-3 shrink-0" />
+        <span className="font-mono text-[11px] font-semibold tabular-nums">
+          {isZero ? "0.00" : value}
+        </span>
+        {!isZero && (
+          <span className="text-[9px] font-bold opacity-80 px-1 rounded bg-white/60">
+            {drCrLbl}
+          </span>
+        )}
+        {clickable && (
+          <ExternalLink className="h-2.5 w-2.5 opacity-0 group-hover:opacity-70 transition-opacity" />
+        )}
+      </span>
+    );
+    if (!clickable) return inner;
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); drillToStatement(account.id); }}
+        className="group focus:outline-none focus:ring-2 focus:ring-emerald-300 rounded-full"
+      >
+        {inner}
+      </button>
+    );
+  }
 
   const ACCOUNT_TYPES = [
     { value: "asset",     label: t("chartOfAccounts.typeAsset"),     badgeClass: "bg-blue-50 text-blue-700 border-blue-200",       printColor: "#1d4ed8", printBg: "#eff6ff" },
@@ -626,12 +700,8 @@ export default function ChartOfAccounts() {
                 {a.isActive
                   ? <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-label={t("chartOfAccounts.active")} />
                   : <XCircle className="h-4 w-4 text-red-500" aria-label={t("chartOfAccounts.inactive")} />}
-                <span className="hidden md:inline-block min-w-[110px] text-end font-mono text-xs tabular-nums" dir="ltr">
-                  {Math.abs(bal) < 0.005
-                    ? <span className="text-muted-foreground">0.00</span>
-                    : <span className={cn("font-medium", bal < 0 ? "text-red-600" : "text-foreground")}>
-                        {fmt(Math.abs(bal))} {bal < 0 ? t("accountingReports.creditShort") : t("accountingReports.debitShort")}
-                      </span>}
+                <span className="hidden md:inline-block text-end" dir="ltr">
+                  <BalancePill account={a} balance={bal} />
                 </span>
                 <div className="flex gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
                   <Button variant="outline" size="icon" className="h-7 w-7 bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700" onClick={() => handleEdit(a)} title={t("chartOfAccounts.editAccount")}>
@@ -793,18 +863,8 @@ export default function ChartOfAccounts() {
                           ? <span className="text-[10px] bg-green-50 text-green-700 border border-green-200 rounded-full px-2 py-0.5">{t("chartOfAccounts.active")}</span>
                           : <span className="text-[10px] bg-red-50 text-red-700 border border-red-200 rounded-full px-2 py-0.5">{t("chartOfAccounts.inactive")}</span>}
                       </td>
-                      <td className="px-4 py-3 text-end tabular-nums" dir="ltr">
-                        {(() => {
-                          const bal = computeBalance(a.id);
-                          if (Math.abs(bal) < 0.005) {
-                            return <span className="text-xs text-muted-foreground">0.00</span>;
-                          }
-                          return (
-                            <span className={cn("text-xs font-mono font-medium", bal < 0 ? "text-destructive" : "text-foreground")}>
-                              {fmt(Math.abs(bal))} {bal < 0 ? t("accountingReports.creditShort") : t("accountingReports.debitShort")}
-                            </span>
-                          );
-                        })()}
+                      <td className="px-4 py-3 text-end" dir="ltr">
+                        <BalancePill account={a} balance={computeBalance(a.id)} />
                       </td>
                     </tr>
                   );
