@@ -149,3 +149,9 @@ id = "CqjxnKlIdtjV4cwhICFsQ"
 uri = "file://.local/sql/backfill_qyd_0251_0281_company10.sql.txt"
 type = "text"
 title = "backfill_qyd_0251_0281_company10.sql — رقمان فقط"
+
+[[outputs]]
+id = "3cQbM9SGL1izeUuDqKFCn"
+uri = "file://.local/sql/reset_journal_seq_company10_to_655.sql.txt"
+type = "text"
+title = "reset_journal_seq_company10_to_655.sql — إرجاع العداد إلى 655"
