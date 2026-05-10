@@ -211,11 +211,17 @@ export default function JournalEntryForm() {
   // newest-first by the API, which we keep so "السابق" walks toward
   // older entries and "التالي" toward newer ones — matching how the
   // table is displayed.
+  // Always fetch the entry list — even on a NEW form — so the predicted
+  // QYD-XXXX badge reflects the most recent saved entry. With this query
+  // disabled in new mode, the prediction had no data to compute from and
+  // would stick to a stale value (e.g. seqPeek cache) until the form
+  // remounted. Short staleTime keeps the next prediction fresh after each
+  // save (qc.invalidateQueries fires in onSuccess).
   const { data: navList = [] } = useQuery<any[]>({
     queryKey: ["journal-entries", cid],
     queryFn:  () => journalEntriesApi.list(cid),
-    enabled:  !!user && !isNew,
-    staleTime: 30_000,
+    enabled:  !!user,
+    staleTime: 5_000,
   });
   const currentIndex = editId != null
     ? navList.findIndex((e: any) => Number(e.id) === Number(editId))
