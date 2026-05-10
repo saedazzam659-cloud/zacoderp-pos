@@ -131,3 +131,9 @@ id = "2kxROpcbWHg7lzIDxsrBL"
 uri = "file://.local/exports/database.sql.gz"
 type = "unspecified"
 title = "قاعدة البيانات مضغوطة (215KB — فكّ الضغط لتحصل على database.sql)"
+
+[[outputs]]
+id = "aLfUOiAeIBhB9b6c4hMIe"
+uri = "file://.local/sql/backfill_qyd_gaps_company10.sql.txt"
+type = "text"
+title = "backfill_qyd_gaps_company10.sql"

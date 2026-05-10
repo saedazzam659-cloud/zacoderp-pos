@@ -1,0 +1,125 @@
+INSERT INTO journal_entries
+  (company_id, doc_number, entry_date, currency, exchange_rate,
+   description, entry_type, status, created_at, updated_at)
+VALUES
+  (10, 'QYD-0408', CURRENT_DATE::text, 'SAR', 1,
+   'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0409', CURRENT_DATE::text, 'SAR', 1,
+   'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0410', CURRENT_DATE::text, 'SAR', 1,
+   'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0411', CURRENT_DATE::text, 'SAR', 1,
+   'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0412', CURRENT_DATE::text, 'SAR', 1,
+   'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0413', CURRENT_DATE::text, 'SAR', 1,
+   'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0414', CURRENT_DATE::text, 'SAR', 1,
+   'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0415', CURRENT_DATE::text, 'SAR', 1,
+   'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0416', CURRENT_DATE::text, 'SAR', 1,
+   'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0417', CURRENT_DATE::text, 'SAR', 1,
+   'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0418', CURRENT_DATE::text, 'SAR', 1,
+   'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0419', CURRENT_DATE::text, 'SAR', 1,
+   'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0420', CURRENT_DATE::text, 'SAR', 1,
+   'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0421', CURRENT_DATE::text, 'SAR', 1,
+  'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0422', CURRENT_DATE::text, 'SAR', 1
+  'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0423', CURRENT_DATE::text, 'SAR', 1
+  'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0424', CURRENT_DATE::text, 'SAR', 1
+  'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0425', CURRENT_DATE::text, 'SAR', 1
+  'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0426', CURRENT_DATE::text, 'SAR', 1
+  'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0427', CURRENT_DATE::text, 'SAR', 1
+  'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0428', CURRENT_DATE::text, 'SAR', 1
+  'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0429', CURRENT_DATE::text, 'SAR', 1
+  'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0430', CURRENT_DATE::text, 'SAR', 1
+  'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0431', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0432', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0433', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0434', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0435', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0436', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0437', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0438', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0439', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0440', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0441', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0442', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0443', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0444', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0445', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0446', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0447', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0448', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0449', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0450', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0451', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0452', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0453', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0454', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0455', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0456', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0457', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0459', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0460', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0461', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0462', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0463', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0464', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0465', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0530', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0531', CURRENT_DATE::text, 'SAR', 1
+'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW()),
+  (10, 'QYD-0532', CURRENT_DATE::text, 'SAR', 1
+   'مسودة مُسترجعة — رقم تسلسل محفوظ', 'general', 'draft', NOW(), NOW())
+RETURNING id, doc_number, status;
