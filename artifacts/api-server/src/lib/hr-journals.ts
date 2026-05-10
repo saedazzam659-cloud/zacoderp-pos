@@ -12,6 +12,7 @@ import {
   employeeLoansTable,
 } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
+import { resolvePostingStatus } from "./postingStatus.js";
 
 type DbOrTx = typeof db;
 
@@ -181,7 +182,7 @@ export async function buildPayrollJournal(cid: number, runId: number, dx: DbOrTx
     exchangeRate: "1",
     description: desc,
     entryType: "payroll_run",
-    status: "posted",
+    status: await resolvePostingStatus(cid, "payroll"),
   }).returning();
 
   const drLines: any[] = [];
@@ -240,7 +241,7 @@ export async function buildLoanDisbursementJournal(
     exchangeRate: "1",
     description: desc,
     entryType: "employee_loan",
-    status: "posted",
+    status: await resolvePostingStatus(cid, "payroll"),
   }).returning();
 
   await dx.insert(journalEntryLinesTable).values([
@@ -285,7 +286,7 @@ export async function buildEosPaymentJournal(
     exchangeRate: "1",
     description: desc,
     entryType: "eos_payment",
-    status: "posted",
+    status: await resolvePostingStatus(cid, "payroll"),
   }).returning();
 
   await dx.insert(journalEntryLinesTable).values([

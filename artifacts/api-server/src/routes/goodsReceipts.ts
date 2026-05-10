@@ -15,6 +15,7 @@ import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { loadMappings } from "../lib/accountingMappings.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
+import { resolvePostingStatus } from "../lib/postingStatus.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -586,7 +587,7 @@ router.patch("/:id/post", async (req, res) => {
         exchangeRate: gr.exchangeRate ?? "1",
         description,
         entryType:    "goods_receipt",
-        status:       "posted",
+        status:       await resolvePostingStatus(cid, "goodsReceipt"),
         periodId:     writability.period?.id ?? null,
       }).returning();
       await tx.insert(journalEntryLinesTable).values(

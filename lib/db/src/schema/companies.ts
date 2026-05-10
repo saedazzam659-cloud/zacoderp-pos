@@ -53,13 +53,26 @@ export const companiesTable = pgTable("companies", {
   // posts the resulting journal entry (true) or leaves it as a draft for
   // manual posting from the Posting Center (false). Default true so newly
   // added columns don't silently change behavior on upgrade.
-  autoPostSales:        boolean("auto_post_sales").notNull().default(true),
-  autoPostPurchase:     boolean("auto_post_purchase").notNull().default(true),
-  autoPostReceipt:      boolean("auto_post_receipt").notNull().default(true),
-  autoPostPayment:      boolean("auto_post_payment").notNull().default(true),
-  autoPostFinancial:    boolean("auto_post_financial").notNull().default(true),
-  autoPostCashTransfer: boolean("auto_post_cash_transfer").notNull().default(true),
-  autoPostPayroll:      boolean("auto_post_payroll").notNull().default(true),
+  autoPostSales:         boolean("auto_post_sales").notNull().default(true),
+  autoPostPurchase:      boolean("auto_post_purchase").notNull().default(true),
+  autoPostReceipt:       boolean("auto_post_receipt").notNull().default(true),
+  autoPostPayment:       boolean("auto_post_payment").notNull().default(true),
+  autoPostFinancial:     boolean("auto_post_financial").notNull().default(true),
+  autoPostCashTransfer:  boolean("auto_post_cash_transfer").notNull().default(true),
+  autoPostPayroll:       boolean("auto_post_payroll").notNull().default(true),
+  // ─── Phase-1 additions: every other module that produces a JE ─────────
+  // Production orders (issue + completion JEs), stock movements (transfers
+  // and adjustments share one toggle so the user doesn't have to reason
+  // about two near-identical inventory flows), goods receipts (GRN cost
+  // accrual), goods deliveries (COGS), and the recurring monthly
+  // accounting adjustments (prepaid / accrued). All default to true so
+  // upgrading tenants keep their existing behavior — the user only sees
+  // the toggle off after they explicitly flip it from /general-settings.
+  autoPostProduction:    boolean("auto_post_production").notNull().default(true),
+  autoPostStockMovement: boolean("auto_post_stock_movement").notNull().default(true),
+  autoPostGoodsReceipt:  boolean("auto_post_goods_receipt").notNull().default(true),
+  autoPostGoodsDelivery: boolean("auto_post_goods_delivery").notNull().default(true),
+  autoPostAdjustment:    boolean("auto_post_adjustment").notNull().default(true),
   // ─── HR / Payroll account mapping (resolved from COA on first use) ─────
   hrSalariesExpenseAccountId:    integer("hr_salaries_expense_account_id"),
   hrAllowancesExpenseAccountId:  integer("hr_allowances_expense_account_id"),

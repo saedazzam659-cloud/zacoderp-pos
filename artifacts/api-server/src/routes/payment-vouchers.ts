@@ -13,6 +13,7 @@ import { moduleAudit, requireModulePermission, requireAdminRole } from "../middl
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
+import { resolvePostingStatus } from "../lib/postingStatus.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -96,7 +97,8 @@ async function buildPaymentJournal(cid: number, v: any): Promise<number> {
     companyId: cid, branchId: v.branchId ?? null,
     docNumber: v.code, entryDate: v.date,
     currency: "SAR", exchangeRate: String(v.exchangeRate ?? "1"),
-    description: desc, entryType: "payment", status: "posted",
+    description: desc, entryType: "payment",
+    status: await resolvePostingStatus(cid, "payment"),
     periodId: writability.period?.id ?? null,
   }).returning();
   // Header-level cost center propagates to BOTH JE lines so cost-center

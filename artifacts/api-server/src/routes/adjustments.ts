@@ -8,6 +8,7 @@ import { and, eq, asc, desc, inArray, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
+import { resolvePostingStatus } from "../lib/postingStatus.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -306,7 +307,7 @@ router.post("/:id/generate", async (req, res) => {
         entryDate:   isoDate,
         description: `${adj.type === "prepaid" ? "تسوية مصروف مقدم" : "تسوية مصروف مستحق"} — ${adj.name} (${ym})`,
         entryType:   adj.type === "prepaid" ? "adjustment_prepaid" : "adjustment_accrued",
-        status:      "posted",
+        status:      await resolvePostingStatus(cid, "adjustment"),
         periodId:    writability.period?.id ?? null,
       }).returning();
 
@@ -387,7 +388,8 @@ router.post("/run-due", async (req, res) => {
           companyId: cid, entryDate: isoDate,
           description: `${adj.type === "prepaid" ? "تسوية مصروف مقدم" : "تسوية مصروف مستحق"} — ${adj.name} (${ym})`,
           entryType: adj.type === "prepaid" ? "adjustment_prepaid" : "adjustment_accrued",
-          status: "posted", periodId: writability.period?.id ?? null,
+          status: await resolvePostingStatus(cid, "adjustment"),
+          periodId: writability.period?.id ?? null,
         }).returning();
         await db.insert(journalEntryLinesTable).values([
           { entryId: entry.id, accountId: adj.expenseAccountId, debit: monthly, credit: "0", sortOrder: 0 },

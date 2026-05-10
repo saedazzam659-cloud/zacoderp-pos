@@ -4,6 +4,7 @@
 // Every mutation writes a row into production_events for full auditability.
 import { Router } from "express";
 import { db } from "@workspace/db";
+import { resolvePostingStatus } from "../lib/postingStatus.js";
 import {
   productionOrdersTable,
   productionOrderItemsTable,
@@ -105,7 +106,7 @@ async function createJournalEntry(opts: {
       exchangeRate: opts.exchangeRate ?? "1",
       description: opts.description,
       entryType: opts.entryType ?? "production",
-      status: "posted",
+      status: await resolvePostingStatus(opts.companyId, "production"),
       periodId: writability.period?.id ?? null,
     })
     .returning();

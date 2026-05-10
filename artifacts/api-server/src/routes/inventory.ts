@@ -23,6 +23,7 @@ import {
   subscriptionsTable,
 } from "@workspace/db";
 import { eq, and, sql, desc, asc, gte, lte, lt, inArray, isNull, or, count } from "drizzle-orm";
+import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { aliasedTable } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
 import { pathRbac, writeAudit } from "../middleware/permissions.js";
@@ -1071,7 +1072,8 @@ router.post("/stock-transfers/:id/post", async (req, res) => {
     const [entry] = await db.insert(journalEntriesTable).values({
       companyId: cid, docNumber: tr.transferNumber, entryDate: tr.transferDate,
       currency: "SAR", exchangeRate: "1",
-      description: desc, entryType: "stock_transfer", status: "posted",
+      description: desc, entryType: "stock_transfer",
+      status: await resolvePostingStatus(cid, "stockMovement"),
       periodId: writability.period?.id ?? null,
     }).returning();
     await db.insert(journalEntryLinesTable).values([
@@ -1235,7 +1237,7 @@ router.post("/stock-adjustments/:id/post", async (req, res) => {
       entryDate: adj.adjustmentDate,
       description: `قيد تسوية مخزنية: ${adj.adjustmentNumber}${adj.reason ? " — " + adj.reason : ""}`,
       entryType: "stock_adjustment",
-      status: "posted",
+      status: await resolvePostingStatus(cid, "stockMovement"),
       periodId: writability.period?.id ?? null,
     }).returning();
     journalEntryId = je.id;

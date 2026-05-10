@@ -64,6 +64,12 @@ export default function GeneralSettings() {
     { key: "autoPostFinancial",    label: "العمليات المالية",         desc: "ترحيل قيد العملية المالية تلقائياً عند الحفظ" },
     { key: "autoPostCashTransfer", label: "تحويلات الخزائن والبنوك",  desc: "ترحيل قيد تحويل النقدية تلقائياً عند الحفظ" },
     { key: "autoPostPayroll",      label: "الرواتب",                  desc: "ترحيل قيد الراتب تلقائياً عند الاحتساب" },
+    // ─── Phase-1 additions: every other JE-producing module ─────────────
+    { key: "autoPostProduction",    label: "أوامر الإنتاج",            desc: "ترحيل قيود الصرف للإنتاج وقيد إنتاج التام تلقائياً" },
+    { key: "autoPostStockMovement", label: "حركات المخزون",            desc: "ترحيل قيود التحويلات والتسويات المخزنية تلقائياً" },
+    { key: "autoPostGoodsReceipt",  label: "إذونات الاستلام (GRN)",     desc: "ترحيل قيد استلام البضاعة من المورد تلقائياً" },
+    { key: "autoPostGoodsDelivery", label: "إذونات التسليم",           desc: "ترحيل قيد تكلفة البضاعة المباعة عند التسليم تلقائياً" },
+    { key: "autoPostAdjustment",    label: "التسويات الشهرية",         desc: "ترحيل قيود التسويات (مصروف مقدم/مستحق) تلقائياً" },
   ];
 
   const headers = {

@@ -129,6 +129,9 @@ router.patch("/:id/general-settings", async (req, res) => {
     // entry. Validated as plain booleans below.
     autoPostSales, autoPostPurchase, autoPostReceipt, autoPostPayment,
     autoPostFinancial, autoPostCashTransfer, autoPostPayroll,
+    // Phase-1 additions: every other module that produces a JE.
+    autoPostProduction, autoPostStockMovement, autoPostGoodsReceipt,
+    autoPostGoodsDelivery, autoPostAdjustment,
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
     // Per-doc-type print preferences (auto-print toggle + template name).
     // Each `printAutoAfterSave*` is a boolean; each `printTemplate*` is
@@ -148,6 +151,9 @@ router.patch("/:id/general-settings", async (req, res) => {
     autoPostReceipt?: boolean; autoPostPayment?: boolean;
     autoPostFinancial?: boolean; autoPostCashTransfer?: boolean;
     autoPostPayroll?: boolean;
+    autoPostProduction?: boolean; autoPostStockMovement?: boolean;
+    autoPostGoodsReceipt?: boolean; autoPostGoodsDelivery?: boolean;
+    autoPostAdjustment?: boolean;
     printFooterInvoice?: string; printFooterReturn?: string;
     printShowTimestamp?: boolean; printShowZatcaBrand?: boolean;
     printAutoAfterSaveSales?: boolean; printAutoAfterSaveReceipt?: boolean;
@@ -177,6 +183,11 @@ router.patch("/:id/general-settings", async (req, res) => {
   if (autoPostFinancial    !== undefined) updates.autoPostFinancial    = !!autoPostFinancial;
   if (autoPostCashTransfer !== undefined) updates.autoPostCashTransfer = !!autoPostCashTransfer;
   if (autoPostPayroll      !== undefined) updates.autoPostPayroll      = !!autoPostPayroll;
+  if (autoPostProduction    !== undefined) updates.autoPostProduction    = !!autoPostProduction;
+  if (autoPostStockMovement !== undefined) updates.autoPostStockMovement = !!autoPostStockMovement;
+  if (autoPostGoodsReceipt  !== undefined) updates.autoPostGoodsReceipt  = !!autoPostGoodsReceipt;
+  if (autoPostGoodsDelivery !== undefined) updates.autoPostGoodsDelivery = !!autoPostGoodsDelivery;
+  if (autoPostAdjustment    !== undefined) updates.autoPostAdjustment    = !!autoPostAdjustment;
   if (printFooterInvoice !== undefined) {
     const v = String(printFooterInvoice).trim();
     if (v.length > 200) {

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
+import { resolvePostingStatus } from "../lib/postingStatus.js";
 import {
   salesInvoicesTable, salesInvoiceLinesTable,
   salesReturnsTable, salesReturnLinesTable,
@@ -80,7 +81,7 @@ async function createJournalEntry(opts: {
     docNumber: opts.docNumber ?? null, entryDate: opts.date,
     currency: "SAR", exchangeRate: opts.exchangeRate ?? "1",
     description: opts.description, entryType: opts.entryType ?? "general",
-    status: "posted",
+    status: await resolvePostingStatus(opts.companyId, "sales"),
     periodId: writability.period?.id ?? null,
   }).returning();
   await db.insert(journalEntryLinesTable).values(
