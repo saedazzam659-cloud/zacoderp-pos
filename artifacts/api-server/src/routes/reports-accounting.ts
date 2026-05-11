@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
 import { accountsTable, journalEntriesTable, journalEntryLinesTable, salesInvoicesTable, purchaseInvoicesTable, trialBalancesTable, trialBalanceDetailsTable } from "@workspace/db";
-import { eq, and, sql, gte, lte, asc, desc, ne } from "drizzle-orm";
+import { eq, and, sql, gte, lte, asc, desc, ne, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
 
 const router = Router();
@@ -39,7 +39,19 @@ function getBid(req: any): number | undefined {
 //   • closingDebit / closingCredit / closingBalance — opening +
 //     period movements. Useful for the trial-balance UI which needs
 //     the three sections side-by-side.
-async function getAccountBalances(req: Request, cid: number, fromDate?: string, toDate?: string, branchId?: number, openingFromTrialBalance = false, costCenterId?: number) {
+// Parse a `costCenterId` query value that may be:
+//   • a single id ("3"), • a CSV of ids ("3,7,12"), • "all" / "" / undefined
+// → empty list. Returns the list of cost-center ids as STRINGS because the
+// `journal_entry_lines.cost_center` column is text (we stringify the
+// numeric id when posting). An empty array means "no cost-center scope".
+export function parseCostCenterIds(raw: any): string[] {
+  if (raw === undefined || raw === null || raw === "" || raw === "all") return [];
+  const parts = String(raw).split(",").map(s => s.trim()).filter(Boolean);
+  const ids = parts.map(p => Number(p)).filter(n => Number.isFinite(n) && n > 0);
+  return ids.map(n => String(n));
+}
+
+async function getAccountBalances(req: Request, cid: number, fromDate?: string, toDate?: string, branchId?: number, openingFromTrialBalance = false, costCenterIds: string[] = []) {
   // Get all accounts for company
   const accounts = await db.select().from(accountsTable)
     .where(and(eq(accountsTable.companyId, cid), eq(accountsTable.isActive, true)))
@@ -78,8 +90,10 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
   // (we stringify the numeric id), so an exact-string match is correct.
   async function aggregate(filters: any[]) {
     const lineFilters: any[] = [...filters];
-    if (costCenterId !== undefined && costCenterId !== null) {
-      lineFilters.push(eq(journalEntryLinesTable.costCenter, String(costCenterId)));
+    if (costCenterIds.length === 1) {
+      lineFilters.push(eq(journalEntryLinesTable.costCenter, costCenterIds[0]));
+    } else if (costCenterIds.length > 1) {
+      lineFilters.push(inArray(journalEntryLinesTable.costCenter, costCenterIds));
     }
     const rows = await db
       .select({
@@ -230,9 +244,8 @@ router.get("/income-statement", async (req, res) => {
     if (!cid) { res.json({}); return; }
     const bid = getBid(req);
     const { fromDate, toDate, costCenterId } = req.query as any;
-    const ccId = costCenterId !== undefined && costCenterId !== "" && costCenterId !== "all"
-      ? Number(costCenterId) : undefined;
-    const rows = await getAccountBalances(req, cid, fromDate, toDate, bid, false, ccId);
+    const ccIds = parseCostCenterIds(costCenterId);
+    const rows = await getAccountBalances(req, cid, fromDate, toDate, bid, false, ccIds);
 
     const revenues  = rows.filter(r => r.accountType === "revenue");
     const expenses  = rows.filter(r => r.accountType === "expense");
@@ -262,8 +275,14 @@ router.get("/account-statement", async (req, res) => {
     // Optional cost-center scope. The column lives on
     // `journal_entry_lines` and is stored as text (we stringify the
     // numeric id when posting), so an exact-string match is correct.
-    const ccId = costCenterId !== undefined && costCenterId !== "" && costCenterId !== "all"
-      ? String(Number(costCenterId)) : undefined;
+    // Multi-value support: `costCenterId` may be a CSV ("3,7,12") or
+    // a single id; both reduce to the same `inArray` line filter below.
+    const ccIds = parseCostCenterIds(costCenterId);
+    const ccLineFilter = ccIds.length === 1
+      ? [eq(journalEntryLinesTable.costCenter, ccIds[0])]
+      : ccIds.length > 1
+      ? [inArray(journalEntryLinesTable.costCenter, ccIds)]
+      : [];
 
     // ── Previous balance (رصيد ما قبل) ──────────────────────────────
     // SAP-style "brought-forward" balance: sum every JE line for this
@@ -280,7 +299,7 @@ router.get("/account-statement", async (req, res) => {
       ];
       pushBranchScope(req, prevFilters, journalEntriesTable.branchId, bid);
       prevFilters.push(sql`${journalEntriesTable.entryDate} < ${fromDate}`);
-      if (ccId) prevFilters.push(eq(journalEntryLinesTable.costCenter, ccId));
+      prevFilters.push(...ccLineFilter);
       const [prev] = await db
         .select({
           debit:  sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}), 0)`,
@@ -339,7 +358,7 @@ router.get("/account-statement", async (req, res) => {
       .where(and(
         eq(journalEntryLinesTable.accountId, Number(accountId)),
         ...entryFilters,
-        ...(ccId ? [eq(journalEntryLinesTable.costCenter, ccId)] : []),
+        ...ccLineFilter,
       ))
       .orderBy(asc(journalEntriesTable.entryDate));
 

@@ -27,18 +27,23 @@ export default function IncomeStatement() {
   const [fromDate, setFromDate] = useState(firstOfYear);
   const [toDate, setToDate]     = useState(today);
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
-  const [costCenterId, setCostCenterId] = useState<number | undefined>(undefined);
+  const [costCenterIds, setCostCenterIds] = useState<number[]>([]);
   const [searched, setSearched] = useState(false);
 
+  // Stable serialised key for React-Query so identical selections (in
+  // any order) reuse the same cache entry. Sort numerically before
+  // joining; the backend doesn't care about order.
+  const ccCsv = costCenterIds.length ? [...costCenterIds].sort((a, b) => a - b).join(",") : "";
+
   const { data, isLoading, refetch } = useQuery<any>({
-    queryKey: ["income-statement", cid, fromDate, toDate, branchId, costCenterId],
+    queryKey: ["income-statement", cid, fromDate, toDate, branchId, ccCsv],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (cid) params.set("companyId", String(cid));
       params.set("fromDate", fromDate);
       params.set("toDate", toDate);
       if (branchId) params.set("branchId", String(branchId));
-      if (costCenterId) params.set("costCenterId", String(costCenterId));
+      if (ccCsv) params.set("costCenterId", ccCsv);
       const res = await fetch(`${API}/api/accounting-reports/income-statement?${params}`, { headers });
       return res.json();
     },
@@ -57,8 +62,8 @@ export default function IncomeStatement() {
     qs.set("accountId", String(accountId));
     qs.set("fromDate", fromDate);
     qs.set("toDate", toDate);
-    if (branchId)     qs.set("branchId", String(branchId));
-    if (costCenterId) qs.set("costCenterId", String(costCenterId));
+    if (branchId) qs.set("branchId", String(branchId));
+    if (ccCsv)    qs.set("costCenterId", ccCsv);
     return `/accounting/reports/account-statement?${qs.toString()}`;
   };
 
@@ -117,7 +122,7 @@ export default function IncomeStatement() {
             <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
           </div>
           <BranchFilter value={branchId} onChange={setBranchId} />
-          <CostCenterFilter value={costCenterId} onChange={setCostCenterId} />
+          <CostCenterFilter value={costCenterIds} onChange={setCostCenterIds} />
           <Button className="gap-2" onClick={() => { setSearched(true); refetch(); }} disabled={isLoading}>
             <Search className="h-4 w-4" />
             {isLoading ? t("accountingReports.loading") : t("accountingReports.show_income_statement")}

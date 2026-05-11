@@ -49,7 +49,12 @@ export default function AccountStatement() {
   const [fromDate, setFromDate]   = useState(firstOfMonth);
   const [toDate, setToDate]       = useState(today);
   const [branchId, setBranchId]   = useState<number | undefined>(undefined);
-  const [costCenterId, setCostCenterId] = useState<number | undefined>(undefined);
+  // Cost-center scope is now multi-valued so deep-links from the
+  // Income Statement (which can carry multiple selected centres as
+  // a CSV) preserve the full filter. Single-id deep-links keep working
+  // because a single number parses to a one-element array.
+  const [costCenterIds, setCostCenterIds] = useState<number[]>([]);
+  const ccCsv = costCenterIds.length ? [...costCenterIds].sort((a, b) => a - b).join(",") : "";
   const [searched, setSearched]   = useState(false);
 
   // Deep-link support: when navigated from another report (e.g. trial
@@ -69,7 +74,11 @@ export default function AccountStatement() {
     if (f) setFromDate(f);
     if (tt) setToDate(tt);
     if (b) setBranchId(Number(b));
-    if (cc) setCostCenterId(Number(cc));
+    if (cc) {
+      // Accept both shapes: "3" (legacy single) and "3,7,12" (multi).
+      const ids = cc.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0);
+      if (ids.length) setCostCenterIds(ids);
+    }
     if (a) setSearched(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchString]);
@@ -100,15 +109,15 @@ export default function AccountStatement() {
     rows: any[];
   };
   const { data, isLoading, refetch } = useQuery<StatementResponse>({
-    queryKey: ["account-statement", cid, accountId, fromDate, toDate, branchId, costCenterId],
+    queryKey: ["account-statement", cid, accountId, fromDate, toDate, branchId, ccCsv],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (cid)         params.set("companyId", String(cid));
-      if (accountId)   params.set("accountId", accountId);
-      if (fromDate)    params.set("fromDate", fromDate);
-      if (toDate)      params.set("toDate", toDate);
-      if (branchId)    params.set("branchId", String(branchId));
-      if (costCenterId) params.set("costCenterId", String(costCenterId));
+      if (cid)       params.set("companyId", String(cid));
+      if (accountId) params.set("accountId", accountId);
+      if (fromDate)  params.set("fromDate", fromDate);
+      if (toDate)    params.set("toDate", toDate);
+      if (branchId)  params.set("branchId", String(branchId));
+      if (ccCsv)     params.set("costCenterId", ccCsv);
       const res = await fetch(`${API}/api/accounting-reports/account-statement?${params}`, { headers });
       if (!res.ok) { const j = await res.json(); throw new Error(j.error); }
       return res.json();
