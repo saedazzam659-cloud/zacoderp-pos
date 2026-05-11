@@ -7,8 +7,9 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import {
   fixedAssetsTable, faMaintenanceTable, faDepreciationRunsTable,
+  accountsTable, companiesTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, asc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
@@ -227,6 +228,259 @@ router.post("/advice", async (req, res) => {
       res.json({ ai: false, advice: fallback });
     }
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// AI Auto-Seed for Fixed-Asset GL accounts (per IAS 16 / IFRS).
+//   POST /seed-fa-accounts
+// For each of the 6 company-level FA account slots:
+//   1. Tries to MATCH the best existing posting account in the COA by
+//      Arabic keyword scoring (also requires the right account_type).
+//   2. If no acceptable match, CREATES a new account using the canonical
+//      international code/name (1210/1280/5400/1290/4910/5450) under a
+//      sensible parent if one exists.  Codes are auto-suffixed if the
+//      preferred code is already taken so we never collide.
+//   3. Patches `companies` with the resolved IDs in one atomic update.
+// Returns a manifest the UI can show: per-field action (matched|created),
+// account code/name, and a short Arabic reason.
+// ─────────────────────────────────────────────────────────────────────────
+type FaSlot = {
+  field: "faAssetCostAccountId" | "faAccumDepreciationAccountId"
+       | "faDepreciationExpenseAccountId" | "faAcquisitionClearingAccountId"
+       | "faDisposalGainAccountId" | "faDisposalLossAccountId";
+  label: string;                       // Arabic field label for the UI
+  type: "asset" | "expense" | "revenue"; // required account_type
+  // Keywords used for Arabic matching against existing accounts. The first
+  // entry of `must` is the strongest positive signal; `nice` adds bonus.
+  must: string[];
+  nice: string[];
+  avoid: string[];                     // negative score (excludes wrong ones)
+  // Canonical IFRS-aligned code + Arabic name to use when creating.
+  newCode: string;
+  newNameAr: string;
+  newNameEn: string;
+  // Preferred parent code (created only if user has it; otherwise top-level).
+  parentCode: string;
+  reportDirection: "balance_sheet" | "income_statement";
+};
+
+const FA_SLOTS: FaSlot[] = [
+  {
+    field: "faAssetCostAccountId",
+    label: "حساب تكلفة الأصل",
+    type: "asset",
+    must: ["تكلفة", "أصول ثابتة", "اصول ثابتة"],
+    nice: ["معدات", "سيارات", "أثاث", "مباني", "مبانى"],
+    avoid: ["مجمع", "إهلاك", "اهلاك", "وسيط", "ربح", "خسارة"],
+    newCode: "1210",
+    newNameAr: "تكلفة الأصول الثابتة",
+    newNameEn: "Property, Plant & Equipment - Cost",
+    parentCode: "1200",
+    reportDirection: "balance_sheet",
+  },
+  {
+    field: "faAccumDepreciationAccountId",
+    label: "حساب مجمع الإهلاك",
+    type: "asset",
+    must: ["مجمع", "إهلاك", "اهلاك"],
+    nice: ["مجمع إهلاك", "مجمع اهلاك"],
+    avoid: ["مصروف", "ربح", "خسارة", "وسيط"],
+    newCode: "1280",
+    newNameAr: "مجمع إهلاك الأصول الثابتة",
+    newNameEn: "Accumulated Depreciation - PPE",
+    parentCode: "1200",
+    reportDirection: "balance_sheet",
+  },
+  {
+    field: "faDepreciationExpenseAccountId",
+    label: "حساب مصروف الإهلاك",
+    type: "expense",
+    must: ["مصروف", "إهلاك", "اهلاك"],
+    nice: ["مصروف إهلاك", "مصروف اهلاك"],
+    avoid: ["مجمع", "ربح", "خسارة", "وسيط"],
+    newCode: "5400",
+    newNameAr: "مصروف إهلاك الأصول الثابتة",
+    newNameEn: "Depreciation Expense",
+    parentCode: "5000",
+    reportDirection: "income_statement",
+  },
+  {
+    field: "faAcquisitionClearingAccountId",
+    label: "حساب وسيط الاقتناء/الاستبعاد",
+    type: "asset",
+    must: ["وسيط", "اقتناء", "تسوية"],
+    nice: ["clearing", "استبعاد", "أصول"],
+    avoid: ["مجمع", "إهلاك", "اهلاك", "مصروف", "ربح", "خسارة"],
+    newCode: "1290",
+    newNameAr: "وسيط اقتناء واستبعاد الأصول الثابتة",
+    newNameEn: "Fixed Assets Acquisition/Disposal Clearing",
+    parentCode: "1200",
+    reportDirection: "balance_sheet",
+  },
+  {
+    field: "faDisposalGainAccountId",
+    label: "حساب أرباح بيع الأصول",
+    type: "revenue",
+    must: ["ربح", "بيع", "أصول"],
+    nice: ["أرباح", "ارباح", "استبعاد"],
+    avoid: ["خسارة", "خسائر", "مصروف", "إهلاك", "اهلاك"],
+    newCode: "4910",
+    newNameAr: "أرباح بيع الأصول الثابتة",
+    newNameEn: "Gain on Disposal of Fixed Assets",
+    parentCode: "4900",
+    reportDirection: "income_statement",
+  },
+  {
+    field: "faDisposalLossAccountId",
+    label: "حساب خسائر بيع الأصول",
+    type: "expense",
+    must: ["خسارة", "بيع", "أصول"],
+    nice: ["خسائر", "استبعاد"],
+    avoid: ["ربح", "أرباح", "ارباح", "إهلاك", "اهلاك"],
+    newCode: "5450",
+    newNameAr: "خسائر بيع الأصول الثابتة",
+    newNameEn: "Loss on Disposal of Fixed Assets",
+    parentCode: "5000",
+    reportDirection: "income_statement",
+  },
+];
+
+// Normalize Arabic text for fuzzy matching (strip diacritics, unify alif).
+function normAr(s: string): string {
+  return (s || "")
+    .replace(/[\u064B-\u0652]/g, "")     // diacritics
+    .replace(/[إأآا]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .toLowerCase()
+    .trim();
+}
+
+// Score how well an account matches a slot. Returns -Infinity for type
+// mismatch or if any "avoid" keyword appears (so we never wire e.g. مجمع
+// الإهلاك into the cost slot).
+function scoreAccount(acc: any, slot: FaSlot): number {
+  if (acc.accountType !== slot.type) return -Infinity;
+  if (!acc.isPosting || !acc.isActive) return -Infinity;
+  const hay = normAr(`${acc.nameAr || ""} ${acc.nameEn || ""}`);
+  for (const bad of slot.avoid) {
+    if (hay.includes(normAr(bad))) return -Infinity;
+  }
+  let score = 0;
+  for (const m of slot.must) {
+    if (hay.includes(normAr(m))) score += 10;
+  }
+  for (const n of slot.nice) {
+    if (hay.includes(normAr(n))) score += 3;
+  }
+  // Need at least one "must" hit to be considered a real match.
+  return score >= 10 ? score : -Infinity;
+}
+
+// Find a unique code: if `preferred` is taken, try `preferred-1`, `-2`, …
+function uniqueCode(preferred: string, taken: Set<string>): string {
+  if (!taken.has(preferred)) return preferred;
+  for (let i = 1; i < 100; i++) {
+    const c = `${preferred}-${i}`;
+    if (!taken.has(c)) return c;
+  }
+  return `${preferred}-${Date.now()}`;
+}
+
+router.post("/seed-fa-accounts", async (req, res) => {
+  try {
+    const cid = requireCid(req, res); if (!cid) return;
+
+    // Authorization: only an admin of THIS company (or a SuperAdmin) may
+    // mutate the chart of accounts + tenant-wide FA mappings. Mirrors the
+    // guard on PATCH /companies/:id/general-settings.
+    const u = (req as any).authUser;
+    if (u.role !== "superadmin" && !(u.companyId === cid && u.role === "admin")) {
+      res.status(403).json({ error: "تحتاج صلاحية مدير الشركة لتنفيذ هذا الإجراء" });
+      return;
+    }
+
+    const all = await db.select().from(accountsTable)
+      .where(eq(accountsTable.companyId, cid))
+      .orderBy(asc(accountsTable.code));
+
+    const takenCodes = new Set(all.map(a => a.code));
+    const byCode: Record<string, any> = {};
+    for (const a of all) byCode[a.code] = a;
+
+    const results: Array<{
+      field: string; label: string;
+      action: "matched" | "created";
+      accountId: number; code: string; nameAr: string;
+      reason: string;
+    }> = [];
+
+    const mapping: Record<string, number> = {};
+
+    for (const slot of FA_SLOTS) {
+      // 1) Try to match an existing account.
+      let bestAcc: any = null; let bestScore = -Infinity;
+      for (const a of all) {
+        const s = scoreAccount(a, slot);
+        if (s > bestScore) { bestScore = s; bestAcc = a; }
+      }
+
+      if (bestAcc && bestScore > -Infinity) {
+        results.push({
+          field: slot.field, label: slot.label,
+          action: "matched",
+          accountId: bestAcc.id, code: bestAcc.code, nameAr: bestAcc.nameAr,
+          reason: `تطابق ذكي مع حساب موجود (نقاط: ${bestScore})`,
+        });
+        mapping[slot.field] = bestAcc.id;
+        continue;
+      }
+
+      // 2) Create a new account using the canonical IFRS code.
+      const code = uniqueCode(slot.newCode, takenCodes);
+      const parent = byCode[slot.parentCode] || null;
+      const [created] = await db.insert(accountsTable).values({
+        companyId: cid,
+        code,
+        nameAr: slot.newNameAr,
+        nameEn: slot.newNameEn,
+        accountType: slot.type as any,
+        parentId: parent?.id ?? null,
+        level: parent ? 2 : 1,
+        reportDirection: slot.reportDirection,
+        isPosting: true,
+        isActive: true,
+      }).returning();
+      takenCodes.add(code);
+      byCode[code] = created;
+      all.push(created);
+      results.push({
+        field: slot.field, label: slot.label,
+        action: "created",
+        accountId: created.id, code: created.code, nameAr: created.nameAr,
+        reason: parent
+          ? `تم إنشاؤه تحت الحساب الأب (${parent.code} ${parent.nameAr})`
+          : `تم إنشاؤه كحساب رئيسي (لا يوجد حساب أب بالكود ${slot.parentCode})`,
+      });
+      mapping[slot.field] = created.id;
+    }
+
+    // 3) Persist mapping on the company record.
+    await db.update(companiesTable)
+      .set({ ...mapping, updatedAt: new Date() })
+      .where(eq(companiesTable.id, cid));
+
+    const createdCount = results.filter(r => r.action === "created").length;
+    const matchedCount = results.filter(r => r.action === "matched").length;
+    res.json({
+      ok: true,
+      summary: { matched: matchedCount, created: createdCount, total: results.length },
+      results,
+      mapping,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 export default router;
