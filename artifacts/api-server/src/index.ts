@@ -345,6 +345,9 @@ async function bootstrap() {
     import("./lib/reportScheduler.js").then(m => m.startReportDigestScheduler?.()).catch(() => {});
     // Daily maintenance scan across active companies (default 03:00 KSA).
     import("./lib/maintenanceScheduler.js").then(m => m.startMaintenanceScheduler?.()).catch(() => {});
+    // Auto-post fixed-assets monthly depreciation per company on its
+    // configured day-of-month (companies.faAutoDepDay).
+    import("./lib/depreciationScheduler.js").then(m => m.startFaDepreciationScheduler?.()).catch(() => {});
   });
 }
 

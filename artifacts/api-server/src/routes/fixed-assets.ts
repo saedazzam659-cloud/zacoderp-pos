@@ -18,6 +18,7 @@ import {
   buildDepreciationRunJournal,
   buildDisposalJournal,
 } from "../lib/fa-journals.js";
+import { postDepreciationForCompany } from "../lib/depreciationPosting.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -412,6 +413,21 @@ router.get("/depreciation/preview", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Manually trigger the auto-depreciation scheduler sweep across ALL active
+// companies. Reserved for SuperAdmin — useful for testing the schedule
+// without waiting for the next hourly tick. The scheduler is idempotent so
+// this is always safe to run.
+router.post("/depreciation/run-auto-now", async (req, res) => {
+  try {
+    if (req.authUser?.role !== "superadmin") {
+      res.status(403).json({ error: "للمدير العام فقط" }); return;
+    }
+    const mod = await import("../lib/depreciationScheduler.js");
+    const summary = await mod.runAutoDepreciationSweep();
+    res.json(summary);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // Post monthly depreciation for one period — body { periodMonth, periodYear }.
 router.post("/depreciation/post", async (req, res) => {
   try {
@@ -420,73 +436,15 @@ router.post("/depreciation/post", async (req, res) => {
     const now = new Date();
     const month = Number(b.periodMonth ?? (now.getMonth() + 1));
     const year  = Number(b.periodYear  ?? now.getFullYear());
-    if (month < 1 || month > 12 || year < 2000) { res.status(400).json({ error: "فترة غير صالحة" }); return; }
-    const assets = await db.select().from(fixedAssetsTable)
-      .where(and(eq(fixedAssetsTable.companyId, cid), eq(fixedAssetsTable.status, "active" as any)));
-    const created: any[] = [];
-    for (const a of assets) {
-      // skip if already posted for that period
-      const existing = await db.select().from(faDepreciationRunsTable)
-        .where(and(
-          eq(faDepreciationRunsTable.companyId, cid),
-          eq(faDepreciationRunsTable.assetId, a.id),
-          eq(faDepreciationRunsTable.periodMonth, month),
-          eq(faDepreciationRunsTable.periodYear, year),
-        ));
-      if (existing.length > 0) continue;
-      // Skip if asset's depreciation start is after the requested period
-      if (a.depreciationStart) {
-        const ds = new Date(a.depreciationStart as any);
-        const dsYear = ds.getFullYear();
-        const dsMonth = ds.getMonth() + 1;
-        if (year < dsYear || (year === dsYear && month < dsMonth)) continue;
-      }
-      const purchase = Number(a.purchaseValue || 0);
-      const scrap    = Number(a.scrapValue || 0);
-      const accum    = Number(a.accumulatedDepreciation || 0);
-      const years    = Math.max(1, Number(a.lifeYears || 1));
-      const months   = years * 12;
-      const method   = String(a.depreciationMethod || "straight_line");
-      const book     = Math.max(scrap, purchase - accum);
-      let monthly: number;
-      if (method === "declining_balance") {
-        monthly = (book * (2 / years)) / 12;
-      } else {
-        monthly = (purchase - scrap) / months;
-      }
-      const remaining = Math.max(0, purchase - scrap - accum);
-      const apply    = Math.min(monthly, remaining);
-      if (apply <= 0) continue;
-      const newAccum = accum + apply;
-      const newBook  = Math.max(scrap, purchase - newAccum);
-      const [run] = await db.insert(faDepreciationRunsTable).values({
-        companyId: cid, assetId: a.id,
-        periodMonth: month, periodYear: year,
-        depreciationAmount: String(apply.toFixed(2)),
-        bookValueBefore: String((purchase - accum).toFixed(2)),
-        bookValueAfter:  String(newBook.toFixed(2)),
-        postedBy: req.authUser?.username || null,
-      }).returning();
-      const newStatus = newBook <= scrap + 0.01 ? "fully_depreciated" : a.status;
-      await db.update(fixedAssetsTable).set({
-        accumulatedDepreciation: String(newAccum.toFixed(2)),
-        bookValue: String(newBook.toFixed(2)),
-        status: newStatus as any,
-        updatedAt: new Date(),
-      }).where(and(eq(fixedAssetsTable.id, a.id), eq(fixedAssetsTable.companyId, cid)));
-      // ── Phase-2: post the matching depreciation JE. Failures here are
-      // non-fatal — the run row is already saved and the user can retry
-      // posting the JE manually from مركز الترحيل once the missing accounts
-      // are mapped on /fixed-assets/settings.
-      try {
-        await buildDepreciationRunJournal(cid, run.id);
-      } catch (e: any) {
-        req.log?.warn?.({ err: e, runId: run.id }, "fa depreciation JE failed");
-      }
-      created.push(run);
-    }
-    res.status(201).json({ posted: created.length, runs: created, period: { month, year } });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+    const out = await postDepreciationForCompany(
+      cid, month, year, req.authUser?.username || null,
+    );
+    res.status(201).json(out);
+  } catch (e: any) {
+    const msg = e?.message || "خطأ غير معروف";
+    const code = msg === "فترة غير صالحة" ? 400 : 500;
+    res.status(code).json({ error: msg });
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════

@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, PlayCircle } from "lucide-react";
+import { TrendingUp, PlayCircle, Clock, Save } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -39,6 +39,52 @@ export default function FaDepreciation() {
     queryFn: async () => (await fetch(`${API}/api/fixed-assets/depreciation/runs?companyId=${cid}`, { headers })).json(),
     enabled: !!cid,
   });
+
+  // Auto-depreciation settings (companies.autoPostFaDepreciation + faAutoDepDay).
+  const { data: company } = useQuery<any>({
+    queryKey: ["company", cid],
+    queryFn: async () => (await fetch(`${API}/api/companies/${cid}`, { headers })).json(),
+    enabled: !!cid,
+  });
+  const [autoEnabled, setAutoEnabled] = useState<boolean>(true);
+  const [autoDay, setAutoDay] = useState<number>(1);
+  useEffect(() => {
+    if (company) {
+      setAutoEnabled(!!company.autoPostFaDepreciation);
+      setAutoDay(Number(company.faAutoDepDay ?? 1));
+    }
+  }, [company]);
+
+  const saveAutoMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API}/api/companies/${cid}/general-settings`, {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ autoPostFaDepreciation: autoEnabled, faAutoDepDay: autoDay }),
+      });
+      if (!r.ok) { const j = await r.json().catch(()=>({})); throw new Error(j.error || "فشل الحفظ"); }
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["company", cid] });
+      toast({ title: "تم الحفظ", description: "تم حفظ إعدادات الترحيل التلقائي" });
+    },
+    onError: (e: any) => toast({ title: "خطأ", description: e?.message, variant: "destructive" }),
+  });
+
+  // Compute when the next auto-run will fire (KSA-local).
+  const nextRunHint = (() => {
+    if (!autoEnabled) return "متوقّف";
+    const now = new Date();
+    const ksa = new Date(now.getTime() + 3 * 60 * 60_000);
+    const today = ksa.getUTCDate();
+    if (today >= autoDay) {
+      // Already past target day — runs hourly until end of month, then resets next month.
+      return `خلال الساعة القادمة (لشهر ${ksa.getUTCMonth() === 0 ? 12 : ksa.getUTCMonth()}/${ksa.getUTCMonth() === 0 ? ksa.getUTCFullYear() - 1 : ksa.getUTCFullYear()})`;
+    }
+    const daysAway = autoDay - today;
+    return `بعد ${daysAway} يوم (في يوم ${autoDay} من الشهر)`;
+  })();
 
   const totalMonthly = preview.reduce((s,p)=>s+p.applicable, 0);
   const totalAccum   = preview.reduce((s,p)=>s+p.accumulatedDepreciation, 0);
@@ -88,6 +134,56 @@ export default function FaDepreciation() {
             <PlayCircle className="h-4 w-4 ms-2" />
             {postMut.isPending ? "جاري الترحيل…" : "ترحيل الإهلاك الشهري"}
           </Button>
+        </div>
+      </div>
+
+      <div className="border rounded-lg p-4 bg-gradient-to-l from-violet-50 via-fuchsia-50 to-pink-50 shadow-sm">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-full bg-violet-600 text-white flex items-center justify-center shrink-0">
+              <Clock className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="font-bold text-violet-900">الترحيل التلقائي للإهلاك الشهري</div>
+              <div className="text-xs text-violet-700 mt-1 leading-relaxed">
+                يقوم النظام بترحيل إهلاك الشهر السابق تلقائياً لكل الأصول النشطة في اليوم المحدد من كل شهر — لا حاجة لضغط زر يدوي.
+                {" "}
+                <span className="font-semibold">الموعد القادم: {nextRunHint}</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-end gap-2 flex-wrap">
+            <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoEnabled}
+                onChange={(e) => setAutoEnabled(e.target.checked)}
+                className="h-4 w-4 accent-violet-600"
+              />
+              <span className="font-semibold text-violet-900">تفعيل الترحيل التلقائي</span>
+            </label>
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] text-violet-700">يوم الترحيل من كل شهر</label>
+              <select
+                value={autoDay}
+                onChange={(e) => setAutoDay(Number(e.target.value))}
+                disabled={!autoEnabled}
+                className="h-9 px-3 rounded-md border border-violet-200 bg-white text-sm disabled:opacity-50"
+              >
+                {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </div>
+            <Button
+              onClick={() => saveAutoMut.mutate()}
+              disabled={saveAutoMut.isPending}
+              className="bg-violet-600 hover:bg-violet-700"
+            >
+              <Save className="h-4 w-4 ms-2" />
+              {saveAutoMut.isPending ? "جاري الحفظ…" : "حفظ"}
+            </Button>
+          </div>
         </div>
       </div>
 

@@ -133,6 +133,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     autoPostProduction, autoPostStockMovement, autoPostGoodsReceipt,
     autoPostGoodsDelivery, autoPostAdjustment,
     autoPostFaAcquisition, autoPostFaDepreciation, autoPostFaDisposal,
+    faAutoDepDay,
     autoPostCtgOutgoingBill, autoPostCtgIncomingBill,
     faAssetCostAccountId, faAccumDepreciationAccountId,
     faDepreciationExpenseAccountId, faAcquisitionClearingAccountId,
@@ -161,6 +162,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     autoPostAdjustment?: boolean;
     autoPostFaAcquisition?: boolean; autoPostFaDepreciation?: boolean;
     autoPostFaDisposal?: boolean;
+    faAutoDepDay?: number;
     autoPostCtgOutgoingBill?: boolean; autoPostCtgIncomingBill?: boolean;
     faAssetCostAccountId?: number | null;
     faAccumDepreciationAccountId?: number | null;
@@ -205,6 +207,13 @@ router.patch("/:id/general-settings", async (req, res) => {
   if (autoPostFaAcquisition  !== undefined) updates.autoPostFaAcquisition  = !!autoPostFaAcquisition;
   if (autoPostFaDepreciation !== undefined) updates.autoPostFaDepreciation = !!autoPostFaDepreciation;
   if (autoPostFaDisposal     !== undefined) updates.autoPostFaDisposal     = !!autoPostFaDisposal;
+  if (faAutoDepDay !== undefined) {
+    const d = Math.floor(Number(faAutoDepDay));
+    if (!Number.isFinite(d) || d < 1 || d > 28) {
+      res.status(400).json({ error: "يوم الترحيل التلقائي يجب أن يكون بين 1 و 28" }); return;
+    }
+    updates.faAutoDepDay = d;
+  }
   if (autoPostCtgOutgoingBill !== undefined) updates.autoPostCtgOutgoingBill = !!autoPostCtgOutgoingBill;
   if (autoPostCtgIncomingBill !== undefined) updates.autoPostCtgIncomingBill = !!autoPostCtgIncomingBill;
   for (const k of [

@@ -80,6 +80,15 @@ export const companiesTable = pgTable("companies", {
   autoPostFaAcquisition: boolean("auto_post_fa_acquisition").notNull().default(true),
   autoPostFaDepreciation: boolean("auto_post_fa_depreciation").notNull().default(true),
   autoPostFaDisposal:    boolean("auto_post_fa_disposal").notNull().default(true),
+  // Day of the current KSA-local month on which the depreciation scheduler
+  // auto-posts the PREVIOUS month's depreciation for every active asset.
+  // Range 1..28 (avoid 29-31 to keep behavior identical in February). The
+  // scheduler is a no-op when `autoPostFaDepreciation` is false. The post
+  // operation itself is naturally idempotent — fa_depreciation_runs has a
+  // unique (companyId, assetId, periodMonth, periodYear) check that the
+  // posting helper consults before inserting, so a duplicate run on the
+  // same day is safe.
+  faAutoDepDay: integer("fa_auto_dep_day").notNull().default(1),
   // ─── Phase-3 additions: Contracting (IFRS 15) auto-post toggles ───────
   // OutgoingBill = JE on PUT /bills/:id when status flips to "approved" for
   // a direction='outgoing' bill (مستخلص للمالك): recognises period revenue
