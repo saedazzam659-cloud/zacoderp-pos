@@ -11,6 +11,9 @@ import {
   payrollRunsTable,
   costCentersTable,
   trialBalancesTable, trialBalanceDetailsTable,
+  salesOrdersTable, salesQuotationsTable,
+  purchaseOrdersTable,
+  maintenanceOrdersTable,
 } from "@workspace/db";
 import { eq, and, sql, gte, lte, asc, desc, ne, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
@@ -466,6 +469,213 @@ router.get("/account-statement", async (req, res) => {
 
     res.json({ previousBalance, previousDebit, previousCredit, rows: withBalance });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── AI FORECAST INCOME STATEMENT ─────────────────────────────────────────────
+// Builds a multi-year predictive Income Statement using the company's last 3
+// years of posted actuals + open commitments (sales orders/quotations,
+// purchase orders, maintenance orders). Calls OpenAI to produce three
+// scenarios (optimistic / realistic / conservative) plus AI insights.
+//
+// Heuristic fallback is used whenever the AI service is not configured or
+// the AI call fails — the report is always returned, never a 5xx.
+router.post("/forecast-income-statement", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const bid = getBid(req);
+    const horizon = Math.max(1, Math.min(10, Number((req.body as any)?.horizonYears) || 3));
+
+    // ── 1. Pull last 3 calendar years of posted actuals (annual P&L) ──
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const histYears = [currentYear - 3, currentYear - 2, currentYear - 1];
+
+    const historical: Array<{ year: number; revenue: number; expenses: number; netIncome: number }> = [];
+    for (const y of histYears) {
+      const from = `${y}-01-01`;
+      const to   = `${y}-12-31`;
+      const rows = await getAccountBalances(req, cid, from, to, bid, false, []);
+      const revenue  = rows.filter(r => r.accountType === "revenue")
+        .reduce((s, r) => s + (r.totalCredit - r.totalDebit), 0);
+      const expenses = rows.filter(r => r.accountType === "expense")
+        .reduce((s, r) => s + (r.totalDebit - r.totalCredit), 0);
+      historical.push({ year: y, revenue, expenses, netIncome: revenue - expenses });
+    }
+
+    // ── 2. Year-to-date current year (informational) ──
+    const ytdRows = await getAccountBalances(req, cid, `${currentYear}-01-01`, today.toISOString().slice(0, 10), bid, false, []);
+    const ytdRevenue  = ytdRows.filter(r => r.accountType === "revenue").reduce((s, r) => s + (r.totalCredit - r.totalDebit), 0);
+    const ytdExpenses = ytdRows.filter(r => r.accountType === "expense").reduce((s, r) => s + (r.totalDebit - r.totalCredit), 0);
+
+    // ── 3. Open commitments (forward-looking pipeline) ──
+    const branchScope = (table: any) => {
+      const arr: any[] = [];
+      pushBranchScope(req, arr, table.branchId, bid);
+      return arr;
+    };
+    const sumOf = async (table: any, col: any, statusCol: any, statuses: string[], hasBranch = true) => {
+      const filters: any[] = [eq(table.companyId, cid), inArray(statusCol, statuses)];
+      if (hasBranch) filters.push(...branchScope(table));
+      const [r] = await db.select({ total: sql<string>`COALESCE(SUM(${col}), 0)`, n: sql<string>`COUNT(*)` })
+        .from(table).where(and(...filters));
+      return { total: Number(r?.total || 0), count: Number(r?.n || 0) };
+    };
+
+    const pendingSalesOrders   = await sumOf(salesOrdersTable,    salesOrdersTable.totalAmount,    salesOrdersTable.status,    ["draft", "confirmed"], true);
+    // sales_quotations has no `branch_id` column. To avoid leaking
+    // company-wide quotation pipeline to branch-restricted users, we
+    // only include quotations when the caller can view all branches.
+    const u = (req as any).authUser;
+    const canSeeAllQuotations = !u || u.role === "superadmin" || u.viewAllBranches === true;
+    const openQuotations = canSeeAllQuotations
+      ? await sumOf(salesQuotationsTable, salesQuotationsTable.totalAmount, salesQuotationsTable.status, ["sent", "accepted"], false)
+      : { total: 0, count: 0 };
+    const openPurchaseOrders   = await sumOf(purchaseOrdersTable,  purchaseOrdersTable.totalAmount,  purchaseOrdersTable.status,  ["draft", "confirmed"], true);
+    const openMaintenanceOrders = await sumOf(maintenanceOrdersTable, maintenanceOrdersTable.totalCost, maintenanceOrdersTable.status, ["draft", "scheduled", "in_progress"], true);
+
+    const commitments = {
+      pendingSalesOrders, openQuotations, openPurchaseOrders, openMaintenanceOrders,
+      ytdRevenue, ytdExpenses,
+    };
+
+    // ── 4. Heuristic baseline (used as fallback + given to AI as anchor) ──
+    const lastYear = historical[historical.length - 1];
+    const validYears = historical.filter(h => h.revenue > 0 || h.expenses > 0);
+    const avgRevGrowth = (() => {
+      if (validYears.length < 2) return 0.05;
+      const ratios: number[] = [];
+      for (let i = 1; i < validYears.length; i++) {
+        const a = validYears[i - 1].revenue, b = validYears[i].revenue;
+        if (a > 0) ratios.push((b - a) / a);
+      }
+      if (!ratios.length) return 0.05;
+      return ratios.reduce((s, r) => s + r, 0) / ratios.length;
+    })();
+    const avgExpGrowth = (() => {
+      if (validYears.length < 2) return 0.04;
+      const ratios: number[] = [];
+      for (let i = 1; i < validYears.length; i++) {
+        const a = validYears[i - 1].expenses, b = validYears[i].expenses;
+        if (a > 0) ratios.push((b - a) / a);
+      }
+      if (!ratios.length) return 0.04;
+      return ratios.reduce((s, r) => s + r, 0) / ratios.length;
+    })();
+
+    const baseRev = lastYear?.revenue  > 0 ? lastYear.revenue  : Math.max(ytdRevenue,  0);
+    const baseExp = lastYear?.expenses > 0 ? lastYear.expenses : Math.max(ytdExpenses, 0);
+
+    function projectScenario(revGrowth: number, expGrowth: number) {
+      const out: Array<{ year: number; revenue: number; expenses: number; netIncome: number; growthPct: number }> = [];
+      let r = baseRev, e = baseExp;
+      for (let i = 1; i <= horizon; i++) {
+        r = r * (1 + revGrowth);
+        e = e * (1 + expGrowth);
+        out.push({
+          year: currentYear + i,
+          revenue: Math.round(r * 100) / 100,
+          expenses: Math.round(e * 100) / 100,
+          netIncome: Math.round((r - e) * 100) / 100,
+          growthPct: Math.round(revGrowth * 1000) / 10,
+        });
+      }
+      return out;
+    }
+
+    const fallback = {
+      optimistic:   projectScenario(Math.max(avgRevGrowth + 0.05, 0.10), Math.max(avgExpGrowth, 0.03)),
+      realistic:    projectScenario(avgRevGrowth, avgExpGrowth),
+      conservative: projectScenario(Math.min(avgRevGrowth - 0.03, 0.01), Math.max(avgExpGrowth + 0.02, 0.05)),
+    };
+
+    // ── 5. AI call (gracefully degrades to heuristic) ──
+    const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+    const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+
+    let aiResult: any = null;
+    if (OPENAI_BASE && OPENAI_KEY) {
+      const sys = "أنت محلل مالي خبير. مهمتك بناء قائمة دخل تقديرية متعددة السنوات بناءً على بيانات فعلية وارتباطات قائمة. ترد بـ JSON صالح فقط.";
+      const user = `بناءً على البيانات المالية التالية لشركة، ولّد توقعات لـ ${horizon} سنوات قادمة بثلاث سيناريوهات (متفائل / واقعي / متحفظ).
+
+البيانات الفعلية لآخر 3 سنوات (بالريال السعودي):
+${JSON.stringify(historical, null, 2)}
+
+البيانات الجارية للسنة الحالية (${currentYear}) حتى اليوم:
+- الإيرادات: ${ytdRevenue}
+- المصروفات: ${ytdExpenses}
+
+الارتباطات القائمة (بايبلاين مفتوح):
+- أوامر بيع غير محولة لفواتير: ${pendingSalesOrders.count} بإجمالي ${pendingSalesOrders.total} ريال
+- عروض أسعار سارية: ${openQuotations.count} بإجمالي ${openQuotations.total} ريال
+- أوامر شراء مفتوحة: ${openPurchaseOrders.count} بإجمالي ${openPurchaseOrders.total} ريال
+- أوامر صيانة مجدولة/قيد التنفيذ: ${openMaintenanceOrders.count} بإجمالي ${openMaintenanceOrders.total} ريال
+
+أعد JSON بهذا الشكل بالضبط:
+{
+  "scenarios": {
+    "optimistic":   [{ "year": ${currentYear + 1}, "revenue": 0, "expenses": 0, "netIncome": 0, "growthPct": 0 }],
+    "realistic":    [{ "year": ${currentYear + 1}, "revenue": 0, "expenses": 0, "netIncome": 0, "growthPct": 0 }],
+    "conservative": [{ "year": ${currentYear + 1}, "revenue": 0, "expenses": 0, "netIncome": 0, "growthPct": 0 }]
+  },
+  "insights": [
+    "ملاحظة 1 بالعربية حول الاتجاه أو المخاطر",
+    "توصية 2 قابلة للتنفيذ"
+  ],
+  "summary": "ملخص تحليلي بالعربية في 2-3 جمل"
+}
+
+كل سيناريو يجب أن يحتوي ${horizon} عناصر (سنة لكل عنصر) متتالية بدءاً من ${currentYear + 1}. الأرقام بالريال السعودي. growthPct = نسبة نمو الإيرادات مقارنة بالسنة السابقة.`;
+
+      try {
+        const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+          body: JSON.stringify({
+            model: "gpt-5.4",
+            max_completion_tokens: 4096,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: sys },
+              { role: "user",   content: user },
+            ],
+          }),
+        });
+        if (r.ok) {
+          const data: any = await r.json();
+          const content = data?.choices?.[0]?.message?.content ?? "{}";
+          const parsed = JSON.parse(content);
+          if (parsed?.scenarios?.optimistic && parsed?.scenarios?.realistic && parsed?.scenarios?.conservative) {
+            aiResult = parsed;
+          }
+        } else {
+          (req as any).log?.warn?.({ status: r.status }, "AI forecast call failed");
+        }
+      } catch (e: any) {
+        (req as any).log?.warn?.({ err: e?.message }, "AI forecast call error");
+      }
+    }
+
+    const scenarios = aiResult?.scenarios ?? fallback;
+    const insights = Array.isArray(aiResult?.insights) ? aiResult.insights : [];
+    const summary  = typeof aiResult?.summary === "string" ? aiResult.summary : "";
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      currentYear,
+      horizonYears: horizon,
+      historical,
+      ytd: { year: currentYear, revenue: ytdRevenue, expenses: ytdExpenses, netIncome: ytdRevenue - ytdExpenses },
+      commitments,
+      scenarios,
+      insights,
+      summary,
+      aiUsed: !!aiResult,
+    });
+  } catch (e: any) {
+    (req as any).log?.error?.({ err: e?.message }, "forecast-income-statement failed");
+    res.status(500).json({ error: e.message });
+  }
 });
 
 export default router;

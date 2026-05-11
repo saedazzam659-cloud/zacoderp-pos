@@ -377,6 +377,7 @@ const reportsSubNav: NavDef[] = [
   { nameKey: "nav.trialBalance",     href: "/accounting/reports/trial-balance",     icon: Scale,      permKey: "accounting_reports" },
   { nameKey: "nav.balanceSheet",     href: "/accounting/reports/balance-sheet",     icon: PieChart,   permKey: "accounting_reports" },
   { nameKey: "nav.incomeStatement",  href: "/accounting/reports/income-statement",  icon: TrendingUp, permKey: "accounting_reports" },
+  { nameKey: "nav.forecastIncomeStatement", href: "/accounting/reports/forecast-income-statement", icon: Sparkles, permKey: "accounting_reports" },
   { nameKey: "nav.taxDeclaration",   href: "/accounting/reports/tax-declaration",   icon: BadgePercent, permKey: "accounting_reports" },
 ];
 const cashSubNav: NavDef[] = [
