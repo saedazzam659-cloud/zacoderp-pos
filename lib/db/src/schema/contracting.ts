@@ -284,6 +284,11 @@ export const contractingProgressBillsTable = pgTable(
     vatAmount:       numeric("vat_amount",        { precision: 14, scale: 2 }).notNull().default("0"),
     netAmount:       numeric("net_amount",        { precision: 14, scale: 2 }).notNull().default("0"),
     paidAmount:      numeric("paid_amount",       { precision: 14, scale: 2 }).notNull().default("0"),
+    // Back-reference to the auto-posted JE (Phase-3 IFRS 15 wiring). NULL
+    // when no JE has been posted yet (status still draft/submitted, the
+    // matching auto-post toggle was off, or the account-mapping for
+    // contracting_(outgoing|incoming)_bill wasn't fully wired).
+    journalEntryId: integer("journal_entry_id"),
     // draft | submitted | approved | paid | rejected
     status: text("status").notNull().default("draft"),
     approvedByUserId: integer("approved_by_user_id")

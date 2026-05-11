@@ -80,6 +80,16 @@ export const companiesTable = pgTable("companies", {
   autoPostFaAcquisition: boolean("auto_post_fa_acquisition").notNull().default(true),
   autoPostFaDepreciation: boolean("auto_post_fa_depreciation").notNull().default(true),
   autoPostFaDisposal:    boolean("auto_post_fa_disposal").notNull().default(true),
+  // ─── Phase-3 additions: Contracting (IFRS 15) auto-post toggles ───────
+  // OutgoingBill = JE on PUT /bills/:id when status flips to "approved" for
+  // a direction='outgoing' bill (مستخلص للمالك): recognises period revenue
+  // via percentage-of-completion. IncomingBill = same trigger for
+  // direction='incoming' (مستخلص باطن): capitalises period cost into
+  // construction WIP and books the subcontractor payable + retention.
+  // Account routing uses the generic accounting_mappings table
+  // (documentType = "contracting_outgoing_bill" | "contracting_incoming_bill").
+  autoPostCtgOutgoingBill: boolean("auto_post_ctg_outgoing_bill").notNull().default(true),
+  autoPostCtgIncomingBill: boolean("auto_post_ctg_incoming_bill").notNull().default(true),
   // ─── HR / Payroll account mapping (resolved from COA on first use) ─────
   hrSalariesExpenseAccountId:    integer("hr_salaries_expense_account_id"),
   hrAllowancesExpenseAccountId:  integer("hr_allowances_expense_account_id"),

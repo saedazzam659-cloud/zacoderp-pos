@@ -23,6 +23,10 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
+import {
+  buildOutgoingBillJournal,
+  buildIncomingBillJournal,
+} from "../lib/contracting-journals.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -978,7 +982,8 @@ router.put("/bills/:id", async (req, res) => {
     upd.netAmount        = String(netAmount);
     if (b.progressPercent !== undefined) upd.progressPercent = String(b.progressPercent);
     if (b.paidAmount !== undefined) upd.paidAmount = String(b.paidAmount);
-    if (b.status === "approved" && cur.status !== "approved") {
+    const becomingApproved = b.status === "approved" && cur.status !== "approved";
+    if (becomingApproved) {
       upd.approvedAt = new Date();
       upd.approvedByUserId = req.authUser!.id;
     }
@@ -993,6 +998,22 @@ router.put("/bills/:id", async (req, res) => {
     const [row] = await db.update(contractingProgressBillsTable).set(upd)
       .where(and(eq(contractingProgressBillsTable.id, id), eq(contractingProgressBillsTable.companyId, cid)))
       .returning();
+
+    // ─── IFRS 15 auto-post on approval ───────────────────────────────────
+    // Trigger only on the status transition (not subsequent edits while
+    // already approved). Both engines are idempotent (no-op when
+    // journalEntryId is already set), so a stray re-trigger is harmless.
+    // Errors here surface as 500 — we deliberately do NOT swallow them so
+    // the user discovers an unmapped account immediately instead of having
+    // a silent gap in the books.
+    if (becomingApproved && !row.journalEntryId) {
+      if (direction === "outgoing") {
+        await buildOutgoingBillJournal(cid, id);
+      } else {
+        await buildIncomingBillJournal(cid, id);
+      }
+    }
+
     if (b.status && b.status !== cur.status) {
       await logEvent({
         companyId: cid, projectId: cur.projectId, userId: req.authUser!.id,

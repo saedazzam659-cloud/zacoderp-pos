@@ -73,6 +73,9 @@ export default function GeneralSettings() {
     { key: "autoPostFaAcquisition", label: "اقتناء الأصول الثابتة",     desc: "ترحيل قيد اقتناء الأصل (مدين أصل/دائن نقدية أو مورد) تلقائياً" },
     { key: "autoPostFaDepreciation", label: "إهلاك الأصول الثابتة",      desc: "ترحيل قيد الإهلاك الشهري (مدين مصروف إهلاك/دائن مجمع إهلاك) تلقائياً" },
     { key: "autoPostFaDisposal",    label: "استبعاد الأصول الثابتة",   desc: "ترحيل قيد البيع/التخريد مع الربح/الخسارة الرأسمالية تلقائياً" },
+    // ─── Phase-3 additions: Contracting (IFRS 15) ───────────────────────
+    { key: "autoPostCtgOutgoingBill", label: "مستخلصات العملاء (مقاولات)", desc: "ترحيل قيد إيراد المستخلص للمالك مع المحتجزات وضريبة المخرجات تلقائياً عند الاعتماد" },
+    { key: "autoPostCtgIncomingBill", label: "مستخلصات الباطن (مقاولات)",  desc: "ترحيل قيد تكلفة مستخلص الباطن مع المحتجزات وضريبة المدخلات تلقائياً عند الاعتماد" },
   ];
 
   const headers = {

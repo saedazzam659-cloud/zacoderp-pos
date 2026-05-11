@@ -139,6 +139,18 @@ export const DEFAULT_MAPPINGS: DefaultMapping[] = [
   { documentType: "entity_account_parents", roleKey: "warehouse_account_parent", accountCode: "1105" },
   { documentType: "entity_account_parents", roleKey: "supplier_account_parent",  accountCode: "2101" },
 
+  // مستخلصات المقاولات الصادرة (IFRS 15)
+  { documentType: "contracting_outgoing_bill", roleKey: "receivable",           accountCode: "11031" },
+  { documentType: "contracting_outgoing_bill", roleKey: "retention_receivable", accountCode: "11031" },
+  { documentType: "contracting_outgoing_bill", roleKey: "revenue",              accountCode: "4101"  },
+  { documentType: "contracting_outgoing_bill", roleKey: "vat_output",           accountCode: "21041" },
+
+  // مستخلصات المقاولات الواردة من الباطن (IFRS 15)
+  { documentType: "contracting_incoming_bill", roleKey: "wip",                  accountCode: "11051" },
+  { documentType: "contracting_incoming_bill", roleKey: "vat_input",            accountCode: "11071" },
+  { documentType: "contracting_incoming_bill", roleKey: "payable",              accountCode: "21011" },
+  { documentType: "contracting_incoming_bill", roleKey: "retention_payable",    accountCode: "21011" },
+
   // الاعتمادات المستندية
   { documentType: "letter_of_credit",     roleKey: "lc_margin",              accountCode: "1150"  },
   { documentType: "letter_of_credit",     roleKey: "lc_liability",           accountCode: "2150"  },

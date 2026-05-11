@@ -146,6 +146,28 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
     ],
   },
   {
+    key: "contracting_outgoing_bill",
+    label: "مستخلصات العملاء (مقاولات IFRS 15)",
+    description: "قيد اعتماد مستخلص للمالك بطريقة نسبة الإنجاز: مدين العملاء (الصافي) ومدين المحتجزات لدى العميل، دائن إيرادات المقاولات وضريبة المخرجات.",
+    roles: [
+      { key: "receivable",           label: "حساب العملاء (مدين)",           description: "صافي القيمة المستحقة الآن من العميل (شاملاً ضريبة القيمة المضافة).", defaultHintCode: "1210", accountType: "asset" },
+      { key: "retention_receivable", label: "محتجزات لدى العميل (مدين)",     description: "نسبة الضمان المحجوزة عند العميل لحين تسليم المشروع.", defaultHintCode: "1215", accountType: "asset" },
+      { key: "revenue",              label: "إيرادات المقاولات (دائن)",      description: "قيمة الأعمال المنفذة في فترة المستخلص (الفرق بين الإجمالي التراكمي والمسبق).", defaultHintCode: "4115", accountType: "revenue" },
+      { key: "vat_output",           label: "ضريبة المخرجات (دائن)",          description: "ضريبة القيمة المضافة المحصلة من العميل على المستخلص.", defaultHintCode: "2140", accountType: "liability" },
+    ],
+  },
+  {
+    key: "contracting_incoming_bill",
+    label: "مستخلصات الباطن (مقاولات IFRS 15)",
+    description: "قيد اعتماد مستخلص من مقاول الباطن: مدين أعمال تحت التنفيذ ومدين ضريبة المدخلات، دائن المورد (الصافي) ودائن محتجزات الموردين.",
+    roles: [
+      { key: "wip",               label: "أعمال تحت التنفيذ (مدين)",   description: "تكلفة الأعمال المنفذة في فترة المستخلص — تُرسمل ضمن تكلفة المشروع.", defaultHintCode: "1310", accountType: "asset" },
+      { key: "vat_input",         label: "ضريبة المدخلات (مدين)",       description: "ضريبة القيمة المضافة على فاتورة الباطن القابلة للاسترداد.", defaultHintCode: "1240", accountType: "asset" },
+      { key: "payable",           label: "مستحق مقاول الباطن (دائن)",   description: "صافي القيمة المستحقة الدفع للباطن (شاملاً ضريبة القيمة المضافة).", defaultHintCode: "2110", accountType: "liability" },
+      { key: "retention_payable", label: "محتجزات الموردين (دائن)",     description: "نسبة الضمان المحجوزة من الباطن لحين انتهاء أعماله.", defaultHintCode: "2115", accountType: "liability" },
+    ],
+  },
+  {
     key: "letter_of_credit",
     label: "الاعتمادات المستندية",
     description: "القيود الخاصة بفتح الاعتماد وسداد الهامش وتحميل المصاريف والعمولات البنكية وفروق العملة، قبل ترحيل التكلفة النهائية على المخزون.",

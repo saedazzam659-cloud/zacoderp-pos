@@ -44,7 +44,9 @@ export type AutoPostDocType =
   | "adjustment"
   | "faAcquisition"
   | "faDepreciation"
-  | "faDisposal";
+  | "faDisposal"
+  | "ctgOutgoingBill"
+  | "ctgIncomingBill";
 
 /**
  * Look up the company's master switch + per-doc-type flag and return the
@@ -79,6 +81,8 @@ export async function resolvePostingStatus(
       faAcquisition:  companiesTable.autoPostFaAcquisition,
       faDepreciation: companiesTable.autoPostFaDepreciation,
       faDisposal:     companiesTable.autoPostFaDisposal,
+      ctgOutgoingBill: companiesTable.autoPostCtgOutgoingBill,
+      ctgIncomingBill: companiesTable.autoPostCtgIncomingBill,
     })
     .from(companiesTable)
     .where(eq(companiesTable.id, cid));

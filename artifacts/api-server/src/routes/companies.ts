@@ -133,6 +133,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     autoPostProduction, autoPostStockMovement, autoPostGoodsReceipt,
     autoPostGoodsDelivery, autoPostAdjustment,
     autoPostFaAcquisition, autoPostFaDepreciation, autoPostFaDisposal,
+    autoPostCtgOutgoingBill, autoPostCtgIncomingBill,
     faAssetCostAccountId, faAccumDepreciationAccountId,
     faDepreciationExpenseAccountId, faAcquisitionClearingAccountId,
     faDisposalGainAccountId, faDisposalLossAccountId,
@@ -160,6 +161,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     autoPostAdjustment?: boolean;
     autoPostFaAcquisition?: boolean; autoPostFaDepreciation?: boolean;
     autoPostFaDisposal?: boolean;
+    autoPostCtgOutgoingBill?: boolean; autoPostCtgIncomingBill?: boolean;
     faAssetCostAccountId?: number | null;
     faAccumDepreciationAccountId?: number | null;
     faDepreciationExpenseAccountId?: number | null;
@@ -203,6 +205,8 @@ router.patch("/:id/general-settings", async (req, res) => {
   if (autoPostFaAcquisition  !== undefined) updates.autoPostFaAcquisition  = !!autoPostFaAcquisition;
   if (autoPostFaDepreciation !== undefined) updates.autoPostFaDepreciation = !!autoPostFaDepreciation;
   if (autoPostFaDisposal     !== undefined) updates.autoPostFaDisposal     = !!autoPostFaDisposal;
+  if (autoPostCtgOutgoingBill !== undefined) updates.autoPostCtgOutgoingBill = !!autoPostCtgOutgoingBill;
+  if (autoPostCtgIncomingBill !== undefined) updates.autoPostCtgIncomingBill = !!autoPostCtgIncomingBill;
   for (const k of [
     "faAssetCostAccountId","faAccumDepreciationAccountId","faDepreciationExpenseAccountId",
     "faAcquisitionClearingAccountId","faDisposalGainAccountId","faDisposalLossAccountId",
