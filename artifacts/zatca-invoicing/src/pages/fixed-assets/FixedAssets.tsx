@@ -11,7 +11,8 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Pencil, Trash2, Search, Package, QrCode } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Package, QrCode,
+  Info, ShoppingCart, Cog, TrendingDown, Shield, FileText } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -72,6 +73,7 @@ export default function FixedAssets() {
   const [form, setForm] = useState(EMPTY);
   const [del, setDel] = useState<Asset | null>(null);
   const [showQr, setShowQr] = useState<Asset | null>(null);
+  const [activeTab, setActiveTab] = useState<"basic"|"purchase"|"tech"|"depreciation"|"insurance"|"extra">("basic");
 
   const { data: rows = [], isLoading } = useQuery<Asset[]>({
     queryKey:["fa/assets", cid],
@@ -105,7 +107,7 @@ export default function FixedAssets() {
     a.serialNo?.toLowerCase().includes(search.toLowerCase()) ||
     a.plateNumber?.toLowerCase().includes(search.toLowerCase()));
 
-  function openNew() { setEditing(null); setForm(EMPTY); setShowForm(true); }
+  function openNew() { setEditing(null); setForm(EMPTY); setActiveTab("basic"); setShowForm(true); }
   function openEdit(a: Asset) {
     setEditing(a);
     setForm({
@@ -129,8 +131,17 @@ export default function FixedAssets() {
       custodianEmployeeId:a.custodianEmployeeId?String(a.custodianEmployeeId):"",
       location:a.location??"", notes:a.notes??"",
     });
-    setShowForm(true);
+    setActiveTab("basic"); setShowForm(true);
   }
+
+  const TABS = [
+    { id:"basic",        label:"البيانات الأساسية", icon: Info,          grad:"from-emerald-500 to-emerald-600", text:"text-emerald-700",  border:"border-emerald-200" },
+    { id:"purchase",     label:"بيانات الشراء",      icon: ShoppingCart,  grad:"from-blue-500 to-blue-600",       text:"text-blue-700",     border:"border-blue-200" },
+    { id:"tech",         label:"بيانات فنية",        icon: Cog,           grad:"from-amber-500 to-amber-600",     text:"text-amber-700",    border:"border-amber-200" },
+    { id:"depreciation", label:"الإهلاك",            icon: TrendingDown,  grad:"from-violet-500 to-violet-600",   text:"text-violet-700",   border:"border-violet-200" },
+    { id:"insurance",    label:"التأمين",            icon: Shield,        grad:"from-pink-500 to-pink-600",        text:"text-pink-700",    border:"border-pink-200" },
+    { id:"extra",        label:"إضافي / ملاحظات",   icon: FileText,      grad:"from-slate-500 to-slate-600",      text:"text-slate-700",   border:"border-slate-200" },
+  ] as const;
 
   const saveMut = useMutation({
     mutationFn: async () => {
@@ -232,9 +243,32 @@ export default function FixedAssets() {
           onSave={()=>saveMut.mutate()} saving={saveMut.isPending}
           saveLabel="حفظ" cancelLabel="إلغاء"
         >
-          <div className="space-y-5">
-            <fieldset className="border border-emerald-200 rounded-lg p-4">
-              <legend className="px-2 text-sm font-bold text-emerald-700">البيانات الأساسية</legend>
+          <div className="space-y-4">
+            {/* ─── Tab strip ─── */}
+            <div className="flex flex-wrap gap-2 p-1.5 bg-gradient-to-l from-slate-50 to-slate-100 rounded-xl border border-slate-200 shadow-inner">
+              {TABS.map(t => {
+                const Icon = t.icon;
+                const active = activeTab === t.id;
+                return (
+                  <button key={t.id} type="button" onClick={()=>setActiveTab(t.id as any)}
+                    data-testid={`tab-${t.id}`}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                      active
+                        ? `bg-gradient-to-l ${t.grad} text-white shadow-md scale-[1.02]`
+                        : `bg-white ${t.text} border border-slate-200 hover:shadow-sm hover:scale-[1.01]`
+                    }`}>
+                    <Icon className="h-4 w-4" />
+                    <span>{t.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {activeTab === "basic" && (
+            <fieldset className="border border-emerald-200 rounded-lg p-4 bg-emerald-50/20">
+              <legend className="px-2 text-sm font-bold text-emerald-700 flex items-center gap-1">
+                <Info className="h-4 w-4" /> البيانات الأساسية
+              </legend>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div><Label>الكود</Label>
                   <Input value={form.code} onChange={(e)=>setForm({...form,code:e.target.value})} placeholder="تلقائي AST0001" /></div>
@@ -257,9 +291,13 @@ export default function FixedAssets() {
                   <Input value={form.location} onChange={(e)=>setForm({...form,location:e.target.value})} /></div>
               </div>
             </fieldset>
+            )}
 
-            <fieldset className="border border-blue-200 rounded-lg p-4">
-              <legend className="px-2 text-sm font-bold text-blue-700">بيانات الشراء</legend>
+            {activeTab === "purchase" && (
+            <fieldset className="border border-blue-200 rounded-lg p-4 bg-blue-50/20">
+              <legend className="px-2 text-sm font-bold text-blue-700 flex items-center gap-1">
+                <ShoppingCart className="h-4 w-4" /> بيانات الشراء
+              </legend>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div><Label>تاريخ الشراء</Label>
                   <Input type="date" value={form.purchaseDate} onChange={(e)=>setForm({...form,purchaseDate:e.target.value})} /></div>
@@ -321,9 +359,13 @@ export default function FixedAssets() {
                 )}
               </div>
             </fieldset>
+            )}
 
-            <fieldset className="border border-amber-200 rounded-lg p-4">
-              <legend className="px-2 text-sm font-bold text-amber-700">بيانات فنية / مركبة</legend>
+            {activeTab === "tech" && (
+            <fieldset className="border border-amber-200 rounded-lg p-4 bg-amber-50/20">
+              <legend className="px-2 text-sm font-bold text-amber-700 flex items-center gap-1">
+                <Cog className="h-4 w-4" /> بيانات فنية / مركبة
+              </legend>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div><Label>الموديل</Label>
                   <Input value={form.model} onChange={(e)=>setForm({...form,model:e.target.value})} placeholder="2023" /></div>
@@ -341,9 +383,13 @@ export default function FixedAssets() {
                   <Input type="number" value={form.currentKm} onChange={(e)=>setForm({...form,currentKm:e.target.value})} /></div>
               </div>
             </fieldset>
+            )}
 
-            <fieldset className="border border-violet-200 rounded-lg p-4">
-              <legend className="px-2 text-sm font-bold text-violet-700">بيانات الإهلاك</legend>
+            {activeTab === "depreciation" && (
+            <fieldset className="border border-violet-200 rounded-lg p-4 bg-violet-50/20">
+              <legend className="px-2 text-sm font-bold text-violet-700 flex items-center gap-1">
+                <TrendingDown className="h-4 w-4" /> بيانات الإهلاك
+              </legend>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div><Label>العمر الافتراضي (سنوات)</Label>
                   <Input type="number" value={form.lifeYears} onChange={(e)=>setForm({...form,lifeYears:e.target.value})} /></div>
@@ -362,9 +408,13 @@ export default function FixedAssets() {
                   <Input type="number" step="0.01" value={form.bookValue} onChange={(e)=>setForm({...form,bookValue:e.target.value})} /></div>
               </div>
             </fieldset>
+            )}
 
-            <fieldset className="border border-pink-200 rounded-lg p-4">
-              <legend className="px-2 text-sm font-bold text-pink-700">بيانات التأمين</legend>
+            {activeTab === "insurance" && (
+            <fieldset className="border border-pink-200 rounded-lg p-4 bg-pink-50/20">
+              <legend className="px-2 text-sm font-bold text-pink-700 flex items-center gap-1">
+                <Shield className="h-4 w-4" /> بيانات التأمين
+              </legend>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div><Label>شركة التأمين</Label>
                   <Input value={form.insuranceCompany} onChange={(e)=>setForm({...form,insuranceCompany:e.target.value})} /></div>
@@ -378,9 +428,13 @@ export default function FixedAssets() {
                   <Input type="date" value={form.insuranceEnd} onChange={(e)=>setForm({...form,insuranceEnd:e.target.value})} /></div>
               </div>
             </fieldset>
+            )}
 
-            <fieldset className="border border-slate-200 rounded-lg p-4">
-              <legend className="px-2 text-sm font-bold text-slate-700">بيانات إضافية</legend>
+            {activeTab === "extra" && (
+            <fieldset className="border border-slate-200 rounded-lg p-4 bg-slate-50/40">
+              <legend className="px-2 text-sm font-bold text-slate-700 flex items-center gap-1">
+                <FileText className="h-4 w-4" /> بيانات إضافية / ملاحظات
+              </legend>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div><Label>المسؤول عن الأصل (رقم الموظف)</Label>
                   <Input type="number" value={form.custodianEmployeeId} onChange={(e)=>setForm({...form,custodianEmployeeId:e.target.value})} /></div>
@@ -388,6 +442,7 @@ export default function FixedAssets() {
                   <Input value={form.notes} onChange={(e)=>setForm({...form,notes:e.target.value})} /></div>
               </div>
             </fieldset>
+            )}
           </div>
         </FormPanel>
       )}
