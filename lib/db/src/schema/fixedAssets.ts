@@ -35,6 +35,12 @@ export const faCategoriesTable = pgTable("fa_categories", {
   defaultDepreciationMethod: faDepreciationMethodEnum("default_depreciation_method").notNull().default("straight_line"),
   defaultScrapRate:    numeric("default_scrap_rate", { precision: 5, scale: 2 }).notNull().default("10"),
   isActive:            boolean("is_active").notNull().default(true),
+  // ─── Phase-2: per-category JE account overrides (IAS 16). NULL = fall
+  // back to the company-wide defaults on `companies.faXxxAccountId`. The
+  // fa-journals helper resolves category first, then company.
+  costAccountId:               integer("cost_account_id"),
+  accumDepreciationAccountId:  integer("accum_depreciation_account_id"),
+  depreciationExpenseAccountId: integer("depreciation_expense_account_id"),
   createdAt:           timestamp("created_at").defaultNow().notNull(),
 });
 export type FaCategory       = typeof faCategoriesTable.$inferSelect;
@@ -93,6 +99,11 @@ export const fixedAssetsTable = pgTable("fixed_assets", {
   aiRecommendation:    text("ai_recommendation"),   // keep/maintain/replace/sell
   qrPayload:           text("qr_payload"),
   notes:               text("notes"),
+
+  // ─── Phase-2: link to the acquisition JE (when posted). NULL = no JE
+  // (opening-balance load, accounts not configured, or auto-post toggle off
+  // and the user hasn't manually posted yet from the Posting Center).
+  journalEntryId:      integer("journal_entry_id"),
 
   createdAt:           timestamp("created_at").defaultNow().notNull(),
   updatedAt:           timestamp("updated_at").defaultNow().notNull(),

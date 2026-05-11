@@ -41,7 +41,10 @@ export type AutoPostDocType =
   | "stockMovement"
   | "goodsReceipt"
   | "goodsDelivery"
-  | "adjustment";
+  | "adjustment"
+  | "faAcquisition"
+  | "faDepreciation"
+  | "faDisposal";
 
 /**
  * Look up the company's master switch + per-doc-type flag and return the
@@ -73,6 +76,9 @@ export async function resolvePostingStatus(
       goodsReceipt:  companiesTable.autoPostGoodsReceipt,
       goodsDelivery: companiesTable.autoPostGoodsDelivery,
       adjustment:    companiesTable.autoPostAdjustment,
+      faAcquisition:  companiesTable.autoPostFaAcquisition,
+      faDepreciation: companiesTable.autoPostFaDepreciation,
+      faDisposal:     companiesTable.autoPostFaDisposal,
     })
     .from(companiesTable)
     .where(eq(companiesTable.id, cid));

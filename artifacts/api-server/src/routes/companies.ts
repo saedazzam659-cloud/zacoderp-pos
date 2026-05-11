@@ -132,6 +132,10 @@ router.patch("/:id/general-settings", async (req, res) => {
     // Phase-1 additions: every other module that produces a JE.
     autoPostProduction, autoPostStockMovement, autoPostGoodsReceipt,
     autoPostGoodsDelivery, autoPostAdjustment,
+    autoPostFaAcquisition, autoPostFaDepreciation, autoPostFaDisposal,
+    faAssetCostAccountId, faAccumDepreciationAccountId,
+    faDepreciationExpenseAccountId, faAcquisitionClearingAccountId,
+    faDisposalGainAccountId, faDisposalLossAccountId,
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
     // Per-doc-type print preferences (auto-print toggle + template name).
     // Each `printAutoAfterSave*` is a boolean; each `printTemplate*` is
@@ -154,6 +158,14 @@ router.patch("/:id/general-settings", async (req, res) => {
     autoPostProduction?: boolean; autoPostStockMovement?: boolean;
     autoPostGoodsReceipt?: boolean; autoPostGoodsDelivery?: boolean;
     autoPostAdjustment?: boolean;
+    autoPostFaAcquisition?: boolean; autoPostFaDepreciation?: boolean;
+    autoPostFaDisposal?: boolean;
+    faAssetCostAccountId?: number | null;
+    faAccumDepreciationAccountId?: number | null;
+    faDepreciationExpenseAccountId?: number | null;
+    faAcquisitionClearingAccountId?: number | null;
+    faDisposalGainAccountId?: number | null;
+    faDisposalLossAccountId?: number | null;
     printFooterInvoice?: string; printFooterReturn?: string;
     printShowTimestamp?: boolean; printShowZatcaBrand?: boolean;
     printAutoAfterSaveSales?: boolean; printAutoAfterSaveReceipt?: boolean;
@@ -188,6 +200,16 @@ router.patch("/:id/general-settings", async (req, res) => {
   if (autoPostGoodsReceipt  !== undefined) updates.autoPostGoodsReceipt  = !!autoPostGoodsReceipt;
   if (autoPostGoodsDelivery !== undefined) updates.autoPostGoodsDelivery = !!autoPostGoodsDelivery;
   if (autoPostAdjustment    !== undefined) updates.autoPostAdjustment    = !!autoPostAdjustment;
+  if (autoPostFaAcquisition  !== undefined) updates.autoPostFaAcquisition  = !!autoPostFaAcquisition;
+  if (autoPostFaDepreciation !== undefined) updates.autoPostFaDepreciation = !!autoPostFaDepreciation;
+  if (autoPostFaDisposal     !== undefined) updates.autoPostFaDisposal     = !!autoPostFaDisposal;
+  for (const k of [
+    "faAssetCostAccountId","faAccumDepreciationAccountId","faDepreciationExpenseAccountId",
+    "faAcquisitionClearingAccountId","faDisposalGainAccountId","faDisposalLossAccountId",
+  ] as const) {
+    const v = (req.body as any)[k];
+    if (v !== undefined) updates[k] = v == null || v === "" ? null : Number(v);
+  }
   if (printFooterInvoice !== undefined) {
     const v = String(printFooterInvoice).trim();
     if (v.length > 200) {

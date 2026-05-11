@@ -13,6 +13,11 @@ import { and, desc, eq } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import {
+  buildAcquisitionJournal,
+  buildDepreciationRunJournal,
+  buildDisposalJournal,
+} from "../lib/fa-journals.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -187,7 +192,22 @@ router.post("/assets", async (req, res) => {
       qrPayload,
       notes: b.notes || null,
     }).returning();
-    res.status(201).json(row);
+    // ── Phase-2: post acquisition JE if this is a fresh purchase (cost > 0
+    // and no opening accumulated depreciation). Skipping when the user is
+    // loading an opening-balance asset prevents double-counting against the
+    // historical balance sheet.
+    let warning: string | null = null;
+    if (Number(purchaseValue) > 0 && Number(accumulated) === 0) {
+      try {
+        await buildAcquisitionJournal(cid, row.id, {
+          cashBoxId:    b.cashBoxId    ? Number(b.cashBoxId)    : null,
+          bankAccountId: b.bankAccountId ? Number(b.bankAccountId) : null,
+        });
+      } catch (e: any) {
+        warning = e.message ?? "تعذّر إنشاء قيد الاقتناء";
+      }
+    }
+    res.status(201).json(warning ? { ...row, warning } : row);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -454,6 +474,15 @@ router.post("/depreciation/post", async (req, res) => {
         status: newStatus as any,
         updatedAt: new Date(),
       }).where(and(eq(fixedAssetsTable.id, a.id), eq(fixedAssetsTable.companyId, cid)));
+      // ── Phase-2: post the matching depreciation JE. Failures here are
+      // non-fatal — the run row is already saved and the user can retry
+      // posting the JE manually from مركز الترحيل once the missing accounts
+      // are mapped on /fixed-assets/settings.
+      try {
+        await buildDepreciationRunJournal(cid, run.id);
+      } catch (e: any) {
+        req.log?.warn?.({ err: e, runId: run.id }, "fa depreciation JE failed");
+      }
       created.push(run);
     }
     res.status(201).json({ posted: created.length, runs: created, period: { month, year } });
@@ -508,7 +537,19 @@ router.post("/disposals", async (req, res) => {
       status: newStatus as any,
       updatedAt: new Date(),
     }).where(and(eq(fixedAssetsTable.id, assetId), eq(fixedAssetsTable.companyId, cid)));
-    res.status(201).json(row);
+    // ── Phase-2: post the disposal JE. Sale proceeds settled to the
+    // supplied cashBoxId / bankAccountId; otherwise they go to the
+    // acquisition-clearing waiting account.
+    let warning: string | null = null;
+    try {
+      await buildDisposalJournal(cid, row.id, {
+        cashBoxId:    b.cashBoxId    ? Number(b.cashBoxId)    : null,
+        bankAccountId: b.bankAccountId ? Number(b.bankAccountId) : null,
+      });
+    } catch (e: any) {
+      warning = e.message ?? "تعذّر إنشاء قيد الاستبعاد";
+    }
+    res.status(201).json(warning ? { ...row, warning } : row);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

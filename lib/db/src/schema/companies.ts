@@ -73,6 +73,13 @@ export const companiesTable = pgTable("companies", {
   autoPostGoodsReceipt:  boolean("auto_post_goods_receipt").notNull().default(true),
   autoPostGoodsDelivery: boolean("auto_post_goods_delivery").notNull().default(true),
   autoPostAdjustment:    boolean("auto_post_adjustment").notNull().default(true),
+  // ─── Phase-2 additions: Fixed Assets (IAS 16) auto-post toggles ───────
+  // Acquisition = JE on POST /assets when purchaseValue>0 and not an
+  // opening balance. Depreciation = JE for each row created by the monthly
+  // /depreciation/post run. Disposal = JE on POST /disposals.
+  autoPostFaAcquisition: boolean("auto_post_fa_acquisition").notNull().default(true),
+  autoPostFaDepreciation: boolean("auto_post_fa_depreciation").notNull().default(true),
+  autoPostFaDisposal:    boolean("auto_post_fa_disposal").notNull().default(true),
   // ─── HR / Payroll account mapping (resolved from COA on first use) ─────
   hrSalariesExpenseAccountId:    integer("hr_salaries_expense_account_id"),
   hrAllowancesExpenseAccountId:  integer("hr_allowances_expense_account_id"),
@@ -85,6 +92,17 @@ export const companiesTable = pgTable("companies", {
   hrEosProvisionAccountId:       integer("hr_eos_provision_account_id"),
   hrDefaultPayCashBoxId:         integer("hr_default_pay_cashbox_id"),
   hrDefaultPayBankAccountId:     integer("hr_default_pay_bank_account_id"),
+  // ─── Fixed Assets (IAS 16) account mapping (company-wide defaults) ─────
+  // The fa-journals helper falls back to these when the asset's category
+  // doesn't carry a per-category override. AcquisitionClearing is the CR
+  // side of the acquisition JE when the user didn't supply a cash/bank
+  // source (typical for "purchased on credit, settle later via voucher").
+  faAssetCostAccountId:          integer("fa_asset_cost_account_id"),
+  faAccumDepreciationAccountId:  integer("fa_accum_depreciation_account_id"),
+  faDepreciationExpenseAccountId: integer("fa_depreciation_expense_account_id"),
+  faAcquisitionClearingAccountId: integer("fa_acquisition_clearing_account_id"),
+  faDisposalGainAccountId:       integer("fa_disposal_gain_account_id"),
+  faDisposalLossAccountId:       integer("fa_disposal_loss_account_id"),
   // POS payment-method → account mappings
   posCashCashBoxId:          integer("pos_cash_cashbox_id"),
   posCardBankAccountId:      integer("pos_card_bank_account_id"),

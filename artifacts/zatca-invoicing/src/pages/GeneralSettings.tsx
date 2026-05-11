@@ -70,6 +70,9 @@ export default function GeneralSettings() {
     { key: "autoPostGoodsReceipt",  label: "إذونات الاستلام (GRN)",     desc: "ترحيل قيد استلام البضاعة من المورد تلقائياً" },
     { key: "autoPostGoodsDelivery", label: "إذونات التسليم",           desc: "ترحيل قيد تكلفة البضاعة المباعة عند التسليم تلقائياً" },
     { key: "autoPostAdjustment",    label: "التسويات الشهرية",         desc: "ترحيل قيود التسويات (مصروف مقدم/مستحق) تلقائياً" },
+    { key: "autoPostFaAcquisition", label: "اقتناء الأصول الثابتة",     desc: "ترحيل قيد اقتناء الأصل (مدين أصل/دائن نقدية أو مورد) تلقائياً" },
+    { key: "autoPostFaDepreciation", label: "إهلاك الأصول الثابتة",      desc: "ترحيل قيد الإهلاك الشهري (مدين مصروف إهلاك/دائن مجمع إهلاك) تلقائياً" },
+    { key: "autoPostFaDisposal",    label: "استبعاد الأصول الثابتة",   desc: "ترحيل قيد البيع/التخريد مع الربح/الخسارة الرأسمالية تلقائياً" },
   ];
 
   const headers = {
