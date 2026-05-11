@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable,
+  journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
+import { eq, and, sql, inArray, notInArray, isNotNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureSupplierLedger } from "../lib/entityAccounts.js";
@@ -36,7 +37,14 @@ router.get("/balances", async (req, res) => {
   const companyId = resolveCompanyId(req, rawCompanyId);
   if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
-  const [invRows, lcInvRows, retRows, setRows] = await Promise.all([
+  // Suppliers with their AP account ids (for direct-JE aggregation below).
+  const supplierRows = await db.select({ id: suppliersTable.id, accountId: suppliersTable.accountId })
+    .from(suppliersTable).where(eq(suppliersTable.companyId, companyId));
+  const accIdToSupplier = new Map<number, number>();
+  for (const s of supplierRows) if (s.accountId != null) accIdToSupplier.set(s.accountId, s.id);
+  const supplierAccIds: number[] = Array.from(accIdToSupplier.keys());
+
+  const [invRows, lcInvRows, retRows, setRows, jeRows] = await Promise.all([
     // Regular (non-LC) posted invoices — these accrue against supplier balance.
     db
       .select({
@@ -85,31 +93,63 @@ router.get("/balances", async (req, res) => {
       .from(supplierSettlementsTable)
       .where(eq(supplierSettlementsTable.companyId, companyId))
       .groupBy(supplierSettlementsTable.supplierId),
+
+    // Direct JE postings to supplier AP accounts that are NOT already aggregated
+    // via purchase_invoices / purchase_returns / payment_vouchers. This captures:
+    //   • Fixed-asset credit acquisitions (entryType = 'fa_acquisition')
+    //   • Manual / opening-balance JEs (entryType = 'general' / 'trial_balance_adjustment')
+    //   • Any future direct-to-AP posting source.
+    // Net = credit - debit (credit increases payable, debit decreases it).
+    supplierAccIds.length === 0
+      ? Promise.resolve([] as { accountId: number; net: string }[])
+      : db
+          .select({
+            accountId: journalEntryLinesTable.accountId,
+            net: sql<string>`coalesce(sum(${journalEntryLinesTable.credit} - ${journalEntryLinesTable.debit}),0)`,
+          })
+          .from(journalEntryLinesTable)
+          .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+          .where(and(
+            eq(journalEntriesTable.companyId, companyId),
+            eq(journalEntriesTable.status, "posted"),
+            inArray(journalEntryLinesTable.accountId, supplierAccIds),
+            notInArray(journalEntriesTable.entryType, [
+              "purchase_invoice", "purchase_return", "payment",
+              "contracting_outgoing_bill", "contracting_incoming_bill",
+            ]),
+          ))
+          .groupBy(journalEntryLinesTable.accountId),
   ]);
 
   const invMap   = Object.fromEntries(invRows.map(r   => [r.supplierId, parseFloat(r.total)]));
   const lcInvMap = Object.fromEntries(lcInvRows.map(r => [r.supplierId, parseFloat(r.total)]));
   const retMap   = Object.fromEntries(retRows.map(r   => [r.supplierId, parseFloat(r.total)]));
   const setMap   = Object.fromEntries(setRows.map(r   => [r.supplierId, parseFloat(r.total)]));
+  // Map JE-net (credit-debit) on supplier accountId back to supplierId.
+  const jeMap: Record<number, number> = {};
+  for (const r of jeRows) {
+    if (r.accountId == null) continue;
+    const sid = accIdToSupplier.get(r.accountId);
+    if (sid) jeMap[sid] = (jeMap[sid] ?? 0) + parseFloat(r.net);
+  }
 
-  const suppliers = await db.select({ id: suppliersTable.id })
-    .from(suppliersTable).where(eq(suppliersTable.companyId, companyId));
-
-  const result = suppliers.map(s => {
+  const result = supplierRows.map(s => {
     const inv   = invMap[s.id]   ?? 0;     // non-LC posted invoices
     const lcInv = lcInvMap[s.id] ?? 0;     // LC-linked posted invoices (already paid via LC)
     const ret   = retMap[s.id]   ?? 0;
     const set   = setMap[s.id]   ?? 0;
+    const je    = jeMap[s.id]    ?? 0;     // direct JE postings (e.g. fixed-asset credit acquisition, manual)
     // LC-linked invoices are excluded from the balance: the supplier was
     // already paid through the Letter of Credit, so its dues are zeroed
     // by the invoice amount on the suppliers screen.
-    const balance = inv - ret - set;
+    const balance = inv - ret - set + je;
     return {
       supplierId:        s.id,
       invoicesTotal:     inv,
       lcInvoicesTotal:   lcInv,
       returnsTotal:      ret,
       settlementsTotal:  set,
+      otherJeTotal:      je,
       balance,
     };
   });

@@ -7,9 +7,70 @@ import {
   paymentVouchersTable,
   cashBoxesTable,
   bankAccountsTable,
+  journalEntriesTable, journalEntryLinesTable,
 } from "@workspace/db";
-import { and, eq, sql, gte, lte, asc, inArray } from "drizzle-orm";
+import { and, eq, sql, gte, lte, lt, asc, inArray, notInArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
+
+// Entry types already aggregated via dedicated document tables — exclude when
+// reading direct JE postings to a supplier's AP account, otherwise we would
+// double-count purchase invoices / returns / payment vouchers.
+const SUPPLIER_DOC_ENTRY_TYPES = [
+  "purchase_invoice", "purchase_return", "payment",
+  "supplier_settlement",
+  "contracting_outgoing_bill", "contracting_incoming_bill",
+] as const;
+
+/** Returns posted JE lines on the supplier's AP account that come from
+ *  sources OTHER than the supplier-document tables (e.g. fixed-asset credit
+ *  acquisition, manual JEs, opening balances). Each row carries the JE date,
+ *  doc number, description, and signed debit/credit amount. */
+async function fetchSupplierDirectJeLines(
+  cid: number,
+  supplierAccountId: number | null | undefined,
+  fromDate?: string,
+  toDate?: string,
+  branchScope: any[] = [],
+): Promise<{ id: number; date: string; docNumber: string | null; description: string | null;
+              debit: number; credit: number; entryType: string }[]> {
+  if (!supplierAccountId) return [];
+  const conds: any[] = [
+    eq(journalEntriesTable.companyId, cid),
+    eq(journalEntriesTable.status, "posted"),
+    eq(journalEntryLinesTable.accountId, supplierAccountId),
+    notInArray(journalEntriesTable.entryType, [...SUPPLIER_DOC_ENTRY_TYPES]),
+    ...branchScope,
+  ];
+  if (fromDate) conds.push(gte(journalEntriesTable.entryDate, fromDate));
+  if (toDate)   conds.push(lte(journalEntriesTable.entryDate, toDate));
+  const rows = await db
+    .select({
+      id: journalEntriesTable.id,
+      date: journalEntriesTable.entryDate,
+      docNumber: journalEntriesTable.docNumber,
+      description: journalEntriesTable.description,
+      debit:  journalEntryLinesTable.debit,
+      credit: journalEntryLinesTable.credit,
+      entryType: journalEntriesTable.entryType,
+    })
+    .from(journalEntryLinesTable)
+    .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+    .where(and(...conds));
+  return rows.map(r => ({
+    id: r.id, date: r.date, docNumber: r.docNumber, description: r.description,
+    debit:  Number(r.debit  || 0),
+    credit: Number(r.credit || 0),
+    entryType: r.entryType,
+  }));
+}
+
+function jeLineLabel(entryType: string, fallback: string | null): string {
+  if (entryType === "fa_acquisition") return "اقتناء أصل ثابت — آجل";
+  if (entryType === "trial_balance_adjustment") return "تسوية رصيد افتتاحي";
+  if (entryType === "opening") return "رصيد افتتاحي";
+  if (entryType === "general") return "قيد يومية يدوي";
+  return fallback || "قيد يومية";
+}
 
 const router = Router();
 router.use(extractAuth);
@@ -241,6 +302,14 @@ router.get("/supplier-statement", async (req, res) => {
     const sid = Number(supplierId);
     if (!supplierId || !Number.isFinite(sid)) { res.status(400).json({ error: "supplierId مطلوب ويجب أن يكون رقماً صحيحاً" }); return; }
 
+    // Resolve the supplier's AP sub-account so we can pull direct JE postings
+    // (fixed-asset credit acquisitions, manual JEs, opening balances, …) and
+    // include them in the ledger.
+    const [supRow] = await db.select({ accountId: suppliersTable.accountId })
+      .from(suppliersTable)
+      .where(and(eq(suppliersTable.id, sid), eq(suppliersTable.companyId, cid)));
+    const supAccountId = supRow?.accountId ?? null;
+
     async function sumPriorTo(date: string | undefined) {
       if (!date) return 0;
       const [inv] = await db.select({ s: sql<string>`coalesce(sum(${purchaseInvoicesTable.totalAmount}), 0)` })
@@ -275,7 +344,24 @@ router.get("/supplier-statement", async (req, res) => {
           sql`${paymentVouchersTable.date} < ${date}`,
           ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
         ));
-      return Number(inv.s) - Number(ret.s) - Number(pay.s);
+      // Direct JE net (credit - debit) before the from date.
+      let jeNet = 0;
+      if (supAccountId) {
+        const [je] = await db
+          .select({ s: sql<string>`coalesce(sum(${journalEntryLinesTable.credit} - ${journalEntryLinesTable.debit}), 0)` })
+          .from(journalEntryLinesTable)
+          .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+          .where(and(
+            eq(journalEntriesTable.companyId, cid as number),
+            eq(journalEntriesTable.status, "posted"),
+            eq(journalEntryLinesTable.accountId, supAccountId),
+            notInArray(journalEntriesTable.entryType, [...SUPPLIER_DOC_ENTRY_TYPES]),
+            lt(journalEntriesTable.entryDate, date),
+            ...branchScopeSpread(req, journalEntriesTable.branchId, bid),
+          ));
+        jeNet = Number(je.s);
+      }
+      return Number(inv.s) - Number(ret.s) - Number(pay.s) + jeNet;
     }
 
     const opening = await sumPriorTo(from);
@@ -324,13 +410,25 @@ router.get("/supplier-statement", async (req, res) => {
       docNumber: paymentVouchersTable.code, amount: paymentVouchersTable.amount,
     }).from(paymentVouchersTable).where(and(...payConds));
 
+    // Direct JE rows (fixed-asset credit, manual JEs, …) within range.
+    const jeLines = await fetchSupplierDirectJeLines(
+      cid, supAccountId, from, to,
+      branchScopeSpread(req, journalEntriesTable.branchId, bid),
+    );
+
     // For supplier statements, invoices increase the payable (credit column),
-    // returns and payments decrease it (debit column).
+    // returns and payments decrease it (debit column). Direct JE lines carry
+    // their own debit/credit as posted.
     type Line = { date: string; type: string; docNumber: string | null; debit: number; credit: number; description: string };
     const lines: Line[] = [
       ...invs.map(i => ({ date: i.date, type: "invoice", docNumber: i.docNumber, debit: 0, credit: Number(i.total), description: "فاتورة مشتريات آجلة" })),
       ...rets.map(r => ({ date: r.date, type: "return",  docNumber: r.docNumber, debit: Number(r.total), credit: 0, description: "مرتجع مشتريات" })),
       ...pays.map(p => ({ date: p.date, type: "payment", docNumber: p.docNumber, debit: Number(p.amount), credit: 0, description: "سند صرف" })),
+      ...jeLines.map(j => ({
+        date: j.date, type: "journal", docNumber: j.docNumber,
+        debit: j.debit, credit: j.credit,
+        description: jeLineLabel(j.entryType, j.description),
+      })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
 
     res.json({ opening, lines });
@@ -355,6 +453,11 @@ router.get("/supplier-statement-detailed", async (req, res) => {
       res.status(400).json({ error: "supplierId مطلوب ويجب أن يكون رقماً صحيحاً" });
       return;
     }
+
+    const [supRow] = await db.select({ accountId: suppliersTable.accountId })
+      .from(suppliersTable)
+      .where(and(eq(suppliersTable.id, sid), eq(suppliersTable.companyId, cid)));
+    const supAccountId = supRow?.accountId ?? null;
 
     async function sumPriorTo(date: string | undefined) {
       if (!date) return 0;
@@ -390,7 +493,23 @@ router.get("/supplier-statement-detailed", async (req, res) => {
           sql`${paymentVouchersTable.date} < ${date}`,
           ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
         ));
-      return Number(inv.s) - Number(ret.s) - Number(pay.s);
+      let jeNet = 0;
+      if (supAccountId) {
+        const [je] = await db
+          .select({ s: sql<string>`coalesce(sum(${journalEntryLinesTable.credit} - ${journalEntryLinesTable.debit}), 0)` })
+          .from(journalEntryLinesTable)
+          .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+          .where(and(
+            eq(journalEntriesTable.companyId, cid as number),
+            eq(journalEntriesTable.status, "posted"),
+            eq(journalEntryLinesTable.accountId, supAccountId),
+            notInArray(journalEntriesTable.entryType, [...SUPPLIER_DOC_ENTRY_TYPES]),
+            lt(journalEntriesTable.entryDate, date),
+            ...branchScopeSpread(req, journalEntriesTable.branchId, bid),
+          ));
+        jeNet = Number(je.s);
+      }
+      return Number(inv.s) - Number(ret.s) - Number(pay.s) + jeNet;
     }
     const opening = await sumPriorTo(from);
 
@@ -596,6 +715,16 @@ router.get("/supplier-statement-detailed", async (req, res) => {
           refNumber: p.refNumber,
           description: p.description,
         },
+      })),
+      ...(await fetchSupplierDirectJeLines(
+        cid, supAccountId, from, to,
+        branchScopeSpread(req, journalEntriesTable.branchId, bid),
+      )).map(j => ({
+        id: j.id, date: j.date, type: "journal", docNumber: j.docNumber,
+        debit: j.debit, credit: j.credit,
+        description: jeLineLabel(j.entryType, j.description),
+        paymentType: null,
+        meta: { entryType: j.entryType, description: j.description },
       })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
 
