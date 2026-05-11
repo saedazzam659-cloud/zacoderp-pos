@@ -36,6 +36,7 @@ import {
   faDisposalsTable,
   journalEntriesTable,
   journalEntryLinesTable,
+  suppliersTable,
 } from "@workspace/db";
 import { resolvePostingStatus } from "./postingStatus.js";
 import { resolveCashAccount } from "./hr-journals.js";
@@ -100,6 +101,10 @@ const fix = (n: number) => n.toFixed(2);
 export interface AcquisitionSource {
   cashBoxId?:    number | null;
   bankAccountId?: number | null;
+  /** When set and no cash/bank source given, credit the supplier's AP
+   *  account (true ذمم/AP behaviour) instead of the generic acquisition
+   *  clearing account. Mirrors the purchase-invoice convention. */
+  supplierId?:    number | null;
 }
 
 /** Posts the acquisition JE and writes journalEntryId back on the asset.
@@ -129,6 +134,18 @@ export async function buildAcquisitionJournal(
     const cash = await resolveCashAccount(cid, source, dx);
     crAccountId = cash.accountId;
     crLabel     = cash.label;
+  } else if (source.supplierId) {
+    const [sup] = await dx.select({
+      accountId: suppliersTable.accountId,
+      nameAr:    suppliersTable.nameAr,
+      nameEn:    suppliersTable.nameEn,
+    }).from(suppliersTable)
+      .where(and(eq(suppliersTable.id, source.supplierId), eq(suppliersTable.companyId, cid)));
+    if (!sup?.accountId) {
+      throw new Error("المورد المختار غير مربوط بحساب ذمم محاسبي");
+    }
+    crAccountId = sup.accountId;
+    crLabel     = `ذمم مورد: ${sup.nameAr ?? sup.nameEn ?? ""}`.trim();
   } else {
     if (!accounts.acquisitionClearing) {
       throw new Error("حساب وسيط اقتناء الأصول غير مربوط (يستخدم عند الشراء الآجل)");

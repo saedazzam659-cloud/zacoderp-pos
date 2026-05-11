@@ -19,7 +19,9 @@ type Asset = {
   id: number; code: string; nameAr: string; nameEn: string | null;
   status: string; categoryId: number | null; branchId: number | null;
   purchaseDate: string | null; purchaseValue: string;
-  supplierName: string | null; invoiceNo: string | null; paymentMethod: string | null;
+  supplierName: string | null; supplierId: number | null;
+  invoiceNo: string | null; paymentMethod: string | null;
+  cashBoxId: number | null; bankAccountId: number | null;
   model: string | null; brand: string | null; serialNo: string | null;
   plateNumber: string | null; color: string | null;
   initialKm: number | null; currentKm: number | null;
@@ -45,7 +47,8 @@ const METHODS = [
 const EMPTY = {
   code:"", nameAr:"", nameEn:"", status:"active",
   categoryId:"", branchId:"", costCenterId:"",
-  purchaseDate:"", purchaseValue:"0", supplierName:"", invoiceNo:"", paymentMethod:"cash",
+  purchaseDate:"", purchaseValue:"0", supplierName:"", supplierId:"",
+  invoiceNo:"", paymentMethod:"cash", cashBoxId:"", bankAccountId:"",
   model:"", brand:"", serialNo:"", plateNumber:"", color:"",
   initialKm:"", currentKm:"",
   lifeYears:"5", depreciationMethod:"straight_line",
@@ -80,6 +83,21 @@ export default function FixedAssets() {
     queryFn: async () => (await fetch(`${API}/api/fixed-assets/categories?companyId=${cid}`, { headers })).json(),
     enabled: !!cid,
   });
+  const { data: suppliers = [] } = useQuery<any[]>({
+    queryKey:["suppliers", cid],
+    queryFn: async () => (await fetch(`${API}/api/suppliers?companyId=${cid}`, { headers })).json(),
+    enabled: !!cid,
+  });
+  const { data: cashBoxes = [] } = useQuery<any[]>({
+    queryKey:["cash-boxes", cid],
+    queryFn: async () => (await fetch(`${API}/api/cash-boxes?companyId=${cid}`, { headers })).json(),
+    enabled: !!cid,
+  });
+  const { data: bankAccounts = [] } = useQuery<any[]>({
+    queryKey:["bank-accounts", cid],
+    queryFn: async () => (await fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers })).json(),
+    enabled: !!cid,
+  });
 
   const filtered = rows.filter(a => !search.trim() ||
     a.nameAr?.toLowerCase().includes(search.toLowerCase()) ||
@@ -95,7 +113,9 @@ export default function FixedAssets() {
       categoryId:a.categoryId?String(a.categoryId):"", branchId:a.branchId?String(a.branchId):"",
       costCenterId:"",
       purchaseDate:a.purchaseDate??"", purchaseValue:String(a.purchaseValue??"0"),
-      supplierName:a.supplierName??"", invoiceNo:a.invoiceNo??"", paymentMethod:a.paymentMethod??"cash",
+      supplierName:a.supplierName??"", supplierId:a.supplierId?String(a.supplierId):"",
+      invoiceNo:a.invoiceNo??"", paymentMethod:a.paymentMethod??"cash",
+      cashBoxId:a.cashBoxId?String(a.cashBoxId):"", bankAccountId:a.bankAccountId?String(a.bankAccountId):"",
       model:a.model??"", brand:a.brand??"", serialNo:a.serialNo??"",
       plateNumber:a.plateNumber??"", color:a.color??"",
       initialKm:a.initialKm?String(a.initialKm):"", currentKm:a.currentKm?String(a.currentKm):"",
@@ -115,6 +135,7 @@ export default function FixedAssets() {
   const saveMut = useMutation({
     mutationFn: async () => {
       if (!form.nameAr.trim()) throw new Error("اسم الأصل مطلوب");
+      const sup = suppliers.find((s: any) => String(s.id) === String(form.supplierId));
       const body: any = { ...form, companyId: cid,
         categoryId: form.categoryId ? Number(form.categoryId) : null,
         branchId:   form.branchId   ? Number(form.branchId)   : null,
@@ -126,6 +147,11 @@ export default function FixedAssets() {
         depreciationStart: form.depreciationStart || null,
         insuranceStart: form.insuranceStart || null,
         insuranceEnd:   form.insuranceEnd   || null,
+        supplierId:    form.supplierId    ? Number(form.supplierId)    : null,
+        // Snapshot supplier name for display continuity
+        supplierName:  sup ? (sup.nameAr ?? sup.nameEn ?? form.supplierName ?? null) : (form.supplierName || null),
+        cashBoxId:     form.paymentMethod === "cash" && form.cashBoxId    ? Number(form.cashBoxId)    : null,
+        bankAccountId: form.paymentMethod === "bank" && form.bankAccountId ? Number(form.bankAccountId) : null,
       };
       const url = editing ? `${API}/api/fixed-assets/assets/${editing.id}` : `${API}/api/fixed-assets/assets`;
       const r = await fetch(url, { method: editing ? "PUT" : "POST",
@@ -240,14 +266,59 @@ export default function FixedAssets() {
                 <div><Label>قيمة الشراء</Label>
                   <Input type="number" step="0.01" value={form.purchaseValue} onChange={(e)=>setForm({...form,purchaseValue:e.target.value})} /></div>
                 <div><Label>المورد</Label>
-                  <Input value={form.supplierName} onChange={(e)=>setForm({...form,supplierName:e.target.value})} /></div>
+                  <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                    value={form.supplierId} onChange={(e)=>setForm({...form,supplierId:e.target.value})}
+                    data-testid="select-supplier">
+                    <option value="">— بدون / مورد عابر —</option>
+                    {suppliers.map((s:any)=>(
+                      <option key={s.id} value={s.id}>{s.nameAr ?? s.nameEn ?? `#${s.id}`}</option>
+                    ))}
+                  </select></div>
                 <div><Label>رقم الفاتورة</Label>
                   <Input value={form.invoiceNo} onChange={(e)=>setForm({...form,invoiceNo:e.target.value})} /></div>
                 <div><Label>طريقة الدفع</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
-                    value={form.paymentMethod} onChange={(e)=>setForm({...form,paymentMethod:e.target.value})}>
-                    <option value="cash">نقدي</option><option value="bank">بنك</option><option value="credit">آجل</option>
+                    value={form.paymentMethod}
+                    onChange={(e)=>setForm({...form,paymentMethod:e.target.value, cashBoxId:"", bankAccountId:""})}
+                    data-testid="select-payment-method">
+                    <option value="cash">نقدي</option><option value="bank">بنك</option><option value="credit">آجل (على المورد)</option>
                   </select></div>
+                {form.paymentMethod === "cash" && (
+                  <div><Label>الصندوق النقدي *</Label>
+                    <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                      value={form.cashBoxId} onChange={(e)=>setForm({...form,cashBoxId:e.target.value})}
+                      data-testid="select-cash-box">
+                      <option value="">— اختر —</option>
+                      {cashBoxes.filter((c:any)=>c.isActive!==false).map((c:any)=>(
+                        <option key={c.id} value={c.id}>{c.nameAr ?? c.nameEn ?? `#${c.id}`}</option>
+                      ))}
+                    </select></div>
+                )}
+                {form.paymentMethod === "bank" && (
+                  <div><Label>الحساب البنكي *</Label>
+                    <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                      value={form.bankAccountId} onChange={(e)=>setForm({...form,bankAccountId:e.target.value})}
+                      data-testid="select-bank-account">
+                      <option value="">— اختر —</option>
+                      {bankAccounts.filter((b:any)=>b.isActive!==false).map((b:any)=>(
+                        <option key={b.id} value={b.id}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</option>
+                      ))}
+                    </select></div>
+                )}
+                {form.paymentMethod === "credit" && form.supplierId && (
+                  <div className="md:col-span-2 self-end">
+                    <p className="text-xs text-muted-foreground bg-amber-50 border border-amber-200 rounded p-2">
+                      سيتم قيد المبلغ على ذمة المورد المختار (دائن لحساب المورد)
+                    </p>
+                  </div>
+                )}
+                {form.paymentMethod === "credit" && !form.supplierId && (
+                  <div className="md:col-span-2 self-end">
+                    <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded p-2">
+                      اختر المورد أعلاه أو سيتم استخدام حساب وسيط اقتناء الأصول
+                    </p>
+                  </div>
+                )}
               </div>
             </fieldset>
 

@@ -168,8 +168,11 @@ router.post("/assets", async (req, res) => {
       purchaseDate: b.purchaseDate || null,
       purchaseValue,
       supplierName: b.supplierName || null,
+      supplierId: b.supplierId ? Number(b.supplierId) : null,
       invoiceNo: b.invoiceNo || null,
       paymentMethod: b.paymentMethod || null,
+      cashBoxId: b.cashBoxId ? Number(b.cashBoxId) : null,
+      bankAccountId: b.bankAccountId ? Number(b.bankAccountId) : null,
       model: b.model || null,
       brand: b.brand || null,
       serialNo: b.serialNo || null,
@@ -201,8 +204,9 @@ router.post("/assets", async (req, res) => {
     if (Number(purchaseValue) > 0 && Number(accumulated) === 0) {
       try {
         await buildAcquisitionJournal(cid, row.id, {
-          cashBoxId:    b.cashBoxId    ? Number(b.cashBoxId)    : null,
-          bankAccountId: b.bankAccountId ? Number(b.bankAccountId) : null,
+          cashBoxId:    b.paymentMethod === "cash" && b.cashBoxId    ? Number(b.cashBoxId)    : null,
+          bankAccountId: b.paymentMethod === "bank" && b.bankAccountId ? Number(b.bankAccountId) : null,
+          supplierId:   b.paymentMethod === "credit" && b.supplierId  ? Number(b.supplierId)   : null,
         });
       } catch (e: any) {
         warning = e.message ?? "تعذّر إنشاء قيد الاقتناء";
@@ -225,7 +229,7 @@ router.put("/assets/:id", async (req, res) => {
     for (const k of numStrFields) if (b[k] !== undefined) patch[k] = String(b[k] || "0");
     const dateFields = ["purchaseDate","depreciationStart","insuranceStart","insuranceEnd"];
     for (const k of dateFields) if (b[k] !== undefined) patch[k] = b[k] || null;
-    const intFields = ["branchId","costCenterId","categoryId","custodianEmployeeId","initialKm","currentKm"];
+    const intFields = ["branchId","costCenterId","categoryId","custodianEmployeeId","initialKm","currentKm","supplierId","cashBoxId","bankAccountId"];
     for (const k of intFields) if (b[k] !== undefined) patch[k] = b[k] ? Number(b[k]) : null;
     if (b.lifeYears !== undefined) patch.lifeYears = Number(b.lifeYears || 5);
     if ((STATUSES as readonly string[]).includes(b.status)) patch.status = b.status;

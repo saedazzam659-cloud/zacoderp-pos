@@ -63,8 +63,18 @@ export const fixedAssetsTable = pgTable("fixed_assets", {
   purchaseDate:        date("purchase_date"),
   purchaseValue:       numeric("purchase_value", { precision: 15, scale: 2 }).notNull().default("0"),
   supplierName:        text("supplier_name"),
+  // FK to suppliers.id — preferred over the free-text snapshot above.
+  // Kept nullable + no FK constraint so legacy rows (and rows where the
+  // user types a one-off vendor) keep working.
+  supplierId:          integer("supplier_id"),
   invoiceNo:           text("invoice_no"),
+  // cash | bank | credit — same vocabulary as purchase invoices.
   paymentMethod:       text("payment_method"),
+  // When paymentMethod = 'cash' or 'bank', point at the source of funds so
+  // the acquisition JE credits the right cash/bank account instead of the
+  // generic acquisition-clearing account.
+  cashBoxId:           integer("cash_box_id"),
+  bankAccountId:       integer("bank_account_id"),
 
   // ── Technical / vehicle data ─────────────────────────────────
   model:               text("model"),                 // e.g. 2023
