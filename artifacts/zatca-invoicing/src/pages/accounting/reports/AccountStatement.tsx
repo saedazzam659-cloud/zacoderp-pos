@@ -15,16 +15,61 @@ import { FileText, Search, Printer, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Map a journal-entry row coming back from /account-statement to the URL of
-// the document that produced it. Sales / purchase invoices have dedicated
-// detail pages; everything else (returns, vouchers, payroll, manual JEs, …)
-// falls back to the journal-entry detail page, which renders cleanly for any
-// entry type and is therefore the safe universal target.
+// the document that produced it. Documents with a dedicated detail page
+// (invoices, vouchers, production orders) deep-link straight to the row;
+// modules whose UI only has a list view (returns, contracting bills, fixed
+// assets, payroll, goods receipts/deliveries) link to the list page so the
+// user lands inside the right module rather than on the raw JE. Anything we
+// don't recognise — manual / opening / closing / depreciation re-runs / …
+// — falls back to the journal-entry detail page, which renders cleanly for
+// every entry type and is therefore the safe universal target.
 function sourceLinkFor(row: any): string | null {
-  if (row.entryType === "sales_invoice" && row.salesInvoiceId) {
-    return `/sales/invoices/${row.salesInvoiceId}`;
-  }
-  if (row.entryType === "purchase_invoice" && row.purchaseInvoiceId) {
-    return `/purchasing/invoices/${row.purchaseInvoiceId}`;
+  switch (row.entryType) {
+    // ── detail-page targets ──────────────────────────────────────────────
+    case "sales_invoice":
+      if (row.salesInvoiceId)    return `/sales/invoices/${row.salesInvoiceId}`;
+      break;
+    case "purchase_invoice":
+      if (row.purchaseInvoiceId) return `/purchasing/invoices/${row.purchaseInvoiceId}`;
+      break;
+    case "receipt":
+      if (row.receiptVoucherId)  return `/cash/receipt-vouchers/${row.receiptVoucherId}`;
+      break;
+    case "payment":
+      if (row.paymentVoucherId)  return `/cash/payment-vouchers/${row.paymentVoucherId}`;
+      break;
+
+    // ── list-page targets (no detail screen exists for these modules) ───
+    case "sales_return":
+      if (row.salesReturnId)             return `/sales/returns`;
+      break;
+    case "purchase_return":
+      if (row.purchaseReturnId)          return `/purchasing/returns`;
+      break;
+    case "contracting_outgoing_bill":
+    case "contracting_incoming_bill":
+      if (row.contractingProgressBillId) return `/contracting/bills`;
+      break;
+    case "fa_acquisition":
+      if (row.fixedAssetId)              return `/fixed-assets/assets`;
+      break;
+    case "fa_depreciation":
+      if (row.faDepreciationRunId)       return `/fixed-assets/depreciation`;
+      break;
+    case "fa_disposal":
+      if (row.faDisposalId)              return `/fixed-assets/disposals`;
+      break;
+    case "payroll_run":
+    case "employee_loan":
+    case "eos_payment":
+      if (row.payrollRunId)              return `/hr/payroll`;
+      break;
+    case "stock_adjustment":
+      if (row.goodsReceiptId)            return `/inventory/goods-receipts`;
+      if (row.goodsDeliveryId)           return `/inventory/goods-deliveries`;
+      break;
+    case "stock_transfer":
+      return `/inventory/transfers`;
   }
   if (row.entryId) {
     return `/accounting/journals/${row.entryId}`;

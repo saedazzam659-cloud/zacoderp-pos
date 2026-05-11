@@ -1,6 +1,16 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { accountsTable, journalEntriesTable, journalEntryLinesTable, salesInvoicesTable, purchaseInvoicesTable, trialBalancesTable, trialBalanceDetailsTable } from "@workspace/db";
+import {
+  accountsTable, journalEntriesTable, journalEntryLinesTable,
+  salesInvoicesTable, salesReturnsTable,
+  purchaseInvoicesTable, purchaseReturnsTable,
+  receiptVouchersTable, paymentVouchersTable,
+  goodsReceiptsTable, goodsDeliveriesTable,
+  contractingProgressBillsTable,
+  fixedAssetsTable, faDepreciationRunsTable, faDisposalsTable,
+  payrollRunsTable,
+  trialBalancesTable, trialBalanceDetailsTable,
+} from "@workspace/db";
 import { eq, and, sql, gte, lte, asc, desc, ne, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
 
@@ -333,28 +343,81 @@ router.get("/account-statement", async (req, res) => {
         credit:      journalEntryLinesTable.credit,
         // sourceId = pk of the source document, if any. Resolved per entryType
         // by left-joining against the table that owns this journal entry.
-        // Sales/purchase invoices keep `journal_entry_id` on the row, so we
-        // map them straight back. Other entry types (returns, vouchers,
-        // payroll, general, …) fall back to the JE itself on the frontend.
-        salesInvoiceId:    salesInvoicesTable.id,
-        purchaseInvoiceId: purchaseInvoicesTable.id,
+        // Each module (sales, purchasing, cash, contracting, FA, payroll,
+        // inventory) keeps a back-reference to its posted JE on the source
+        // row, so we just LEFT JOIN those tables and expose the IDs. The
+        // frontend (`sourceLinkFor()`) maps each entryType+id pair to the
+        // matching detail or list page; entry types we don't recognise
+        // (general, manual, opening, closing, …) safely fall back to the
+        // JE detail page.
+        salesInvoiceId:           salesInvoicesTable.id,
+        salesReturnId:            salesReturnsTable.id,
+        purchaseInvoiceId:        purchaseInvoicesTable.id,
+        purchaseReturnId:         purchaseReturnsTable.id,
+        receiptVoucherId:         receiptVouchersTable.id,
+        paymentVoucherId:         paymentVouchersTable.id,
+        goodsReceiptId:           goodsReceiptsTable.id,
+        goodsDeliveryId:          goodsDeliveriesTable.id,
+        contractingProgressBillId:contractingProgressBillsTable.id,
+        fixedAssetId:             fixedAssetsTable.id,
+        faDepreciationRunId:      faDepreciationRunsTable.id,
+        faDisposalId:             faDisposalsTable.id,
+        payrollRunId:             payrollRunsTable.id,
       })
       .from(journalEntryLinesTable)
       .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
-      .leftJoin(
-        salesInvoicesTable,
-        and(
-          eq(salesInvoicesTable.journalEntryId, journalEntriesTable.id),
-          eq(salesInvoicesTable.companyId, cid),
-        ),
-      )
-      .leftJoin(
-        purchaseInvoicesTable,
-        and(
-          eq(purchaseInvoicesTable.journalEntryId, journalEntriesTable.id),
-          eq(purchaseInvoicesTable.companyId, cid),
-        ),
-      )
+      .leftJoin(salesInvoicesTable, and(
+        eq(salesInvoicesTable.journalEntryId, journalEntriesTable.id),
+        eq(salesInvoicesTable.companyId, cid),
+      ))
+      .leftJoin(salesReturnsTable, and(
+        eq(salesReturnsTable.journalEntryId, journalEntriesTable.id),
+        eq(salesReturnsTable.companyId, cid),
+      ))
+      .leftJoin(purchaseInvoicesTable, and(
+        eq(purchaseInvoicesTable.journalEntryId, journalEntriesTable.id),
+        eq(purchaseInvoicesTable.companyId, cid),
+      ))
+      .leftJoin(purchaseReturnsTable, and(
+        eq(purchaseReturnsTable.journalEntryId, journalEntriesTable.id),
+        eq(purchaseReturnsTable.companyId, cid),
+      ))
+      .leftJoin(receiptVouchersTable, and(
+        eq(receiptVouchersTable.journalEntryId, journalEntriesTable.id),
+        eq(receiptVouchersTable.companyId, cid),
+      ))
+      .leftJoin(paymentVouchersTable, and(
+        eq(paymentVouchersTable.journalEntryId, journalEntriesTable.id),
+        eq(paymentVouchersTable.companyId, cid),
+      ))
+      .leftJoin(goodsReceiptsTable, and(
+        eq(goodsReceiptsTable.journalEntryId, journalEntriesTable.id),
+        eq(goodsReceiptsTable.companyId, cid),
+      ))
+      .leftJoin(goodsDeliveriesTable, and(
+        eq(goodsDeliveriesTable.journalEntryId, journalEntriesTable.id),
+        eq(goodsDeliveriesTable.companyId, cid),
+      ))
+      .leftJoin(contractingProgressBillsTable, and(
+        eq(contractingProgressBillsTable.journalEntryId, journalEntriesTable.id),
+        eq(contractingProgressBillsTable.companyId, cid),
+      ))
+      .leftJoin(fixedAssetsTable, and(
+        eq(fixedAssetsTable.journalEntryId, journalEntriesTable.id),
+        eq(fixedAssetsTable.companyId, cid),
+      ))
+      .leftJoin(faDepreciationRunsTable, and(
+        eq(faDepreciationRunsTable.journalEntryId, journalEntriesTable.id),
+        eq(faDepreciationRunsTable.companyId, cid),
+      ))
+      .leftJoin(faDisposalsTable, and(
+        eq(faDisposalsTable.journalEntryId, journalEntriesTable.id),
+        eq(faDisposalsTable.companyId, cid),
+      ))
+      .leftJoin(payrollRunsTable, and(
+        eq(payrollRunsTable.postedJournalId, journalEntriesTable.id),
+        eq(payrollRunsTable.companyId, cid),
+      ))
       .where(and(
         eq(journalEntryLinesTable.accountId, Number(accountId)),
         ...entryFilters,
