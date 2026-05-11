@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { Link } from "wouter";
 import { useFormatters } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -8,7 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
-import { TrendingUp, Search, Printer } from "lucide-react";
+import CostCenterFilter from "@/components/CostCenterFilter";
+import { TrendingUp, Search, Printer, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -25,16 +27,18 @@ export default function IncomeStatement() {
   const [fromDate, setFromDate] = useState(firstOfYear);
   const [toDate, setToDate]     = useState(today);
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
+  const [costCenterId, setCostCenterId] = useState<number | undefined>(undefined);
   const [searched, setSearched] = useState(false);
 
   const { data, isLoading, refetch } = useQuery<any>({
-    queryKey: ["income-statement", cid, fromDate, toDate, branchId],
+    queryKey: ["income-statement", cid, fromDate, toDate, branchId, costCenterId],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (cid) params.set("companyId", String(cid));
       params.set("fromDate", fromDate);
       params.set("toDate", toDate);
       if (branchId) params.set("branchId", String(branchId));
+      if (costCenterId) params.set("costCenterId", String(costCenterId));
       const res = await fetch(`${API}/api/accounting-reports/income-statement?${params}`, { headers });
       return res.json();
     },
@@ -43,6 +47,20 @@ export default function IncomeStatement() {
 
   const netIncome = data?.netIncome ?? 0;
   const isProfit  = netIncome >= 0;
+
+  // Build the deep-link href to the Account Statement (ledger) page,
+  // pre-filtered to the same date range / branch / cost-center the user
+  // is currently viewing on the Income Statement. Clicking any account row
+  // opens its full transaction ledger filtered to the exact same context.
+  const drillHref = (accountId: number) => {
+    const qs = new URLSearchParams();
+    qs.set("accountId", String(accountId));
+    qs.set("fromDate", fromDate);
+    qs.set("toDate", toDate);
+    if (branchId)     qs.set("branchId", String(branchId));
+    if (costCenterId) qs.set("costCenterId", String(costCenterId));
+    return `/accounting/reports/account-statement?${qs.toString()}`;
+  };
 
   const exportRows = data ? [
     ...(data.revenues ?? []).filter((r: any) => r.totalCredit !== r.totalDebit).map((r: any) =>
@@ -85,9 +103,11 @@ export default function IncomeStatement() {
         </div>
       </div>
 
-      {/* Filters */}
+      {/* Filters — 5-col grid on lg so date range + branch + cost-center
+          + the action button all line up cleanly. Cost-center filter is
+          a visual twin of the branch filter (same Select/Label idiom). */}
       <div className="rounded-xl border bg-card p-4 shadow-sm">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
           <div className="space-y-1.5">
             <Label>{t("accountingReports.fromDate")}</Label>
             <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
@@ -96,10 +116,8 @@ export default function IncomeStatement() {
             <Label>{t("accountingReports.toDate")}</Label>
             <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
           </div>
-          <div className="space-y-1.5">
-            <Label>{t("common.branch")}</Label>
-            <BranchFilter value={branchId} onChange={setBranchId} />
-          </div>
+          <BranchFilter value={branchId} onChange={setBranchId} />
+          <CostCenterFilter value={costCenterId} onChange={setCostCenterId} />
           <Button className="gap-2" onClick={() => { setSearched(true); refetch(); }} disabled={isLoading}>
             <Search className="h-4 w-4" />
             {isLoading ? t("accountingReports.loading") : t("accountingReports.show_income_statement")}
@@ -118,15 +136,23 @@ export default function IncomeStatement() {
               <div className="px-5 py-4 text-center text-muted-foreground text-sm">{t("incomeStatement.noRevenues")}</div>
             )}
             {(data.revenues ?? []).filter((r: any) => r.totalCredit !== r.totalDebit).map((r: any) => (
-              <div key={r.id} className="flex items-center justify-between px-5 py-2.5 border-b hover:bg-muted/30">
-                <div>
+              <Link
+                key={r.id}
+                href={drillHref(r.id)}
+                title={t("accountStatement.openLedger", "فتح كشف حساب لهذا البند")}
+                className="group flex items-center justify-between px-5 py-2.5 border-b hover:bg-green-50/60 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <ExternalLink className="h-3.5 w-3.5 text-muted-foreground/0 group-hover:text-green-700 transition-colors shrink-0" />
                   <span className={cn("text-xs text-muted-foreground font-mono", isRtl ? "ml-2" : "mr-2")}>{r.code}</span>
-                  <span className="text-sm">{isRtl ? r.nameAr : (r.nameEn || r.nameAr)}</span>
+                  <span className="text-sm group-hover:text-green-800 group-hover:underline underline-offset-4 decoration-green-400 truncate">
+                    {isRtl ? r.nameAr : (r.nameEn || r.nameAr)}
+                  </span>
                 </div>
                 <span className="font-mono text-sm font-semibold text-green-700">
                   {fmt(r.totalCredit - r.totalDebit)}
                 </span>
-              </div>
+              </Link>
             ))}
             <div className="bg-green-50 flex items-center justify-between px-5 py-3 font-bold text-green-800">
               <span>{t("incomeStatement.totalRevenues")}</span>
@@ -143,15 +169,23 @@ export default function IncomeStatement() {
               <div className="px-5 py-4 text-center text-muted-foreground text-sm">{t("incomeStatement.noExpenses")}</div>
             )}
             {(data.expenses ?? []).filter((r: any) => r.totalDebit !== r.totalCredit).map((r: any) => (
-              <div key={r.id} className="flex items-center justify-between px-5 py-2.5 border-b hover:bg-muted/30">
-                <div>
+              <Link
+                key={r.id}
+                href={drillHref(r.id)}
+                title={t("accountStatement.openLedger", "فتح كشف حساب لهذا البند")}
+                className="group flex items-center justify-between px-5 py-2.5 border-b hover:bg-rose-50/60 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <ExternalLink className="h-3.5 w-3.5 text-muted-foreground/0 group-hover:text-rose-700 transition-colors shrink-0" />
                   <span className={cn("text-xs text-muted-foreground font-mono", isRtl ? "ml-2" : "mr-2")}>{r.code}</span>
-                  <span className="text-sm">{isRtl ? r.nameAr : (r.nameEn || r.nameAr)}</span>
+                  <span className="text-sm group-hover:text-rose-800 group-hover:underline underline-offset-4 decoration-rose-400 truncate">
+                    {isRtl ? r.nameAr : (r.nameEn || r.nameAr)}
+                  </span>
                 </div>
                 <span className="font-mono text-sm font-semibold text-rose-700">
                   {fmt(r.totalDebit - r.totalCredit)}
                 </span>
-              </div>
+              </Link>
             ))}
             <div className="bg-rose-50 flex items-center justify-between px-5 py-3 font-bold text-rose-800">
               <span>{t("incomeStatement.totalExpenses")}</span>

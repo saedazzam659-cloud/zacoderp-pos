@@ -39,7 +39,7 @@ function getBid(req: any): number | undefined {
 //   • closingDebit / closingCredit / closingBalance — opening +
 //     period movements. Useful for the trial-balance UI which needs
 //     the three sections side-by-side.
-async function getAccountBalances(req: Request, cid: number, fromDate?: string, toDate?: string, branchId?: number, openingFromTrialBalance = false) {
+async function getAccountBalances(req: Request, cid: number, fromDate?: string, toDate?: string, branchId?: number, openingFromTrialBalance = false, costCenterId?: number) {
   // Get all accounts for company
   const accounts = await db.select().from(accountsTable)
     .where(and(eq(accountsTable.companyId, cid), eq(accountsTable.isActive, true)))
@@ -73,7 +73,14 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
   }
 
   // Helper to sum debit/credit per account under a set of filters.
+  // Cost-center filter (when supplied) is applied at the LINE level — the
+  // `cost_center` column lives on `journal_entry_lines`, stored as text
+  // (we stringify the numeric id), so an exact-string match is correct.
   async function aggregate(filters: any[]) {
+    const lineFilters: any[] = [...filters];
+    if (costCenterId !== undefined && costCenterId !== null) {
+      lineFilters.push(eq(journalEntryLinesTable.costCenter, String(costCenterId)));
+    }
     const rows = await db
       .select({
         accountId: journalEntryLinesTable.accountId,
@@ -82,7 +89,7 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
       })
       .from(journalEntryLinesTable)
       .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
-      .where(and(...filters))
+      .where(and(...lineFilters))
       .groupBy(journalEntryLinesTable.accountId);
     const map = new Map<number, { debit: number; credit: number }>();
     for (const l of rows) {
@@ -222,8 +229,10 @@ router.get("/income-statement", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.json({}); return; }
     const bid = getBid(req);
-    const { fromDate, toDate } = req.query as any;
-    const rows = await getAccountBalances(req, cid, fromDate, toDate, bid);
+    const { fromDate, toDate, costCenterId } = req.query as any;
+    const ccId = costCenterId !== undefined && costCenterId !== "" && costCenterId !== "all"
+      ? Number(costCenterId) : undefined;
+    const rows = await getAccountBalances(req, cid, fromDate, toDate, bid, false, ccId);
 
     const revenues  = rows.filter(r => r.accountType === "revenue");
     const expenses  = rows.filter(r => r.accountType === "expense");
@@ -248,8 +257,13 @@ router.get("/account-statement", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.json({ previousBalance: 0, previousDebit: 0, previousCredit: 0, rows: [] }); return; }
     const bid = getBid(req);
-    const { accountId, fromDate, toDate } = req.query as any;
+    const { accountId, fromDate, toDate, costCenterId } = req.query as any;
     if (!accountId) { res.status(400).json({ error: "accountId مطلوب" }); return; }
+    // Optional cost-center scope. The column lives on
+    // `journal_entry_lines` and is stored as text (we stringify the
+    // numeric id when posting), so an exact-string match is correct.
+    const ccId = costCenterId !== undefined && costCenterId !== "" && costCenterId !== "all"
+      ? String(Number(costCenterId)) : undefined;
 
     // ── Previous balance (رصيد ما قبل) ──────────────────────────────
     // SAP-style "brought-forward" balance: sum every JE line for this
@@ -266,6 +280,7 @@ router.get("/account-statement", async (req, res) => {
       ];
       pushBranchScope(req, prevFilters, journalEntriesTable.branchId, bid);
       prevFilters.push(sql`${journalEntriesTable.entryDate} < ${fromDate}`);
+      if (ccId) prevFilters.push(eq(journalEntryLinesTable.costCenter, ccId));
       const [prev] = await db
         .select({
           debit:  sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}), 0)`,
@@ -324,6 +339,7 @@ router.get("/account-statement", async (req, res) => {
       .where(and(
         eq(journalEntryLinesTable.accountId, Number(accountId)),
         ...entryFilters,
+        ...(ccId ? [eq(journalEntryLinesTable.costCenter, ccId)] : []),
       ))
       .orderBy(asc(journalEntriesTable.entryDate));
 

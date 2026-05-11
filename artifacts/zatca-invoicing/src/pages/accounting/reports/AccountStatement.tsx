@@ -49,10 +49,12 @@ export default function AccountStatement() {
   const [fromDate, setFromDate]   = useState(firstOfMonth);
   const [toDate, setToDate]       = useState(today);
   const [branchId, setBranchId]   = useState<number | undefined>(undefined);
+  const [costCenterId, setCostCenterId] = useState<number | undefined>(undefined);
   const [searched, setSearched]   = useState(false);
 
   // Deep-link support: when navigated from another report (e.g. trial
-  // balance drill-down) with ?accountId=&fromDate=&toDate=, pre-fill the
+  // balance drill-down or Income Statement row click) with
+  // ?accountId=&fromDate=&toDate=&branchId=&costCenterId=, pre-fill the
   // form and auto-trigger the search so the statement is shown immediately.
   const searchString = useSearch();
   useEffect(() => {
@@ -62,10 +64,12 @@ export default function AccountStatement() {
     const f = params.get("fromDate");
     const tt = params.get("toDate");
     const b = params.get("branchId");
+    const cc = params.get("costCenterId");
     if (a) setAccountId(a);
     if (f) setFromDate(f);
     if (tt) setToDate(tt);
     if (b) setBranchId(Number(b));
+    if (cc) setCostCenterId(Number(cc));
     if (a) setSearched(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchString]);
@@ -96,14 +100,15 @@ export default function AccountStatement() {
     rows: any[];
   };
   const { data, isLoading, refetch } = useQuery<StatementResponse>({
-    queryKey: ["account-statement", cid, accountId, fromDate, toDate, branchId],
+    queryKey: ["account-statement", cid, accountId, fromDate, toDate, branchId, costCenterId],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (cid)       params.set("companyId", String(cid));
-      if (accountId) params.set("accountId", accountId);
-      if (fromDate)  params.set("fromDate", fromDate);
-      if (toDate)    params.set("toDate", toDate);
-      if (branchId)  params.set("branchId", String(branchId));
+      if (cid)         params.set("companyId", String(cid));
+      if (accountId)   params.set("accountId", accountId);
+      if (fromDate)    params.set("fromDate", fromDate);
+      if (toDate)      params.set("toDate", toDate);
+      if (branchId)    params.set("branchId", String(branchId));
+      if (costCenterId) params.set("costCenterId", String(costCenterId));
       const res = await fetch(`${API}/api/accounting-reports/account-statement?${params}`, { headers });
       if (!res.ok) { const j = await res.json(); throw new Error(j.error); }
       return res.json();
