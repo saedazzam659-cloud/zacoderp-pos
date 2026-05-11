@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "react-i18next";
 import { getSaveToastTitle } from "@/lib/saveToast";
@@ -296,6 +297,30 @@ export default function JournalEntryForm() {
   const acctLabel = (id: any) => {
     const a = acctMap.get(Number(id));
     return a ? `${a.code} — ${a.nameAr || a.nameEn || ""}` : "—";
+  };
+
+  // Cost-center lookup: the value stored on a JE line MAY be either the
+  // numeric id (system-generated JEs e.g. fa-journals, contracting,
+  // production all stringify the id) OR the code (manual JEs created in
+  // this form, where `costCenterOptions` uses `c.code` as the value).
+  // Index by both so display logic and the print template can resolve
+  // either format to a friendly "code — nameAr" label.
+  const ccById = new Map<string, any>();
+  const ccByCode = new Map<string, any>();
+  for (const c of costCentersList) {
+    if (c?.id != null)   ccById.set(String(c.id), c);
+    if (c?.code != null) ccByCode.set(String(c.code), c);
+  }
+  const findCc = (value: any) => {
+    if (value == null || value === "") return null;
+    const v = String(value);
+    return ccByCode.get(v) ?? ccById.get(v) ?? null;
+  };
+  /** Friendly "code — name" label for a cost-center value (id or code). */
+  const ccLabel = (value: any) => {
+    const c = findCc(value);
+    if (!c) return value ? String(value) : "—";
+    return `${c.code} — ${c.nameAr || c.nameEn || ""}`;
   };
 
   useEffect(() => {
@@ -854,7 +879,7 @@ export default function JournalEntryForm() {
         i + 1,
         a?.code ?? "",
         a?.nameAr || a?.nameEn || "",
-        l.costCenter || "",
+        ccLabel(l.costCenter),
         Number(l.debit  || 0).toFixed(2),
         Number(l.credit || 0).toFixed(2),
         l.description || "",
@@ -884,9 +909,13 @@ export default function JournalEntryForm() {
       const debit  = Number(l.debit  || 0);
       const credit = Number(l.credit || 0);
       const side = debit > 0 ? `مدين ${debit.toFixed(2)}` : `دائن ${credit.toFixed(2)}`;
+      const ccInline = l.costCenter
+        ? `<div class="desc">مركز التكلفة: ${escapeHtml(ccLabel(l.costCenter))}</div>`
+        : "";
       return `<div class="line">
         <div class="acc">${i + 1}. ${escapeHtml(a?.code ?? "")} — ${escapeHtml(a?.nameAr || a?.nameEn || "—")}</div>
         <div class="amt">${side}</div>
+        ${ccInline}
         ${l.description ? `<div class="desc">${escapeHtml(l.description)}</div>` : ""}
       </div>`;
     }).join("");
@@ -948,7 +977,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
         <td class="c">${i + 1}</td>
         <td class="num">${escapeHtml(a?.code ?? "")}</td>
         <td>${escapeHtml(a?.nameAr || a?.nameEn || "—")}</td>
-        <td>${escapeHtml(l.costCenter || "—")}</td>
+        <td>${escapeHtml(ccLabel(l.costCenter))}</td>
         <td class="num">${Number(l.debit  || 0).toFixed(2)}</td>
         <td class="num">${Number(l.credit || 0).toFixed(2)}</td>
         <td>${escapeHtml(l.description || "—")}</td>
@@ -1599,15 +1628,65 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                   >
                     <span className="text-[10px] text-muted-foreground text-center font-mono">{idx + 1}</span>
 
-                    <AccountCombobox
-                      value={line.accountId}
-                      onValueChange={v => updateLine(line.id, "accountId", v)}
-                      placeholder="بحث بالكود أو الاسم..."
-                      grouped={false}
-                      allowEmpty
-                      emptyLabel="— اختر الحساب —"
-                      autoFocus={line.id === focusLineId}
-                    />
+                    {/* Wrap the account picker in a tooltip that surfaces
+                        the FULL account context (code + Ar/En name + type
+                        + parent header) on hover. Helps verify the right
+                        account is selected before posting without having
+                        to re-open the combobox or the chart-of-accounts. */}
+                    {(() => {
+                      const a = acctMap.get(Number(line.accountId));
+                      const parent = a?.parentId != null ? acctMap.get(Number(a.parentId)) : null;
+                      const typeLbl: Record<string, string> = {
+                        asset: "أصول", liability: "التزامات", equity: "حقوق ملكية",
+                        revenue: "إيرادات", expense: "مصروفات",
+                      };
+                      const tip = a ? (
+                        <div className="space-y-1 text-xs leading-5">
+                          <div className="font-semibold flex items-center gap-2">
+                            <span className="font-mono text-[10px] bg-primary/15 text-primary px-1.5 py-0.5 rounded">{a.code}</span>
+                            <span>{a.nameAr || "—"}</span>
+                          </div>
+                          {a.nameEn && <div className="text-muted-foreground">{a.nameEn}</div>}
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <span>النوع:</span>
+                            <span className="font-medium text-foreground">{typeLbl[a.accountType] ?? a.accountType ?? "—"}</span>
+                          </div>
+                          {parent && (
+                            <div className="flex items-center gap-2 text-muted-foreground">
+                              <span>الحساب الرئيسي:</span>
+                              <span className="font-medium text-foreground">{parent.code} — {parent.nameAr || parent.nameEn}</span>
+                            </div>
+                          )}
+                          {a.isPosting === false && (
+                            <div className="text-amber-600 font-medium">حساب رئيسي — غير قابل للترحيل</div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-muted-foreground">لم يتم اختيار حساب بعد</div>
+                      );
+                      return (
+                        <TooltipProvider delayDuration={250}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="w-full">
+                                <AccountCombobox
+                                  value={line.accountId}
+                                  onValueChange={v => updateLine(line.id, "accountId", v)}
+                                  placeholder="بحث بالكود أو الاسم..."
+                                  grouped={false}
+                                  allowEmpty
+                                  emptyLabel="— اختر الحساب —"
+                                  autoFocus={line.id === focusLineId}
+                                />
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" align="start" className="max-w-xs p-3">
+                              {tip}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      );
+                    })()}
 
                     {/* Debit / Credit inputs use type="text" with a strict
                         decimal sanitizer instead of type="number". The native
@@ -1664,12 +1743,47 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                       className="h-8 text-sm"
                     />
 
-                    <SearchCombobox
-                      items={costCenterOptions}
-                      value={line.costCenter}
-                      onValueChange={(v) => updateLine(line.id, "costCenter", v)}
-                      placeholder="— مركز التكلفة —"
-                    />
+                    {/* Cost-center picker. The textbox already shows
+                        "code — nameAr" via `costCenterOptions.label`.
+                        The tooltip on hover repeats the full context so
+                        the user can confirm the centre before saving and
+                        works the same way the account tooltip does. */}
+                    {(() => {
+                      const c = findCc(line.costCenter);
+                      const tip = c ? (
+                        <div className="space-y-1 text-xs leading-5">
+                          <div className="font-semibold flex items-center gap-2">
+                            <span className="font-mono text-[10px] bg-primary/15 text-primary px-1.5 py-0.5 rounded">{c.code}</span>
+                            <span>{c.nameAr || "—"}</span>
+                          </div>
+                          {c.nameEn && <div className="text-muted-foreground">{c.nameEn}</div>}
+                          {c.isPosting === false && (
+                            <div className="text-amber-600 font-medium">مركز رئيسي — غير قابل للترحيل</div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-muted-foreground">بدون مركز تكلفة</div>
+                      );
+                      return (
+                        <TooltipProvider delayDuration={250}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="w-full">
+                                <SearchCombobox
+                                  items={costCenterOptions}
+                                  value={line.costCenter}
+                                  onValueChange={(v) => updateLine(line.id, "costCenter", v)}
+                                  placeholder="— مركز التكلفة —"
+                                />
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" align="start" className="max-w-xs p-3">
+                              {tip}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      );
+                    })()}
 
                     <Button
                       variant="ghost" size="icon"
