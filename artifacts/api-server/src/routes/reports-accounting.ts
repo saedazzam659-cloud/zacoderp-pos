@@ -9,6 +9,7 @@ import {
   contractingProgressBillsTable,
   fixedAssetsTable, faDepreciationRunsTable, faDisposalsTable,
   payrollRunsTable,
+  costCentersTable,
   trialBalancesTable, trialBalanceDetailsTable,
 } from "@workspace/db";
 import { eq, and, sql, gte, lte, asc, desc, ne, inArray } from "drizzle-orm";
@@ -51,14 +52,39 @@ function getBid(req: any): number | undefined {
 //     the three sections side-by-side.
 // Parse a `costCenterId` query value that may be:
 //   • a single id ("3"), • a CSV of ids ("3,7,12"), • "all" / "" / undefined
-// → empty list. Returns the list of cost-center ids as STRINGS because the
-// `journal_entry_lines.cost_center` column is text (we stringify the
-// numeric id when posting). An empty array means "no cost-center scope".
+// → empty list. Returns the list of cost-center ids as STRINGS so they can
+// be matched against the text `journal_entry_lines.cost_center` column.
+// An empty array means "no cost-center scope".
 export function parseCostCenterIds(raw: any): string[] {
   if (raw === undefined || raw === null || raw === "" || raw === "all") return [];
   const parts = String(raw).split(",").map(s => s.trim()).filter(Boolean);
   const ids = parts.map(p => Number(p)).filter(n => Number.isFinite(n) && n > 0);
   return ids.map(n => String(n));
+}
+
+// Resolve the picked cost-center IDs into the **set of tokens** to match
+// against the text `journal_entry_lines.cost_center` column. Different
+// modules historically wrote different things into that column:
+//   • the JE form (and most modern flows) writes the cost-center CODE
+//     (e.g. "CC-0002") because the dropdown uses `code` as its value;
+//   • some legacy paths write the numeric ID as a string ("3");
+//   • a few imports may write the Arabic/English name.
+// To keep the filter robust for all of those, we look the picked ids up
+// in `cost_centers`, then return [...idStrings, ...codes]. The line-level
+// filter then becomes `inArray(cost_center, tokens)` which matches every
+// representation in use today. Empty input → empty token list (caller
+// treats that as "no cost-center scope").
+async function resolveCostCenterTokens(cid: number, ids: string[]): Promise<string[]> {
+  if (!ids.length) return [];
+  const numericIds = ids.map(Number).filter(n => Number.isFinite(n) && n > 0);
+  if (!numericIds.length) return [];
+  const rows = await db.select({ id: costCentersTable.id, code: costCentersTable.code })
+    .from(costCentersTable)
+    .where(and(eq(costCentersTable.companyId, cid), inArray(costCentersTable.id, numericIds)));
+  const tokens = new Set<string>();
+  for (const n of numericIds) tokens.add(String(n));
+  for (const r of rows) if (r.code) tokens.add(r.code);
+  return Array.from(tokens);
 }
 
 async function getAccountBalances(req: Request, cid: number, fromDate?: string, toDate?: string, branchId?: number, openingFromTrialBalance = false, costCenterIds: string[] = []) {
@@ -255,7 +281,8 @@ router.get("/income-statement", async (req, res) => {
     const bid = getBid(req);
     const { fromDate, toDate, costCenterId } = req.query as any;
     const ccIds = parseCostCenterIds(costCenterId);
-    const rows = await getAccountBalances(req, cid, fromDate, toDate, bid, false, ccIds);
+    const ccTokens = await resolveCostCenterTokens(cid, ccIds);
+    const rows = await getAccountBalances(req, cid, fromDate, toDate, bid, false, ccTokens);
 
     const revenues  = rows.filter(r => r.accountType === "revenue");
     const expenses  = rows.filter(r => r.accountType === "expense");
@@ -288,10 +315,11 @@ router.get("/account-statement", async (req, res) => {
     // Multi-value support: `costCenterId` may be a CSV ("3,7,12") or
     // a single id; both reduce to the same `inArray` line filter below.
     const ccIds = parseCostCenterIds(costCenterId);
-    const ccLineFilter = ccIds.length === 1
-      ? [eq(journalEntryLinesTable.costCenter, ccIds[0])]
-      : ccIds.length > 1
-      ? [inArray(journalEntryLinesTable.costCenter, ccIds)]
+    const ccTokens = await resolveCostCenterTokens(cid, ccIds);
+    const ccLineFilter = ccTokens.length === 1
+      ? [eq(journalEntryLinesTable.costCenter, ccTokens[0])]
+      : ccTokens.length > 1
+      ? [inArray(journalEntryLinesTable.costCenter, ccTokens)]
       : [];
 
     // ── Previous balance (رصيد ما قبل) ──────────────────────────────
