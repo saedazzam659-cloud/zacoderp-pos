@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
+import CostCenterFilter from "@/components/CostCenterFilter";
 import { FileText, Search, Printer, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -288,9 +289,12 @@ export default function AccountStatement() {
             <Label>{t("accountingReports.toDate")}</Label>
             <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
           </div>
-          <div className="space-y-1.5 lg:col-span-2">
+          <div className="space-y-1.5">
             <Label>{t("common.branch")}</Label>
             <BranchFilter value={branchId} onChange={setBranchId} />
+          </div>
+          <div className="space-y-1.5">
+            <CostCenterFilter value={costCenterIds} onChange={setCostCenterIds} />
           </div>
         </div>
         <div className="mt-4 flex justify-end">

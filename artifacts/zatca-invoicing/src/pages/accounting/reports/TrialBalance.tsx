@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/popover";
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
+import CostCenterFilter from "@/components/CostCenterFilter";
 import {
   Scale, Search, Printer, Eye, ExternalLink, Loader2, AlertCircle, FileText,
   Columns3, RotateCcw,
@@ -139,17 +140,24 @@ export default function TrialBalance() {
   const [fromDate, setFromDate] = useState(firstOfYear);
   const [toDate, setToDate]     = useState(today);
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
+  const [costCenterIds, setCostCenterIds] = useState<number[]>([]);
   const [searched, setSearched] = useState(false);
   const [drillRow, setDrillRow] = useState<any | null>(null);
 
+  // Stable serialised key (sorted) so identical multi-selections in any
+  // order reuse the same React-Query cache entry. Mirrors the Income
+  // Statement / Account Statement convention.
+  const ccCsv = costCenterIds.length ? [...costCenterIds].sort((a, b) => a - b).join(",") : "";
+
   const { data: rows = [], isLoading, refetch } = useQuery<any[]>({
-    queryKey: ["trial-balance", cid, fromDate, toDate, branchId],
+    queryKey: ["trial-balance", cid, fromDate, toDate, branchId, ccCsv],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (cid)     params.set("companyId", String(cid));
       if (fromDate) params.set("fromDate", fromDate);
       if (toDate)   params.set("toDate", toDate);
       if (branchId !== undefined) params.set("branchId", String(branchId));
+      if (ccCsv)    params.set("costCenterId", ccCsv);
       const res = await fetch(`${API}/api/accounting-reports/trial-balance?${params}`, { headers });
       return res.json();
     },
@@ -250,7 +258,7 @@ export default function TrialBalance() {
 
       {/* Filters */}
       <div className="rounded-xl border bg-card p-4 shadow-sm">
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
           <div className="space-y-1.5">
             <Label>{t("accountingReports.fromDate")}</Label>
             <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
@@ -260,6 +268,7 @@ export default function TrialBalance() {
             <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
           </div>
           <BranchFilter value={branchId} onChange={setBranchId} />
+          <CostCenterFilter value={costCenterIds} onChange={setCostCenterIds} />
           <Button className="gap-2" onClick={() => { setSearched(true); refetch(); }} disabled={isLoading}>
             <Search className="h-4 w-4" />
             {isLoading ? t("accountingReports.loading") : t("accountingReports.show_trial_balance")}
