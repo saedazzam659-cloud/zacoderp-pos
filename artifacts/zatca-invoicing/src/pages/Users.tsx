@@ -20,7 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   Users as UsersIcon, Plus, Pencil, Trash2, Shield, Search, KeyRound,
-  CheckCircle2, XCircle, Loader2, X, Save, Check, ShieldCheck,
+  CheckCircle2, XCircle, Loader2, X, Save, Check, ShieldCheck, PowerOff, Power,
 } from "lucide-react";
 import {
   PERMISSION_MODULES, PERMISSION_GROUPS, ACTION_LABELS,
@@ -40,6 +40,7 @@ type UserRow = {
   nameEn: string | null;
   permissions: PermissionMap | null;
   viewAllBranches: boolean;
+  scopeOwnCustomersOnly?: boolean;
   isActive: boolean;
   lastLoginAt: string | null;
   branchIds: number[];
@@ -64,6 +65,7 @@ const emptyForm = () => ({
   role: "user" as "user" | "admin",
   isActive: true,
   viewAllBranches: true,
+  scopeOwnCustomersOnly: false,
   branchIds: [] as number[],
   permissions: viewOnlyPermissions(),
   // Approval defaults: off, level 0, no cap, single-signature is fine.
@@ -230,6 +232,7 @@ export default function Users() {
       role: (u.role === "admin" ? "admin" : "user"),
       isActive: u.isActive,
       viewAllBranches: u.viewAllBranches ?? true,
+      scopeOwnCustomersOnly: !!u.scopeOwnCustomersOnly,
       branchIds: u.branchIds ?? [],
       permissions: { ...viewOnlyPermissions(), ...(u.permissions ?? {}) },
       // Approval workflow fields — coerce numeric-string cap to a string the
@@ -263,6 +266,7 @@ export default function Users() {
         role: form.role,
         isActive: form.isActive,
         viewAllBranches: form.viewAllBranches,
+        scopeOwnCustomersOnly: form.scopeOwnCustomersOnly,
         branchIds: form.branchIds,
         permissions: form.permissions,
         // Approval workflow — server clamps these too as a safety net.
@@ -304,6 +308,47 @@ export default function Users() {
       toast({ title: t("users.error"), description: extractApiError(e), variant: "destructive" });
       qc.invalidateQueries({ queryKey: ["users-quota", cid] });
     },
+  });
+
+  // ─── Kill-switch: instant deactivation ───────────────────────────
+  // Hits the same PATCH /users/:id endpoint with isActive=false. Server-side
+  // also clears sessionToken+sessionId so the user's next request returns 401
+  // and they're bounced to login *immediately* (no waiting for token expiry).
+  // Used for fired-employee scenarios where every minute of access matters.
+  const killSwitchMut = useMutation({
+    mutationFn: async (id: number) => {
+      const r = await fetch(`${API}/api/users/${id}?companyId=${cid ?? ""}`, {
+        method: "PATCH",
+        headers: { ...authH, "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: false }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || "تعذّر إيقاف المستخدم");
+    },
+    onSuccess: () => {
+      toast({ title: "🛑 تم إيقاف الوصول فوراً", description: "تم قطع الجلسة الحالية وأي محاولة دخول قادمة سيتم رفضها." });
+      qc.invalidateQueries({ queryKey: ["users", cid] });
+    },
+    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+  });
+
+  // Re-activate a deactivated user. They'll need to log in again — the cleared
+  // sessionToken means no automatic restoration of their previous session.
+  const reactivateMut = useMutation({
+    mutationFn: async (id: number) => {
+      const r = await fetch(`${API}/api/users/${id}?companyId=${cid ?? ""}`, {
+        method: "PATCH",
+        headers: { ...authH, "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: true }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || "تعذّر إعادة التفعيل");
+    },
+    onSuccess: () => {
+      toast({ title: "✅ تم إعادة التفعيل", description: "يمكن للمستخدم الآن تسجيل الدخول مجدداً." });
+      qc.invalidateQueries({ queryKey: ["users", cid] });
+    },
+    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
   });
 
   const deleteMut = useMutation({
@@ -554,6 +599,30 @@ export default function Users() {
                     <div className="font-medium">{t("users.viewAllBranches")}</div>
                     <div className="text-xs text-muted-foreground mt-0.5">
                       {t("users.viewAllBranchesHint")}
+                    </div>
+                  </div>
+                </label>
+
+                {/* عزل العملاء — only see customers assigned to me as a sales rep */}
+                <label
+                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition ${
+                    form.scopeOwnCustomersOnly
+                      ? "bg-amber-50 border-amber-300 dark:bg-amber-950/30"
+                      : "hover:bg-muted/50"
+                  }`}
+                  data-testid="checkbox-scope-own-customers"
+                >
+                  <Checkbox
+                    checked={form.scopeOwnCustomersOnly}
+                    onCheckedChange={(v) => setForm(f => ({ ...f, scopeOwnCustomersOnly: !!v }))}
+                  />
+                  <div>
+                    <div className="font-medium flex items-center gap-1">
+                      <Shield className="h-3.5 w-3.5 text-amber-600" />
+                      عزل العملاء — يرى عملاءه فقط
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      عند التفعيل: المستخدم لا يرى إلا العملاء المرتبطين بحسابه كمندوب مبيعات (يتطلب ربطه بمندوب من شاشة "مناديب المبيعات"). الأدمن والمدير العام لا يتأثرون بهذا الحد.
                     </div>
                   </div>
                 </label>
@@ -897,6 +966,35 @@ export default function Users() {
                               <Button size="sm" variant="ghost" onClick={() => openEdit(u)} title={t("users.edit")}>
                                 <Pencil className="h-4 w-4" />
                               </Button>
+                              {u.isActive ? (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="text-rose-700 hover:text-rose-800 hover:bg-rose-50"
+                                  onClick={() => {
+                                    if (confirm(`🛑 إيقاف الوصول فوراً للمستخدم "${u.nameAr || u.username}"؟\n\nسيتم:\n• قطع جلسته الحالية مباشرةً (401 على الفور)\n• منع تسجيل دخوله مجدداً\n• إبقاء كل بياناته وفواتيره كما هي\n\nيمكنك إعادة تفعيله لاحقاً.`)) {
+                                      killSwitchMut.mutate(u.id);
+                                    }
+                                  }}
+                                  title="إيقاف الوصول فوراً"
+                                  disabled={u.role === "superadmin" || u.id === user?.id || killSwitchMut.isPending}
+                                  data-testid={`btn-kill-switch-${u.id}`}
+                                >
+                                  <PowerOff className="h-4 w-4" />
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50"
+                                  onClick={() => reactivateMut.mutate(u.id)}
+                                  title="إعادة تفعيل الدخول"
+                                  disabled={reactivateMut.isPending}
+                                  data-testid={`btn-reactivate-${u.id}`}
+                                >
+                                  <Power className="h-4 w-4" />
+                                </Button>
+                              )}
                               <Button
                                 size="sm"
                                 variant="ghost"

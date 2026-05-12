@@ -58,6 +58,22 @@ router.get("/", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── Resolve "the rep linked to the currently logged-in user" ───────────────
+// Used by the frontend to (a) show a "هويتي كمندوب" badge on dashboards and
+// (b) decide whether to make the salesRepId field on invoices read-only.
+// Returns 404 (not 401) when no rep is linked so the UI can branch silently.
+router.get("/me/current", async (req, res) => {
+  try {
+    const cid = requireCid(req, res); if (!cid) return;
+    const uid = req.authUser?.id;
+    if (!uid) { res.status(404).json({ error: "غير مرتبط" }); return; }
+    const [rep] = await db.select().from(salesRepsTable)
+      .where(and(eq(salesRepsTable.companyId, cid), eq(salesRepsTable.userId, uid)));
+    if (!rep) { res.status(404).json({ error: "لا يوجد مندوب مرتبط بهذا المستخدم" }); return; }
+    res.json(rep);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 router.get("/active", async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
@@ -103,6 +119,7 @@ router.post("/", async (req, res) => {
       branchId:       b.branchId ? Number(b.branchId) : null,
       region:         b.region || null,
       isActive:       b.isActive !== false,
+      userId:         b.userId ? Number(b.userId) : null,
       commissionPct:  b.commissionPct != null ? String(b.commissionPct) : "0",
       commissionType: b.commissionType === "collection" ? "collection" : "invoice",
       monthlyTarget:  b.monthlyTarget != null ? String(b.monthlyTarget) : "0",
@@ -111,6 +128,8 @@ router.post("/", async (req, res) => {
     }).returning();
     res.status(201).json(row);
   } catch (e: any) {
+    if (String(e?.message).includes("sales_reps_user_uniq"))
+      return res.status(409).json({ error: "هذا المستخدم مرتبط بمندوب آخر بالفعل" });
     if (String(e?.message).includes("duplicate") || e?.code === "23505")
       return res.status(409).json({ error: "كود المندوب مستخدم مسبقاً" });
     res.status(500).json({ error: e.message });
@@ -138,6 +157,7 @@ router.put("/:id", async (req, res) => {
       branchId:       b.branchId ? Number(b.branchId) : null,
       region:         b.region ?? null,
       isActive:       b.isActive !== undefined ? !!b.isActive : undefined,
+      userId:         b.userId === null ? null : (b.userId ? Number(b.userId) : undefined),
       commissionPct:  b.commissionPct != null ? String(b.commissionPct) : undefined,
       commissionType: b.commissionType === "collection" ? "collection"
                       : b.commissionType === "invoice" ? "invoice" : undefined,

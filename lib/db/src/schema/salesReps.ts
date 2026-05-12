@@ -23,6 +23,7 @@ export const salesRepsTable = pgTable("sales_reps", {
   branchId:        integer("branch_id"),
   region:          text("region"),
   isActive:        boolean("is_active").notNull().default(true),
+  userId:          integer("user_id"),
   commissionPct:   numeric("commission_pct", { precision: 6, scale: 3 }).notNull().default("0"),
   commissionType:  commissionTypeEnum("commission_type").notNull().default("invoice"),
   monthlyTarget:   numeric("monthly_target", { precision: 15, scale: 2 }).notNull().default("0"),

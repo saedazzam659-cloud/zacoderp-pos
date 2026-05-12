@@ -124,6 +124,21 @@ async function getBankAccountAccountId(cid: number, bankAccountId: number | null
  * are "0". For commissionType="collection" the snapshot pct is preserved but invoice-time
  * commissionAmount is "0" (collection commission is computed at receipt time from receipts).
  */
+// Look up the rep linked to a given user (per company). Returns null when no
+// rep is linked. Used to auto-attribute invoices to the logged-in salesperson
+// when the form didn't pass an explicit salesRepId — see resolveRepCommission.
+async function repIdForUser(cid: number, userId: number | null | undefined): Promise<number | null> {
+  if (!userId) return null;
+  const [rep] = await db.select({ id: salesRepsTable.id })
+    .from(salesRepsTable)
+    .where(and(
+      eq(salesRepsTable.companyId, cid),
+      eq(salesRepsTable.userId, Number(userId)),
+      eq(salesRepsTable.isActive, true),
+    ));
+  return rep?.id ?? null;
+}
+
 async function resolveRepCommission(
   cid: number,
   salesRepId: number | string | null | undefined,
@@ -562,7 +577,15 @@ router.post("/sales-invoices", async (req, res) => {
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     // Snapshot the rep's commission % at save time so historical invoices keep
     // their commission even if the rep's % changes later.
-    const repInfo = await resolveRepCommission(cid, salesRepId, totals.totalAmount);
+    // ─── Auto-attribution ───
+    // If the form didn't pass an explicit salesRepId, fall back to the rep
+    // linked to the currently-logged-in user (sales_reps.user_id). This is
+    // the whole point of the user↔rep link: the salesperson logs in, opens a
+    // new invoice, and their commission is automatically tagged without any
+    // manual selection. Admin/superadmin can still override by passing
+    // salesRepId explicitly in the body.
+    const effectiveRepId = salesRepId ?? await repIdForUser(cid, req.authUser?.id);
+    const repInfo = await resolveRepCommission(cid, effectiveRepId, totals.totalAmount);
 
     // The central sequence engine is authoritative whenever an active
     // sequence exists for "sales_invoice" — we always allocate server-side

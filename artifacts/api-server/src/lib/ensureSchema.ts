@@ -241,6 +241,13 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     // companies.code is unique whenever populated.
     { label: "companies_code_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS companies_code_uniq ON companies (code) WHERE code IS NOT NULL` },
+    // ─── Sales-rep ↔ user 1:1 link (per company). Partial unique so reps without
+    // a login (external/freelancer) are allowed (user_id NULL). Same user can
+    // never be linked to two reps in the same company.
+    { label: "sales_reps_user_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS sales_reps_user_uniq ON sales_reps (company_id, user_id) WHERE user_id IS NOT NULL` },
+    { label: "sales_reps_user_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS sales_reps_user_idx ON sales_reps (user_id) WHERE user_id IS NOT NULL` },
     // Backfill: any legacy company without a code gets ZTC-{id}.
     { label: "backfill companies.code",
       sql:   `UPDATE companies SET code = 'ZTC-' || id WHERE code IS NULL` },

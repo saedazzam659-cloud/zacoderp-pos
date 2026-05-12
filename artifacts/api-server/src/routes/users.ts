@@ -84,6 +84,7 @@ router.get("/", async (req, res) => {
       nameEn: usersTable.nameEn,
       permissions: usersTable.permissions,
       viewAllBranches: usersTable.viewAllBranches,
+      scopeOwnCustomersOnly: usersTable.scopeOwnCustomersOnly,
       isActive: usersTable.isActive,
       lastLoginAt: usersTable.lastLoginAt,
       createdAt: usersTable.createdAt,
@@ -193,6 +194,7 @@ router.post("/", async (req, res) => {
       permissions: permissions ?? null,
       // Default true if not provided (matches the column default).
       viewAllBranches: typeof viewAllBranches === "boolean" ? viewAllBranches : true,
+      scopeOwnCustomersOnly: typeof req.body?.scopeOwnCustomersOnly === "boolean" ? req.body.scopeOwnCustomersOnly : false,
       isActive: isActive !== false,
       // Approval permissions — see schema/users.ts.
       canApprove:            typeof canApprove === "boolean" ? canApprove : false,
@@ -234,8 +236,25 @@ router.patch("/:id", async (req, res) => {
     if (code !== undefined) update.code = code || null;
     if (nameAr !== undefined) update.nameAr = nameAr || null;
     if (nameEn !== undefined) update.nameEn = nameEn || null;
-    if (typeof isActive === "boolean") update.isActive = isActive;
+    if (typeof isActive === "boolean") {
+      update.isActive = isActive;
+      // ─── Kill-switch ─────────────────────────────────────────────────
+      // Flipping isActive=false invalidates the user's live session
+      // immediately. extractAuth checks sessionToken on every request, so
+      // clearing it means the very next API call from that user (whether
+      // from a browser tab they had open, or an in-flight fetch) gets a 401
+      // and is bounced to the login screen. Required for fired-employee
+      // scenarios — without this, a deactivated user keeps working until
+      // their cached token finally expires.
+      if (isActive === false) {
+        update.sessionToken = null;
+        update.sessionId = null;
+      }
+    }
     if (typeof viewAllBranches === "boolean") update.viewAllBranches = viewAllBranches;
+    if (typeof req.body?.scopeOwnCustomersOnly === "boolean") {
+      update.scopeOwnCustomersOnly = req.body.scopeOwnCustomersOnly;
+    }
     if (permissions !== undefined) update.permissions = permissions;
     // ─── Approval permissions (clamped) ───
     if (typeof canApprove === "boolean") update.canApprove = canApprove;

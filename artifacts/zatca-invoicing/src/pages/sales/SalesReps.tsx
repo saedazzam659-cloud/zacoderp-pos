@@ -20,7 +20,7 @@ import {
 import {
   Plus, Search, Pencil, Trash2, UserCheck, UserX,
   Phone, Mail, MapPin, Percent, Target, Users, Sparkles, Loader2,
-  FileSpreadsheet, X,
+  FileSpreadsheet, X, KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -50,6 +50,15 @@ type Rep = {
   monthlyTarget: string;
   accountId: number | null;
   notes: string | null;
+  userId: number | null;
+};
+
+type CompanyUser = {
+  id: number;
+  username: string;
+  nameAr: string | null;
+  nameEn: string | null;
+  isActive: boolean;
 };
 
 const EMPTY_FORM = {
@@ -67,6 +76,7 @@ const EMPTY_FORM = {
   monthlyTarget: "0",
   accountId: "" as string,
   notes: "",
+  userId: "" as string,
 };
 
 export default function SalesReps() {
@@ -114,6 +124,19 @@ export default function SalesReps() {
       return r.json();
     },
     enabled: !!user,
+  });
+
+  // ─── Company users for the "حساب الدخول" dropdown ─────────────
+  // Pulls every user in the tenant; the UI filters out users already linked
+  // to *another* rep (we keep the currently-edited rep's user, of course).
+  const { data: users = [] } = useQuery<CompanyUser[]>({
+    queryKey: ["company-users", cid],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/users?companyId=${cid}`, { headers });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!cid,
   });
 
   const { data: branches = [] } = useQuery<any[]>({
@@ -233,6 +256,7 @@ export default function SalesReps() {
       monthlyTarget: String(r.monthlyTarget ?? "0"),
       accountId: r.accountId ? String(r.accountId) : "",
       notes: r.notes ?? "",
+      userId: r.userId ? String(r.userId) : "",
     });
     setShowForm(true);
   }
@@ -256,6 +280,9 @@ export default function SalesReps() {
         monthlyTarget: Number(form.monthlyTarget) || 0,
         accountId: form.accountId ? Number(form.accountId) : null,
         notes: form.notes.trim() || null,
+        // Either pass a user id OR explicit null to disconnect on edit. The
+        // backend treats undefined as "leave alone" but null as "clear".
+        userId: form.userId ? Number(form.userId) : (editing ? null : undefined),
       };
       const url = editing
         ? `${API}/api/sales-reps/${editing.id}`
@@ -530,6 +557,37 @@ export default function SalesReps() {
                 placeholder="ملاحظات إدارية"
                 data-testid="input-notes"
               />
+            </div>
+            <div className="md:col-span-2">
+              <Label className="flex items-center gap-1">
+                <KeyRound className="h-3.5 w-3.5 text-blue-600" />
+                حساب الدخول للنظام
+              </Label>
+              <select
+                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                value={form.userId}
+                onChange={(e) => setForm({ ...form, userId: e.target.value })}
+                data-testid="select-rep-user"
+              >
+                <option value="">— بدون حساب دخول (مندوب خارجي) —</option>
+                {users
+                  .filter((u) => {
+                    // Hide users already linked to a *different* rep so the
+                    // unique constraint can't bite at save time. Always keep
+                    // the currently-edited rep's own user in the list.
+                    const takenBy = reps.find((r) => r.userId === u.id);
+                    return !takenBy || takenBy.id === editing?.id;
+                  })
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.nameAr || u.nameEn || u.username} ({u.username})
+                      {!u.isActive ? " — موقوف" : ""}
+                    </option>
+                  ))}
+              </select>
+              <p className="text-xs text-muted-foreground mt-1">
+                عند ربط حساب دخول، فواتير هذا المستخدم تُسنَد تلقائياً للمندوب وتُحسب عمولته بدون تدخّل يدوي.
+              </p>
             </div>
             <div className="md:col-span-2 flex items-center gap-2">
               <input

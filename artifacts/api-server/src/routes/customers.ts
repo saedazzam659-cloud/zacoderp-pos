@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable } from "@workspace/db";
+import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, salesRepsTable, usersTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
@@ -27,6 +27,17 @@ router.get("/balances", async (req, res) => {
     const companyId = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
     if (!companyId) { res.json([]); return; }
     const bid = req.query.branchId ? Number(req.query.branchId) : undefined;
+    // ─── Customer-isolation scope ─────────────────────────────
+    // Restrict the aggregated balances to customers in the caller's scope so
+    // a salesperson can't infer their colleagues' AR exposure by inspecting
+    // this endpoint. Admin/superadmin get the unfiltered company-wide map.
+    const repScope = await customerScopeRepId(req, companyId);
+    let allowedCustomerIds: Set<number> | null = null;
+    if (repScope !== null) {
+      const mine = await db.select({ id: customersTable.id }).from(customersTable)
+        .where(and(eq(customersTable.companyId, companyId), eq(customersTable.salesRepId, repScope)));
+      allowedCustomerIds = new Set(mine.map(r => r.id));
+    }
 
     const invs = await db
       .select({
@@ -70,23 +81,43 @@ router.get("/balances", async (req, res) => {
       .groupBy(receiptVouchersTable.entityId);
 
     const map: Record<number, number> = {};
-    for (const r of invs)  if (r.customerId) map[r.customerId] = (map[r.customerId] ?? 0) + Number(r.total);
-    for (const r of rets)  if (r.customerId) map[r.customerId] = (map[r.customerId] ?? 0) - Number(r.total);
-    for (const r of recvs) if (r.customerId) map[r.customerId] = (map[r.customerId] ?? 0) - Number(r.total);
+    const allowed = (id: number | null) => id != null && (allowedCustomerIds === null || allowedCustomerIds.has(id));
+    for (const r of invs)  if (allowed(r.customerId)) map[r.customerId!] = (map[r.customerId!] ?? 0) + Number(r.total);
+    for (const r of rets)  if (allowed(r.customerId)) map[r.customerId!] = (map[r.customerId!] ?? 0) - Number(r.total);
+    for (const r of recvs) if (allowed(r.customerId)) map[r.customerId!] = (map[r.customerId!] ?? 0) - Number(r.total);
 
     res.json(Object.entries(map).map(([id, balance]) => ({ customerId: Number(id), balance })));
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
+
+// ─── Customer-isolation scope ───────────────────────────────────────────────
+// When a user has `scopeOwnCustomersOnly = true` AND is linked to a sales rep
+// (sales_reps.user_id), they may only see customers whose `salesRepId` matches
+// their rep id. Admin / superadmin always bypass the filter so back-office
+// staff keep full visibility. Returns the rep id to scope to, or null when no
+// scoping is required.
+async function customerScopeRepId(req: any, companyId: number): Promise<number | null> {
+  const u = req.authUser;
+  if (!u || u.role === "admin" || u.role === "superadmin") return null;
+  const [me] = await db.select({ scope: usersTable.scopeOwnCustomersOnly })
+    .from(usersTable).where(eq(usersTable.id, u.id));
+  if (!me?.scope) return null;
+  const [rep] = await db.select({ id: salesRepsTable.id })
+    .from(salesRepsTable)
+    .where(and(eq(salesRepsTable.companyId, companyId), eq(salesRepsTable.userId, u.id)));
+  return rep?.id ?? -1; // -1 = scope ON but no rep linked → see nothing
+}
 
 router.get("/", async (req, res) => {
   const params = ListCustomersQueryParams.safeParse(req.query);
   const rawCompanyId = params.success && params.data.companyId ? params.data.companyId : undefined;
   const companyId = resolveCompanyId(req, rawCompanyId);
 
-  const customers = companyId
-    ? await db.select().from(customersTable).where(eq(customersTable.companyId, companyId))
-    : await db.select().from(customersTable);
-
+  if (!companyId) { res.json(await db.select().from(customersTable)); return; }
+  const repScope = await customerScopeRepId(req, companyId);
+  const conds = [eq(customersTable.companyId, companyId)];
+  if (repScope !== null) conds.push(eq(customersTable.salesRepId, repScope));
+  const customers = await db.select().from(customersTable).where(and(...conds));
   res.json(customers);
 });
 
@@ -156,6 +187,16 @@ router.get("/:id", async (req, res) => {
   const companyId = resolveCompanyId(req, customer.companyId);
   if (companyId && customer.companyId !== companyId) {
     res.status(403).json({ error: "غير مصرح" }); return;
+  }
+  // ─── Per-rep customer-isolation guard ────────────────────────────
+  // The list endpoint (GET /) silently filters; here we 403 because the
+  // caller is asking for a *specific* id. Without this, a scoped user could
+  // enumerate competing reps' customers by guessing ids (IDOR).
+  if (companyId) {
+    const repScope = await customerScopeRepId(req, companyId);
+    if (repScope !== null && customer.salesRepId !== repScope) {
+      res.status(403).json({ error: "هذا العميل خارج نطاق صلاحياتك" }); return;
+    }
   }
   res.json(customer);
 });
