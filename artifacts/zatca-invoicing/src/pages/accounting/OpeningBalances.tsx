@@ -63,6 +63,7 @@ export default function OpeningBalances() {
   const [search, setSearch]             = useState("");
   const [filterType, setFilterType]     = useState<string>("all");
   const [amounts, setAmounts]           = useState<Record<number, Amount>>({});
+  const [isExporting, setIsExporting]   = useState(false);
 
   // Load branches for the current company so the opening JE can be tied to a
   // specific branch. Without this, Trial Balance / Account Statement filtered
@@ -158,7 +159,62 @@ export default function OpeningBalances() {
   }
 
   // ── EXPORT ────────────────────────────────────────────────────────────────
-  function exportXlsx(includeAmounts: boolean) {
+  // When `includeAmounts=true`, the export must reflect the REAL cumulative
+  // balances posted up to `entryDate` — not whatever the user happens to have
+  // typed into the on-screen form (which is empty on a fresh page load and
+  // would otherwise produce an empty file). We pull the trial-balance from
+  // the server with `toDate=entryDate` (no fromDate, so movements are
+  // cumulative since inception) and use its signed `balance` per account
+  // (debit − credit) to fill the right column. Branch filter is applied when
+  // an opening branch is selected so the export matches the same scope the
+  // user would post the JE under.
+  async function exportXlsx(includeAmounts: boolean) {
+    if (isExporting) return;
+    let serverBalances: Record<number, { debit: number; credit: number }> = {};
+    if (includeAmounts) {
+      setIsExporting(true);
+      try {
+        const params = new URLSearchParams();
+        if (cid) params.set("companyId", String(cid));
+        if (entryDate) params.set("toDate", entryDate);
+        if (branchId) params.set("branchId", branchId);
+        const res = await fetch(`${API}/api/reports/trial-balance?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const rows = await res.json() as Array<{ accountId: number; balance: number }>;
+          for (const r of rows) {
+            const bal = Number(r.balance) || 0;
+            // Positive net = debit side; negative = credit side. Tiny
+            // residuals (< 0.005) round to zero so we don't pollute the
+            // sheet with noise like "0.0000001".
+            if (Math.abs(bal) < 0.005) continue;
+            serverBalances[r.accountId] = bal > 0
+              ? { debit: bal,  credit: 0 }
+              : { debit: 0,    credit: -bal };
+          }
+        } else {
+          toast({
+            title: t("openingBalances.exportFailed"),
+            description: await res.text(),
+            variant: "destructive",
+          });
+          setIsExporting(false);
+          return;
+        }
+      } catch (err: any) {
+        toast({
+          title: t("openingBalances.exportFailed"),
+          description: err?.message ?? String(err),
+          variant: "destructive",
+        });
+        setIsExporting(false);
+        return;
+      } finally {
+        setIsExporting(false);
+      }
+    }
+
     const aoa: any[][] = [[
       "code",
       "nameAr",
@@ -168,9 +224,15 @@ export default function OpeningBalances() {
       "credit",
     ]];
     for (const a of postableAccounts.sort((x, y) => x.code.localeCompare(y.code, undefined, { numeric: true }))) {
-      const row = amounts[a.id];
-      const d = includeAmounts ? num(row?.debit)  : 0;
-      const c = includeAmounts ? num(row?.credit) : 0;
+      // Prefer what the user typed on screen (mid-edit values), fall back to
+      // the server-side cumulative balance for that account. This way the
+      // export reflects in-flight edits PLUS any pre-existing posted balances.
+      const typed = amounts[a.id];
+      const typedDebit  = num(typed?.debit);
+      const typedCredit = num(typed?.credit);
+      const fromServer  = serverBalances[a.id] ?? { debit: 0, credit: 0 };
+      const d = includeAmounts ? (typedDebit  || fromServer.debit)  : 0;
+      const c = includeAmounts ? (typedCredit || fromServer.credit) : 0;
       aoa.push([
         a.code,
         a.nameAr,
@@ -199,7 +261,7 @@ export default function OpeningBalances() {
     XLSX.utils.book_append_sheet(wb, help, "تعليمات");
 
     const fname = includeAmounts
-      ? `opening-balances-${new Date().toISOString().slice(0, 10)}.xlsx`
+      ? `opening-balances-${entryDate || new Date().toISOString().slice(0, 10)}.xlsx`
       : `opening-balances-template.xlsx`;
     XLSX.writeFile(wb, fname);
   }
@@ -397,8 +459,9 @@ export default function OpeningBalances() {
             <Button variant="outline" size="sm" className="gap-2" onClick={() => exportXlsx(false)}>
               <FileSpreadsheet className="h-4 w-4" /> {t("openingBalances.downloadTemplate")}
             </Button>
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => exportXlsx(true)}>
-              <Download className="h-4 w-4" /> {t("openingBalances.exportCurrent")}
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => exportXlsx(true)} disabled={isExporting}>
+              <Download className={cn("h-4 w-4", isExporting && "animate-pulse")} />
+              {isExporting ? t("openingBalances.exporting") : t("openingBalances.exportCurrent")}
             </Button>
             <Button variant="outline" size="sm" className="gap-2" onClick={triggerImport}>
               <Upload className="h-4 w-4" /> {t("openingBalances.import")}

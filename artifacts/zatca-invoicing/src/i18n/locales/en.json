@@ -7382,6 +7382,8 @@
     "defaultDesc": "Opening journal entry for fiscal year {{year}}",
     "downloadTemplate": "Download Blank Template",
     "exportCurrent": "Export Current",
+    "exportFailed": "Failed to export opening balances",
+    "exporting": "Exporting...",
     "import": "Import from Excel",
     "importDone": "Import complete",
     "importStats": "{{matched}} accounts applied — {{unmatched}} codes not found in the chart",
