@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { CountrySelector } from "@/components/CountrySelector";
 import { useVisitorCountry } from "@/lib/useVisitorCountry";
 import { getCountryByCode } from "@/lib/countries";
+import SaudiContactCta from "@/components/SaudiContactCta";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Public "/" Home landing page — the canonical homepage Google sees.
@@ -445,6 +446,9 @@ export default function Home() {
           ))}
         </div>
       </section>
+
+      {/* Saudi-only contact card (auto-hides when visitor country !== SA) */}
+      <SaudiContactCta />
 
       {/* CTA */}
       <section className="max-w-5xl mx-auto px-4 py-14">

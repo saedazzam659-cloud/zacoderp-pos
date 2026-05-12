@@ -9,6 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import SaudiContactCta from "@/components/SaudiContactCta";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Public /pricing page — the new top-of-funnel entry point.
@@ -538,6 +539,8 @@ export default function Pricing() {
           </Button>
         </div>
       </section>
+
+      <SaudiContactCta />
 
       <footer className="text-center text-xs text-muted-foreground pb-8">
         © 2026 زاكود المحاسبي — نظام محاسبة سعودي معتمد من ZATCA. جميع الحقوق محفوظة.

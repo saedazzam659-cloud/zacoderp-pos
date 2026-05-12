@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import SaudiContactCta from "@/components/SaudiContactCta";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Public /pos-system landing page — addresses the SEO AI medium-impact
@@ -309,6 +310,8 @@ export default function PosLanding() {
           </div>
         </div>
       </section>
+
+      <SaudiContactCta />
 
       <footer className="text-center text-xs text-muted-foreground pb-8 px-4">
         © 2026 زاكود المحاسبي — نقاط بيع سعودية معتمدة من ZATCA. جميع الحقوق محفوظة.
