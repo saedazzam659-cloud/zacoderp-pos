@@ -324,6 +324,238 @@ router.get("/reports/sales", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── COMMISSION DETAIL (per rep, with invoice breakdown) ────────────────────
+// GET /api/sales-reps/:id/commission-detail?from=&to=&companyId=
+// Returns: { rep, summary, invoices[], collections[] }
+// summary uses commissionType to pick the correct base:
+//   - invoice-based: commission = sum of invoice.commissionAmount snapshots
+//   - collection-based: commission = sum(collected) × rep.commissionPct / 100
+router.get("/:id/commission-detail", async (req, res) => {
+  try {
+    const cid = requireCid(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const from = req.query.from ? String(req.query.from) : null;
+    const to   = req.query.to   ? String(req.query.to)   : null;
+
+    const [rep] = await db.select().from(salesRepsTable)
+      .where(and(eq(salesRepsTable.id, id), eq(salesRepsTable.companyId, cid)));
+    if (!rep) { res.status(404).json({ error: "المندوب غير موجود" }); return; }
+
+    const invConds = [
+      eq(salesInvoicesTable.companyId, cid),
+      eq(salesInvoicesTable.salesRepId, id),
+      eq(salesInvoicesTable.status, "posted"),
+    ];
+    if (from) invConds.push(sql`${salesInvoicesTable.invoiceDate} >= ${from}`);
+    if (to)   invConds.push(sql`${salesInvoicesTable.invoiceDate} <= ${to}`);
+
+    const invoices = await db.select({
+      id:               salesInvoicesTable.id,
+      invoiceNumber:    salesInvoicesTable.docNumber,
+      invoiceDate:      salesInvoicesTable.invoiceDate,
+      customerId:       salesInvoicesTable.customerId,
+      totalAmount:      salesInvoicesTable.totalAmount,
+      commissionPct:    salesInvoicesTable.commissionPct,
+      commissionAmount: salesInvoicesTable.commissionAmount,
+    })
+      .from(salesInvoicesTable)
+      .where(and(...invConds))
+      .orderBy(desc(salesInvoicesTable.invoiceDate));
+
+    // Customer names for the invoice list
+    const custIds = Array.from(new Set(invoices.map(i => i.customerId).filter((x): x is number => x != null)));
+    const customers = custIds.length
+      ? await db.select({ id: customersTable.id, nameAr: customersTable.nameAr })
+          .from(customersTable)
+          .where(and(eq(customersTable.companyId, cid), inArray(customersTable.id, custIds)))
+      : [];
+    const custMap = new Map(customers.map(c => [c.id, c.nameAr]));
+
+    // Collections by this rep in the same window (used for collection-type)
+    const colConds = [
+      eq(receiptVouchersTable.companyId, cid),
+      eq(receiptVouchersTable.salesRepId, id),
+      eq(receiptVouchersTable.status, "posted"),
+    ];
+    if (from) colConds.push(sql`${receiptVouchersTable.date} >= ${from}`);
+    if (to)   colConds.push(sql`${receiptVouchersTable.date} <= ${to}`);
+    const collections = await db.select({
+      id:     receiptVouchersTable.id,
+      date:   receiptVouchersTable.date,
+      amount: receiptVouchersTable.amount,
+    })
+      .from(receiptVouchersTable)
+      .where(and(...colConds))
+      .orderBy(desc(receiptVouchersTable.date));
+
+    const totalSales      = invoices.reduce((s, i) => s + Number(i.totalAmount      ?? 0), 0);
+    const totalCommission = invoices.reduce((s, i) => s + Number(i.commissionAmount ?? 0), 0);
+    const totalCollected  = collections.reduce((s, r) => s + Number(r.amount        ?? 0), 0);
+    const repPct = Number(rep.commissionPct ?? 0);
+    const effectiveCommission = rep.commissionType === "collection"
+      ? totalCollected * (repPct / 100)
+      : totalCommission;
+    const target = Number(rep.monthlyTarget ?? 0);
+
+    res.json({
+      rep: {
+        id: rep.id,
+        code: rep.code,
+        nameAr: rep.nameAr,
+        nameEn: rep.nameEn,
+        region: rep.region,
+        commissionPct: repPct,
+        commissionType: rep.commissionType,
+        monthlyTarget: target,
+        isActive: rep.isActive,
+      },
+      window: { from, to },
+      summary: {
+        invoiceCount:        invoices.length,
+        totalSales:          Number(totalSales.toFixed(2)),
+        totalCommissionRaw:  Number(totalCommission.toFixed(2)),
+        totalCollected:      Number(totalCollected.toFixed(2)),
+        effectiveCommission: Number(effectiveCommission.toFixed(2)),
+        avgInvoiceValue:     invoices.length ? Number((totalSales / invoices.length).toFixed(2)) : 0,
+        targetAchievedPct:   target > 0 ? Math.round((totalSales / target) * 100) : null,
+      },
+      invoices: invoices.map(i => ({
+        id:               i.id,
+        invoiceNumber:    i.invoiceNumber,
+        invoiceDate:      i.invoiceDate,
+        customerName:     i.customerId != null ? (custMap.get(i.customerId) ?? `#${i.customerId}`) : "—",
+        totalAmount:      Number(i.totalAmount ?? 0),
+        commissionPct:    Number(i.commissionPct ?? 0),
+        commissionAmount: Number(i.commissionAmount ?? 0),
+      })),
+      collections: collections.map(c => ({
+        id:     c.id,
+        date:   c.date,
+        amount: Number(c.amount ?? 0),
+      })),
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── AI COMMISSION ANALYSIS (international compensation standards) ───────────
+// POST /api/sales-reps/:id/ai-commission?from=&to=&companyId=
+router.post("/:id/ai-commission", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const from = req.query.from ? String(req.query.from) : null;
+    const to   = req.query.to   ? String(req.query.to)   : null;
+
+    const [rep] = await db.select().from(salesRepsTable)
+      .where(and(eq(salesRepsTable.id, id), eq(salesRepsTable.companyId, cid)));
+    if (!rep) { res.status(404).json({ error: "المندوب غير موجود" }); return; }
+
+    const invConds = [
+      eq(salesInvoicesTable.companyId, cid),
+      eq(salesInvoicesTable.salesRepId, id),
+      eq(salesInvoicesTable.status, "posted"),
+    ];
+    if (from) invConds.push(sql`${salesInvoicesTable.invoiceDate} >= ${from}`);
+    if (to)   invConds.push(sql`${salesInvoicesTable.invoiceDate} <= ${to}`);
+    const invs = await db.select({
+      totalAmount:      salesInvoicesTable.totalAmount,
+      commissionAmount: salesInvoicesTable.commissionAmount,
+    }).from(salesInvoicesTable).where(and(...invConds));
+
+    const colConds = [
+      eq(receiptVouchersTable.companyId, cid),
+      eq(receiptVouchersTable.salesRepId, id),
+      eq(receiptVouchersTable.status, "posted"),
+    ];
+    if (from) colConds.push(sql`${receiptVouchersTable.date} >= ${from}`);
+    if (to)   colConds.push(sql`${receiptVouchersTable.date} <= ${to}`);
+    const cols = await db.select({ amount: receiptVouchersTable.amount })
+      .from(receiptVouchersTable).where(and(...colConds));
+
+    const totalSales      = invs.reduce((s, i) => s + Number(i.totalAmount ?? 0), 0);
+    const totalCommission = invs.reduce((s, i) => s + Number(i.commissionAmount ?? 0), 0);
+    const totalCollected  = cols.reduce((s, r) => s + Number(r.amount ?? 0), 0);
+    const repPct = Number(rep.commissionPct ?? 0);
+    const effective = rep.commissionType === "collection"
+      ? totalCollected * (repPct / 100) : totalCommission;
+    const target = Number(rep.monthlyTarget ?? 0);
+    const collectionRate = totalSales > 0 ? Number(((totalCollected / totalSales) * 100).toFixed(1)) : null;
+    const commToSalesRatio = totalSales > 0 ? Number(((effective / totalSales) * 100).toFixed(2)) : 0;
+
+    const facts = {
+      rep: {
+        name: rep.nameAr, code: rep.code, region: rep.region,
+        commissionPct: repPct, commissionType: rep.commissionType,
+        monthlyTarget: target, isActive: rep.isActive,
+      },
+      window: { from, to },
+      sales: {
+        invoiceCount: invs.length,
+        totalSales: Number(totalSales.toFixed(2)),
+        avgInvoiceValue: invs.length ? Number((totalSales / invs.length).toFixed(2)) : 0,
+        monthlyTarget: target,
+        targetAchievedPct: target > 0 ? Math.round((totalSales / target) * 100) : null,
+      },
+      commission: {
+        snapshotFromInvoices: Number(totalCommission.toFixed(2)),
+        effective: Number(effective.toFixed(2)),
+        commissionToSalesRatioPct: commToSalesRatio,
+      },
+      collections: {
+        totalCollected: Number(totalCollected.toFixed(2)),
+        collectionRatePct: collectionRate,
+      },
+    };
+
+    if (!process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL || !process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيّأة على الخادم." });
+      return;
+    }
+
+    const client = new Anthropic({
+      apiKey:  process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+    });
+
+    const prompt = `أنت خبير تعويضات وعمولات مبيعات (Sales Compensation Consultant) معتمد على المعايير الدولية:
+- WorldatWork Sales Compensation Principles
+- Korn Ferry / Mercer / Radford benchmarks للأدوار البيعية
+- مفاهيم OTE (On-Target Earnings)، Pay Mix، Quota Attainment، Accelerators، SPIF.
+
+حلّل عمولة مندوب المبيعات التالي بناءً على البيانات الموضوعية فقط، ثم قارنها بالمعايير الدولية الشائعة، واكتب الردّ بالعربية الفصحى الواضحة وبتنسيق Markdown.
+
+البيانات (JSON):
+\`\`\`json
+${JSON.stringify(facts, null, 2)}
+\`\`\`
+
+اكتب الردّ في الأقسام التالية فقط:
+1. **ملخص العمولة** — العمولة الفعلية بالريال السعودي (ر.س)، نوع العمولة، نسبة العمولة إلى المبيعات (Comm/Sales %)، ونسبة تحقيق الهدف (Quota Attainment).
+2. **مقارنة بالمعايير الدولية** — قارن نسبة العمولة، Pay Mix المتوقع (Base/Variable)، ومستوى تحقيق الهدف بأرقام معيارية شائعة في WorldatWork/Radford لقطاع المبيعات B2B (اذكر أنها مرجعية تقريبية وليست أرقام شركة بعينها).
+3. **مؤشرات المخاطر** — مثل: ضعف معدل التحصيل، اعتماد كبير على عميل واحد (إن أمكن استنتاجه)، تحقيق هدف منخفض (<60%) أو مرتفع جداً (>120% قد يدل على هدف غير معاير).
+4. **توصيات لهيكل العمولة** — 3-5 توصيات عملية: مثل إدخال Accelerators فوق 100% من الهدف، تحويل لنموذج Collection-Based عند ضعف التحصيل، مراجعة Pay Mix، أو إضافة SPIF لمنتجات معينة.
+
+قواعد:
+- لا تخترع أرقاماً غير موجودة في البيانات.
+- استخدم القيم بالريال السعودي (ر.س).
+- إذا كانت البيانات شحيحة (صفر فواتير) صرّح بذلك واقترح خطوات أولى.`;
+
+    const message = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 8192,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const block = message.content[0];
+    const analysis = block && block.type === "text" ? block.text : "";
+
+    res.json({ analysis, facts });
+  } catch (e: any) {
+    console.error("[sales-reps ai-commission]", e);
+    res.status(500).json({ error: e?.message ?? "فشل تحليل العمولة" });
+  }
+});
+
 // ─── AI PERFORMANCE ANALYSIS ─────────────────────────────────────────────────
 // POST /api/sales-reps/:id/ai-analysis?companyId=X
 // Aggregates last-90-days facts about the rep and asks Claude for an Arabic

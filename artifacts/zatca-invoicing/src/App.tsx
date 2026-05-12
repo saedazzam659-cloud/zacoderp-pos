@@ -211,6 +211,7 @@ import AccountingMappings from "@/pages/settings/AccountingMappings";
 import DataImportExport from "@/pages/settings/DataImportExport";
 import Sequences from "@/pages/settings/Sequences";
 import SalesReps from "@/pages/sales/SalesReps";
+import SalesRepCommissions from "@/pages/sales/SalesRepCommissions";
 // Accounting Reports
 import AccountStatement from "@/pages/accounting/reports/AccountStatement";
 import TrialBalance     from "@/pages/accounting/reports/TrialBalance";
@@ -816,6 +817,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/settings/accounting-mappings" module="general_settings" component={AccountingMappings} />}
             {!isSuperAdmin && <PermRoute path="/settings/data-io"             module="data_io"          component={DataImportExport} />}
             {!isSuperAdmin && user?.role === "admin" && <PermRoute path="/settings/sequences" module="sequences" component={Sequences} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reps/commissions"       module="sales_reps"       component={SalesRepCommissions} />}
             {!isSuperAdmin && <PermRoute path="/sales/reps"                   module="sales_reps"       component={SalesReps} />}
 
             {/* Shared routes */}

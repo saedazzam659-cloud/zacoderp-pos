@@ -521,6 +521,7 @@
     "salesGroup": "Customers & Sales",
     "customers": "Customers",
     "salesReps": "Sales Representatives",
+    "salesRepCommissions": "Sales Rep Commissions",
     "quotations": "Quotations",
     "salesOrders": "Sales Orders",
     "salesInvoices": "Sales Invoices",
@@ -668,9 +669,17 @@
       "empty": "No devices yet",
       "confirmDelete": "Delete this device?",
       "col": {
-        "code": "Code", "name": "Name", "type": "Type", "brand": "Brand",
-        "model": "Model", "channels": "Channels", "ip": "IP", "port": "Port",
-        "serial": "Serial", "location": "Location", "status": "Status"
+        "code": "Code",
+        "name": "Name",
+        "type": "Type",
+        "brand": "Brand",
+        "model": "Model",
+        "channels": "Channels",
+        "ip": "IP",
+        "port": "Port",
+        "serial": "Serial",
+        "location": "Location",
+        "status": "Status"
       }
     },
     "cameras": {
@@ -689,53 +698,58 @@
       "warehouseId": "Warehouse ID",
       "employeeId": "Employee ID",
       "loc": {
-        "generic": "Generic", "department": "Department", "production_line": "Production Line",
-        "warehouse": "Warehouse", "employee_workstation": "Employee Workstation",
-        "entrance": "Entrance", "parking": "Parking"
+        "generic": "Generic",
+        "department": "Department",
+        "production_line": "Production Line",
+        "warehouse": "Warehouse",
+        "employee_workstation": "Employee Workstation",
+        "entrance": "Entrance",
+        "parking": "Parking"
       }
     },
     "deviceType": {
-      "dvr": "DVR", "nvr": "NVR", "hybrid": "Hybrid",
-      "camera_ip": "IP Camera", "camera_analog": "Analog Camera"
+      "dvr": "DVR",
+      "nvr": "NVR",
+      "hybrid": "Hybrid",
+      "camera_ip": "IP Camera",
+      "camera_analog": "Analog Camera"
     },
     "deviceStatus": {
-      "active": "Active", "inactive": "Inactive", "maintenance": "Maintenance"
+      "active": "Active",
+      "inactive": "Inactive",
+      "maintenance": "Maintenance"
     },
     "liveView": {
-      "title": "Live View", "tiles": "tiles", "online": "Online", "offline": "Offline",
+      "title": "Live View",
+      "tiles": "tiles",
+      "online": "Online",
+      "offline": "Offline",
       "empty": "—",
       "note": "Cameras shown as placeholders only — live RTSP playback requires an external component"
     },
     "ai": {
-      "title": "Security AI",
-      "last7": "Last 7 days", "last30": "Last 30 days", "last90": "Last 90 days",
-      "totalEvents": "Total Events", "mttr": "Mean Time To Resolve",
-      "aiSourced": "AI-sourced", "actionsTaken": "Actions Taken",
-      "byModule": "By Module", "bySource": "By Source", "topTypes": "Top Event Types",
-      "heatmap": "Heatmap (day × hour)",
-      "openEventsRec": "Open Events — Analysis & Recommendations",
-      "noOpen": "No open events",
-      "actionsLog": "Actions Log", "noActions": "No actions yet",
-      "evaluateRules": "Evaluate Rules", "evaluating": "Evaluating…",
-      "evaluated": "Rules evaluated", "generatedN": "{{n}} events generated",
-      "analyze": "Analyze", "analyzing": "Analyzing…",
-      "dispatch": "Dispatch", "dispatched": "Action dispatched",
-      "action": "Action", "reasons": "Reasons",
-      "col": { "when": "When", "kind": "Kind", "module": "Module", "title": "Title", "event": "Event" },
-      "kind": {
-        "create_task": "Create task",
-        "create_violation": "Log violation",
-        "create_maintenance": "Maintenance request",
-        "notify": "Notify",
-        "open_ticket": "Open ticket"
-      }
+      "suggest": "AI Suggest",
+      "thinking": "Analyzing...",
+      "applied": "AI suggestion applied",
+      "needDescription": "Please write a description first (at least 5 characters)",
+      "analyzeImage": "Analyze image with AI",
+      "needImage": "Please upload an image first",
+      "visionApplied": "Image analyzed and fields filled",
+      "visionNoConcern": "Image shows no clear security concern",
+      "visionFailed": "Failed to analyze image"
     },
     "module": {
-      "hr": "HR", "production": "Production", "inventory": "Inventory",
-      "branch": "Branch", "none": "—"
+      "hr": "HR",
+      "production": "Production",
+      "inventory": "Inventory",
+      "branch": "Branch",
+      "none": "—"
     },
     "source": {
-      "manual": "Manual", "ai": "AI", "rule": "Rule", "import": "Import"
+      "manual": "Manual",
+      "ai": "AI",
+      "rule": "Rule",
+      "import": "Import"
     },
     "reports": {
       "title": "Advanced Security Reports",
@@ -745,10 +759,17 @@
       "branches": "Branch Comparison",
       "warehouseNote": "Night window: from {{from}}:00 to {{to}}:00",
       "col": {
-        "employee": "Employee", "line": "Production Line", "warehouse": "Warehouse",
-        "branch": "Branch", "cameras": "Cameras",
-        "total": "Total", "open": "Open", "critical": "Critical", "high": "High",
-        "stops": "Stops", "last": "Last event"
+        "employee": "Employee",
+        "line": "Production Line",
+        "warehouse": "Warehouse",
+        "branch": "Branch",
+        "cameras": "Cameras",
+        "total": "Total",
+        "open": "Open",
+        "critical": "Critical",
+        "high": "High",
+        "stops": "Stops",
+        "last": "Last event"
       }
     },
     "rules": {
@@ -886,17 +907,6 @@
       "eventDateTime": "Event date & time",
       "resolutionNote": "Resolution notes",
       "resolutionPlaceholder": "How was this event resolved?"
-    },
-    "ai": {
-      "suggest": "AI Suggest",
-      "thinking": "Analyzing...",
-      "applied": "AI suggestion applied",
-      "needDescription": "Please write a description first (at least 5 characters)",
-      "analyzeImage": "Analyze image with AI",
-      "needImage": "Please upload an image first",
-      "visionApplied": "Image analyzed and fields filled",
-      "visionNoConcern": "Image shows no clear security concern",
-      "visionFailed": "Failed to analyze image"
     },
     "validation": {
       "titleRequired": "Title is required"
@@ -7613,5 +7623,45 @@
     "severity_medium": "Medium",
     "severity_low": "Low",
     "invoicesShort": "{{n}} invoices"
+  },
+  "salesRepCommissions": {
+    "title": "Sales Rep Commissions",
+    "subtitle": "Calculate any rep's commission for any period and benchmark it against international compensation standards using AI",
+    "selectRep": "Sales Rep",
+    "selectRepPh": "Select a rep…",
+    "from": "From",
+    "to": "To",
+    "exportCsv": "Export CSV",
+    "aiAnalyze": "AI Commission Analysis",
+    "aiTitle": "Commission Analysis vs International Standards",
+    "aiDisclaimer": "AI-generated analysis for guidance only. Validate compensation decisions with HR.",
+    "close": "Close",
+    "emptyHint": "Select a sales rep to view their commission details for the chosen period.",
+    "region": "Region",
+    "typeInvoice": "Invoice-based",
+    "typeCollection": "Collection-based",
+    "target": "Monthly Target",
+    "noTarget": "No target set",
+    "of": "of",
+    "sar": "SAR",
+    "totalSales": "Total Sales",
+    "effectiveCommission": "Effective Commission",
+    "avgInvoice": "Avg Invoice Value",
+    "targetAchieved": "Target Achieved",
+    "basedOnInvoices": "Based on invoice snapshots",
+    "basedOnCollections": "Based on collected receipts",
+    "collected": "Total Collected",
+    "collectionRate": "Collection Rate",
+    "invoiceBreakdown": "Invoice Breakdown",
+    "rows": "rows",
+    "noInvoices": "No invoices for this rep in the selected period.",
+    "invoiceNumber": "Invoice #",
+    "invoiceDate": "Date",
+    "customer": "Customer",
+    "totalAmount": "Total",
+    "commPct": "Commission %",
+    "commAmount": "Commission Amount",
+    "total": "Total",
+    "invoices": "invoices"
   }
 }
