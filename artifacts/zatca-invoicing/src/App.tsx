@@ -822,7 +822,15 @@ function AppRoutes() {
 
             {/* Shared routes */}
             <Route path="/settings" component={Settings} />
-            <Route component={NotFound} />
+            {/* Authenticated catch-all: a logged-in user landing on a path
+                that has no matching route (e.g. a sales rep opening /users
+                — which only renders for admins, so the Switch falls all the
+                way through) used to see the public 404 page rendered INSIDE
+                the app shell, which looked like a broken UI. Send them to
+                "/" instead. The marketing 404 still serves unauthenticated
+                visitors via the unauthenticated branch above, so SEO
+                crawlers continue to get a proper noindex 404 page. */}
+            <Route><Redirect to="/" /></Route>
           </Switch>
         </Layout>
       </Route>
