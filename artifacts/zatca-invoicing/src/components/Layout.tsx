@@ -1600,6 +1600,14 @@ function AIToolsNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  // Hide the entire "أدوات الذكاء الاصطناعي" group unless the user holds
+  // at least one of the *real* AI permissions. Without this, sales reps
+  // (who have none of these) would still see the group purely because
+  // workSessions / inbox are unguarded utility items inside it — and the
+  // group's hub link would 404 since they can't actually reach any
+  // meaningful child. Admin / superadmin always pass via groupVisible.
+  const AI_OWN_PERMS = ["voiceAssistant", "sessions", "chat", "data_io"];
+  if (!groupVisible(user, AI_OWN_PERMS)) return null;
   const visibleChildren = filterNav(aiToolsSubNav, user);
   if (visibleChildren.length === 0) return null;
   const isOnSub = aiToolsSubNav.some(i => location.startsWith(i.href));
