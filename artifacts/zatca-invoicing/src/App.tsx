@@ -376,7 +376,7 @@ function safeRedirectTarget(raw: string | null | undefined): string | null {
 }
 
 function AppRoutes() {
-  const { isAuthenticated, loading, user } = useAuth();
+  const { isAuthenticated, loading, user, actingCompanyId } = useAuth() as any;
   const [location] = useLocation();
 
   if (loading) return <LoadingScreen />;
@@ -448,7 +448,12 @@ function AppRoutes() {
     }
   }
 
-  const isSuperAdmin = user?.role === "superadmin";
+  // While the SuperAdmin is "acting as" a tenant via the impersonation
+  // banner, route them through the tenant-side router (Dashboard, Invoices,
+  // Customers, …). Otherwise every `!isSuperAdmin` route 404s and the SA
+  // gets stranded on a useless SuperAdmin shell. The banner stays visible
+  // and provides the "خروج" exit, so flipping this flag is safe.
+  const isSuperAdmin = user?.role === "superadmin" && !actingCompanyId;
 
   return (
     <Switch>

@@ -2424,7 +2424,7 @@ function TopBar({
 // ─── Main Layout ───────────────────────────────────────────────────────────────
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, actingCompanyId } = useAuth() as any;
   // Auto-logout after a configurable idle period (set in General Settings).
   // No-op when the setting is 0/disabled or no user is signed in.
   useIdleLogout();
@@ -2481,7 +2481,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     location.startsWith("/settings/data-io")
   );
 
-  const isSuperAdmin = user?.role === "superadmin";
+  // Mirror the App.tsx logic: while impersonating a tenant the SA should
+  // see the tenant sidebar (Dashboard / Sales / Inventory / …), not the
+  // SuperAdmin sidebar. The amber banner remains the safe exit.
+  const isSuperAdmin = user?.role === "superadmin" && !actingCompanyId;
   const menuPerms    = parseMenuPerms(user?.company?.menuPermissions);
 
   // Accordion behavior — only ONE top-level group may be expanded at a time.
