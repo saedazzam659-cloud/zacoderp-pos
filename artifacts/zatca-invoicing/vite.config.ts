@@ -27,9 +27,33 @@ if (!basePath) {
   );
 }
 
+// Vite middleware that asserts a positive X-Robots-Tag on every HTML
+// response. Without this, an upstream proxy / CDN can silently inject
+// `noindex` and Lighthouse's "Page is blocked from indexing" audit
+// fails even though the HTML <meta name="robots"> is set to
+// `index,follow`. Applies to both dev and preview servers.
+function positiveRobotsHeader() {
+  return {
+    name: "positive-robots-header",
+    configureServer(server: any) {
+      server.middlewares.use((req: any, res: any, next: any) => {
+        res.setHeader("X-Robots-Tag", "index, follow");
+        next();
+      });
+    },
+    configurePreviewServer(server: any) {
+      server.middlewares.use((req: any, res: any, next: any) => {
+        res.setHeader("X-Robots-Tag", "index, follow");
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig({
   base: basePath,
   plugins: [
+    positiveRobotsHeader(),
     react(),
     tailwindcss(),
     runtimeErrorOverlay(),

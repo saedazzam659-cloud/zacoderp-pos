@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /admin/
+Disallow: /accounting/
+Disallow: /settings/
+Disallow: /pos-app/
+Disallow: /super/
+Disallow: /pending-approval
+Disallow: /recover-superadmin
