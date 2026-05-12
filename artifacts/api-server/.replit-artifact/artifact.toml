@@ -7,7 +7,14 @@ id = "3B4_FFSkEVBkAeYMFRJ2e"
 [[services]]
 localPort = 8080
 name = "API Server"
-paths = ["/api"]
+# Routes:
+#   /api/*        → REST API + generated client.
+#   /sitemap.xml  → dynamic SEO sitemap built from DB (plans + published
+#                   articles). MUST live at the domain root because Google
+#                   Search Console only fetches /sitemap.xml at root, never
+#                   /api/sitemap.xml.
+#   /robots.txt   → same reason — crawlers only honour /robots.txt at root.
+paths = ["/api", "/sitemap.xml", "/robots.txt"]
 
 [services.development]
 run = "pnpm --filter @workspace/api-server run dev"
