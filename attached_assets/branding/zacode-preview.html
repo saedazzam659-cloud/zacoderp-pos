@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Zacode — Logo Preview</title>
+<style>
+  body { font-family: 'Cairo','Segoe UI',sans-serif; background:#f8fafc; margin:0; padding:32px; color:#0f172a; }
+  h1 { font-size:24px; margin:0 0 24px; }
+  .grid { display:grid; gap:24px; max-width:900px; margin:0 auto; }
+  .card { background:white; border:1px solid #e2e8f0; border-radius:16px; padding:32px; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+  .card h2 { margin:0 0 4px; font-size:14px; font-weight:700; color:#475569; }
+  .card .desc { margin:0 0 20px; font-size:12px; color:#94a3b8; }
+  .card.dark { background:#0f172a; }
+  .card.dark h2, .card.dark .desc { color:#cbd5e1; }
+  .row { display:flex; align-items:center; gap:32px; flex-wrap:wrap; }
+  img { max-height:88px; }
+  img.mark { max-height:128px; width:128px; }
+  .swatch-row { display:flex; gap:12px; margin-top:24px; }
+  .swatch { width:48px; height:48px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:9px; color:white; font-weight:700; }
+</style>
+</head>
+<body>
+  <div class="grid">
+    <h1>Zacode — معاينة الهوية البصرية</h1>
+
+    <div class="card">
+      <h2>الشعار الأفقي (إنجليزي)</h2>
+      <p class="desc">للاستخدام في الهيدر، التواقيع، الفواتير، الموقع</p>
+      <div class="row">
+        <img src="zacode-logo-horizontal.svg" alt="Zacode logo">
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>الشعار الأفقي (عربي)</h2>
+      <p class="desc">للنسخة العربية من الموقع، اللافتات، المطبوعات</p>
+      <div class="row">
+        <img src="zacode-logo-arabic.svg" alt="زاكود">
+      </div>
+    </div>
+
+    <div class="card dark">
+      <h2>الشعار على خلفية داكنة</h2>
+      <p class="desc">للهيدرات الداكنة، السوشيال، العروض التقديمية</p>
+      <div class="row">
+        <img src="zacode-logo-dark.svg" alt="Zacode dark">
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>الأيقونة فقط (Brand Mark)</h2>
+      <p class="desc">للـ favicon، صورة الواتساب، بروفايل السوشيال، الأفاتار</p>
+      <div class="row">
+        <img class="mark" src="zacode-mark.svg" alt="Zacode mark">
+        <img src="zacode-mark.svg" alt="Zacode mark" style="height:64px;width:64px;">
+        <img src="zacode-mark.svg" alt="Zacode mark" style="height:32px;width:32px;">
+        <img src="zacode-mark.svg" alt="Zacode mark" style="height:16px;width:16px;">
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>لوحة الألوان</h2>
+      <p class="desc">للاستخدام المتسق في كل التصاميم</p>
+      <div class="swatch-row">
+        <div class="swatch" style="background:#10b981">#10b981</div>
+        <div class="swatch" style="background:#059669">#059669</div>
+        <div class="swatch" style="background:#047857">#047857</div>
+        <div class="swatch" style="background:#fbbf24;color:#0f172a">#fbbf24</div>
+        <div class="swatch" style="background:#0f172a">#0f172a</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

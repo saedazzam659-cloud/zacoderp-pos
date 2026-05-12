@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="256" height="256" role="img" aria-label="Zacode">
+  <defs>
+    <linearGradient id="zg3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#047857"/>
+    </linearGradient>
+    <linearGradient id="zg-shine3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#zg3)"/>
+  <rect width="64" height="32" rx="14" fill="url(#zg-shine3)"/>
+  <path d="M 18 20 H 46 L 19 44 H 46"
+        fill="none" stroke="#ffffff" stroke-width="5.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 32 50 L 40 42 L 48 46 L 54 38"
+        fill="none" stroke="#fbbf24" stroke-width="3"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="54" cy="14" r="4" fill="#fbbf24"/>
+  <circle cx="54" cy="14" r="1.6" fill="#047857"/>
+</svg>

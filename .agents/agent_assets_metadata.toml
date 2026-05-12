@@ -161,3 +161,27 @@ id = "oXCjAmuHGeZ3aSbQI7npP"
 uri = "file://.local/sql/fix_duplicate_qyd_0722_company18.sql.txt"
 type = "text"
 title = "fix_duplicate_qyd_0722_company18.sql — إصلاح التكرار"
+
+[[outputs]]
+id = "2_mmM084F6mXXbNK9cGFr"
+uri = "file://attached_assets/branding/zacode-logo-horizontal.svg"
+type = "image"
+title = "Zacode — الشعار الأفقي (إنجليزي)"
+
+[[outputs]]
+id = "MA3RpwJ6TeTWM8y6ZfnMr"
+uri = "file://attached_assets/branding/zacode-logo-arabic.svg"
+type = "image"
+title = "زاكود — الشعار الأفقي (عربي)"
+
+[[outputs]]
+id = "RALLy-Hfi5L736IDiUJPa"
+uri = "file://attached_assets/branding/zacode-logo-dark.svg"
+type = "image"
+title = "Zacode — على خلفية داكنة"
+
+[[outputs]]
+id = "tQ3T8Scj5o3ZUsGHKqFAn"
+uri = "file://attached_assets/branding/zacode-mark.svg"
+type = "image"
+title = "Zacode — الأيقونة فقط (Brand Mark / Favicon)"
