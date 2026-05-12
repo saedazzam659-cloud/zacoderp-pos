@@ -178,7 +178,7 @@ export default function OpeningBalances() {
         if (cid) params.set("companyId", String(cid));
         if (entryDate) params.set("toDate", entryDate);
         if (branchId) params.set("branchId", branchId);
-        const res = await fetch(`${API}/api/reports/trial-balance?${params.toString()}`, {
+        const res = await fetch(`${API}/api/accounting-reports/trial-balance?${params.toString()}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (res.ok) {
