@@ -390,6 +390,35 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     },
     enabled: !!user && usesOps,
   });
+  // ─── My-rep auto-attribution ─────────────────────────────────────────
+  // If the logged-in user is linked to a sales rep (sales_reps.user_id), the
+  // backend already auto-attributes the invoice to that rep on save. The UI
+  // mirrors this by (a) pre-selecting the rep on a new doc and (b) locking
+  // the combobox so the user can't reassign their own commissions to a
+  // colleague. Admin / superadmin keep full freedom (myRep stays null).
+  const { data: myRep } = useQuery<any>({
+    queryKey: ["sales-reps-me-current", cid],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/sales-reps/me/current?companyId=${cid ?? ""}`, { headers: authH });
+      if (r.status === 404) return null;
+      if (!r.ok) return null;
+      return r.json();
+    },
+    enabled: !!user && !!cid && usesOps && user?.role !== "superadmin" && user?.role !== "admin",
+    staleTime: 5 * 60_000,
+  });
+  const repLocked = !!myRep?.id;
+  // ─── Auto-pre-select the linked rep on a NEW doc ───
+  // We only touch state when (a) the doc is new (so existing-doc loads aren't
+  // overwritten) and (b) the field is still empty (preserves any explicit
+  // user choice if they cleared it deliberately). Edit/quotation-source paths
+  // already restore salesRepId from the source row.
+  useEffect(() => {
+    if (repLocked && isNew && !salesRepId) {
+      setSalesRepId(String(myRep.id));
+    }
+  }, [repLocked, isNew, myRep?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
   useEffect(() => {
     if (!isNew || !defaultBranch || branchId) return;
@@ -1094,15 +1123,22 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     { value: "", label: t("salesDocForm.noCustomer") },
     ...customers.map((c: any) => ({ value: String(c.id), label: c.nameAr ?? c.nameEn ?? `#${c.id}` })),
   ];
-  const salesRepComboItems = [
-    { value: "", label: t("salesDocForm.noSalesRep") },
-    ...(salesReps as any[])
-      .filter((r: any) => r.isActive !== false)
-      .map((r: any) => ({
-        value: String(r.id),
-        label: r.code ? `${r.code} — ${r.nameAr ?? r.nameEn ?? `#${r.id}`}` : (r.nameAr ?? r.nameEn ?? `#${r.id}`),
-      })),
-  ];
+  const salesRepComboItems = repLocked
+    // When the user is locked to their own rep, hide every other entry so the
+    // combobox visually communicates "this is you, can't change it".
+    ? [{
+        value: String(myRep.id),
+        label: myRep.code ? `${myRep.code} — ${myRep.nameAr ?? myRep.nameEn ?? `#${myRep.id}`}` : (myRep.nameAr ?? myRep.nameEn ?? `#${myRep.id}`),
+      }]
+    : [
+        { value: "", label: t("salesDocForm.noSalesRep") },
+        ...(salesReps as any[])
+          .filter((r: any) => r.isActive !== false)
+          .map((r: any) => ({
+            value: String(r.id),
+            label: r.code ? `${r.code} — ${r.nameAr ?? r.nameEn ?? `#${r.id}`}` : (r.nameAr ?? r.nameEn ?? `#${r.id}`),
+          })),
+      ];
   const itemComboItems = [
     { value: "", label: t("salesDocForm.selectItem") },
     ...inventoryItems.map((i: any) => ({ value: String(i.id), label: i.code ? `${i.code} — ${i.nameAr}` : i.nameAr })),
@@ -1974,13 +2010,22 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 </div>
                 {usesOps && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">{t("salesDocForm.salesRep")}</Label>
-                    <SearchCombobox
-                      items={salesRepComboItems}
-                      value={salesRepId}
-                      onValueChange={setSalesRepId}
-                      placeholder={t("salesDocForm.salesRepPlaceholder")}
-                    />
+                    <Label className="text-xs flex items-center gap-1">
+                      <span>{t("salesDocForm.salesRep")}</span>
+                      {repLocked && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                          مُعيَّن تلقائياً (هويتك كمندوب)
+                        </span>
+                      )}
+                    </Label>
+                    <div className={repLocked ? "opacity-90 pointer-events-none" : ""} title={repLocked ? "لا يمكنك إسناد فاتورتك لمندوب آخر" : undefined}>
+                      <SearchCombobox
+                        items={salesRepComboItems}
+                        value={salesRepId}
+                        onValueChange={setSalesRepId}
+                        placeholder={t("salesDocForm.salesRepPlaceholder")}
+                      />
+                    </div>
                   </div>
                 )}
                 <div className="space-y-1.5">
