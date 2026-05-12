@@ -2800,7 +2800,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           assign sessions to employees and shouldn't be prompted to pick one
           themselves. The SessionIndicator in the topbar still lets them
           opt-in and switch sessions whenever they want. */}
-      {!isSuperAdmin && user?.role !== "admin" && <SessionPickerModal />}
+      {/* Use the RAW role here, not `isSuperAdmin` (which we deliberately
+          flip to false while a SuperAdmin is impersonating a tenant). The
+          session-picker modal is for genuine company employees only — an
+          impersonating SA must never be forced to "pick a session". */}
+      {user?.role !== "superadmin" && user?.role !== "admin" && <SessionPickerModal />}
 
       {/* Global AI assistant — floating widget rendered on every authenticated
           screen. The component itself self-hides when the user is not
