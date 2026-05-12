@@ -90,7 +90,17 @@ export default function PosLanding() {
         "acceptedAnswer": { "@type": "Answer", "text": f.a },
       })),
     },
-  ], [canonical, faqs]);
+    // Breadcrumb so the search result reads "zacoderp.com › نقاط البيع"
+    // instead of the raw URL — improves CTR and clarifies hierarchy.
+    {
+      "@context": "https://schema.org",
+      "@type":    "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "الرئيسية",  "item": `${origin}/` },
+        { "@type": "ListItem", "position": 2, "name": "نقاط البيع", "item": canonical },
+      ],
+    },
+  ], [canonical, faqs, origin]);
 
   useEffect(() => {
     const tag = "data-pos-jsonld";

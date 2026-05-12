@@ -78,9 +78,9 @@ export default function BlogArticle() {
   // JSON-LD Article schema. React 19 + react-helmet-async@3 doesn't auto-
   // hoist inline <script> children, so we mount the schema ourselves into
   // <head> and clean up on unmount / re-fetch.
-  const articleSchema = useMemo(() => {
+  const articleSchemas = useMemo(() => {
     if (!data) return null;
-    return {
+    const article = {
       "@context": "https://schema.org",
       "@type":    "Article",
       "headline": data.title,
@@ -100,19 +100,35 @@ export default function BlogArticle() {
       "image":   `${origin}${BASE}/opengraph.jpg`,
       "mainEntityOfPage": { "@type": "WebPage", "@id": canonical },
     };
+    // Breadcrumb so Google shows "zacoderp.com › المدونة › {title}" under
+    // the article result instead of the raw URL — improves CTR meaningfully.
+    const breadcrumb = {
+      "@context": "https://schema.org",
+      "@type":    "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "الرئيسية",  "item": `${origin}/` },
+        { "@type": "ListItem", "position": 2, "name": "المدونة",    "item": `${origin}/blog` },
+        { "@type": "ListItem", "position": 3, "name": data.title,   "item": canonical },
+      ],
+    };
+    return [article, breadcrumb];
   }, [data, canonical, origin]);
 
   useEffect(() => {
     const tag = "data-blog-jsonld";
     document.head.querySelectorAll(`script[${tag}]`).forEach(el => el.remove());
-    if (!articleSchema) return;
-    const el = document.createElement("script");
-    el.type = "application/ld+json";
-    el.setAttribute(tag, "1");
-    el.text = JSON.stringify(articleSchema);
-    document.head.appendChild(el);
-    return () => { el.remove(); };
-  }, [articleSchema]);
+    if (!articleSchemas) return;
+    const created: HTMLScriptElement[] = [];
+    for (const s of articleSchemas) {
+      const el = document.createElement("script");
+      el.type = "application/ld+json";
+      el.setAttribute(tag, "1");
+      el.text = JSON.stringify(s);
+      document.head.appendChild(el);
+      created.push(el);
+    }
+    return () => { created.forEach(el => el.remove()); };
+  }, [articleSchemas]);
 
   // Helmet's <title> child doesn't always populate document.title under
   // React 19, so we set it explicitly. Restoring the previous title on

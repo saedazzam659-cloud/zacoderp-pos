@@ -180,6 +180,16 @@ export default function Pricing() {
       "acceptedAnswer": { "@type": "Answer", "text": f.a },
     })),
   };
+  // Breadcrumb so the search result reads "zacoderp.com › الباقات"
+  // instead of the raw URL — improves CTR.
+  const breadcrumbSchema = {
+    "@context": "https://schema.org",
+    "@type":    "BreadcrumbList",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "الرئيسية", "item": `${origin}/` },
+      { "@type": "ListItem", "position": 2, "name": "الباقات",   "item": canonical },
+    ],
+  };
 
   return (
     <div dir="rtl" className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-muted">
@@ -210,7 +220,7 @@ export default function Pricing() {
         <link rel="alternate" hrefLang="ar" href={canonical} />
         <link rel="alternate" hrefLang="x-default" href={canonical} />
       </Helmet>
-      <PricingJsonLd schemas={[...productSchema, faqSchema]} />
+      <PricingJsonLd schemas={[...productSchema, faqSchema, breadcrumbSchema]} />
 
       {/* Top nav strip */}
       <header className="border-b bg-white/80 backdrop-blur sticky top-0 z-20">
