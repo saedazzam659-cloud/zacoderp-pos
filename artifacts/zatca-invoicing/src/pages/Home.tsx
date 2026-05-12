@@ -232,7 +232,14 @@ export default function Home() {
       <header className="border-b bg-white/80 backdrop-blur sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-sm font-bold min-w-0">
-            <div className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold shadow">Z</div>
+            <img
+              src={`${BASE}/favicon.svg`}
+              alt="زاكود Zacode"
+              width={36}
+              height={36}
+              className="h-9 w-9 shrink-0 rounded-lg shadow"
+              data-testid="home-brand-mark"
+            />
             <span className="hidden sm:inline truncate">زاكود المحاسبي</span>
           </div>
           <nav className="flex items-center gap-1 sm:gap-1.5 shrink-0">

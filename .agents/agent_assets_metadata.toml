@@ -185,3 +185,39 @@ id = "tQ3T8Scj5o3ZUsGHKqFAn"
 uri = "file://attached_assets/branding/zacode-mark.svg"
 type = "image"
 title = "Zacode — الأيقونة فقط (Brand Mark / Favicon)"
+
+[[outputs]]
+id = "QLoABkQnajYtfdc1qArK_"
+uri = "file://attached_assets/branding/zacode-mark-1024.png"
+type = "image"
+title = "Zacode — أيقونة PNG عالية الدقة (1024×1024 — للسوشيال)"
+
+[[outputs]]
+id = "xJvMJablraDbLCGhvzgOh"
+uri = "file://attached_assets/branding/zacode-mark-512.png"
+type = "image"
+title = "Zacode — أيقونة PNG متوسطة (512×512 — للواتساب Business)"
+
+[[outputs]]
+id = "SE2__x42rNVnbQqxsQ09k"
+uri = "file://attached_assets/branding/zacode-mark-256.png"
+type = "image"
+title = "Zacode — أيقونة PNG صغيرة (256×256 — لـ LinkedIn/X)"
+
+[[outputs]]
+id = "FvJp66GW44GeNlYMmNG2L"
+uri = "file://attached_assets/branding/zacode-logo-horizontal.png"
+type = "image"
+title = "Zacode — الشعار الأفقي إنجليزي (PNG بخلفية شفافة)"
+
+[[outputs]]
+id = "I1C1gLnXMMHd3tHb__pwS"
+uri = "file://attached_assets/branding/zacode-logo-arabic.png"
+type = "image"
+title = "زاكود — الشعار الأفقي عربي (PNG بخلفية شفافة)"
+
+[[outputs]]
+id = "u2MthIBG-LNrjPZtQTuH1"
+uri = "file://attached_assets/branding/zacode-logo-dark.png"
+type = "image"
+title = "Zacode — على خلفية داكنة (PNG للعروض/السوشيال)"

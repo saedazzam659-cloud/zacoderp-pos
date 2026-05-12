@@ -1,22 +1,22 @@
-<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Zacoderp / زاكود">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="256" height="256" role="img" aria-label="Zacode">
   <defs>
-    <linearGradient id="zacBg" x1="0" y1="0" x2="180" y2="180" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#0FB7A6"/>
-      <stop offset="100%" stop-color="#0E7C8A"/>
+    <linearGradient id="zg3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#047857"/>
     </linearGradient>
-    <linearGradient id="zacShine" x1="0" y1="0" x2="0" y2="180" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.18"/>
-      <stop offset="55%" stop-color="#FFFFFF" stop-opacity="0"/>
+    <linearGradient id="zg-shine3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
   </defs>
-
-  <rect width="180" height="180" rx="36" fill="url(#zacBg)"/>
-  <rect width="180" height="180" rx="36" fill="url(#zacShine)"/>
-
-  <!-- Bold stylized Z mark, designed to read at favicon size -->
-  <path d="M48 50 H132 L72 122 H134 V140 H48 V128 L108 56 H48 Z"
-        fill="#FFFFFF"/>
-
-  <!-- accent dot — evokes the brand's checkmark / signature -->
-  <circle cx="139" cy="48" r="9" fill="#FACC15"/>
+  <rect width="64" height="64" rx="14" fill="url(#zg3)"/>
+  <rect width="64" height="32" rx="14" fill="url(#zg-shine3)"/>
+  <path d="M 18 20 H 46 L 19 44 H 46"
+        fill="none" stroke="#ffffff" stroke-width="5.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 32 50 L 40 42 L 48 46 L 54 38"
+        fill="none" stroke="#fbbf24" stroke-width="3"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="54" cy="14" r="4" fill="#fbbf24"/>
+  <circle cx="54" cy="14" r="1.6" fill="#047857"/>
 </svg>

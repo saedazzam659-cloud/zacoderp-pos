@@ -667,7 +667,14 @@ export default function Register() {
 
         {/* Logo */}
         <div className="text-center mb-6">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground text-xl font-bold mb-3 shadow-lg">Z</div>
+          <img
+            src={`${import.meta.env.BASE_URL}favicon.svg`}
+            alt="زاكود Zacode"
+            width={48}
+            height={48}
+            className="inline-block h-12 w-12 rounded-xl mb-3 shadow-lg"
+            data-testid="register-brand-mark"
+          />
           <h1 className="text-2xl font-bold text-foreground">إنشاء حساب جديد</h1>
           <p className="text-muted-foreground mt-1 text-sm">سجّل شركتك وابدأ إصدار فواتير متوافقة مع ZATCA</p>
         </div>

@@ -1805,7 +1805,16 @@ function SidebarInner({
           badge stays for desktop where the X is hidden. */}
       <div className="flex h-16 shrink-0 items-center justify-between border-b border-sidebar-border px-4">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold text-sm shadow">Z</div>
+          {/* Brand mark — uses the new Zacode SVG logo (lives at
+              /favicon.svg so it's cached aggressively across the SPA). */}
+          <img
+            src={`${import.meta.env.BASE_URL}favicon.svg`}
+            alt="زاكود Zacode"
+            width={32}
+            height={32}
+            className="h-8 w-8 shrink-0 rounded-lg shadow"
+            data-testid="sidebar-brand-mark"
+          />
           <div className="min-w-0">
             <p className="text-sm font-bold text-sidebar-foreground leading-tight truncate">{t("auth.appName")}</p>
             <p className="text-[10px] text-sidebar-foreground/50 leading-tight">ZATCA e-Invoicing</p>

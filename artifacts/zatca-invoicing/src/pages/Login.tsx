@@ -449,9 +449,14 @@ export default function Login() {
                 existing "ZATCA compliant" pill; for other countries we
                 substitute the local compliance summary from countries.ts. */}
             <div className="text-center lg:text-start">
-              <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground text-2xl font-bold mb-3 shadow-lg">
-                Z
-              </div>
+              <img
+                src={`${import.meta.env.BASE_URL}favicon.svg`}
+                alt="زاكود Zacode"
+                width={56}
+                height={56}
+                className="inline-block h-14 w-14 rounded-2xl mb-3 shadow-lg"
+                data-testid="login-brand-mark"
+              />
               <h1 className="text-2xl lg:text-3xl font-bold text-foreground">{t("auth.appName")}</h1>
               <p className="text-muted-foreground mt-1 text-sm">{t("auth.appSubtitle")}</p>
               <p className="text-xs text-muted-foreground mt-2" data-testid="login-country-welcome">
