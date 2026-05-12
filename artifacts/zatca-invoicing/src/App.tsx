@@ -1,6 +1,7 @@
 import { Switch, Route, Router as WouterRouter, useLocation, Redirect } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import CustomerCobrowseWidget from "@/components/cobrowse/CustomerCobrowseWidget";
+import WhatsAppFloat from "@/components/WhatsAppFloat";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
@@ -856,6 +857,12 @@ function App() {
             <ScreenActionsProvider>
               <AppRoutes />
               <CustomerCobrowseWidget />
+              {/* Floating WhatsApp CTA — visible to unauthenticated
+                  visitors only (the component self-gates via useAuth).
+                  Mounted at the App root so it persists across every
+                  public route (Home, Pricing, Login, blog, PosLanding…)
+                  without each page needing to opt in. */}
+              <WhatsAppFloat />
             </ScreenActionsProvider>
           </AuthProvider>
         </WouterRouter>
