@@ -1133,7 +1133,13 @@ function DashboardNavGroup({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
-  const isOnSub = location === "/control-panel" || dashboardSubNav.some(i => location.startsWith(i.href) && i.href !== "/");
+  const { user } = useAuth();
+  // Hide the entire "لوحة التحكم" group when none of its children would be
+  // visible to this user (e.g. a sales rep who has no admin/settings perms).
+  // Mirrors the pattern used by AIToolsNavGroup.
+  const visibleChildren = filterNav(dashboardSubNav, user);
+  if (visibleChildren.length === 0) return null;
+  const isOnSub = location === "/control-panel" || visibleChildren.some(i => location.startsWith(i.href) && i.href !== "/");
   return (
     <div>
       <HubGroupButton
@@ -1148,7 +1154,7 @@ function DashboardNavGroup({
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
-          {dashboardSubNav.map(item => (
+          {visibleChildren.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -1171,11 +1177,23 @@ function ZatcaNavGroup({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
-  const isOnSub = zatcaGroupSubNav.some(i => location.startsWith(i.href));
+  const { user } = useAuth();
+  // Hide the entire "ربط ZATCA" group unless the user has at least one
+  // of the *real* ZATCA permissions. We deliberately exclude the
+  // sales_invoices-gated /invoices child from the visibility decision:
+  // sales reps have sales_invoices.view (so they can manage their own
+  // invoices via the Sales group), and without this filter they'd see
+  // the entire "ZATCA integration" group only to reach the same invoice
+  // list that's already in their Sales group.
+  const ZATCA_OWN_PERMS = ["zatca_setup", "zatca_bridge", "zatca_report"];
+  if (!groupVisible(user, ZATCA_OWN_PERMS)) return null;
+  const visibleChildren = filterNav(zatcaGroupSubNav, user);
+  if (visibleChildren.length === 0) return null;
+  const isOnSub = visibleChildren.some(i => location.startsWith(i.href));
   return (
     <div>
       <HubGroupButton
-        hubHref="/zatca"
+        hubHref={visibleChildren[0].href}
         icon={Link2}
         label={t("nav.zatcaGroup")}
         isOn={isOnSub}
@@ -1186,7 +1204,7 @@ function ZatcaNavGroup({
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
-          {zatcaGroupSubNav.map(item => (
+          {visibleChildren.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
