@@ -12,9 +12,11 @@ import {
 } from "@/components/ui/select";
 import {
   BadgeCheck, Sparkles, Loader2, Wallet, TrendingUp, Receipt,
-  Target, Percent, Users, FileSpreadsheet,
+  Target, Percent, Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import ExportButtons from "@/components/ExportButtons";
+import type { ExportColumn } from "@/lib/export";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -154,30 +156,67 @@ export default function SalesRepCommissions() {
 
   const detail = detailQ.data;
 
-  const exportCsv = () => {
-    if (!detail) return;
-    const rows = [
-      ["#", tr("invoiceNumber"), tr("invoiceDate"), tr("customer"), tr("totalAmount"), tr("commPct"), tr("commAmount")],
-      ...detail.invoices.map((i, idx) => [
-        idx + 1, i.invoiceNumber ?? "", i.invoiceDate, i.customerName,
-        i.totalAmount.toFixed(2), i.commissionPct.toFixed(2), i.commissionAmount.toFixed(2),
-      ]),
-      [],
-      [tr("totalSales"), "", "", "", detail.summary.totalSales.toFixed(2)],
-      [tr("effectiveCommission"), "", "", "", detail.summary.effectiveCommission.toFixed(2)],
-    ];
-    const csv = rows.map(r => r.map(c => {
-      const s = String(c ?? "");
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    }).join(",")).join("\n");
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `commission_${detail.rep.code}_${from}_${to}.csv`;
-    a.click(); URL.revokeObjectURL(url);
-  };
-
   const repOptions = useMemo(() => repsQ.data ?? [], [repsQ.data]);
+
+  // Columns + rows + totals for the unified Excel / PDF / Print export.
+  const exportColumns: ExportColumn[] = useMemo(() => ([
+    { header: "#",                  key: "idx",          width: 5  },
+    { header: tr("invoiceNumber"),  key: "invoiceNumber",width: 16 },
+    { header: tr("invoiceDate"),    key: "invoiceDate",  width: 12 },
+    { header: tr("customer"),       key: "customer",     width: 28 },
+    { header: tr("totalAmount"),    key: "totalAmount",  width: 14 },
+    { header: tr("commPct"),        key: "commPct",      width: 10 },
+    { header: tr("commAmount"),     key: "commAmount",   width: 14 },
+  ]), [i18n.language]);
+
+  const exportRows = useMemo(() => {
+    if (!detail) return [];
+    return detail.invoices.map((i, idx) => ({
+      idx:           idx + 1,
+      invoiceNumber: i.invoiceNumber ?? `#${i.id}`,
+      invoiceDate:   i.invoiceDate,
+      customer:      i.customerName,
+      totalAmount:   fmtSAR(i.totalAmount),
+      commPct:       `${i.commissionPct}%`,
+      commAmount:    fmtSAR(i.commissionAmount),
+    }));
+  }, [detail]);
+
+  const totalsRow = useMemo(() => {
+    if (!detail) return null;
+    return {
+      idx:         "",
+      invoiceNumber: "",
+      invoiceDate: "",
+      customer:    tr("total"),
+      totalAmount: fmtSAR(detail.summary.totalSales),
+      commPct:     "",
+      commAmount:  fmtSAR(detail.summary.totalCommissionRaw),
+    };
+  }, [detail, i18n.language]);
+
+  const summaryFooter = useMemo(() => {
+    if (!detail) return null;
+    const items: Array<{ label: string; value: string; tone?: "default" | "primary" }> = [
+      { label: tr("totalSales"),          value: `${fmtSAR(detail.summary.totalSales)} ${tr("sar")}` },
+      { label: tr("effectiveCommission"), value: `${fmtSAR(detail.summary.effectiveCommission)} ${tr("sar")}`, tone: "primary" },
+    ];
+    if (detail.summary.totalCollected > 0 || detail.rep.commissionType === "collection") {
+      items.push({ label: tr("collected"), value: `${fmtSAR(detail.summary.totalCollected)} ${tr("sar")}` });
+    }
+    if (detail.summary.targetAchievedPct != null) {
+      items.push({ label: tr("targetAchieved"), value: `${detail.summary.targetAchievedPct}%` });
+    }
+    return items;
+  }, [detail, i18n.language]);
+
+  const exportTitle = detail
+    ? `${tr("title")} — ${detail.rep.nameAr} (${detail.rep.code})`
+    : tr("title");
+  const exportSubtitle = detail ? `${tr("from")}: ${from}   ${tr("to")}: ${to}` : "";
+  const exportFilename = detail
+    ? `commission_${detail.rep.code}_${from}_${to}`
+    : "commission";
 
   return (
     <div className="p-4 md:p-6 space-y-5" dir={isAr ? "rtl" : "ltr"}>
@@ -227,9 +266,18 @@ export default function SalesRepCommissions() {
             <Input type="date" value={to} onChange={e => setTo(e.target.value)} className="h-10 bg-card" dir="ltr" />
           </div>
           <div className="flex items-end">
-            <Button variant="outline" disabled={!detail} className="w-full h-10 gap-2" onClick={exportCsv}>
-              <FileSpreadsheet className="h-4 w-4" /> {tr("exportCsv")}
-            </Button>
+            <div className="w-full">
+              <ExportButtons
+                rows={exportRows}
+                columns={exportColumns}
+                filename={exportFilename}
+                title={exportTitle}
+                subtitle={exportSubtitle}
+                disabled={!detail || exportRows.length === 0}
+                totalsRow={totalsRow}
+                summaryFooter={summaryFooter}
+              />
+            </div>
           </div>
         </div>
       </div>
