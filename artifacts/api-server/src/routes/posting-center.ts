@@ -36,8 +36,9 @@ import {
   warehousesTable, cashBoxesTable, bankAccountsTable,
 } from "@workspace/db";
 import { eq, and, desc, gte, lte, inArray, sql } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
+import type { Request } from "express";
 
 const router = Router();
 // Auth gate at the router level — closes the unauthenticated
@@ -168,22 +169,30 @@ router.get("/list", gateByModule, async (req, res) => {
   const statusFilter = (req.query.status as string) || "unposted";
   const dateFrom = (req.query.dateFrom as string) || undefined;
   const dateTo = (req.query.dateTo as string) || undefined;
+  // Branch filter — when omitted ("all"), branchScopeSpread still applies the
+  // user's per-branch policy (viewAllBranches=false → only assigned branches).
+  // When a specific branchId is passed, rows where branch_id matches OR
+  // branch_id IS NULL (shared/company-wide) are included — see Branch Filter
+  // semantics in replit.md.
+  const branchIdRaw = req.query.branchId as string | undefined;
 
   try {
     let rows: PostingRow[] = [];
 
     switch (mod) {
-      case "sales_invoices":    rows = await listSalesInvoices(cid, dateFrom, dateTo); break;
-      case "pos_sales":         rows = await listPosSales(cid, dateFrom, dateTo);      break;
-      case "sales_returns":     rows = await listSalesReturns(cid, dateFrom, dateTo); break;
-      case "purchase_invoices": rows = await listPurchaseInvoices(cid, dateFrom, dateTo); break;
-      case "purchase_returns":  rows = await listPurchaseReturns(cid, dateFrom, dateTo); break;
-      case "receipt_vouchers":  rows = await listReceiptVouchers(cid, dateFrom, dateTo); break;
-      case "payment_vouchers":  rows = await listPaymentVouchers(cid, dateFrom, dateTo); break;
-      case "journal_entries":   rows = await listJournalEntries(cid, dateFrom, dateTo); break;
-      case "goods_receipts":    rows = await listGoodsReceipts(cid, dateFrom, dateTo); break;
-      case "goods_deliveries":  rows = await listGoodsDeliveries(cid, dateFrom, dateTo); break;
-      case "cash_transfers":    rows = await listCashTransfers(cid, dateFrom, dateTo); break;
+      case "sales_invoices":    rows = await listSalesInvoices(req, cid, dateFrom, dateTo, branchIdRaw); break;
+      case "pos_sales":         rows = await listPosSales(req, cid, dateFrom, dateTo, branchIdRaw);      break;
+      case "sales_returns":     rows = await listSalesReturns(req, cid, dateFrom, dateTo, branchIdRaw); break;
+      case "purchase_invoices": rows = await listPurchaseInvoices(req, cid, dateFrom, dateTo, branchIdRaw); break;
+      case "purchase_returns":  rows = await listPurchaseReturns(req, cid, dateFrom, dateTo, branchIdRaw); break;
+      case "receipt_vouchers":  rows = await listReceiptVouchers(req, cid, dateFrom, dateTo, branchIdRaw); break;
+      case "payment_vouchers":  rows = await listPaymentVouchers(req, cid, dateFrom, dateTo, branchIdRaw); break;
+      case "journal_entries":   rows = await listJournalEntries(req, cid, dateFrom, dateTo, branchIdRaw); break;
+      case "goods_receipts":    rows = await listGoodsReceipts(req, cid, dateFrom, dateTo, branchIdRaw); break;
+      case "goods_deliveries":  rows = await listGoodsDeliveries(req, cid, dateFrom, dateTo, branchIdRaw); break;
+      case "cash_transfers":    rows = await listCashTransfers(req, cid, dateFrom, dateTo, branchIdRaw); break;
+      // stock_transfers / stock_adjustments / stock_counts have no branch_id
+      // column on the header — they're scoped by warehouse, not branch.
       case "stock_transfers":   rows = await listStockTransfers(cid, dateFrom, dateTo); break;
       case "stock_adjustments": rows = await listStockAdjustments(cid, dateFrom, dateTo); break;
       case "stock_counts":      rows = await listStockCounts(cid, dateFrom, dateTo); break;
@@ -275,21 +284,22 @@ router.get("/ai-summary", gateByModule, async (req, res) => {
 
   // gateByModule already validated the module; safe to cast.
   const mod = ((req.query.module as string) || "sales_invoices") as ModuleKey;
+  const branchIdRaw = req.query.branchId as string | undefined;
 
   try {
     let rows: PostingRow[] = [];
     switch (mod as ModuleKey) {
-      case "sales_invoices":    rows = await listSalesInvoices(cid);    break;
-      case "pos_sales":         rows = await listPosSales(cid);         break;
-      case "sales_returns":     rows = await listSalesReturns(cid);     break;
-      case "purchase_invoices": rows = await listPurchaseInvoices(cid); break;
-      case "purchase_returns":  rows = await listPurchaseReturns(cid);  break;
-      case "receipt_vouchers":  rows = await listReceiptVouchers(cid);  break;
-      case "payment_vouchers":  rows = await listPaymentVouchers(cid);  break;
-      case "journal_entries":   rows = await listJournalEntries(cid);   break;
-      case "goods_receipts":    rows = await listGoodsReceipts(cid);    break;
-      case "goods_deliveries":  rows = await listGoodsDeliveries(cid);  break;
-      case "cash_transfers":    rows = await listCashTransfers(cid);    break;
+      case "sales_invoices":    rows = await listSalesInvoices(req, cid, undefined, undefined, branchIdRaw);    break;
+      case "pos_sales":         rows = await listPosSales(req, cid, undefined, undefined, branchIdRaw);         break;
+      case "sales_returns":     rows = await listSalesReturns(req, cid, undefined, undefined, branchIdRaw);     break;
+      case "purchase_invoices": rows = await listPurchaseInvoices(req, cid, undefined, undefined, branchIdRaw); break;
+      case "purchase_returns":  rows = await listPurchaseReturns(req, cid, undefined, undefined, branchIdRaw);  break;
+      case "receipt_vouchers":  rows = await listReceiptVouchers(req, cid, undefined, undefined, branchIdRaw);  break;
+      case "payment_vouchers":  rows = await listPaymentVouchers(req, cid, undefined, undefined, branchIdRaw);  break;
+      case "journal_entries":   rows = await listJournalEntries(req, cid, undefined, undefined, branchIdRaw);   break;
+      case "goods_receipts":    rows = await listGoodsReceipts(req, cid, undefined, undefined, branchIdRaw);    break;
+      case "goods_deliveries":  rows = await listGoodsDeliveries(req, cid, undefined, undefined, branchIdRaw);  break;
+      case "cash_transfers":    rows = await listCashTransfers(req, cid, undefined, undefined, branchIdRaw);    break;
       case "stock_transfers":   rows = await listStockTransfers(cid);   break;
       case "stock_adjustments": rows = await listStockAdjustments(cid); break;
       case "stock_counts":      rows = await listStockCounts(cid);      break;
@@ -380,7 +390,7 @@ router.get("/ai-summary", gateByModule, async (req, res) => {
 // stays fast even with 100k+ rows.
 
 async function listSalesInvoices(
-  cid: number, dateFrom?: string, dateTo?: string,
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
 ): Promise<PostingRow[]> {
   // Manual sales invoices ONLY — POS-originated invoices (posSessionId IS NOT NULL)
   // are surfaced under the dedicated "pos_sales" module so the accountant can
@@ -389,6 +399,7 @@ async function listSalesInvoices(
   const conds = [
     eq(salesInvoicesTable.companyId, cid),
     sql`${salesInvoicesTable.posSessionId} IS NULL`,
+    ...branchScopeSpread(req, salesInvoicesTable.branchId, branchIdRaw),
   ];
   if (dateFrom) conds.push(gte(salesInvoicesTable.invoiceDate, dateFrom));
   if (dateTo)   conds.push(lte(salesInvoicesTable.invoiceDate, dateTo));
@@ -418,11 +429,12 @@ async function listSalesInvoices(
 // /post endpoint server-side — we only split the *listing* so the accountant
 // can post POS shifts in bulk without mixing them with manual invoices.
 async function listPosSales(
-  cid: number, dateFrom?: string, dateTo?: string,
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
 ): Promise<PostingRow[]> {
   const conds = [
     eq(salesInvoicesTable.companyId, cid),
     sql`${salesInvoicesTable.posSessionId} IS NOT NULL`,
+    ...branchScopeSpread(req, salesInvoicesTable.branchId, branchIdRaw),
   ];
   if (dateFrom) conds.push(gte(salesInvoicesTable.invoiceDate, dateFrom));
   if (dateTo)   conds.push(lte(salesInvoicesTable.invoiceDate, dateTo));
@@ -448,9 +460,12 @@ async function listPosSales(
 }
 
 async function listSalesReturns(
-  cid: number, dateFrom?: string, dateTo?: string,
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
 ): Promise<PostingRow[]> {
-  const conds = [eq(salesReturnsTable.companyId, cid)];
+  const conds = [
+    eq(salesReturnsTable.companyId, cid),
+    ...branchScopeSpread(req, salesReturnsTable.branchId, branchIdRaw),
+  ];
   if (dateFrom) conds.push(gte(salesReturnsTable.returnDate, dateFrom));
   if (dateTo)   conds.push(lte(salesReturnsTable.returnDate, dateTo));
   const docs = await db.select().from(salesReturnsTable)
@@ -475,9 +490,12 @@ async function listSalesReturns(
 }
 
 async function listPurchaseInvoices(
-  cid: number, dateFrom?: string, dateTo?: string,
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
 ): Promise<PostingRow[]> {
-  const conds = [eq(purchaseInvoicesTable.companyId, cid)];
+  const conds = [
+    eq(purchaseInvoicesTable.companyId, cid),
+    ...branchScopeSpread(req, purchaseInvoicesTable.branchId, branchIdRaw),
+  ];
   if (dateFrom) conds.push(gte(purchaseInvoicesTable.invoiceDate, dateFrom));
   if (dateTo)   conds.push(lte(purchaseInvoicesTable.invoiceDate, dateTo));
   const docs = await db.select().from(purchaseInvoicesTable)
@@ -502,9 +520,12 @@ async function listPurchaseInvoices(
 }
 
 async function listPurchaseReturns(
-  cid: number, dateFrom?: string, dateTo?: string,
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
 ): Promise<PostingRow[]> {
-  const conds = [eq(purchaseReturnsTable.companyId, cid)];
+  const conds = [
+    eq(purchaseReturnsTable.companyId, cid),
+    ...branchScopeSpread(req, (purchaseReturnsTable as any).branchId, branchIdRaw),
+  ];
   // purchaseReturnsTable's date column is `returnDate` per schema convention
   if (dateFrom) conds.push(gte((purchaseReturnsTable as any).returnDate, dateFrom));
   if (dateTo)   conds.push(lte((purchaseReturnsTable as any).returnDate, dateTo));
@@ -530,9 +551,12 @@ async function listPurchaseReturns(
 }
 
 async function listReceiptVouchers(
-  cid: number, dateFrom?: string, dateTo?: string,
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
 ): Promise<PostingRow[]> {
-  const conds = [eq(receiptVouchersTable.companyId, cid)];
+  const conds = [
+    eq(receiptVouchersTable.companyId, cid),
+    ...branchScopeSpread(req, receiptVouchersTable.branchId, branchIdRaw),
+  ];
   if (dateFrom) conds.push(gte(receiptVouchersTable.date, dateFrom));
   if (dateTo)   conds.push(lte(receiptVouchersTable.date, dateTo));
   const docs = await db.select().from(receiptVouchersTable)
@@ -563,9 +587,12 @@ async function listReceiptVouchers(
 }
 
 async function listPaymentVouchers(
-  cid: number, dateFrom?: string, dateTo?: string,
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
 ): Promise<PostingRow[]> {
-  const conds = [eq(paymentVouchersTable.companyId, cid)];
+  const conds = [
+    eq(paymentVouchersTable.companyId, cid),
+    ...branchScopeSpread(req, paymentVouchersTable.branchId, branchIdRaw),
+  ];
   if (dateFrom) conds.push(gte(paymentVouchersTable.date, dateFrom));
   if (dateTo)   conds.push(lte(paymentVouchersTable.date, dateTo));
   const docs = await db.select().from(paymentVouchersTable)
@@ -619,12 +646,13 @@ const LOCKED_JE_TYPES = [
 ];
 
 async function listJournalEntries(
-  cid: number, dateFrom?: string, dateTo?: string,
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
 ): Promise<PostingRow[]> {
   const conds = [
     eq(journalEntriesTable.companyId, cid),
     // Only manual JEs — null entryType is treated as "general" and kept.
     sql`(${journalEntriesTable.entryType} IS NULL OR ${journalEntriesTable.entryType} NOT IN ${LOCKED_JE_TYPES})`,
+    ...branchScopeSpread(req, journalEntriesTable.branchId, branchIdRaw),
   ];
   if (dateFrom) conds.push(gte(journalEntriesTable.entryDate, dateFrom));
   if (dateTo)   conds.push(lte(journalEntriesTable.entryDate, dateTo));
@@ -664,9 +692,12 @@ async function listJournalEntries(
 
 // ─── Goods Receipts ─────────────────────────────────────────────────────────
 async function listGoodsReceipts(
-  cid: number, dateFrom?: string, dateTo?: string,
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
 ): Promise<PostingRow[]> {
-  const conds = [eq(goodsReceiptsTable.companyId, cid)];
+  const conds = [
+    eq(goodsReceiptsTable.companyId, cid),
+    ...branchScopeSpread(req, (goodsReceiptsTable as any).branchId, branchIdRaw),
+  ];
   if (dateFrom) conds.push(gte(goodsReceiptsTable.receiptDate, dateFrom));
   if (dateTo)   conds.push(lte(goodsReceiptsTable.receiptDate, dateTo));
   const docs = await db.select().from(goodsReceiptsTable)
@@ -691,9 +722,12 @@ async function listGoodsReceipts(
 
 // ─── Goods Deliveries ───────────────────────────────────────────────────────
 async function listGoodsDeliveries(
-  cid: number, dateFrom?: string, dateTo?: string,
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
 ): Promise<PostingRow[]> {
-  const conds = [eq(goodsDeliveriesTable.companyId, cid)];
+  const conds = [
+    eq(goodsDeliveriesTable.companyId, cid),
+    ...branchScopeSpread(req, (goodsDeliveriesTable as any).branchId, branchIdRaw),
+  ];
   if (dateFrom) conds.push(gte(goodsDeliveriesTable.deliveryDate, dateFrom));
   if (dateTo)   conds.push(lte(goodsDeliveriesTable.deliveryDate, dateTo));
   const docs = await db.select().from(goodsDeliveriesTable)
@@ -720,8 +754,11 @@ async function listGoodsDeliveries(
 // Note: cash_transfers has only POST /post (no unpost endpoint server-side).
 // Frontend disables the unpost button for this module.
 async function listCashTransfers(
-  cid: number, dateFrom?: string, dateTo?: string,
+  _req: Request, cid: number, dateFrom?: string, dateTo?: string, _branchIdRaw?: unknown,
 ): Promise<PostingRow[]> {
+  // cash_transfers header has no branch_id column — it's scoped by
+  // from/to cash boxes & banks (which themselves carry branchId). Branch
+  // filtering on this module is intentionally a no-op.
   const conds = [eq(cashTransfersTable.companyId, cid)];
   if (dateFrom) conds.push(gte(cashTransfersTable.date, dateFrom));
   if (dateTo)   conds.push(lte(cashTransfersTable.date, dateTo));

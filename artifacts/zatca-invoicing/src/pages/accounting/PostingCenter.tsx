@@ -36,6 +36,7 @@ import {
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { cn } from "@/lib/utils";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
+import { useBranches } from "@/hooks/useBranches";
 
 // Auth header helper — mirrors the pattern used by every other API client
 // in this app (journalEntriesApi.ts, salesAnalyticsApi.ts, etc.). The
@@ -171,6 +172,13 @@ export default function PostingCenter() {
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  // Branch filter — "all" means no explicit branchId is sent, so the server
+  // returns every branch the user is allowed to see (admin/superadmin → all
+  // branches; restricted user → their assigned branches only). Picking a
+  // specific branch sends ?branchId=N which the server combines with the
+  // user's branch policy via branchScopeSpread().
+  const [branchId, setBranchId] = useState<string>("all");
+  const branchesQuery = useBranches();
 
   // Pagination state — pageSize persists in localStorage so the user's
   // preferred page size sticks across reloads / module switches.
@@ -200,14 +208,14 @@ export default function PostingCenter() {
   // when they're looking at purchase invoices.
   useEffect(() => {
     setSelected(new Set());
-  }, [selectedModule, statusFilter, dateFrom, dateTo]);
+  }, [selectedModule, statusFilter, dateFrom, dateTo, branchId]);
 
   // Reset to first page whenever the filter set or page size changes so the
   // user is never stranded on (e.g.) page 7 of a result set that just shrank
   // to one page.
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedModule, statusFilter, dateFrom, dateTo, search, pageSize]);
+  }, [selectedModule, statusFilter, dateFrom, dateTo, search, pageSize, branchId]);
 
   // Persist the user's page-size preference across reloads.
   useEffect(() => {
@@ -215,7 +223,7 @@ export default function PostingCenter() {
   }, [pageSize]);
 
   const { data, isLoading, isFetching, refetch, error } = useQuery({
-    queryKey: ["posting-center-list", cid, selectedModule, statusFilter, dateFrom, dateTo],
+    queryKey: ["posting-center-list", cid, selectedModule, statusFilter, dateFrom, dateTo, branchId],
     queryFn: async () => {
       const params = new URLSearchParams({
         module: selectedModule,
@@ -224,6 +232,7 @@ export default function PostingCenter() {
       if (cid) params.set("companyId", String(cid));
       if (dateFrom) params.set("dateFrom", dateFrom);
       if (dateTo) params.set("dateTo", dateTo);
+      if (branchId !== "all") params.set("branchId", branchId);
       const r = await fetch(`/api/posting-center/list?${params.toString()}`, { headers: authHeaders() });
       if (!r.ok) throw new Error("فشل جلب البيانات");
       return (await r.json()) as {
@@ -426,6 +435,7 @@ export default function PostingCenter() {
     try {
       const params = new URLSearchParams({ module: selectedModule });
       if (cid) params.set("companyId", String(cid));
+      if (branchId !== "all") params.set("branchId", branchId);
       const r = await fetch(`/api/posting-center/ai-summary?${params.toString()}`, { headers: authHeaders() });
       if (!r.ok) throw new Error("فشل التحليل");
       setAiSummary(await r.json());
@@ -559,7 +569,7 @@ export default function PostingCenter() {
 
       {/* Filter card */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-3 space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">نوع الحركة</label>
             {/* Searchable combobox — lets the accountant type "نقاط" or
@@ -590,6 +600,30 @@ export default function PostingCenter() {
                 <SelectItem value="all">الكل</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">الفرع</label>
+            {/* Searchable branch combobox — defaults to "all branches" so the
+                accountant sees company-wide totals out of the box. Picking a
+                specific branch sends ?branchId=N to the server, which combines
+                it with the user's branch policy (restricted users only ever
+                see their assigned branches in this list via useBranches). */}
+            <div data-testid="select-branch">
+              <SearchCombobox
+                items={[
+                  { value: "all", label: "كل الفروع" },
+                  ...(branchesQuery.data ?? []).map(b => ({
+                    value: String(b.id),
+                    label: b.nameAr || b.nameEn || b.code,
+                  })),
+                ]}
+                value={branchId}
+                onValueChange={(v) => setBranchId(v || "all")}
+                placeholder="كل الفروع"
+                searchPlaceholder="ابحث عن فرع..."
+                emptyText="لا يوجد فرع بهذا الاسم"
+              />
+            </div>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">من تاريخ</label>
