@@ -171,6 +171,8 @@
     "colWarehouse": "Warehouse",
     "colUnit": "Unit",
     "colQty": "Qty",
+    "colFreeQty": "Free",
+    "colFreeQtyHint": "Free quantity — deducted from stock with zero invoice value",
     "colPrice": "Sale Price",
     "colDiscPct": "Disc %",
     "colVatPct": "VAT %",

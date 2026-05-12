@@ -107,16 +107,21 @@ function customerBlock(cu: any) {
 
 function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
   const showDisc = lines.some(l => (Number(l.discount) || 0) > 0);
+  // Only render the "مجاني" column when at least one line has free qty —
+  // keeps the printed table clean for invoices that don't use the feature.
+  const showFree = lines.some(l => (Number(l.freeQty) || 0) > 0);
   const rows = lines.map((l, i) => {
     const disc = Math.max(0, Math.min(100, Number(l.discount) || 0));
     const sub  = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - disc / 100);
     const vat  = sub * ((Number(l.vatRate) || 0) / 100);
     const tot  = sub + vat;
+    const freeQ = Number(l.freeQty) || 0;
     return `
       <tr style="${i % 2 === 0 ? rowEvenStyle : ""}">
         <td>${i + 1}</td>
         <td>${l.itemName ?? l.itemCode ?? "—"}</td>
         <td class="mono">${Math.round(Number(l.qty) || 0)}</td>
+        ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
         <td>${l.unit ?? "—"}</td>
         <td class="mono">${fmt(l.unitPrice)}</td>
         ${showDisc ? `<td class="mono" style="color:#b91c1c;">${disc}%</td>` : ""}
@@ -133,6 +138,7 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
           <th style="width:30px">#</th>
           <th>الصنف / الخدمة</th>
           <th>الكمية</th>
+          ${showFree ? `<th style="color:#b45309;">مجاني</th>` : ""}
           <th>الوحدة</th>
           <th>سعر الوحدة</th>
           ${showDisc ? `<th>خصم%</th>` : ""}
@@ -541,7 +547,7 @@ function template6(d: PrintData): string {
       </tr>
       <tr>
         <td class="mono" style="padding-bottom:4px;border-bottom:1px dashed #999;">
-          ${Math.round(Number(l.qty) || 0)} × ${fmt(l.unitPrice)}
+          ${Math.round(Number(l.qty) || 0)} × ${fmt(l.unitPrice)}${(Number(l.freeQty) || 0) > 0 ? ` <span style="color:#b45309;font-weight:700;">+ ${Math.round(Number(l.freeQty))} مجاني</span>` : ""}
         </td>
         <td class="mono" style="text-align:center;padding-bottom:4px;border-bottom:1px dashed #999;">
           ${l.vatRate ?? 15}%
@@ -661,6 +667,7 @@ function template7(d: PrintData): string {
         </div>
         <div class="line-sub mono">
           ${Math.round(Number(l.qty) || 0)} ${l.unit ?? ""} × ${fmt(l.unitPrice)}
+          ${(Number(l.freeQty) || 0) > 0 ? ` <span style="color:#b45309;font-weight:700;">+ ${Math.round(Number(l.freeQty))} مجاني</span>` : ""}
           ${disc > 0 ? ` <span style="color:#b91c1c;">(خصم ${disc}%)</span>` : ""}
           <span style="opacity:.7;"> · ض ${l.vatRate ?? 15}%</span>
         </div>

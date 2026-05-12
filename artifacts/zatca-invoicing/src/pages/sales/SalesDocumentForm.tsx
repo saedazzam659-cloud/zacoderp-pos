@@ -44,6 +44,8 @@ interface DocLine {
   conversionFactor: string;
   warehouseId: string;
   qty: string;
+  // Free (bonus) qty — deducts stock like `qty` but adds 0 to revenue/VAT.
+  freeQty: string;
   unitPrice: string;
   discount: string;
   vatRate: string;
@@ -75,7 +77,7 @@ function newLine(): DocLine {
   return {
     _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
     unitId: "", unit: "", conversionFactor: "1", warehouseId: "",
-    qty: "1", unitPrice: "0", discount: "0", vatRate: "15",
+    qty: "1", freeQty: "0", unitPrice: "0", discount: "0", vatRate: "15",
     lineTotal: "0", notes: "",
     appliedOfferId: null, appliedOfferName: null,
     engineUnitPrice: null, engineDiscount: null,
@@ -289,6 +291,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         conversionFactor: "1",
         warehouseId: "",
         qty:         String(l.qty),
+        freeQty:     String(l.freeQty ?? "0"),
         unitPrice:   String(l.unitPrice),
         discount:    String(l.discount ?? "0"),
         vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
@@ -539,6 +542,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       conversionFactor: String(l.conversionFactor ?? "1"),
       warehouseId: l.warehouseId ? String(l.warehouseId) : "",
       qty:         String(l.qty),
+      freeQty:     String(l.freeQty ?? "0"),
       unitPrice:   String(l.unitPrice),
       discount:    String(l.discount ?? "0"),
       vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
@@ -612,6 +616,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           conversionFactor: String(l.conversionFactor ?? "1"),
           warehouseId: l.warehouseId ? String(l.warehouseId) : "",
           qty:         String(l.qty),
+          freeQty:     String(l.freeQty ?? "0"),
           unitPrice:   String(l.unitPrice),
           discount:    String(l.discount ?? "0"),
           vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
@@ -1126,12 +1131,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     <div className="pt-2 space-y-3">
               {(() => {
                 const gridCols = isInvoice
-                  ? "220px 110px 160px 120px 90px 110px 80px 80px 130px 180px 40px"
-                  : "240px 110px 120px 90px 110px 80px 80px 130px 200px 40px";
+                  ? "220px 110px 160px 120px 90px 80px 110px 80px 80px 130px 180px 40px"
+                  : "240px 110px 120px 90px 80px 110px 80px 80px 130px 200px 40px";
                 const totalLabel = t("salesDocForm.colTotal");
                 const headers = isInvoice
-                  ? [t("salesDocForm.colItem"), t("salesDocForm.colItemCode"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""]
-                  : [t("salesDocForm.colItem"), t("salesDocForm.colItemCode"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""];
+                  ? [t("salesDocForm.colItem"), t("salesDocForm.colItemCode"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""]
+                  : [t("salesDocForm.colItem"), t("salesDocForm.colItemCode"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""];
                 return (
               <div data-enter-nav-container="lines" className="rounded-xl border bg-card overflow-x-auto">
                 <div className="min-w-max">
@@ -1193,6 +1198,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       })()}
                       <Input className="h-8 text-xs" type="text" inputMode="numeric" dir="ltr" value={l.qty}
                         onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
+                      <Input className="h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono"
+                        type="text" inputMode="numeric" dir="ltr" value={l.freeQty}
+                        title={t("salesDocForm.colFreeQtyHint") as string}
+                        onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />
                       <Input
                         className={cn(
                           "h-8 text-xs",
@@ -1419,6 +1428,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         conversionFactor: "1",
         warehouseId: "",
         qty: String(qty ?? 1),
+        freeQty: "0",
         unitPrice: finalPrice,
         discount: String(resolvedDiscount ?? "0"),
         vatRate: String(item.vatRate ?? "15"),

@@ -86,6 +86,11 @@ export const salesInvoiceLinesTable = pgTable("sales_invoice_lines", {
   conversionFactor: numeric("conversion_factor", { precision: 15, scale: 6 }).default("1"),
   warehouseId: integer("warehouse_id"),
   qty:         numeric("qty",        { precision: 15, scale: 4 }).notNull().default("1"),
+  // Free (bonus) quantity given to the customer at no charge. Deducts stock
+  // exactly like `qty` (and is included in COGS), but contributes ZERO to
+  // revenue / VAT / line total. Shown as a separate column "مجاني" on the
+  // form and the printed invoice.
+  freeQty:     numeric("free_qty",   { precision: 15, scale: 4 }).notNull().default("0"),
   unitPrice:   numeric("unit_price", { precision: 15, scale: 4 }).notNull().default("0"),
   discount:    numeric("discount",   { precision: 15, scale: 2 }).default("0"),
   vatRate:     numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),

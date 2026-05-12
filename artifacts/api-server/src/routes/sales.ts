@@ -423,6 +423,7 @@ function mapInvoiceLine(l: any, invoiceId: number, cid: number) {
     conversionFactor: String(l.conversionFactor || "1"),
     warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
     qty:         String(l.qty       || "1"),
+    freeQty:     String(l.freeQty   || "0"),
     unitPrice:   String(l.unitPrice || "0"),
     discount:    String(l.discount  || "0"),
     vatRate:     String(l.vatRate   || "15"),
@@ -820,7 +821,10 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
         const wh = whInfo[line.warehouseId];
         if (wh?.allowNegative) continue;
         const factor = Number(line.conversionFactor || "1") || 1;
-        const qty = Number(line.qty) * factor;
+        // Free qty leaves the warehouse exactly like paid qty — include it
+        // in the availability check so a 5-paid + 3-free line that exceeds
+        // stock fails up-front instead of going negative on the COGS leg.
+        const qty = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
         const cur = await getBalance(cid, line.itemId, line.warehouseId);
         if (cur < qty) {
           res.status(400).json({
@@ -844,7 +848,10 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       for (const line of lines) {
         if (!line.itemId || !line.warehouseId) continue;
         const factor  = Number(line.conversionFactor || "1") || 1;
-        const qty     = Number(line.qty) * factor;
+        // Free qty consumes inventory at the same avg cost as paid qty —
+        // both legs add to COGS so the inventory credit matches the actual
+        // units leaving the warehouse. Revenue stays on `qty` only.
+        const qty     = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
         const avgCost = await getAvgCost(cid, line.itemId, line.warehouseId);
         const lineCogs = qty * avgCost;
         totalCogs += lineCogs;

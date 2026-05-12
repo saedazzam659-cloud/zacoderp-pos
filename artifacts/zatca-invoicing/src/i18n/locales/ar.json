@@ -171,6 +171,8 @@
     "colWarehouse": "المستودع",
     "colUnit": "الوحدة",
     "colQty": "الكمية",
+    "colFreeQty": "مجاني",
+    "colFreeQtyHint": "كمية مجانية تخصم من المخزون بدون إضافتها لقيمة الفاتورة",
     "colPrice": "سعر البيع",
     "colDiscPct": "خصم%",
     "colVatPct": "ضريبة%",
