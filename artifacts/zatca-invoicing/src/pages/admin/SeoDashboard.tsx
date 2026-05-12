@@ -163,20 +163,38 @@ export default function SeoDashboard() {
     onSuccess: () => { refetch(); },
   });
 
-  const t = data?.totals;
+  // Connection gate: when neither Analytics nor Search Console is linked, the
+  // backend returns mock/seed data for layout illustration. We MUST NOT surface
+  // those numbers as if they were real metrics — it misleads admins into
+  // thinking they have traffic when they don't. So when disconnected we mask
+  // every metric (KPIs, charts, tables, alerts, recommendations) and show a
+  // single prominent empty state pointing to the connection dialog.
+  const isConnected = !!(data?.connected.analytics || data?.connected.searchConsole);
+
+  const t = isConnected ? data?.totals : undefined;
   const timeline = useMemo<TimelinePoint[]>(() => {
-    if (!data) return [];
+    if (!data || !isConnected) return [];
     return data.timeline[tab];
-  }, [data, tab]);
+  }, [data, tab, isConnected]);
 
   const [connOpen, setConnOpen] = useState(false);
 
-  const sourcesPie = (data?.trafficSources ?? []).map((s) => ({
-    name: SOURCE_LABEL_AR[s.source],
-    value: s.sessions,
-    pct: s.pct,
-    fill: SOURCE_COLORS[s.source],
-  }));
+  const sourcesPie = isConnected
+    ? (data?.trafficSources ?? []).map((s) => ({
+        name: SOURCE_LABEL_AR[s.source],
+        value: s.sessions,
+        pct: s.pct,
+        fill: SOURCE_COLORS[s.source],
+      }))
+    : [];
+
+  // Masked views — empty arrays when disconnected so all tables/lists render
+  // their own "no data" empty states without leaking the seeded mock rows.
+  const keywords        = isConnected ? data?.keywords        ?? [] : [];
+  const topPages        = isConnected ? data?.topPages        ?? [] : [];
+  const indexStatus     = isConnected ? data?.indexStatus            : undefined;
+  const alerts          = isConnected ? data?.alerts          ?? [] : [];
+  const recommendations = isConnected ? data?.recommendations ?? [] : [];
 
   return (
     <div className="space-y-6">
@@ -226,11 +244,11 @@ export default function SeoDashboard() {
           <CardContent className="p-4 flex items-start gap-3 flex-wrap">
             <Info className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
             <div className="text-sm text-amber-900 flex-1 min-w-[260px]">
-              <p className="font-semibold mb-1">البيانات المعروضة للعرض التوضيحي</p>
+              <p className="font-semibold mb-1">لا توجد بيانات حقيقية بعد</p>
               <p>
-                لم يتم بعد ربط <span className="font-semibold">Google Analytics</span> و
-                <span className="font-semibold"> Search Console</span>. الأرقام أدناه تمثل عينة واقعية لشكل اللوحة.
-                اضغط الزر لربط حساباتك وعرض البيانات الحقيقية.
+                لم يتم بعد ربط <span className="font-semibold">Google Analytics</span> أو
+                <span className="font-semibold"> Search Console</span>. لذلك تظهر اللوحة فارغة لتجنّب عرض أرقام مضللة.
+                اضغط الزر لربط حساباتك وعرض بيانات موقعك الفعلية.
               </p>
             </div>
             <Button
@@ -335,7 +353,11 @@ export default function SeoDashboard() {
           <CardContent className="pt-2">
             {timeline.length === 0 ? (
               <div className="h-72 flex items-center justify-center text-sm text-muted-foreground">
-                {isLoading ? "جاري التحميل..." : "لا توجد بيانات"}
+                {isLoading
+                  ? "جاري التحميل..."
+                  : !isConnected
+                  ? "اربط Google Analytics أو Search Console لعرض حركة الزيارات الحقيقية"
+                  : "لا توجد بيانات"}
               </div>
             ) : (
               <div className="h-72">
@@ -405,8 +427,12 @@ export default function SeoDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-2">
-            {(data?.keywords ?? []).length === 0 ? (
-              <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">لا توجد كلمات</div>
+            {keywords.length === 0 ? (
+              <div className="h-40 flex items-center justify-center text-sm text-muted-foreground text-center px-4">
+                {!isConnected
+                  ? "اربط Search Console لعرض كلمات البحث الفعلية التي يظهر فيها موقعك"
+                  : "لا توجد كلمات"}
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <Table>
@@ -419,7 +445,7 @@ export default function SeoDashboard() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data!.keywords.slice(0, 10).map((k) => (
+                    {keywords.slice(0, 10).map((k) => (
                       <TableRow key={k.keyword}>
                         <TableCell className="font-medium">
                           <div>{k.keyword}</div>
@@ -449,8 +475,12 @@ export default function SeoDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-2">
-            {(data?.topPages ?? []).length === 0 ? (
-              <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">لا توجد صفحات</div>
+            {topPages.length === 0 ? (
+              <div className="h-40 flex items-center justify-center text-sm text-muted-foreground text-center px-4">
+                {!isConnected
+                  ? "اربط Google Analytics لعرض الصفحات الأكثر زيارة على موقعك"
+                  : "لا توجد صفحات"}
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <Table>
@@ -463,7 +493,7 @@ export default function SeoDashboard() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data!.topPages.slice(0, 10).map((p) => (
+                    {topPages.slice(0, 10).map((p) => (
                       <TableRow key={p.url}>
                         <TableCell className="font-medium">
                           <div>{p.title}</div>
@@ -499,7 +529,11 @@ export default function SeoDashboard() {
           </CardHeader>
           <CardContent className="pt-2">
             {sourcesPie.length === 0 ? (
-              <div className="h-56 flex items-center justify-center text-sm text-muted-foreground">لا توجد بيانات</div>
+              <div className="h-56 flex items-center justify-center text-sm text-muted-foreground text-center px-4">
+                {!isConnected
+                  ? "اربط Google Analytics لمعرفة من أين يأتي زوار موقعك (بحث، مباشر، تواصل اجتماعي، إحالات)"
+                  : "لا توجد بيانات"}
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
                 <div className="h-56">
@@ -513,7 +547,7 @@ export default function SeoDashboard() {
                   </ResponsiveContainer>
                 </div>
                 <div className="space-y-2">
-                  {(data?.trafficSources ?? []).map((s) => (
+                  {(isConnected ? data?.trafficSources ?? [] : []).map((s) => (
                     <div key={s.source} className="flex items-center justify-between gap-3 text-sm">
                       <div className="flex items-center gap-2">
                         <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: SOURCE_COLORS[s.source] }} />
@@ -540,16 +574,21 @@ export default function SeoDashboard() {
           <CardContent className="pt-2 space-y-3">
             <div className="flex items-center justify-between rounded-md bg-green-50 border border-green-200 p-3">
               <div className="text-sm text-green-900">صفحات مؤرشفة</div>
-              <div className="text-xl font-bold text-green-700 tabular-nums">{fmt(data?.indexStatus.indexed)}</div>
+              <div className="text-xl font-bold text-green-700 tabular-nums">{fmt(indexStatus?.indexed)}</div>
             </div>
             <div className="flex items-center justify-between rounded-md bg-amber-50 border border-amber-200 p-3">
               <div className="text-sm text-amber-900">غير مؤرشفة</div>
-              <div className="text-xl font-bold text-amber-700 tabular-nums">{fmt(data?.indexStatus.notIndexed)}</div>
+              <div className="text-xl font-bold text-amber-700 tabular-nums">{fmt(indexStatus?.notIndexed)}</div>
             </div>
             <div className="flex items-center justify-between rounded-md bg-rose-50 border border-rose-200 p-3">
               <div className="text-sm text-rose-900">أخطاء زحف</div>
-              <div className="text-xl font-bold text-rose-700 tabular-nums">{fmt(data?.indexStatus.crawlErrors)}</div>
+              <div className="text-xl font-bold text-rose-700 tabular-nums">{fmt(indexStatus?.crawlErrors)}</div>
             </div>
+            {!isConnected && (
+              <p className="text-[11px] text-muted-foreground text-center pt-1">
+                اربط Search Console لعرض حالة أرشفة صفحاتك الفعلية
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -558,7 +597,14 @@ export default function SeoDashboard() {
       <div>
         <SectionHeader icon={AlertTriangle} title="تنبيهات الذكاء الاصطناعي" color="text-rose-700" />
         <div className="space-y-2">
-          {(data?.alerts ?? []).map((a) => {
+          {alerts.length === 0 && !isConnected && (
+            <Card className="border-dashed">
+              <CardContent className="p-4 text-sm text-muted-foreground text-center">
+                ستظهر التنبيهات الذكية هنا بمجرد ربط Google Analytics و Search Console وتجميع بيانات كافية لتحليلها
+              </CardContent>
+            </Card>
+          )}
+          {alerts.map((a) => {
             const styles = a.severity === "critical"
               ? "border-rose-300 bg-rose-50/60 text-rose-900"
               : a.severity === "warn"
@@ -580,8 +626,15 @@ export default function SeoDashboard() {
       {/* ─── 10. AI Recommendations ──────────────────────────────────── */}
       <div>
         <SectionHeader icon={Sparkles} title="توصيات الذكاء الاصطناعي" color="text-indigo-700" />
+        {recommendations.length === 0 && !isConnected && (
+          <Card className="border-dashed mb-3">
+            <CardContent className="p-4 text-sm text-muted-foreground text-center">
+              ستقترح خوارزميات الذكاء الاصطناعي تحسينات مخصصة لموقعك بمجرد توفر بيانات حقيقية من Analytics و Search Console
+            </CardContent>
+          </Card>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {(data?.recommendations ?? []).map((r) => (
+          {recommendations.map((r) => (
             <Card key={r.id}>
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-2 mb-2">
