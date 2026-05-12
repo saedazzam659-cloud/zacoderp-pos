@@ -145,6 +145,28 @@ router.post("/", async (req, res) => {
     return;
   }
 
+  // ─── Auto-attribute customer to the creator's rep ────────────────
+  // When a scoped rep-user (`scopeOwnCustomersOnly = true` and linked to a
+  // sales rep) creates a customer, force `salesRepId` to their own rep id.
+  // Without this, the new customer would be inserted with salesRepId=null
+  // and the list filter (eq salesRepId, repScope) would immediately hide
+  // it from its own creator — exactly the bug just observed in the UI.
+  // The same lock prevents a scoped rep from assigning a fresh customer
+  // to a colleague (would otherwise be a quiet way to leak commissions).
+  // Admin / superadmin keep full control over `salesRepId`.
+  const repScope = await customerScopeRepId(req, effectiveCompanyId);
+  let effectiveSalesRepId: number | null =
+    (data as any).salesRepId != null ? Number((data as any).salesRepId) : null;
+  if (repScope !== null) {
+    // repScope === -1 means "scope ON but no rep linked" → block creation,
+    // otherwise the row would be invisible to its own creator forever.
+    if (repScope === -1) {
+      res.status(403).json({ error: "حسابك مقيَّد على عملاء مندوبك لكنه غير مربوط بأي مندوب — اطلب من المسؤول ربطك أولاً." });
+      return;
+    }
+    effectiveSalesRepId = repScope;
+  }
+
   let accountId: number | null = (data as any).accountId ? Number((data as any).accountId) : null;
   if (!accountId) {
     try {
@@ -175,6 +197,7 @@ router.post("/", async (req, res) => {
     locationLng: d.locationLng ?? null,
     locationLink: d.locationLink ?? null,
     accountId,
+    salesRepId: effectiveSalesRepId,
   }).returning();
   res.status(201).json(customer);
 });
@@ -207,6 +230,20 @@ router.put("/:id", async (req, res) => {
   if (!existing) { res.status(404).json({ error: "Customer not found" }); return; }
   const companyId = resolveCompanyId(req, existing.companyId);
   if (companyId && existing.companyId !== companyId) { res.status(403).json({ error: "غير مصرح" }); return; }
+
+  // ─── Per-rep IDOR guard on update ──────────────────────────────
+  // Mirror the GET /:id check: a scoped rep must not be able to mutate a
+  // colleague's customer by guessing the id, and must not be able to
+  // re-assign salesRepId away from themselves (silent commission theft).
+  if (companyId) {
+    const repScopeForUpdate = await customerScopeRepId(req, companyId);
+    if (repScopeForUpdate !== null && existing.salesRepId !== repScopeForUpdate) {
+      res.status(403).json({ error: "هذا العميل خارج نطاق صلاحياتك" }); return;
+    }
+    if (repScopeForUpdate !== null && req.body && (req.body as any).salesRepId !== undefined && Number((req.body as any).salesRepId) !== repScopeForUpdate) {
+      res.status(403).json({ error: "لا يمكنك تغيير مندوب هذا العميل" }); return;
+    }
+  }
 
   const parsed = UpdateCustomerBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid input", details: parsed.error.issues }); return; }
