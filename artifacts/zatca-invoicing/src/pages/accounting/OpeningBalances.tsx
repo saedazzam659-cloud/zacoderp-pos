@@ -164,7 +164,7 @@ export default function OpeningBalances() {
   // typed into the on-screen form (which is empty on a fresh page load and
   // would otherwise produce an empty file).
   //
-  // Why we pass `fromDate = entryDate+1` and read `openingBalance`:
+  // Why we pass `fromDate = entryDate+1` and read `closingBalance`:
   // The `/accounting-reports/trial-balance` endpoint deliberately EXCLUDES
   // `opening` and `trial_balance_adjustment` JEs from the *period* column
   // to avoid double-counting in the trial-balance UI (those entries are
@@ -176,9 +176,16 @@ export default function OpeningBalances() {
   // By setting fromDate = entryDate+1day, every JE on/before entryDate
   // (including the opening JE we want to surface) lands in the opening
   // column. `closingBalance` then equals the cumulative net balance as of
-  // entryDate. Branch filter is applied when an opening branch is
-  // selected so the export matches the same scope the user would post
-  // the JE under.
+  // entryDate.
+  //
+  // We deliberately DO NOT pass `branchId` even when one is selected on
+  // screen. Opening balances are inherently company-wide — many existing
+  // opening JEs in the wild were saved with branch_id=NULL (before the
+  // branch field was wired in, or by users who left it blank), and the
+  // server filter `eq(branch_id, X)` excludes NULL rows. Filtering by the
+  // currently-selected branch would silently hide those legitimate
+  // opening entries and produce an empty export, which is exactly the
+  // bug the user reported.
   async function exportXlsx(includeAmounts: boolean) {
     if (isExporting) return;
     let serverBalances: Record<number, { debit: number; credit: number }> = {};
@@ -196,7 +203,6 @@ export default function OpeningBalances() {
         if (cid) params.set("companyId", String(cid));
         params.set("fromDate", dayAfter);
         params.set("toDate",   dayAfter);
-        if (branchId) params.set("branchId", branchId);
         const res = await fetch(`${API}/api/accounting-reports/trial-balance?${params.toString()}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
