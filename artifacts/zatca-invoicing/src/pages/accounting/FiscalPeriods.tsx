@@ -38,12 +38,19 @@ const EMPTY_YEAR = {
 };
 
 export default function FiscalPeriods() {
-  const { user, token } = useAuth() as any;
+  const { user, token, actingCompanyId } = useAuth() as any;
   const { t } = useTranslation();
   const { isRtl } = useFormatters();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  // For a SuperAdmin we have no own company. Use the impersonated tenant's
+  // id (set via the "دخول إلى الشركة" flow) so this page operates on the
+  // company the SA is currently fixing. This page uses raw fetch() and so
+  // does NOT pick up the global x-acting-company-id header injection — we
+  // pass `?companyId=` explicitly instead.
+  const cid = user?.role === "superadmin"
+    ? (actingCompanyId ?? undefined)
+    : user?.company?.id;
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
   const STATUS_CONFIG = {
