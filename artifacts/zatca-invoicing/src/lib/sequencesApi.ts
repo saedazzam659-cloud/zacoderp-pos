@@ -29,6 +29,9 @@ export type SequenceRow = {
   nameAr: string;
   nameEn: string | null;
   prefix: string;
+  // Optional dynamic pattern inserted between prefix and the running number.
+  // Tokens: `{MM}` `{M}` `{YY}` `{YYYY}`. NULL/empty = legacy format.
+  monthPattern?: string | null;
   startNumber: number;
   endNumber: number;
   currentNumber: number;

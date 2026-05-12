@@ -62,9 +62,30 @@ export class SequenceCapacityExceededError extends Error {
   }
 }
 
-function format(prefix: string, n: number, padLength: number): string {
+/**
+ * Render the configured `monthPattern` with current-date tokens substituted.
+ * Returns "" when the pattern is null/empty, preserving the legacy format.
+ *
+ * Supported tokens: {MM} {M} {YY} {YYYY}.
+ * Unknown tokens are left as-is so a typo never silently disappears.
+ */
+function renderMonthPattern(pattern: string | null | undefined, now: Date = new Date()): string {
+  if (!pattern) return "";
+  const m  = now.getMonth() + 1;          // 1..12
+  const y  = now.getFullYear();           // e.g. 2026
+  const MM = String(m).padStart(2, "0");
+  const YY = String(y).slice(-2);
+  return pattern
+    .replace(/\{MM\}/g,   MM)
+    .replace(/\{M\}/g,    String(m))
+    .replace(/\{YYYY\}/g, String(y))
+    .replace(/\{YY\}/g,   YY);
+}
+
+function format(prefix: string, n: number, padLength: number, monthPattern?: string | null): string {
   const padded = padLength > 0 ? String(n).padStart(padLength, "0") : String(n);
-  return `${prefix ?? ""}${padded}`;
+  const month  = renderMonthPattern(monthPattern);
+  return `${prefix ?? ""}${month}${padded}`;
 }
 
 /**
@@ -97,9 +118,9 @@ export async function nextSequenceNumber(
     //    SAME row.
     const seqRows = await tx.execute<{
       id: number; prefix: string; start_number: number; current_number: number;
-      end_number: number; pad_length: number; code: string;
+      end_number: number; pad_length: number; code: string; month_pattern: string | null;
     }>(sql`
-      SELECT id, prefix, start_number, current_number, end_number, pad_length, code
+      SELECT id, prefix, start_number, current_number, end_number, pad_length, code, month_pattern
       FROM sequences
       WHERE company_id = ${companyId}
         AND is_active = true
@@ -160,7 +181,7 @@ export async function nextSequenceNumber(
       throw new SequenceCapacityExceededError(seq.code);
     }
 
-    const generated = format(seq.prefix ?? "", issuedNumber, seq.pad_length ?? 0);
+    const generated = format(seq.prefix ?? "", issuedNumber, seq.pad_length ?? 0, seq.month_pattern);
 
     // 4. Bump the per-branch counter only. Master sequences row is NEVER
     //    written to during issuance (per spec).

@@ -3118,6 +3118,8 @@
     "nameAr": "Name (Arabic)",
     "nameEn": "Name (English)",
     "padLength": "Zero-pad length",
+    "monthPattern": "Month/Year code (optional)",
+    "monthPatternHelp": "Optional pattern inserted between prefix and number. Leave empty to disable. Tokens: {MM} 2-digit month, {M} no padding, {YY} 2-digit year, {YYYY} 4-digit year. Example: PR + {MM}- + 0001 ⇒ PR-01-0001",
     "startNumber": "Start number",
     "endNumber": "End number",
     "currentNumber": "Current (next to issue)",

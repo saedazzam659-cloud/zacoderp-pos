@@ -25,10 +25,32 @@ function getCid(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
 }
 
-function fmt(prefix: string | null | undefined, n: number, padLength: number | null | undefined): string {
+// Render the optional dynamic month/year pattern (`{MM} {M} {YY} {YYYY}`)
+// against the current date. Empty / null pattern → "" (legacy format).
+// Kept in sync with the same helper in `lib/sequences.ts` so peek + issue
+// always agree on the format.
+function renderMonthPattern(pattern: string | null | undefined, now: Date = new Date()): string {
+  if (!pattern) return "";
+  const m  = now.getMonth() + 1;
+  const y  = now.getFullYear();
+  const MM = String(m).padStart(2, "0");
+  const YY = String(y).slice(-2);
+  return pattern
+    .replace(/\{MM\}/g,   MM)
+    .replace(/\{M\}/g,    String(m))
+    .replace(/\{YYYY\}/g, String(y))
+    .replace(/\{YY\}/g,   YY);
+}
+
+function fmt(
+  prefix: string | null | undefined,
+  n: number,
+  padLength: number | null | undefined,
+  monthPattern?: string | null,
+): string {
   const pad = padLength ?? 0;
   const padded = pad > 0 ? String(n).padStart(pad, "0") : String(n);
-  return `${prefix ?? ""}${padded}`;
+  return `${prefix ?? ""}${renderMonthPattern(monthPattern)}${padded}`;
 }
 
 // ─── Public (authenticated) peek endpoint ──────────────────────────────────
@@ -67,8 +89,9 @@ router.get("/peek/:txType", async (req: any, res) => {
     id: number;
     prefix: string | null; start_number: number; current_number: number;
     end_number: number; pad_length: number | null; code: string;
+    month_pattern: string | null;
   }>(sql`
-    SELECT id, prefix, start_number, current_number, end_number, pad_length, code
+    SELECT id, prefix, start_number, current_number, end_number, pad_length, code, month_pattern
     FROM sequences
     WHERE company_id = ${cid}
       AND is_active = true
@@ -100,7 +123,7 @@ router.get("/peek/:txType", async (req: any, res) => {
 
   const exhausted = previewNumber > seq.end_number;
   res.json({
-    number: exhausted ? null : fmt(seq.prefix, previewNumber, seq.pad_length),
+    number: exhausted ? null : fmt(seq.prefix, previewNumber, seq.pad_length, seq.month_pattern),
     hasSequence: true,
     sequenceCode: seq.code,
     branchId: branchKey,
@@ -149,6 +172,12 @@ function validatePayload(body: any): string | null {
   // sane bound. Keeps DB indexes / printouts predictable.
   if ((prefix?.length ?? 0) + Math.max(pad, String(end).length) > 40)
     return "البادئة + طول الرقم تتجاوز الحد المسموح";
+  // Optional dynamic month/year pattern: cap length defensively. Empty/null
+  // is the legacy default and never validated. 32 chars is plenty for any
+  // realistic combination of tokens + separators (e.g. "{YYYY}-{MM}-").
+  const monthPattern = body?.monthPattern == null ? "" : String(body.monthPattern);
+  if (monthPattern.length > 32)
+    return "نمط الشهر/السنة طويل جداً (الحد الأقصى 32 حرفاً)";
   return null;
 }
 
@@ -268,6 +297,10 @@ router.post("/", audit("sequences", "create"), async (req, res) => {
         nameAr:           String(req.body.nameAr).trim(),
         nameEn:           req.body.nameEn ? String(req.body.nameEn).trim() : null,
         prefix:           String(req.body.prefix ?? ""),
+        // Optional dynamic month/year pattern inserted between prefix and the
+        // running number at issuance time. NULL / empty string both mean
+        // "legacy behaviour" (prefix + padded number, no month).
+        monthPattern:     req.body.monthPattern ? String(req.body.monthPattern) : null,
         startNumber:      start,
         endNumber:        Number(req.body.endNumber),
         currentNumber:    req.body.currentNumber == null ? start : Number(req.body.currentNumber),
@@ -321,12 +354,22 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
       existing.branchIds     = existing.branch_ids     ?? existing.branchIds ?? [];
       existing.nameAr        = existing.name_ar        ?? existing.nameAr;
       existing.nameEn        = existing.name_en        ?? existing.nameEn;
+      existing.monthPattern  = existing.month_pattern  ?? existing.monthPattern ?? null;
+
+      // monthPattern is OPTIONAL: an explicit empty string from the client
+      // means "clear the pattern", so we only fall back to the existing
+      // value when the field is undefined (omitted) — not when it's "".
+      const monthPatternIn = req.body.monthPattern;
+      const mergedMonthPattern = monthPatternIn === undefined
+        ? existing.monthPattern
+        : (monthPatternIn ? String(monthPatternIn) : null);
 
       const merged = {
         code:             req.body.code             ?? existing.code,
         nameAr:           req.body.nameAr           ?? existing.nameAr,
         nameEn:           req.body.nameEn           ?? existing.nameEn,
         prefix:           req.body.prefix           ?? existing.prefix,
+        monthPattern:     mergedMonthPattern,
         startNumber:      req.body.startNumber      ?? existing.startNumber,
         endNumber:        req.body.endNumber        ?? existing.endNumber,
         currentNumber:    req.body.currentNumber    ?? existing.currentNumber,
@@ -406,6 +449,7 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         nameAr:           String(merged.nameAr).trim(),
         nameEn:           merged.nameEn || null,
         prefix:           String(merged.prefix ?? ""),
+        monthPattern:     merged.monthPattern ? String(merged.monthPattern) : null,
         startNumber:      Number(merged.startNumber),
         endNumber:        Number(merged.endNumber),
         currentNumber:    Number(merged.currentNumber),

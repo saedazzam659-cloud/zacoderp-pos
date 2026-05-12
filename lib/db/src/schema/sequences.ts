@@ -63,6 +63,18 @@ export const sequencesTable = pgTable("sequences", {
   nameAr:           text("name_ar").notNull(),
   nameEn:           text("name_en"),
   prefix:           text("prefix").notNull().default(""),            // e.g. "INV-", may be empty
+  // Optional free-form pattern inserted between prefix and the padded
+  // running number, with the following tokens substituted at issuance time:
+  //   {MM}   → 2-digit month (01..12)
+  //   {M}    → 1- or 2-digit month (1..12)
+  //   {YY}   → 2-digit year   (e.g. "26")
+  //   {YYYY} → 4-digit year   (e.g. "2026")
+  // Examples (prefix="PR-", padLength=4, currentNumber=1):
+  //   monthPattern = ""           → "PR-0001"     (legacy behaviour, default)
+  //   monthPattern = "{MM}-"      → "PR-01-0001"
+  //   monthPattern = "{YY}/{MM}/" → "PR-26/01/0001"
+  // Optional — empty string keeps the prior format exactly.
+  monthPattern:     text("month_pattern"),
   startNumber:      integer("start_number").notNull().default(1),
   endNumber:        integer("end_number").notNull().default(999999),
   currentNumber:    integer("current_number").notNull().default(1),  // NEXT to be issued

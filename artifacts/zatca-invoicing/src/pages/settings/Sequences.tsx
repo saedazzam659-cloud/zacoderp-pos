@@ -28,6 +28,9 @@ const EMPTY_FORM = {
   nameAr: "",
   nameEn: "",
   prefix: "",
+  // Optional free-form pattern with date tokens (`{MM} {M} {YY} {YYYY}`).
+  // Empty string = legacy format (prefix + padded number, no month/year).
+  monthPattern: "",
   startNumber: 1,
   endNumber: 999999,
   currentNumber: 1,
@@ -173,9 +176,30 @@ function txLabel(t: (k: string) => string, key: string) {
   return tr.startsWith("sequences.tx.") ? key : tr;
 }
 
-function formatPreview(prefix: string, n: number, padLength: number): string {
+// Render the optional dynamic month/year pattern against the current date.
+// Mirrors the server-side helper exactly so the on-screen preview matches
+// what `nextSequenceNumber` will actually issue at submit time.
+function renderMonthPattern(pattern: string | null | undefined, now: Date = new Date()): string {
+  if (!pattern) return "";
+  const m  = now.getMonth() + 1;
+  const y  = now.getFullYear();
+  const MM = String(m).padStart(2, "0");
+  const YY = String(y).slice(-2);
+  return pattern
+    .replace(/\{MM\}/g,   MM)
+    .replace(/\{M\}/g,    String(m))
+    .replace(/\{YYYY\}/g, String(y))
+    .replace(/\{YY\}/g,   YY);
+}
+
+function formatPreview(
+  prefix: string,
+  n: number,
+  padLength: number,
+  monthPattern?: string | null,
+): string {
   const padded = padLength > 0 ? String(n).padStart(padLength, "0") : String(n);
-  return `${prefix ?? ""}${padded}`;
+  return `${prefix ?? ""}${renderMonthPattern(monthPattern)}${padded}`;
 }
 
 export default function Sequences() {
@@ -268,6 +292,7 @@ export default function Sequences() {
       nameAr:           r.nameAr,
       nameEn:           r.nameEn ?? "",
       prefix:           r.prefix ?? "",
+      monthPattern:     r.monthPattern ?? "",
       startNumber:      r.startNumber,
       endNumber:        r.endNumber,
       currentNumber:    r.currentNumber,
@@ -322,7 +347,12 @@ export default function Sequences() {
     else create.mutate(payload);
   }
 
-  const previewNumber = formatPreview(form.prefix, form.currentNumber || form.startNumber, form.padLength);
+  const previewNumber = formatPreview(
+    form.prefix,
+    form.currentNumber || form.startNumber,
+    form.padLength,
+    form.monthPattern,
+  );
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-6" data-testid="page-sequences">
@@ -368,7 +398,7 @@ export default function Sequences() {
                   {rows.map(r => {
                     const pct  = r.usedPct ?? 0;
                     const warn = pct >= 80;
-                    const next = formatPreview(r.prefix, r.currentNumber, r.padLength);
+                    const next = formatPreview(r.prefix, r.currentNumber, r.padLength, r.monthPattern);
                     return (
                       <tr key={r.id} className="border-b hover:bg-muted/20" data-testid={`row-sequence-${r.id}`}>
                         <td className="px-3 py-2 font-mono">{r.code}</td>
@@ -490,6 +520,16 @@ export default function Sequences() {
                   <Label>{t("sequences.col.prefix")}</Label>
                   <Input value={form.prefix} onChange={e => setForm({ ...form, prefix: e.target.value })}
                          placeholder="INV-" disabled={editingIsUsed} data-testid="input-prefix" />
+                </div>
+                <div>
+                  <Label>{t("sequences.monthPattern")}</Label>
+                  <Input value={form.monthPattern}
+                         onChange={e => setForm({ ...form, monthPattern: e.target.value })}
+                         placeholder="{MM}-"
+                         data-testid="input-month-pattern" />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {t("sequences.monthPatternHelp")}
+                  </p>
                 </div>
                 <div>
                   <Label>{t("sequences.padLength")}</Label>
