@@ -1141,7 +1141,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       ];
   const itemComboItems = [
     { value: "", label: t("salesDocForm.selectItem") },
-    ...inventoryItems.map((i: any) => ({ value: String(i.id), label: i.code ? `${i.code} — ${i.nameAr}` : i.nameAr })),
+    ...inventoryItems.map((i: any) => ({ value: String(i.id), code: i.code ?? undefined, label: i.nameAr ?? i.nameEn ?? `#${i.id}` })),
   ];
   const unitItems = units.map((u: any) => ({ value: String(u.id), label: u.nameAr }));
 
@@ -1167,8 +1167,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     <div className="pt-2 space-y-3">
               {(() => {
                 const gridCols = isInvoice
-                  ? "220px 110px 160px 120px 90px 80px 110px 80px 80px 130px 180px 40px"
-                  : "240px 110px 120px 90px 80px 110px 80px 80px 130px 200px 40px";
+                  ? "minmax(260px,1.4fr) 110px 160px 120px 90px 80px 110px 80px 80px 130px 180px 40px"
+                  : "minmax(280px,1.4fr) 110px 120px 90px 80px 110px 80px 80px 130px 200px 40px";
                 const totalLabel = t("salesDocForm.colTotal");
                 const headers = isInvoice
                   ? [t("salesDocForm.colItem"), t("salesDocForm.colItemCode"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""]

@@ -524,7 +524,8 @@ export default function GoodsReceipts() {
     { value: "", label: tr("selectItemOpt") },
     ...inventoryItems.map((i: any) => ({
       value: String(i.id),
-      label: i.code ? `${i.code} — ${itemName(i)}` : itemName(i),
+      code: i.code ?? undefined,
+      label: itemName(i),
     })),
   ];
   const supMap = Object.fromEntries(suppliers.map((s: any) => [s.id, supName(s)]));

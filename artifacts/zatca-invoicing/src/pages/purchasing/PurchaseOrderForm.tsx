@@ -558,7 +558,8 @@ export default function PurchaseOrderForm() {
     { value: "", label: tr("itemSearchPh") },
     ...inventoryItems.map((i: any) => ({
       value: String(i.id),
-      label: i.code ? `${i.code} — ${itemNameOf(i)}` : itemNameOf(i),
+      code: i.code ?? undefined,
+      label: itemNameOf(i),
     })),
   ];
   const unitItems = units.map((u: any) => ({ value: String(u.id), label: unitNameOf(u) }));

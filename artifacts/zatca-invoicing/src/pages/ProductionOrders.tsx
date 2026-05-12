@@ -273,7 +273,7 @@ export default function ProductionOrders() {
                   searchPlaceholder="ابحث بالاسم أو الكود…"
                   items={[
                     { value: "", label: "—" },
-                    ...fgItems.map((i) => ({ value: String(i.id), label: `${i.code} — ${i.nameAr}` })),
+                    ...fgItems.map((i) => ({ value: String(i.id), code: i.code ?? undefined, label: i.nameAr ?? `#${i.id}` })),
                   ]}
                 />
               </div>

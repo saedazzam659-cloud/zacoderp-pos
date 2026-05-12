@@ -522,7 +522,8 @@ export default function GoodsDeliveries() {
     { value: "", label: tr("selectItemOpt") },
     ...inventoryItems.map((i: any) => ({
       value: String(i.id),
-      label: i.code ? `${i.code} — ${itemName(i)}` : itemName(i),
+      code: i.code ?? undefined,
+      label: itemName(i),
     })),
   ];
   const custMap = Object.fromEntries(customers.map((s: any) => [s.id, custName(s)]));

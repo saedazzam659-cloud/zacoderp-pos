@@ -60,11 +60,13 @@ export function SearchCombobox({
 
   const selectedItem = items.find(i => i.value === value);
 
-  // Display value: show search if user is typing/popover open, else selected label
+  // Display value: show search if user is typing/popover open, else just the
+  // selected label. The code (when present) is shown as a colored badge in the
+  // dropdown — no need to repeat it inside the (often narrow) input.
   const displayValue = open
     ? search
     : selectedItem
-      ? (selectedItem.code ? `${selectedItem.code} — ${selectedItem.label}` : selectedItem.label)
+      ? selectedItem.label
       : "";
 
   React.useEffect(() => {

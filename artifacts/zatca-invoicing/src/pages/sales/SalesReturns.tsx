@@ -709,7 +709,7 @@ export default function SalesReturns() {
         label: r.code ? `${r.code} — ${r.nameAr ?? r.nameEn ?? `#${r.id}`}` : (r.nameAr ?? r.nameEn ?? `#${r.id}`),
       })),
   ];
-  const itemComboItems = [{ value: "", label: t("salesReturns.selectItem") }, ...inventoryItems.map((i: any) => ({ value: String(i.id), label: i.code ? `${i.code} — ${i.nameAr}` : i.nameAr }))];
+  const itemComboItems = [{ value: "", label: t("salesReturns.selectItem") }, ...inventoryItems.map((i: any) => ({ value: String(i.id), code: i.code ?? undefined, label: i.nameAr ?? i.nameEn ?? `#${i.id}` }))];
   const cusMap = Object.fromEntries(customers.map((c: any) => [c.id, c.nameAr ?? c.nameEn]));
   const invMap = useMemo(
     () => Object.fromEntries((invoices as any[]).map((i: any) => [i.id, i.docNumber ?? `SI-${i.id}`])),
