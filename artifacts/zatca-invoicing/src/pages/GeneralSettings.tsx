@@ -237,7 +237,11 @@ export default function GeneralSettings() {
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || t("pages.generalSettings.importFailed"));
       setItemsReport(j);
-      toast({ title: t("pages.generalSettings.itemsImportReport", { created: j.created, updated: j.updated, errors: j.errors?.length || 0 }) });
+      {
+        const errCount = j.errors?.length || 0;
+        const key = errCount > 0 ? "pages.generalSettings.itemsImportReportWithErrors" : "pages.generalSettings.itemsImportReport";
+        toast({ title: t(key, { created: j.created, updated: j.updated, errors: errCount }) });
+      }
       qc.invalidateQueries({ queryKey: ["items"] });
     } catch (e: any) {
       toast({ title: e.message || t("pages.generalSettings.importFailed"), variant: "destructive" });
@@ -259,7 +263,11 @@ export default function GeneralSettings() {
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || t("pages.generalSettings.importFailed"));
       setBalancesReport(j);
-      toast({ title: t("pages.generalSettings.balancesImportReport", { applied: j.applied, errors: j.errors?.length || 0 }) });
+      {
+        const errCount = j.errors?.length || 0;
+        const key = errCount > 0 ? "pages.generalSettings.balancesImportReportWithErrors" : "pages.generalSettings.balancesImportReport";
+        toast({ title: t(key, { applied: j.applied, errors: errCount }) });
+      }
       qc.invalidateQueries({ queryKey: ["stock-balance"] });
     } catch (e: any) {
       toast({ title: e.message || t("pages.generalSettings.importFailed"), variant: "destructive" });
