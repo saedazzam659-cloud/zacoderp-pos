@@ -7,6 +7,7 @@ import net from "node:net";
 import http from "node:http";
 import https from "node:https";
 import { resolveBearerToken } from "../middleware/auth.js";
+import { pingArticleUrls } from "../lib/indexNow.js";
 import {
   parseServiceAccount,
   testGsc,
@@ -974,6 +975,25 @@ router.patch("/ai-articles/:id", requireSuperAdmin, async (req, res) => {
     const [row] = await db.update(seoGeneratedArticlesTable)
       .set(patch).where(eq(seoGeneratedArticlesTable.id, id)).returning();
     if (!row) return res.status(404).json({ error: "المقال غير موجود" });
+
+    // If this transition published the article (status changed TO
+    // "published"), fire-and-forget an IndexNow ping so Bing/Yandex/
+    // Yahoo/Naver/Seznam crawl the new URL within minutes instead of
+    // waiting for their next scheduled pass. Google ignores IndexNow,
+    // but its sitemap.xml is dynamic and lists this slug immediately.
+    if (patch.status === "published") {
+      const proto = (req.headers["x-forwarded-proto"] as string)?.split(",")[0]?.trim()
+        || req.protocol || "https";
+      const host  = (req.headers["x-forwarded-host"] as string)?.split(",")[0]?.trim()
+        || req.get("host") || "";
+      if (host) {
+        const origin = `${proto}://${host}`;
+        // Don't await — IndexNow has its own 5s timeout and we don't want
+        // the admin's PATCH response to wait on it.
+        pingArticleUrls(origin, [row.slug]).catch(() => { /* logged inside */ });
+      }
+    }
+
     res.json(row);
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "تعذّر تحديث المقال" });
