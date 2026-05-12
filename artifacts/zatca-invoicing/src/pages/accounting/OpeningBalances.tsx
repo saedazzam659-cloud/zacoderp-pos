@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -7,6 +7,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { branchesApi } from "@/lib/branchesApi";
 import {
   Save, Upload, Download, ScrollText, Search,
   AlertTriangle, CheckCircle2, FileSpreadsheet, Sparkles,
@@ -57,9 +59,31 @@ export default function OpeningBalances() {
 
   const [entryDate, setEntryDate]       = useState<string>(todayIsoStartOfYear());
   const [description, setDescription]   = useState<string>(t("openingBalances.defaultDesc", { year: new Date().getFullYear() }));
+  const [branchId, setBranchId]         = useState<string>("");
   const [search, setSearch]             = useState("");
   const [filterType, setFilterType]     = useState<string>("all");
   const [amounts, setAmounts]           = useState<Record<number, Amount>>({});
+
+  // Load branches for the current company so the opening JE can be tied to a
+  // specific branch. Without this, Trial Balance / Account Statement filtered
+  // by branch will exclude the opening entry entirely.
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey: ["branches", cid],
+    queryFn: () => branchesApi.getBranches(cid),
+    enabled: !!user && !!cid,
+  });
+
+  // Default to the company's main branch (or first available) the first time
+  // branches load, so the user does not accidentally save a branch-less entry.
+  const branchDefaultedRef = useRef(false);
+  useEffect(() => {
+    if (branchDefaultedRef.current || branchId) return;
+    const def = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
+    if (def?.id) {
+      setBranchId(String(def.id));
+      branchDefaultedRef.current = true;
+    }
+  }, [branches, branchId]);
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -312,10 +336,11 @@ export default function OpeningBalances() {
         );
         if (!proceed) throw new Error(t("openingBalances.cancelledByUser"));
       }
-      const payload = {
+      const payload: any = {
         entryDate,
         description: description || t("openingBalances.defaultDesc", { year: new Date(entryDate).getFullYear() }),
         entryType: "opening",
+        branchId: branchId ? Number(branchId) : null,
         lines,
       };
       const res = await fetch(`${API}/api/journal-entries`, {
@@ -381,16 +406,39 @@ export default function OpeningBalances() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-5">
           <div>
             <label className="text-xs text-muted-foreground font-medium">{t("openingBalances.entryDate")}</label>
             <Input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)} className="mt-1" />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground font-medium">{t("openingBalances.branch")}</label>
+            <Select value={branchId || "__none"} onValueChange={(v) => setBranchId(v === "__none" ? "" : v)}>
+              <SelectTrigger className="mt-1">
+                <SelectValue placeholder={t("openingBalances.branchPlaceholder")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none">— {t("openingBalances.noBranch")} —</SelectItem>
+                {(branches as any[]).map((b: any) => (
+                  <SelectItem key={b.id} value={String(b.id)}>
+                    {isRtl ? (b.nameAr || b.nameEn) : (b.nameEn || b.nameAr)}
+                    {b.isMain ? ` ★` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="md:col-span-2">
             <label className="text-xs text-muted-foreground font-medium">{t("openingBalances.description")}</label>
             <Input value={description} onChange={e => setDescription(e.target.value)} className="mt-1" placeholder={t("openingBalances.descPlaceholder")} />
           </div>
         </div>
+        {!branchId && (branches as any[]).length > 0 && (
+          <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <span>{t("openingBalances.branchWarning")}</span>
+          </div>
+        )}
       </div>
 
       {/* Filters */}
