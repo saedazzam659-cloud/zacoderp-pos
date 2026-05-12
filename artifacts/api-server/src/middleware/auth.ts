@@ -1,6 +1,6 @@
 import { db } from "@workspace/db";
 import { usersTable, userBranchesTable, superAdminSessionsTable, companiesTable, kioskTokensTable } from "@workspace/db";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Request, Response, NextFunction } from "express";
 import crypto from "node:crypto";
 
@@ -329,7 +329,12 @@ export function branchScopeFilter(req: Request, branchColumn: any) {
   const allowed = getAllowedBranchIds(req);
   if (allowed === null) return undefined;
   if (allowed.length === 0) return sql`false`;
-  return inArray(branchColumn, allowed);
+  // Shared rows (branch_id IS NULL) belong to no specific branch and are
+  // visible from any branch context — they represent company-wide entries
+  // such as opening JEs, system-generated entries, and shared cash boxes /
+  // bank accounts / warehouses. Excluding them would silently drop activity
+  // that legitimately affects every branch's view.
+  return or(inArray(branchColumn, allowed), isNull(branchColumn));
 }
 
 /**
@@ -385,7 +390,14 @@ export function effectiveBranchCondition(
     Number.isFinite(reqId as number) ? (reqId as number) : null,
   );
   if (intersect === "deny") return { deny: true };
-  if (typeof intersect === "number") return { cond: eq(branchColumn, intersect) };
+  // When a specific branch is requested, also include rows with branch_id
+  // IS NULL — those are shared/company-wide entries (opening JEs, system
+  // entries) that belong to every branch's view. Without this, picking
+  // the only branch in a single-branch company shows a different total
+  // than "all branches" because NULL-branch rows get filtered out.
+  if (typeof intersect === "number") {
+    return { cond: or(eq(branchColumn, intersect), isNull(branchColumn)) };
+  }
   return { cond: branchScopeFilter(req, branchColumn) };
 }
 
