@@ -51,7 +51,18 @@ export default function FiscalPeriods() {
   const cid = user?.role === "superadmin"
     ? (actingCompanyId ?? undefined)
     : user?.company?.id;
-  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  // Headers used by every raw-fetch call on this page. We attach
+  // `x-acting-company-id` as a defensive backup so the request still
+  // resolves to the impersonated tenant even if `cid` is somehow falsy
+  // (e.g. cache / hydration race) and the `?companyId=` query param is
+  // missing. The server validates the role before honouring this header.
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+  if (user?.role === "superadmin" && actingCompanyId) {
+    headers["x-acting-company-id"] = String(actingCompanyId);
+  }
 
   const STATUS_CONFIG = {
     open: {
@@ -78,7 +89,7 @@ export default function FiscalPeriods() {
     queryKey: ["fiscal-years", cid],
     queryFn: async () => {
       const url = cid ? `${API}/api/fiscal/years?companyId=${cid}` : `${API}/api/fiscal/years`;
-      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const r = await fetch(url, { headers });
       return r.ok ? r.json() : [];
     },
   });
@@ -87,7 +98,7 @@ export default function FiscalPeriods() {
     queryKey: ["fiscal-periods", selectedYearId],
     enabled: !!selectedYearId,
     queryFn: async () => {
-      const r = await fetch(`${API}/api/fiscal/years/${selectedYearId}`, { headers: { Authorization: `Bearer ${token}` } });
+      const r = await fetch(`${API}/api/fiscal/years/${selectedYearId}`, { headers });
       if (!r.ok) return [];
       const d = await r.json();
       return d?.periods ?? [];
