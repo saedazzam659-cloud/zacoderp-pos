@@ -238,6 +238,54 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
   });
 }
 
+// ─── OPENING BALANCES SNAPSHOT ────────────────────────────────────────────────
+// Purpose-built for the Opening Balances screen's "Export Current" button.
+// Aggregates ALL journal-entry lines (POSTED *and* DRAFT) for entries dated
+// on or before `asOfDate`, scoped to the company. Unlike trial-balance this
+// intentionally:
+//   • Includes DRAFT entries — the user is exporting their own opening JE
+//     to inspect/edit it, and that JE may still be in draft status.
+//   • Does NOT apply branch scoping — opening JEs are inherently
+//     company-wide and many legacy ones were saved with branch_id=NULL,
+//     which a strict equality filter would exclude.
+// Returns one row per active account with a single signed `balance`
+// (debit − credit) so the client can place it on the right side of the sheet.
+router.get("/opening-balances-snapshot", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json([]); return; }
+    const { asOfDate } = req.query as any;
+    const accounts = await db.select({
+      id: accountsTable.id,
+    }).from(accountsTable)
+      .where(and(eq(accountsTable.companyId, cid), eq(accountsTable.isActive, true)));
+
+    const filters: any[] = [eq(journalEntriesTable.companyId, cid)];
+    if (asOfDate) filters.push(lte(journalEntriesTable.entryDate, asOfDate));
+
+    const rows = await db.select({
+      accountId: journalEntryLinesTable.accountId,
+      debit:     sql<string>`SUM(${journalEntryLinesTable.debit})`,
+      credit:    sql<string>`SUM(${journalEntryLinesTable.credit})`,
+    })
+      .from(journalEntryLinesTable)
+      .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+      .where(and(...filters))
+      .groupBy(journalEntryLinesTable.accountId);
+
+    const map = new Map<number, { debit: number; credit: number }>();
+    for (const r of rows) {
+      if (r.accountId) {
+        map.set(r.accountId, { debit: Number(r.debit || 0), credit: Number(r.credit || 0) });
+      }
+    }
+    res.json(accounts.map(a => {
+      const v = map.get(a.id) ?? { debit: 0, credit: 0 };
+      return { accountId: a.id, debit: v.debit, credit: v.credit, balance: v.debit - v.credit };
+    }));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── TRIAL BALANCE ─────────────────────────────────────────────────────────────
 router.get("/trial-balance", async (req, res) => {
   try {
