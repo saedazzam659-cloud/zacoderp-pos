@@ -1318,7 +1318,9 @@ router.post("/sales-returns", async (req, res) => {
           unitId:   l.unitId   ? Number(l.unitId)   : null,
           conversionFactor: String(l.conversionFactor || "1"),
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-          qty: String(l.qty || "1"), unitPrice: String(l.unitPrice || "0"),
+          qty: String(l.qty || "1"),
+          freeQty: String(l.freeQty || "0"),
+          unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
           vatRate: String(l.vatRate || "15"),
           lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
@@ -1403,7 +1405,9 @@ router.put("/sales-returns/:id", async (req, res) => {
           unitId:   l.unitId   ? Number(l.unitId)   : null,
           conversionFactor: String(l.conversionFactor || "1"),
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-          qty: String(l.qty || "1"), unitPrice: String(l.unitPrice || "0"),
+          qty: String(l.qty || "1"),
+          freeQty: String(l.freeQty || "0"),
+          unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
           vatRate: String(l.vatRate || "15"),
           lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
@@ -1443,7 +1447,9 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
       const factor  = Number(line.conversionFactor || "1") || 1;
-      const qty     = Number(line.qty) * factor;
+      // Sales return mirrors the original sale: paid qty + free qty came back, so
+      // both must be added back to stock and refunded into COGS reversal.
+      const qty     = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
       const avgCost = await getAvgCost(cid, line.itemId, line.warehouseId);
       // If item never existed in warehouse, fall back to the line's price as cost.
       // unitPrice is in the SELECTED unit, so divide by factor to get base-unit cost.
@@ -1719,6 +1725,7 @@ function mapQuotationLine(l: any, quotationId: number, cid: number) {
     unit:      l.unit     || null,
     unitId:    l.unitId   ? Number(l.unitId)   : null,
     qty:       String(l.qty       || "1"),
+    freeQty:   String(l.freeQty   || "0"),
     unitPrice: String(l.unitPrice || "0"),
     discount:  String(l.discount  || "0"),
     vatRate:   String(l.vatRate   || "15"),
@@ -1847,7 +1854,7 @@ router.post("/sales-quotations/:id/convert", async (req, res) => {
         invoiceId: inv.id, companyId: cid,
         itemId: l.itemId, itemName: l.itemName, itemCode: l.itemCode,
         unit: l.unit, unitId: l.unitId, warehouseId: null,
-        qty: l.qty, unitPrice: l.unitPrice, discount: l.discount,
+        qty: l.qty, freeQty: l.freeQty, unitPrice: l.unitPrice, discount: l.discount,
         vatRate: l.vatRate, lineTotal: l.lineTotal, notes: l.notes,
       })));
     }
@@ -1897,6 +1904,7 @@ function mapOrderLine(l: any, orderId: number, cid: number) {
     conversionFactor: String(l.conversionFactor || "1"),
     warehouseId:      l.warehouseId ? Number(l.warehouseId) : null,
     qty:              String(l.qty       || "1"),
+    freeQty:          String(l.freeQty   || "0"),
     unitPrice:        String(l.unitPrice || "0"),
     discount:         String(l.discount  || "0"),
     vatRate:          String(l.vatRate   || "15"),
@@ -2143,6 +2151,7 @@ router.post("/sales-orders/:id/convert", async (req, res) => {
         conversionFactor: l.conversionFactor,
         warehouseId:      l.warehouseId,
         qty:              l.qty,
+        freeQty:          l.freeQty,
         unitPrice:        l.unitPrice,
         discount:         l.discount,
         vatRate:          l.vatRate,

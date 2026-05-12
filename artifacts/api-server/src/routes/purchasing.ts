@@ -987,7 +987,9 @@ router.post("/purchase-invoices", async (req, res) => {
           unit: l.unit || null,
           unitId: l.unitId ? Number(l.unitId) : null,
           conversionFactor: String(l.conversionFactor || "1"),
-          qty: String(l.qty || "1"), weight: String(l.weight || "0"),
+          qty: String(l.qty || "1"),
+          freeQty: String(l.freeQty || "0"),
+          weight: String(l.weight || "0"),
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))), vatRate: String(l.vatRate || "15"),
           lineTotal: String(l.lineTotal || "0"),
@@ -1061,7 +1063,9 @@ router.put("/purchase-invoices/:id", async (req, res) => {
             unit: l.unit || null,
             unitId: l.unitId ? Number(l.unitId) : null,
             conversionFactor: String(l.conversionFactor || "1"),
-            qty: String(l.qty || "1"), weight: String(l.weight || "0"),
+            qty: String(l.qty || "1"),
+            freeQty: String(l.freeQty || "0"),
+            weight: String(l.weight || "0"),
             unitPrice: String(l.unitPrice || "0"),
             discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))), vatRate: String(l.vatRate || "15"),
             lineTotal: String(l.lineTotal || "0"),
@@ -1113,7 +1117,11 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
       const factor   = Number(line.conversionFactor || "1") || 1;
-      const qty      = Number(line.qty) * factor;
+      // Stock receives paid qty + free qty (supplier bonus units), but the
+      // cost paid (finalCost) covers only the paid qty — so free units land
+      // in inventory at zero marginal cost, lowering the weighted avg cost.
+      // Example: buy 10 @ 100 + 2 free ⇒ 12 units for 1000 ⇒ 83.33 avg.
+      const qty      = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
       const cost     = Number(line.finalCost || line.unitPrice);
       const costUnit = qty > 0 ? cost / qty : Number(line.unitPrice) / factor;
       inventoryByWarehouse[line.warehouseId] = (inventoryByWarehouse[line.warehouseId] ?? 0) + cost;
@@ -1634,6 +1642,7 @@ router.post("/purchase-orders", async (req, res) => {
           unitId: l.unitId ? Number(l.unitId) : null,
           conversionFactor: String(l.conversionFactor || "1"),
           qty: String(l.qty || "1"),
+          freeQty: String(l.freeQty || "0"),
           weight: String(l.weight || "0"),
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
@@ -1696,6 +1705,7 @@ router.put("/purchase-orders/:id", async (req, res) => {
             unitId: l.unitId ? Number(l.unitId) : null,
             conversionFactor: String(l.conversionFactor || "1"),
             qty: String(l.qty || "1"),
+            freeQty: String(l.freeQty || "0"),
             weight: String(l.weight || "0"),
             unitPrice: String(l.unitPrice || "0"),
             discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
@@ -1821,7 +1831,7 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
           itemId: l.itemId, itemName: l.itemName, itemCode: l.itemCode,
           unit: l.unit, unitId: l.unitId,
           conversionFactor: l.conversionFactor ?? "1",
-          qty: l.qty, weight: l.weight ?? "0",
+          qty: l.qty, freeQty: l.freeQty ?? "0", weight: l.weight ?? "0",
           unitPrice: conv(l.unitPrice),
           discount: conv(l.discount ?? "0"),
           vatRate: l.vatRate ?? "15",
@@ -1956,7 +1966,9 @@ router.post("/purchase-returns", async (req, res) => {
           unitId: l.unitId ? Number(l.unitId) : null,
           conversionFactor: String(l.conversionFactor || "1"),
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-          qty: String(l.qty || "1"), unitPrice: String(l.unitPrice || "0"),
+          qty: String(l.qty || "1"),
+          freeQty: String(l.freeQty || "0"),
+          unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
           vatRate: String(l.vatRate || "15"),
           lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
@@ -2014,7 +2026,9 @@ router.put("/purchase-returns/:id", async (req, res) => {
             unitId: l.unitId ? Number(l.unitId) : null,
             conversionFactor: String(l.conversionFactor || "1"),
             warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-            qty: String(l.qty || "1"), unitPrice: String(l.unitPrice || "0"),
+            qty: String(l.qty || "1"),
+            freeQty: String(l.freeQty || "0"),
+            unitPrice: String(l.unitPrice || "0"),
             discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
             vatRate: String(l.vatRate || "15"),
             lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
@@ -2055,7 +2069,8 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       const wh = whInfo[line.warehouseId];
       if (wh?.allowNegative) continue;
       const factor = Number(line.conversionFactor || "1") || 1;
-      const qty = Number(line.qty) * factor;
+      // Returning paid qty + free qty back to supplier — both leave stock.
+      const qty = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
       const cur = await getBalance(cid, line.itemId, line.warehouseId);
       if (cur < qty) {
         res.status(400).json({
@@ -2070,9 +2085,16 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
       const factor   = Number(line.conversionFactor || "1") || 1;
-      const qty      = Number(line.qty) * factor;
+      // Inventory credit covers BOTH paid and free units leaving the warehouse.
+      // Cost-per-unit for the JE is derived from the paid line value spread
+      // across the full physical quantity (paid + free) — same averaging
+      // principle as the purchase-invoice posting that received them.
+      const paidQty  = Number(line.qty) * factor;
+      const freeQ    = Number(line.freeQty || 0) * factor;
+      const qty      = paidQty + freeQ;
       const lineDisc = Math.max(0, Math.min(100, Number((line as any).discount) || 0));
-      const costUnit = (Number(line.unitPrice) * (1 - lineDisc / 100)) / factor;
+      const paidLineValue = Number(line.unitPrice) * Number(line.qty) * (1 - lineDisc / 100);
+      const costUnit = qty > 0 ? paidLineValue / qty : 0;
       inventoryByWarehouse[line.warehouseId] = (inventoryByWarehouse[line.warehouseId] ?? 0) + qty * costUnit;
 
       await upsertBalance(cid, line.itemId, line.warehouseId, -qty, costUnit);

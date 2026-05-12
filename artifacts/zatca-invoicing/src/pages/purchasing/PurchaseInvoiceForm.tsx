@@ -36,6 +36,7 @@ interface InvoiceLine {
   conversionFactor: string;
   warehouseId: string;
   qty: string;
+  freeQty: string;
   weight: string;
   unitPrice: string;
   discount: string;
@@ -50,7 +51,7 @@ function newLine(): InvoiceLine {
   return {
     _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
     unitId: "", unit: "", conversionFactor: "1", warehouseId: "",
-    qty: "1", weight: "0", unitPrice: "0", discount: "0", vatRate: "15",
+    qty: "1", freeQty: "0", weight: "0", unitPrice: "0", discount: "0", vatRate: "15",
     lineTotal: "0", expenseShare: "0", finalCost: "0", notes: "",
   };
 }
@@ -329,6 +330,7 @@ export default function PurchaseInvoiceForm() {
     setTaxAccountId(existing.taxAccountId ? String(existing.taxAccountId) : "");
     setDiscountAccountId(existing.discountAccountId ? String(existing.discountAccountId) : "");
     setLines(existing.lines?.length ? existing.lines.map((l: any) => ({
+      freeQty:     String(l.freeQty ?? "0"),
       _id: crypto.randomUUID(),
       itemId:      l.itemId      ? String(l.itemId)      : "",
       itemName:    l.itemName    ?? "",
@@ -381,6 +383,7 @@ export default function PurchaseInvoiceForm() {
         setTaxAccountId(src.taxAccountId ? String(src.taxAccountId) : "");
         setDiscountAccountId(src.discountAccountId ? String(src.discountAccountId) : "");
         setLines(src.lines?.length ? src.lines.map((l: any) => ({
+          freeQty:     String(l.freeQty ?? "0"),
           _id: crypto.randomUUID(),
           itemId:      l.itemId      ? String(l.itemId)      : "",
           itemName:    l.itemName    ?? "",
@@ -684,6 +687,7 @@ export default function PurchaseInvoiceForm() {
     tr("lineCols.warehouse"),
     tr("lineCols.unit"),
     tr("lineCols.qty"),
+    t("salesDocForm.colFreeQty"),
     tr("lineCols.weight"),
     tr("lineCols.unitPrice"),
     tr("lineCols.discount"),
@@ -1131,7 +1135,7 @@ export default function PurchaseInvoiceForm() {
                 <span>{tr("linesTitle")} ({lines.filter(l => l.itemName).length})</span>
               </div>
               {(() => {
-                const GRID_COLS = "220px 110px 160px 120px 90px 80px 110px 80px 80px 110px 130px 180px 40px";
+                const GRID_COLS = "220px 110px 160px 120px 90px 80px 80px 110px 80px 80px 110px 130px 180px 40px";
                 return (
               <div data-enter-nav-container="lines" className="mb-3 rounded-xl border bg-card overflow-x-auto">
                 <div className="min-w-max">
@@ -1206,6 +1210,10 @@ export default function PurchaseInvoiceForm() {
                       })()}
                       <Input className="h-8 text-xs" type="text" inputMode="numeric" value={l.qty}
                         onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
+                      <Input className="h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono"
+                        type="text" inputMode="numeric" value={l.freeQty}
+                        title={t("salesDocForm.colFreeQtyHint") as string}
+                        onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />
                       <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.weight}
                         onChange={e => updateLine(l._id, "weight", e.target.value.replace(/[^0-9.]/g, ""))} />
                       <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.unitPrice}

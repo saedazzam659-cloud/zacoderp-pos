@@ -50,6 +50,7 @@ interface ReturnLine {
   conversionFactor: string;
   warehouseId: string;
   qty: string;
+  freeQty: string;
   unitPrice: string;
   discount: string;
   vatRate: string;
@@ -61,7 +62,7 @@ function newLine(): ReturnLine {
   return {
     _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
     unitId: "", unit: "", conversionFactor: "1", warehouseId: "",
-    qty: "1", unitPrice: "0", discount: "0", vatRate: "15", lineTotal: "0",
+    qty: "1", freeQty: "0", unitPrice: "0", discount: "0", vatRate: "15", lineTotal: "0",
     notes: "",
   };
 }
@@ -326,6 +327,7 @@ export default function PurchaseReturns() {
         discountAccountId:  full.discountAccountId  ? String(full.discountAccountId)  : "",
       });
       setLines((full.lines ?? []).length ? full.lines.map((l: any) => ({
+        freeQty:     String(l.freeQty ?? "0"),
         _id:         crypto.randomUUID(),
         itemId:      l.itemId      ? String(l.itemId)      : "",
         itemName:    l.itemName    ?? "",
@@ -373,6 +375,7 @@ export default function PurchaseReturns() {
         discountAccountId:  full.discountAccountId  ? String(full.discountAccountId)  : "",
       });
       setLines((full.lines ?? []).length ? full.lines.map((l: any) => ({
+        freeQty:     String(l.freeQty ?? "0"),
         _id:         crypto.randomUUID(),
         itemId:      l.itemId      ? String(l.itemId)      : "",
         itemName:    l.itemName    ?? "",
@@ -468,6 +471,7 @@ export default function PurchaseReturns() {
           conversionFactor: String(l.conversionFactor ?? "1"),
           warehouseId: l.warehouseId ? String(l.warehouseId) : "",
           qty:         String(Math.round(Number(l.qty ?? 1))),
+          freeQty:     String(l.freeQty ?? "0"),
           unitPrice:   String(l.unitPrice ?? 0),
           discount:    String(l.discount  ?? "0"),
           vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
@@ -681,6 +685,7 @@ export default function PurchaseReturns() {
     tr("lineCols.warehouse"),
     tr("lineCols.unit"),
     tr("lineCols.qty"),
+    t("salesDocForm.colFreeQty"),
     tr("lineCols.price"),
     tr("lineCols.discount"),
     tr("lineCols.vat"),
@@ -1445,7 +1450,7 @@ ${sections}
                 <span>{tr("linesTitle")} ({lines.filter(l => l.itemId || l.itemName).length})</span>
               </div>
               {(() => {
-                const GRID_COLS_PR = "220px 110px 160px 120px 90px 110px 80px 80px 130px 180px 40px";
+                const GRID_COLS_PR = "220px 110px 160px 120px 90px 80px 110px 80px 80px 130px 180px 40px";
                 return (
               <div className="rounded-xl border bg-card overflow-x-auto">
                 <div className="min-w-max">
@@ -1507,6 +1512,10 @@ ${sections}
                     })()}
                     <Input className="h-8 text-xs" type="text" inputMode="numeric" value={l.qty}
                       onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
+                    <Input className="h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono"
+                      type="text" inputMode="numeric" value={l.freeQty}
+                      title={t("salesDocForm.colFreeQtyHint") as string}
+                      onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />
                     <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.unitPrice}
                       onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
                     <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.discount}

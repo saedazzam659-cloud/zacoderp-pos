@@ -73,16 +73,20 @@ function supplierBlock(s: any) {
 
 function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
   const showDisc = lines.some(l => (Number(l.discount) || 0) > 0);
+  // Only render the "مجاني" column when at least one line has free qty.
+  const showFree = lines.some(l => (Number(l.freeQty) || 0) > 0);
   const rows = lines.map((l, i) => {
     const disc = Math.max(0, Math.min(100, Number(l.discount) || 0));
     const sub  = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - disc / 100);
     const vat  = sub * ((Number(l.vatRate) || 0) / 100);
     const tot  = sub + vat;
+    const freeQ = Number(l.freeQty) || 0;
     return `
       <tr style="${i % 2 === 0 ? rowEvenStyle : ""}">
         <td>${i + 1}</td>
         <td>${l.itemName ?? l.itemCode ?? "—"}</td>
         <td class="mono">${Math.round(Number(l.qty) || 0)}</td>
+        ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
         <td>${l.unit ?? "—"}</td>
         <td class="mono">${fmt(l.unitPrice)}</td>
         ${showDisc ? `<td class="mono" style="color:#b91c1c;">${disc}%</td>` : ""}
@@ -99,6 +103,7 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
           <th style="width:30px">#</th>
           <th>الصنف / الخدمة</th>
           <th>الكمية</th>
+          ${showFree ? `<th style="color:#b45309;">مجاني</th>` : ""}
           <th>الوحدة</th>
           <th>سعر الوحدة</th>
           ${showDisc ? `<th>خصم%</th>` : ""}
