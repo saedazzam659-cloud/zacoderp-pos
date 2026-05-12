@@ -2788,7 +2788,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           onMobileMenu={() => setMobileOpen(true)}
           onLogout={logout}
         />
-        {isSuperAdmin && <ActingCompanyBanner />}
+        {/* Banner uses the RAW role so it stays visible while the SA is
+            inside a tenant — `isSuperAdmin` above is flipped to false
+            during impersonation to enable tenant routes. */}
+        {user?.role === "superadmin" && <ActingCompanyBanner />}
         <main className="flex-1 p-4 sm:p-6 md:p-8 bg-muted/30">{children}</main>
       </div>
 

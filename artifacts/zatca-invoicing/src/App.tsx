@@ -448,12 +448,18 @@ function AppRoutes() {
     }
   }
 
-  // While the SuperAdmin is "acting as" a tenant via the impersonation
-  // banner, route them through the tenant-side router (Dashboard, Invoices,
-  // Customers, …). Otherwise every `!isSuperAdmin` route 404s and the SA
-  // gets stranded on a useless SuperAdmin shell. The banner stays visible
-  // and provides the "خروج" exit, so flipping this flag is safe.
-  const isSuperAdmin = user?.role === "superadmin" && !actingCompanyId;
+  // `rawIsSuperAdmin` reflects the actual user role and stays TRUE even
+  // while the SA is "acting as" a tenant. We use it to keep the SA-only
+  // navigation/exit routes (`/admin/enter-company`, `/companies*`, the
+  // amber banner) reachable from inside an impersonated tenant — the SA
+  // must always be able to switch companies or exit without logging out.
+  //
+  // `isSuperAdmin` is the routing flag. While impersonating, we flip it
+  // to FALSE so all `!isSuperAdmin` tenant routes (Dashboard, Sales,
+  // Inventory, …) take over the same paths and the SA actually sees the
+  // company's UI instead of the SA shell.
+  const rawIsSuperAdmin = user?.role === "superadmin";
+  const isSuperAdmin = rawIsSuperAdmin && !actingCompanyId;
 
   return (
     <Switch>
@@ -477,11 +483,13 @@ function AppRoutes() {
             {/* Superadmin routes */}
             {isSuperAdmin && <Route path="/" component={SuperAdminDashboard} />}
             {isSuperAdmin && <Route path="/admin/requests" component={RegistrationRequests} />}
-            {isSuperAdmin && <Route path="/admin/enter-company" component={EnterCompany} />}
-            {isSuperAdmin && <Route path="/companies" component={Companies} />}
-            {isSuperAdmin && <Route path="/companies/new" component={CompanyNew} />}
-            {isSuperAdmin && <Route path="/companies/deleted" component={DeletedCompanies} />}
-            {isSuperAdmin && <Route path="/companies/:id" component={CompanyDetails} />}
+            {/* These four stay on rawIsSuperAdmin so the SA can switch
+                tenants or exit impersonation without logging out. */}
+            {rawIsSuperAdmin && <Route path="/admin/enter-company" component={EnterCompany} />}
+            {rawIsSuperAdmin && <Route path="/companies" component={Companies} />}
+            {rawIsSuperAdmin && <Route path="/companies/new" component={CompanyNew} />}
+            {rawIsSuperAdmin && <Route path="/companies/deleted" component={DeletedCompanies} />}
+            {rawIsSuperAdmin && <Route path="/companies/:id" component={CompanyDetails} />}
             {isSuperAdmin && <Route path="/admin/subscriptions" component={SubscriptionManagement} />}
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
