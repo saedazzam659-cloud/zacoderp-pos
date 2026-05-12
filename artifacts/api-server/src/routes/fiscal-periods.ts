@@ -598,10 +598,32 @@ router.post("/periods/:id/soft-close", async (req, res) => {
     .groupBy(journalEntryLinesTable.entryId);
     const unbalanced = balRows.filter(r => Math.abs(parseFloat(r.debit || "0") - parseFloat(r.credit || "0")) > 0.01);
 
-    if (!force && (drafts.length > 0 || unbalanced.length > 0)) {
+    // IFRS-aligned guard: revenue/expense accounts must be zeroed out via
+    // close-pl before soft-closing the period. Otherwise the user ends up
+    // with a "closed" period whose income statement still carries balances
+    // — which is exactly the bug that left fiscal year 2025 in a broken
+    // state for company 18 (closed without closing entries).
+    // `force=true` still allows monthly soft-close where P&L closing only
+    // happens at year-end, but the response now reports the open balances
+    // so the UI can warn explicitly.
+    const revBal  = await balancesByType(cid, period.startDate, period.endDate, "revenue");
+    const expBal  = await balancesByType(cid, period.startDate, period.endDate, "expense");
+    const openRev = revBal.filter(r => Math.abs(r.balance) > 0.005);
+    const openExp = expBal.filter(r => Math.abs(r.balance) > 0.005);
+    const plOpen  = openRev.length > 0 || openExp.length > 0;
+
+    if (!force && (drafts.length > 0 || unbalanced.length > 0 || plOpen)) {
+      const reasons: string[] = [];
+      if (drafts.length > 0)     reasons.push(`${drafts.length} قيد غير مرحّل`);
+      if (unbalanced.length > 0) reasons.push(`${unbalanced.length} قيد غير متوازن`);
+      if (plOpen) reasons.push(
+        `حسابات الإيرادات والمصروفات لم تُقفل بعد (${openRev.length} إيراد، ${openExp.length} مصروف برصيد غير صفري). شغّل "إقفال الأرباح والخسائر" ثم "ترحيل الأرباح" أولاً`
+      );
       res.status(400).json({
-        error: "لا يمكن إقفال الفترة — يوجد قيود غير مرحلة أو غير متوازنة. استخدم force=true لتجاوز هذا التحذير",
+        error: "لا يمكن إقفال الفترة — " + reasons.join("؛ ") + ". استخدم force=true لتجاوز التحذير",
         drafts: drafts.length, unbalanced: unbalanced.length,
+        openRevenueAccounts: openRev.length, openExpenseAccounts: openExp.length,
+        requiresPlClose: plOpen,
       });
       return;
     }
@@ -609,11 +631,21 @@ router.post("/periods/:id/soft-close", async (req, res) => {
     const [updated] = await db.update(fiscalPeriodsTable)
       .set({ status: "closed", updatedAt: new Date() })
       .where(eq(fiscalPeriodsTable.id, id)).returning();
-    res.json({ ok: true, period: updated, forced: force });
+    res.json({ ok: true, period: updated, forced: force, plClosed: !plOpen });
   } catch (e: any) { res.status(500).json({ error: e.message ?? "خطأ" }); }
 });
 
 // ─── POST /api/fiscal/periods/:id/hard-close — closed → permanently_closed ──
+// IFRS-aligned: hard-close is irreversible (audit-trail final state), so we
+// MUST verify that the closing-entries cycle actually ran. Specifically:
+//   • At least one `closing_revenue` OR `closing_expense` JE exists for the
+//     period (the close-pl step ran), AND
+//   • At least one `closing_transfer_profit` OR `closing_transfer_loss` JE
+//     exists for the period (the transfer-profit step ran).
+// Without these checks, hitting hard-close prematurely (as happened with
+// fiscal year 2025 for company 18) leaves the books mathematically wrong
+// AND permanently locked. There is intentionally NO `force` override here —
+// recovery requires the SuperAdmin force-reopen endpoint below.
 router.post("/periods/:id/hard-close", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -628,10 +660,108 @@ router.post("/periods/:id/hard-close", async (req, res) => {
       return;
     }
 
+    // Verify closing entries exist for this period.
+    const closingEntries = await db.select({
+      entryType: journalEntriesTable.entryType,
+    }).from(journalEntriesTable).where(and(
+      eq(journalEntriesTable.companyId, cid),
+      eq(journalEntriesTable.periodId, period.id),
+      inArray(journalEntriesTable.entryType, [
+        "closing_revenue", "closing_expense",
+        "closing_transfer_profit", "closing_transfer_loss",
+      ]),
+    ));
+    const types = new Set(closingEntries.map(e => e.entryType));
+    const hasPlClose   = types.has("closing_revenue") || types.has("closing_expense");
+    const hasTransfer  = types.has("closing_transfer_profit") || types.has("closing_transfer_loss");
+
+    // If the period has no revenue/expense activity at all, close-pl is
+    // legitimately a no-op and there's nothing to transfer. Allow the
+    // hard-close in that case (e.g. dormant company / sub-period).
+    const revBal = await balancesByType(cid, period.startDate, period.endDate, "revenue");
+    const expBal = await balancesByType(cid, period.startDate, period.endDate, "expense");
+    const hadPlActivity =
+      revBal.some(r => Math.abs(r.balance) > 0.005) ||
+      expBal.some(e => Math.abs(e.balance) > 0.005) ||
+      hasPlClose;
+
+    if (hadPlActivity && (!hasPlClose || !hasTransfer)) {
+      const missing: string[] = [];
+      if (!hasPlClose)  missing.push('قيد إقفال الإيرادات/المصروفات (Close P&L)');
+      if (!hasTransfer) missing.push('قيد ترحيل صافي الربح أو الخسارة (Transfer Profit)');
+      res.status(400).json({
+        error: "لا يمكن الإقفال النهائي — قيود الإقفال المحاسبية لم تُولَّد لهذه الفترة. المفقود: " + missing.join("، "),
+        missing,
+        hasClosePl: hasPlClose,
+        hasTransferProfit: hasTransfer,
+      });
+      return;
+    }
+
     const [updated] = await db.update(fiscalPeriodsTable)
       .set({ status: "permanently_closed", updatedAt: new Date() })
       .where(eq(fiscalPeriodsTable.id, id)).returning();
     res.json({ ok: true, period: updated });
+  } catch (e: any) { res.status(500).json({ error: e.message ?? "خطأ" }); }
+});
+
+// ─── POST /api/fiscal/periods/:id/force-reopen — SuperAdmin recovery ─────
+// Last-resort escape hatch for periods that were prematurely hard-closed
+// (status === "permanently_closed") without the required closing entries.
+// The standard PATCH /status endpoint refuses to touch permanently_closed
+// periods, which is correct under IFRS — but it leaves no recovery path
+// when the closing flow itself was misused.
+//
+// Restrictions:
+//   • SuperAdmin role only (regular admins cannot bypass IFRS audit lock).
+//   • Requires a non-empty `reason` string in the body — logged to the
+//     server log as an audit trail.
+//   • Sets status back to "open" so the standard close-pl → transfer-profit
+//     → soft-close → hard-close cycle can be redone properly.
+//   • Cascades to the parent fiscal year if it's also permanently_closed,
+//     so the year doesn't stay locked while one of its periods is open.
+router.post("/periods/:id/force-reopen", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    if ((req as any).authUser?.role !== "superadmin") {
+      res.status(403).json({ error: "هذا الإجراء متاح للسوبر أدمن فقط" }); return;
+    }
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+    const reason = String(req.body?.reason ?? "").trim();
+    if (reason.length < 10) {
+      res.status(400).json({ error: "سبب فك القفل مطلوب (10 أحرف على الأقل)" }); return;
+    }
+
+    const period = await fetchPeriod(cid, id);
+    if (!period) { res.status(404).json({ error: "الفترة غير موجودة" }); return; }
+    if (period.status === "open") { res.json({ ok: true, alreadyOpen: true }); return; }
+
+    (req as any).log?.warn?.({
+      action: "fiscal_period_force_reopen",
+      companyId: cid,
+      periodId: period.id,
+      periodName: period.name,
+      previousStatus: period.status,
+      userId: (req as any).authUser?.id,
+      reason,
+    }, `SuperAdmin force-reopened fiscal period ${period.name}`);
+
+    const [updated] = await db.update(fiscalPeriodsTable)
+      .set({ status: "open", updatedAt: new Date() })
+      .where(eq(fiscalPeriodsTable.id, id)).returning();
+
+    // If the parent year is permanently_closed, unlock it too — otherwise
+    // the year-level guard would still treat its periods as untouchable.
+    await db.update(fiscalYearsTable)
+      .set({ status: "open", updatedAt: new Date() })
+      .where(and(
+        eq(fiscalYearsTable.id, period.fiscalYearId),
+        eq(fiscalYearsTable.companyId, cid),
+        eq(fiscalYearsTable.status, "permanently_closed"),
+      ));
+
+    res.json({ ok: true, period: updated, reason });
   } catch (e: any) { res.status(500).json({ error: e.message ?? "خطأ" }); }
 });
 

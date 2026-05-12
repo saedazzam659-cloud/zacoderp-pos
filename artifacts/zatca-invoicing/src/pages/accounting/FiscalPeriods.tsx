@@ -156,6 +156,27 @@ export default function FiscalPeriods() {
     onError: (e: any) => toast({ title: t("fiscalPeriods.error"), description: e.message, variant: "destructive" }),
   });
 
+  // SuperAdmin-only recovery for periods that were prematurely hard-closed
+  // without the required closing entries. Calls the dedicated force-reopen
+  // endpoint which requires a non-empty justification (logged on the server).
+  const forceReopenMut = useMutation({
+    mutationFn: async ({ id, reason }: { id: number; reason: string }) => {
+      const r = await fetch(`${API}/api/fiscal/periods/${id}/force-reopen`, {
+        method: "POST", headers, body: JSON.stringify({ reason }),
+      });
+      return await safeJson(r, "تعذر فك القفل النهائي");
+    },
+    onSuccess: () => {
+      toast({
+        title: "تم فك القفل النهائي",
+        description: "الفترة مفتوحة الآن — أعد تشغيل خطوات الإقفال بالترتيب الصحيح",
+      });
+      qc.invalidateQueries({ queryKey: ["fiscal-periods", selectedYearId] });
+      qc.invalidateQueries({ queryKey: ["fiscal-years", cid] });
+    },
+    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+  });
+
   const delYearMut = useMutation({
     mutationFn: async (id: number) => {
       const r = await fetch(`${API}/api/fiscal/years/${id}`, { method: "DELETE", headers });
@@ -441,7 +462,36 @@ export default function FiscalPeriods() {
                               )}
                             </div>
                           ) : (
-                            <span className="text-[10px] text-muted-foreground italic">{t("fiscalPeriods.cannotEditPeriod")}</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-muted-foreground italic">{t("fiscalPeriods.cannotEditPeriod")}</span>
+                              {/* SuperAdmin-only escape hatch: prematurely
+                                  hard-closed periods (no closing entries
+                                  generated) can be reopened with a
+                                  justification logged on the server. */}
+                              {user?.role === "superadmin" && p.status === "permanently_closed" && (
+                                <Button size="sm" variant="ghost" className="h-7 px-2 text-orange-700"
+                                  disabled={forceReopenMut.isPending}
+                                  onClick={() => {
+                                    const reason = window.prompt(
+                                      "سبب فك القفل النهائي (10 أحرف على الأقل):\n" +
+                                      "هذا الإجراء يخالف مبدأ تكامل البيانات المحاسبية ويُسجَّل في سجل التدقيق.",
+                                      "إعادة تشغيل قيود الإقفال — لم تُولَّد عند الإقفال السابق"
+                                    );
+                                    if (reason && reason.trim().length >= 10) {
+                                      forceReopenMut.mutate({ id: p.id, reason: reason.trim() });
+                                    } else if (reason !== null) {
+                                      toast({
+                                        title: "السبب قصير جداً",
+                                        description: "يجب أن يكون السبب 10 أحرف على الأقل",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}>
+                                  <Unlock className="h-3 w-3" />
+                                  <span className={cn("text-[10px]", isRtl ? "mr-1" : "ml-1")}>فك القفل (سوبر أدمن)</span>
+                                </Button>
+                              )}
+                            </div>
                           )}
                         </div>
                       );
