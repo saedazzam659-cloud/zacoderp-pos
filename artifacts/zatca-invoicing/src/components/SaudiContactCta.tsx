@@ -64,9 +64,9 @@ export default function SaudiContactCta({ className }: { className?: string }) {
                 </span>
                 <span className="text-base leading-tight text-right">
                   راسلنا على واتساب
-                  <span className="block text-[11px] font-normal opacity-90 ltr">
+                  <bdi dir="ltr" className="block text-[11px] font-normal opacity-90 tracking-wide">
                     {PHONE_DISPLAY}
-                  </span>
+                  </bdi>
                 </span>
               </span>
               <span className="hidden sm:inline text-[11px] font-semibold bg-white/15 px-2 py-1 rounded-full">
@@ -86,9 +86,9 @@ export default function SaudiContactCta({ className }: { className?: string }) {
                 </span>
                 <span className="text-base leading-tight text-right">
                   اتصل بنا
-                  <span className="block text-[11px] font-normal opacity-80 ltr">
+                  <bdi dir="ltr" className="block text-[11px] font-normal opacity-80 tracking-wide">
                     {PHONE_DISPLAY}
-                  </span>
+                  </bdi>
                 </span>
               </span>
               <span className="hidden sm:inline text-[11px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-1 rounded-full">
