@@ -229,12 +229,20 @@ const REP_BASE_PERMISSIONS: Record<string, Partial<Record<string, boolean>>> = {
   sales_quotations:           { view: true, create: true, edit: true, post: true },
   sales_invoices:             { view: true, create: true, edit: true, post: true },
   sales_returns:              { view: true, create: true, edit: true, post: true },
-  sales_reports:              { view: true },
-  items:                      { view: true },
-  warehouses:                 { view: true },
   receipt_vouchers:           { view: true, create: true, edit: true },
   cash_boxes:                 { view: true },
   bank_accounts:              { view: true },
+  // NOTE: items / warehouses are intentionally NOT granted here.
+  // The sales-invoice form needs to read them, but giving the full
+  // `items.view` / `warehouses.view` perm would also expose the inventory
+  // dashboard (with cost totals!), item-groups, units, goods-receipt
+  // screens — none of which a rep should see. Instead, see the lookup
+  // bypass in artifacts/api-server/src/middleware/permissions.ts that
+  // grants implicit read access to items+warehouses for any user with
+  // sales_invoices.create or sales_quotations.create.
+  //
+  // sales_reports is also intentionally NOT granted: it shows aggregate
+  // company-wide sales (all reps), which a rep must not see.
 };
 
 router.post("/:id/onboard-user", async (req, res) => {

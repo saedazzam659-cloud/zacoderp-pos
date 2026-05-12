@@ -393,7 +393,13 @@ const cashSubNav: NavDef[] = [
   { nameKey: "nav.financialTransactions", href: "/cash/financial-transactions", icon: Banknote, permKey: "cash_boxes" },
 ];
 
-const inventoryHeader: NavDef = { nameKey: "nav.inventoryDashboard", href: "/inventory", icon: LayoutDashboard, exact: true };
+// permKey ties the inventory dashboard tile (which exposes cost totals) to
+// the same `items` permission as the items list. Without this, sales reps
+// — who get implicit items.view via the lookup bypass for the invoice
+// picker — would still NOT see this header (because the lookup bypass is
+// server-side only; the menu still checks the literal permission map).
+// Admin / superadmin / users with explicit items.view continue to see it.
+const inventoryHeader: NavDef = { nameKey: "nav.inventoryDashboard", href: "/inventory", icon: LayoutDashboard, exact: true, permKey: "items" };
 const inventorySubNav: NavDef[] = [
   { nameKey: "nav.items",             href: "/inventory/items",            icon: Package,           permKey: "items" },
   // item_groups + units piggy-back on items (no dedicated module key).

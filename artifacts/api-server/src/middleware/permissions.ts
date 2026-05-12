@@ -149,6 +149,21 @@ export function requirePermission(module: string, action: PermAction) {
     ) {
       next(); return;
     }
+    // Sales-rep lookup bypass: any user who can CREATE a sales invoice or
+    // quotation needs to read items + warehouses to populate the line-item
+    // picker and warehouse dropdown. Granting them the full `items.view` /
+    // `warehouses.view` permission would also expose the inventory
+    // dashboard, item-groups, units, goods-receipt screens, etc — none of
+    // which a sales rep should see (they expose cost data + non-rep ops).
+    // So we allow only READ here and only for these two modules. Mutating
+    // inventory still requires the explicit module permission.
+    if (
+      (module === "items" || module === "warehouses") &&
+      action === "view" &&
+      (map["sales_invoices"]?.create || map["sales_quotations"]?.create)
+    ) {
+      next(); return;
+    }
     // Fire-and-forget denial audit (don't block the response)
     void writeAudit({
       userId: u.id, username: u.username, role: u.role, companyId: u.companyId,
