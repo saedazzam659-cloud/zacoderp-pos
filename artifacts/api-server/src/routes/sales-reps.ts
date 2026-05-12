@@ -6,6 +6,7 @@ import {
   customersTable,
   salesInvoicesTable,
   receiptVouchersTable, // used by delete guard so we don't orphan collection-commission history
+  usersTable,
 } from "@workspace/db";
 import { and, desc, eq, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -199,6 +200,70 @@ router.delete("/:id", async (req, res) => {
     await db.delete(salesRepsTable)
       .where(and(eq(salesRepsTable.id, id), eq(salesRepsTable.companyId, cid)));
     res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── ONE-CLICK REP ONBOARDING ────────────────────────────────────────────────
+// Activates the customer-isolation scope on the rep's linked user AND grants
+// the standard rep permission set. Without this, the admin had to (a) flip
+// `scopeOwnCustomersOnly` on the user screen, (b) toggle ~10 permission
+// checkboxes one-by-one, and (c) hope they didn't miss any — a frequent
+// support pain point that was leaving reps either with no access at all
+// (403 on save) or with their newly-created customers invisible to them.
+//
+// Behavior:
+//   - Requires the rep to have `userId` linked (else 400)
+//   - Sets users.scopeOwnCustomersOnly = true
+//   - MERGES (not replaces) the standard rep permission set into
+//     users.permissions, so any extra perms an admin granted manually are
+//     preserved. Only adds — never removes.
+//   - Idempotent: safe to click multiple times.
+//   - Admin / superadmin only (RBAC layer above already enforces sales_invoices)
+//
+// Standard rep set (view+create+edit on customer-facing surfaces; view-only
+// on the supporting reads they need to actually do their job):
+const REP_BASE_PERMISSIONS: Record<string, Partial<Record<string, boolean>>> = {
+  dashboard:                  { view: true },
+  dashboard_recent_invoices:  { view: true },
+  customers:                  { view: true, create: true, edit: true },
+  sales_quotations:           { view: true, create: true, edit: true, post: true },
+  sales_invoices:             { view: true, create: true, edit: true, post: true },
+  sales_returns:              { view: true, create: true, edit: true, post: true },
+  sales_reports:              { view: true },
+  items:                      { view: true },
+  warehouses:                 { view: true },
+  receipt_vouchers:           { view: true, create: true, edit: true },
+  cash_boxes:                 { view: true },
+  bank_accounts:              { view: true },
+};
+
+router.post("/:id/onboard-user", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const repId = Number(req.params.id);
+    const [rep] = await db.select().from(salesRepsTable)
+      .where(and(eq(salesRepsTable.id, repId), eq(salesRepsTable.companyId, cid)));
+    if (!rep) { res.status(404).json({ error: "المندوب غير موجود" }); return; }
+    if (!rep.userId) {
+      res.status(400).json({ error: "هذا المندوب غير مربوط بأي مستخدم — اربطه بمستخدم أولاً ثم أعد المحاولة." });
+      return;
+    }
+    // Merge with whatever the admin already had, so we never silently strip
+    // extra perms (e.g. they granted purchase_invoices.view manually).
+    const [u] = await db.select({ permissions: usersTable.permissions })
+      .from(usersTable).where(eq(usersTable.id, rep.userId));
+    const current = (u?.permissions as Record<string, Record<string, boolean>> | null) ?? {};
+    const merged: Record<string, Record<string, boolean>> = { ...current };
+    for (const [mod, actions] of Object.entries(REP_BASE_PERMISSIONS)) {
+      merged[mod] = { ...(current[mod] ?? {}), ...(actions as Record<string, boolean>) };
+    }
+
+    await db.update(usersTable)
+      .set({ scopeOwnCustomersOnly: true, permissions: merged as any })
+      .where(eq(usersTable.id, rep.userId));
+
+    req.log?.info({ repId, userId: rep.userId, cid }, "rep_onboard_user");
+    res.json({ ok: true, userId: rep.userId, modules: Object.keys(REP_BASE_PERMISSIONS) });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

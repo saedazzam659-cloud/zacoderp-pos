@@ -20,7 +20,7 @@ import {
 import {
   Plus, Search, Pencil, Trash2, UserCheck, UserX,
   Phone, Mail, MapPin, Percent, Target, Users, Sparkles, Loader2,
-  FileSpreadsheet, X, KeyRound,
+  FileSpreadsheet, X, KeyRound, Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -307,6 +307,34 @@ export default function SalesReps() {
     },
     onError: (e: any) => {
       toast({ title: "خطأ", description: e?.message || "فشل الحفظ", variant: "destructive" });
+    },
+  });
+
+  // ─── One-click rep onboarding ───────────────────────────────────
+  // Posts to /api/sales-reps/:id/onboard-user which, on the linked user,
+  // (a) sets scopeOwnCustomersOnly = true and (b) merges the standard rep
+  // permission set (customers / sales_invoices / sales_quotations / etc.)
+  // without removing any extra perms an admin already granted. Idempotent.
+  const onboardMut = useMutation({
+    mutationFn: async (repId: number) => {
+      const r = await fetch(`${API}/api/sales-reps/${repId}/onboard-user?companyId=${cid}`, {
+        method: "POST",
+        headers,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "تعذّر التجهيز");
+      return j;
+    },
+    onSuccess: (j: any) => {
+      qc.invalidateQueries({ queryKey: ["sales-reps", cid] });
+      qc.invalidateQueries({ queryKey: ["company-users", cid] });
+      toast({
+        title: "تم تجهيز المندوب",
+        description: `تم تفعيل عزل العملاء ومنح صلاحيات: ${(j?.modules ?? []).length} وحدة. اطلب من المندوب تسجيل الخروج والدخول مجدداً.`,
+      });
+    },
+    onError: (e: any) => {
+      toast({ title: "تعذّر تجهيز المندوب", description: e?.message, variant: "destructive" });
     },
   });
 
@@ -808,6 +836,22 @@ export default function SalesReps() {
                                   data-testid={`btn-ai-${r.id}`}
                                 >
                                   <Sparkles className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className={cn(
+                                    "h-7 w-7",
+                                    r.userId ? "text-emerald-600 hover:text-emerald-700" : "text-gray-300 cursor-not-allowed",
+                                  )}
+                                  disabled={!r.userId || onboardMut.isPending}
+                                  onClick={() => r.userId && onboardMut.mutate(r.id)}
+                                  title={r.userId ? "تجهيز كامل للمندوب (تفعيل العزل + منح الصلاحيات الأساسية)" : "اربط المندوب بمستخدم أولاً"}
+                                  data-testid={`btn-onboard-${r.id}`}
+                                >
+                                  {onboardMut.isPending && onboardMut.variables === r.id
+                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    : <Wand2 className="h-3.5 w-3.5" />}
                                 </Button>
                                 <Button
                                   variant="ghost"
