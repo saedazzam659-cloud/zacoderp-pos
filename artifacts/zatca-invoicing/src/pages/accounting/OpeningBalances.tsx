@@ -162,32 +162,54 @@ export default function OpeningBalances() {
   // When `includeAmounts=true`, the export must reflect the REAL cumulative
   // balances posted up to `entryDate` — not whatever the user happens to have
   // typed into the on-screen form (which is empty on a fresh page load and
-  // would otherwise produce an empty file). We pull the trial-balance from
-  // the server with `toDate=entryDate` (no fromDate, so movements are
-  // cumulative since inception) and use its signed `balance` per account
-  // (debit − credit) to fill the right column. Branch filter is applied when
-  // an opening branch is selected so the export matches the same scope the
-  // user would post the JE under.
+  // would otherwise produce an empty file).
+  //
+  // Why we pass `fromDate = entryDate+1` and read `openingBalance`:
+  // The `/accounting-reports/trial-balance` endpoint deliberately EXCLUDES
+  // `opening` and `trial_balance_adjustment` JEs from the *period* column
+  // to avoid double-counting in the trial-balance UI (those entries are
+  // meant to feed the *opening* column there). It only includes them when
+  // `fromDate` is set — they then land in the opening column (entries
+  // strictly before fromDate, no type filter). So calling with
+  // `toDate=entryDate` and no `fromDate` would return 0 for any account
+  // whose only history is the opening entry itself.
+  // By setting fromDate = entryDate+1day, every JE on/before entryDate
+  // (including the opening JE we want to surface) lands in the opening
+  // column. `closingBalance` then equals the cumulative net balance as of
+  // entryDate. Branch filter is applied when an opening branch is
+  // selected so the export matches the same scope the user would post
+  // the JE under.
   async function exportXlsx(includeAmounts: boolean) {
     if (isExporting) return;
     let serverBalances: Record<number, { debit: number; credit: number }> = {};
     if (includeAmounts) {
       setIsExporting(true);
       try {
+        // Compute the day AFTER entryDate as the period window so the
+        // opening column captures everything ≤ entryDate (incl. opening JEs).
+        const dayAfter = (() => {
+          const d = new Date(entryDate || new Date().toISOString().slice(0, 10));
+          d.setDate(d.getDate() + 1);
+          return d.toISOString().slice(0, 10);
+        })();
         const params = new URLSearchParams();
         if (cid) params.set("companyId", String(cid));
-        if (entryDate) params.set("toDate", entryDate);
+        params.set("fromDate", dayAfter);
+        params.set("toDate",   dayAfter);
         if (branchId) params.set("branchId", branchId);
         const res = await fetch(`${API}/api/accounting-reports/trial-balance?${params.toString()}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (res.ok) {
-          const rows = await res.json() as Array<{ accountId: number; balance: number }>;
+          const rows = await res.json() as Array<{
+            accountId: number;
+            closingDebit: number; closingCredit: number; closingBalance: number;
+          }>;
           for (const r of rows) {
-            const bal = Number(r.balance) || 0;
-            // Positive net = debit side; negative = credit side. Tiny
-            // residuals (< 0.005) round to zero so we don't pollute the
+            // Use closingBalance (signed): positive → debit side, negative → credit side.
+            // Tiny residuals (< 0.005) round to zero so we don't pollute the
             // sheet with noise like "0.0000001".
+            const bal = Number(r.closingBalance) || 0;
             if (Math.abs(bal) < 0.005) continue;
             serverBalances[r.accountId] = bal > 0
               ? { debit: bal,  credit: 0 }
