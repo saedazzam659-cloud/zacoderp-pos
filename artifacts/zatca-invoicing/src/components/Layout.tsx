@@ -10,7 +10,7 @@ import {
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote, Wrench,
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
   Search, Home, HelpCircle, ChevronLeft, Mic,
-  ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
+  ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator, LogIn,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck, Stethoscope, Video,
   ScrollText, Database, ListOrdered, HardDrive, Trash2, BadgePercent,
   Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat, Boxes, Megaphone,
@@ -112,6 +112,7 @@ const ACCOUNTING_REPORTS_PERMS  = ["accounting_reports"];
 
 const superAdminNav: NavDef[] = [
   { nameKey: "nav.infoBoard",            href: "/",                         icon: LayoutDashboard, exact: true },
+  { nameKey: "nav.enterCompany",         href: "/admin/enter-company",      icon: LogIn },
   { nameKey: "nav.registrationRequests", href: "/admin/requests",           icon: Clock },
   { nameKey: "nav.licenses",             href: "/admin/licenses",           icon: KeyRound },
   { nameKey: "nav.backupOperations",     href: "/admin/backups",            icon: HardDrive },
@@ -422,6 +423,54 @@ const inventoryReportsSubNav: NavDef[] = [
 // (icon + label → hub landing page) and a separate chevron button (toggle
 // expand/collapse only). Clicking the link auto-expands the group as well,
 // so the user lands on the hub AND sees the children in the sidebar.
+// SuperAdmin "Acting As Company" banner. Renders just below the TopBar when
+// the SA has entered a tenant (via the "دخول إلى الشركة" button on /companies).
+// Loud, sticky reminder that any write actions on this page hit the
+// impersonated tenant's data — and provides a one-click exit so the SA never
+// gets stranded inside a company they didn't mean to act on.
+function ActingCompanyBanner() {
+  const { actingCompanyId, setActingCompany, token } = useAuth() as any;
+  const [, setLocation] = useLocation();
+  const [name, setName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!actingCompanyId || !token) { setName(null); return; }
+    let cancelled = false;
+    const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+    fetch(`${API}/api/companies/${actingCompanyId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (!cancelled) setName(d?.nameAr || d?.nameEn || `#${actingCompanyId}`); })
+      .catch(() => { if (!cancelled) setName(`#${actingCompanyId}`); });
+    return () => { cancelled = true; };
+  }, [actingCompanyId, token]);
+
+  if (!actingCompanyId) return null;
+
+  return (
+    <div className="sticky top-0 z-40 bg-amber-100 border-b-2 border-amber-400 text-amber-900 px-4 py-2 flex items-center justify-between gap-3 shadow-sm">
+      <div className="flex items-center gap-2 min-w-0">
+        <Building2 className="h-4 w-4 shrink-0" />
+        <span className="text-sm font-semibold truncate">
+          أنت تعمل حالياً داخل شركة: {name ?? "..."}
+        </span>
+        <span className="text-[11px] opacity-80 hidden sm:inline">
+          (كل عمليات الإضافة/التعديل ستُنسب لهذه الشركة)
+        </span>
+      </div>
+      <Button
+        size="sm" variant="outline"
+        className="h-7 bg-white hover:bg-amber-50 text-amber-900 border-amber-400 gap-1.5"
+        onClick={() => { setActingCompany(null); setLocation("/companies"); }}
+      >
+        <LogOut className="h-3.5 w-3.5" />
+        خروج من الشركة
+      </Button>
+    </div>
+  );
+}
+
 function HubGroupButton({
   hubHref, icon: Icon, label, isOn, open, onToggle, onNavigate,
 }: {
@@ -2736,6 +2785,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           onMobileMenu={() => setMobileOpen(true)}
           onLogout={logout}
         />
+        {isSuperAdmin && <ActingCompanyBanner />}
         <main className="flex-1 p-4 sm:p-6 md:p-8 bg-muted/30">{children}</main>
       </div>
 

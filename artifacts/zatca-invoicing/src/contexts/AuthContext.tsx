@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
-import { setAuthTokenGetter, setSessionIdGetter } from "@workspace/api-client-react";
+import { setAuthTokenGetter, setSessionIdGetter, setActingCompanyIdGetter } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -13,6 +13,16 @@ setAuthTokenGetter(() => localStorage.getItem("zatca_token"));
 setSessionIdGetter(() => {
   const v = localStorage.getItem("zatca_manual_session_id");
   return v ? v : null;
+});
+// SuperAdmin-only "Acting As Company" header — server's resolveCompanyId
+// honours `x-acting-company-id` only when the caller's role is superadmin,
+// so this is a safe default to attach to every request. A tampered value
+// from a tenant user is silently ignored.
+setActingCompanyIdGetter(() => {
+  const v = localStorage.getItem("zatca_acting_company_id");
+  if (!v) return null;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
 });
 
 export interface AuthUser {
@@ -68,6 +78,14 @@ interface AuthContextType {
   register: (data: RegisterData) => Promise<void>;
   setUser: React.Dispatch<React.SetStateAction<AuthUser | null>>;
   /**
+   * SuperAdmin "act as company" — when set, every API call sends an
+   * `x-acting-company-id` header that the server treats as the effective
+   * tenant for that request. Pass `null` to exit impersonation. Honoured
+   * server-side only when the caller's role is superadmin.
+   */
+  actingCompanyId: number | null;
+  setActingCompany: (companyId: number | null) => void;
+  /**
    * Used by alternate sign-in flows (e.g. SuperAdmin multi-factor flow,
    * recovery-code/recovery-link flows) to install a session that the
    * client obtained out-of-band from a non-`/api/auth/login` endpoint.
@@ -111,6 +129,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 const TOKEN_KEY = "zatca_token";
 const SESSION_KEY = "zatca_session";
 const MANUAL_SESSION_KEY = "zatca_manual_session_id";
+const ACTING_COMPANY_KEY = "zatca_acting_company_id";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -122,10 +141,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const n = v ? parseInt(v, 10) : NaN;
     return Number.isFinite(n) && n > 0 ? n : null;
   });
+  const [actingCompanyId, setActingCompanyIdState] = useState<number | null>(() => {
+    const v = localStorage.getItem(ACTING_COMPANY_KEY);
+    const n = v ? parseInt(v, 10) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sseRef = useRef<EventSource | null>(null);
   const sseRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const qc = useQueryClient();
+
+  // Persist + invalidate every cached query when the SuperAdmin enters or
+  // exits a tenant — otherwise stale per-company data would linger in the
+  // React Query cache and bleed across tenants in the UI.
+  const setActingCompany = useCallback((id: number | null) => {
+    setActingCompanyIdState(id);
+    if (id == null) localStorage.removeItem(ACTING_COMPANY_KEY);
+    else localStorage.setItem(ACTING_COMPANY_KEY, String(id));
+    // Cancel in-flight queries first so their late responses cannot
+    // overwrite the freshly-invalidated cache with old-tenant data; then
+    // invalidate everything so list pages immediately re-fetch in the
+    // new tenant scope.
+    try {
+      void qc.cancelQueries();
+      void qc.invalidateQueries();
+    } catch { /* ignore */ }
+  }, [qc]);
 
   // Keep localStorage in lock-step so setSessionIdGetter() reads stay correct.
   const persistManualSession = useCallback((id: number | null) => {
@@ -323,6 +364,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     localStorage.setItem(TOKEN_KEY, data.token);
     localStorage.setItem(SESSION_KEY, data.sessionId);
+    // Defensively clear any stale acting-company id from a previous login
+    // (e.g. SA logged out, then a tenant user logs in on the same browser).
+    // Without this the new user would still send the header — server ignores
+    // it for non-SAs, but the UI banner would render incorrectly until next
+    // page reload.
+    localStorage.removeItem(ACTING_COMPANY_KEY);
+    setActingCompanyIdState(null);
     setToken(data.token);
     setUser(data.user);
     setManualSessions(Array.isArray(data.manualSessions) ? data.manualSessions : []);
@@ -335,6 +383,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await apiFetch("/auth/logout", { method: "POST" });
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(ACTING_COMPANY_KEY);
+    setActingCompanyIdState(null);
     setToken(null);
     setUser(null);
     setManualSessions([]);
@@ -416,6 +466,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isAuthenticated: !!user,
       manualSessions, currentSessionId,
       selectManualSession, quickCreateManualSession, refreshManualSessions,
+      actingCompanyId, setActingCompany,
     }}>
       {children}
     </AuthContext.Provider>

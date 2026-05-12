@@ -18,6 +18,7 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
 let _sessionIdGetter: (() => string | number | null) | null = null;
+let _actingCompanyIdGetter: (() => string | number | null) | null = null;
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -58,6 +59,25 @@ export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
  */
 export function setSessionIdGetter(getter: (() => string | number | null) | null): void {
   _sessionIdGetter = getter;
+}
+
+/**
+ * Register a getter that supplies the SuperAdmin's currently-impersonated
+ * companyId. Before every fetch the getter is invoked; when it returns a
+ * positive number, an `x-acting-company-id: <value>` header is attached.
+ *
+ * Server-side, `resolveCompanyId` honours this header ONLY for users with
+ * role='superadmin'. Regular users always get scoped to their own company,
+ * so the header is silently ignored for them. This lets a SuperAdmin enter
+ * a specific tenant and have every existing API call automatically scope
+ * to that tenant without each route needing to pass `?companyId=` manually.
+ *
+ * Pass `null` to clear the getter.
+ */
+export function setActingCompanyIdGetter(
+  getter: (() => string | number | null) | null,
+): void {
+  _actingCompanyIdGetter = getter;
 }
 
 function isRequest(input: RequestInfo | URL): input is Request {
@@ -381,6 +401,18 @@ export async function customFetch<T = unknown>(
       const sid = _sessionIdGetter();
       if (sid != null && sid !== "" && Number(sid) > 0) {
         headers.set("x-session-id", String(sid));
+      }
+    } catch { /* getter must never break a request */ }
+  }
+
+  // Attach the SuperAdmin's currently-impersonated companyId, if any.
+  // The server validates the role before honouring it, so a tampered
+  // header on a regular user's request is harmless.
+  if (_actingCompanyIdGetter && !headers.has("x-acting-company-id")) {
+    try {
+      const cid = _actingCompanyIdGetter();
+      if (cid != null && cid !== "" && Number(cid) > 0) {
+        headers.set("x-acting-company-id", String(cid));
       }
     } catch { /* getter must never break a request */ }
   }

@@ -273,6 +273,30 @@ export async function extractAuth(req: Request, _res: Response, next: NextFuncti
     (req as any).manualSessionId = null;
   }
 
+  // SuperAdmin "Acting As Company" header — parse once here, validate, and
+  // attach to req for resolveCompanyId / audit / log child contexts. Honoured
+  // ONLY for superadmins; tenant users have it silently dropped so a
+  // tampered header from a regular user can never escalate scope.
+  if (user.role === "superadmin") {
+    const raw = req.headers["x-acting-company-id"];
+    const headerVal = Array.isArray(raw) ? raw[0] : raw;
+    const parsed = headerVal ? Number(headerVal) : NaN;
+    if (Number.isFinite(parsed) && parsed > 0) {
+      req.actingAsCompanyId = parsed;
+      // Stamp every log line for this request with the impersonation
+      // context so production triage can grep by acting tenant and tell
+      // SA-impersonated actions apart from a tenant user's real activity.
+      try {
+        if (req.log && typeof (req.log as any).child === "function") {
+          req.log = (req.log as any).child({
+            impersonatorUserId: user.id,
+            actingAsCompanyId: parsed,
+          });
+        }
+      } catch { /* non-fatal */ }
+    }
+  }
+
   // Refresh SA session lastSeenAt (best-effort).
   if (resolved.origin === "superadmin" && resolved.saSessionRowId) {
     db.update(superAdminSessionsTable)
@@ -291,7 +315,15 @@ export async function extractAuth(req: Request, _res: Response, next: NextFuncti
  */
 export function resolveCompanyId(req: Request, queryCompanyId?: number): number | undefined {
   if (!req.authUser) return queryCompanyId;
-  if (req.authUser.role === "superadmin") return queryCompanyId;
+  if (req.authUser.role === "superadmin") {
+    // Explicit query/body companyId always wins so existing call sites
+    // (e.g. /admin/* dashboards) still address a tenant deliberately.
+    if (queryCompanyId != null) return queryCompanyId;
+    // Otherwise fall back to the impersonation context set by extractAuth
+    // from the x-acting-company-id header (validated, role-gated there).
+    if (req.actingAsCompanyId != null) return req.actingAsCompanyId;
+    return undefined;
+  }
   return req.authUser.companyId ?? undefined;
 }
 

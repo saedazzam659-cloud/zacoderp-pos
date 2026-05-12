@@ -9,6 +9,11 @@ declare global {
   namespace Express {
     interface Request {
       adminUser?: ResolvedAdminUser;
+      // SuperAdmin "Acting As" target — set by extractAuth from the
+      // x-acting-company-id header ONLY for role==="superadmin". Used by
+      // resolveCompanyId and audit/log child contexts so impersonated
+      // actions remain traceable to the SA.
+      actingAsCompanyId?: number;
     }
   }
 }

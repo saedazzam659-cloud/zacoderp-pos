@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useListCompanies, useDeleteCompany } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   Plus, Building2, ExternalLink, ShieldCheck, AlertCircle,
   CheckCircle2, Search, ChevronDown, ChevronUp, MapPin,
-  BadgeCheck, FileText, RefreshCw, Layers, Trash2, Globe2
+  BadgeCheck, FileText, RefreshCw, Layers, Trash2, Globe2, LogIn
 } from "lucide-react";
 import ExportButtons from "@/components/ExportButtons";
 import { Button } from "@/components/ui/button";
@@ -47,6 +48,9 @@ function StatCard({ label, value, color, border }: any) {
 }
 
 export default function Companies() {
+  const { user, actingCompanyId, setActingCompany } = useAuth() as any;
+  const [, setLocation] = useLocation();
+  const isSuperAdmin = user?.role === "superadmin";
   const { data: companies = [], isLoading, refetch } = useListCompanies({
     query: { queryKey: ["companies"] }
   }) as any;
@@ -407,6 +411,25 @@ export default function Companies() {
                           <ExternalLink className="h-3.5 w-3.5" />عرض التفاصيل
                         </Link>
                       </Button>
+                      {/* SuperAdmin-only "enter company" — sets the global
+                          impersonation context so every API call from here
+                          on automatically scopes to this tenant. The yellow
+                          banner in Layout makes the active context obvious
+                          and provides a one-click exit. */}
+                      {isSuperAdmin && (
+                        <Button
+                          size="sm"
+                          variant={actingCompanyId === company.id ? "secondary" : "default"}
+                          className="gap-1.5 h-8"
+                          onClick={() => {
+                            setActingCompany(company.id);
+                            setLocation("/dashboard");
+                          }}
+                        >
+                          <LogIn className="h-3.5 w-3.5" />
+                          {actingCompanyId === company.id ? "داخل الشركة" : "دخول إلى الشركة"}
+                        </Button>
+                      )}
                       {/* Soft delete: any status. Moves to recycle bin
                           (/companies/deleted) — fully reversible. */}
                       <Button

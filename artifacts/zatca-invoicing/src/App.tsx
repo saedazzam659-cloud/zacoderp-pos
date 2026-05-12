@@ -9,6 +9,7 @@ import PermRoute from "@/components/PermRoute";
 import Dashboard from "@/pages/Dashboard";
 import SuperAdminDashboard from "@/pages/SuperAdminDashboard";
 import OrphanStockCleanup from "@/pages/admin/OrphanStockCleanup";
+import EnterCompany from "@/pages/admin/EnterCompany";
 import DatabaseStats from "@/pages/admin/DatabaseStats";
 import AICompanyFix from "@/pages/admin/AICompanyFix";
 import CompanyDataDoctor from "@/pages/admin/CompanyDataDoctor";
@@ -471,6 +472,7 @@ function AppRoutes() {
             {/* Superadmin routes */}
             {isSuperAdmin && <Route path="/" component={SuperAdminDashboard} />}
             {isSuperAdmin && <Route path="/admin/requests" component={RegistrationRequests} />}
+            {isSuperAdmin && <Route path="/admin/enter-company" component={EnterCompany} />}
             {isSuperAdmin && <Route path="/companies" component={Companies} />}
             {isSuperAdmin && <Route path="/companies/new" component={CompanyNew} />}
             {isSuperAdmin && <Route path="/companies/deleted" component={DeletedCompanies} />}
