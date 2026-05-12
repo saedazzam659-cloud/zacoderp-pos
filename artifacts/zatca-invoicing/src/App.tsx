@@ -4,6 +4,7 @@ import CustomerCobrowseWidget from "@/components/cobrowse/CustomerCobrowseWidget
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
+import InAppNotFound from "@/components/InAppNotFound";
 import Layout from "@/components/Layout";
 import PermRoute from "@/components/PermRoute";
 import Dashboard from "@/pages/Dashboard";
@@ -825,12 +826,14 @@ function AppRoutes() {
             {/* Authenticated catch-all: a logged-in user landing on a path
                 that has no matching route (e.g. a sales rep opening /users
                 — which only renders for admins, so the Switch falls all the
-                way through) used to see the public 404 page rendered INSIDE
-                the app shell, which looked like a broken UI. Send them to
-                "/" instead. The marketing 404 still serves unauthenticated
-                visitors via the unauthenticated branch above, so SEO
-                crawlers continue to get a proper noindex 404 page. */}
-            <Route><Redirect to="/" /></Route>
+                way through) used to see the public marketing 404 page
+                rendered INSIDE the app shell, which looked broken. We now
+                show a friendly in-app "no permission" screen with clear
+                next-step actions. The marketing 404 still serves
+                unauthenticated visitors via the unauthenticated branch
+                above, so SEO crawlers continue to get a proper noindex
+                404 page. */}
+            <Route component={InAppNotFound} />
           </Switch>
         </Layout>
       </Route>
