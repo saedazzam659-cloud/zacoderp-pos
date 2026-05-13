@@ -11,10 +11,162 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { TablePagination, usePagination } from "@/components/TablePagination";
-import { Landmark, Plus, Pencil, Trash2, Search, CheckCircle2, XCircle, TrendingUp, CreditCard, AlertTriangle } from "lucide-react";
+import { Landmark, Plus, Pencil, Trash2, Search, CheckCircle2, XCircle, TrendingUp, CreditCard, AlertTriangle, Check, X, ChevronsUpDown, Building2 } from "lucide-react";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
-const EMPTY = { code: "", nameAr: "", nameEn: "", bankName: "", bankNameEn: "", accountNumber: "", iban: "", swiftCode: "", currencyId: "", branchId: "", notes: "", isActive: true };
+const EMPTY = { code: "", nameAr: "", nameEn: "", bankName: "", bankNameEn: "", accountNumber: "", iban: "", swiftCode: "", currencyId: "", branchIds: [] as number[], notes: "", isActive: true };
+
+// ─── BranchMultiSelect ────────────────────────────────────────────────────────
+// Searchable multi-select dropdown for picking the branches a bank account
+// belongs to. Renders selected branches as pills with a quick-remove button.
+function BranchMultiSelect({
+  branches,
+  value,
+  onChange,
+  isRtl,
+  disabled,
+}: {
+  branches: any[];
+  value: number[];
+  onChange: (next: number[]) => void;
+  isRtl: boolean;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const filtered = branches.filter((b: any) => {
+    if (!search) return true;
+    const s = search.toLowerCase();
+    return (
+      b.code?.toLowerCase().includes(s) ||
+      b.nameAr?.includes(search) ||
+      b.nameEn?.toLowerCase().includes(s)
+    );
+  });
+  const selectedSet = new Set(value);
+  const toggle = (id: number) => {
+    if (selectedSet.has(id)) onChange(value.filter(v => v !== id));
+    else onChange([...value, id]);
+  };
+  const clearOne = (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    onChange(value.filter(v => v !== id));
+  };
+  const selectedBranches = value
+    .map(id => branches.find((b: any) => b.id === id))
+    .filter(Boolean);
+
+  return (
+    <Popover open={open} onOpenChange={o => { setOpen(o); if (!o) setSearch(""); }}>
+      <PopoverAnchor asChild>
+        <div
+          className={cn(
+            "min-h-9 w-full rounded-md border border-input bg-background px-2 py-1 text-sm shadow-sm cursor-text",
+            "focus-within:ring-1 focus-within:ring-ring",
+            disabled && "opacity-50 cursor-not-allowed",
+          )}
+          onClick={() => !disabled && setOpen(true)}
+        >
+          <div className="flex flex-wrap items-center gap-1">
+            {selectedBranches.length === 0 && (
+              <span className="text-muted-foreground text-sm py-1 px-1">— لم يُحدَّد فرع —</span>
+            )}
+            {selectedBranches.map((b: any) => (
+              <span
+                key={b.id}
+                className="inline-flex items-center gap-1 bg-primary/10 text-primary border border-primary/20 rounded-full ps-2 pe-1 py-0.5 text-xs"
+                onClick={e => e.stopPropagation()}
+              >
+                <Building2 className="h-3 w-3" />
+                <span className="font-medium">{b.code}</span>
+                <span>—</span>
+                <span>{isRtl ? b.nameAr : (b.nameEn || b.nameAr)}</span>
+                {!disabled && (
+                  <button
+                    type="button"
+                    onClick={e => clearOne(b.id, e)}
+                    className="ms-0.5 rounded-full hover:bg-primary/20 p-0.5"
+                    aria-label="إزالة"
+                    tabIndex={-1}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </span>
+            ))}
+            <div className="ms-auto flex items-center gap-1 self-stretch text-muted-foreground">
+              <ChevronsUpDown className="h-3.5 w-3.5 opacity-50" />
+            </div>
+          </div>
+        </div>
+      </PopoverAnchor>
+      <PopoverContent
+        className="w-[var(--radix-popover-trigger-width)] p-0 min-w-[280px]"
+        align="start"
+        side="bottom"
+        onOpenAutoFocus={e => e.preventDefault()}
+      >
+        <div className="p-2 border-b">
+          <div className="relative">
+            <Search className={`absolute ${isRtl ? "right-2" : "left-2"} top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground`} />
+            <Input
+              autoFocus
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="ابحث عن فرع..."
+              className={`h-8 ${isRtl ? "pr-8" : "pl-8"} text-sm`}
+            />
+          </div>
+          {value.length > 0 && (
+            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>تم اختيار {value.length} فرع</span>
+              <button
+                type="button"
+                onClick={() => onChange([])}
+                className="text-destructive hover:underline"
+              >
+                مسح الكل
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="max-h-64 overflow-y-auto py-1">
+          {filtered.length === 0 ? (
+            <div className="py-6 text-center text-sm text-muted-foreground">لا توجد نتائج</div>
+          ) : filtered.map((b: any) => {
+            const sel = selectedSet.has(b.id);
+            return (
+              <div
+                key={b.id}
+                onClick={() => toggle(b.id)}
+                className={cn(
+                  "px-2 py-2 mx-1 rounded-sm cursor-pointer flex items-start gap-2 text-sm",
+                  sel ? "bg-primary/10" : "hover:bg-muted/60",
+                )}
+              >
+                <Check className={cn("h-4 w-4 mt-0.5 shrink-0 text-primary", sel ? "opacity-100" : "opacity-0")} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded border shrink-0">{b.code}</span>
+                    <span className="font-medium">{isRtl ? b.nameAr : (b.nameEn || b.nameAr)}</span>
+                    {b.isMain && (
+                      <span className="text-[10px] bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded">رئيسي</span>
+                    )}
+                  </div>
+                  {b.nameEn && isRtl && (
+                    <p className="text-[11px] text-muted-foreground mt-0.5 truncate" dir="ltr">{b.nameEn}</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export default function BankAccounts() {
   const { user, token } = useAuth();
@@ -59,8 +211,8 @@ export default function BankAccounts() {
     if (panel && !editing && !form.currencyId && defaultCurrencyId) {
       setForm(p => ({ ...p, currencyId: String(defaultCurrencyId) }));
     }
-    if (panel && !editing && !form.branchId && defaultBranchId) {
-      setForm(p => ({ ...p, branchId: String(defaultBranchId) }));
+    if (panel && !editing && form.branchIds.length === 0 && defaultBranchId) {
+      setForm(p => ({ ...p, branchIds: [defaultBranchId] }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panel, editing, defaultCurrencyId, defaultBranchId]);
@@ -80,7 +232,10 @@ export default function BankAccounts() {
   }
   function openEdit(r: any) {
     setEditing(r);
-    setForm({ code: r.code ?? "", nameAr: r.nameAr ?? "", nameEn: r.nameEn ?? "", bankName: r.bankName ?? "", bankNameEn: r.bankNameEn ?? "", accountNumber: r.accountNumber ?? "", iban: r.iban ?? "", swiftCode: r.swiftCode ?? "", currencyId: r.currencyId ? String(r.currencyId) : "", branchId: r.branchId ? String(r.branchId) : "", notes: r.notes ?? "", isActive: r.isActive ?? true });
+    const branchIds: number[] = Array.isArray(r.branchIds) && r.branchIds.length
+      ? r.branchIds.map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
+      : (r.branchId ? [Number(r.branchId)] : []);
+    setForm({ code: r.code ?? "", nameAr: r.nameAr ?? "", nameEn: r.nameEn ?? "", bankName: r.bankName ?? "", bankNameEn: r.bankNameEn ?? "", accountNumber: r.accountNumber ?? "", iban: r.iban ?? "", swiftCode: r.swiftCode ?? "", currencyId: r.currencyId ? String(r.currencyId) : "", branchIds, notes: r.notes ?? "", isActive: r.isActive ?? true });
     setAcctId(r.accountId ? String(r.accountId) : "");
     setPanel(true);
   }
@@ -92,7 +247,9 @@ export default function BankAccounts() {
         companyId: cid,
         accountId: acctId ? parseInt(acctId) : null,
         currencyId: form.currencyId ? parseInt(form.currencyId) : null,
-        branchId:   form.branchId   ? parseInt(form.branchId)   : null,
+        // Multi-branch — server stores as int[]; legacy `branchId` kept in
+        // sync server-side from `branchIds[0]`.
+        branchIds: form.branchIds,
       };
       const url  = editing ? `${API}/api/bank-accounts/${editing.id}` : `${API}/api/bank-accounts`;
       const res  = await fetch(url, { method: editing ? "PUT" : "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -202,17 +359,13 @@ export default function BankAccounts() {
                 {(currencies as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.code} — {isRtl ? c.nameAr : (c.nameEn || c.nameAr)}</option>)}
               </select>
             </Field>
-            <Field label="الفرع">
-              <select
-                className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
-                value={form.branchId}
-                onChange={e => setForm(p => ({ ...p, branchId: e.target.value }))}
-              >
-                <option value="">— بدون فرع محدد —</option>
-                {(branches as any[]).map((b: any) => (
-                  <option key={b.id} value={b.id}>{b.code} — {isRtl ? b.nameAr : (b.nameEn || b.nameAr)}</option>
-                ))}
-              </select>
+            <Field label="الفروع" hint={<span className="text-muted-foreground text-xs">يمكن ربط الحساب بأكثر من فرع — اتركه فارغاً ليكون مشتركاً بين كل الفروع</span>}>
+              <BranchMultiSelect
+                branches={branches as any[]}
+                value={form.branchIds}
+                onChange={next => setForm(p => ({ ...p, branchIds: next }))}
+                isRtl={isRtl}
+              />
             </Field>
             <Field label={t("cashCommon.account")} className="md:col-span-2">
               <AccountCombobox value={acctId} onValueChange={setAcctId} placeholder={t("cashCommon.selectAccount")} filterTypes={["asset"]} grouped={false} />

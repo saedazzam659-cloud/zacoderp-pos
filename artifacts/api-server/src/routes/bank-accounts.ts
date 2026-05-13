@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { bankAccountsTable, receiptVouchersTable, paymentVouchersTable } from "@workspace/db";
-import { eq, and, sql, or, isNull, inArray } from "drizzle-orm";
+import { bankAccountsTable, branchesTable, receiptVouchersTable, paymentVouchersTable } from "@workspace/db";
+import { eq, and, sql, or, isNull, inArray, arrayOverlaps } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, getAllowedBranchIds } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureBankAccountLedger } from "../lib/entityAccounts.js";
@@ -12,21 +12,51 @@ router.use(requireModulePermission("bank_accounts"));
 router.use(moduleAudit("bank_accounts"));
 
 /**
- * Branch-scope filter for bank accounts (nullable branchId column).
- * Same semantics as the cash-boxes helper: NULL branch = shared / HQ
- * resource visible to every branch user; otherwise restrict to user's
- * allowed branches.
+ * Branch-scope filter for bank accounts. A bank account may now be linked to
+ * multiple branches via `branchIds` (int[]). The legacy single `branchId` is
+ * kept and mirrored to `branchIds[0]` for back-compat with cash-analytics.
+ *
+ * Visibility rule for a restricted user:
+ *   - rows with `branchIds IS NULL` AND `branchId IS NULL`  → shared / HQ → visible
+ *   - rows where any of `branchIds` overlaps the user's allowed list → visible
+ *   - legacy rows (branchIds IS NULL) where `branchId` is in allowed → visible
  */
-function branchOrNullScope(req: any, branchCol: any): any {
+function branchOrNullScope(req: any): any {
   const allowed = getAllowedBranchIds(req);
   if (allowed === null) return undefined;
   if (allowed.length === 0) return sql`false`;
-  return or(isNull(branchCol), inArray(branchCol, allowed));
+  return or(
+    and(isNull(bankAccountsTable.branchIds), isNull(bankAccountsTable.branchId)),
+    arrayOverlaps(bankAccountsTable.branchIds, allowed),
+    and(isNull(bankAccountsTable.branchIds), inArray(bankAccountsTable.branchId, allowed)),
+  );
+}
+
+// Validate that every id in `ids` belongs to the same company. Returns a
+// list of invalid ids (empty when all good).
+async function invalidBranchIds(cid: number, ids: number[]): Promise<number[]> {
+  if (ids.length === 0) return [];
+  const rows = await db.select({ id: branchesTable.id })
+    .from(branchesTable)
+    .where(and(eq(branchesTable.companyId, cid), inArray(branchesTable.id, ids)));
+  const ok = new Set(rows.map(r => r.id));
+  return ids.filter(i => !ok.has(i));
+}
+
+// Normalise branchIds payload from the client into a clean int[] (or null).
+function normaliseBranchIds(raw: any): number[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: number[] = [];
+  for (const v of raw) {
+    const n = typeof v === "number" ? v : parseInt(String(v), 10);
+    if (Number.isFinite(n) && n > 0 && !out.includes(n)) out.push(n);
+  }
+  return out.length ? out : null;
 }
 
 router.get("/", async (req, res) => {
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
-  const branchCond = branchOrNullScope(req, bankAccountsTable.branchId);
+  const branchCond = branchOrNullScope(req);
   const conds: any[] = [];
   if (cid) conds.push(eq(bankAccountsTable.companyId, cid));
   if (branchCond) conds.push(branchCond);
@@ -40,7 +70,7 @@ router.get("/balances", async (req, res) => {
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
-  const branchCond = branchOrNullScope(req, bankAccountsTable.branchId);
+  const branchCond = branchOrNullScope(req);
   const banks = await db.select({ id: bankAccountsTable.id })
     .from(bankAccountsTable)
     .where(branchCond
@@ -78,7 +108,7 @@ router.get("/:id", async (req, res) => {
   // Tenant + branch isolation on individual fetch.
   const conds: any[] = [eq(bankAccountsTable.id, id)];
   if (cid) conds.push(eq(bankAccountsTable.companyId, cid));
-  const branchCond = branchOrNullScope(req, bankAccountsTable.branchId);
+  const branchCond = branchOrNullScope(req);
   if (branchCond) conds.push(branchCond);
   const [row] = await db.select().from(bankAccountsTable).where(and(...conds));
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
@@ -105,6 +135,18 @@ router.post("/", async (req, res) => {
   const cid = resolveCompanyId(req, d.companyId ? parseInt(d.companyId) : undefined);
   if (!cid)   { res.status(400).json({ error: "companyId مطلوب" }); return; }
   if (!d.nameAr) { res.status(400).json({ error: "الاسم مطلوب" }); return; }
+
+  // Multi-branch payload. Accepts `branchIds: number[]` (preferred). For
+  // back-compat, a single `branchId` is folded in when `branchIds` is absent.
+  const branchIds = normaliseBranchIds(d.branchIds)
+    ?? (toInt(d.branchId) != null ? [toInt(d.branchId) as number] : null);
+  if (branchIds) {
+    const bad = await invalidBranchIds(cid, branchIds);
+    if (bad.length) {
+      res.status(400).json({ error: `فرع غير صالح: ${bad.join(", ")}` });
+      return;
+    }
+  }
 
   const existing = await db.select().from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid));
   const code = (d.code && String(d.code).trim()) ? String(d.code).trim() : await nextBankAccountCode(cid);
@@ -136,7 +178,8 @@ router.post("/", async (req, res) => {
 
   const [row] = await db.insert(bankAccountsTable).values({
     companyId:     cid,
-    branchId:      toInt(d.branchId),
+    branchId:      branchIds?.[0] ?? null,
+    branchIds:     branchIds,
     code,
     nameAr:        String(d.nameAr).trim(),
     nameEn:        toStr(d.nameEn),
@@ -159,6 +202,16 @@ router.put("/:id", async (req, res) => {
   const [current] = await db.select().from(bankAccountsTable).where(eq(bankAccountsTable.id, id));
   if (!current) { res.status(404).json({ error: "غير موجود" }); return; }
 
+  const branchIds = normaliseBranchIds(d.branchIds)
+    ?? (toInt(d.branchId) != null ? [toInt(d.branchId) as number] : null);
+  if (branchIds) {
+    const bad = await invalidBranchIds(current.companyId, branchIds);
+    if (bad.length) {
+      res.status(400).json({ error: `فرع غير صالح: ${bad.join(", ")}` });
+      return;
+    }
+  }
+
   const others = await db.select().from(bankAccountsTable).where(eq(bankAccountsTable.companyId, current.companyId));
   if (d.code && others.some(b => b.id !== id && b.code?.trim().toLowerCase() === String(d.code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${d.code}" مستخدم بالفعل لحساب بنكي آخر` });
@@ -174,7 +227,8 @@ router.put("/:id", async (req, res) => {
   }
 
   const [row] = await db.update(bankAccountsTable).set({
-    branchId:      toInt(d.branchId),
+    branchId:      branchIds?.[0] ?? null,
+    branchIds:     branchIds,
     code:          (d.code && String(d.code).trim()) ? String(d.code).trim() : current.code,
     nameAr:        String(d.nameAr ?? current.nameAr).trim(),
     nameEn:        toStr(d.nameEn),

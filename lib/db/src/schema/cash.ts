@@ -36,6 +36,11 @@ export const bankAccountsTable = pgTable("bank_accounts", {
   id:            serial("id").primaryKey(),
   companyId:     integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
   branchId:      integer("branch_id").references(() => branchesTable.id),
+  // Multi-branch link (نظام متعدد الفروع). When set, this is the source of
+  // truth for branch ownership; the legacy single `branchId` column is kept
+  // and mirrored to `branchIds[0]` for back-compat with cash-analytics
+  // (which still groups by a single branch).
+  branchIds:     integer("branch_ids").array(),
   code:          text("code").notNull(),
   nameAr:        text("name_ar").notNull(),
   nameEn:        text("name_en"),
