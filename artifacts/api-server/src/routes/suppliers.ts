@@ -38,8 +38,13 @@ router.get("/balances", async (req, res) => {
   if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
   // Suppliers with their AP account ids (for direct-JE aggregation below).
+  // Display-only suppliers are intentionally excluded — their balance is
+  // hidden everywhere else (statement / aging) for consistency.
   const supplierRows = await db.select({ id: suppliersTable.id, accountId: suppliersTable.accountId })
-    .from(suppliersTable).where(eq(suppliersTable.companyId, companyId));
+    .from(suppliersTable).where(and(
+      eq(suppliersTable.companyId, companyId),
+      eq(suppliersTable.includeInStatements, true),
+    ));
   const accIdToSupplier = new Map<number, number>();
   for (const s of supplierRows) if (s.accountId != null) accIdToSupplier.set(s.accountId, s.id);
   const supplierAccIds: number[] = Array.from(accIdToSupplier.keys());
@@ -212,6 +217,7 @@ router.post("/", async (req, res) => {
     locationLng: data.locationLng ?? null,
     locationLink: data.locationLink ?? null,
     accountId,
+    includeInStatements: data.includeInStatements === false ? false : true,
   }).returning();
   res.status(201).json(supplier);
 });
@@ -266,6 +272,9 @@ router.put("/:id", async (req, res) => {
     postalCode: data.postalCode ?? null,
     country: data.country ?? "SA",
     accountId: data.accountId ? Number(data.accountId) : null,
+    ...(typeof data.includeInStatements === "boolean"
+      ? { includeInStatements: data.includeInStatements }
+      : {}),
   }).where(eq(suppliersTable.id, id)).returning();
   if (!supplier) { res.status(404).json({ error: "المورد غير موجود" }); return; }
   res.json(supplier);

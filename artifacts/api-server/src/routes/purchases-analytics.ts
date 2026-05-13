@@ -302,12 +302,30 @@ router.get("/supplier-statement", async (req, res) => {
     const sid = Number(supplierId);
     if (!supplierId || !Number.isFinite(sid)) { res.status(400).json({ error: "supplierId مطلوب ويجب أن يكون رقماً صحيحاً" }); return; }
 
+    // Display-only suppliers — hide their balance from statement view.
+    const [supMeta] = await db.select({ includeInStatements: suppliersTable.includeInStatements })
+      .from(suppliersTable)
+      .where(and(eq(suppliersTable.id, sid), eq(suppliersTable.companyId, cid)));
+    if (supMeta && supMeta.includeInStatements === false) {
+      res.json({ opening: 0, lines: [], excluded: true, reason: "display_only",
+        message: "هذا المورد مُعلَّم «للعرض فقط» — أرصدته لا تظهر في كشوفات الحسابات." });
+      return;
+    }
+
     // Resolve the supplier's AP sub-account so we can pull direct JE postings
     // (fixed-asset credit acquisitions, manual JEs, opening balances, …) and
     // include them in the ledger.
-    const [supRow] = await db.select({ accountId: suppliersTable.accountId })
+    const [supRow] = await db.select({
+        accountId: suppliersTable.accountId,
+        includeInStatements: suppliersTable.includeInStatements,
+      })
       .from(suppliersTable)
       .where(and(eq(suppliersTable.id, sid), eq(suppliersTable.companyId, cid)));
+    if (supRow && supRow.includeInStatements === false) {
+      res.json({ opening: 0, lines: [], excluded: true, reason: "display_only",
+        message: "هذا المورد مُعلَّم «للعرض فقط» — أرصدته لا تظهر في كشوفات الحسابات." });
+      return;
+    }
     const supAccountId = supRow?.accountId ?? null;
 
     async function sumPriorTo(date: string | undefined) {
@@ -454,9 +472,17 @@ router.get("/supplier-statement-detailed", async (req, res) => {
       return;
     }
 
-    const [supRow] = await db.select({ accountId: suppliersTable.accountId })
+    const [supRow] = await db.select({
+        accountId: suppliersTable.accountId,
+        includeInStatements: suppliersTable.includeInStatements,
+      })
       .from(suppliersTable)
       .where(and(eq(suppliersTable.id, sid), eq(suppliersTable.companyId, cid)));
+    if (supRow && supRow.includeInStatements === false) {
+      res.json({ opening: 0, lines: [], excluded: true, reason: "display_only",
+        message: "هذا المورد مُعلَّم «للعرض فقط» — أرصدته لا تظهر في كشوفات الحسابات." });
+      return;
+    }
     const supAccountId = supRow?.accountId ?? null;
 
     async function sumPriorTo(date: string | undefined) {
@@ -742,7 +768,12 @@ router.get("/aging", async (req, res) => {
     const bid = getBid(req);
     const asOf = (req.query.asOf as string) || new Date().toISOString().slice(0, 10);
 
-    const suppliers = await db.select().from(suppliersTable).where(eq(suppliersTable.companyId, cid));
+    const suppliers = await db.select().from(suppliersTable)
+      .where(and(
+        eq(suppliersTable.companyId, cid),
+        // Display-only suppliers are intentionally excluded from aging.
+        eq(suppliersTable.includeInStatements, true),
+      ));
 
     const invs = await db
       .select({

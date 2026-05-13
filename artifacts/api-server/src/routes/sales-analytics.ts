@@ -242,6 +242,18 @@ router.get("/customer-statement", async (req, res) => {
     const ccid = Number(customerId);
     if (!customerId || !Number.isFinite(ccid)) { res.status(400).json({ error: "customerId مطلوب ويجب أن يكون رقماً صحيحاً" }); return; }
 
+    // If this customer is flagged "display only" we hide their balance from
+    // the statement view (the underlying JEs still exist and roll up into the
+    // AR control account in the trial balance / GL).
+    const [custMeta] = await db.select({ includeInStatements: customersTable.includeInStatements })
+      .from(customersTable)
+      .where(and(eq(customersTable.id, ccid), eq(customersTable.companyId, cid)));
+    if (custMeta && custMeta.includeInStatements === false) {
+      res.json({ opening: 0, lines: [], excluded: true, reason: "display_only",
+        message: "هذا العميل مُعلَّم «للعرض فقط» — أرصدته لا تظهر في كشوفات الحسابات." });
+      return;
+    }
+
     async function sumPriorTo(date: string | undefined) {
       if (!date) return 0;
       const [inv] = await db.select({ s: sql<string>`coalesce(sum(${salesInvoicesTable.totalAmount}), 0)` })
@@ -349,6 +361,16 @@ router.get("/customer-statement-detailed", async (req, res) => {
     const ccid = Number(customerId);
     if (!customerId || !Number.isFinite(ccid)) {
       res.status(400).json({ error: "customerId مطلوب ويجب أن يكون رقماً صحيحاً" });
+      return;
+    }
+
+    // Display-only customer — short-circuit (matches /customer-statement).
+    const [custMeta] = await db.select({ includeInStatements: customersTable.includeInStatements })
+      .from(customersTable)
+      .where(and(eq(customersTable.id, ccid), eq(customersTable.companyId, cid)));
+    if (custMeta && custMeta.includeInStatements === false) {
+      res.json({ opening: 0, lines: [], excluded: true, reason: "display_only",
+        message: "هذا العميل مُعلَّم «للعرض فقط» — أرصدته لا تظهر في كشوفات الحسابات." });
       return;
     }
 
@@ -612,7 +634,12 @@ router.get("/aging", async (req, res) => {
     const bid = getBid(req);
     const asOf = (req.query.asOf as string) || new Date().toISOString().slice(0, 10);
 
-    const customers = await db.select().from(customersTable).where(eq(customersTable.companyId, cid));
+    const customers = await db.select().from(customersTable)
+      .where(and(
+        eq(customersTable.companyId, cid),
+        // Display-only customers are intentionally excluded from aging.
+        eq(customersTable.includeInStatements, true),
+      ));
 
     // Pull all posted credit invoices on or before asOf, ordered oldest first per customer
     const invs = await db

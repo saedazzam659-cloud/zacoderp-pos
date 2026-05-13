@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, numeric } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, numeric, boolean } from "drizzle-orm/pg-core";
 
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -26,6 +26,17 @@ export const customersTable = pgTable("customers", {
   accountId: integer("account_id"),
   salesRepId: integer("sales_rep_id"),
   creditLimit: numeric("credit_limit", { precision: 15, scale: 2 }).default("0"),
+  /**
+   * When false → this customer is treated as a *display-only* / memo entity:
+   *   – Their data still prints on invoices / vouchers / journal entries.
+   *   – Their AR balance is EXCLUDED from كشف حساب العملاء، تقارير الأعمار،
+   *     وأرصدة العملاء (the customer doesn't appear in those reports at all).
+   *   – Underlying journal entries are still posted normally to the AR
+   *     control account, so the trial balance / income statement remain
+   *     correct — only the per-customer statement views ignore them.
+   * Default true (full posting + statement participation).
+   */
+  includeInStatements: boolean("include_in_statements").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

@@ -39,6 +39,12 @@ router.get("/balances", async (req, res) => {
       allowedCustomerIds = new Set(mine.map(r => r.id));
     }
 
+    // Display-only customers must NOT contribute to the balances aggregation
+    // (matches the /aging + /customer-statement filters elsewhere).
+    const displayOnlyRows = await db.select({ id: customersTable.id }).from(customersTable)
+      .where(and(eq(customersTable.companyId, companyId), eq(customersTable.includeInStatements, false)));
+    const displayOnlyIds = new Set(displayOnlyRows.map(r => r.id));
+
     const invs = await db
       .select({
         customerId: salesInvoicesTable.customerId,
@@ -81,7 +87,8 @@ router.get("/balances", async (req, res) => {
       .groupBy(receiptVouchersTable.entityId);
 
     const map: Record<number, number> = {};
-    const allowed = (id: number | null) => id != null && (allowedCustomerIds === null || allowedCustomerIds.has(id));
+    const allowed = (id: number | null) =>
+      id != null && !displayOnlyIds.has(id) && (allowedCustomerIds === null || allowedCustomerIds.has(id));
     for (const r of invs)  if (allowed(r.customerId)) map[r.customerId!] = (map[r.customerId!] ?? 0) + Number(r.total);
     for (const r of rets)  if (allowed(r.customerId)) map[r.customerId!] = (map[r.customerId!] ?? 0) - Number(r.total);
     for (const r of recvs) if (allowed(r.customerId)) map[r.customerId!] = (map[r.customerId!] ?? 0) - Number(r.total);
@@ -198,6 +205,10 @@ router.post("/", async (req, res) => {
     locationLink: d.locationLink ?? null,
     accountId,
     salesRepId: effectiveSalesRepId,
+    // "Display-only" flag — accept from raw body since it is not part of the
+    // generated CreateCustomerBody zod schema yet. Defaults to true (full
+    // statement participation) when omitted.
+    includeInStatements: (req.body as any)?.includeInStatements === false ? false : true,
   }).returning();
   res.status(201).json(customer);
 });
@@ -263,7 +274,14 @@ router.put("/:id", async (req, res) => {
     return;
   }
 
-  const [customer] = await db.update(customersTable).set(parsed.data).where(eq(customersTable.id, id)).returning();
+  // Pass through `includeInStatements` from raw body — the generated
+  // UpdateCustomerBody zod schema strips unknown keys, so we merge it
+  // back in explicitly when the client sends it.
+  const setData: any = { ...parsed.data };
+  if (typeof (req.body as any)?.includeInStatements === "boolean") {
+    setData.includeInStatements = (req.body as any).includeInStatements;
+  }
+  const [customer] = await db.update(customersTable).set(setData).where(eq(customersTable.id, id)).returning();
   res.json(customer);
 });
 

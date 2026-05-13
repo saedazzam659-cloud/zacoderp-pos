@@ -30,6 +30,8 @@ export const suppliersTable = pgTable("suppliers", {
   openingBalance:      numeric("opening_balance", { precision: 15, scale: 2 }).default("0"),
   openingBalanceType:  text("opening_balance_type").default("credit"),
   isActive:            boolean("is_active").notNull().default(true),
+  /** Mirror of customers.includeInStatements — see that field for full rationale. */
+  includeInStatements: boolean("include_in_statements").notNull().default(true),
   createdAt:           timestamp("created_at").defaultNow().notNull(),
 });
 

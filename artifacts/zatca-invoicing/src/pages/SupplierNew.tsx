@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowRight, Save, Truck, MapPin, Phone, AlertTriangle, BookMarked } from "lucide-react";
+import { ArrowRight, Save, Truck, MapPin, Phone, AlertTriangle, BookMarked, Eye, Receipt, CheckCircle2 } from "lucide-react";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Link } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -28,6 +28,8 @@ const supplierSchema = z.object({
   buildingNumber: z.string().optional(),
   postalCode: z.string().optional(),
   country: z.string().default("SA"),
+  /** See customers schema — same semantics for the supplier statement / aging. */
+  includeInStatements: z.boolean().default(true),
 });
 
 type FormValues = z.infer<typeof supplierSchema>;
@@ -40,7 +42,7 @@ export default function SupplierNew() {
 
   const form = useForm<FormValues>({
     resolver: zodResolver(supplierSchema),
-    defaultValues: { country: "SA" },
+    defaultValues: { country: "SA", includeInStatements: true },
   });
 
   const createSupplier = useMutation({
@@ -217,7 +219,7 @@ export default function SupplierNew() {
                 <BookMarked className="h-4 w-4" />الربط المحاسبي
               </CardTitle>
             </CardHeader>
-            <CardContent className="pt-5">
+            <CardContent className="pt-5 space-y-6">
               <div className="max-w-sm space-y-1.5">
                 <label className="text-sm font-medium">حساب الدائنين (المورد)</label>
                 <AccountCombobox
@@ -229,6 +231,69 @@ export default function SupplierNew() {
                 />
                 <p className="text-xs text-muted-foreground">الحساب المرتبط بهذا المورد في دفتر الأستاذ</p>
               </div>
+
+              {/* ── Statement participation: 2-card attractive selector ── */}
+              <FormField control={form.control} name="includeInStatements" render={({ field }) => {
+                const includeOn = field.value !== false;
+                return (
+                  <FormItem className="space-y-3">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <FormLabel className="text-sm font-semibold">
+                        ظهور المورد في كشوفات الحسابات
+                      </FormLabel>
+                      <span className="text-xs text-muted-foreground">اختياري — افتراضي: تسميع كامل</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <button type="button"
+                        onClick={() => field.onChange(true)}
+                        className={`group flex items-start gap-3 p-4 rounded-xl border-2 text-right transition-all ${
+                          includeOn
+                            ? "border-emerald-500 bg-emerald-50/70 shadow-sm ring-2 ring-emerald-200"
+                            : "border-input bg-background hover:border-emerald-300 hover:bg-emerald-50/30"
+                        }`}>
+                        <div className={`shrink-0 h-10 w-10 rounded-lg flex items-center justify-center ${
+                          includeOn ? "bg-emerald-500 text-white" : "bg-muted text-muted-foreground"
+                        }`}>
+                          <Receipt className="h-5 w-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-sm">تسميع الأرصدة كاملاً</span>
+                            {includeOn && <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                            المورد يظهر في كشوفات الحسابات وتقارير الأعمار، وأرصدته تُحتسَب طبيعي.
+                          </p>
+                        </div>
+                      </button>
+
+                      <button type="button"
+                        onClick={() => field.onChange(false)}
+                        className={`group flex items-start gap-3 p-4 rounded-xl border-2 text-right transition-all ${
+                          !includeOn
+                            ? "border-amber-500 bg-amber-50/70 shadow-sm ring-2 ring-amber-200"
+                            : "border-input bg-background hover:border-amber-300 hover:bg-amber-50/30"
+                        }`}>
+                        <div className={`shrink-0 h-10 w-10 rounded-lg flex items-center justify-center ${
+                          !includeOn ? "bg-amber-500 text-white" : "bg-muted text-muted-foreground"
+                        }`}>
+                          <Eye className="h-5 w-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-sm">للعرض فقط (لا يُسمَّع رصيده)</span>
+                            {!includeOn && <CheckCircle2 className="h-4 w-4 text-amber-600" />}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                            بياناته تُطبَع على فواتير الشراء والقيود فقط. لن يظهر في كشف حساب الموردين ولا في تقارير الأعمار.
+                          </p>
+                        </div>
+                      </button>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                );
+              }} />
             </CardContent>
           </Card>
 
