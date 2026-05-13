@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -86,8 +85,6 @@ export default function PurchaseInvoiceForm() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [, navigate] = useLocation();
-  // Per-company field policy for non-admin users (see /admin/invoice-field-policies).
-  const fp = useFieldPolicy("purchase");
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -788,23 +785,10 @@ export default function PurchaseInvoiceForm() {
                     );
                   })()}
                 </div>
-                {fp.isVisible("date") && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">
-                      {tr("fields.date")}
-                      {fp.dateBounds("date") && <span className="ms-1 text-[10px] text-amber-600">(اليوم فقط)</span>}
-                    </Label>
-                    <Input
-                      type="date" className="h-9 text-sm"
-                      value={invoiceDate}
-                      onChange={e => setInvoiceDate(e.target.value)}
-                      required
-                      readOnly={fp.isReadOnly("date")}
-                      min={fp.dateBounds("date")?.min}
-                      max={fp.dateBounds("date")?.max}
-                    />
-                  </div>
-                )}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{tr("fields.date")}</Label>
+                  <Input type="date" className="h-9 text-sm" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} required />
+                </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.supplier")}</Label>
                   <SearchCombobox items={supplierItems} value={supplierId} onValueChange={setSupplierId} placeholder={tr("fields.supplierPh")} />

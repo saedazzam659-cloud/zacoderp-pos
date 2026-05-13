@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { useRegisterScreenActions, type ScreenActionsRegistration } from "@/contexts/ScreenActionsContext";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
@@ -128,8 +127,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const { t } = useTranslation();
-  // Per-company field policy for non-admin users (see /admin/invoice-field-policies).
-  const fp = useFieldPolicy("sales");
   const { fmt, isRtl } = useFormatters();
   const BackIcon = isRtl ? ArrowRight : ArrowLeft;
   const qc = useQueryClient();
@@ -1871,23 +1868,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     );
                   })()}
                 </div>
-                {fp.isVisible("date") && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">
-                      {t("salesDocForm.date")}
-                      {fp.dateBounds("date") && <span className="ms-1 text-[10px] text-amber-600">(اليوم فقط)</span>}
-                    </Label>
-                    <Input
-                      type="date" className="h-9 text-sm"
-                      value={docDate}
-                      onChange={e => setDocDate(e.target.value)}
-                      required
-                      readOnly={fp.isReadOnly("date")}
-                      min={fp.dateBounds("date")?.min}
-                      max={fp.dateBounds("date")?.max}
-                    />
-                  </div>
-                )}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("salesDocForm.date")}</Label>
+                  <Input type="date" className="h-9 text-sm" value={docDate} onChange={e => setDocDate(e.target.value)} required />
+                </div>
                 {!isInvoice && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">{isOrder ? t("salesDocForm.expectedDeliveryDate") : t("salesDocForm.validUntil")}</Label>
