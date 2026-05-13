@@ -21,7 +21,10 @@ import {
   Plus, Search, Pencil, Trash2, UserCheck, UserX,
   Phone, Mail, MapPin, Percent, Target, Users, Sparkles, Loader2,
   FileSpreadsheet, X, KeyRound, Wand2,
+  ListChecks, BarChart3, TrendingUp, Award, Wallet, Trophy,
 } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
@@ -380,6 +383,31 @@ export default function SalesReps() {
         </Button>
       </div>
 
+      <Tabs defaultValue="list" className="w-full">
+        <TabsList className="grid grid-cols-2 w-full max-w-md mx-auto h-12 p-1 bg-gradient-to-l from-violet-50 via-blue-50 to-emerald-50 border border-slate-200 shadow-sm">
+          <TabsTrigger
+            value="list"
+            className="gap-2 text-sm font-semibold data-[state=active]:bg-white data-[state=active]:shadow-md data-[state=active]:text-blue-700 transition-all"
+            data-testid="tab-reps-list"
+          >
+            <ListChecks className="h-4 w-4" />
+            قائمة المناديب
+            <span className="ms-1 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-mono">
+              {reps.length}
+            </span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="dashboard"
+            className="gap-2 text-sm font-semibold data-[state=active]:bg-white data-[state=active]:shadow-md data-[state=active]:text-violet-700 transition-all"
+            data-testid="tab-reps-dashboard"
+          >
+            <BarChart3 className="h-4 w-4" />
+            لوحة الأداء
+            <Sparkles className="h-3 w-3 text-violet-500" />
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="list" className="space-y-4 mt-4">
       {/* Audit-grid toolbar */}
       <div className={cn("rounded-t-lg overflow-hidden border shadow-sm transition-colors", theme.border)}>
         <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)} dir="rtl">
@@ -893,6 +921,289 @@ export default function SalesReps() {
           unitLabel="مندوب"
         />
       </div>
+        </TabsContent>
+
+        <TabsContent value="dashboard" className="space-y-4 mt-4" dir="rtl">
+          {(() => {
+            const activeReps = reps.filter((r) => r.isActive);
+            const inactiveReps = reps.filter((r) => !r.isActive);
+            const totalTarget = reps.reduce((s, r) => s + Number(r.monthlyTarget || 0), 0);
+            const avgCommission = reps.length
+              ? reps.reduce((s, r) => s + Number(r.commissionPct || 0), 0) / reps.length
+              : 0;
+            const linkedUsers = reps.filter((r) => r.userId).length;
+            const invoiceType = reps.filter((r) => r.commissionType === "invoice").length;
+            const collectionType = reps.filter((r) => r.commissionType === "collection").length;
+            const topByTarget = [...reps]
+              .sort((a, b) => Number(b.monthlyTarget || 0) - Number(a.monthlyTarget || 0))
+              .slice(0, 5);
+            const regionMap = new Map<string, number>();
+            reps.forEach((r) => {
+              const k = (r.region || "غير محدد").trim() || "غير محدد";
+              regionMap.set(k, (regionMap.get(k) || 0) + 1);
+            });
+            const regions = [...regionMap.entries()]
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 6);
+            const fmt = (n: number) =>
+              n.toLocaleString("ar-SA", { maximumFractionDigits: 2 });
+
+            const kpis = [
+              {
+                icon: Users,
+                label: "إجمالي المناديب",
+                value: reps.length,
+                tone: "from-blue-500 to-blue-600",
+                bg: "bg-blue-50",
+                fg: "text-blue-700",
+              },
+              {
+                icon: UserCheck,
+                label: "المناديب النشطون",
+                value: activeReps.length,
+                sub: reps.length
+                  ? `${Math.round((activeReps.length / reps.length) * 100)}% من الإجمالي`
+                  : "—",
+                tone: "from-emerald-500 to-emerald-600",
+                bg: "bg-emerald-50",
+                fg: "text-emerald-700",
+              },
+              {
+                icon: UserX,
+                label: "المناديب الموقوفون",
+                value: inactiveReps.length,
+                tone: "from-slate-400 to-slate-500",
+                bg: "bg-slate-50",
+                fg: "text-slate-700",
+              },
+              {
+                icon: Target,
+                label: "إجمالي الهدف الشهري",
+                value: `${fmt(totalTarget)} ر.س`,
+                tone: "from-amber-500 to-orange-500",
+                bg: "bg-amber-50",
+                fg: "text-amber-700",
+                wide: true,
+              },
+              {
+                icon: Percent,
+                label: "متوسط نسبة العمولة",
+                value: `${avgCommission.toFixed(2)}%`,
+                tone: "from-violet-500 to-fuchsia-500",
+                bg: "bg-violet-50",
+                fg: "text-violet-700",
+              },
+              {
+                icon: KeyRound,
+                label: "مرتبطون بحساب دخول",
+                value: linkedUsers,
+                sub: `${reps.length - linkedUsers} بدون حساب`,
+                tone: "from-cyan-500 to-teal-500",
+                bg: "bg-cyan-50",
+                fg: "text-cyan-700",
+              },
+            ];
+
+            return (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                  {kpis.map((k) => {
+                    const Icon = k.icon;
+                    return (
+                      <Card
+                        key={k.label}
+                        className={cn(
+                          "relative overflow-hidden border-slate-200 hover:shadow-lg transition-shadow group",
+                          k.wide && "col-span-2 lg:col-span-2",
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            "absolute inset-x-0 top-0 h-1 bg-gradient-to-l",
+                            k.tone,
+                          )}
+                        />
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[11px] text-muted-foreground font-medium truncate">
+                                {k.label}
+                              </p>
+                              <p className={cn("text-2xl font-bold mt-1 tabular-nums", k.fg)}>
+                                {k.value}
+                              </p>
+                              {k.sub && (
+                                <p className="text-[10px] text-muted-foreground mt-0.5">
+                                  {k.sub}
+                                </p>
+                              )}
+                            </div>
+                            <div
+                              className={cn(
+                                "p-2 rounded-lg group-hover:scale-110 transition-transform",
+                                k.bg,
+                              )}
+                            >
+                              <Icon className={cn("h-5 w-5", k.fg)} />
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  <Card className="lg:col-span-2 border-slate-200">
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-3 pb-2 border-b">
+                        <Trophy className="h-4 w-4 text-amber-500" />
+                        <h3 className="text-sm font-bold text-slate-800">
+                          أعلى 5 مناديب من حيث الهدف الشهري
+                        </h3>
+                      </div>
+                      {topByTarget.length === 0 ? (
+                        <p className="text-xs text-muted-foreground text-center py-6">
+                          لا يوجد مناديب بعد
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {topByTarget.map((r, i) => {
+                            const pct = totalTarget
+                              ? (Number(r.monthlyTarget || 0) / Number(topByTarget[0].monthlyTarget || 1)) * 100
+                              : 0;
+                            const medal =
+                              i === 0
+                                ? "bg-amber-100 text-amber-700 border-amber-300"
+                                : i === 1
+                                ? "bg-slate-100 text-slate-700 border-slate-300"
+                                : i === 2
+                                ? "bg-orange-100 text-orange-700 border-orange-300"
+                                : "bg-blue-50 text-blue-700 border-blue-200";
+                            return (
+                              <div key={r.id} className="flex items-center gap-3">
+                                <div
+                                  className={cn(
+                                    "h-7 w-7 rounded-full border flex items-center justify-center text-[11px] font-bold shrink-0",
+                                    medal,
+                                  )}
+                                >
+                                  {i + 1}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between gap-2 mb-1">
+                                    <span className="text-xs font-semibold truncate">
+                                      {r.nameAr}
+                                    </span>
+                                    <span className="text-xs tabular-nums font-mono text-amber-700">
+                                      {fmt(Number(r.monthlyTarget || 0))} ر.س
+                                    </span>
+                                  </div>
+                                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-gradient-to-l from-amber-400 to-orange-500 transition-all"
+                                      style={{ width: `${Math.max(pct, 4)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-slate-200">
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-3 pb-2 border-b">
+                        <Wallet className="h-4 w-4 text-violet-500" />
+                        <h3 className="text-sm font-bold text-slate-800">
+                          نوع العمولة
+                        </h3>
+                      </div>
+                      {reps.length === 0 ? (
+                        <p className="text-xs text-muted-foreground text-center py-6">
+                          لا توجد بيانات
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-medium">على الفاتورة</span>
+                              <span className="text-xs font-mono tabular-nums text-blue-700">
+                                {invoiceType}
+                              </span>
+                            </div>
+                            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-gradient-to-l from-blue-400 to-blue-600"
+                                style={{ width: `${(invoiceType / reps.length) * 100}%` }}
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-medium">على التحصيل</span>
+                              <span className="text-xs font-mono tabular-nums text-emerald-700">
+                                {collectionType}
+                              </span>
+                            </div>
+                            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-gradient-to-l from-emerald-400 to-emerald-600"
+                                style={{ width: `${(collectionType / reps.length) * 100}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <Card className="border-slate-200">
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-2 mb-3 pb-2 border-b">
+                      <MapPin className="h-4 w-4 text-rose-500" />
+                      <h3 className="text-sm font-bold text-slate-800">
+                        التوزيع الجغرافي للمناديب
+                      </h3>
+                    </div>
+                    {regions.length === 0 ? (
+                      <p className="text-xs text-muted-foreground text-center py-6">
+                        لا توجد بيانات منطقة
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+                        {regions.map(([region, count]) => (
+                          <div
+                            key={region}
+                            className="rounded-lg border border-rose-100 bg-gradient-to-br from-rose-50 to-pink-50 p-3 hover:shadow-md transition-shadow"
+                          >
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <MapPin className="h-3 w-3 text-rose-500 shrink-0" />
+                              <span className="text-xs font-semibold text-slate-700 truncate">
+                                {region}
+                              </span>
+                            </div>
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-xl font-bold text-rose-700 tabular-nums">
+                                {count}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground">مندوب</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            );
+          })()}
+        </TabsContent>
+      </Tabs>
 
       <AlertDialog open={!!deleteRep} onOpenChange={(o) => !o && setDeleteRep(null)}>
         <AlertDialogContent dir="rtl">
