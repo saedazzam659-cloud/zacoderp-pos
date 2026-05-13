@@ -28,6 +28,48 @@ import {
   type PermissionMap, type Action,
 } from "@/lib/permissions";
 
+// Mapping permission-group key (i18n) → company menuPermissions JSON keys.
+// A group is shown only if AT LEAST ONE of its mapped menu keys is enabled
+// for the active company (matches the SuperAdmin → MenuPermissions screen).
+// Groups not listed here (currently only "dashboard") are always visible
+// because they cover core settings every user needs (regions, branches,
+// users, currencies, sequences, ZATCA setup, general settings).
+// Missing key in the JSON = enabled (legacy-friendly), only explicit
+// `false` hides the group — same semantics used by Layout.tsx sidebar.
+const GROUP_TO_MENU_KEYS: Record<string, string[]> = {
+  "perms.groups.sales":                 ["sales_module", "sales_reports"],
+  "perms.groups.purchasing":            ["purchases_module", "purchases_reports"],
+  "perms.groups.inventory":             ["inventory_mobile", "inventory_reports"],
+  "perms.groups.accounting":            ["accounts", "accounting_reports", "cash_module", "cash_reports"],
+  "perms.groups.accountingMaintenance": ["accounting_maintenance"],
+  "perms.groups.tax":                   ["reports"],
+  "perms.groups.pos":                   ["pos"],
+  "perms.groups.hr":                    ["hr_module"],
+  "perms.groups.production":            ["production"],
+  "perms.groups.contracting":           ["contracting"],
+  "perms.groups.maintenance":           ["maintenance"],
+  "perms.groups.hotel":                 ["hotel"],
+  "perms.groups.hospital":              ["hospital"],
+  "perms.groups.crm":                   ["crm"],
+  "perms.groups.fixedAssets":           ["fixed_assets"],
+  "perms.groups.security":              ["security_events"],
+  "perms.groups.aiTools":               ["ai_tools"],
+};
+
+function parseCompanyMenuPerms(raw: string | null | undefined): Record<string, boolean> {
+  let parsed: Record<string, boolean> = {};
+  try { parsed = JSON.parse(raw ?? "{}") || {}; } catch { parsed = {}; }
+  if (!parsed || typeof parsed !== "object") parsed = {};
+  return parsed;
+}
+
+function isGroupEnabled(group: string, menuPerms: Record<string, boolean>): boolean {
+  const keys = GROUP_TO_MENU_KEYS[group];
+  if (!keys || keys.length === 0) return true; // core/dashboard group — always shown
+  // Missing key = enabled (legacy-friendly); only explicit `false` hides it.
+  return keys.some(k => menuPerms[k] !== false);
+}
+
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type UserRow = {
@@ -131,6 +173,34 @@ export default function Users() {
   // Plan-based user quota — refetched on focus and on `subscription_changed`
   // SSE (handled globally by AuthContext via qc.invalidateQueries()) so any
   // SuperAdmin upgrade/downgrade reflects without a re-login.
+  // Fetch the target company's menuPermissions so we can hide permission
+  // groups whose modules are disabled for this tenant. For non-superadmins
+  // the auth user already carries `user.company.menuPermissions` (no extra
+  // fetch); SuperAdmins acting on a tenant fetch it via /api/companies/:id.
+  const { data: targetCompany } = useQuery<{ menuPermissions: string | null } | null>({
+    queryKey: ["company-menu-perms", cid],
+    enabled: user?.role === "superadmin" && !!cid,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/companies/${cid}`, { headers: authH });
+      if (!r.ok) return null;
+      return r.json();
+    },
+  });
+
+  const companyMenuPermsRaw =
+    user?.role === "superadmin"
+      ? targetCompany?.menuPermissions ?? null
+      : user?.company?.menuPermissions ?? null;
+  const companyMenuPerms = useMemo(
+    () => parseCompanyMenuPerms(companyMenuPermsRaw),
+    [companyMenuPermsRaw],
+  );
+  const visibleGroups = useMemo(
+    () => PERMISSION_GROUPS.filter(g => isGroupEnabled(g, companyMenuPerms)),
+    [companyMenuPerms],
+  );
+  const hiddenGroupsCount = PERMISSION_GROUPS.length - visibleGroups.length;
+
   const { data: userQuota } = useQuery<{ limit: number; used: number; remaining: number; hasSubscription: boolean }>({
     queryKey: ["users-quota", cid],
     enabled: fetchEnabled && !!cid,
@@ -690,8 +760,27 @@ export default function Users() {
                   </div>
                 </div>
 
+                {hiddenGroupsCount > 0 && (
+                  <div className="flex items-start gap-2 p-3 rounded-lg border border-blue-200 bg-blue-50/60 dark:bg-blue-950/20 text-xs">
+                    <Shield className="h-4 w-4 text-blue-600 mt-0.5 shrink-0" />
+                    <div className="flex-1">
+                      <div className="font-semibold text-blue-900 dark:text-blue-100">
+                        تم إخفاء {hiddenGroupsCount} مجموعة صلاحيات
+                      </div>
+                      <div className="text-blue-800/80 dark:text-blue-200/80 mt-0.5">
+                        تظهر هنا فقط الموديلات المُفعّلة لهذه الشركة من شاشة «صلاحيات القوائم» (سوبر أدمن). لتفعيل المزيد، اطلب من السوبر أدمن تفعيل الموديلات المطلوبة من إعدادات القوائم.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className={`space-y-4 ${form.role === "admin" ? "opacity-50 pointer-events-none" : ""}`}>
-                  {PERMISSION_GROUPS.map(group => {
+                  {visibleGroups.length === 0 ? (
+                    <div className="text-center py-8 text-sm text-muted-foreground border rounded-lg bg-muted/30">
+                      لا توجد موديلات مُفعّلة لهذه الشركة. فعّل موديلات من شاشة «صلاحيات القوائم».
+                    </div>
+                  ) : null}
+                  {visibleGroups.map(group => {
                     const mods = PERMISSION_MODULES.filter(m => m.group === group);
                     return (
                       <div key={group} className="border rounded-lg overflow-hidden">
