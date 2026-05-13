@@ -268,6 +268,7 @@ import CashBalances            from "@/pages/cash/reports/CashBalances";
 import BankBalances            from "@/pages/cash/reports/BankBalances";
 import CashBoxStatement        from "@/pages/cash/reports/CashBoxStatement";
 import BankAccountStatement    from "@/pages/cash/reports/BankAccountStatement";
+import BankReconciliation      from "@/pages/cash/reports/BankReconciliation";
 import CashFlowReport          from "@/pages/cash/reports/CashFlowReport";
 import ReceiptVouchersReport   from "@/pages/cash/reports/ReceiptVouchersReport";
 import PaymentVouchersReport   from "@/pages/cash/reports/PaymentVouchersReport";
@@ -794,6 +795,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/cash/reports/bank-balances"      module="bank_accounts"     component={BankBalances} />}
             {!isSuperAdmin && <PermRoute path="/cash/reports/cash-box-statement" module="cash_boxes"        component={CashBoxStatement} />}
             {!isSuperAdmin && <PermRoute path="/cash/reports/bank-statement"     module="bank_accounts"     component={BankAccountStatement} />}
+            {!isSuperAdmin && <PermRoute path="/cash/reports/bank-reconciliation" module="bank_accounts"     component={BankReconciliation} />}
             {!isSuperAdmin && <PermRoute path="/cash/reports/daily-summary"      module="cash_boxes"        component={CashFlowReport} />}
             {!isSuperAdmin && <PermRoute path="/cash/reports/receipts"           module="receipt_vouchers"  component={ReceiptVouchersReport} />}
             {!isSuperAdmin && <PermRoute path="/cash/reports/payments"           module="payment_vouchers"  component={PaymentVouchersReport} />}

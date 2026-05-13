@@ -2,7 +2,7 @@ import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import {
   ChevronLeft, ChevronRight, Wallet, Landmark, FileText, Banknote,
-  ArrowDownCircle, ArrowUpCircle, ArrowLeftRight, CalendarRange,
+  ArrowDownCircle, ArrowUpCircle, ArrowLeftRight, CalendarRange, GitCompareArrows,
 } from "lucide-react";
 
 export default function CashReportsHub() {
@@ -14,6 +14,7 @@ export default function CashReportsHub() {
     { href: "/cash/reports/bank-balances",     title: t("cashReports.hub.bankBalances"),     desc: t("cashReports.hub.bankBalancesDesc"),     icon: Landmark,        color: "from-sky-50 to-sky-100/40 text-sky-700 border-sky-200" },
     { href: "/cash/reports/cash-box-statement",title: t("cashReports.hub.cashBoxStatement"), desc: t("cashReports.hub.cashBoxStatementDesc"), icon: FileText,        color: "from-indigo-50 to-indigo-100/40 text-indigo-700 border-indigo-200" },
     { href: "/cash/reports/bank-statement",    title: t("cashReports.hub.bankStatement"),    desc: t("cashReports.hub.bankStatementDesc"),    icon: Banknote,        color: "from-cyan-50 to-cyan-100/40 text-cyan-700 border-cyan-200" },
+    { href: "/cash/reports/bank-reconciliation", title: "مطابقة كشف البنك",                  desc: "قارن قيود البنك الدفترية مع كشف الحساب الفعلي (Excel/CSV/PDF/Word)", icon: GitCompareArrows, color: "from-teal-50 to-teal-100/40 text-teal-700 border-teal-200" },
     { href: "/cash/reports/daily-summary",     title: t("cashReports.hub.cashFlow"),         desc: t("cashReports.hub.cashFlowDesc"),         icon: CalendarRange,   color: "from-purple-50 to-purple-100/40 text-purple-700 border-purple-200" },
     { href: "/cash/reports/receipts",          title: t("cashReports.hub.receipts"),         desc: t("cashReports.hub.receiptsDesc"),         icon: ArrowDownCircle, color: "from-green-50 to-green-100/40 text-green-700 border-green-200" },
     { href: "/cash/reports/payments",          title: t("cashReports.hub.payments"),         desc: t("cashReports.hub.paymentsDesc"),         icon: ArrowUpCircle,   color: "from-rose-50 to-rose-100/40 text-rose-700 border-rose-200" },
