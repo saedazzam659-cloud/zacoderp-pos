@@ -356,6 +356,10 @@ async function ocrTransactionsFromImage(
   const list = Array.isArray(parsed?.transactions) ? parsed.transactions : [];
   const warnings: string[] = [];
   const txns: ParsedTx[] = [];
+  // Track suspicious rows where the amount equals a date component
+  // (year / day / month). This catches the classic OCR column-mix where
+  // the year "2025" or day "16" gets pulled into the amount column.
+  let suspiciousCount = 0;
   for (const t of list) {
     const date = String(t?.date ?? "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
@@ -367,6 +371,33 @@ async function ocrTransactionsFromImage(
       balanceRaw === null || balanceRaw === undefined || balanceRaw === ""
         ? null
         : (Number.isFinite(Number(balanceRaw)) ? Number(balanceRaw) : null);
+
+    // ── Date-vs-amount sanity check ────────────────────────────────────
+    const [yStr, mStr, dStr] = date.split("-");
+    const y = Number(yStr);
+    const m = Number(mStr);
+    const d = Number(dStr);
+    const amt = debit !== 0 ? debit : credit;
+    const isWholeNumber = Number.isInteger(amt);
+    // Flag if the amount looks like one of the date parts AND is a
+    // round whole number with no decimals (real transactions almost
+    // always have decimals or are larger than the date components).
+    const looksLikeDatePart =
+      isWholeNumber &&
+      (amt === y ||           // 2025, 2026 …
+        (amt === d && d > 0) || // 1..31
+        (amt === m && m > 0));  // 1..12
+    // Also catch year-like values even if date didn't match exactly
+    const looksLikeYear = isWholeNumber && amt >= 1990 && amt <= 2100;
+
+    if (looksLikeDatePart || looksLikeYear) {
+      suspiciousCount++;
+      // Skip the row entirely — including it would silently corrupt the
+      // reconciliation. The user gets a warning to re-upload or enter
+      // it manually.
+      continue;
+    }
+
     txns.push({
       date,
       description: String(t?.description ?? "").trim(),
@@ -375,6 +406,11 @@ async function ocrTransactionsFromImage(
       balance,
       ref: t?.ref ? String(t.ref).slice(0, 64) : null,
     });
+  }
+  if (suspiciousCount > 0) {
+    warnings.push(
+      `تم تجاهل ${suspiciousCount} حركة مشبوهة: قيمتها تطابق السنة/اليوم/الشهر — على الأرجح خلط بين عمود التاريخ وعمود المبلغ في القراءة الذكية. ارفع صورة أوضح أو أدخل هذه السطور يدوياً.`
+    );
   }
   if (txns.length === 0) warnings.push("لم تُستخرج أي حركة من الصورة. تأكد أن الصورة واضحة وتحتوي جدول الحركات.");
   return { txns, warnings };
