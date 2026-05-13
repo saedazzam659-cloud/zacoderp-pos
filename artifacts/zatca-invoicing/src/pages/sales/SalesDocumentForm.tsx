@@ -1243,16 +1243,23 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       })()}
                       <Input className="h-8 text-xs" type="text" inputMode="numeric" dir="ltr" value={l.qty}
                         onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
-                      <Input className="h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono"
+                      <Input className={cn(
+                          "h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono",
+                          fp.isReadOnly("freeQty") && "bg-muted/40 cursor-not-allowed"
+                        )}
                         type="text" inputMode="numeric" dir="ltr" value={l.freeQty}
-                        title={t("salesDocForm.colFreeQtyHint") as string}
+                        readOnly={fp.isReadOnly("freeQty")}
+                        title={fp.isReadOnly("freeQty") ? "للقراءة فقط حسب السياسة" : (t("salesDocForm.colFreeQtyHint") as string)}
                         onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />
                       <Input
                         className={cn(
                           "h-8 text-xs",
-                          l.appliedOfferId && l.appliedOfferName && "bg-emerald-50 border-emerald-300 text-emerald-800"
+                          l.appliedOfferId && l.appliedOfferName && "bg-emerald-50 border-emerald-300 text-emerald-800",
+                          fp.isReadOnly("unitPrice") && "bg-muted/40 cursor-not-allowed"
                         )}
                         type="text" inputMode="decimal" dir="ltr" value={l.unitPrice}
+                        readOnly={fp.isReadOnly("unitPrice")}
+                        title={fp.isReadOnly("unitPrice") ? "للقراءة فقط حسب السياسة" : undefined}
                         onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
                       <Input
                         className={cn(

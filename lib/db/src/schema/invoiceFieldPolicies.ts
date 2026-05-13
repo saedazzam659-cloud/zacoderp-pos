@@ -91,6 +91,8 @@ export const FIELD_CATALOGUE: Record<PolicyScope, FieldDef[]> = {
     { key: "exchangeRate",    labelAr: "سعر الصرف",            labelEn: "Exchange rate" },
     { key: "paymentMethod",   labelAr: "طريقة الدفع",          labelEn: "Payment method" },
     { key: "dueDate",         labelAr: "تاريخ الاستحقاق",      labelEn: "Due date" },
+    { key: "unitPrice",       labelAr: "سعر البيع",            labelEn: "Unit price" },
+    { key: "freeQty",         labelAr: "كمية مجانية",          labelEn: "Free qty" },
     { key: "discount",        labelAr: "الخصم",                labelEn: "Discount" },
     { key: "taxRate",         labelAr: "نسبة الضريبة",         labelEn: "Tax rate" },
     { key: "notes",           labelAr: "ملاحظات",              labelEn: "Notes" },
