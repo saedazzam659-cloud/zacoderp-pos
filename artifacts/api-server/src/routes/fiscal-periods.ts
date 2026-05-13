@@ -192,6 +192,13 @@ router.delete("/years/:id", async (req, res) => {
 });
 
 // ─── PATCH /api/fiscal-periods/:id/status — change a period status ─────
+// IFRS-aligned: this endpoint ONLY handles re-opening a soft-closed period
+// (closed → open). Direct flips to "closed" or "permanently_closed" are
+// REFUSED — those must run through the wizard endpoints (/soft-close +
+// /hard-close) which validate drafts/unbalanced entries and require the
+// closing JEs (closing_revenue/expense + closing_transfer_*) to exist.
+// Bypassing them was the root cause of periods that ended up "closed
+// نهائي" with zero closing entries posted.
 router.patch("/periods/:id/status", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -206,26 +213,58 @@ router.patch("/periods/:id/status", async (req, res) => {
       .where(and(eq(fiscalPeriodsTable.id, id), eq(fiscalPeriodsTable.companyId, cid)));
     if (!current) { res.status(404).json({ error: "الفترة غير موجودة" }); return; }
 
-    // Locked: permanently_closed cannot be changed
     if (current.status === "permanently_closed") {
-      res.status(400).json({ error: "لا يمكن التعديل على فترة مغلقة نهائياً" }); return;
+      res.status(400).json({
+        error: "لا يمكن التعديل على فترة مغلقة نهائياً. يحتاج فك القفل صلاحية سوبر أدمن (force-reopen)"
+      });
+      return;
     }
-    // Closed → only allowed: re-open or permanently close
+
+    // Re-open a soft-closed period — only legal direct transition here.
     if (current.status === "closed" && status === "open") {
-      // allow re-open
+      const [updated] = await db.update(fiscalPeriodsTable)
+        .set({ status: "open", updatedAt: new Date() })
+        .where(eq(fiscalPeriodsTable.id, id)).returning();
+      res.json({ ok: true, period: updated });
+      return;
     }
 
-    const [updated] = await db.update(fiscalPeriodsTable)
-      .set({ status, updatedAt: new Date() })
-      .where(eq(fiscalPeriodsTable.id, id)).returning();
+    // No-op (already in requested status)
+    if (current.status === status) { res.json({ ok: true, period: current, noop: true }); return; }
 
-    res.json({ ok: true, period: updated });
+    // Direct close / permanently_close attempts → push the user through the
+    // proper closing wizard so the IFRS validation and closing JEs run.
+    if (status === "closed") {
+      res.status(400).json({
+        error: "لا يمكن إقفال الفترة مباشرة من هنا. استخدم «معالج الإقفال» الذي يتحقق من القيود غير المرحّلة وأرصدة الإيرادات/المصروفات قبل الإقفال الناعم.",
+        useWizard: true,
+        endpoint: `/api/fiscal/periods/${id}/soft-close`,
+      });
+      return;
+    }
+    if (status === "permanently_closed") {
+      res.status(400).json({
+        error: "لا يمكن الإقفال النهائي مباشرة من هنا. استخدم «معالج الإقفال»: إقفال الأرباح والخسائر → ترحيل الأرباح إلى الأرباح المحتجزة → الإقفال الناعم → الإقفال النهائي. هذا يضمن ترحيل قيود الإقفال المحاسبية قبل تأمين الفترة نهائياً.",
+        useWizard: true,
+        endpoint: `/api/fiscal/periods/${id}/hard-close`,
+      });
+      return;
+    }
+
+    res.status(400).json({ error: `انتقال غير مسموح: ${current.status} → ${status}` });
   } catch (err: any) {
     res.status(500).json({ error: err.message ?? "خطأ" });
   }
 });
 
 // ─── PATCH /api/fiscal-years/:id/status — close/reopen entire year ─────
+// IFRS-aligned: a year-level close is a *rollup* status — it can only flip
+// to "closed" once every period inside is at least "closed", and to
+// "permanently_closed" once every period is "permanently_closed" (which
+// means the wizard ran and posted closing JEs for each of them). Re-open
+// (→ open) is always allowed. Bypassing this was the root cause of years
+// shown as "permanently_closed" while their periods still had open P&L
+// balances and zero closing entries.
 router.patch("/years/:id/status", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -240,21 +279,72 @@ router.patch("/years/:id/status", async (req, res) => {
       .where(and(eq(fiscalYearsTable.id, id), eq(fiscalYearsTable.companyId, cid)));
     if (!current) { res.status(404).json({ error: "السنة المالية غير موجودة" }); return; }
     if (current.status === "permanently_closed") {
-      res.status(400).json({ error: "لا يمكن التعديل على سنة مالية مغلقة نهائياً" }); return;
+      res.status(400).json({
+        error: "لا يمكن التعديل على سنة مالية مغلقة نهائياً. يحتاج فك القفل صلاحية سوبر أدمن (force-reopen على إحدى فتراتها)"
+      });
+      return;
+    }
+    if (current.status === status) { res.json({ ok: true, year: current, noop: true }); return; }
+
+    // Re-open (→ open) is always allowed — cascades to soft-closed periods
+    // (but never reopens an already permanently_closed period).
+    if (status === "open") {
+      const [updated] = await db.update(fiscalYearsTable)
+        .set({ status: "open", updatedAt: new Date() })
+        .where(eq(fiscalYearsTable.id, id)).returning();
+      await db.update(fiscalPeriodsTable)
+        .set({ status: "open", updatedAt: new Date() })
+        .where(and(
+          eq(fiscalPeriodsTable.fiscalYearId, id),
+          eq(fiscalPeriodsTable.companyId, cid),
+          eq(fiscalPeriodsTable.status, "closed"),
+        ));
+      res.json({ ok: true, year: updated, reopenedSoftClosed: true });
+      return;
+    }
+
+    // For a year-level close, every constituent period must already be at
+    // the matching (or stronger) status — meaning the user already ran the
+    // wizard for each of them. We don't auto-run the wizard here because
+    // each period needs its own P&L summary + retained-earnings selection.
+    const periods = await db.select({ id: fiscalPeriodsTable.id, name: fiscalPeriodsTable.name, status: fiscalPeriodsTable.status })
+      .from(fiscalPeriodsTable)
+      .where(and(
+        eq(fiscalPeriodsTable.fiscalYearId, id),
+        eq(fiscalPeriodsTable.companyId, cid),
+      ));
+
+    if (periods.length === 0) {
+      res.status(400).json({ error: "السنة المالية لا تحتوي على فترات — لا يوجد ما يُقفل" });
+      return;
+    }
+
+    if (status === "closed") {
+      // Every period must be at least closed (closed or permanently_closed).
+      const stillOpen = periods.filter(p => p.status === "open");
+      if (stillOpen.length > 0) {
+        res.status(400).json({
+          error: `لا يمكن إقفال السنة قبل إقفال جميع فتراتها. ${stillOpen.length} فترة لم تُقفل بعد. استخدم «معالج الإقفال» لكل فترة على حدة.`,
+          stillOpenPeriods: stillOpen.map(p => ({ id: p.id, name: p.name })),
+        });
+        return;
+      }
+    }
+    if (status === "permanently_closed") {
+      // Every period must be permanently_closed (i.e. closing JEs verified).
+      const notFinal = periods.filter(p => p.status !== "permanently_closed");
+      if (notFinal.length > 0) {
+        res.status(400).json({
+          error: `لا يمكن الإقفال النهائي للسنة قبل الإقفال النهائي لجميع فتراتها. ${notFinal.length} فترة لم تُقفل نهائياً بعد. شغّل «معالج الإقفال» (مع ترحيل الأرباح للأرباح المحتجزة) لكل فترة، ثم أعد المحاولة.`,
+          notFinalPeriods: notFinal.map(p => ({ id: p.id, name: p.name, status: p.status })),
+        });
+        return;
+      }
     }
 
     const [updated] = await db.update(fiscalYearsTable)
       .set({ status, updatedAt: new Date() })
       .where(eq(fiscalYearsTable.id, id)).returning();
-
-    // Cascade to periods (without overwriting permanently_closed)
-    await db.update(fiscalPeriodsTable)
-      .set({ status, updatedAt: new Date() })
-      .where(and(
-        eq(fiscalPeriodsTable.fiscalYearId, id),
-        eq(fiscalPeriodsTable.companyId, cid),
-        ne(fiscalPeriodsTable.status, "permanently_closed"),
-      ));
 
     res.json({ ok: true, year: updated });
   } catch (err: any) {
@@ -751,14 +841,16 @@ router.post("/periods/:id/force-reopen", async (req, res) => {
       .set({ status: "open", updatedAt: new Date() })
       .where(eq(fiscalPeriodsTable.id, id)).returning();
 
-    // If the parent year is permanently_closed, unlock it too — otherwise
-    // the year-level guard would still treat its periods as untouchable.
+    // If the parent year is anything other than open (closed or
+    // permanently_closed), unlock it too — otherwise the year-level
+    // writability guard would still block writes inside the just-reopened
+    // period (dates in period gaps would also remain blocked).
     await db.update(fiscalYearsTable)
       .set({ status: "open", updatedAt: new Date() })
       .where(and(
         eq(fiscalYearsTable.id, period.fiscalYearId),
         eq(fiscalYearsTable.companyId, cid),
-        eq(fiscalYearsTable.status, "permanently_closed"),
+        ne(fiscalYearsTable.status, "open"),
       ));
 
     res.json({ ok: true, period: updated, reason });

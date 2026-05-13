@@ -451,32 +451,26 @@ export default function FiscalPeriods() {
                           </Badge>
                           {editable ? (
                             <div className="flex items-center gap-1">
+                              {/* Single entry point for closing — the wizard runs validation,
+                                  posts the closing JEs (إيرادات/مصروفات → ملخص الأرباح
+                                  والخسائر، ثم ترحيل لصافي الربح للأرباح المحتجزة) and finally
+                                  calls /soft-close + /hard-close. Direct PATCH /status flips
+                                  to closed/permanently_closed are blocked server-side because
+                                  they were the source of "مغلقة نهائياً بدون قيود إقفال" bugs. */}
                               <Button size="sm" variant="ghost" className="h-7 px-2 text-violet-700"
                                 onClick={() => setClosingPeriod(p)}
-                                title="معالج الإقفال + تحليل AI">
+                                title="معالج الإقفال — يحقّق ويولّد قيود الإقفال ثم يقفل الفترة">
                                 <ShieldCheck className="h-3 w-3" />
-                                <span className={cn("text-[10px]", isRtl ? "mr-1" : "ml-1")}>إقفال</span>
+                                <span className={cn("text-[10px]", isRtl ? "mr-1" : "ml-1")}>
+                                  {p.status === "open" ? "بدء الإقفال" : "متابعة الإقفال"}
+                                </span>
                               </Button>
-                              {p.status === "open" && (
-                                <Button size="sm" variant="ghost" className="h-7 px-2 text-amber-700"
-                                  onClick={() => updatePeriodStatusMut.mutate({ id: p.id, status: "closed" })}>
-                                  <Lock className="h-3 w-3" />
-                                  <span className={cn("text-[10px]", isRtl ? "mr-1" : "ml-1")}>{t("fiscalPeriods.closePeriod")}</span>
-                                </Button>
-                              )}
                               {p.status === "closed" && (
-                                <>
-                                  <Button size="sm" variant="ghost" className="h-7 px-2 text-green-700"
-                                    onClick={() => updatePeriodStatusMut.mutate({ id: p.id, status: "open" })}>
-                                    <Unlock className="h-3 w-3" />
-                                    <span className={cn("text-[10px]", isRtl ? "mr-1" : "ml-1")}>{t("fiscalPeriods.reopenPeriod")}</span>
-                                  </Button>
-                                  <Button size="sm" variant="ghost" className="h-7 px-2 text-red-700"
-                                    onClick={() => updatePeriodStatusMut.mutate({ id: p.id, status: "permanently_closed" })}>
-                                    <ShieldX className="h-3 w-3" />
-                                    <span className={cn("text-[10px]", isRtl ? "mr-1" : "ml-1")}>{t("fiscalPeriods.permanentlyClosePeriod")}</span>
-                                  </Button>
-                                </>
+                                <Button size="sm" variant="ghost" className="h-7 px-2 text-green-700"
+                                  onClick={() => updatePeriodStatusMut.mutate({ id: p.id, status: "open" })}>
+                                  <Unlock className="h-3 w-3" />
+                                  <span className={cn("text-[10px]", isRtl ? "mr-1" : "ml-1")}>{t("fiscalPeriods.reopenPeriod")}</span>
+                                </Button>
                               )}
                             </div>
                           ) : (
