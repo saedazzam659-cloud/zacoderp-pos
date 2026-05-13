@@ -1,42 +1,55 @@
-import { pgTable, serial, integer, text, jsonb, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, text, jsonb, timestamp, boolean, uniqueIndex } from "drizzle-orm/pg-core";
 
-// Per-company "field policy" for invoice screens.
+// ── Invoice Field Policy ─────────────────────────────────────────────────
 //
-// One row per (companyId, scope). `scope` is one of:
-//   - "sales"     → SalesDocumentForm (sales invoices)
-//   - "purchase"  → PurchaseInvoiceForm
-//   - "pos"       → POS Operations sale screen
+// A "policy profile" is a named bundle of per-field rules covering the
+// three invoice screens (sales / purchase / POS). The admin authors many
+// profiles per company (e.g. "كاشير", "محاسب مبتدئ", "مدير فرع") and
+// assigns each user to exactly one profile via `user_invoice_field_policies`.
 //
-// `policy` is a JSON blob mapping field name → { mode, ...constraints }.
+// Effective policy for a given user = profile.bundle (admins bypass).
+// If a user has no assignment, the profile flagged `is_default = true`
+// applies; if no default exists, the user is treated as fully editable.
+//
+// `bundle` shape:
+//   { sales: { fieldKey: { mode, dateConstraint? }, ... },
+//     purchase: { ... },
+//     pos: { ... } }
 //   mode: "editable" | "readonly" | "hidden" | "required"
-//   For the date field we also store dateConstraint: "none" | "today_only"
-//
-// The intent is admin-only authoring + read-by-everyone consumption: a
-// non-admin user opening an invoice screen fetches the policy and the
-// frontend hides / locks / marks-required fields accordingly. Admins always
-// see every field (the policy is bypassed for `admin`/`superadmin` roles).
-//
-// Stored as JSONB (not separate columns) because the field set evolves with
-// the product — adding a new policy-controlled field stays purely a code
-// change, no migration needed.
-export const invoiceFieldPoliciesTable = pgTable(
-  "invoice_field_policies",
+//   dateConstraint: "none" | "today_only"   (only for date fields)
+
+export const invoiceFieldPolicyProfilesTable = pgTable(
+  "invoice_field_policy_profiles",
   {
-    id:        serial("id").primaryKey(),
-    companyId: integer("company_id").notNull(),
-    scope:     text("scope").notNull(), // "sales" | "purchase" | "pos"
-    policy:    jsonb("policy").notNull().default({}),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedBy: integer("updated_by"),
+    id:         serial("id").primaryKey(),
+    companyId:  integer("company_id").notNull(),
+    name:       text("name").notNull(),
+    bundle:     jsonb("bundle").notNull().default({}),
+    isDefault:  boolean("is_default").notNull().default(false),
+    color:      text("color"),                          // hex tint shown in cards / pills
+    updatedAt:  timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedBy:  integer("updated_by"),
+    createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
-    uniqCompanyScope: uniqueIndex("invoice_field_policies_company_scope_idx")
-      .on(t.companyId, t.scope),
+    uniqCompanyName: uniqueIndex("invoice_field_policy_profiles_company_name_idx")
+      .on(t.companyId, t.name),
   }),
 );
 
-export type InvoiceFieldPolicyRow = typeof invoiceFieldPoliciesTable.$inferSelect;
-export type NewInvoiceFieldPolicyRow = typeof invoiceFieldPoliciesTable.$inferInsert;
+export const userInvoiceFieldPoliciesTable = pgTable(
+  "user_invoice_field_policies",
+  {
+    userId:     integer("user_id").primaryKey(),
+    profileId:  integer("profile_id").notNull(),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).defaultNow().notNull(),
+    assignedBy: integer("assigned_by"),
+  },
+);
+
+export type InvoiceFieldPolicyProfileRow = typeof invoiceFieldPolicyProfilesTable.$inferSelect;
+export type NewInvoiceFieldPolicyProfileRow = typeof invoiceFieldPolicyProfilesTable.$inferInsert;
+export type UserInvoiceFieldPolicyRow = typeof userInvoiceFieldPoliciesTable.$inferSelect;
 
 // ── Shared types & catalogue (used by both server and client) ────────────
 
@@ -49,17 +62,14 @@ export interface FieldRule {
   dateConstraint?: DateConstraint;
 }
 
-/** A complete policy: { fieldName: rule } */
+/** A complete policy for one scope: { fieldName: rule } */
 export type PolicyMap = Record<string, FieldRule>;
 
 export type PolicyScope = "sales" | "purchase" | "pos";
 
-/**
- * Catalogue of fields the admin can govern, per scope. Any field not listed
- * here is always editable (the policy doesn't reach into it).
- *
- * `key` must match the field key the frontend passes to <PolicyField name=…>.
- */
+/** A complete bundle covering all scopes — the shape stored in `bundle`. */
+export type PolicyBundle = Record<PolicyScope, PolicyMap>;
+
 export interface FieldDef {
   key: string;
   labelAr: string;
@@ -120,4 +130,12 @@ export function defaultPolicy(scope: PolicyScope): PolicyMap {
     out[f.key] = { mode: "editable", ...(f.isDate ? { dateConstraint: "none" as const } : {}) };
   }
   return out;
+}
+
+export function defaultBundle(): PolicyBundle {
+  return {
+    sales:    defaultPolicy("sales"),
+    purchase: defaultPolicy("purchase"),
+    pos:      defaultPolicy("pos"),
+  };
 }

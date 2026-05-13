@@ -44,6 +44,9 @@ type NavDef = { nameKey: string; href: string; icon: any; exact?: boolean; permK
    *  Use for screens whose backend is hard-coded admin-only (e.g. user management) so non-admins
    *  don't see a menu link that would 404 / 403 when clicked. */
   requireAdmin?: boolean;
+  /** When true, this entry is visible ONLY to superadmins (even when entered into a tenant
+   *  via "الدخول إلى شركة"). Company admins never see it. */
+  requireSuperadmin?: boolean;
 };
 
 // Returns true when this nav item should be visible to the given user.
@@ -61,6 +64,9 @@ type NavDef = { nameKey: string; href: string; icon: any; exact?: boolean; permK
 // Centralized so leaf-level (NavItem) and group-level filtering stay in sync.
 function navItemAllowed(item: NavDef, user: any): boolean {
   if (!user) return false;
+  // Superadmin-only items: visible only to platform operators (even while
+  // they're acting inside a tenant). Company admins never see them.
+  if (item.requireSuperadmin && user.role !== "superadmin") return false;
   if (user.role === "superadmin") return true;
   // Admin-only items stay hidden for non-admin roles regardless of granted
   // perms, because their backend endpoints require admin role and would 403/404.
@@ -295,7 +301,7 @@ const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.auditLog",        href: "/admin/audit-log",     icon: ScrollText, requireAdmin: true },
   // Per-company governance of which fields show on invoice screens for non-admin users.
   // Admin-only — see /admin/invoice-field-policies.
-  { nameKey: "nav.invoiceFieldPolicies", href: "/admin/invoice-field-policies", icon: ShieldCheck, requireAdmin: true },
+  { nameKey: "nav.invoiceFieldPolicies", href: "/admin/invoice-field-policies", icon: ShieldCheck, requireSuperadmin: true },
 ];
 
 // "أدوات الذكاء الاصطناعي" — top-level group for AI-related screens. Per the

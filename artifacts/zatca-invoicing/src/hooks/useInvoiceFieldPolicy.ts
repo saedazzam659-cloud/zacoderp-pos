@@ -1,14 +1,15 @@
-// React hook + helpers for consuming the per-company invoice field policy.
+// React hook + helpers for consuming the invoice field policy.
 //
-// The bundle is fetched once per session and cached for 5 minutes.
-// `useFieldPolicy(scope)` gives every form a tight API:
+// Each user has at most one assigned policy "profile" (set in
+// /admin/invoice-field-policies). The hook fetches the effective bundle
+// once per session and exposes per-field helpers used by invoice forms:
 //
 //   const fp = useFieldPolicy("sales");
 //   if (!fp.isVisible("notes")) return null;
 //   <Input ... readOnly={fp.isReadOnly("date")} required={fp.isRequired("date")} />
 //   const dateBounds = fp.dateBounds("date"); // { min, max } or null
 //
-// Admins get an all-editable bundle so existing UX is unchanged for them.
+// Admins/superadmins always get an all-editable bundle.
 
 import { useQuery } from "@tanstack/react-query";
 
@@ -23,10 +24,12 @@ export interface FieldRule {
   dateConstraint?: DateConstraint;
 }
 export type PolicyMap = Record<string, FieldRule>;
+export type PolicyBundle = Record<PolicyScope, PolicyMap>;
 
 interface BundleResponse {
   isAdmin: boolean;
-  bundle: Record<PolicyScope, PolicyMap>;
+  bundle: PolicyBundle;
+  profile: { id: number; name: string } | null;
 }
 
 function todayIso(): string {
@@ -36,18 +39,18 @@ function todayIso(): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
+function emptyBundle(): PolicyBundle {
+  return { sales: {}, purchase: {}, pos: {} };
+}
+
 function fetchBundle(): Promise<BundleResponse> {
   const token = localStorage.getItem("zatca_token") ?? "";
   return fetch(`${API}/api/invoice-field-policies/me`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   }).then(async (r) => {
     if (!r.ok) {
-      // Fail-safe: when the policy endpoint can't answer (network blip, server
-      // error), return an empty bundle WITHOUT admin bypass. The default rule
-      // for unknown keys is `editable`, so all fields stay usable but the
-      // admin's intent (hidden / readonly / required / today_only) is NOT
-      // silently revoked just because one fetch failed.
-      return { isAdmin: false, bundle: { sales: {}, purchase: {}, pos: {} } } as BundleResponse;
+      // Fail-safe: empty bundle (defaults to editable) WITHOUT admin bypass.
+      return { isAdmin: false, bundle: emptyBundle(), profile: null };
     }
     return r.json();
   });
@@ -62,22 +65,20 @@ export function useInvoiceFieldPolicyBundle() {
 }
 
 export interface FieldPolicy {
-  /** True for admins/superadmins — all checks are bypassed (everything is editable). */
   bypass: boolean;
+  profileName: string | null;
   rule: (key: string) => FieldRule;
   isVisible: (key: string) => boolean;
   isReadOnly: (key: string) => boolean;
   isRequired: (key: string) => boolean;
-  /** For date fields locked to today: returns `{ min, max }` for <input type="date">, else `null`. */
   dateBounds: (key: string) => { min?: string; max?: string } | null;
 }
 
 export function useFieldPolicy(scope: PolicyScope): FieldPolicy {
   const { data, isLoading } = useInvoiceFieldPolicyBundle();
-  // While loading, bypass (avoid flicker — fields render immediately).
-  // Once data arrives, only bypass if the server says the user is admin.
   const bypass = isLoading ? true : (data?.isAdmin ?? false);
   const map = data?.bundle?.[scope] ?? {};
+  const profileName = data?.profile?.name ?? null;
 
   function rule(key: string): FieldRule {
     if (bypass) return { mode: "editable" };
@@ -87,12 +88,11 @@ export function useFieldPolicy(scope: PolicyScope): FieldPolicy {
   function isReadOnly(key: string) { return rule(key).mode === "readonly"; }
   function isRequired(key: string) { return rule(key).mode === "required"; }
   function dateBounds(key: string) {
-    const r = rule(key);
-    if (r.dateConstraint === "today_only") {
+    if (rule(key).dateConstraint === "today_only") {
       const t = todayIso();
       return { min: t, max: t };
     }
     return null;
   }
-  return { bypass, rule, isVisible, isReadOnly, isRequired, dateBounds };
+  return { bypass, profileName, rule, isVisible, isReadOnly, isRequired, dateBounds };
 }

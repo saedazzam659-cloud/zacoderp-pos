@@ -497,7 +497,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/subscriptions" component={SubscriptionManagement} />}
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
-            <Route path="/admin/invoice-field-policies" component={InvoiceFieldPolicies} />
+            {isSuperAdmin && <Route path="/admin/invoice-field-policies" component={InvoiceFieldPolicies} />}
             {isSuperAdmin && <Route path="/admin/modules" component={Modules} />}
             {isSuperAdmin && <Route path="/admin/industries" component={Industries} />}
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}

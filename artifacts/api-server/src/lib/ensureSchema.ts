@@ -465,18 +465,36 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "chat_messages_company_idx",
       sql:   `CREATE INDEX IF NOT EXISTS chat_messages_company_idx ON chat_messages (company_id, created_at)` },
 
-    { label: "create invoice_field_policies table",
-      sql:   `CREATE TABLE IF NOT EXISTS invoice_field_policies (
+    // Drop the legacy single-policy-per-company table (was created earlier in
+    // this same task, never used in production) — it's been replaced by the
+    // profiles + user-assignments model below.
+    { label: "drop legacy invoice_field_policies",
+      sql:   `DROP TABLE IF EXISTS invoice_field_policies` },
+
+    { label: "create invoice_field_policy_profiles table",
+      sql:   `CREATE TABLE IF NOT EXISTS invoice_field_policy_profiles (
         id          SERIAL PRIMARY KEY,
         company_id  INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-        scope       TEXT NOT NULL,
-        policy      JSONB NOT NULL DEFAULT '{}'::jsonb,
+        name        TEXT NOT NULL,
+        bundle      JSONB NOT NULL DEFAULT '{}'::jsonb,
+        is_default  BOOLEAN NOT NULL DEFAULT FALSE,
+        color       TEXT,
         updated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
         updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
         created_at  TIMESTAMP NOT NULL DEFAULT NOW()
       )` },
-    { label: "invoice_field_policies_company_scope_uniq",
-      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS invoice_field_policies_company_scope_uniq ON invoice_field_policies (company_id, scope)` },
+    { label: "invoice_field_policy_profiles_company_name_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS invoice_field_policy_profiles_company_name_uniq ON invoice_field_policy_profiles (company_id, name)` },
+
+    { label: "create user_invoice_field_policies table",
+      sql:   `CREATE TABLE IF NOT EXISTS user_invoice_field_policies (
+        user_id     INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        profile_id  INTEGER NOT NULL REFERENCES invoice_field_policy_profiles(id) ON DELETE CASCADE,
+        assigned_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        assigned_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+      )` },
+    { label: "user_invoice_field_policies_profile_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS user_invoice_field_policies_profile_idx ON user_invoice_field_policies (profile_id)` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {
