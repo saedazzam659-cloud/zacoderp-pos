@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { invoicesTable, invoiceLineItemsTable, companiesTable, customersTable } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { invoicesTable, invoiceLineItemsTable, companiesTable, customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable } from "@workspace/db";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { createHash } from "crypto";
 import { CreateInvoiceBody, UpdateInvoiceBody, ListInvoicesQueryParams } from "@workspace/api-zod";
 import { generateZatcaQr } from "../lib/zatca-tlv.js";
@@ -21,6 +21,36 @@ function generateInvoiceNumber(companyId: number): string {
   const year = now.getFullYear();
   const seq = Math.floor(Math.random() * 900000) + 100000;
   return `INV-${year}-${companyId}-${seq}`;
+}
+
+// Posted credit invoices − posted returns − posted receipt vouchers.
+// Mirrors the formula in routes/customers.ts GET /balances but scoped
+// to a single customer. Used by the credit-limit guard on POST /.
+async function computeCustomerBalance(companyId: number, customerId: number): Promise<number> {
+  const [inv] = await db.select({
+    total: sql<string>`COALESCE(SUM(${salesInvoicesTable.totalAmount}), 0)`,
+  }).from(salesInvoicesTable).where(and(
+    eq(salesInvoicesTable.companyId, companyId),
+    eq(salesInvoicesTable.customerId, customerId),
+    eq(salesInvoicesTable.status, "posted"),
+    eq(salesInvoicesTable.paymentType, "credit"),
+  ));
+  const [ret] = await db.select({
+    total: sql<string>`COALESCE(SUM(${salesReturnsTable.totalAmount}), 0)`,
+  }).from(salesReturnsTable).where(and(
+    eq(salesReturnsTable.companyId, companyId),
+    eq(salesReturnsTable.customerId, customerId),
+    eq(salesReturnsTable.status, "posted"),
+  ));
+  const [rec] = await db.select({
+    total: sql<string>`COALESCE(SUM(${receiptVouchersTable.amount}), 0)`,
+  }).from(receiptVouchersTable).where(and(
+    eq(receiptVouchersTable.companyId, companyId),
+    eq(receiptVouchersTable.entityId, customerId),
+    eq(receiptVouchersTable.entityType, "customer"),
+    eq(receiptVouchersTable.status, "posted"),
+  ));
+  return Number(inv?.total ?? 0) - Number(ret?.total ?? 0) - Number(rec?.total ?? 0);
 }
 
 async function getInvoiceWithRelations(id: number) {
@@ -90,7 +120,41 @@ router.post("/", async (req, res) => {
     return { ...item, subtotal: itemSubtotal.toFixed(2), vatAmount: vatAmount.toFixed(2), total: total.toFixed(2) };
   });
   const grandTotal = subtotal - discountTotal + vatTotal;
-  
+
+  // ── Credit-limit guard ──────────────────────────────────────────────
+  // If the customer has `enforceCreditLimit` flipped on AND a positive
+  // creditLimit AND this is a credit (non-cash) sale, refuse to create
+  // the invoice when (currentBalance + grandTotal) exceeds the limit.
+  // Cash invoices are skipped because they don't grow AR exposure.
+  // Errors here are non-fatal to schema completeness — if the customer
+  // row is missing the columns for any reason, we let the invoice
+  // through (fail-open on infrastructure, fail-closed on policy).
+  if (data.customerId && (data as any).paymentType !== "cash") {
+    const [cust] = await db.select({
+      creditLimit: customersTable.creditLimit,
+      enforce:     customersTable.enforceCreditLimit,
+      nameAr:      customersTable.nameAr,
+    }).from(customersTable).where(eq(customersTable.id, data.customerId));
+    if (cust?.enforce && Number(cust.creditLimit ?? 0) > 0) {
+      const limit = Number(cust.creditLimit);
+      const balance = await computeCustomerBalance(data.companyId, data.customerId);
+      const projected = balance + grandTotal;
+      if (projected > limit) {
+        res.status(409).json({
+          error: `تم رفض إنشاء الفاتورة: الحد الائتماني للعميل "${cust.nameAr}" هو ${limit.toFixed(2)} ` +
+                 `والرصيد الحالي ${balance.toFixed(2)}، وإجمالي الفاتورة ${grandTotal.toFixed(2)} ` +
+                 `يجعل المستحق ${projected.toFixed(2)} وهو يتجاوز الحد المسموح.`,
+          code: "credit_limit_exceeded",
+          creditLimit: limit,
+          currentBalance: balance,
+          invoiceTotal: grandTotal,
+          projectedBalance: projected,
+        });
+        return;
+      }
+    }
+  }
+
   const invoiceNumber = generateInvoiceNumber(data.companyId);
   
   const d = data as typeof data & {

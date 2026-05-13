@@ -85,9 +85,10 @@ function sanitizePolicy(scope: PolicyScope, raw: any): PolicyMap {
 
 function sanitizeBundle(raw: any): PolicyBundle {
   return {
-    sales:    sanitizePolicy("sales",    raw?.sales),
-    purchase: sanitizePolicy("purchase", raw?.purchase),
-    pos:      sanitizePolicy("pos",      raw?.pos),
+    sales:     sanitizePolicy("sales",     raw?.sales),
+    purchase:  sanitizePolicy("purchase",  raw?.purchase),
+    pos:       sanitizePolicy("pos",       raw?.pos),
+    customers: sanitizePolicy("customers", raw?.customers),
   };
 }
 

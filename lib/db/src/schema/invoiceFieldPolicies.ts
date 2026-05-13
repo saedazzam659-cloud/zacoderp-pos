@@ -65,7 +65,7 @@ export interface FieldRule {
 /** A complete policy for one scope: { fieldName: rule } */
 export type PolicyMap = Record<string, FieldRule>;
 
-export type PolicyScope = "sales" | "purchase" | "pos";
+export type PolicyScope = "sales" | "purchase" | "pos" | "customers";
 
 /** A complete bundle covering all scopes — the shape stored in `bundle`. */
 export type PolicyBundle = Record<PolicyScope, PolicyMap>;
@@ -120,9 +120,33 @@ export const FIELD_CATALOGUE: Record<PolicyScope, FieldDef[]> = {
     { key: "discount",      labelAr: "الخصم",           labelEn: "Discount" },
     { key: "notes",         labelAr: "ملاحظات",         labelEn: "Notes" },
   ],
+  // ── شاشة العميل ──
+  // Governs which fields appear / are required on the Customer create+edit
+  // screen (CustomerNew.tsx). Includes the new credit-limit pair.
+  customers: [
+    { key: "nameAr",               labelAr: "اسم العميل (عربي)",     labelEn: "Customer name (AR)" },
+    { key: "nameEn",               labelAr: "اسم العميل (إنجليزي)",  labelEn: "Customer name (EN)" },
+    { key: "customerType",         labelAr: "نوع العميل (B2B/B2C)",  labelEn: "Customer type" },
+    { key: "vatNumber",            labelAr: "الرقم الضريبي",         labelEn: "VAT number" },
+    { key: "crNumber",             labelAr: "السجل التجاري",         labelEn: "CR number" },
+    { key: "email",                labelAr: "البريد الإلكتروني",     labelEn: "Email" },
+    { key: "phone",                labelAr: "الجوال",                labelEn: "Phone" },
+    { key: "city",                 labelAr: "المدينة",               labelEn: "City" },
+    { key: "district",             labelAr: "الحي",                  labelEn: "District" },
+    { key: "street",               labelAr: "الشارع",                labelEn: "Street" },
+    { key: "buildingNumber",       labelAr: "رقم المبنى",            labelEn: "Building #" },
+    { key: "postalCode",           labelAr: "الرمز البريدي",         labelEn: "Postal code" },
+    { key: "nationalAddressShort", labelAr: "العنوان الوطني المختصر", labelEn: "Short national address" },
+    { key: "salesRepId",           labelAr: "مندوب المبيعات",        labelEn: "Sales rep" },
+    { key: "accountId",            labelAr: "حساب الأستاذ",          labelEn: "Ledger account" },
+    { key: "creditLimit",          labelAr: "الحد الائتماني للسحب",  labelEn: "Credit limit" },
+    { key: "enforceCreditLimit",   labelAr: "منع التجاوز عند الوصول للحد", labelEn: "Block when limit reached" },
+    { key: "includeInStatements",  labelAr: "إدراج في كشوفات الحسابات", labelEn: "Include in statements" },
+    { key: "location",             labelAr: "الموقع الجغرافي",       labelEn: "Geo location" },
+  ],
 };
 
-export const POLICY_SCOPES: PolicyScope[] = ["sales", "purchase", "pos"];
+export const POLICY_SCOPES: PolicyScope[] = ["sales", "purchase", "pos", "customers"];
 
 export function defaultPolicy(scope: PolicyScope): PolicyMap {
   const out: PolicyMap = {};
@@ -134,8 +158,9 @@ export function defaultPolicy(scope: PolicyScope): PolicyMap {
 
 export function defaultBundle(): PolicyBundle {
   return {
-    sales:    defaultPolicy("sales"),
-    purchase: defaultPolicy("purchase"),
-    pos:      defaultPolicy("pos"),
+    sales:     defaultPolicy("sales"),
+    purchase:  defaultPolicy("purchase"),
+    pos:       defaultPolicy("pos"),
+    customers: defaultPolicy("customers"),
   };
 }

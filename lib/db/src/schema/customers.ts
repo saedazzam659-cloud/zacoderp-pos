@@ -27,6 +27,13 @@ export const customersTable = pgTable("customers", {
   salesRepId: integer("sales_rep_id"),
   creditLimit: numeric("credit_limit", { precision: 15, scale: 2 }).default("0"),
   /**
+   * When true → POST /api/invoices refuses to create a credit sales invoice
+   * for this customer if (currentARBalance + newInvoiceTotal) would exceed
+   * `creditLimit`. When false (default) the limit is informational only.
+   * Cash invoices and zero/empty `creditLimit` always bypass the guard.
+   */
+  enforceCreditLimit: boolean("enforce_credit_limit").notNull().default(false),
+  /**
    * When false → this customer is treated as a *display-only* / memo entity:
    *   – Their data still prints on invoices / vouchers / journal entries.
    *   – Their AR balance is EXCLUDED from كشف حساب العملاء، تقارير الأعمار،

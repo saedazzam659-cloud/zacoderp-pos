@@ -209,6 +209,13 @@ router.post("/", async (req, res) => {
     // generated CreateCustomerBody zod schema yet. Defaults to true (full
     // statement participation) when omitted.
     includeInStatements: (req.body as any)?.includeInStatements === false ? false : true,
+    // Credit-limit pair — also raw-body pass-through for the same reason.
+    // creditLimit is stored as numeric(15,2); we coerce to string and clamp
+    // negatives to 0 to keep the column non-negative. Enforcement defaults
+    // to false so existing customers stay in informational-only mode until
+    // someone explicitly toggles it on.
+    creditLimit: clampCreditLimit((req.body as any)?.creditLimit) ?? "0",
+    enforceCreditLimit: (req.body as any)?.enforceCreditLimit === true,
   }).returning();
   res.status(201).json(customer);
 });
@@ -281,9 +288,28 @@ router.put("/:id", async (req, res) => {
   if (typeof (req.body as any)?.includeInStatements === "boolean") {
     setData.includeInStatements = (req.body as any).includeInStatements;
   }
+  // Credit-limit pair — same raw-body pass-through pattern. Only assign
+  // when the client actually sent the key so we don't silently overwrite
+  // existing values during partial updates.
+  if ((req.body as any)?.creditLimit !== undefined) {
+    const v = clampCreditLimit((req.body as any).creditLimit);
+    if (v != null) setData.creditLimit = v;
+  }
+  if (typeof (req.body as any)?.enforceCreditLimit === "boolean") {
+    setData.enforceCreditLimit = (req.body as any).enforceCreditLimit;
+  }
   const [customer] = await db.update(customersTable).set(setData).where(eq(customersTable.id, id)).returning();
   res.json(customer);
 });
+
+// Coerce raw body input → numeric(15,2)-safe string. Returns null for
+// invalid / non-numeric input so the caller can decide the fallback.
+function clampCreditLimit(v: any): string | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, n).toFixed(2);
+}
 
 router.delete("/:id", async (req, res) => {
   const id = parseInt(req.params.id);

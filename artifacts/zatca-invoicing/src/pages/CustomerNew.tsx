@@ -48,6 +48,15 @@ const customerSchema = z.object({
    *            مُستثناة من كشف حساب العملاء وتقارير الأعمار.
    */
   includeInStatements: z.boolean().default(true),
+  /**
+   * Credit-control pair:
+   *   creditLimit         — sets the maximum AR exposure (SAR). 0 / empty means none.
+   *   enforceCreditLimit  — when true, the server refuses to CREATE a credit sales
+   *                         invoice that would push (currentBalance + invoiceTotal)
+   *                         above creditLimit (returns 409 with code "credit_limit_exceeded").
+   */
+  creditLimit:        z.coerce.number().min(0, "لا يمكن أن يكون سالباً").default(0),
+  enforceCreditLimit: z.boolean().default(false),
 });
 
 type FormValues = z.infer<typeof customerSchema>;
@@ -92,6 +101,8 @@ export default function CustomerNew() {
       country: "SA",
       nationalAddressShort: "",
       includeInStatements: true,
+      creditLimit: 0,
+      enforceCreditLimit: false,
     },
   });
 
@@ -121,6 +132,8 @@ export default function CustomerNew() {
       country:        c.country ?? "SA",
       nationalAddressShort: c.nationalAddressShort ?? "",
       includeInStatements: c.includeInStatements ?? true,
+      creditLimit: Number(c.creditLimit ?? 0),
+      enforceCreditLimit: c.enforceCreditLimit ?? false,
     });
     if (c.accountId) setCustAccountId(String(c.accountId));
     setLocation_({
@@ -481,6 +494,74 @@ export default function CustomerNew() {
                         <FormMessage />
                       </FormItem>
                     )} />
+                  </div>
+
+                  {/* ── حدود الائتمان ── */}
+                  {/* Two fields:
+                      • creditLimit        — informational ceiling (numeric).
+                      • enforceCreditLimit — when on, server refuses any credit
+                        sales invoice that would push the customer's AR above
+                        the limit (returns 409 credit_limit_exceeded). */}
+                  <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <BadgeCheck className="h-4 w-4 text-amber-600" />
+                      <h3 className="text-sm font-semibold text-amber-900">الائتمان والمسموح به</h3>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <FormField control={form.control} name="creditLimit" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>الحد الائتماني للسحب (ر.س)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number" min={0} step="0.01" inputMode="decimal"
+                              placeholder="0.00" dir="ltr" className="text-left font-mono"
+                              {...field}
+                              value={field.value ?? 0}
+                              onChange={e => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            الحد الأقصى للمستحق على العميل. اتركه 0 للسماح بدون حد.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+
+                      <FormField control={form.control} name="enforceCreditLimit" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>منع التجاوز عند الوصول للحد</FormLabel>
+                          <FormControl>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={field.value}
+                              onClick={() => field.onChange(!field.value)}
+                              className={`flex items-center justify-between gap-3 w-full px-3 py-2.5 rounded-md border text-sm transition-all ${
+                                field.value
+                                  ? "bg-amber-100 border-amber-400 text-amber-900"
+                                  : "bg-white border-input text-muted-foreground hover:bg-muted/40"
+                              }`}
+                            >
+                              <span className="flex items-center gap-2">
+                                {field.value
+                                  ? <CheckCircle2 className="h-4 w-4 text-amber-600" />
+                                  : <Info className="h-4 w-4" />}
+                                <span className="font-medium">
+                                  {field.value ? "مفعَّل — سيتم رفض الفواتير الزائدة عن الحد" : "غير مفعَّل — الحد للعرض فقط"}
+                                </span>
+                              </span>
+                              <span className={`relative inline-block w-10 h-5 rounded-full transition ${field.value ? "bg-amber-500" : "bg-slate-300"}`}>
+                                <span className={`absolute top-0.5 ${field.value ? "right-0.5" : "right-5"} w-4 h-4 bg-white rounded-full shadow transition-all`} />
+                              </span>
+                            </button>
+                          </FormControl>
+                          <FormDescription>
+                            عند تفعيله، إنشاء فاتورة آجلة تجعل المستحق يتجاوز الحد سيُرفض من الخادم.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+                    </div>
                   </div>
 
                   <div className="flex justify-between pt-4 border-t">
