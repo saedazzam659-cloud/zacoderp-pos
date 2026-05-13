@@ -12,6 +12,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import {
+  accountsTable,
   bankAccountsTable,
   journalEntriesTable,
   journalEntryLinesTable,
@@ -362,43 +363,69 @@ router.get("/book-ledger", async (req, res) => {
   try {
     const cid = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
     if (!cid) { res.json({ opening: 0, transactions: [] }); return; }
-    const bankAccountId = Number(req.query.bankAccountId);
+    const bankAccountIdRaw = req.query.bankAccountId;
+    const accountIdRaw = req.query.accountId;
     const from = String(req.query.from ?? "");
     const to = String(req.query.to ?? "");
-    if (!Number.isFinite(bankAccountId) || !from || !to) {
-      res.status(400).json({ error: "bankAccountId, from, to مطلوبة" });
+    if ((!bankAccountIdRaw && !accountIdRaw) || !from || !to) {
+      res.status(400).json({ error: "bankAccountId أو accountId مع from, to مطلوبة" });
       return;
     }
 
-    // Resolve GL accountId + branch isolation. Mirror the visibility rules
-    // used by /api/bank-accounts: a row is visible when it is shared
-    // (`branchIds IS NULL AND branchId IS NULL`), when its `branchIds`
-    // overlaps the user's allowed branches, or — for legacy rows that
-    // never got migrated to the array — when its single `branchId` is
-    // in the allowed list.
-    const [bank] = await db
-      .select({
-        accountId: bankAccountsTable.accountId,
-        branchId: bankAccountsTable.branchId,
-        branchIds: bankAccountsTable.branchIds,
-        companyId: bankAccountsTable.companyId,
-      })
-      .from(bankAccountsTable)
-      .where(eq(bankAccountsTable.id, bankAccountId))
-      .limit(1);
-    if (!bank || bank.companyId !== cid || !bank.accountId) {
-      res.json({ opening: 0, transactions: [] });
-      return;
-    }
-    const allowed = getAllowedBranchIds(req);
-    if (allowed) {
-      const ownedBranchIds = bank.branchIds ?? (bank.branchId != null ? [bank.branchId] : null);
-      const isShared = ownedBranchIds == null;
-      const overlaps = ownedBranchIds != null && ownedBranchIds.some(b => allowed.includes(b));
-      if (!isShared && !overlaps) {
+    // Resolve the GL accountId from either source:
+    //   • bankAccountId → look up the bank-account row in the cash module
+    //     (with branch isolation, mirroring /api/bank-accounts visibility).
+    //   • accountId     → use a chart-of-accounts row directly. Useful when
+    //     the company tracks the bank only as a GL account and never
+    //     registered it in the cash & banks module.
+    let glAccountId: number | null = null;
+    if (bankAccountIdRaw) {
+      const bankAccountId = Number(bankAccountIdRaw);
+      if (!Number.isFinite(bankAccountId)) {
+        res.status(400).json({ error: "bankAccountId غير صالح" });
+        return;
+      }
+      const [bank] = await db
+        .select({
+          accountId: bankAccountsTable.accountId,
+          branchId: bankAccountsTable.branchId,
+          branchIds: bankAccountsTable.branchIds,
+          companyId: bankAccountsTable.companyId,
+        })
+        .from(bankAccountsTable)
+        .where(eq(bankAccountsTable.id, bankAccountId))
+        .limit(1);
+      if (!bank || bank.companyId !== cid || !bank.accountId) {
         res.json({ opening: 0, transactions: [] });
         return;
       }
+      const allowed = getAllowedBranchIds(req);
+      if (allowed) {
+        const ownedBranchIds = bank.branchIds ?? (bank.branchId != null ? [bank.branchId] : null);
+        const isShared = ownedBranchIds == null;
+        const overlaps = ownedBranchIds != null && ownedBranchIds.some(b => allowed.includes(b));
+        if (!isShared && !overlaps) {
+          res.json({ opening: 0, transactions: [] });
+          return;
+        }
+      }
+      glAccountId = bank.accountId;
+    } else {
+      const accountId = Number(accountIdRaw);
+      if (!Number.isFinite(accountId)) {
+        res.status(400).json({ error: "accountId غير صالح" });
+        return;
+      }
+      const [acc] = await db
+        .select({ id: accountsTable.id, companyId: accountsTable.companyId })
+        .from(accountsTable)
+        .where(eq(accountsTable.id, accountId))
+        .limit(1);
+      if (!acc || acc.companyId !== cid) {
+        res.json({ opening: 0, transactions: [] });
+        return;
+      }
+      glAccountId = acc.id;
     }
     // Branch scope on the JE side: when the user is restricted to a subset
     // of branches we must filter journal_entry_lines accordingly so that
@@ -416,7 +443,7 @@ router.get("/book-ledger", async (req, res) => {
       .from(journalEntryLinesTable)
       .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
       .where(and(
-        eq(journalEntryLinesTable.accountId, bank.accountId),
+        eq(journalEntryLinesTable.accountId, glAccountId),
         eq(journalEntriesTable.companyId, cid),
         eq(journalEntriesTable.status, "posted"),
         sql`${journalEntriesTable.entryDate} < ${from}`,
@@ -436,7 +463,7 @@ router.get("/book-ledger", async (req, res) => {
       .from(journalEntryLinesTable)
       .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
       .where(and(
-        eq(journalEntryLinesTable.accountId, bank.accountId),
+        eq(journalEntryLinesTable.accountId, glAccountId),
         eq(journalEntriesTable.companyId, cid),
         eq(journalEntriesTable.status, "posted"),
         gte(journalEntriesTable.entryDate, from),

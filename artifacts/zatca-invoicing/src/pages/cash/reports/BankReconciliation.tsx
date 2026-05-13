@@ -51,8 +51,9 @@ export default function BankReconciliation() {
   const today = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
 
-  const [filters, setFilters] = useState({ from: firstDay, to: today, bankAccountId: "" });
-  const [applied, setApplied] = useState({ from: firstDay, to: today, bankAccountId: "" });
+  const [sourceMode, setSourceMode] = useState<"bank" | "account">("bank");
+  const [filters, setFilters] = useState({ from: firstDay, to: today, bankAccountId: "", accountId: "" });
+  const [applied, setApplied] = useState({ from: firstDay, to: today, bankAccountId: "", accountId: "", sourceMode: "bank" as "bank" | "account" });
   const [bankTxns, setBankTxns] = useState<BankTx[]>([]);
   const [statementLabel, setStatementLabel] = useState<string>("");
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -69,7 +70,7 @@ export default function BankReconciliation() {
     stats?: { totalProposed: number; totalAccepted: number; bookMatched: number; bankMatched: number };
   } | null>(null);
 
-  // Bank accounts for the picker
+  // Bank accounts for the picker (cash & banks module)
   const { data: banks = [] } = useQuery<any[]>({
     queryKey: ["bank-accounts", cid],
     queryFn: async () => {
@@ -79,12 +80,32 @@ export default function BankReconciliation() {
   });
   const bank = (banks as any[]).find(b => String(b.id) === applied.bankAccountId);
 
+  // Chart-of-accounts entries for the alternative picker — restricted to
+  // asset accounts that are leaf (postable), since a bank ledger has to be
+  // a posting account.
+  const { data: chartAccounts = [] } = useQuery<any[]>({
+    queryKey: ["chart-accounts", cid],
+    queryFn: async () => {
+      const r = await fetch(cid ? `${API}/api/accounts?companyId=${cid}` : `${API}/api/accounts`, { headers: authHeaders() });
+      const all = await r.json();
+      return (Array.isArray(all) ? all : []).filter((a: any) =>
+        a.isActive !== false && a.isPosting !== false && (a.accountType === "asset" || !a.accountType)
+      );
+    },
+  });
+  const chartAcc = (chartAccounts as any[]).find(a => String(a.id) === applied.accountId);
+
+  const hasSelection = applied.sourceMode === "bank" ? !!applied.bankAccountId : !!applied.accountId;
+  const filterHasSelection = sourceMode === "bank" ? !!filters.bankAccountId : !!filters.accountId;
+
   // Book-side ledger (from posted GL journal entries)
   const { data: book, isLoading: loadingBook } = useQuery<BookSide>({
     queryKey: ["bank-recon-book", cid, applied],
-    enabled: !!applied.bankAccountId,
+    enabled: hasSelection,
     queryFn: async () => {
-      const sp = new URLSearchParams({ bankAccountId: applied.bankAccountId, from: applied.from, to: applied.to });
+      const sp = new URLSearchParams({ from: applied.from, to: applied.to });
+      if (applied.sourceMode === "bank") sp.set("bankAccountId", applied.bankAccountId);
+      else sp.set("accountId", applied.accountId);
       if (cid) sp.set("companyId", String(cid));
       const r = await fetch(`${API}/api/bank-reconciliation/book-ledger?${sp}`, { headers: authHeaders() });
       if (!r.ok) throw new Error(await r.text());
@@ -262,6 +283,22 @@ export default function BankReconciliation() {
   const unmatchedBankSum = unmatchedBank.reduce((s, t) => s + t.debit - t.credit, 0);
   const reconciledDifference = bookMovement - bankMovement; // 0 = perfect
 
+  // Professional bank-reconciliation statement: split unmatched items by
+  // direction (deposits vs withdrawals) so we can present the classic
+  // 4-quadrant adjusted-balance comparison.
+  const unBookDeposits   = unmatchedBook.reduce((s, t) => s + Number(t.debit  || 0), 0);
+  const unBookWithdrawals = unmatchedBook.reduce((s, t) => s + Number(t.credit || 0), 0);
+  const unBankDeposits   = unmatchedBank.reduce((s, t) => s + Number(t.debit  || 0), 0);
+  const unBankWithdrawals = unmatchedBank.reduce((s, t) => s + Number(t.credit || 0), 0);
+  // Bank closing per the statement: prefer the reported closing if the
+  // parser surfaced one, otherwise infer from net movement.
+  const bankClosing = bankReportedClosing != null ? bankReportedClosing : bankMovement;
+  // Adjusted balances — once both sides absorb each other's outstanding
+  // items they MUST be equal. Any residual is the true unexplained gap.
+  const adjustedBookBalance = bookClosing + unBankDeposits - unBankWithdrawals;
+  const adjustedBankBalance = bankClosing + unBookDeposits - unBookWithdrawals;
+  const trueDifference = adjustedBookBalance - adjustedBankBalance;
+
   const exportRows = [
     { side: "دفتري — افتتاحي", date: applied.from, ref: "", description: "الرصيد الافتتاحي", debit: bookOpening > 0 ? fmt(bookOpening) : "", credit: bookOpening < 0 ? fmt(-bookOpening) : "", status: "" },
     ...bookTxns.map(t => ({
@@ -306,9 +343,9 @@ export default function BankReconciliation() {
         <ExportButtons
           rows={exportRows}
           columns={COLS}
-          filename={`bank-reconciliation-${bank?.nameAr ?? ""}-${applied.from}-${applied.to}`}
+          filename={`bank-reconciliation-${bank?.nameAr ?? chartAcc?.nameAr ?? ""}-${applied.from}-${applied.to}`}
           title="تقرير مطابقة كشف البنك"
-          subtitle={bank ? `${bank.nameAr}  |  ${applied.from} → ${applied.to}` : ""}
+          subtitle={(bank || chartAcc) ? `${bank?.nameAr ?? chartAcc?.nameAr}  |  ${applied.from} → ${applied.to}` : ""}
         />
       </div>
 
@@ -318,15 +355,48 @@ export default function BankReconciliation() {
           <Filter className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold">المرشحات</h2>
         </div>
+        {/* Source mode toggle */}
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-muted-foreground">مصدر الحساب:</span>
+          <button
+            type="button"
+            onClick={() => setSourceMode("bank")}
+            className={`px-3 py-1.5 rounded-lg border transition ${sourceMode === "bank" ? "bg-primary text-primary-foreground border-primary" : "bg-card hover:bg-muted"}`}
+          >
+            النقد والبنوك
+          </button>
+          <button
+            type="button"
+            onClick={() => setSourceMode("account")}
+            className={`px-3 py-1.5 rounded-lg border transition ${sourceMode === "account" ? "bg-primary text-primary-foreground border-primary" : "bg-card hover:bg-muted"}`}
+          >
+            شجرة الحسابات
+          </button>
+          <span className="text-muted-foreground">
+            {sourceMode === "bank"
+              ? "— الحسابات المسجّلة في وحدة النقد والبنوك"
+              : "— أي حساب أصول من شجرة الحسابات (مفيد لو البنك مضاف مباشرة في الشجرة)"}
+          </span>
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="space-y-1.5">
-            <Label>الحساب البنكي <span className="text-red-500">*</span></Label>
-            <SearchCombobox
-              items={(banks as any[]).map(b => ({ value: String(b.id), label: b.nameAr, labelEn: b.nameEn }))}
-              value={filters.bankAccountId}
-              onValueChange={v => setFilters(p => ({ ...p, bankAccountId: v }))}
-              placeholder="اختر الحساب البنكي"
-            />
+            <Label>{sourceMode === "bank" ? "الحساب البنكي" : "حساب من شجرة الحسابات"} <span className="text-red-500">*</span></Label>
+            {sourceMode === "bank" ? (
+              <SearchCombobox
+                items={(banks as any[]).map(b => ({ value: String(b.id), label: b.nameAr, labelEn: b.nameEn }))}
+                value={filters.bankAccountId}
+                onValueChange={v => setFilters(p => ({ ...p, bankAccountId: v }))}
+                placeholder="اختر الحساب البنكي"
+              />
+            ) : (
+              <SearchCombobox
+                items={(chartAccounts as any[]).map(a => ({ value: String(a.id), label: `${a.code} — ${a.nameAr}`, labelEn: a.nameEn }))}
+                value={filters.accountId}
+                onValueChange={v => setFilters(p => ({ ...p, accountId: v }))}
+                placeholder="اختر الحساب من الشجرة"
+              />
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>من تاريخ</Label>
@@ -342,13 +412,13 @@ export default function BankReconciliation() {
           </div>
         </div>
         <div className="flex justify-end mt-4">
-          <Button size="sm" onClick={() => { setApplied({ ...filters }); resetMatches(); }} disabled={!filters.bankAccountId} className="gap-2">
+          <Button size="sm" onClick={() => { setApplied({ ...filters, sourceMode }); resetMatches(); }} disabled={!filterHasSelection} className="gap-2">
             <Search className="h-3.5 w-3.5" />جلب القيود الدفترية
           </Button>
         </div>
       </div>
 
-      {applied.bankAccountId && (
+      {hasSelection && (
         <>
           {/* Upload + actions */}
           <div className="rounded-xl border bg-card p-4 flex flex-wrap items-center gap-3">
@@ -417,6 +487,102 @@ export default function BankReconciliation() {
               <p className="text-[10px] text-muted-foreground mt-1">{moneyEq(reconciledDifference, 0) ? "متطابقان ✓" : "يوجد فرق — راجع غير المطابقة"}</p>
             </div>
           </div>
+
+          {/* Professional bank reconciliation statement */}
+          {bankTxns.length > 0 && (
+            <div className="rounded-xl border-2 border-slate-200 bg-white p-5 space-y-4">
+              <div className="flex items-center justify-between gap-2 border-b pb-3">
+                <div>
+                  <h3 className="text-base font-bold">مذكرة التسوية البنكية</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {bank?.nameAr ?? chartAcc?.nameAr ?? ""} • {applied.from} → {applied.to}
+                  </p>
+                </div>
+                <div className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${moneyEq(trueDifference, 0) ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-rose-50 text-rose-700 border-rose-200"}`}>
+                  {moneyEq(trueDifference, 0) ? "متوازنة ✓" : `فرق غير مفسَّر: ${fmt(trueDifference)}`}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Per Books (Chart of Accounts) */}
+                <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-4 space-y-2">
+                  <p className="text-xs font-bold text-blue-900 mb-2 pb-1 border-b border-blue-200">
+                    وفقاً للدفاتر (شجرة الحسابات)
+                  </p>
+                  <div className="flex items-center justify-between text-xs">
+                    <span>الرصيد الإقفالي حسب الدفاتر</span>
+                    <span className="tabular-nums font-bold">{fmt(bookClosing)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-emerald-700">
+                    <span className="flex items-center gap-1">+ إيداعات بالكشف لم تُسجَّل دفترياً
+                      {unmatchedBank.filter(t => t.debit > 0).length > 0 && <span className="text-[10px] text-muted-foreground">({unmatchedBank.filter(t => t.debit > 0).length} حركة)</span>}
+                    </span>
+                    <span className="tabular-nums">{fmt(unBankDeposits)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-rose-700">
+                    <span className="flex items-center gap-1">− مسحوبات بالكشف لم تُسجَّل دفترياً
+                      {unmatchedBank.filter(t => t.credit > 0).length > 0 && <span className="text-[10px] text-muted-foreground">({unmatchedBank.filter(t => t.credit > 0).length} حركة)</span>}
+                    </span>
+                    <span className="tabular-nums">{fmt(unBankWithdrawals)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm pt-2 border-t border-blue-200 font-bold">
+                    <span>الرصيد الدفتري المعدّل</span>
+                    <span className="tabular-nums text-blue-900">{fmt(adjustedBookBalance)}</span>
+                  </div>
+                </div>
+
+                {/* Per Bank Statement */}
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-4 space-y-2">
+                  <p className="text-xs font-bold text-emerald-900 mb-2 pb-1 border-b border-emerald-200">
+                    وفقاً لكشف البنك
+                  </p>
+                  <div className="flex items-center justify-between text-xs">
+                    <span>الرصيد الإقفالي حسب الكشف</span>
+                    <span className="tabular-nums font-bold">{fmt(bankClosing)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-emerald-700">
+                    <span className="flex items-center gap-1">+ إيداعات دفترية لم تظهر بالكشف
+                      {unmatchedBook.filter(t => t.debit > 0).length > 0 && <span className="text-[10px] text-muted-foreground">({unmatchedBook.filter(t => t.debit > 0).length} حركة)</span>}
+                    </span>
+                    <span className="tabular-nums">{fmt(unBookDeposits)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-rose-700">
+                    <span className="flex items-center gap-1">− شيكات/مسحوبات دفترية لم تظهر بالكشف
+                      {unmatchedBook.filter(t => t.credit > 0).length > 0 && <span className="text-[10px] text-muted-foreground">({unmatchedBook.filter(t => t.credit > 0).length} حركة)</span>}
+                    </span>
+                    <span className="tabular-nums">{fmt(unBookWithdrawals)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm pt-2 border-t border-emerald-200 font-bold">
+                    <span>الرصيد البنكي المعدّل</span>
+                    <span className="tabular-nums text-emerald-900">{fmt(adjustedBankBalance)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {!moneyEq(trueDifference, 0) && (
+                <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 text-xs text-rose-800 flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-bold mb-1">فرق غير مفسَّر بقيمة {fmt(trueDifference)}</p>
+                    <p>الرصيدان المعدّلان لا يتساويان — هذا الفرق لا يفسّره غير المطابق المعروض. أسباب محتملة:</p>
+                    <ul className="list-disc ms-5 mt-1 space-y-0.5">
+                      <li>رصيد افتتاحي مختلف بين الدفاتر والكشف</li>
+                      <li>قيود مكرّرة أو محذوفة في فترة سابقة</li>
+                      <li>عمولات/فوائد بنكية لم يَلتقطها مُحلِّل الكشف</li>
+                      <li>قيود مرحَّلة بعملة مختلفة وفروقات سعر صرف</li>
+                    </ul>
+                    <p className="mt-2">جرّب زر <strong>"مطابقة ذكية (AI)"</strong> لتحليل الفروقات تلقائياً.</p>
+                  </div>
+                </div>
+              )}
+              {moneyEq(trueDifference, 0) && (
+                <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800 flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  <span>الرصيدان المعدّلان متطابقان — كل الفروقات مُفسَّرة بحركات معلَّقة وستُسوَّى تلقائياً عند ظهورها في الجانب الآخر.</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Two-pane diff */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -570,7 +736,7 @@ export default function BankReconciliation() {
         </>
       )}
 
-      {!applied.bankAccountId && (
+      {!hasSelection && (
         <div className="rounded-xl border bg-card p-12 text-center text-muted-foreground">
           <GitCompareArrows className="h-10 w-10 mx-auto mb-3 opacity-30" />
           <p>اختر الحساب البنكي والفترة لبدء المطابقة</p>
