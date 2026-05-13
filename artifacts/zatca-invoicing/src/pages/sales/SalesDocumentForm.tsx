@@ -1167,12 +1167,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     <div className="pt-2 space-y-3">
               {(() => {
                 const gridCols = isInvoice
-                  ? "minmax(260px,1.4fr) 110px 160px 120px 90px 80px 110px 80px 80px 130px 180px 40px"
-                  : "minmax(280px,1.4fr) 110px 120px 90px 80px 110px 80px 80px 130px 200px 40px";
+                  ? "110px minmax(260px,1.4fr) 160px 120px 90px 80px 110px 80px 80px 130px 180px 40px"
+                  : "110px minmax(280px,1.4fr) 120px 90px 80px 110px 80px 80px 130px 200px 40px";
                 const totalLabel = t("salesDocForm.colTotal");
                 const headers = isInvoice
-                  ? [t("salesDocForm.colItem"), t("salesDocForm.colItemCode"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""]
-                  : [t("salesDocForm.colItem"), t("salesDocForm.colItemCode"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""];
+                  ? [t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""]
+                  : [t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""];
                 return (
               <div data-enter-nav-container="lines" className="rounded-xl border bg-card overflow-x-auto">
                 <div className="min-w-max">
@@ -1188,14 +1188,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       className="grid gap-2 items-center"
                       style={{ gridTemplateColumns: gridCols }}
                     >
+                      <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
+                        onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                       {inventoryItems.length > 0 ? (
-                        <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder={t("salesDocForm.itemPlaceholder")} />
+                        <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder="ابحث بالكود أو الاسم..." />
                       ) : (
                         <Input className="h-8 text-xs" placeholder={t("salesDocForm.itemNamePlaceholder")} value={l.itemName}
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                       )}
-                      <Input className="h-8 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
-                        onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                       {isInvoice && (
                         warehouses.length > 0 ? (
                           <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
