@@ -21,9 +21,14 @@ import {
   manufacturingSettingsTable,
   workCentersTable,
   costCentersTable,
+  productionRoutingsTable,
+  productionRoutingStagesTable,
+  productionOrderStagesTable,
   PRODUCTION_ORDER_STATUSES,
   PRODUCTION_STATUS_TRANSITIONS,
+  PRODUCTION_STAGE_STATUSES,
   type ProductionOrderStatus,
+  type ProductionStageStatus,
 } from "@workspace/db";
 import { and, asc, desc, eq, ilike, sql, or } from "drizzle-orm";
 import {
@@ -750,7 +755,66 @@ router.post("/orders", async (req, res) => {
       ).catch(() => {});
     }
 
-    res.status(201).json({ ...row, bomLoaded });
+    // ─── PHASE C: Auto-copy active production routing (stages) ─────
+    // قالب المراحل التشغيلي. ينُسخ بكامله إلى أمر الإنتاج. أول مرحلة
+    // تأخذ inputQty = plannedQty تلقائياً لتكون نقطة البداية البصرية.
+    let routingLoaded = 0;
+    try {
+      if (row.productItemId) {
+        const [routing] = await db
+          .select()
+          .from(productionRoutingsTable)
+          .where(
+            and(
+              eq(productionRoutingsTable.companyId, cid),
+              eq(productionRoutingsTable.productItemId, row.productItemId),
+              eq(productionRoutingsTable.isActive, true),
+            ),
+          )
+          .orderBy(desc(productionRoutingsTable.updatedAt))
+          .limit(1);
+        if (routing) {
+          const rs = await db
+            .select()
+            .from(productionRoutingStagesTable)
+            .where(eq(productionRoutingStagesTable.routingId, routing.id))
+            .orderBy(asc(productionRoutingStagesTable.sequence));
+          if (rs.length > 0) {
+            await db.insert(productionOrderStagesTable).values(
+              rs.map((s, idx) => ({
+                orderId: row.id,
+                sequence: s.sequence,
+                code: s.code,
+                nameAr: s.nameAr,
+                nameEn: s.nameEn,
+                workCenterId: s.workCenterId,
+                expectedWasteRatio: s.expectedWasteRatio,
+                expectedDurationMinutes: s.expectedDurationMinutes,
+                icon: s.icon,
+                color: s.color,
+                status: "pending" as const,
+                inputQty: idx === 0 ? String(num(row.plannedQty)) : "0",
+                outputQty: "0",
+                wasteQty: "0",
+                fromRoutingId: routing.id,
+              })),
+            );
+            routingLoaded = rs.length;
+            await writeEvent(
+              cid,
+              row.id,
+              "routing_loaded",
+              { routingId: routing.id, stages: rs.length },
+              req.authUser!.id,
+            );
+          }
+        }
+      }
+    } catch (rErr: any) {
+      req.log?.warn?.({ err: rErr, orderId: row.id }, "routing auto-copy failed");
+    }
+
+    res.status(201).json({ ...row, bomLoaded, routingLoaded });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -2355,6 +2419,824 @@ router.put("/bom-templates/:id/lines", async (req, res) => {
     res.json({ ok: true, count: inserts.length });
   } catch (e: any) {
     res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// PHASE C — Production Routings (قوالب مراحل الإنتاج)
+// ────────────────────────────────────────────────────────────────────────
+
+router.get("/routings", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const q = String(req.query.q ?? "").trim();
+    const where = q
+      ? and(
+          eq(productionRoutingsTable.companyId, cid),
+          or(
+            ilike(productionRoutingsTable.nameAr, `%${q}%`),
+            ilike(productionRoutingsTable.nameEn, `%${q}%`),
+          ),
+        )
+      : eq(productionRoutingsTable.companyId, cid);
+    const rows = await db
+      .select({
+        id: productionRoutingsTable.id,
+        productItemId: productionRoutingsTable.productItemId,
+        productNameAr: itemsTable.nameAr,
+        productNameEn: itemsTable.nameEn,
+        nameAr: productionRoutingsTable.nameAr,
+        nameEn: productionRoutingsTable.nameEn,
+        isActive: productionRoutingsTable.isActive,
+        notes: productionRoutingsTable.notes,
+        updatedAt: productionRoutingsTable.updatedAt,
+        stagesCount: sql<number>`(SELECT COUNT(*)::int FROM ${productionRoutingStagesTable} WHERE ${productionRoutingStagesTable.routingId} = ${productionRoutingsTable.id})`,
+      })
+      .from(productionRoutingsTable)
+      .leftJoin(itemsTable, eq(itemsTable.id, productionRoutingsTable.productItemId))
+      .where(where)
+      .orderBy(desc(productionRoutingsTable.updatedAt));
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/routings/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const [r] = await db
+      .select()
+      .from(productionRoutingsTable)
+      .where(
+        and(
+          eq(productionRoutingsTable.id, id),
+          eq(productionRoutingsTable.companyId, cid),
+        ),
+      );
+    if (!r) {
+      res.status(404).json({ error: "غير موجود" });
+      return;
+    }
+    const stages = await db
+      .select()
+      .from(productionRoutingStagesTable)
+      .where(eq(productionRoutingStagesTable.routingId, id))
+      .orderBy(asc(productionRoutingStagesTable.sequence));
+    res.json({ ...r, stages });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/routings", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const b = req.body ?? {};
+    if (!b.nameAr || typeof b.nameAr !== "string") {
+      res.status(400).json({ error: "اسم القالب مطلوب" });
+      return;
+    }
+    if (!b.productItemId) {
+      res.status(400).json({ error: "اختر المنتج النهائي" });
+      return;
+    }
+    await validateItem(cid, Number(b.productItemId));
+    if (Array.isArray(b.stages)) {
+      for (const s of b.stages) {
+        if (s.workCenterId) await loadWorkCenter(cid, Number(s.workCenterId));
+      }
+    }
+    const [r] = await db
+      .insert(productionRoutingsTable)
+      .values({
+        companyId: cid,
+        productItemId: Number(b.productItemId),
+        nameAr: b.nameAr.trim(),
+        nameEn: b.nameEn?.trim() || null,
+        isActive: b.isActive !== false,
+        notes: b.notes || null,
+      })
+      .returning();
+    if (Array.isArray(b.stages) && b.stages.length > 0) {
+      await db.insert(productionRoutingStagesTable).values(
+        b.stages.map((s: any, i: number) => ({
+          routingId: r.id,
+          sequence: Number(s.sequence ?? i + 1),
+          code: String(s.code ?? `S${i + 1}`).toUpperCase(),
+          nameAr: String(s.nameAr ?? `مرحلة ${i + 1}`),
+          nameEn: s.nameEn || null,
+          workCenterId: s.workCenterId ? Number(s.workCenterId) : null,
+          expectedWasteRatio: String(num(s.expectedWasteRatio)),
+          expectedDurationMinutes: s.expectedDurationMinutes
+            ? Number(s.expectedDurationMinutes)
+            : null,
+          icon: s.icon || null,
+          color: s.color || null,
+          notes: s.notes || null,
+        })),
+      );
+    }
+    res.status(201).json(r);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.patch("/routings/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const b = req.body ?? {};
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+    if (typeof b.nameAr === "string") updates.nameAr = b.nameAr.trim();
+    if ("nameEn" in b) updates.nameEn = b.nameEn?.trim() || null;
+    if ("notes" in b) updates.notes = b.notes || null;
+    if (typeof b.isActive === "boolean") updates.isActive = b.isActive;
+    if (b.productItemId) {
+      await validateItem(cid, Number(b.productItemId));
+      updates.productItemId = Number(b.productItemId);
+    }
+    const [r] = await db
+      .update(productionRoutingsTable)
+      .set(updates)
+      .where(
+        and(
+          eq(productionRoutingsTable.id, id),
+          eq(productionRoutingsTable.companyId, cid),
+        ),
+      )
+      .returning();
+    if (!r) {
+      res.status(404).json({ error: "غير موجود" });
+      return;
+    }
+    res.json(r);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put("/routings/:id/stages", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const [r] = await db
+      .select()
+      .from(productionRoutingsTable)
+      .where(
+        and(
+          eq(productionRoutingsTable.id, id),
+          eq(productionRoutingsTable.companyId, cid),
+        ),
+      );
+    if (!r) {
+      res.status(404).json({ error: "غير موجود" });
+      return;
+    }
+    const stages = Array.isArray(req.body?.stages) ? req.body.stages : [];
+    for (const s of stages) {
+      if (s.workCenterId) await loadWorkCenter(cid, Number(s.workCenterId));
+    }
+    await db
+      .delete(productionRoutingStagesTable)
+      .where(eq(productionRoutingStagesTable.routingId, id));
+    if (stages.length > 0) {
+      await db.insert(productionRoutingStagesTable).values(
+        stages.map((s: any, i: number) => ({
+          routingId: id,
+          sequence: Number(s.sequence ?? i + 1),
+          code: String(s.code ?? `S${i + 1}`).toUpperCase(),
+          nameAr: String(s.nameAr ?? `مرحلة ${i + 1}`),
+          nameEn: s.nameEn || null,
+          workCenterId: s.workCenterId ? Number(s.workCenterId) : null,
+          expectedWasteRatio: String(num(s.expectedWasteRatio)),
+          expectedDurationMinutes: s.expectedDurationMinutes
+            ? Number(s.expectedDurationMinutes)
+            : null,
+          icon: s.icon || null,
+          color: s.color || null,
+          notes: s.notes || null,
+        })),
+      );
+    }
+    await db
+      .update(productionRoutingsTable)
+      .set({ updatedAt: new Date() })
+      .where(eq(productionRoutingsTable.id, id));
+    res.json({ ok: true, stages: stages.length });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete("/routings/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const r = await db
+      .delete(productionRoutingsTable)
+      .where(
+        and(
+          eq(productionRoutingsTable.id, id),
+          eq(productionRoutingsTable.companyId, cid),
+        ),
+      )
+      .returning();
+    if (r.length === 0) {
+      res.status(404).json({ error: "غير موجود" });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// PHASE C — Order stages (تتبّع تنفيذ المراحل لكل أمر)
+// ────────────────────────────────────────────────────────────────────────
+
+async function loadOrderForStages(req: any, res: any) {
+  const cid = guard(req, res);
+  if (!cid) return null;
+  const id = Number(req.params.id);
+  const [order] = await db
+    .select()
+    .from(productionOrdersTable)
+    .where(
+      and(
+        eq(productionOrdersTable.id, id),
+        eq(productionOrdersTable.companyId, cid),
+      ),
+    );
+  if (!order) {
+    res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+    return null;
+  }
+  if (!rowInScope(req, order.branchId)) {
+    res.status(403).json({ error: "خارج نطاق الفرع" });
+    return null;
+  }
+  return { cid, order };
+}
+
+router.get("/orders/:id/stages", async (req, res) => {
+  try {
+    const ctx = await loadOrderForStages(req, res);
+    if (!ctx) return;
+    const stages = await db
+      .select()
+      .from(productionOrderStagesTable)
+      .where(eq(productionOrderStagesTable.orderId, ctx.order.id))
+      .orderBy(asc(productionOrderStagesTable.sequence));
+    res.json(stages);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/orders/:id/stages/seed", async (req, res) => {
+  try {
+    const ctx = await loadOrderForStages(req, res);
+    if (!ctx) return;
+    const { cid, order } = ctx;
+    const existing = await db
+      .select({ id: productionOrderStagesTable.id })
+      .from(productionOrderStagesTable)
+      .where(eq(productionOrderStagesTable.orderId, order.id))
+      .limit(1);
+    if (existing.length > 0 && !req.body?.replace) {
+      res.status(400).json({
+        error: "هذا الأمر له مراحل بالفعل. مرّر replace=true للاستبدال.",
+      });
+      return;
+    }
+    const routingId = req.body?.routingId
+      ? Number(req.body.routingId)
+      : order.productItemId
+        ? null
+        : null;
+    let routing: any = null;
+    if (routingId) {
+      [routing] = await db
+        .select()
+        .from(productionRoutingsTable)
+        .where(
+          and(
+            eq(productionRoutingsTable.id, routingId),
+            eq(productionRoutingsTable.companyId, cid),
+          ),
+        );
+    } else if (order.productItemId) {
+      [routing] = await db
+        .select()
+        .from(productionRoutingsTable)
+        .where(
+          and(
+            eq(productionRoutingsTable.companyId, cid),
+            eq(productionRoutingsTable.productItemId, order.productItemId),
+            eq(productionRoutingsTable.isActive, true),
+          ),
+        )
+        .orderBy(desc(productionRoutingsTable.updatedAt))
+        .limit(1);
+    }
+    if (!routing) {
+      res
+        .status(400)
+        .json({ error: "لا يوجد قالب مراحل نشط لهذا المنتج" });
+      return;
+    }
+    const rs = await db
+      .select()
+      .from(productionRoutingStagesTable)
+      .where(eq(productionRoutingStagesTable.routingId, routing.id))
+      .orderBy(asc(productionRoutingStagesTable.sequence));
+    if (rs.length === 0) {
+      res.status(400).json({ error: "القالب لا يحتوي على مراحل" });
+      return;
+    }
+    if (existing.length > 0) {
+      await db
+        .delete(productionOrderStagesTable)
+        .where(eq(productionOrderStagesTable.orderId, order.id));
+    }
+    await db.insert(productionOrderStagesTable).values(
+      rs.map((s, idx) => ({
+        orderId: order.id,
+        sequence: s.sequence,
+        code: s.code,
+        nameAr: s.nameAr,
+        nameEn: s.nameEn,
+        workCenterId: s.workCenterId,
+        expectedWasteRatio: s.expectedWasteRatio,
+        expectedDurationMinutes: s.expectedDurationMinutes,
+        icon: s.icon,
+        color: s.color,
+        status: "pending" as const,
+        inputQty: idx === 0 ? String(num(order.plannedQty)) : "0",
+        outputQty: "0",
+        wasteQty: "0",
+        fromRoutingId: routing.id,
+      })),
+    );
+    await writeEvent(
+      cid,
+      order.id,
+      "routing_loaded",
+      { routingId: routing.id, stages: rs.length, manual: true },
+      req.authUser!.id,
+    );
+    res.json({ ok: true, stages: rs.length, routingId: routing.id });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/orders/:id/stages/:stageId/start", async (req, res) => {
+  try {
+    const ctx = await loadOrderForStages(req, res);
+    if (!ctx) return;
+    const stageId = Number(req.params.stageId);
+    const [stage] = await db
+      .select()
+      .from(productionOrderStagesTable)
+      .where(
+        and(
+          eq(productionOrderStagesTable.id, stageId),
+          eq(productionOrderStagesTable.orderId, ctx.order.id),
+        ),
+      );
+    if (!stage) {
+      res.status(404).json({ error: "المرحلة غير موجودة" });
+      return;
+    }
+    if (stage.status === "done") {
+      res.status(400).json({ error: "المرحلة مكتملة بالفعل" });
+      return;
+    }
+    if (stage.status === "skipped") {
+      res.status(400).json({ error: "المرحلة متخطّاة — لا يمكن بدؤها" });
+      return;
+    }
+    // Enforce sequence: previous stage must be done or skipped
+    const prevStages = await db
+      .select({ id: productionOrderStagesTable.id, status: productionOrderStagesTable.status, sequence: productionOrderStagesTable.sequence })
+      .from(productionOrderStagesTable)
+      .where(eq(productionOrderStagesTable.orderId, ctx.order.id))
+      .orderBy(asc(productionOrderStagesTable.sequence));
+    const prev = prevStages.filter((s) => s.sequence < stage.sequence);
+    const blocking = prev.find((s) => s.status !== "done" && s.status !== "skipped");
+    if (blocking) {
+      res.status(400).json({ error: "أكمل المراحل السابقة أولاً" });
+      return;
+    }
+    const inputQty =
+      req.body?.inputQty !== undefined && req.body?.inputQty !== ""
+        ? String(num(req.body.inputQty))
+        : Number(stage.inputQty) > 0
+          ? stage.inputQty
+          : String(num(ctx.order.plannedQty));
+    const [updated] = await db
+      .update(productionOrderStagesTable)
+      .set({
+        status: "in_progress" as const,
+        startedAt: stage.startedAt ?? new Date(),
+        inputQty,
+        operatorUserId: req.body?.operatorUserId
+          ? Number(req.body.operatorUserId)
+          : (stage.operatorUserId ?? req.authUser!.id),
+      })
+      .where(eq(productionOrderStagesTable.id, stageId))
+      .returning();
+    await writeEvent(
+      ctx.cid,
+      ctx.order.id,
+      "stage_started",
+      { stageId, code: stage.code, inputQty },
+      req.authUser!.id,
+    );
+    res.json(updated);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/orders/:id/stages/:stageId/complete", async (req, res) => {
+  try {
+    const ctx = await loadOrderForStages(req, res);
+    if (!ctx) return;
+    const stageId = Number(req.params.stageId);
+    const b = req.body ?? {};
+    const [stage] = await db
+      .select()
+      .from(productionOrderStagesTable)
+      .where(
+        and(
+          eq(productionOrderStagesTable.id, stageId),
+          eq(productionOrderStagesTable.orderId, ctx.order.id),
+        ),
+      );
+    if (!stage) {
+      res.status(404).json({ error: "المرحلة غير موجودة" });
+      return;
+    }
+    if (stage.status === "done") {
+      res.status(400).json({ error: "المرحلة مكتملة بالفعل" });
+      return;
+    }
+    if (stage.status === "pending") {
+      res.status(400).json({ error: "ابدأ المرحلة أولاً قبل إكمالها" });
+      return;
+    }
+    const outputQty = num(b.outputQty);
+    const wasteQty = num(b.wasteQty);
+    if (outputQty < 0 || wasteQty < 0) {
+      res.status(400).json({ error: "الكميات يجب أن تكون موجبة" });
+      return;
+    }
+    const [updated] = await db
+      .update(productionOrderStagesTable)
+      .set({
+        status: "done" as const,
+        outputQty: String(outputQty),
+        wasteQty: String(wasteQty),
+        completedAt: new Date(),
+        startedAt: stage.startedAt ?? new Date(),
+        notes: b.notes ?? stage.notes,
+        operatorUserId: b.operatorUserId
+          ? Number(b.operatorUserId)
+          : (stage.operatorUserId ?? req.authUser!.id),
+      })
+      .where(eq(productionOrderStagesTable.id, stageId))
+      .returning();
+
+    // تمرير الكمية للمرحلة التالية تلقائياً (إلا إذا حُدّدت يدوياً)
+    const allStages = await db
+      .select()
+      .from(productionOrderStagesTable)
+      .where(eq(productionOrderStagesTable.orderId, ctx.order.id))
+      .orderBy(asc(productionOrderStagesTable.sequence));
+    const idx = allStages.findIndex((s) => s.id === stageId);
+    const next = idx >= 0 ? allStages[idx + 1] : undefined;
+    if (next && next.status === "pending" && Number(next.inputQty) === 0) {
+      await db
+        .update(productionOrderStagesTable)
+        .set({ inputQty: String(outputQty) })
+        .where(eq(productionOrderStagesTable.id, next.id));
+    }
+
+    await writeEvent(
+      ctx.cid,
+      ctx.order.id,
+      "stage_completed",
+      { stageId, code: stage.code, outputQty, wasteQty },
+      req.authUser!.id,
+    );
+    res.json(updated);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.patch("/orders/:id/stages/:stageId", async (req, res) => {
+  try {
+    const ctx = await loadOrderForStages(req, res);
+    if (!ctx) return;
+    const stageId = Number(req.params.stageId);
+    const b = req.body ?? {};
+    const updates: Record<string, unknown> = {};
+    if ("inputQty" in b) updates.inputQty = String(num(b.inputQty));
+    if ("outputQty" in b) updates.outputQty = String(num(b.outputQty));
+    if ("wasteQty" in b) updates.wasteQty = String(num(b.wasteQty));
+    if ("notes" in b) updates.notes = b.notes || null;
+    if ("operatorUserId" in b)
+      updates.operatorUserId = b.operatorUserId
+        ? Number(b.operatorUserId)
+        : null;
+    if (
+      typeof b.status === "string" &&
+      (PRODUCTION_STAGE_STATUSES as readonly string[]).includes(b.status)
+    ) {
+      updates.status = b.status;
+      if (b.status === "in_progress") updates.startedAt = new Date();
+      if (b.status === "done") updates.completedAt = new Date();
+      if (b.status === "pending") {
+        updates.startedAt = null;
+        updates.completedAt = null;
+      }
+    }
+    if (Object.keys(updates).length === 0) {
+      res.status(400).json({ error: "لا يوجد تحديث" });
+      return;
+    }
+    const [updated] = await db
+      .update(productionOrderStagesTable)
+      .set(updates)
+      .where(
+        and(
+          eq(productionOrderStagesTable.id, stageId),
+          eq(productionOrderStagesTable.orderId, ctx.order.id),
+        ),
+      )
+      .returning();
+    if (!updated) {
+      res.status(404).json({ error: "المرحلة غير موجودة" });
+      return;
+    }
+    res.json(updated);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// PHASE C — Visual board (لوحة خط الإنتاج البصرية)
+// ────────────────────────────────────────────────────────────────────────
+router.get("/board", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const branchScope = branchScopeFilter(req, productionOrdersTable.branchId);
+    const orders = await db
+      .select({
+        id: productionOrdersTable.id,
+        orderNumber: productionOrdersTable.orderNumber,
+        title: productionOrdersTable.title,
+        status: productionOrdersTable.status,
+        plannedQty: productionOrdersTable.plannedQty,
+        producedQty: productionOrdersTable.producedQty,
+        wasteQty: productionOrdersTable.wasteQty,
+        productItemId: productionOrdersTable.productItemId,
+        productNameAr: itemsTable.nameAr,
+        productNameEn: itemsTable.nameEn,
+        plannedStartDate: productionOrdersTable.plannedStartDate,
+        plannedEndDate: productionOrdersTable.plannedEndDate,
+      })
+      .from(productionOrdersTable)
+      .leftJoin(itemsTable, eq(itemsTable.id, productionOrdersTable.productItemId))
+      .where(
+        and(
+          eq(productionOrdersTable.companyId, cid),
+          sql`${productionOrdersTable.status} NOT IN ('completed','cancelled')`,
+          ...(branchScope ? [branchScope] : []),
+        ),
+      )
+      .orderBy(desc(productionOrdersTable.id))
+      .limit(200);
+    if (orders.length === 0) {
+      res.json({ orders: [], stages: {} });
+      return;
+    }
+    const ids = orders.map((o) => o.id);
+    const stages = await db
+      .select()
+      .from(productionOrderStagesTable)
+      .where(sql`${productionOrderStagesTable.orderId} IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`)
+      .orderBy(asc(productionOrderStagesTable.sequence));
+    const grouped: Record<number, typeof stages> = {};
+    for (const s of stages) {
+      (grouped[s.orderId] ??= [] as any).push(s);
+    }
+    res.json({ orders, stages: grouped });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// PHASE C — Seed example: المعمول (دورة كاملة 6 مراحل)
+// ────────────────────────────────────────────────────────────────────────
+router.post("/seed-maamoul-example", async (req, res) => {
+  try {
+    if (req.authUser?.role !== "superadmin") {
+      res.status(403).json({ error: "هذا المسار للمشرف العام فقط (مثال توضيحي)" });
+      return;
+    }
+    const cid = guard(req, res);
+    if (!cid) return;
+
+    // 1) صنف "معمول" — أنشئ إن لم يوجد
+    let [maamoul] = await db
+      .select()
+      .from(itemsTable)
+      .where(
+        and(
+          eq(itemsTable.companyId, cid),
+          eq(itemsTable.code, "MAAMOUL-DEMO"),
+        ),
+      )
+      .limit(1);
+    if (!maamoul) {
+      const inserted = await db
+        .insert(itemsTable)
+        .values({
+          companyId: cid,
+          code: "MAAMOUL-DEMO",
+          nameAr: "معمول (مثال خط الإنتاج)",
+          nameEn: "Maamoul (Production Demo)",
+          unitCode: "KG",
+          itemType: "stock" as const,
+          isActive: true,
+        } as any)
+        .returning();
+      maamoul = inserted[0];
+    }
+
+    // 2) قالب Routing — أنشئ أو حدّث
+    const stagesSpec = [
+      { code: "MIX",     nameAr: "العجن",           nameEn: "Dough Mixing",    color: "#f59e0b", icon: "🥣", waste: "0.005", mins: 30 },
+      { code: "FREEZE",  nameAr: "التجميد",          nameEn: "Freezing",        color: "#0ea5e9", icon: "❄️", waste: "0.001", mins: 240 },
+      { code: "THAW",    nameAr: "فك التجميد + ماكينة المعمول", nameEn: "Thaw & Maamoul Machine", color: "#8b5cf6", icon: "⚙️", waste: "0.010", mins: 60 },
+      { code: "SHAPE",   nameAr: "التصبيع",          nameEn: "Shaping",         color: "#ec4899", icon: "🤲", waste: "0.015", mins: 90 },
+      { code: "OVEN",    nameAr: "الفرن",            nameEn: "Baking",          color: "#ef4444", icon: "🔥", waste: "0.020", mins: 45 },
+      { code: "PACK",    nameAr: "الفرز والتعبئة",   nameEn: "Sorting & Packing", color: "#10b981", icon: "📦", waste: "0.005", mins: 60 },
+    ];
+
+    let [routing] = await db
+      .select()
+      .from(productionRoutingsTable)
+      .where(
+        and(
+          eq(productionRoutingsTable.companyId, cid),
+          eq(productionRoutingsTable.productItemId, maamoul.id),
+        ),
+      )
+      .limit(1);
+    if (!routing) {
+      const inserted = await db
+        .insert(productionRoutingsTable)
+        .values({
+          companyId: cid,
+          productItemId: maamoul.id,
+          nameAr: "خط إنتاج المعمول الكامل",
+          nameEn: "Full Maamoul Production Line",
+          isActive: true,
+          notes: "مثال توضيحي تلقائي — 6 مراحل من العجن إلى التعبئة.",
+        })
+        .returning();
+      routing = inserted[0];
+    } else {
+      await db
+        .update(productionRoutingsTable)
+        .set({ isActive: true, updatedAt: new Date() })
+        .where(eq(productionRoutingsTable.id, routing.id));
+    }
+
+    // استبدال المراحل (idempotent)
+    await db
+      .delete(productionRoutingStagesTable)
+      .where(eq(productionRoutingStagesTable.routingId, routing.id));
+    await db.insert(productionRoutingStagesTable).values(
+      stagesSpec.map((s, i) => ({
+        routingId: routing!.id,
+        sequence: i + 1,
+        code: s.code,
+        nameAr: s.nameAr,
+        nameEn: s.nameEn,
+        workCenterId: null,
+        expectedWasteRatio: s.waste,
+        expectedDurationMinutes: s.mins,
+        icon: s.icon,
+        color: s.color,
+        notes: null,
+      })),
+    );
+
+    // 3) أنشئ أمر إنتاج تجريبي (100 كجم) وسطورُه التشغيلية
+    const seq = await nextSequenceNumber(cid, "production_order").catch(
+      () => null,
+    );
+    const orderNumber = seq ?? `PRD-DEMO-${Date.now().toString(36)}`;
+    const [order] = await db
+      .insert(productionOrdersTable)
+      .values({
+        companyId: cid,
+        branchId: null,
+        orderNumber,
+        title: "أمر إنتاج تجريبي — معمول 100 كجم",
+        status: "in_production" as const,
+        plannedQty: "100",
+        producedQty: "0",
+        wasteQty: "0",
+        productItemId: maamoul.id,
+        unitCode: "KG",
+        plannedStartDate: new Date().toISOString().slice(0, 10),
+        notes: "مثال تلقائي يوضح كامل دورة المراحل لخط معمول.",
+        meta: { isDemo: true, scenario: "maamoul-line" },
+        createdBy: req.authUser!.id,
+      } as any)
+      .returning();
+
+    await db.insert(productionOrderStagesTable).values(
+      stagesSpec.map((s, i) => ({
+        orderId: order.id,
+        sequence: i + 1,
+        code: s.code,
+        nameAr: s.nameAr,
+        nameEn: s.nameEn,
+        workCenterId: null,
+        expectedWasteRatio: s.waste,
+        expectedDurationMinutes: s.mins,
+        icon: s.icon,
+        color: s.color,
+        // 3 مراحل أولى مكتملة، الرابعة جارية، الباقي pending
+        status:
+          i < 3
+            ? ("done" as const)
+            : i === 3
+              ? ("in_progress" as const)
+              : ("pending" as const),
+        inputQty:
+          i === 0
+            ? "100.000"
+            : i === 1
+              ? "99.500"
+              : i === 2
+                ? "99.400"
+                : i === 3
+                  ? "98.400"
+                  : "0",
+        outputQty:
+          i === 0 ? "99.500" : i === 1 ? "99.400" : i === 2 ? "98.400" : "0",
+        wasteQty:
+          i === 0 ? "0.500" : i === 1 ? "0.100" : i === 2 ? "1.000" : "0",
+        startedAt:
+          i <= 3
+            ? new Date(Date.now() - (4 - i) * 60 * 60 * 1000)
+            : null,
+        completedAt:
+          i < 3 ? new Date(Date.now() - (3 - i) * 60 * 60 * 1000) : null,
+        operatorUserId: req.authUser!.id,
+        fromRoutingId: routing!.id,
+      })),
+    );
+
+    await writeEvent(
+      cid,
+      order.id,
+      "demo_seeded",
+      { routingId: routing.id, productId: maamoul.id, orderNumber },
+      req.authUser!.id,
+    );
+
+    res.json({
+      ok: true,
+      product: { id: maamoul.id, nameAr: maamoul.nameAr },
+      routing: { id: routing.id, nameAr: routing.nameAr },
+      order: { id: order.id, orderNumber: order.orderNumber },
+      stagesCount: stagesSpec.length,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
   }
 });
 

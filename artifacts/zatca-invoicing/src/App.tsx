@@ -104,6 +104,8 @@ import ManufacturingSettings from "@/pages/production/ManufacturingSettings";
 import BomTemplates from "@/pages/production/BomTemplates";
 import BomTemplateEditor from "@/pages/production/BomTemplateEditor";
 import WorkCenters from "@/pages/production/WorkCenters";
+import ProductionRoutings from "@/pages/production/ProductionRoutings";
+import ProductionBoard from "@/pages/production/ProductionBoard";
 import ContractingDashboard from "@/pages/ContractingDashboard";
 import ContractingProjects from "@/pages/ContractingProjects";
 import ContractingProjectDetail from "@/pages/ContractingProjectDetail";
@@ -601,6 +603,8 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/production/bom-templates"     module="production"     component={BomTemplates} />}
             {!isSuperAdmin && <PermRoute path="/production/bom-templates/:id" module="production"     component={BomTemplateEditor} />}
             {!isSuperAdmin && <PermRoute path="/production/work-centers"     module="production"     component={WorkCenters} />}
+            {!isSuperAdmin && <PermRoute path="/production/routings"          module="production"     component={ProductionRoutings} />}
+            {!isSuperAdmin && <PermRoute path="/production/board"             module="production"     component={ProductionBoard} />}
             {!isSuperAdmin && <PermRoute path="/production/settings"          module="production"     component={ManufacturingSettings} />}
 
             {/* Contracting / Construction ERP — gated by `contracting` permission. */}

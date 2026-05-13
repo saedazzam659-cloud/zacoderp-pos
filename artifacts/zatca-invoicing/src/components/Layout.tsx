@@ -15,6 +15,7 @@ import {
   ScrollText, Database, ListOrdered, HardDrive, Trash2, BadgePercent,
   Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat, Boxes, Megaphone,
   Server, Camera, Monitor,
+  GitBranch,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -188,9 +189,11 @@ const HR_GROUP_PERMS = [
 // always see it; tenant users need permissions.production.view = true.
 const productionSubNav: NavDef[] = [
   { nameKey: "nav.productionDashboard", href: "/production",           icon: BarChart3, permKey: "production", exact: true },
+  { nameKey: "nav.productionBoard",     href: "/production/board",     icon: Activity, permKey: "production" },
   { nameKey: "nav.productionOrders",    href: "/production/orders",    icon: ClipboardList, permKey: "production" },
   { nameKey: "nav.productionResources", href: "/production/resources", icon: Cog, permKey: "production" },
   { nameKey: "nav.bomTemplates",        href: "/production/bom-templates", icon: ListTree, permKey: "production" },
+  { nameKey: "nav.productionRoutings",  href: "/production/routings",  icon: GitBranch, permKey: "production" },
   { nameKey: "nav.workCenters",         href: "/production/work-centers", icon: Factory, permKey: "production" },
   { nameKey: "nav.manufacturingSettings", href: "/production/settings", icon: Settings2, permKey: "production" },
 ];

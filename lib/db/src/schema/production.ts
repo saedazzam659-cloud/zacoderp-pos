@@ -433,6 +433,143 @@ export type BomTemplateLine = typeof bomTemplateLinesTable.$inferSelect;
 export type ManufacturingSettings =
   typeof manufacturingSettingsTable.$inferSelect;
 
+// ─── PHASE C — Production Routings (مراحل الإنتاج / Routing) ──────────────
+// قالب مراحل قياسي لكل منتج: عجن → تجميد → فك تجميد → ماكينة → تصبيع →
+// فرن → فرز/تعبئة، أو أي تسلسل آخر يناسب المنتج. عند إنشاء أمر إنتاج
+// لمنتج له Routing نشط، تُنسخ مراحله تلقائياً إلى أمر الإنتاج (مثل BOM).
+//
+// التتبّع التشغيلي على مستوى المرحلة: كمية داخلة/خارجة/هالك + مشغل
+// + ختم وقت بداية/نهاية. القيود المحاسبية تبقى على مستوى الأمر (إصدار
+// خامات في البداية + قيد إنتاج تام عند الانتهاء)، تماماً كما في
+// SAP S/4HANA و Odoo Manufacturing — Routing تشغيلي، WIP محاسبي.
+export const productionRoutingsTable = pgTable(
+  "production_routings",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    productItemId: integer("product_item_id").references(() => itemsTable.id, {
+      onDelete: "set null",
+    }),
+    nameAr: text("name_ar").notNull(),
+    nameEn: text("name_en"),
+    isActive: boolean("is_active").notNull().default(true),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byCompanyProduct: index("prod_routings_company_product_idx").on(
+      t.companyId,
+      t.productItemId,
+    ),
+  }),
+);
+
+export const productionRoutingStagesTable = pgTable(
+  "production_routing_stages",
+  {
+    id: serial("id").primaryKey(),
+    routingId: integer("routing_id")
+      .notNull()
+      .references(() => productionRoutingsTable.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    code: text("code").notNull(),
+    nameAr: text("name_ar").notNull(),
+    nameEn: text("name_en"),
+    workCenterId: integer("work_center_id").references(
+      () => workCentersTable.id,
+      { onDelete: "set null" },
+    ),
+    expectedWasteRatio: numeric("expected_waste_ratio", {
+      precision: 6,
+      scale: 4,
+    })
+      .notNull()
+      .default("0"),
+    expectedDurationMinutes: integer("expected_duration_minutes"),
+    icon: text("icon"),
+    color: text("color"),
+    notes: text("notes"),
+  },
+  (t) => ({
+    byRouting: index("prod_routing_stages_routing_idx").on(t.routingId),
+  }),
+);
+
+export const productionOrderStagesTable = pgTable(
+  "production_order_stages",
+  {
+    id: serial("id").primaryKey(),
+    orderId: integer("order_id")
+      .notNull()
+      .references(() => productionOrdersTable.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    code: text("code").notNull(),
+    nameAr: text("name_ar").notNull(),
+    nameEn: text("name_en"),
+    workCenterId: integer("work_center_id").references(
+      () => workCentersTable.id,
+      { onDelete: "set null" },
+    ),
+    expectedWasteRatio: numeric("expected_waste_ratio", {
+      precision: 6,
+      scale: 4,
+    })
+      .notNull()
+      .default("0"),
+    expectedDurationMinutes: integer("expected_duration_minutes"),
+    icon: text("icon"),
+    color: text("color"),
+    // pending → in_progress → done (or skipped). Stages can be re-opened
+    // by setting status back to in_progress.
+    status: text("status").notNull().default("pending"),
+    inputQty: numeric("input_qty", { precision: 14, scale: 4 })
+      .notNull()
+      .default("0"),
+    outputQty: numeric("output_qty", { precision: 14, scale: 4 })
+      .notNull()
+      .default("0"),
+    wasteQty: numeric("waste_qty", { precision: 14, scale: 4 })
+      .notNull()
+      .default("0"),
+    operatorUserId: integer("operator_user_id").references(
+      () => usersTable.id,
+      { onDelete: "set null" },
+    ),
+    startedAt: timestamp("started_at"),
+    completedAt: timestamp("completed_at"),
+    notes: text("notes"),
+    fromRoutingId: integer("from_routing_id").references(
+      () => productionRoutingsTable.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byOrder: index("prod_order_stages_order_idx").on(t.orderId),
+    byOrderSeq: uniqueIndex("prod_order_stages_order_seq_uniq").on(
+      t.orderId,
+      t.sequence,
+    ),
+  }),
+);
+
+export type ProductionRouting = typeof productionRoutingsTable.$inferSelect;
+export type ProductionRoutingStage =
+  typeof productionRoutingStagesTable.$inferSelect;
+export type ProductionOrderStage =
+  typeof productionOrderStagesTable.$inferSelect;
+
+export const PRODUCTION_STAGE_STATUSES = [
+  "pending",
+  "in_progress",
+  "done",
+  "skipped",
+] as const;
+export type ProductionStageStatus = (typeof PRODUCTION_STAGE_STATUSES)[number];
+
 // Allowed status transitions for production orders. Used by both backend
 // validation and frontend status-button rendering. Keep this in sync with
 // the workflow described in the manufacturing module spec.
