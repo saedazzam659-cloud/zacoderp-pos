@@ -50,6 +50,7 @@ import {
 } from "@workspace/db";
 import { resolvePostingStatus } from "./postingStatus.js";
 import { loadMappings } from "./accountingMappings.js";
+import { assertWritableForDate } from "./periodGuard.js";
 
 type DbOrTx = typeof db;
 
@@ -116,6 +117,8 @@ export async function buildOutgoingBillJournal(
     throw new Error("حساب ضريبة المخرجات (vat_output) للمستخلصات غير مربوط في الربط المحاسبي");
   }
 
+  const outW = await assertWritableForDate(cid, b.billDate);
+  if (!outW.ok) throw new Error(outW.reason);
   const desc = `مستخلص مالك معتمد رقم ${b.billNumber} — مشروع #${b.projectId}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
@@ -203,6 +206,8 @@ export async function buildIncomingBillJournal(
     throw new Error("حساب ضريبة المدخلات (vat_input) لمستخلصات الباطن غير مربوط في الربط المحاسبي");
   }
 
+  const inW = await assertWritableForDate(cid, b.billDate);
+  if (!inW.ok) throw new Error(inW.reason);
   const desc = `مستخلص باطن معتمد رقم ${b.billNumber} — مشروع #${b.projectId}`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,

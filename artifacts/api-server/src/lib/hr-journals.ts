@@ -13,6 +13,7 @@ import {
 } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { resolvePostingStatus } from "./postingStatus.js";
+import { assertWritableForDate } from "./periodGuard.js";
 
 type DbOrTx = typeof db;
 
@@ -173,11 +174,14 @@ export async function buildPayrollJournal(cid: number, runId: number, dx: DbOrTx
   const period = `${String(run.month).padStart(2, "0")}/${run.year}`;
   const desc = `قيد مسير الرواتب ${run.code} عن الفترة ${period}`;
 
+  const payrollDate = run.payDate || run.periodEnd;
+  const prW = await assertWritableForDate(cid, payrollDate);
+  if (!prW.ok) throw new Error(prW.reason);
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: run.branchId ?? null,
     docNumber: run.code,
-    entryDate: run.payDate || run.periodEnd,
+    entryDate: payrollDate,
     currency: "SAR",
     exchangeRate: "1",
     description: desc,
@@ -232,6 +236,8 @@ export async function buildLoanDisbursementJournal(
   const cash = await resolveCashAccount(cid, source, dx);
   const desc = `صرف ${loan.loanType === "advance" ? "عُهدة" : "سلفة"} للموظف ${emp?.nameAr ?? ""}`.trim();
 
+  const loanW = await assertWritableForDate(cid, loan.loanDate);
+  if (!loanW.ok) throw new Error(loanW.reason);
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: emp?.branchId ?? null,
@@ -277,6 +283,8 @@ export async function buildEosPaymentJournal(
   const cash = await resolveCashAccount(cid, source, dx);
   const desc = opts.description || `صرف مكافأة نهاية الخدمة للموظف ${emp.nameAr}`;
 
+  const eosW = await assertWritableForDate(cid, payDate);
+  if (!eosW.ok) throw new Error(eosW.reason);
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: emp.branchId ?? null,

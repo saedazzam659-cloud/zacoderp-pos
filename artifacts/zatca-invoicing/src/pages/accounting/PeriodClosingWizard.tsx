@@ -195,6 +195,32 @@ export function PeriodClosingWizard({ period, onClose, onPeriodUpdated }: Props)
     onError: (e: any) => toast({ title: "تعذر الإقفال النهائي", description: e.message, variant: "destructive" }),
   });
 
+  // Combo: run all 4 steps in order — each idempotent on the server side.
+  const runAllMut = useMutation({
+    mutationFn: async () => {
+      const post = async (path: string, body: any, fallback: string) => {
+        const r = await fetch(`${API}/api/fiscal/periods/${period.id}/${path}`, {
+          method: "POST", headers, body: JSON.stringify(body),
+        });
+        return safeJson(r, fallback);
+      };
+      const a = await post("close-pl",         { plSummaryAccountId: Number(plAccountId) },                                            "تعذر إقفال الإيرادات/المصروفات");
+      const b = await post("transfer-profit",  { plSummaryAccountId: Number(plAccountId), retainedEarningsAccountId: Number(retainedId) }, "تعذر ترحيل الأرباح");
+      await post("soft-close", { force: forceSoftClose || true }, "تعذر الإقفال الناعم");
+      await post("hard-close", {},                                "تعذر الإقفال النهائي");
+      return { netIncome: a?.netIncome ?? 0, transferred: b?.amount ?? 0 };
+    },
+    onSuccess: (d: any) => {
+      toast({
+        title: "تمّت دورة الإقفال بالكامل",
+        description: `صافي الفترة: ${(d?.netIncome ?? 0).toFixed(2)} — تم ترحيل ${(d?.transferred ?? 0).toFixed(2)} للأرباح المحتجزة، ثم الإقفال النهائي`,
+      });
+      qc.invalidateQueries({ queryKey: ["fiscal-periods"] });
+      onPeriodUpdated();
+    },
+    onError: (e: any) => toast({ title: "توقفت دورة الإقفال", description: e.message, variant: "destructive" }),
+  });
+
   const v = validateQ.data;
   const ai = aiMut.data;
   const isOpen = period.status === "open";
@@ -460,6 +486,37 @@ export function PeriodClosingWizard({ period, onClose, onPeriodUpdated }: Props)
                 <p className="text-[10px] text-muted-foreground">
                   ✦ الخطوات قابلة للإعادة (idempotent على المحاسب). أنشئ القيود ثم راجعها في «القيود المحاسبية».
                 </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* 3.5 One-click full closing cycle */}
+          {isOpen && (
+            <Card className="border-violet-300 bg-gradient-to-bl from-violet-50 to-fuchsia-50">
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="h-7 w-7 rounded-full bg-violet-600 text-white flex items-center justify-center text-xs font-bold">
+                    <Sparkles className="h-3.5 w-3.5" />
+                  </div>
+                  <h3 className="font-semibold text-sm text-violet-900">تنفيذ دورة الإقفال كاملةً (موصى به)</h3>
+                </div>
+                <p className="text-xs text-violet-900/80 leading-relaxed">
+                  زر واحد يُنشئ قيد إقفال الإيرادات/المصروفات، ثم قيد ترحيل الصافي للأرباح المحتجزة، ثم يُقفل الفترة ناعماً ثم نهائياً —
+                  بنفس الترتيب المحاسبي الصحيح. تأكّد من اختيار الحسابين أعلاه أولاً.
+                </p>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    if (!confirm("سيتم تنفيذ دورة الإقفال الكاملة (قيد إقفال + قيد ترحيل + إقفال ناعم + إقفال نهائي). الإقفال النهائي لا يمكن التراجع عنه. متابعة؟")) return;
+                    runAllMut.mutate();
+                  }}
+                  disabled={!plAccountId || !retainedId || plAccountId === retainedId || runAllMut.isPending}
+                  className="gap-2 bg-gradient-to-l from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white w-full"
+                >
+                  {runAllMut.isPending
+                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> جاري التنفيذ — قد يستغرق ثوانٍ…</>
+                    : <><Sparkles className="h-3.5 w-3.5" /> تنفيذ كامل دورة الإقفال (4 خطوات)</>}
+                </Button>
               </CardContent>
             </Card>
           )}

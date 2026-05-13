@@ -40,6 +40,7 @@ import {
 } from "@workspace/db";
 import { resolvePostingStatus } from "./postingStatus.js";
 import { resolveCashAccount } from "./hr-journals.js";
+import { assertWritableForDate } from "./periodGuard.js";
 
 type DbOrTx = typeof db;
 
@@ -154,12 +155,15 @@ export async function buildAcquisitionJournal(
     crLabel     = "حساب وسيط اقتناء أصول ثابتة";
   }
 
+  const acqDate = a.purchaseDate || new Date().toISOString().slice(0, 10);
+  const acqW = await assertWritableForDate(cid, acqDate);
+  if (!acqW.ok) throw new Error(acqW.reason);
   const desc = `اقتناء أصل ثابت: ${a.nameAr} (${a.code})`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: a.branchId ?? null,
     docNumber: a.code,
-    entryDate: a.purchaseDate || new Date().toISOString().slice(0, 10),
+    entryDate: acqDate,
     currency: "SAR",
     exchangeRate: "1",
     description: desc,
@@ -213,6 +217,8 @@ export async function buildDepreciationRunJournal(
   const lastDay = new Date(run.periodYear, run.periodMonth, 0).getDate();
   const entryDate = `${run.periodYear}-${String(run.periodMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
+  const depW = await assertWritableForDate(cid, entryDate);
+  if (!depW.ok) throw new Error(depW.reason);
   const desc = `إهلاك شهري ${period} — ${a.nameAr} (${a.code})`;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
@@ -298,6 +304,8 @@ export async function buildDisposalJournal(
                    : d.type === "full_depreciation" ? "إهلاك كامل" : "شطب";
   const desc = `استبعاد أصل ثابت (${typeLabel}): ${a.nameAr} (${a.code})`;
 
+  const dispW = await assertWritableForDate(cid, d.disposalDate);
+  if (!dispW.ok) throw new Error(dispW.reason);
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: a.branchId ?? null,
