@@ -461,4 +461,138 @@ router.get("/book-ledger", async (req, res) => {
   }
 });
 
+// ── POST /ai-match ───────────────────────────────────────────────────────
+// AI-powered smart matching. Handles consolidated journal entries that map
+// to many individual bank transactions (e.g., one salary JE of 100,000 that
+// matches 20 bank transfers of 5,000 each), as well as the reverse case.
+//
+// Request body:
+//   { book: BookTx[], bank: BankTx[], toleranceDays?: number }
+// Response:
+//   {
+//     pairs:   [{ bookIds:[...], bankIds:[...], confidence, reason }],
+//     unmatchedAnalysis: [{ side:"book"|"bank", id, likelyExplanation }],
+//     summary: string
+//   }
+const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+const OPENAI_KEY = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+
+router.post("/ai-match", async (req, res) => {
+  try {
+    if (!OPENAI_BASE || !OPENAI_KEY) {
+      res.status(500).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" });
+      return;
+    }
+    const book = Array.isArray(req.body?.book) ? req.body.book : [];
+    const bank = Array.isArray(req.body?.bank) ? req.body.bank : [];
+    const toleranceDays = Math.min(15, Math.max(0, Number(req.body?.toleranceDays ?? 3)));
+    if (book.length === 0 || bank.length === 0) {
+      res.status(400).json({ error: "يجب توفير حركات دفترية وبنكية" });
+      return;
+    }
+
+    // Trim payload to keep prompt manageable (~200 each side, descriptions to 80 chars)
+    const trim = (arr: any[], max = 200) =>
+      arr.slice(0, max).map((t: any) => ({
+        id: String(t.id),
+        date: String(t.date ?? "").slice(0, 10),
+        desc: String(t.description ?? "").slice(0, 80),
+        amount: Number(t.debit ?? 0) - Number(t.credit ?? 0),
+        ref: t.ref ? String(t.ref).slice(0, 30) : null,
+      }));
+    const bookSlim = trim(book);
+    const bankSlim = trim(bank);
+
+    const systemPrompt = `أنت محاسب خبير في مطابقة كشوف البنوك. مهمتك مطابقة قيود اليومية مع حركات كشف البنك.
+
+قواعد:
+- "amount" موجب = إيداع (وارد للبنك)، سالب = سحب (صادر من البنك).
+- يجب أن يتطابق اتجاه المبلغ (نفس الإشارة) في كل مجموعة.
+- مجموع المبالغ في bookIds يجب أن يساوي مجموع المبالغ في bankIds (سماحية ±0.01).
+- التواريخ يجب أن تكون متقاربة (سماحية ${toleranceDays} يوم).
+- حالات شائعة:
+  * 1↔1: قيد واحد = حركة بنكية واحدة (نفس المبلغ والتاريخ).
+  * 1↔N: قيد رواتب مجمّع 100,000 = 20 تحويل بنكي 5,000 لكل موظف.
+  * N↔1: عدة قيود مبيعات يومية = إيداع نقدي واحد في البنك.
+  * N↔N: مجموعة قيود = مجموعة حركات بنفس الإجمالي.
+- استخدم البيان (desc) والمرجع (ref) كدلائل (أسماء موظفين، أرقام شيكات، إلخ).
+- لا تخمّن — إذا لم تكن واثقاً (confidence < 0.6) لا تطابق.
+
+أعد JSON فقط بهذا الشكل:
+{
+  "pairs": [
+    { "bookIds": ["..."], "bankIds": ["..."], "confidence": 0.0-1.0, "reason": "شرح موجز بالعربية" }
+  ],
+  "unmatchedAnalysis": [
+    { "side": "book"|"bank", "id": "...", "likelyExplanation": "سبب محتمل لعدم وجود مطابق" }
+  ],
+  "summary": "ملخص عام للنتيجة"
+}`;
+
+    const userPayload = JSON.stringify({ book: bookSlim, bank: bankSlim });
+    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        max_completion_tokens: 4096,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPayload },
+        ],
+      }),
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      res.status(502).json({ error: `فشل الذكاء الاصطناعي: ${r.status} ${txt.slice(0, 200)}` });
+      return;
+    }
+    const data = await r.json();
+    const content = data?.choices?.[0]?.message?.content ?? "{}";
+    let parsed: any;
+    try { parsed = JSON.parse(content); } catch { parsed = {}; }
+
+    // Server-side validation: keep only pairs whose sums actually balance.
+    const bookMap = new Map(book.map((t: any) => [String(t.id), Number(t.debit ?? 0) - Number(t.credit ?? 0)]));
+    const bankMap = new Map(bank.map((t: any) => [String(t.id), Number(t.debit ?? 0) - Number(t.credit ?? 0)]));
+    const seenBook = new Set<string>();
+    const seenBank = new Set<string>();
+    const validPairs: any[] = [];
+    for (const p of (parsed.pairs ?? [])) {
+      const bookIds = (p.bookIds ?? []).map(String).filter((id: string) => bookMap.has(id) && !seenBook.has(id));
+      const bankIds = (p.bankIds ?? []).map(String).filter((id: string) => bankMap.has(id) && !seenBank.has(id));
+      if (bookIds.length === 0 || bankIds.length === 0) continue;
+      const bookSum = bookIds.reduce((s: number, id: string) => s + (bookMap.get(id) ?? 0), 0);
+      const bankSum = bankIds.reduce((s: number, id: string) => s + (bankMap.get(id) ?? 0), 0);
+      if (Math.abs(bookSum - bankSum) > 0.01) continue;
+      bookIds.forEach((id: string) => seenBook.add(id));
+      bankIds.forEach((id: string) => seenBank.add(id));
+      validPairs.push({
+        bookIds,
+        bankIds,
+        confidence: Math.max(0, Math.min(1, Number(p.confidence ?? 0.7))),
+        reason: String(p.reason ?? ""),
+        bookSum: Number(bookSum.toFixed(2)),
+        bankSum: Number(bankSum.toFixed(2)),
+      });
+    }
+
+    res.json({
+      pairs: validPairs,
+      unmatchedAnalysis: Array.isArray(parsed.unmatchedAnalysis) ? parsed.unmatchedAnalysis.slice(0, 50) : [],
+      summary: String(parsed.summary ?? ""),
+      stats: {
+        totalProposed: (parsed.pairs ?? []).length,
+        totalAccepted: validPairs.length,
+        bookMatched: seenBook.size,
+        bankMatched: seenBank.size,
+      },
+    });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "bank-reconciliation ai-match failed");
+    res.status(500).json({ error: e?.message ?? "فشل المطابقة الذكية" });
+  }
+});
+
 export default router;

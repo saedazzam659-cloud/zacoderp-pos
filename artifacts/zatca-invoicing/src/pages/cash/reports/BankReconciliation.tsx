@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useFmt } from "@/hooks/use-fmt";
 import ExportButtons from "@/components/ExportButtons";
 import {
-  GitCompareArrows, Upload, Search, Filter, CheckCircle2, Link2, Link2Off, Trash2, AlertTriangle,
+  GitCompareArrows, Upload, Search, Filter, CheckCircle2, Link2, Link2Off, Trash2, AlertTriangle, Sparkles, Brain,
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL ?? "";
@@ -61,6 +61,13 @@ export default function BankReconciliation() {
   const [selBank, setSelBank] = useState<Set<string>>(new Set());
   const [tolerance, setTolerance] = useState(2); // days
   const [parsing, setParsing] = useState(false);
+  const [aiMatching, setAiMatching] = useState(false);
+  const [aiResult, setAiResult] = useState<{
+    pairs: Array<{ bookIds: string[]; bankIds: string[]; confidence: number; reason: string; bookSum: number; bankSum: number }>;
+    unmatchedAnalysis: Array<{ side: "book" | "bank"; id: string; likelyExplanation: string }>;
+    summary: string;
+    stats?: { totalProposed: number; totalAccepted: number; bookMatched: number; bankMatched: number };
+  } | null>(null);
 
   // Bank accounts for the picker
   const { data: banks = [] } = useQuery<any[]>({
@@ -180,6 +187,59 @@ export default function BankReconciliation() {
 
   function unmatchPair(bookId: string, bankId: string) {
     setMatchedPairs(p => p.filter(x => !(x.bookId === bookId && x.bankId === bankId)));
+  }
+
+  async function aiMatch() {
+    if (bookTxns.length === 0 || bankTxns.length === 0) return;
+    setAiMatching(true);
+    setAiResult(null);
+    try {
+      // Send only currently-unmatched txns so AI focuses on the diff
+      const matchedBook = new Set(matchedPairs.map(p => p.bookId));
+      const matchedBank = new Set(matchedPairs.map(p => p.bankId));
+      const book = bookTxns.filter(t => !matchedBook.has(t.id));
+      const bank = bankTxns.filter(t => !matchedBank.has(t.id));
+      if (book.length === 0 || bank.length === 0) {
+        toast({ title: "لا توجد حركات غير مطابقة", description: "كل الحركات مطابقة بالفعل" });
+        return;
+      }
+      const r = await fetch(`${API}/api/bank-reconciliation/ai-match`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ book, bank, toleranceDays: tolerance }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error ?? "فشل المطابقة الذكية");
+      setAiResult(j);
+      // Auto-apply high-confidence pairs (>=0.8)
+      const autoApply = j.pairs.filter((p: any) => p.confidence >= 0.8);
+      const newPairs: Array<{ bookId: string; bankId: string }> = [];
+      for (const p of autoApply) {
+        for (const bookId of p.bookIds) {
+          for (const bankId of p.bankIds) {
+            newPairs.push({ bookId, bankId });
+          }
+        }
+      }
+      if (newPairs.length > 0) {
+        setMatchedPairs(prev => [...prev, ...newPairs]);
+      }
+      toast({
+        title: "اكتملت المطابقة الذكية",
+        description: `${j.stats?.totalAccepted ?? 0} مجموعة (طُبّق تلقائياً ${autoApply.length} عالي الثقة) — راجع الباقي أدناه`,
+      });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "فشل المطابقة الذكية", description: e?.message ?? String(e) });
+    } finally {
+      setAiMatching(false);
+    }
+  }
+
+  function applyAiSuggestion(p: { bookIds: string[]; bankIds: string[] }) {
+    const newPairs = p.bookIds.flatMap(bookId => p.bankIds.map(bankId => ({ bookId, bankId })));
+    setMatchedPairs(prev => [...prev, ...newPairs]);
+    setAiResult(prev => prev ? { ...prev, pairs: prev.pairs.filter(x => x !== p) } : prev);
+    toast({ title: "تمت المطابقة", description: `${p.bookIds.length} ↔ ${p.bankIds.length}` });
   }
 
   // Derived sets
@@ -310,6 +370,14 @@ export default function BankReconciliation() {
               <Button size="sm" variant="outline" onClick={autoMatch} disabled={bookTxns.length === 0 || bankTxns.length === 0} className="gap-2">
                 <Link2 className="h-4 w-4" />مطابقة تلقائية
               </Button>
+              <Button
+                size="sm"
+                onClick={aiMatch}
+                disabled={bookTxns.length === 0 || bankTxns.length === 0 || aiMatching}
+                className="gap-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white border-0"
+              >
+                <Sparkles className="h-4 w-4" />{aiMatching ? "تحليل ذكي..." : "مطابقة ذكية (AI)"}
+              </Button>
               <Button size="sm" onClick={manualMatch} disabled={selBook.size === 0 || selBank.size === 0} className="gap-2">
                 <Link2 className="h-4 w-4" />مطابقة المحدد
               </Button>
@@ -375,6 +443,93 @@ export default function BankReconciliation() {
               fmt={fmt}
             />
           </div>
+
+          {/* AI suggestions panel */}
+          {aiResult && (
+            <div className="rounded-xl border-2 border-violet-200 bg-gradient-to-br from-violet-50 to-fuchsia-50 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Brain className="h-5 w-5 text-violet-600" />
+                <h3 className="text-sm font-bold text-violet-900">تحليل الذكاء الاصطناعي</h3>
+                {aiResult.stats && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">
+                    {aiResult.stats.totalAccepted} مجموعة • {aiResult.stats.bookMatched} دفتري ↔ {aiResult.stats.bankMatched} بنكي
+                  </span>
+                )}
+              </div>
+              {aiResult.summary && (
+                <p className="text-xs text-violet-800 bg-white/60 rounded-lg p-2 border border-violet-100">{aiResult.summary}</p>
+              )}
+              {aiResult.pairs.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-violet-900">مطابقات مقترحة (راجع وأكّد):</p>
+                  {aiResult.pairs.map((p, i) => {
+                    const conf = p.confidence;
+                    const confClass =
+                      conf >= 0.8 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                      : conf >= 0.6 ? "bg-amber-50 text-amber-700 border-amber-200"
+                      : "bg-rose-50 text-rose-700 border-rose-200";
+                    return (
+                      <div key={i} className="rounded-lg bg-white border border-violet-100 p-3">
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${confClass}`}>
+                              ثقة {Math.round(conf * 100)}%
+                            </span>
+                            <span className="text-xs text-muted-foreground">{p.bookIds.length} دفتري ↔ {p.bankIds.length} بنكي</span>
+                            <span className="text-xs font-bold tabular-nums text-violet-700">{fmt(p.bookSum)}</span>
+                          </div>
+                          <Button size="sm" variant="outline" onClick={() => applyAiSuggestion(p)} className="h-6 text-xs gap-1">
+                            <CheckCircle2 className="h-3 w-3" />تطبيق
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground mb-2">{p.reason}</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px]">
+                          <div className="bg-blue-50/50 rounded p-2 border border-blue-100">
+                            <p className="font-semibold text-blue-900 mb-1">الدفتري:</p>
+                            {p.bookIds.map(id => {
+                              const t = bookTxns.find(x => x.id === id);
+                              return t ? <div key={id} className="truncate">{t.date} • {t.description.slice(0, 50)} • <span className="tabular-nums font-bold">{fmt(t.debit - t.credit)}</span></div> : null;
+                            })}
+                          </div>
+                          <div className="bg-emerald-50/50 rounded p-2 border border-emerald-100">
+                            <p className="font-semibold text-emerald-900 mb-1">البنكي:</p>
+                            {p.bankIds.map(id => {
+                              const t = bankTxns.find(x => x.id === id);
+                              return t ? <div key={id} className="truncate">{t.date} • {t.description.slice(0, 50)} • <span className="tabular-nums font-bold">{fmt(t.debit - t.credit)}</span></div> : null;
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {aiResult.unmatchedAnalysis.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-rose-900">حركات بدون مطابق — تحليل الفروقات:</p>
+                  <div className="rounded-lg bg-white border border-rose-100 divide-y max-h-72 overflow-y-auto">
+                    {aiResult.unmatchedAnalysis.map((u, i) => {
+                      const t = u.side === "book" ? bookTxns.find(x => x.id === u.id) : bankTxns.find(x => x.id === u.id);
+                      return (
+                        <div key={i} className="p-2 text-[11px] flex items-start gap-2">
+                          <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded ${u.side === "book" ? "bg-blue-100 text-blue-700" : "bg-emerald-100 text-emerald-700"}`}>
+                            {u.side === "book" ? "دفتري" : "بنكي"}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            {t && <div className="truncate font-medium">{t.date} • {t.description.slice(0, 60)} • <span className="tabular-nums">{fmt(t.debit - t.credit)}</span></div>}
+                            <div className="text-muted-foreground mt-0.5">{u.likelyExplanation}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {aiResult.pairs.length === 0 && aiResult.unmatchedAnalysis.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-3">لم يجد الذكاء الاصطناعي أي مطابقات إضافية موثوقة</p>
+              )}
+            </div>
+          )}
 
           {/* Matched pairs list */}
           {matchedPairs.length > 0 && (
