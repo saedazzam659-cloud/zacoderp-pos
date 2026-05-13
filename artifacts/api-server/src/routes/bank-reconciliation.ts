@@ -229,6 +229,37 @@ function textToTx(text: string): { txns: ParsedTx[]; warnings: string[] } {
   const warnings: string[] = [];
   if (!text || !text.trim()) return { txns: [], warnings: ["لم يُستخرج أي نص من الملف"] };
 
+  // ── Format detection ──────────────────────────────────────────────────
+  // Saudi bank PDFs (NCB/Al-Ahli, Al-Rajhi, Riyad …) render each
+  // transaction as 3 separate text lines after pdf-parse:
+  //   Line A: "<balance> SAR  <credit> SAR  <debit> SAR"   (RTL columns)
+  //   Line B: free-form Arabic description
+  //   Line C: "YYYY/MM/DD"
+  // We try a multi-line parser first, then fall back to the legacy
+  // single-line parser for other formats.
+  //
+  // We also try to detect the statement header totals (e.g. "Number Of
+  // Deposits 194 / Withdrawals 555") so we can warn if the parser
+  // missed a lot of rows.
+  const expected = detectHeaderCounts(text);
+
+  const multi = parseMultiLineSarFormat(text);
+  if (multi.txns.length >= 5) {
+    if (expected && expected.total > 0) {
+      const got = multi.txns.length;
+      const ratio = got / expected.total;
+      if (ratio < 0.9) {
+        multi.warnings.push(
+          `الكشف يذكر ${expected.total} حركة (إيداع ${expected.deposits} + سحب ${expected.withdrawals}) — استُخرج ${got} فقط. راجع الكشف لو فيه صفوف ناقصة.`,
+        );
+      } else {
+        multi.warnings.push(`تم استخراج ${got} حركة من ${expected.total} مذكورة في رأس الكشف.`);
+      }
+    }
+    return multi;
+  }
+
+  // ── Fallback: legacy single-line parser ──────────────────────────────
   const dateRe = /(\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/;
   const numRe = /-?\(?[\d\u0660-\u0669\u06f0-\u06f9][\d\u0660-\u0669\u06f0-\u06f9,]*(?:\.[\d\u0660-\u0669\u06f0-\u06f9]+)?\)?/g;
 
@@ -241,7 +272,6 @@ function textToTx(text: string): { txns: ParsedTx[]; warnings: string[] } {
     const date = parseDate(dm[1]);
     if (!date) continue;
 
-    // Strip the date out and collect all numeric tokens in order
     const after = line.slice((dm.index ?? 0) + dm[1].length);
     const nums: number[] = [];
     const matches = after.match(numRe) ?? [];
@@ -251,24 +281,17 @@ function textToTx(text: string): { txns: ParsedTx[]; warnings: string[] } {
     }
     if (nums.length === 0) continue;
 
-    // Description = everything before the last numbers
     const lastIdx = after.lastIndexOf(matches[matches.length - 1]);
     const description = after.slice(0, lastIdx).replace(/\s{2,}/g, " ").trim();
 
     let debit = 0, credit = 0, balance: number | null = null;
     if (nums.length >= 3) {
-      // Probably: debit, credit, balance (or credit, debit, balance)
       const [a, b, c] = nums.slice(-3);
-      // Heuristic: column with smaller magnitude that's not zero is the
-      // movement. We can't reliably tell which is debit vs credit from
-      // text alone, so we pick the side based on description keywords
-      // and fall back to "credit" (money out).
       const movement = a !== 0 ? a : b;
       const isDeposit = /(deposit|credit|إيداع|وارد|تحويل\s*إليكم?)/i.test(description);
       if (isDeposit) debit = Math.abs(movement); else credit = Math.abs(movement);
       balance = c;
     } else if (nums.length === 2) {
-      // Probably: amount, balance
       const [a, bal] = nums.slice(-2);
       const isDeposit = /(deposit|credit|إيداع|وارد)/i.test(description);
       if (a >= 0 && isDeposit) debit = a;
@@ -289,6 +312,105 @@ function textToTx(text: string): { txns: ParsedTx[]; warnings: string[] } {
   } else {
     warnings.push("استخراج تجريبي من نص PDF/Word: راجع المبالغ والاتجاه (مدين/دائن) قبل الاعتماد عليها.");
   }
+  return { txns, warnings };
+}
+
+/**
+ * Try to read the deposit/withdrawal totals from the statement header.
+ * Used purely for sanity warnings — never affects parsed rows.
+ */
+function detectHeaderCounts(text: string):
+  | { deposits: number; withdrawals: number; total: number }
+  | null {
+  const dep = text.match(/Number\s*Of\s*Deposits\s*(\d{1,6})/i)
+    ?? text.match(/عدد\s*ال[إا]يداعات[^\d]{0,20}(\d{1,6})/);
+  const wd = text.match(/Number\s*Of\s*Withdrawals\s*(\d{1,6})/i)
+    ?? text.match(/عدد\s*السحوبات[^\d]{0,20}(\d{1,6})/);
+  if (!dep && !wd) return null;
+  const deposits = dep ? Number(dep[1]) : 0;
+  const withdrawals = wd ? Number(wd[1]) : 0;
+  return { deposits, withdrawals, total: deposits + withdrawals };
+}
+
+/**
+ * Multi-line parser for Saudi bank PDFs (NCB/Al-Ahli style):
+ *   amounts line  → "<balance> SAR  <credit> SAR  <debit> SAR"
+ *   description   → one or more free-text lines (Arabic)
+ *   date          → "YYYY/MM/DD" alone (or with extra Hijri date)
+ *
+ * In the extracted text the visual right-to-left order means the FIRST
+ * SAR amount is the BALANCE, the second is CREDIT, the third is DEBIT.
+ * A row with `0.00 SAR` in the credit slot is a withdrawal; `0.00 SAR`
+ * in the debit slot is a deposit.
+ */
+function parseMultiLineSarFormat(
+  text: string,
+): { txns: ParsedTx[]; warnings: string[] } {
+  const warnings: string[] = [];
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+  // Match "1,234.56 SAR" tokens (also negative / parenthesised)
+  const sarTokenRe = /-?\(?[\d,]+(?:\.\d+)?\)?\s*SAR\b/gi;
+  // Match a date line: just a YYYY/MM/DD (Gregorian) optionally followed
+  // by a Hijri date or whitespace.
+  const dateOnlyRe = /^\s*(\d{4}\/\d{1,2}\/\d{1,2})(?:\s|$)/;
+
+  type Pending = { amounts: number[]; descLines: string[] };
+  let pending: Pending | null = null;
+  const txns: ParsedTx[] = [];
+
+  for (const line of lines) {
+    const sarMatches = line.match(sarTokenRe);
+    if (sarMatches && sarMatches.length >= 2) {
+      // New transaction header — flush any half-built one
+      const amounts = sarMatches
+        .map((t) => parseAmount(t.replace(/SAR/gi, "").trim()))
+        .filter((n): n is number => n != null);
+      pending = { amounts, descLines: [] };
+      // Anything else on this line is part of the description
+      const rest = line.replace(sarTokenRe, " ").replace(/\s{2,}/g, " ").trim();
+      if (rest) pending.descLines.push(rest);
+      continue;
+    }
+
+    const dm = line.match(dateOnlyRe);
+    if (dm && pending && pending.amounts.length >= 2) {
+      const date = parseDate(dm[1]);
+      if (date) {
+        // amounts order in extracted text: [balance, credit, debit]
+        // (visual RTL: الرصيد | دائن | مدين)
+        const [balance, credit, debit] =
+          pending.amounts.length >= 3
+            ? pending.amounts.slice(0, 3)
+            : [null as any, pending.amounts[0], pending.amounts[1]];
+        const debitN = Math.abs(Number(debit) || 0);
+        const creditN = Math.abs(Number(credit) || 0);
+        if (debitN > 0 || creditN > 0) {
+          const description = pending.descLines.join(" ").replace(/\s{2,}/g, " ").trim();
+          txns.push({
+            date,
+            description: description.slice(0, 500),
+            debit: debitN,
+            credit: creditN,
+            balance: balance != null ? Number(balance) : null,
+            ref: null,
+          });
+        }
+      }
+      pending = null;
+      continue;
+    }
+
+    // Otherwise it's part of the current description
+    if (pending) {
+      // Skip pure page numbers / repeated header noise
+      if (/^\d{1,3}$/.test(line)) continue;
+      if (/^Ref\.?\s*No/i.test(line)) continue;
+      if (/الرقم\s*التسلسلي/.test(line)) continue;
+      pending.descLines.push(line);
+    }
+  }
+
   return { txns, warnings };
 }
 
