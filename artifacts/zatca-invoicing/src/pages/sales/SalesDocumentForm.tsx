@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useFormatters } from "@/lib/format";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
+import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { useToast } from "@/hooks/use-toast";
 import { getSaveToastTitle } from "@/lib/saveToast";
 import { ensurePrinterReady } from "@/lib/printerGuard";
@@ -139,6 +140,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [matchEdit, params]   = useRoute(`${basePath}/:id`);
   const isNew  = !!matchNew;
   const editId = matchEdit ? Number((params as any).id) : null;
+
+  // SuperAdmin "Invoice Field Policies" governance — controls which header
+  // fields are visible / readonly / required, and locks the date to today
+  // when the matching profile says so. Admins/superadmins always bypass via
+  // the hook (returns editable for everything). Field keys here MUST match
+  // FIELD_CATALOGUE.sales in lib/db/src/schema/invoiceFieldPolicies.ts.
+  const fp = useFieldPolicy("sales");
+  const dateBounds = fp.dateBounds("date") ?? {};
 
   const [activeTab, setActiveTab]       = useState("header");
   const [docNumber, setDocNumber]       = useState("");
@@ -1846,14 +1855,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <TabsContent value="header" className="mt-0">
             <CardContent className="pt-5 pb-5 space-y-4">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                {fp.isVisible("docNumber") && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{isInvoice ? t("salesDocForm.invoiceNumber") : isOrder ? t("salesDocForm.orderNumber") : t("salesDocForm.quotationNumber")}</Label>
+                  <Label className="text-xs">{isInvoice ? t("salesDocForm.invoiceNumber") : isOrder ? t("salesDocForm.orderNumber") : t("salesDocForm.quotationNumber")}{fp.isRequired("docNumber") && <span className="text-destructive"> *</span>}</Label>
                   {(() => {
                     const lockOnEdit = !!editId;
                     // Lock the number field whenever the central sequence
                     // engine is authoritative for this document type.
                     const lockOnSeq  = !!sequenceType && seqPeek.hasSequence;
-                    const locked     = lockOnEdit || lockOnSeq;
+                    const lockOnPol  = fp.isReadOnly("docNumber");
+                    const locked     = lockOnEdit || lockOnSeq || lockOnPol;
                     return (
                       <Input
                         ref={docNumberRef}
@@ -1863,25 +1874,40 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         value={docNumber}
                         onChange={e => { if (!locked) setDocNumber(e.target.value); }}
                         readOnly={locked}
-                        title={lockOnEdit ? "الرقم محفوظ — لا يمكن تعديله" : (lockOnSeq ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined)}
+                        title={lockOnEdit ? "الرقم محفوظ — لا يمكن تعديله" : (lockOnSeq ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : (lockOnPol ? "للقراءة فقط حسب السياسة" : undefined))}
                       />
                     );
                   })()}
                 </div>
+                )}
+                {fp.isVisible("date") && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t("salesDocForm.date")}</Label>
-                  <Input type="date" className="h-9 text-sm" value={docDate} onChange={e => setDocDate(e.target.value)} required />
+                  <Label className="text-xs">{t("salesDocForm.date")}{fp.isRequired("date") && <span className="text-destructive"> *</span>}</Label>
+                  <Input
+                    type="date" className="h-9 text-sm" value={docDate}
+                    onChange={e => setDocDate(e.target.value)}
+                    required
+                    readOnly={fp.isReadOnly("date") || !!dateBounds.min}
+                    min={dateBounds.min}
+                    max={dateBounds.max}
+                    title={dateBounds.min ? "مقيّد بتاريخ اليوم حسب السياسة" : (fp.isReadOnly("date") ? "للقراءة فقط حسب السياسة" : undefined)}
+                  />
                 </div>
-                {!isInvoice && (
+                )}
+                {!isInvoice && fp.isVisible("validUntil") && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">{isOrder ? t("salesDocForm.expectedDeliveryDate") : t("salesDocForm.validUntil")}</Label>
-                    <Input type="date" className="h-9 text-sm" value={validUntil} onChange={e => setValidUntil(e.target.value)} />
+                    <Label className="text-xs">{isOrder ? t("salesDocForm.expectedDeliveryDate") : t("salesDocForm.validUntil")}{fp.isRequired("validUntil") && <span className="text-destructive"> *</span>}</Label>
+                    <Input type="date" className="h-9 text-sm" value={validUntil} onChange={e => setValidUntil(e.target.value)} readOnly={fp.isReadOnly("validUntil")} />
                   </div>
                 )}
+                {fp.isVisible("customer") && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t("salesDocForm.customer")}</Label>
-                  <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder={t("salesDocForm.customerPlaceholder")} />
+                  <Label className="text-xs">{t("salesDocForm.customer")}{fp.isRequired("customer") && <span className="text-destructive"> *</span>}</Label>
+                  <div className={fp.isReadOnly("customer") ? "pointer-events-none opacity-70" : ""} title={fp.isReadOnly("customer") ? "للقراءة فقط حسب السياسة" : undefined}>
+                    <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder={t("salesDocForm.customerPlaceholder")} />
+                  </div>
                 </div>
+                )}
                 <CustomerVatControl customers={customers} customerId={customerId} onCustomerChange={setCustomerId} />
                 {isInvoice && isNew && (
                   <div className="space-y-1.5">
@@ -1911,10 +1937,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     />
                   </div>
                 )}
-                {usesOps && (
+                {usesOps && fp.isVisible("branch") && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">{t("salesDocForm.branch")}</Label>
-                    <Select value={branchId || undefined} onValueChange={setBranchId}>
+                    <Label className="text-xs">{t("salesDocForm.branch")}{fp.isRequired("branch") && <span className="text-destructive"> *</span>}</Label>
+                    <Select value={branchId || undefined} onValueChange={setBranchId} disabled={fp.isReadOnly("branch")}>
                       <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesDocForm.branchPlaceholder")} /></SelectTrigger>
                       <SelectContent>
                         {(branches as any[]).map((b: any) => (
@@ -1924,10 +1950,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </Select>
                   </div>
                 )}
-                {usesOps && (
+                {usesOps && fp.isVisible("paymentMethod") && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">{t("salesDocForm.paymentType")}</Label>
-                    <Select value={paymentType} onValueChange={(v) => {
+                    <Label className="text-xs">{t("salesDocForm.paymentType")}{fp.isRequired("paymentMethod") && <span className="text-destructive"> *</span>}</Label>
+                    <Select value={paymentType} disabled={fp.isReadOnly("paymentMethod")} onValueChange={(v) => {
                       setPaymentType(v);
                       if (v === "cash") {
                         if (!cashBoxId) {
@@ -1981,10 +2007,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </Select>
                   </div>
                 )}
+                {fp.isVisible("currency") && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t("salesDocForm.currency")}</Label>
+                  <Label className="text-xs">{t("salesDocForm.currency")}{fp.isRequired("currency") && <span className="text-destructive"> *</span>}</Label>
                   {currencies.length > 0 ? (
-                    <Select value={currencyCode || undefined} onValueChange={handleCurrencyChange}>
+                    <Select value={currencyCode || undefined} onValueChange={handleCurrencyChange} disabled={fp.isReadOnly("currency")}>
                       <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="..." /></SelectTrigger>
                       <SelectContent>
                         {currencies.map((c: any) => (
@@ -1993,12 +2020,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       </SelectContent>
                     </Select>
                   ) : (
-                    <Input className="h-9 text-sm" dir="ltr" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)} />
+                    <Input className="h-9 text-sm" dir="ltr" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)} readOnly={fp.isReadOnly("currency")} />
                   )}
                 </div>
+                )}
+                {fp.isVisible("exchangeRate") && (
                 <div className="space-y-1.5">
                   <Label className="text-xs flex items-center justify-between gap-2">
-                    <span>{t("salesDocForm.exchangeRate")}</span>
+                    <span>{t("salesDocForm.exchangeRate")}{fp.isRequired("exchangeRate") && <span className="text-destructive"> *</span>}</span>
                     {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && (
                       <span className="text-[10px] text-muted-foreground font-normal" dir="ltr">
                         1 {currencyCode} = {Number(exchangeRate) > 0 ? Number(exchangeRate).toFixed(4) : "—"} {defaultCurrency?.code ?? "SAR"}
@@ -2006,19 +2035,21 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     )}
                   </Label>
                   <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr" value={exchangeRate}
+                    readOnly={fp.isReadOnly("exchangeRate")}
                     onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
                 </div>
-                {usesOps && (
+                )}
+                {usesOps && fp.isVisible("salesperson") && (
                   <div className="space-y-1.5">
                     <Label className="text-xs flex items-center gap-1">
-                      <span>{t("salesDocForm.salesRep")}</span>
+                      <span>{t("salesDocForm.salesRep")}{fp.isRequired("salesperson") && <span className="text-destructive"> *</span>}</span>
                       {repLocked && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
                           مُعيَّن تلقائياً (هويتك كمندوب)
                         </span>
                       )}
                     </Label>
-                    <div className={repLocked ? "opacity-90 pointer-events-none" : ""} title={repLocked ? "لا يمكنك إسناد فاتورتك لمندوب آخر" : undefined}>
+                    <div className={(repLocked || fp.isReadOnly("salesperson")) ? "opacity-90 pointer-events-none" : ""} title={repLocked ? "لا يمكنك إسناد فاتورتك لمندوب آخر" : (fp.isReadOnly("salesperson") ? "للقراءة فقط حسب السياسة" : undefined)}>
                       <SearchCombobox
                         items={salesRepComboItems}
                         value={salesRepId}
@@ -2028,18 +2059,21 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </div>
                   </div>
                 )}
+                {fp.isVisible("notes") && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t("salesDocForm.notes")}</Label>
-                  <Input className="h-9 text-sm" value={notes} onChange={e => setNotes(e.target.value)} />
+                  <Label className="text-xs">{t("salesDocForm.notes")}{fp.isRequired("notes") && <span className="text-destructive"> *</span>}</Label>
+                  <Input className="h-9 text-sm" value={notes} onChange={e => setNotes(e.target.value)} readOnly={fp.isReadOnly("notes")} />
                 </div>
-                {isInvoice && (
+                )}
+                {isInvoice && fp.isVisible("costCenter") && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">مركز التكلفة</Label>
+                    <Label className="text-xs">مركز التكلفة{fp.isRequired("costCenter") && <span className="text-destructive"> *</span>}</Label>
                     <select
                       value={costCenter}
                       onChange={e => setCostCenter(e.target.value)}
+                      disabled={fp.isReadOnly("costCenter")}
                       data-testid="sales-cost-center"
-                      className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                      className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background disabled:bg-muted/40 disabled:cursor-not-allowed"
                     >
                       <option value="">— بدون مركز تكلفة —</option>
                       {(costCentersList as any[])
