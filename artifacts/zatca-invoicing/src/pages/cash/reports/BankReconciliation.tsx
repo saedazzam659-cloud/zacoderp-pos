@@ -121,25 +121,78 @@ export default function BankReconciliation() {
   // Reset matches whenever the underlying datasets change
   const resetMatches = () => { setMatchedPairs([]); setSelBook(new Set()); setSelBank(new Set()); };
 
-  async function handleFile(file: File) {
+  async function handleFiles(files: File[]) {
+    if (files.length === 0) return;
     setParsing(true);
     try {
-      const contentBase64 = await toBase64(file);
-      const r = await fetch(`${API}/api/bank-reconciliation/parse`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: JSON.stringify({ filename: file.name, contentBase64 }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error ?? "فشل رفع الكشف");
-      const txns: BankTx[] = (j.transactions ?? []).map((t: any, i: number) => ({ ...t, id: `bank-${i}-${t.date}` }));
+      const allTxns: Omit<BankTx, "id">[] = [];
+      const allWarnings: string[] = [];
+      const fileLabels: string[] = [];
+      const failures: string[] = [];
+
+      // Parse files sequentially to avoid hammering the OCR endpoint and to
+      // give clear per-file error messages.
+      for (const file of files) {
+        try {
+          const contentBase64 = await toBase64(file);
+          const r = await fetch(`${API}/api/bank-reconciliation/parse`, {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify({ filename: file.name, contentBase64 }),
+          });
+          const j = await r.json();
+          if (!r.ok) throw new Error(j?.error ?? "فشل التحليل");
+          const fileTxns = (j.transactions ?? []) as Omit<BankTx, "id">[];
+          allTxns.push(...fileTxns);
+          fileLabels.push(`${file.name} (${fileTxns.length})`);
+          for (const w of (j.warnings ?? []) as string[]) {
+            allWarnings.push(`[${file.name}] ${w}`);
+          }
+        } catch (e: any) {
+          failures.push(`${file.name}: ${e?.message ?? String(e)}`);
+        }
+      }
+
+      // De-duplicate across files: same date + same description + same debit + same credit
+      // counts as a duplicate (a single transaction appearing in two overlapping statements).
+      const seen = new Set<string>();
+      const merged: Omit<BankTx, "id">[] = [];
+      for (const t of allTxns) {
+        const key = `${t.date}|${(t.description ?? "").trim()}|${t.debit.toFixed(2)}|${t.credit.toFixed(2)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(t);
+      }
+      const dupCount = allTxns.length - merged.length;
+      if (dupCount > 0) {
+        allWarnings.unshift(`تم استبعاد ${dupCount} حركة مكررة بين الملفات.`);
+      }
+
+      // Sort merged transactions chronologically before assigning stable IDs.
+      merged.sort((a, b) => a.date.localeCompare(b.date));
+      const txns: BankTx[] = merged.map((t, i) => ({ ...t, id: `bank-${i}-${t.date}` }));
+
       setBankTxns(txns);
-      setStatementLabel(`${file.name} — ${txns.length} حركة`);
-      setWarnings(j.warnings ?? []);
+      setStatementLabel(
+        files.length === 1
+          ? `${files[0].name} — ${txns.length} حركة`
+          : `${files.length} ملفات (${fileLabels.join(" • ")}) — ${txns.length} حركة`
+      );
+      setWarnings(allWarnings);
       resetMatches();
-      toast({ title: "تم تحليل الكشف", description: `استخرجنا ${txns.length} حركة من ${file.name}` });
-    } catch (e: any) {
-      toast({ variant: "destructive", title: "خطأ في الرفع", description: e?.message ?? String(e) });
+
+      if (failures.length > 0) {
+        toast({
+          variant: "destructive",
+          title: `فشل ${failures.length} من ${files.length} ملفات`,
+          description: failures.join(" | "),
+        });
+      } else {
+        toast({
+          title: "تم تحليل الكشوف",
+          description: `استخرجنا ${txns.length} حركة من ${files.length} ${files.length === 1 ? "ملف" : "ملفات"}.`,
+        });
+      }
     } finally {
       setParsing(false);
     }
@@ -423,14 +476,18 @@ export default function BankReconciliation() {
           {/* Upload + actions */}
           <div className="rounded-xl border bg-card p-4 flex flex-wrap items-center gap-3">
             <Label htmlFor="recon-file" className="cursor-pointer inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:opacity-90">
-              <Upload className="h-4 w-4" />{parsing ? "جارٍ التحليل..." : "رفع كشف البنك"}
+              <Upload className="h-4 w-4" />{parsing ? "جارٍ التحليل..." : "رفع كشوف البنك (متعدد)"}
             </Label>
             <input
-              id="recon-file" type="file" className="hidden" disabled={parsing}
-              accept=".xlsx,.xls,.csv,.pdf,.doc,.docx"
-              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.currentTarget.value = ""; }}
+              id="recon-file" type="file" className="hidden" disabled={parsing} multiple
+              accept=".xlsx,.xls,.csv,.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp"
+              onChange={e => {
+                const fs = Array.from(e.target.files ?? []);
+                if (fs.length > 0) void handleFiles(fs);
+                e.currentTarget.value = "";
+              }}
             />
-            <p className="text-xs text-muted-foreground">المدعوم: Excel / CSV / PDF / Word</p>
+            <p className="text-xs text-muted-foreground">يمكن رفع أكثر من ملف معاً • Excel / CSV / PDF / Word / صور (PNG, JPG) — الصور تُقرأ بالـ OCR</p>
             {statementLabel && (
               <span className="text-xs px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
                 <CheckCircle2 className="h-3 w-3 inline ms-1" />{statementLabel}

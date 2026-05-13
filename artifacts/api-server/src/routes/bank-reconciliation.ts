@@ -299,6 +299,87 @@ function decodeBase64(payload: string): Buffer {
   return Buffer.from(b64, "base64");
 }
 
+// ── OCR helper: ask OpenAI vision to extract bank-statement transactions ─
+// Used for image uploads (PNG/JPG/WEBP) and as a fallback for scanned PDFs.
+// (OPENAI_BASE / OPENAI_KEY are declared further below for /ai-match — read
+// from process.env directly here to avoid forward-reference issues.)
+async function ocrTransactionsFromImage(
+  buf: Buffer,
+  mime: string,
+  filename?: string,
+): Promise<{ txns: ParsedTx[]; warnings: string[] }> {
+  const baseUrl = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+  const apiKey  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+  if (!baseUrl || !apiKey) {
+    throw new Error("القراءة الذكية غير مفعّلة على الخادم (AI_INTEGRATIONS_OPENAI_* مفقود).");
+  }
+  const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+  const systemPrompt = `أنت محلل كشوف بنكية خبير. مهمتك قراءة صورة كشف حساب بنكي بدقة عالية واستخراج كل سطر حركة.
+أعد JSON فقط بهذا الشكل بدون أي شرح:
+{ "transactions": [ { "date": "YYYY-MM-DD", "description": "نص الحركة", "debit": 0, "credit": 0, "balance": null, "ref": null } ] }
+
+قواعد صارمة:
+- "debit" = مبلغ دخل للبنك (إيداع / دائن من منظور كشف البنك). "credit" = مبلغ خرج من البنك (سحب / مدين).
+- استخدم 0 للقيمة غير الموجودة، لا تستخدم null للمبالغ.
+- التواريخ بصيغة ISO YYYY-MM-DD. لو السنة مش واضحة استنتجها من السياق أو من تاريخ الكشف.
+- اقرأ الأرقام كما هي بدون فواصل آلاف، الفاصلة العشرية نقطة.
+- تجاهل الرصيد الافتتاحي والختامي والإجماليات — استخرج فقط الحركات الفعلية.
+- لو الصورة غير واضحة أو لا تحوي حركات، أرجع { "transactions": [] }.`;
+
+  const r = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: "gpt-5.4",
+      max_completion_tokens: 8192,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: `استخرج كل حركات كشف البنك من ${filename ?? "الصورة المرفقة"}.` },
+            { type: "image_url", image_url: { url: dataUrl } },
+          ],
+        },
+      ],
+    }),
+  });
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    throw new Error(`فشل القراءة الذكية: ${r.status} ${t.slice(0, 200)}`);
+  }
+  const data = await r.json();
+  const content = data?.choices?.[0]?.message?.content ?? "{}";
+  let parsed: any;
+  try { parsed = JSON.parse(content); } catch { throw new Error("استجابة OCR غير صالحة"); }
+  const list = Array.isArray(parsed?.transactions) ? parsed.transactions : [];
+  const warnings: string[] = [];
+  const txns: ParsedTx[] = [];
+  for (const t of list) {
+    const date = String(t?.date ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const debit = Number(t?.debit) || 0;
+    const credit = Number(t?.credit) || 0;
+    if (debit === 0 && credit === 0) continue;
+    const balanceRaw = t?.balance;
+    const balance =
+      balanceRaw === null || balanceRaw === undefined || balanceRaw === ""
+        ? null
+        : (Number.isFinite(Number(balanceRaw)) ? Number(balanceRaw) : null);
+    txns.push({
+      date,
+      description: String(t?.description ?? "").trim(),
+      debit,
+      credit,
+      balance,
+      ref: t?.ref ? String(t.ref).slice(0, 64) : null,
+    });
+  }
+  if (txns.length === 0) warnings.push("لم تُستخرج أي حركة من الصورة. تأكد أن الصورة واضحة وتحتوي جدول الحركات.");
+  return { txns, warnings };
+}
+
 // ── POST /parse ──────────────────────────────────────────────────────────
 router.post("/parse", async (req, res) => {
   try {
@@ -328,12 +409,25 @@ router.post("/parse", async (req, res) => {
       txns = r.txns;
       warnings = r.warnings;
     } else if (ext === "pdf") {
-      const mod = await import("pdf-parse");
-      const pdfParse: any = (mod as any).default ?? mod;
-      const data = await pdfParse(buf);
-      const r = textToTx(String(data?.text ?? ""));
+      // pdf-parse v2 exports a class — old `pdfParse(buf)` call no longer works.
+      const { PDFParse } = await import("pdf-parse");
+      const parser = new (PDFParse as any)({ data: new Uint8Array(buf) });
+      const out = await parser.getText();
+      const text = String(out?.text ?? "");
+      const r = textToTx(text);
       txns = r.txns;
       warnings = r.warnings;
+      // Scanned PDFs have no extractable text. The OCR helper accepts only
+      // image MIME types (OpenAI vision rejects application/pdf), so we
+      // surface a clear Arabic instruction to the user instead of attempting
+      // a call that would fail. They can re-export the PDF as PNG/JPG or
+      // upload pages as images and we'll OCR those.
+      if (txns.length === 0 && text.trim().length < 40) {
+        warnings = [
+          "هذا الـ PDF يبدو ممسوحاً ضوئياً (لا يحوي نصاً قابلاً للقراءة).",
+          "للقراءة الذكية: حوّل صفحاته إلى صور (PNG/JPG) وارفعها مباشرة — يمكنك رفع أكثر من صورة معاً وسيتم دمج الحركات تلقائياً.",
+        ];
+      }
     } else if (ext === "docx" || ext === "doc") {
       const mod = await import("mammoth");
       const mammoth: any = (mod as any).default ?? mod;
@@ -341,8 +435,13 @@ router.post("/parse", async (req, res) => {
       const r = textToTx(String(value ?? ""));
       txns = r.txns;
       warnings = r.warnings;
+    } else if (ext === "png" || ext === "jpg" || ext === "jpeg" || ext === "webp") {
+      const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+      const ocr = await ocrTransactionsFromImage(buf, mime, filename);
+      txns = ocr.txns;
+      warnings = ["تم استخدام القراءة الذكية لاستخراج الحركات من الصورة (OCR).", ...ocr.warnings];
     } else {
-      res.status(400).json({ error: `صيغة غير مدعومة: .${ext || "?"} — المدعوم: xlsx, xls, csv, pdf, docx` });
+      res.status(400).json({ error: `صيغة غير مدعومة: .${ext || "?"} — المدعوم: xlsx, xls, csv, pdf, docx, png, jpg, jpeg, webp` });
       return;
     }
 
