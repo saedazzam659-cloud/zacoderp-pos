@@ -86,7 +86,15 @@ export default function SessionPickerModal() {
         .finally(() => setBusy(null));
       return;
     }
-    // 0 or >1 → ask the user.
+    // 0 sessions → user is not linked to any session; skip silently
+    // (no modal). The picker only surfaces when the user actually has
+    // assigned sessions to choose from.
+    if (manualSessions.length === 0) {
+      handledToken.current = token;
+      setOpen(false);
+      return;
+    }
+    // >1 → ask the user to pick.
     setOpen(true);
   }, [isAuthenticated, user, token, manualSessions, currentSessionId,
       selectManualSession, t, toast, busy]);
