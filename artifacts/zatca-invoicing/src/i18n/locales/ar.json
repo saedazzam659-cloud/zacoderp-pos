@@ -573,6 +573,8 @@
     "settings": "الإعدادات",
     "productionGroup": "الإنتاج والتصنيع",
     "productionDashboard": "لوحة الإنتاج",
+    "productionBoard": "خط الإنتاج المرئي",
+    "productionRoutings": "قوالب مراحل الإنتاج",
     "productionOrders": "أوامر الإنتاج",
     "productionResources": "الماكينات والموارد",
     "bomTemplates": "قوالب المكوّنات (BOM)",

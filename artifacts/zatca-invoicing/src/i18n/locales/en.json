@@ -571,6 +571,8 @@
     "settings": "Settings",
     "productionGroup": "Manufacturing",
     "productionDashboard": "Production Dashboard",
+    "productionBoard": "Visual Production Line",
+    "productionRoutings": "Production Routings",
     "maintenanceGroup": "Maintenance",
     "maintenanceHub": "Maintenance Hub",
     "maintenanceAssets": "Assets & Equipment",

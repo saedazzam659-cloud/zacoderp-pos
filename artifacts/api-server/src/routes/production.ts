@@ -3053,25 +3053,26 @@ router.get("/board", async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// PHASE C — Seed example: المعمول (دورة كاملة 6 مراحل)
+// PHASE C — Seed example: مثال توضيحي كامل (دورة 6 مراحل)
 // ────────────────────────────────────────────────────────────────────────
 router.post("/seed-maamoul-example", async (req, res) => {
   try {
-    if (req.authUser?.role !== "superadmin") {
-      res.status(403).json({ error: "هذا المسار للمشرف العام فقط (مثال توضيحي)" });
+    const role = req.authUser?.role;
+    if (role !== "superadmin" && role !== "admin") {
+      res.status(403).json({ error: "هذا المسار لمدير الشركة فقط (مثال توضيحي)" });
       return;
     }
     const cid = guard(req, res);
     if (!cid) return;
 
-    // 1) صنف "معمول" — أنشئ إن لم يوجد
+    // 1) صنف تجريبي — أنشئ إن لم يوجد
     let [maamoul] = await db
       .select()
       .from(itemsTable)
       .where(
         and(
           eq(itemsTable.companyId, cid),
-          eq(itemsTable.code, "MAAMOUL-DEMO"),
+          eq(itemsTable.code, "DEMO-PRODUCT"),
         ),
       )
       .limit(1);
@@ -3080,9 +3081,9 @@ router.post("/seed-maamoul-example", async (req, res) => {
         .insert(itemsTable)
         .values({
           companyId: cid,
-          code: "MAAMOUL-DEMO",
-          nameAr: "معمول (مثال خط الإنتاج)",
-          nameEn: "Maamoul (Production Demo)",
+          code: "DEMO-PRODUCT",
+          nameAr: "منتج تجريبي (مثال خط الإنتاج)",
+          nameEn: "Demo Product (Production Example)",
           unitCode: "KG",
           itemType: "stock" as const,
           isActive: true,
@@ -3093,12 +3094,12 @@ router.post("/seed-maamoul-example", async (req, res) => {
 
     // 2) قالب Routing — أنشئ أو حدّث
     const stagesSpec = [
-      { code: "MIX",     nameAr: "العجن",           nameEn: "Dough Mixing",    color: "#f59e0b", icon: "🥣", waste: "0.005", mins: 30 },
-      { code: "FREEZE",  nameAr: "التجميد",          nameEn: "Freezing",        color: "#0ea5e9", icon: "❄️", waste: "0.001", mins: 240 },
-      { code: "THAW",    nameAr: "فك التجميد + ماكينة المعمول", nameEn: "Thaw & Maamoul Machine", color: "#8b5cf6", icon: "⚙️", waste: "0.010", mins: 60 },
-      { code: "SHAPE",   nameAr: "التصبيع",          nameEn: "Shaping",         color: "#ec4899", icon: "🤲", waste: "0.015", mins: 90 },
-      { code: "OVEN",    nameAr: "الفرن",            nameEn: "Baking",          color: "#ef4444", icon: "🔥", waste: "0.020", mins: 45 },
-      { code: "PACK",    nameAr: "الفرز والتعبئة",   nameEn: "Sorting & Packing", color: "#10b981", icon: "📦", waste: "0.005", mins: 60 },
+      { code: "MIX",     nameAr: "العجن",                     nameEn: "Dough Mixing",      color: "#f59e0b", icon: "🥣", waste: "0.005", mins: 30 },
+      { code: "FREEZE",  nameAr: "التجميد",                   nameEn: "Freezing",          color: "#0ea5e9", icon: "❄️", waste: "0.001", mins: 240 },
+      { code: "THAW",    nameAr: "فك التجميد والتشكيل الأولي", nameEn: "Thaw & Pre-Shaping", color: "#8b5cf6", icon: "⚙️", waste: "0.010", mins: 60 },
+      { code: "SHAPE",   nameAr: "التصبيع",                   nameEn: "Shaping",           color: "#ec4899", icon: "🤲", waste: "0.015", mins: 90 },
+      { code: "OVEN",    nameAr: "الفرن",                     nameEn: "Baking",            color: "#ef4444", icon: "🔥", waste: "0.020", mins: 45 },
+      { code: "PACK",    nameAr: "الفرز والتعبئة",            nameEn: "Sorting & Packing", color: "#10b981", icon: "📦", waste: "0.005", mins: 60 },
     ];
 
     let [routing] = await db
@@ -3117,8 +3118,8 @@ router.post("/seed-maamoul-example", async (req, res) => {
         .values({
           companyId: cid,
           productItemId: maamoul.id,
-          nameAr: "خط إنتاج المعمول الكامل",
-          nameEn: "Full Maamoul Production Line",
+          nameAr: "خط إنتاج تجريبي كامل",
+          nameEn: "Full Demo Production Line",
           isActive: true,
           notes: "مثال توضيحي تلقائي — 6 مراحل من العجن إلى التعبئة.",
         })
@@ -3162,7 +3163,7 @@ router.post("/seed-maamoul-example", async (req, res) => {
         companyId: cid,
         branchId: null,
         orderNumber,
-        title: "أمر إنتاج تجريبي — معمول 100 كجم",
+        title: "أمر إنتاج تجريبي — 100 كجم",
         status: "in_production" as const,
         plannedQty: "100",
         producedQty: "0",
@@ -3170,8 +3171,8 @@ router.post("/seed-maamoul-example", async (req, res) => {
         productItemId: maamoul.id,
         unitCode: "KG",
         plannedStartDate: new Date().toISOString().slice(0, 10),
-        notes: "مثال تلقائي يوضح كامل دورة المراحل لخط معمول.",
-        meta: { isDemo: true, scenario: "maamoul-line" },
+        notes: "مثال تلقائي يوضح كامل دورة مراحل خط الإنتاج.",
+        meta: { isDemo: true, scenario: "demo-line" },
         createdBy: req.authUser!.id,
       } as any)
       .returning();

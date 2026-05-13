@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import {
-  GitBranch, RefreshCw, Play, CheckCircle2, Clock, AlertCircle, Sparkles,
+  GitBranch, RefreshCw, Play, CheckCircle2, Clock, AlertCircle,
   ChevronLeft, X, Save, Activity,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -67,7 +67,6 @@ export default function ProductionBoard() {
   const { toast } = useToast();
   const [data, setData] = useState<BoardResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [seeding, setSeeding] = useState(false);
   const [actStage, setActStage] = useState<{ orderId: number; stage: Stage } | null>(null);
 
   async function load() {
@@ -86,25 +85,6 @@ export default function ProductionBoard() {
   }
   useEffect(() => { if (token) void load(); /* eslint-disable-next-line */ }, [token]);
 
-  async function seedMaamoul() {
-    if (!confirm("سيُنشئ منتج معمول تجريبي + قالب مراحل + أمر إنتاج جاري. متابعة؟")) return;
-    setSeeding(true);
-    try {
-      const r = await fetch(`${API}/api/production/seed-maamoul-example`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "seed");
-      toast({ title: "✓ تم إنشاء مثال المعمول", description: `أمر #${j.order.orderNumber}` });
-      await load();
-    } catch (e: any) {
-      toast({ title: "خطأ", description: e?.message, variant: "destructive" });
-    } finally {
-      setSeeding(false);
-    }
-  }
 
   const ordersWithStages = useMemo(() => {
     if (!data) return [];
@@ -137,16 +117,6 @@ export default function ProductionBoard() {
             <RefreshCw className={`h-4 w-4 me-1 ${loading ? "animate-spin" : ""}`} />
             تحديث
           </Button>
-          <Button
-            variant="outline"
-            onClick={seedMaamoul}
-            disabled={seeding}
-            className="border-amber-300 text-amber-700 hover:bg-amber-50"
-            data-testid="btn-board-seed-maamoul"
-          >
-            <Sparkles className="h-4 w-4 me-1" />
-            {seeding ? "جاري…" : "مثال «المعمول»"}
-          </Button>
         </div>
       </div>
 
@@ -160,12 +130,8 @@ export default function ProductionBoard() {
           <Activity className="mx-auto h-14 w-14 text-slate-300 mb-3" />
           <h3 className="font-bold text-lg mb-1">لا توجد أوامر إنتاج جارية</h3>
           <p className="text-sm text-slate-500 mb-4">
-            ابدأ بإنشاء قالب مراحل ثم أمر إنتاج، أو جرّب «مثال المعمول» لرؤية كل شيء.
+            ابدأ بإنشاء قالب مراحل من صفحة «قوالب مراحل الإنتاج»، ثم أنشئ أمر إنتاج جديداً.
           </p>
-          <Button onClick={seedMaamoul} disabled={seeding}>
-            <Sparkles className="h-4 w-4 me-1" />
-            أنشئ مثال المعمول الكامل
-          </Button>
         </div>
       ) : (
         <div className="space-y-3">

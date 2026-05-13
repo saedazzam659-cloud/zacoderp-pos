@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Search, Workflow, Edit3, Trash2, Power, PowerOff,
-  Sparkles, ChevronUp, ChevronDown, X, Save, GitBranch,
+  ChevronUp, ChevronDown, X, Save, GitBranch,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,7 +52,6 @@ export default function ProductionRoutings() {
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
   const [editor, setEditor] = useState<{ id: number | null } | null>(null);
-  const [seeding, setSeeding] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -103,29 +102,6 @@ export default function ProductionRoutings() {
     }
   }
 
-  async function seedMaamoul() {
-    if (!confirm("سيُنشئ هذا منتج «معمول» تجريبي + قالب مراحل + أمر إنتاج جاري لتوضيح الدورة كاملة. هل تتابع؟")) return;
-    setSeeding(true);
-    try {
-      const r = await fetch(`${API}/api/production/seed-maamoul-example`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-      toast({
-        title: "✓ تم إنشاء مثال المعمول",
-        description: `أمر #${j.order.orderNumber} — ${j.stagesCount} مراحل. افتح «خط الإنتاج المرئي» لمشاهدته.`,
-      });
-      await load();
-    } catch (e: any) {
-      toast({ title: "خطأ", description: e?.message, variant: "destructive" });
-    } finally {
-      setSeeding(false);
-    }
-  }
-
   const list = useMemo(() => rows ?? [], [rows]);
 
   return (
@@ -136,23 +112,13 @@ export default function ProductionRoutings() {
             <Workflow className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold">قوالب مراحل الإنتاج (Routings)</h1>
+            <h1 className="text-2xl font-bold">قوالب مراحل الإنتاج</h1>
             <p className="text-sm text-slate-500">
               عرّف مراحل تصنيع كل منتج (عجن → فرن → تعبئة …) مرة واحدة، وستُنسخ تلقائياً مع كل أمر إنتاج.
             </p>
           </div>
         </div>
         <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={seedMaamoul}
-            disabled={seeding}
-            data-testid="btn-seed-maamoul"
-            className="border-amber-300 text-amber-700 hover:bg-amber-50"
-          >
-            <Sparkles className="h-4 w-4 me-1" />
-            {seeding ? "جاري الإنشاء…" : "أنشئ مثال «المعمول» الكامل"}
-          </Button>
           <Button onClick={() => setEditor({ id: null })} data-testid="btn-new-routing">
             <Plus className="h-4 w-4 me-1" />
             قالب مراحل جديد
@@ -179,8 +145,7 @@ export default function ProductionRoutings() {
       ) : list.length === 0 ? (
         <div className="rounded-xl border border-dashed p-10 text-center text-slate-500">
           <GitBranch className="mx-auto h-10 w-10 text-slate-300 mb-3" />
-          لا توجد قوالب مراحل بعد. اضغط <strong>«قالب مراحل جديد»</strong> أو
-          جرّب زر <strong>«مثال المعمول»</strong> أعلاه لرؤية الفكرة.
+          لا توجد قوالب مراحل بعد. اضغط <strong>«قالب مراحل جديد»</strong> لإنشاء أول قالب يحدد مراحل تصنيع منتجك.
         </div>
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
@@ -405,11 +370,11 @@ function RoutingEditor({
             <div className="grid md:grid-cols-2 gap-3">
               <div>
                 <label className="text-sm font-medium block mb-1">اسم القالب (عربي) *</label>
-                <Input value={nameAr} onChange={(e) => setNameAr(e.target.value)} placeholder="مثال: خط إنتاج المعمول" data-testid="input-routing-name-ar" />
+                <Input value={nameAr} onChange={(e) => setNameAr(e.target.value)} placeholder="مثال: خط الإنتاج الكامل" data-testid="input-routing-name-ar" />
               </div>
               <div>
                 <label className="text-sm font-medium block mb-1">اسم القالب (إنجليزي)</label>
-                <Input value={nameEn} onChange={(e) => setNameEn(e.target.value)} placeholder="Maamoul Production Line" />
+                <Input value={nameEn} onChange={(e) => setNameEn(e.target.value)} placeholder="Full Production Line" />
               </div>
             </div>
             <div>
