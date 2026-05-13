@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, salesRepsTable, usersTable, branchesTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
-import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureCustomerLedger } from "../lib/entityAccounts.js";
 
@@ -124,6 +124,10 @@ router.get("/", async (req, res) => {
   const repScope = await customerScopeRepId(req, companyId);
   const conds = [eq(customersTable.companyId, companyId)];
   if (repScope !== null) conds.push(eq(customersTable.salesRepId, repScope));
+  // Branch-level isolation: a user with viewAllBranches=false only sees
+  // customers tied to one of their assigned branches (or shared rows where
+  // branchId IS NULL). Admin / superadmin / viewAll users are unaffected.
+  conds.push(...branchScopeSpread(req, customersTable.branchId, req.query.branchId));
   const customers = await db.select().from(customersTable).where(and(...conds));
   res.json(customers);
 });

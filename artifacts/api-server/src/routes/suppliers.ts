@@ -4,7 +4,7 @@ import { branchesTable } from "@workspace/db";
 import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable,
   journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import { eq, and, sql, inArray, notInArray, isNotNull } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureSupplierLedger } from "../lib/entityAccounts.js";
 
@@ -24,10 +24,13 @@ router.use(moduleAudit("suppliers"));
 router.get("/", async (req, res) => {
   const rawCompanyId = req.query.companyId ? parseInt(req.query.companyId as string) : undefined;
   const companyId = resolveCompanyId(req, rawCompanyId);
-  const query = companyId
-    ? db.select().from(suppliersTable).where(eq(suppliersTable.companyId, companyId))
-    : db.select().from(suppliersTable);
-  const suppliers = await query;
+  if (!companyId) { res.json(await db.select().from(suppliersTable)); return; }
+  // Branch-level isolation — same rule as customers.
+  const conds = [
+    eq(suppliersTable.companyId, companyId),
+    ...branchScopeSpread(req, suppliersTable.branchId, req.query.branchId),
+  ];
+  const suppliers = await db.select().from(suppliersTable).where(and(...conds));
   res.json(suppliers);
 });
 
