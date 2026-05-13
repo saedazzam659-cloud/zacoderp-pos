@@ -23,6 +23,7 @@ import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Save, Mic, Sparkles, ListMusic, ArrowRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { BrowserPermissionsCard } from "@/components/BrowserPermissionsCard";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -166,6 +167,10 @@ export default function VoiceAssistantSettings() {
           {tr("back")}
         </Button>
       </div>
+
+      {/* Browser permissions diagnostic — shown FIRST so users hitting the
+          "تم رفض الإذن بالميكروفون" toast can fix it without leaving this page. */}
+      <BrowserPermissionsCard />
 
       {/* Master switches */}
       <Card>
