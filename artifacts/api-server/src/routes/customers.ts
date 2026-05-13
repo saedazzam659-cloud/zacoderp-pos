@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, salesRepsTable, usersTable, branchesTable } from "@workspace/db";
+import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, branchesTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
@@ -28,16 +28,15 @@ router.get("/balances", async (req, res) => {
     if (!companyId) { res.json([]); return; }
     const bid = req.query.branchId ? Number(req.query.branchId) : undefined;
     // ─── Customer-isolation scope ─────────────────────────────
-    // Restrict the aggregated balances to customers in the caller's scope so
-    // a salesperson can't infer their colleagues' AR exposure by inspecting
-    // this endpoint. Admin/superadmin get the unfiltered company-wide map.
-    const repScope = await customerScopeRepId(req, companyId);
-    let allowedCustomerIds: Set<number> | null = null;
-    if (repScope !== null) {
-      const mine = await db.select({ id: customersTable.id }).from(customersTable)
-        .where(and(eq(customersTable.companyId, companyId), eq(customersTable.salesRepId, repScope)));
-      allowedCustomerIds = new Set(mine.map(r => r.id));
-    }
+    // Restrict the aggregated balances to customers visible under the
+    // caller's branch scope, so a branch user can't infer the AR exposure
+    // of customers belonging to other branches via this endpoint.
+    const visibleRows = await db.select({ id: customersTable.id }).from(customersTable)
+      .where(and(
+        eq(customersTable.companyId, companyId),
+        ...branchScopeSpread(req, customersTable.branchId, bid),
+      ));
+    const allowedCustomerIds: Set<number> = new Set(visibleRows.map(r => r.id));
 
     // Display-only customers must NOT contribute to the balances aggregation
     // (matches the /aging + /customer-statement filters elsewhere).
@@ -88,7 +87,7 @@ router.get("/balances", async (req, res) => {
 
     const map: Record<number, number> = {};
     const allowed = (id: number | null) =>
-      id != null && !displayOnlyIds.has(id) && (allowedCustomerIds === null || allowedCustomerIds.has(id));
+      id != null && !displayOnlyIds.has(id) && allowedCustomerIds.has(id);
     for (const r of invs)  if (allowed(r.customerId)) map[r.customerId!] = (map[r.customerId!] ?? 0) + Number(r.total);
     for (const r of rets)  if (allowed(r.customerId)) map[r.customerId!] = (map[r.customerId!] ?? 0) - Number(r.total);
     for (const r of recvs) if (allowed(r.customerId)) map[r.customerId!] = (map[r.customerId!] ?? 0) - Number(r.total);
@@ -97,23 +96,11 @@ router.get("/balances", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── Customer-isolation scope ───────────────────────────────────────────────
-// When a user has `scopeOwnCustomersOnly = true` AND is linked to a sales rep
-// (sales_reps.user_id), they may only see customers whose `salesRepId` matches
-// their rep id. Admin / superadmin always bypass the filter so back-office
-// staff keep full visibility. Returns the rep id to scope to, or null when no
-// scoping is required.
-async function customerScopeRepId(req: any, companyId: number): Promise<number | null> {
-  const u = req.authUser;
-  if (!u || u.role === "admin" || u.role === "superadmin") return null;
-  const [me] = await db.select({ scope: usersTable.scopeOwnCustomersOnly })
-    .from(usersTable).where(eq(usersTable.id, u.id));
-  if (!me?.scope) return null;
-  const [rep] = await db.select({ id: salesRepsTable.id })
-    .from(salesRepsTable)
-    .where(and(eq(salesRepsTable.companyId, companyId), eq(salesRepsTable.userId, u.id)));
-  return rep?.id ?? -1; // -1 = scope ON but no rep linked → see nothing
-}
+// NOTE: customer-isolation no longer relies on sales-rep linkage.
+// The previous `scopeOwnCustomersOnly` flag (per-rep filter) was removed
+// because moving a salesperson between branches would silently hide their
+// historical customers. Visibility is now governed purely by the per-user
+// branch scope (`viewAllBranches` + assigned branches).
 
 router.get("/", async (req, res) => {
   const params = ListCustomersQueryParams.safeParse(req.query);
@@ -121,9 +108,7 @@ router.get("/", async (req, res) => {
   const companyId = resolveCompanyId(req, rawCompanyId);
 
   if (!companyId) { res.json(await db.select().from(customersTable)); return; }
-  const repScope = await customerScopeRepId(req, companyId);
   const conds = [eq(customersTable.companyId, companyId)];
-  if (repScope !== null) conds.push(eq(customersTable.salesRepId, repScope));
   // Branch-level isolation: a user with viewAllBranches=false only sees
   // customers tied to one of their assigned branches (or shared rows where
   // branchId IS NULL). Admin / superadmin / viewAll users are unaffected.
@@ -156,27 +141,11 @@ router.post("/", async (req, res) => {
     return;
   }
 
-  // ─── Auto-attribute customer to the creator's rep ────────────────
-  // When a scoped rep-user (`scopeOwnCustomersOnly = true` and linked to a
-  // sales rep) creates a customer, force `salesRepId` to their own rep id.
-  // Without this, the new customer would be inserted with salesRepId=null
-  // and the list filter (eq salesRepId, repScope) would immediately hide
-  // it from its own creator — exactly the bug just observed in the UI.
-  // The same lock prevents a scoped rep from assigning a fresh customer
-  // to a colleague (would otherwise be a quiet way to leak commissions).
-  // Admin / superadmin keep full control over `salesRepId`.
-  const repScope = await customerScopeRepId(req, effectiveCompanyId);
-  let effectiveSalesRepId: number | null =
+  // Sales-rep auto-attribution removed alongside the per-rep customer
+  // isolation filter. The salesRepId is now whatever the caller chose
+  // (or null) — branch isolation handles visibility.
+  const effectiveSalesRepId: number | null =
     (data as any).salesRepId != null ? Number((data as any).salesRepId) : null;
-  if (repScope !== null) {
-    // repScope === -1 means "scope ON but no rep linked" → block creation,
-    // otherwise the row would be invisible to its own creator forever.
-    if (repScope === -1) {
-      res.status(403).json({ error: "حسابك مقيَّد على عملاء مندوبك لكنه غير مربوط بأي مندوب — اطلب من المسؤول ربطك أولاً." });
-      return;
-    }
-    effectiveSalesRepId = repScope;
-  }
 
   // Validate branchId belongs to the same company
   const rawBranchId = (req.body as any)?.branchId;
@@ -241,16 +210,10 @@ router.get("/:id", async (req, res) => {
   if (companyId && customer.companyId !== companyId) {
     res.status(403).json({ error: "غير مصرح" }); return;
   }
-  // ─── Per-rep customer-isolation guard ────────────────────────────
-  // The list endpoint (GET /) silently filters; here we 403 because the
-  // caller is asking for a *specific* id. Without this, a scoped user could
-  // enumerate competing reps' customers by guessing ids (IDOR).
-  if (companyId) {
-    const repScope = await customerScopeRepId(req, companyId);
-    if (repScope !== null && customer.salesRepId !== repScope) {
-      res.status(403).json({ error: "هذا العميل خارج نطاق صلاحياتك" }); return;
-    }
-  }
+  // Per-rep IDOR guard removed alongside the per-rep customer isolation
+  // filter. Branch-level isolation handles cross-branch visibility on
+  // the list endpoint; direct GET /:id is now allowed for any user with
+  // module access within the same company.
   res.json(customer);
 });
 
@@ -261,19 +224,8 @@ router.put("/:id", async (req, res) => {
   const companyId = resolveCompanyId(req, existing.companyId);
   if (companyId && existing.companyId !== companyId) { res.status(403).json({ error: "غير مصرح" }); return; }
 
-  // ─── Per-rep IDOR guard on update ──────────────────────────────
-  // Mirror the GET /:id check: a scoped rep must not be able to mutate a
-  // colleague's customer by guessing the id, and must not be able to
-  // re-assign salesRepId away from themselves (silent commission theft).
-  if (companyId) {
-    const repScopeForUpdate = await customerScopeRepId(req, companyId);
-    if (repScopeForUpdate !== null && existing.salesRepId !== repScopeForUpdate) {
-      res.status(403).json({ error: "هذا العميل خارج نطاق صلاحياتك" }); return;
-    }
-    if (repScopeForUpdate !== null && req.body && (req.body as any).salesRepId !== undefined && Number((req.body as any).salesRepId) !== repScopeForUpdate) {
-      res.status(403).json({ error: "لا يمكنك تغيير مندوب هذا العميل" }); return;
-    }
-  }
+  // Per-rep IDOR + salesRepId-tamper guards removed alongside the per-rep
+  // customer isolation filter (see GET / for context).
 
   const parsed = UpdateCustomerBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid input", details: parsed.error.issues }); return; }
