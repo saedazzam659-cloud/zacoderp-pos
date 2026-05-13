@@ -1207,7 +1207,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       )}
                       {isInvoice && (
                         warehouses.length > 0 ? (
-                          <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
+                          <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)} disabled={fp.isReadOnly("warehouse")}>
                             <SelectTrigger className={cn("h-8 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
                               <SelectValue placeholder={t("salesDocForm.warehousePlaceholder")} />
                             </SelectTrigger>
@@ -1257,11 +1257,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <Input
                         className={cn(
                           "h-8 text-xs",
-                          l.appliedOfferId && "bg-emerald-50 border-emerald-300 text-emerald-800 font-semibold"
+                          l.appliedOfferId && "bg-emerald-50 border-emerald-300 text-emerald-800 font-semibold",
+                          fp.isReadOnly("discount") && "bg-muted/40 cursor-not-allowed"
                         )}
                         type="text" inputMode="decimal" dir="ltr" value={l.discount}
+                        readOnly={fp.isReadOnly("discount")}
+                        title={fp.isReadOnly("discount") ? "للقراءة فقط حسب السياسة" : undefined}
                         onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
-                      <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
+                      <Input
+                        className={cn("h-8 text-xs", fp.isReadOnly("taxRate") && "bg-muted/40 cursor-not-allowed")}
+                        type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
+                        readOnly={fp.isReadOnly("taxRate")}
+                        title={fp.isReadOnly("taxRate") ? "للقراءة فقط حسب السياسة" : undefined}
                         onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                       <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
                       <Input className="h-8 text-xs" value={l.notes}
