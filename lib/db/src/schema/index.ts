@@ -30,6 +30,7 @@ export * from "./salesReps";
 export * from "./auditLog";
 export * from "./workSessions";
 export * from "./workSessionSettings";
+export * from "./invoiceFieldPolicies";
 export * from "./sequences";
 export * from "./systemSettings";
 export * from "./superAdminSecurity";

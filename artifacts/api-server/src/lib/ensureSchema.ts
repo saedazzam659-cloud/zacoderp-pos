@@ -464,6 +464,19 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE INDEX IF NOT EXISTS chat_messages_conv_idx ON chat_messages (conversation_id, created_at)` },
     { label: "chat_messages_company_idx",
       sql:   `CREATE INDEX IF NOT EXISTS chat_messages_company_idx ON chat_messages (company_id, created_at)` },
+
+    { label: "create invoice_field_policies table",
+      sql:   `CREATE TABLE IF NOT EXISTS invoice_field_policies (
+        id          SERIAL PRIMARY KEY,
+        company_id  INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        scope       TEXT NOT NULL,
+        policy      JSONB NOT NULL DEFAULT '{}'::jsonb,
+        updated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+        created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "invoice_field_policies_company_scope_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS invoice_field_policies_company_scope_uniq ON invoice_field_policies (company_id, scope)` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {

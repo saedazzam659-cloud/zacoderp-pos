@@ -11,6 +11,7 @@ import PermRoute from "@/components/PermRoute";
 import Dashboard from "@/pages/Dashboard";
 import SuperAdminDashboard from "@/pages/SuperAdminDashboard";
 import OrphanStockCleanup from "@/pages/admin/OrphanStockCleanup";
+import InvoiceFieldPolicies from "@/pages/admin/InvoiceFieldPolicies";
 import EnterCompany from "@/pages/admin/EnterCompany";
 import DatabaseStats from "@/pages/admin/DatabaseStats";
 import AICompanyFix from "@/pages/admin/AICompanyFix";
@@ -496,6 +497,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/subscriptions" component={SubscriptionManagement} />}
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
+            <Route path="/admin/invoice-field-policies" component={InvoiceFieldPolicies} />
             {isSuperAdmin && <Route path="/admin/modules" component={Modules} />}
             {isSuperAdmin && <Route path="/admin/industries" component={Industries} />}
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}

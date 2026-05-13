@@ -293,6 +293,9 @@ const dashboardSubNav: NavDef[] = [
   // user.role==="admin"; per the user's request it's now nested under the
   // dashboard/control-panel group. requireAdmin keeps the same admin-only gate.
   { nameKey: "nav.auditLog",        href: "/admin/audit-log",     icon: ScrollText, requireAdmin: true },
+  // Per-company governance of which fields show on invoice screens for non-admin users.
+  // Admin-only — see /admin/invoice-field-policies.
+  { nameKey: "nav.invoiceFieldPolicies", href: "/admin/invoice-field-policies", icon: ShieldCheck, requireAdmin: true },
 ];
 
 // "أدوات الذكاء الاصطناعي" — top-level group for AI-related screens. Per the
