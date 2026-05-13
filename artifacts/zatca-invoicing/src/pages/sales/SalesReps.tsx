@@ -480,6 +480,27 @@ export default function SalesReps() {
           saveLabel="حفظ"
           cancelLabel="إلغاء"
         >
+          <Tabs defaultValue="basic" className="w-full" dir="rtl">
+            <TabsList className="grid w-full grid-cols-2 h-auto p-1.5 bg-gradient-to-l from-slate-100 to-slate-50 border border-slate-200 rounded-xl gap-1.5">
+              <TabsTrigger
+                value="basic"
+                className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-semibold text-slate-600 data-[state=active]:bg-gradient-to-l data-[state=active]:from-emerald-600 data-[state=active]:to-teal-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
+                data-testid="tab-rep-basic"
+              >
+                <Users className="h-4 w-4" />
+                <span>البيانات الأساسية</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="financial"
+                className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-semibold text-slate-600 data-[state=active]:bg-gradient-to-l data-[state=active]:from-violet-600 data-[state=active]:to-fuchsia-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
+                data-testid="tab-rep-financial"
+              >
+                <Wallet className="h-4 w-4" />
+                <span>العمولة وحساب الدخول</span>
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="basic" className="mt-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label>الكود</Label>
@@ -561,6 +582,11 @@ export default function SalesReps() {
                 data-testid="input-address"
               />
             </div>
+          </div>
+            </TabsContent>
+
+            <TabsContent value="financial" className="mt-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label>نسبة العمولة %</Label>
               <Input
@@ -659,6 +685,8 @@ export default function SalesReps() {
               </Label>
             </div>
           </div>
+            </TabsContent>
+          </Tabs>
         </FormPanel>
       )}
 
