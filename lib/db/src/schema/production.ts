@@ -489,6 +489,17 @@ export const productionRoutingStagesTable = pgTable(
       .notNull()
       .default("0"),
     expectedDurationMinutes: integer("expected_duration_minutes"),
+    // Expected operating cost per stage (labor + overhead, in base currency).
+    // Used for routing-level cost estimation and seeded into the order
+    // stage so finished-goods cost can include routing cost without
+    // requiring per-stage time tracking.
+    expectedCost: numeric("expected_cost", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    expectedCostAccountId: integer("expected_cost_account_id").references(
+      () => accountsTable.id,
+      { onDelete: "set null" },
+    ),
     icon: text("icon"),
     color: text("color"),
     notes: text("notes"),
@@ -520,6 +531,13 @@ export const productionOrderStagesTable = pgTable(
       .notNull()
       .default("0"),
     expectedDurationMinutes: integer("expected_duration_minutes"),
+    expectedCost: numeric("expected_cost", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    expectedCostAccountId: integer("expected_cost_account_id").references(
+      () => accountsTable.id,
+      { onDelete: "set null" },
+    ),
     icon: text("icon"),
     color: text("color"),
     // pending → in_progress → done (or skipped). Stages can be re-opened

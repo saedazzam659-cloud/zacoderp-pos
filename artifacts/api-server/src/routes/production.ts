@@ -790,6 +790,8 @@ router.post("/orders", async (req, res) => {
                 workCenterId: s.workCenterId,
                 expectedWasteRatio: s.expectedWasteRatio,
                 expectedDurationMinutes: s.expectedDurationMinutes,
+                expectedCost: s.expectedCost,
+                expectedCostAccountId: s.expectedCostAccountId,
                 icon: s.icon,
                 color: s.color,
                 status: "pending" as const,
@@ -2523,8 +2525,10 @@ router.post("/routings", async (req, res) => {
       })
       .returning();
     if (Array.isArray(b.stages) && b.stages.length > 0) {
-      await db.insert(productionRoutingStagesTable).values(
-        b.stages.map((s: any, i: number) => ({
+      // Tenant-validate each stage's GL account in parallel before
+      // inserting (prevents cross-company id injection).
+      const stageRows = await Promise.all(
+        b.stages.map(async (s: any, i: number) => ({
           routingId: r.id,
           sequence: Number(s.sequence ?? i + 1),
           code: String(s.code ?? `S${i + 1}`).toUpperCase(),
@@ -2535,11 +2539,17 @@ router.post("/routings", async (req, res) => {
           expectedDurationMinutes: s.expectedDurationMinutes
             ? Number(s.expectedDurationMinutes)
             : null,
+          expectedCost: String(num(s.expectedCost)),
+          expectedCostAccountId: await validateAccount(
+            cid,
+            s.expectedCostAccountId ? Number(s.expectedCostAccountId) : null,
+          ),
           icon: s.icon || null,
           color: s.color || null,
           notes: s.notes || null,
         })),
       );
+      await db.insert(productionRoutingStagesTable).values(stageRows);
     }
     res.status(201).json(r);
   } catch (e: any) {
@@ -2608,8 +2618,8 @@ router.put("/routings/:id/stages", async (req, res) => {
       .delete(productionRoutingStagesTable)
       .where(eq(productionRoutingStagesTable.routingId, id));
     if (stages.length > 0) {
-      await db.insert(productionRoutingStagesTable).values(
-        stages.map((s: any, i: number) => ({
+      const stageRows = await Promise.all(
+        stages.map(async (s: any, i: number) => ({
           routingId: id,
           sequence: Number(s.sequence ?? i + 1),
           code: String(s.code ?? `S${i + 1}`).toUpperCase(),
@@ -2620,11 +2630,17 @@ router.put("/routings/:id/stages", async (req, res) => {
           expectedDurationMinutes: s.expectedDurationMinutes
             ? Number(s.expectedDurationMinutes)
             : null,
+          expectedCost: String(num(s.expectedCost)),
+          expectedCostAccountId: await validateAccount(
+            cid,
+            s.expectedCostAccountId ? Number(s.expectedCostAccountId) : null,
+          ),
           icon: s.icon || null,
           color: s.color || null,
           notes: s.notes || null,
         })),
       );
+      await db.insert(productionRoutingStagesTable).values(stageRows);
     }
     await db
       .update(productionRoutingsTable)
@@ -2779,6 +2795,11 @@ router.post("/orders/:id/stages/seed", async (req, res) => {
         workCenterId: s.workCenterId,
         expectedWasteRatio: s.expectedWasteRatio,
         expectedDurationMinutes: s.expectedDurationMinutes,
+        // Routing-stage cost fields are tenant-validated already (only
+        // company-scoped routings can be loaded above), so a direct copy
+        // is safe here.
+        expectedCost: s.expectedCost,
+        expectedCostAccountId: s.expectedCostAccountId,
         icon: s.icon,
         color: s.color,
         status: "pending" as const,

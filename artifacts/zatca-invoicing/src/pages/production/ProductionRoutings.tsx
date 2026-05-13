@@ -33,12 +33,21 @@ type Stage = {
   nameEn?: string | null;
   expectedWasteRatio?: string | number;
   expectedDurationMinutes?: number | null;
+  expectedCost?: string | number;
+  expectedCostAccountId?: number | null;
   icon?: string | null;
   color?: string | null;
   notes?: string | null;
 };
 
 type ProductOpt = { id: number; nameAr: string; code: string };
+type AccountOpt = {
+  id: number;
+  code: string;
+  nameAr: string;
+  accountType: string;
+  isPosting: boolean;
+};
 
 const PALETTE = [
   "#f59e0b", "#0ea5e9", "#8b5cf6", "#ec4899", "#ef4444", "#10b981",
@@ -223,10 +232,32 @@ function RoutingEditor({
   const [isActive, setIsActive] = useState(true);
   const [notes, setNotes] = useState("");
   const [stages, setStages] = useState<Stage[]>([
-    { sequence: 1, code: "S1", nameAr: "المرحلة الأولى", color: PALETTE[0], expectedWasteRatio: 0 },
+    { sequence: 1, code: "S1", nameAr: "المرحلة الأولى", color: PALETTE[0], expectedWasteRatio: 0, expectedCost: 0, expectedCostAccountId: null },
   ]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(!!id);
+  const [accounts, setAccounts] = useState<AccountOpt[]>([]);
+  const [newAccountFor, setNewAccountFor] = useState<number | null>(null);
+
+  // Load chart of accounts (filtered to expense / cost-of-goods accounts that
+  // are postable — those are the only valid targets for a routing-stage cost).
+  async function loadAccounts() {
+    try {
+      const r = await fetch(`${API}/api/accounts`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) return;
+      const all: AccountOpt[] = await r.json();
+      // Keep posting expense / cost accounts (case-insensitive match on type).
+      const filtered = all.filter((a) => {
+        if (!a.isPosting) return false;
+        const t = (a.accountType || "").toLowerCase();
+        return t.includes("expense") || t.includes("cost") || t.includes("مصروف") || t.includes("تكلف");
+      });
+      setAccounts(filtered.length > 0 ? filtered : all.filter((a) => a.isPosting));
+    } catch { /* ignore */ }
+  }
+  useEffect(() => { if (token) void loadAccounts(); /* eslint-disable-next-line */ }, [token]);
 
   useEffect(() => {
     if (!id) return;
@@ -289,6 +320,10 @@ function RoutingEditor({
         nameAr: `مرحلة ${prev.length + 1}`,
         color: PALETTE[prev.length % PALETTE.length],
         expectedWasteRatio: 0,
+        expectedCost: 0,
+        // Default to the previous stage's cost account so users only
+        // pick once per routing in the common case.
+        expectedCostAccountId: prev[prev.length - 1]?.expectedCostAccountId ?? null,
       },
     ]);
   }
@@ -314,6 +349,8 @@ function RoutingEditor({
         nameEn: s.nameEn || null,
         expectedWasteRatio: Number(s.expectedWasteRatio ?? 0) || 0,
         expectedDurationMinutes: s.expectedDurationMinutes || null,
+        expectedCost: Number(s.expectedCost ?? 0) || 0,
+        expectedCostAccountId: s.expectedCostAccountId || null,
         icon: s.icon || null,
         color: s.color || null,
         notes: s.notes || null,
@@ -460,7 +497,7 @@ function RoutingEditor({
                         </button>
                       </div>
                     </div>
-                    <div className="grid md:grid-cols-3 gap-2 text-xs">
+                    <div className="grid md:grid-cols-2 gap-2 text-xs">
                       <div>
                         <label className="text-slate-500 block mb-1">نسبة الهالك المتوقعة</label>
                         <Input
@@ -480,18 +517,61 @@ function RoutingEditor({
                           placeholder="60"
                         />
                       </div>
+                    </div>
+                    {/* Cost row — international ERP standard: each operation
+                        carries an expected cost (labor + overhead) and the
+                        GL expense account it will be charged to. */}
+                    <div className="grid md:grid-cols-2 gap-2 text-xs mt-2 pt-2 border-t border-dashed">
                       <div>
-                        <label className="text-slate-500 block mb-1">اللون</label>
-                        <div className="flex gap-1 flex-wrap">
-                          {PALETTE.map((c) => (
-                            <button
-                              key={c}
-                              onClick={() => patchStage(i, { color: c })}
-                              className={`h-6 w-6 rounded-full border-2 ${s.color === c ? "border-slate-800" : "border-white"}`}
-                              style={{ background: c }}
-                            />
+                        <label className="text-slate-500 block mb-1">التكلفة المتوقعة للمرحلة (ريال)</label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={s.expectedCost ?? 0}
+                          onChange={(e) => patchStage(i, { expectedCost: e.target.value })}
+                          placeholder="0.00"
+                          data-testid={`input-stage-cost-${i}`}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-500 block mb-1 flex items-center justify-between">
+                          <span>حساب التكلفة (شجرة الحسابات)</span>
+                          <button
+                            type="button"
+                            onClick={() => setNewAccountFor(i)}
+                            className="text-indigo-600 hover:text-indigo-800 text-[11px] inline-flex items-center gap-0.5"
+                            title="إنشاء حساب جديد"
+                          >
+                            <Plus className="h-3 w-3" /> حساب جديد
+                          </button>
+                        </label>
+                        <select
+                          value={s.expectedCostAccountId ?? ""}
+                          onChange={(e) => patchStage(i, { expectedCostAccountId: e.target.value ? Number(e.target.value) : null })}
+                          className="w-full rounded-md border bg-white p-2 text-xs"
+                          data-testid={`select-stage-account-${i}`}
+                        >
+                          <option value="">— بدون حساب —</option>
+                          {accounts.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.code} — {a.nameAr}
+                            </option>
                           ))}
-                        </div>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="mt-2 pt-2 border-t border-dashed">
+                      <label className="text-slate-500 block mb-1 text-xs">اللون</label>
+                      <div className="flex gap-1 flex-wrap">
+                        {PALETTE.map((c) => (
+                          <button
+                            key={c}
+                            onClick={() => patchStage(i, { color: c })}
+                            className={`h-6 w-6 rounded-full border-2 ${s.color === c ? "border-slate-800" : "border-white"}`}
+                            style={{ background: c }}
+                          />
+                        ))}
                       </div>
                     </div>
                   </div>
@@ -516,6 +596,150 @@ function RoutingEditor({
           <Button onClick={save} disabled={busy} data-testid="btn-save-routing">
             <Save className="h-4 w-4 me-1" />
             {busy ? "جاري الحفظ…" : "حفظ"}
+          </Button>
+        </div>
+      </div>
+
+      {newAccountFor != null && (
+        <NewAccountModal
+          token={token}
+          existingAccounts={accounts}
+          onClose={() => setNewAccountFor(null)}
+          onCreated={async (acc) => {
+            await loadAccounts();
+            patchStage(newAccountFor, { expectedCostAccountId: acc.id });
+            setNewAccountFor(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Inline "Create Account" modal ────────────────────────────────────────
+// Lets the user add a new posting account to the chart of accounts without
+// leaving the routing editor. POSTs to /api/accounts.
+function NewAccountModal({
+  token, existingAccounts, onClose, onCreated,
+}: {
+  token: string;
+  existingAccounts: AccountOpt[];
+  onClose: () => void;
+  onCreated: (acc: AccountOpt) => void;
+}) {
+  const { toast } = useToast();
+  const [code, setCode] = useState("");
+  const [nameAr, setNameAr] = useState("");
+  const [nameEn, setNameEn] = useState("");
+  const [accountType, setAccountType] = useState("expense");
+  const [parentId, setParentId] = useState<number | "">("");
+  const [busy, setBusy] = useState(false);
+
+  // Suggest a fresh code based on the highest existing numeric code
+  useEffect(() => {
+    if (code) return;
+    const nums = existingAccounts
+      .map((a) => Number(String(a.code).replace(/\D/g, "")))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const next = nums.length ? Math.max(...nums) + 1 : 5101;
+    setCode(String(next));
+    // eslint-disable-next-line
+  }, []);
+
+  async function create() {
+    if (!code.trim() || !nameAr.trim()) {
+      toast({ title: "كود الحساب واسمه مطلوبة", variant: "destructive" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await fetch(`${API}/api/accounts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          code: code.trim(),
+          nameAr: nameAr.trim(),
+          nameEn: nameEn.trim() || null,
+          accountType,
+          parentId: parentId || null,
+          isPosting: true,
+          isActive: true,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      toast({ title: "✓ تم إنشاء الحساب" });
+      onCreated({
+        id: j.id,
+        code: j.code,
+        nameAr: j.nameAr,
+        accountType: j.accountType,
+        isPosting: !!j.isPosting,
+      });
+    } catch (e: any) {
+      toast({ title: "خطأ في إنشاء الحساب", description: e?.message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl w-full max-w-md shadow-2xl">
+        <div className="flex items-center justify-between p-3 border-b bg-emerald-50 rounded-t-xl">
+          <h3 className="font-bold flex items-center gap-2">
+            <Plus className="h-4 w-4 text-emerald-600" />
+            حساب جديد في شجرة الحسابات
+          </h3>
+          <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
+        </div>
+        <div className="p-4 space-y-3 text-sm">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-slate-500 block mb-1 text-xs">كود الحساب *</label>
+              <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="5101" data-testid="input-new-account-code" />
+            </div>
+            <div>
+              <label className="text-slate-500 block mb-1 text-xs">نوع الحساب</label>
+              <select
+                value={accountType}
+                onChange={(e) => setAccountType(e.target.value)}
+                className="w-full rounded-md border bg-white p-2 text-sm"
+              >
+                <option value="expense">مصروف (Expense)</option>
+                <option value="cost_of_goods">تكلفة بضاعة (COGS)</option>
+                <option value="liability">التزام (Liability)</option>
+                <option value="asset">أصل (Asset)</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="text-slate-500 block mb-1 text-xs">الاسم بالعربي *</label>
+            <Input value={nameAr} onChange={(e) => setNameAr(e.target.value)} placeholder="مثال: مصروف عمالة الإنتاج" data-testid="input-new-account-name-ar" />
+          </div>
+          <div>
+            <label className="text-slate-500 block mb-1 text-xs">الاسم بالإنجليزي</label>
+            <Input value={nameEn} onChange={(e) => setNameEn(e.target.value)} placeholder="Production Labor Expense" />
+          </div>
+          <div>
+            <label className="text-slate-500 block mb-1 text-xs">الحساب الأب (اختياري)</label>
+            <select
+              value={parentId}
+              onChange={(e) => setParentId(e.target.value ? Number(e.target.value) : "")}
+              className="w-full rounded-md border bg-white p-2 text-sm"
+            >
+              <option value="">— حساب رئيسي —</option>
+              {existingAccounts.map((a) => (
+                <option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="p-3 border-t bg-slate-50 rounded-b-xl flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onClose}>إلغاء</Button>
+          <Button size="sm" onClick={create} disabled={busy} data-testid="btn-create-account">
+            <Save className="h-4 w-4 me-1" />
+            {busy ? "جارٍ الحفظ…" : "إنشاء واختياره"}
           </Button>
         </div>
       </div>
