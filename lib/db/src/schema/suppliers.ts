@@ -25,6 +25,8 @@ export const suppliersTable = pgTable("suppliers", {
   locationLink:        text("location_link"),
   accountId:           integer("account_id"),
   groupId:             integer("group_id"),
+  /** Optional home branch — mirror of customers.branchId. */
+  branchId:            integer("branch_id"),
   currencyCode:        text("currency_code").default("SAR"),
   creditLimit:         numeric("credit_limit", { precision: 15, scale: 2 }).default("0"),
   openingBalance:      numeric("opening_balance", { precision: 15, scale: 2 }).default("0"),

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
+import { branchesTable } from "@workspace/db";
 import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable,
   journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import { eq, and, sql, inArray, notInArray, isNotNull } from "drizzle-orm";
@@ -186,6 +187,12 @@ router.post("/", async (req, res) => {
     return;
   }
 
+  // Validate branchId belongs to the same company (prevents cross-tenant assignment)
+  if (data.branchId) {
+    const [b] = await db.select().from(branchesTable).where(and(eq(branchesTable.id, Number(data.branchId)), eq(branchesTable.companyId, companyId)));
+    if (!b) { res.status(400).json({ error: "الفرع المحدّد غير موجود في هذه الشركة" }); return; }
+  }
+
   // Auto-create a sub-account under the suppliers parent if none was provided.
   let accountId: number | null = data.accountId ? Number(data.accountId) : null;
   if (!accountId) {
@@ -217,6 +224,7 @@ router.post("/", async (req, res) => {
     locationLng: data.locationLng ?? null,
     locationLink: data.locationLink ?? null,
     accountId,
+    branchId: data.branchId ? Number(data.branchId) : null,
     includeInStatements: data.includeInStatements === false ? false : true,
   }).returning();
   res.status(201).json(supplier);
@@ -257,6 +265,11 @@ router.put("/:id", async (req, res) => {
     return;
   }
 
+  if (data.branchId) {
+    const [b] = await db.select().from(branchesTable).where(and(eq(branchesTable.id, Number(data.branchId)), eq(branchesTable.companyId, existing.companyId)));
+    if (!b) { res.status(400).json({ error: "الفرع المحدّد غير موجود في هذه الشركة" }); return; }
+  }
+
   const [supplier] = await db.update(suppliersTable).set({
     code: data.code ?? null,
     nameAr: data.nameAr,
@@ -272,6 +285,9 @@ router.put("/:id", async (req, res) => {
     postalCode: data.postalCode ?? null,
     country: data.country ?? "SA",
     accountId: data.accountId ? Number(data.accountId) : null,
+    ...(data.branchId !== undefined
+      ? { branchId: data.branchId === null || data.branchId === "" ? null : Number(data.branchId) }
+      : {}),
     ...(typeof data.includeInStatements === "boolean"
       ? { includeInStatements: data.includeInStatements }
       : {}),

@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { useCreateCustomer, useListCompanies, useGetCustomer, useUpdateCustomer } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -57,6 +57,8 @@ const customerSchema = z.object({
    */
   creditLimit:        z.coerce.number().min(0, "لا يمكن أن يكون سالباً").default(0),
   enforceCreditLimit: z.boolean().default(false),
+  /** Optional default branch — sent as null when blank. */
+  branchId:           z.union([z.coerce.number().int().positive(), z.literal(""), z.null()]).optional(),
 });
 
 type FormValues = z.infer<typeof customerSchema>;
@@ -83,7 +85,18 @@ export default function CustomerNew() {
   // Superadmin: company text input state
   const [companyText, setCompanyText] = useState("");
   const [custAccountId, setCustAccountId] = useState("");
+  const [branchId, setBranchId] = useState("");
   const [location, setLocation_] = useState<LocationValue>({ lat: null, lng: null, link: null });
+  const { token } = useAuth() as any;
+  const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey: ["branches", userCompanyId],
+    enabled: !!userCompanyId,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/org/branches`, { headers: { Authorization: `Bearer ${token}` } });
+      return r.ok ? r.json() : [];
+    },
+  });
   const { data: companies } = useListCompanies({
     query: { queryKey: ["companies"], enabled: isSuperAdmin }
   });
@@ -136,6 +149,7 @@ export default function CustomerNew() {
       enforceCreditLimit: c.enforceCreditLimit ?? false,
     });
     if (c.accountId) setCustAccountId(String(c.accountId));
+    setBranchId(c.branchId ? String(c.branchId) : "");
     setLocation_({
       lat: c.locationLat ?? null,
       lng: c.locationLng ?? null,
@@ -161,6 +175,7 @@ export default function CustomerNew() {
     const payload = {
       ...rest,
       accountId: custAccountId ? Number(custAccountId) : null,
+      branchId: branchId ? Number(branchId) : null,
       locationLat: location.lat,
       locationLng: location.lng,
       locationLink: location.link,
@@ -721,20 +736,42 @@ export default function CustomerNew() {
                     </div>
                   </div>
 
-                  {/* Accounting link */}
-                  <div className="pt-4 border-t space-y-1.5">
-                    <label className="text-sm font-medium flex items-center gap-1.5">
-                      <BookMarked className="h-3.5 w-3.5 text-muted-foreground" />
-                      حساب المدينين (العميل)
-                    </label>
-                    <AccountCombobox
-                      value={custAccountId}
-                      onValueChange={setCustAccountId}
-                      placeholder="— اختر الحساب المحاسبي —"
-                      filterTypes={["asset"]}
-                      grouped={false}
-                    />
-                    <p className="text-xs text-muted-foreground">اختياري — الحساب المرتبط بهذا العميل في دفتر الأستاذ</p>
+                  {/* Branch + Accounting link */}
+                  <div className="pt-4 border-t grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium flex items-center gap-1.5">
+                        <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+                        الفرع الافتراضي
+                      </label>
+                      <select
+                        value={branchId}
+                        onChange={e => setBranchId(e.target.value)}
+                        className="w-full h-10 border border-input rounded-md px-3 text-sm bg-background"
+                        data-testid="customer-branch"
+                      >
+                        <option value="">— بدون فرع محدد —</option>
+                        {(branches as any[]).map((b: any) => (
+                          <option key={b.id} value={b.id}>
+                            {b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? " (الرئيسي)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-muted-foreground">اختياري — الفرع الافتراضي عند إنشاء فاتورة لهذا العميل</p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium flex items-center gap-1.5">
+                        <BookMarked className="h-3.5 w-3.5 text-muted-foreground" />
+                        حساب المدينين (العميل)
+                      </label>
+                      <AccountCombobox
+                        value={custAccountId}
+                        onValueChange={setCustAccountId}
+                        placeholder="— اختر الحساب المحاسبي —"
+                        filterTypes={["asset"]}
+                        grouped={false}
+                      />
+                      <p className="text-xs text-muted-foreground">اختياري — الحساب المرتبط بهذا العميل في دفتر الأستاذ</p>
+                    </div>
                   </div>
 
                   <div className="flex justify-between pt-4 border-t">

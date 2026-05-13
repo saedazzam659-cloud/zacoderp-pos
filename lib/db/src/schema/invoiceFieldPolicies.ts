@@ -140,6 +140,7 @@ export const FIELD_CATALOGUE: Record<PolicyScope, FieldDef[]> = {
     { key: "postalCode",           labelAr: "الرمز البريدي",         labelEn: "Postal code" },
     { key: "nationalAddressShort", labelAr: "العنوان الوطني المختصر", labelEn: "Short national address" },
     { key: "salesRepId",           labelAr: "مندوب المبيعات",        labelEn: "Sales rep" },
+    { key: "branchId",             labelAr: "الفرع",                 labelEn: "Branch" },
     { key: "accountId",            labelAr: "حساب الأستاذ",          labelEn: "Ledger account" },
     { key: "creditLimit",          labelAr: "الحد الائتماني للسحب",  labelEn: "Credit limit" },
     { key: "enforceCreditLimit",   labelAr: "منع التجاوز عند الوصول للحد", labelEn: "Block when limit reached" },

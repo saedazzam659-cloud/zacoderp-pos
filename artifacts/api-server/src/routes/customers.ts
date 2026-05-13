@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, salesRepsTable, usersTable } from "@workspace/db";
+import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, salesRepsTable, usersTable, branchesTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
@@ -174,6 +174,13 @@ router.post("/", async (req, res) => {
     effectiveSalesRepId = repScope;
   }
 
+  // Validate branchId belongs to the same company
+  const rawBranchId = (req.body as any)?.branchId;
+  if (rawBranchId) {
+    const [b] = await db.select().from(branchesTable).where(and(eq(branchesTable.id, Number(rawBranchId)), eq(branchesTable.companyId, effectiveCompanyId)));
+    if (!b) { res.status(400).json({ error: "الفرع المحدّد غير موجود في هذه الشركة" }); return; }
+  }
+
   let accountId: number | null = (data as any).accountId ? Number((data as any).accountId) : null;
   if (!accountId) {
     try {
@@ -205,6 +212,7 @@ router.post("/", async (req, res) => {
     locationLink: d.locationLink ?? null,
     accountId,
     salesRepId: effectiveSalesRepId,
+    branchId: (req.body as any)?.branchId ? Number((req.body as any).branchId) : null,
     // "Display-only" flag — accept from raw body since it is not part of the
     // generated CreateCustomerBody zod schema yet. Defaults to true (full
     // statement participation) when omitted.
@@ -297,6 +305,16 @@ router.put("/:id", async (req, res) => {
   }
   if (typeof (req.body as any)?.enforceCreditLimit === "boolean") {
     setData.enforceCreditLimit = (req.body as any).enforceCreditLimit;
+  }
+  if ((req.body as any)?.branchId !== undefined) {
+    const bv = (req.body as any).branchId;
+    if (bv === null || bv === "") {
+      setData.branchId = null;
+    } else {
+      const [br] = await db.select().from(branchesTable).where(and(eq(branchesTable.id, Number(bv)), eq(branchesTable.companyId, existing.companyId)));
+      if (!br) { res.status(400).json({ error: "الفرع المحدّد غير موجود في هذه الشركة" }); return; }
+      setData.branchId = Number(bv);
+    }
   }
   const [customer] = await db.update(customersTable).set(setData).where(eq(customersTable.id, id)).returning();
   res.json(customer);

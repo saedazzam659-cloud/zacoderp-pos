@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ArrowRight, Save, Truck, MapPin, Phone, AlertTriangle, BookMarked } from "lucide-react";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Link } from "wouter";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 const supplierSchema = z.object({
   code: z.string().optional(),
@@ -50,7 +50,7 @@ export default function SupplierNew() {
       const res = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/suppliers`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ...values, companyId: user?.companyId, accountId: accountId ? Number(accountId) : null }),
+        body: JSON.stringify({ ...values, companyId: user?.companyId, accountId: accountId ? Number(accountId) : null, branchId: branchId ? Number(branchId) : null }),
       });
       if (!res.ok) {
         const txt = await res.text();
@@ -69,7 +69,18 @@ export default function SupplierNew() {
   });
 
   const [accountId, setAccountId] = useState("");
+  const [branchId, setBranchId] = useState("");
   const vatVal = form.watch("vatNumber");
+
+  const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey: ["branches", user?.companyId],
+    enabled: !!user?.companyId,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/org/branches`, { headers: { Authorization: `Bearer ${token}` } });
+      return r.ok ? r.json() : [];
+    },
+  });
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -220,16 +231,35 @@ export default function SupplierNew() {
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-5 space-y-6">
-              <div className="max-w-sm space-y-1.5">
-                <label className="text-sm font-medium">حساب الدائنين (المورد)</label>
-                <AccountCombobox
-                  value={accountId}
-                  onValueChange={setAccountId}
-                  placeholder="— اختر حساب الدائنين —"
-                  filterTypes={["liability"]}
-                  grouped={false}
-                />
-                <p className="text-xs text-muted-foreground">الحساب المرتبط بهذا المورد في دفتر الأستاذ</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">الفرع الافتراضي</label>
+                  <select
+                    value={branchId}
+                    onChange={e => setBranchId(e.target.value)}
+                    className="w-full h-10 border border-input rounded-md px-3 text-sm bg-background"
+                    data-testid="supplier-branch"
+                  >
+                    <option value="">— بدون فرع محدد —</option>
+                    {(branches as any[]).map((b: any) => (
+                      <option key={b.id} value={b.id}>
+                        {b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? " (الرئيسي)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground">اختياري — الفرع الافتراضي عند إنشاء فاتورة شراء لهذا المورد</p>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">حساب الدائنين (المورد)</label>
+                  <AccountCombobox
+                    value={accountId}
+                    onValueChange={setAccountId}
+                    placeholder="— اختر حساب الدائنين —"
+                    filterTypes={["liability"]}
+                    grouped={false}
+                  />
+                  <p className="text-xs text-muted-foreground">الحساب المرتبط بهذا المورد في دفتر الأستاذ</p>
+                </div>
               </div>
 
             </CardContent>
