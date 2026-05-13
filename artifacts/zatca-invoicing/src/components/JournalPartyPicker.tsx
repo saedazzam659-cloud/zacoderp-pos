@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Search, Plus, Save, X, UserCog, Truck, ClipboardCopy } from "lucide-react";
+import { Search, Plus, Save, X, UserCog, Truck, ClipboardCopy, Receipt, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -132,11 +132,13 @@ export function JournalPartyPicker({ onInsert, className }: Props) {
   const [nCity, setNCity] = useState("");
   const [nPostal, setNPostal] = useState("");
   const [nNAShort, setNNAShort] = useState("");
+  const [nIncludeInStatements, setNIncludeInStatements] = useState(true);
 
   function resetCreate() {
     setNName(""); setNNameEn(""); setNVat(""); setNCr(""); setNPhone("");
     setNBuilding(""); setNStreet(""); setNDistrict("");
     setNCity(""); setNPostal(""); setNNAShort("");
+    setNIncludeInStatements(true);
   }
 
   const create = useMutation({
@@ -157,6 +159,7 @@ export function JournalPartyPicker({ onInsert, className }: Props) {
         postalCode:           nPostal.trim()   || undefined,
         nationalAddressShort: nNAShort.trim()  || undefined,
         country: "SA",
+        includeInStatements:  nIncludeInStatements,
       };
       const r = await fetch(`${API}${path}`, {
         method: "POST",
@@ -369,6 +372,47 @@ export function JournalPartyPicker({ onInsert, className }: Props) {
                         <Label className="text-xs text-muted-foreground">رمز العنوان الوطني المختصر</Label>
                         <Input value={nNAShort} onChange={(e) => setNNAShort(e.target.value)} className="h-9 font-mono" dir="ltr" placeholder="RIYD1234" />
                       </div>
+                    </div>
+                  </div>
+
+                  {/* ── Statement-visibility selector ─────────────────────── */}
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold">طريقة الظهور في كشوف الحسابات</Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setNIncludeInStatements(true)}
+                        className={`rounded-md border-2 p-3 text-right transition-all ${
+                          nIncludeInStatements
+                            ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30"
+                            : "border-muted hover:border-emerald-300"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <Receipt className={`h-4 w-4 ${nIncludeInStatements ? "text-emerald-600" : "text-muted-foreground"}`} />
+                          <span className="text-xs font-semibold">تسميع الأرصدة كاملاً</span>
+                        </div>
+                        <div className="text-[10px] text-muted-foreground leading-tight">
+                          يظهر في كشف الحساب وأعمار الديون والأرصدة
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNIncludeInStatements(false)}
+                        className={`rounded-md border-2 p-3 text-right transition-all ${
+                          !nIncludeInStatements
+                            ? "border-amber-500 bg-amber-50 dark:bg-amber-950/30"
+                            : "border-muted hover:border-amber-300"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <Eye className={`h-4 w-4 ${!nIncludeInStatements ? "text-amber-600" : "text-muted-foreground"}`} />
+                          <span className="text-xs font-semibold">للعرض فقط</span>
+                        </div>
+                        <div className="text-[10px] text-muted-foreground leading-tight">
+                          يُستبعد من كشوف الحسابات والأرصدة (القيود تُسجّل عادي)
+                        </div>
+                      </button>
                     </div>
                   </div>
                 </div>
