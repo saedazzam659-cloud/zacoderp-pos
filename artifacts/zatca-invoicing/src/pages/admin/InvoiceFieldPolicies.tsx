@@ -87,6 +87,12 @@ function authHeaders(): Record<string, string> {
   const tok = localStorage.getItem("zatca_token") ?? "";
   const h: Record<string, string> = { "Content-Type": "application/json" };
   if (tok) h.Authorization = `Bearer ${tok}`;
+  // SuperAdmin "enter-company" context: this raw fetch helper bypasses the
+  // generated API client, so we must forward the acting-company header
+  // ourselves — otherwise resolveCompanyId returns undefined and every
+  // POST/PUT here fails with 401 "غير مصرح".
+  const acting = localStorage.getItem("zatca_acting_company_id");
+  if (acting) h["x-acting-company-id"] = acting;
   return h;
 }
 async function jget<T>(path: string): Promise<T> {
