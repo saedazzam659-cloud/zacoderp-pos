@@ -529,7 +529,7 @@ export default function GoodsDeliveries() {
   const custMap = Object.fromEntries(customers.map((s: any) => [s.id, custName(s)]));
 
   const lineColHeaders = [
-    tr("lineCols.item"), tr("lineCols.itemCode"), tr("lineCols.warehouse"),
+    tr("lineCols.itemCode"), tr("lineCols.item"), tr("lineCols.warehouse"),
     tr("lineCols.unit"), tr("lineCols.qty"), tr("lineCols.price"),
     tr("lineCols.discount"), tr("lineCols.vat"), tr("lineCols.total"),
     tr("lineCols.notes"), "",
@@ -1084,7 +1084,7 @@ ${sections}
                     <span>{tr("linesTitle")} ({lines.filter(l => l.itemId || l.itemName).length})</span>
                   </div>
                   {(() => {
-                    const GRID_COLS_GD = "220px 110px 160px 120px 90px 110px 80px 80px 130px 180px 40px";
+                    const GRID_COLS_GD = "110px minmax(260px,1.4fr) 160px 120px 90px 110px 80px 80px 130px 180px 40px";
                     return (
                   <div className="rounded-xl border bg-card overflow-x-auto" dir={isRtl ? "rtl" : "ltr"}>
                     <div className="min-w-max">
@@ -1097,16 +1097,17 @@ ${sections}
                   {lines.map(l => (
                     <div key={l._id} className="px-3 py-2 hover:bg-muted/30 transition-colors">
                       <div className="grid gap-2 items-center" style={{ gridTemplateColumns: GRID_COLS_GD }}>
+                        <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
+                          onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                         {inventoryItems.length > 0 ? (
                           <SearchCombobox items={itemComboItems} value={l.itemId}
                             onValueChange={v => selectItem(l._id, v)}
-                            placeholder={tr("selectItemCombo")} />
+                            placeholder={tr("selectItemCombo")}
+                            searchPlaceholder="ابحث بالكود أو الاسم..." />
                         ) : (
                           <Input className="h-8 text-xs" placeholder={tr("itemNamePh")} value={l.itemName}
                             onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                         )}
-                        <Input className="h-8 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
-                          onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                         {warehouses.length > 0 ? (
                           <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
                             <SelectTrigger className={cn("h-8 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
