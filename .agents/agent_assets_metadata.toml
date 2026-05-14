@@ -130,7 +130,7 @@ title = "دليل النشر على سيرفر محلي وسحابي (Word)"
 id = "2kxROpcbWHg7lzIDxsrBL"
 uri = "file://.local/exports/database.sql.gz"
 type = "unspecified"
-title = "قاعدة البيانات مضغوطة (215KB — فكّ الضغط لتحصل على database.sql)"
+title = "نسخة قاعدة البيانات (gzip - 280KB)"
 
 [[outputs]]
 id = "aLfUOiAeIBhB9b6c4hMIe"
@@ -221,3 +221,9 @@ id = "u2MthIBG-LNrjPZtQTuH1"
 uri = "file://attached_assets/branding/zacode-logo-dark.png"
 type = "image"
 title = "Zacode — على خلفية داكنة (PNG للعروض/السوشيال)"
+
+[[outputs]]
+id = "AZVS8Ec60ozJmTWzlRcnd"
+uri = "file://.local/exports/source.tar.gz"
+type = "unspecified"
+title = "السورس كود الكامل (tar.gz - 536MB)"
