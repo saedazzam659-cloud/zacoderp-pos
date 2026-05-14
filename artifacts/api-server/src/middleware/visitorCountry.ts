@@ -142,6 +142,43 @@ async function lookupCountryByIp(ip: string): Promise<string | null> {
   }
 }
 
+// Public helper: resolve the raw ISO-3166-1 alpha-2 country code for an
+// arbitrary IP address (e.g. from audit_log or session-tracking rows).
+// Unlike the visitor middleware below, this function does NOT coerce
+// unsupported codes to "GLOBAL" — callers like /admin/security/sessions
+// want the actual reporting country (US/FR/IN/...) to display next to
+// the IP, not the localized-content fallback. Returns null for private/
+// loopback IPs and on any upstream failure (cached so we don't retry).
+export async function resolveCountryForIp(ip: string): Promise<string | null> {
+  if (!ip) return null;
+  const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip;
+  if (isPrivateOrLoopback(v4)) return null;
+  const cached = geoCacheGet(v4);
+  // The cache stores either a real 2-letter code or the "GLOBAL" sentinel
+  // written by the visitor middleware path. Treat GLOBAL as "unknown"
+  // here so reporting surfaces show "—" instead of an ISO-invalid badge.
+  if (cached) return cached === "GLOBAL" ? null : cached;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), GEO_LOOKUP_TIMEOUT_MS);
+  try {
+    const r = await fetch(`https://api.country.is/${encodeURIComponent(v4)}`, { signal: ctrl.signal });
+    if (!r.ok) { geoCacheSet(v4, "GLOBAL"); return null; }
+    const j: any = await r.json();
+    const raw = String(j?.country || "").trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(raw)) {
+      geoCacheSet(v4, raw);
+      return raw;
+    }
+    geoCacheSet(v4, "GLOBAL");
+    return null;
+  } catch {
+    geoCacheSet(v4, "GLOBAL");
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function normalize(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const v = raw.trim().toUpperCase();

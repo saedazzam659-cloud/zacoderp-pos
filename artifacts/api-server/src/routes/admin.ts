@@ -2449,8 +2449,37 @@ router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
       for (const c of cos) companyMap.set(c.id, c);
     }
 
+    // ─── Country resolution + per-company login counter ──────────────────
+    // Resolve a country code for every distinct IP we're about to display.
+    // Lookups are cached (24h) and capped at ~1.5s each by resolveCountryForIp,
+    // and we run them concurrently so total latency is ~max(individual) not sum.
+    // We swallow per-IP failures: a missing country must never break the page.
+    const distinctIps = Array.from(new Set(
+      Array.from(loginByUser.values()).map(r => r.ip).filter((x): x is string => !!x),
+    ));
+    const ipCountry = new Map<string, string | null>();
+    await Promise.all(distinctIps.map(async (ip) => {
+      try { ipCountry.set(ip, await resolveCountryForIp(ip)); }
+      catch { ipCountry.set(ip, null); }
+    }));
+
+    // Aggregate successful logins per company across the whole audit_log so
+    // the UI can show how many times each tenant has signed in (lifetime).
+    // We filter to action='login' module='auth' (writeAudit's success path);
+    // failed attempts use action='denied' so they're naturally excluded.
+    const companyLoginAggRows = await db
+      .select({ companyId: auditLogTable.companyId, c: sql<number>`count(*)::int` })
+      .from(auditLogTable)
+      .where(and(eq(auditLogTable.module, "auth"), eq(auditLogTable.action, "login")))
+      .groupBy(auditLogTable.companyId);
+    const companyLoginCount = new Map<number, number>();
+    for (const r of companyLoginAggRows) {
+      if (r.companyId != null) companyLoginCount.set(Number(r.companyId), Number(r.c));
+    }
+
     const rows = sessions.map(s => {
       const lg = loginByUser.get(s.id);
+      const country = lg?.ip ? (ipCountry.get(lg.ip) ?? null) : null;
       return {
         userId:      s.id,
         username:    s.username,
@@ -2458,9 +2487,11 @@ router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
         role:        s.role,
         companyId:   s.companyId,
         companyName: s.companyId != null ? companyMap.get(s.companyId)?.nameAr ?? null : null,
+        companyLoginCount: s.companyId != null ? (companyLoginCount.get(s.companyId) ?? 0) : null,
         sessionId:   s.sessionId,
         lastLoginAt: s.lastLoginAt,
         ip:          lg?.ip ?? null,
+        country,
         userAgent:   lg?.user_agent ?? null,
       };
     });
