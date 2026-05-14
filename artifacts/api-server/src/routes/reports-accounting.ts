@@ -520,14 +520,30 @@ router.get("/account-statement", async (req, res) => {
       // Resolve the effective cost-centre (line OR source document) into
       // its human-readable code/name. Has to come AFTER every source-doc
       // join above so the COALESCE expression sees their columns.
+      //
+      // The stored value can be EITHER the numeric id (system-generated
+      // JEs — fa-journals, contracting, production all stringify the id)
+      // OR the code (manual JEs from JournalEntryForm, which uses
+      // `c.code` as the option value). We match on either by ORing the
+      // two equality conditions — `code` is a TEXT column so the cast on
+      // `id::text` keeps both sides comparable.
       .leftJoin(costCentersTable, and(
         eq(costCentersTable.companyId, cid),
-        sql`${costCentersTable.id}::text = COALESCE(
-          ${journalEntryLinesTable.costCenter},
-          ${salesInvoicesTable.costCenter},
-          ${purchaseInvoicesTable.costCenter},
-          ${receiptVouchersTable.costCenter},
-          ${paymentVouchersTable.costCenter}
+        sql`(
+          ${costCentersTable.id}::text = COALESCE(
+            ${journalEntryLinesTable.costCenter},
+            ${salesInvoicesTable.costCenter},
+            ${purchaseInvoicesTable.costCenter},
+            ${receiptVouchersTable.costCenter},
+            ${paymentVouchersTable.costCenter}
+          )
+          OR ${costCentersTable.code} = COALESCE(
+            ${journalEntryLinesTable.costCenter},
+            ${salesInvoicesTable.costCenter},
+            ${purchaseInvoicesTable.costCenter},
+            ${receiptVouchersTable.costCenter},
+            ${paymentVouchersTable.costCenter}
+          )
         )`,
       ))
       .where(and(
