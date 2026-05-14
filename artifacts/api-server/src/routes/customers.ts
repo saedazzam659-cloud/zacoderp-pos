@@ -285,6 +285,87 @@ function clampCreditLimit(v: any): string | null {
   return Math.max(0, n).toFixed(2);
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// Fetch National Address from Saudi Post (SPL) API.
+// Uses the customer's stored vatNumber or crNumber to look up the official
+// registered address and writes the resolved fields back to the row.
+// Requires SPL_API_KEY env (subscribe at https://api.address.gov.sa).
+// ════════════════════════════════════════════════════════════════════════
+router.put("/:id/fetch-national-address", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const [existing] = await db.select().from(customersTable).where(eq(customersTable.id, id));
+    if (!existing) { res.status(404).json({ error: "العميل غير موجود" }); return; }
+    const companyId = resolveCompanyId(req, existing.companyId);
+    if (companyId && existing.companyId !== companyId) { res.status(403).json({ error: "غير مصرح" }); return; }
+
+    const apiKey = process.env.SPL_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({
+        error: "خدمة العنوان الوطني غير مفعّلة",
+        details: "يجب إضافة مفتاح SPL_API_KEY من إعدادات البيئة. اشترك في https://api.address.gov.sa للحصول على المفتاح.",
+      });
+      return;
+    }
+
+    const cr = (existing.crNumber ?? "").trim();
+    const vat = (existing.vatNumber ?? "").trim();
+    if (!cr && !vat) {
+      res.status(400).json({ error: "يجب إدخال رقم السجل التجاري أو الرقم الضريبي للعميل أولاً" });
+      return;
+    }
+
+    // Prefer CR over VAT (CR-based lookup is the SPL primary endpoint).
+    const baseUrl = "https://apina.address.gov.sa/NationalAddress/v3.1/Address";
+    const url = cr
+      ? `${baseUrl}/address-by-cr?crNumber=${encodeURIComponent(cr)}&language=A&format=JSON`
+      : `${baseUrl}/address-by-vat?vatNumber=${encodeURIComponent(vat)}&language=A&format=JSON`;
+
+    const sr = await fetch(url, { headers: { "api_key": apiKey, "Accept": "application/json" } });
+    if (!sr.ok) {
+      const text = await sr.text().catch(() => "");
+      req.log.warn({ status: sr.status, body: text.slice(0, 200) }, "SPL API request failed");
+      res.status(502).json({ error: `خدمة العنوان الوطني ردّت بخطأ ${sr.status}`, details: text.slice(0, 200) });
+      return;
+    }
+    const payload: any = await sr.json().catch(() => ({}));
+    const addr = Array.isArray(payload?.Addresses) && payload.Addresses.length ? payload.Addresses[0] : null;
+    if (!addr) {
+      res.status(404).json({ error: "لم يتم العثور على عنوان وطني مسجَّل لهذا العميل" });
+      return;
+    }
+
+    const setData: Partial<typeof existing> = {
+      city:                 addr.CityName ?? existing.city,
+      district:             addr.DistrictName ?? existing.district,
+      street:               addr.Street ?? existing.street,
+      buildingNumber:       String(addr.BuildingNumber ?? "").trim() || existing.buildingNumber,
+      postalCode:           String(addr.PostCode ?? "").trim() || existing.postalCode,
+      nationalAddressShort: (addr.ShortAddress ?? existing.nationalAddressShort)?.toString().toUpperCase().replace(/[^A-Z0-9]/g, "") || existing.nationalAddressShort,
+    };
+
+    const [updated] = await db.update(customersTable).set(setData).where(eq(customersTable.id, id)).returning();
+    res.json({
+      ok: true,
+      source: cr ? "CR" : "VAT",
+      fetched: {
+        city: addr.CityName ?? null,
+        district: addr.DistrictName ?? null,
+        street: addr.Street ?? null,
+        buildingNumber: addr.BuildingNumber ?? null,
+        postalCode: addr.PostCode ?? null,
+        additionalNumber: addr.AdditionalNumber ?? null,
+        shortAddress: addr.ShortAddress ?? null,
+        regionName: addr.RegionName ?? null,
+      },
+      customer: updated,
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, "fetch-national-address failed");
+    res.status(500).json({ error: e?.message || "خطأ غير متوقع" });
+  }
+});
+
 router.delete("/:id", async (req, res) => {
   const id = parseInt(req.params.id);
   const [existing] = await db.select().from(customersTable).where(eq(customersTable.id, id));

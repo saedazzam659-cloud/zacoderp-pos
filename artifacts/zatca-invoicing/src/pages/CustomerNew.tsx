@@ -16,6 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowRight, Save, Users, Info, Building2, MapPin, Phone,
   BadgeCheck, AlertTriangle, ChevronLeft, ChevronRight, CheckCircle2, BookMarked,
+  Download, Loader2,
 } from "lucide-react";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Link } from "wouter";
@@ -87,8 +88,53 @@ export default function CustomerNew() {
   const [custAccountId, setCustAccountId] = useState("");
   const [branchId, setBranchId] = useState("");
   const [location, setLocation_] = useState<LocationValue>({ lat: null, lng: null, link: null });
+  const [fetchingNA, setFetchingNA] = useState(false);
   const { token } = useAuth() as any;
   const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+  // Calls POST /api/customers/:id/fetch-national-address — server hits the
+  // SPL (Saudi Post) National Address API using the customer's stored CR or
+  // VAT number, persists the resolved fields, and returns them. We then
+  // mirror the values into the form so the user can review/edit before save.
+  async function fetchNationalAddress() {
+    if (!editingId) {
+      toast({ title: "احفظ بيانات العميل أولاً", description: "هذه الأداة تعمل بعد إنشاء العميل وحفظ السجل التجاري أو الرقم الضريبي.", variant: "destructive" });
+      return;
+    }
+    setFetchingNA(true);
+    try {
+      const r = await fetch(`${API}/api/customers/${editingId}/fetch-national-address`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        toast({
+          title: data?.error || "تعذّر جلب العنوان الوطني",
+          description: data?.details || `HTTP ${r.status}`,
+          variant: "destructive",
+        });
+        return;
+      }
+      const c: any = data?.customer ?? {};
+      form.setValue("city",                 c.city ?? "");
+      form.setValue("district",             c.district ?? "");
+      form.setValue("street",               c.street ?? "");
+      form.setValue("buildingNumber",       c.buildingNumber ?? "");
+      form.setValue("postalCode",           c.postalCode ?? "");
+      form.setValue("nationalAddressShort", c.nationalAddressShort ?? "");
+      queryClient.invalidateQueries({ queryKey: ["getCustomer", editingId] });
+      toast({
+        title: "تم تحديث العنوان الوطني",
+        description: `${data?.fetched?.regionName ?? ""} — ${data?.fetched?.shortAddress ?? ""}`.trim(),
+      });
+    } catch (e: any) {
+      toast({ title: "خطأ في الشبكة", description: e?.message, variant: "destructive" });
+    } finally {
+      setFetchingNA(false);
+    }
+  }
+
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["branches", userCompanyId],
     enabled: !!userCompanyId,
@@ -626,7 +672,7 @@ export default function CustomerNew() {
 
                   {/* National Address */}
                   <div>
-                    <div className="flex items-center gap-2 mb-4">
+                    <div className="flex items-center gap-2 mb-4 flex-wrap">
                       <MapPin className="h-4 w-4 text-primary" />
                       <h3 className="font-semibold text-sm">العنوان الوطني</h3>
                       {isB2B && (
@@ -634,6 +680,24 @@ export default function CustomerNew() {
                           مطلوب للفواتير B2B
                         </span>
                       )}
+                      <div className="ms-auto">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={!isEditMode || fetchingNA}
+                          onClick={fetchNationalAddress}
+                          data-testid="btn-fetch-national-address"
+                          title={!isEditMode
+                            ? "احفظ بيانات العميل أولاً ثم استخدم هذا الزر"
+                            : "جلب العنوان الوطني الرسمي من البريد السعودي"}
+                        >
+                          {fetchingNA
+                            ? <Loader2 className="h-4 w-4 ms-2 animate-spin" />
+                            : <Download className="h-4 w-4 ms-2" />}
+                          تحديث العنوان الوطني
+                        </Button>
+                      </div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                       <FormField control={form.control} name="street" render={({ field }) => (
