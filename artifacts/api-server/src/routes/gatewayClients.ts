@@ -4,8 +4,15 @@ import { gatewayClientsTable, gatewayApiKeysTable, gatewayInvoicesTable } from "
 import { eq, and, desc, sql, isNull } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { writeAudit } from "../middleware/permissions.js";
+import { extractAuth } from "../middleware/auth.js";
 
 const router = Router();
+
+// extractAuth populates req.authUser from the Bearer token (legacy
+// users.sessionToken OR SuperAdmin multi-session token). Without it,
+// req.authUser would always be undefined and every endpoint here would
+// 401 — matching the pattern used by zatca.ts, hr-settings.ts, etc.
+router.use(extractAuth);
 
 async function requireSuperAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   const u = req.authUser;
@@ -62,11 +69,21 @@ router.get("/:id", async (req, res) => {
 });
 
 // ─── Create client ─────────────────────────────────────────────────────
+const VALID_ENV = new Set(["production", "sandbox"]);
+const VALID_STATUS = new Set(["pending", "active", "suspended"]);
+const VALID_SCOPE = new Set(["invoice_submit", "invoice_read", "full"]);
+
 router.post("/", async (req, res) => {
   const { nameAr, nameEn, vatNumber, crNumber, contactEmail, contactPhone, addressAr, city, zatcaEnv, monthlyQuota, notes } = req.body ?? {};
   if (!nameAr || typeof nameAr !== "string") { res.status(400).json({ error: "اسم الشركة بالعربية مطلوب" }); return; }
   if (!vatNumber || typeof vatNumber !== "string" || !/^\d{15}$/.test(vatNumber)) {
     res.status(400).json({ error: "الرقم الضريبي يجب أن يكون 15 رقماً" });
+    return;
+  }
+  if (zatcaEnv != null && !VALID_ENV.has(String(zatcaEnv))) { res.status(400).json({ error: "بيئة زاتكا غير صالحة" }); return; }
+  const quotaNum = Number(monthlyQuota);
+  if (monthlyQuota != null && (!Number.isFinite(quotaNum) || quotaNum < 0 || quotaNum > 1_000_000)) {
+    res.status(400).json({ error: "الحصة الشهرية يجب أن تكون رقماً موجباً" });
     return;
   }
 
@@ -105,9 +122,18 @@ router.patch("/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
   const allowed = ["nameAr","nameEn","crNumber","contactEmail","contactPhone","addressAr","city","zatcaEnv","status","monthlyQuota","notes"] as const;
+  const body = (req.body ?? {}) as Record<string, unknown>;
   const patch: Record<string, unknown> = {};
-  for (const k of allowed) if (k in (req.body ?? {})) patch[k] = (req.body as Record<string, unknown>)[k];
+  for (const k of allowed) if (k in body) patch[k] = body[k];
   if (Object.keys(patch).length === 0) { res.status(400).json({ error: "لا يوجد تغييرات" }); return; }
+  // Validate enums + numeric bounds
+  if ("zatcaEnv" in patch && !VALID_ENV.has(String(patch["zatcaEnv"]))) { res.status(400).json({ error: "بيئة زاتكا غير صالحة" }); return; }
+  if ("status" in patch && !VALID_STATUS.has(String(patch["status"]))) { res.status(400).json({ error: "الحالة غير صالحة" }); return; }
+  if ("monthlyQuota" in patch) {
+    const q = Number(patch["monthlyQuota"]);
+    if (!Number.isFinite(q) || q < 0 || q > 1_000_000) { res.status(400).json({ error: "الحصة الشهرية غير صالحة" }); return; }
+    patch["monthlyQuota"] = q;
+  }
   patch["updatedAt"] = new Date();
 
   const [updated] = await db.update(gatewayClientsTable).set(patch).where(eq(gatewayClientsTable.id, id)).returning();
@@ -128,7 +154,13 @@ router.patch("/:id", async (req, res) => {
 // In production, swap to a managed KMS (AWS KMS, GCP KMS, HashiCorp Vault).
 import { createCipheriv, createDecipheriv, scryptSync } from "crypto";
 function getKek(): Buffer {
-  const secret = process.env.SESSION_SECRET || "dev-secret-change-me";
+  // FAIL FAST — never silently fall back to a hardcoded secret. Encrypted
+  // ZATCA private keys are sensitive enough that operating without a
+  // configured SESSION_SECRET is a deployment error, not a soft warning.
+  const secret = process.env.SESSION_SECRET;
+  if (!secret || secret.length < 16) {
+    throw new Error("SESSION_SECRET must be set (≥16 chars) to encrypt gateway credentials");
+  }
   return scryptSync(secret, "gateway-kek-v1", 32);
 }
 function encryptValue(plain: string): string {
@@ -213,7 +245,16 @@ router.post("/:id/api-keys", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
   const { label, scope, expiresAt } = req.body ?? {};
-  if (!label || typeof label !== "string") { res.status(400).json({ error: "تسمية المفتاح مطلوبة" }); return; }
+  if (!label || typeof label !== "string" || label.length > 100) { res.status(400).json({ error: "تسمية المفتاح مطلوبة (≤100 حرف)" }); return; }
+  if (scope != null && !VALID_SCOPE.has(String(scope))) { res.status(400).json({ error: "نطاق المفتاح غير صالح" }); return; }
+  let expiresAtDate: Date | null = null;
+  if (expiresAt) {
+    expiresAtDate = new Date(expiresAt);
+    if (Number.isNaN(expiresAtDate.getTime()) || expiresAtDate.getTime() < Date.now()) {
+      res.status(400).json({ error: "تاريخ الانتهاء غير صالح أو في الماضي" });
+      return;
+    }
+  }
 
   // Verify client exists
   const [client] = await db.select({ id: gatewayClientsTable.id }).from(gatewayClientsTable).where(eq(gatewayClientsTable.id, id)).limit(1);
@@ -230,7 +271,7 @@ router.post("/:id/api-keys", async (req, res) => {
     keyHash,
     keyPrefix,
     scope: typeof scope === "string" ? scope : "invoice_submit",
-    expiresAt: expiresAt ? new Date(expiresAt) : null,
+    expiresAt: expiresAtDate,
   }).returning({
     id: gatewayApiKeysTable.id,
     label: gatewayApiKeysTable.label,
