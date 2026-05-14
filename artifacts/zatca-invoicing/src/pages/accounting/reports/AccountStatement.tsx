@@ -129,10 +129,17 @@ export default function AccountStatement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchString]);
 
+  // Cost-center column is shown only when the user has explicitly
+  // picked one or more cost centers in the filter. The default
+  // "all" view stays uncluttered (matches the original layout).
+  const showCostCenterCol = costCenterIds.length > 0;
   const EXPORT_COLS = [
     { key: "entryDate",   header: t("accountingReports.fromDate"), width: 14 },
     { key: "docNumber",   header: t("accountStatement.docNumber"), width: 14 },
     { key: "description", header: t("accountStatement.description"), width: 36 },
+    ...(showCostCenterCol
+      ? [{ key: "costCenter", header: t("accountingReports.costCenter", { defaultValue: "مركز التكلفة" }), width: 22 }]
+      : []),
     { key: "debit",       header: t("accountingReports.debit"), width: 14 },
     { key: "credit",      header: t("accountingReports.credit"), width: 14 },
     { key: "balance",     header: t("accountingReports.balance"), width: 14 },
@@ -200,6 +207,11 @@ export default function AccountStatement() {
       entryDate:   r.entryDate,
       docNumber:   r.docNumber,
       description: r.description,
+      ...(showCostCenterCol ? {
+        costCenter: r.costCenterCode
+          ? `${r.costCenterCode} — ${isRtl ? (r.costCenterNameAr ?? "") : (r.costCenterNameEn ?? r.costCenterNameAr ?? "")}`.trim()
+          : "—",
+      } : {}),
       debit:       fmt(r.debit),
       credit:      fmt(r.credit),
       balance:     fmt(r.balance),
@@ -342,6 +354,11 @@ export default function AccountStatement() {
                     <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.fromDate")}</th>
                     <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountStatement.docNumber")}</th>
                     <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountStatement.description")}</th>
+                    {showCostCenterCol && (
+                      <th className="text-start px-4 py-3 font-semibold text-muted-foreground">
+                        {t("accountingReports.costCenter", { defaultValue: "مركز التكلفة" })}
+                      </th>
+                    )}
                     <th className="text-end px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.debit")}</th>
                     <th className="text-end px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.credit")}</th>
                     <th className="text-end px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.balance")}</th>
@@ -356,6 +373,7 @@ export default function AccountStatement() {
                     <td className="px-4 py-2.5">{fromDate || "—"}</td>
                     <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">—</td>
                     <td className="px-4 py-2.5 text-muted-foreground italic">{t("accountStatement.previousBalance")}</td>
+                    {showCostCenterCol && <td className="px-4 py-2.5 text-muted-foreground text-xs">—</td>}
                     <td className="px-4 py-2.5 text-end font-mono text-blue-700">
                       {previousDebit > 0 ? fmt(previousDebit) : ""}
                     </td>
@@ -392,6 +410,26 @@ export default function AccountStatement() {
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-muted-foreground max-w-xs truncate">{r.description || "—"}</td>
+                      {showCostCenterCol && (
+                        <td className="px-4 py-2.5">
+                          {r.costCenterCode ? (
+                            <span
+                              className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-gradient-to-l from-violet-50 to-fuchsia-50 px-2.5 py-1 text-xs font-medium text-violet-800 shadow-sm"
+                              title={isRtl ? (r.costCenterNameAr ?? "") : (r.costCenterNameEn ?? r.costCenterNameAr ?? "")}
+                              data-testid={`cell-costcenter-${r.lineId}`}
+                            >
+                              <span className="font-mono text-[10px] rounded bg-violet-100 px-1 py-0.5 text-violet-700">
+                                {r.costCenterCode}
+                              </span>
+                              <span className="truncate max-w-[140px]">
+                                {isRtl ? (r.costCenterNameAr ?? "") : (r.costCenterNameEn ?? r.costCenterNameAr ?? "")}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </td>
+                      )}
                       <td className="px-4 py-2.5 text-end font-mono text-blue-700">
                         {r.debit > 0 ? fmt(r.debit) : ""}
                       </td>
@@ -410,7 +448,7 @@ export default function AccountStatement() {
                 </tbody>
                 <tfoot>
                   <tr className="bg-muted/50 font-semibold border-t-2">
-                    <td colSpan={4} className="px-4 py-3 text-center">{t("accountingReports.total")}</td>
+                    <td colSpan={showCostCenterCol ? 5 : 4} className="px-4 py-3 text-center">{t("accountingReports.total")}</td>
                     <td className="px-4 py-3 text-end font-mono text-blue-700">{fmt(totalDebit)}</td>
                     <td className="px-4 py-3 text-end font-mono text-rose-700">{fmt(totalCredit)}</td>
                     <td className={cn("px-4 py-3 text-end font-mono",

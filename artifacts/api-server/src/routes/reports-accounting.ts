@@ -442,9 +442,22 @@ router.get("/account-statement", async (req, res) => {
         faDepreciationRunId:      faDepreciationRunsTable.id,
         faDisposalId:             faDisposalsTable.id,
         payrollRunId:             payrollRunsTable.id,
+        // Per-line cost center. The line stores the id as text (we
+        // stringify on post), so we LEFT JOIN cost_centers via a CAST
+        // to surface the human-readable code + name. Rows with no
+        // cost-center tag come back with all three fields null.
+        costCenterRaw:    journalEntryLinesTable.costCenter,
+        costCenterId:     costCentersTable.id,
+        costCenterCode:   costCentersTable.code,
+        costCenterNameAr: costCentersTable.nameAr,
+        costCenterNameEn: costCentersTable.nameEn,
       })
       .from(journalEntryLinesTable)
       .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+      .leftJoin(costCentersTable, and(
+        eq(costCentersTable.companyId, cid),
+        sql`${costCentersTable.id}::text = ${journalEntryLinesTable.costCenter}`,
+      ))
       .leftJoin(salesInvoicesTable, and(
         eq(salesInvoicesTable.journalEntryId, journalEntriesTable.id),
         eq(salesInvoicesTable.companyId, cid),
