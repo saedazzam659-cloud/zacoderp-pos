@@ -108,6 +108,82 @@ function verifyTicket(token: string | undefined | null): TicketPayload | null {
   } catch { return null; }
 }
 
+// ─── Geofence helpers ───────────────────────────────────
+// Haversine distance in metres between two lat/lng pairs.
+function haversineMeters(
+  lat1: number, lng1: number, lat2: number, lng2: number,
+): number {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+const DEFAULT_RADIUS_M = 200;
+const MAX_ACCEPTABLE_ACCURACY_M = 75;
+
+// Gate the geofence-management endpoints (work locations, approvals queue,
+// timeline reports) to admin/superadmin/manager roles. Returns true if the
+// caller is denied (response already sent); routes should return early.
+function requireManager(req: any, res: any): boolean {
+  const role = req.authUser?.role;
+  if (role !== "superadmin" && role !== "admin" && role !== "manager") {
+    res.status(403).json({ error: "صلاحيات غير كافية — مطلوب مدير" });
+    return true;
+  }
+  return false;
+}
+
+// Evaluate a location reading against the employee's configured geofence.
+// Returns { status, distanceM } where status is one of:
+//   ok | out_of_geofence | low_accuracy | mock_suspected | denied | no_gps
+function evaluateLocation(opts: {
+  lat: number | null;
+  lng: number | null;
+  accuracy: number | null;
+  mocked?: boolean;
+  workLat: number | null;
+  workLng: number | null;
+  workRadiusM: number | null;
+}): { status: string; distanceM: number | null } {
+  const { lat, lng, accuracy, mocked, workLat, workLng, workRadiusM } = opts;
+  // Browser explicitly reported a mocked location (Android only — iOS
+  // does not surface this). Treat as a hard fail.
+  if (mocked) return { status: "mock_suspected", distanceM: null };
+  // Employee did not allow GPS, or the payload was malformed (e.g. a
+  // non-numeric value coerced to NaN). Either way we cannot trust the
+  // reading — flag as denied so it goes to manager approval. Bounds-check
+  // too: out-of-range coords almost certainly indicate a tampered payload.
+  if (
+    lat == null || lng == null ||
+    !Number.isFinite(lat) || !Number.isFinite(lng) ||
+    lat < -90 || lat > 90 || lng < -180 || lng > 180
+  ) {
+    return { status: "denied", distanceM: null };
+  }
+  if (accuracy != null && !Number.isFinite(accuracy)) {
+    return { status: "denied", distanceM: null };
+  }
+  // Reading was successful but accuracy is too poor to trust (e.g. wifi
+  // triangulation only, indoor in a basement).
+  if (accuracy != null && accuracy > MAX_ACCEPTABLE_ACCURACY_M) {
+    return { status: "low_accuracy", distanceM: null };
+  }
+  // No work location configured → cannot enforce geofence; accept reading
+  // so the coordinates still get logged for audit.
+  if (workLat == null || workLng == null) {
+    return { status: "no_gps", distanceM: null };
+  }
+  const distanceM = haversineMeters(lat, lng, workLat, workLng);
+  const radius = workRadiusM ?? DEFAULT_RADIUS_M;
+  if (distanceM > radius) return { status: "out_of_geofence", distanceM };
+  return { status: "ok", distanceM };
+}
+
 function parseDescriptor(json: string): number[] | null {
   try {
     const a = JSON.parse(json);
@@ -504,6 +580,23 @@ router.post("/check", async (req, res) => {
       .where(and(eq(employeesTable.id, employeeId), eq(employeesTable.companyId, cid))).limit(1);
     if (!emp) { res.status(404).json({ error: "موظف غير موجود" }); return; }
 
+    // ── Live GPS evaluation ─────────────────────────────────────────────
+    // Mobile callers send { location: { lat, lng, accuracy, mocked? } }.
+    // We evaluate against the employee's stored work coordinates and stamp
+    // the resulting status onto the attendance row. A non-"ok" status sets
+    // needs_approval=true so a manager has to confirm the entry.
+    const loc = b.location ?? {};
+    const locEval = evaluateLocation({
+      lat: loc.lat != null && loc.lat !== "" ? Number(loc.lat) : null,
+      lng: loc.lng != null && loc.lng !== "" ? Number(loc.lng) : null,
+      accuracy: loc.accuracy != null && loc.accuracy !== "" ? Number(loc.accuracy) : null,
+      mocked: !!loc.mocked,
+      workLat: emp.workLat != null ? Number(emp.workLat) : null,
+      workLng: emp.workLng != null ? Number(emp.workLng) : null,
+      workRadiusM: emp.workRadiusM,
+    });
+    const locFlagged = locEval.status !== "ok" && locEval.status !== "no_gps";
+
     const today = new Date();
     const dateStr = today.toISOString().slice(0, 10);
     const timeStr = today.toTimeString().slice(0, 8);
@@ -557,6 +650,14 @@ router.post("/check", async (req, res) => {
         const nowMin = today.getHours() * 60 + today.getMinutes();
         if (nowMin > dueMin) lateMinutes = nowMin - (hh * 60 + mm);
       }
+      const locFields = {
+        checkInLat: loc.lat != null && loc.lat !== "" ? String(loc.lat) : null,
+        checkInLng: loc.lng != null && loc.lng !== "" ? String(loc.lng) : null,
+        checkInAccuracyM: loc.accuracy != null && loc.accuracy !== "" ? String(loc.accuracy) : null,
+        checkInDistanceM: locEval.distanceM != null ? String(locEval.distanceM.toFixed(2)) : null,
+        checkInLocStatus: locEval.status,
+        deviceInfoIn: deviceInfo,
+      };
       if (existing) {
         const [u] = await db.update(employeeAttendanceTable).set({
           checkIn: timeStr,
@@ -565,6 +666,13 @@ router.post("/check", async (req, res) => {
           cameraInId: cameraId,
           lateMinutes,
           status: "present",
+          ...locFields,
+          // Preserve an existing approval state if this row was already
+          // flagged on a previous attempt; otherwise set fresh state.
+          needsApproval: existing.needsApproval || locFlagged,
+          approvalStatus: locFlagged
+            ? (existing.approvalStatus ?? "pending")
+            : existing.approvalStatus,
           updatedAt: new Date(),
         }).where(eq(employeeAttendanceTable.id, existing.id)).returning();
         attendanceId = u.id;
@@ -579,6 +687,9 @@ router.post("/check", async (req, res) => {
           cameraInId: cameraId,
           lateMinutes,
           status: "present",
+          ...locFields,
+          needsApproval: locFlagged,
+          approvalStatus: locFlagged ? "pending" : null,
         }).returning();
         attendanceId = ins.id;
       }
@@ -597,6 +708,17 @@ router.post("/check", async (req, res) => {
         aiConfidenceOut: conf != null ? String(conf) : null,
         cameraOutId: cameraId,
         workedHours: String(worked.toFixed(2)),
+        checkOutLat: loc.lat != null && loc.lat !== "" ? String(loc.lat) : null,
+        checkOutLng: loc.lng != null && loc.lng !== "" ? String(loc.lng) : null,
+        checkOutAccuracyM: loc.accuracy != null && loc.accuracy !== "" ? String(loc.accuracy) : null,
+        checkOutDistanceM: locEval.distanceM != null ? String(locEval.distanceM.toFixed(2)) : null,
+        checkOutLocStatus: locEval.status,
+        deviceInfoOut: deviceInfo,
+        // Either side can flag the day (check-in OR check-out off-site).
+        needsApproval: existing.needsApproval || locFlagged,
+        approvalStatus: locFlagged
+          ? (existing.approvalStatus ?? "pending")
+          : existing.approvalStatus,
         updatedAt: new Date(),
       }).where(eq(employeeAttendanceTable.id, existing.id)).returning();
       attendanceId = u.id;
@@ -614,7 +736,253 @@ router.post("/check", async (req, res) => {
       attendanceId,
     }).returning();
 
-    res.json({ ok: true, action, attendanceId, logId: logRow.id, lateMinutes });
+    res.json({
+      ok: true,
+      action,
+      attendanceId,
+      logId: logRow.id,
+      lateMinutes,
+      // Surface geofence outcome to the client so the mobile UI can show
+      // a clear amber/green badge instead of generic success.
+      location: {
+        status: locEval.status,
+        distanceM: locEval.distanceM,
+        flagged: locFlagged,
+        radiusM: emp.workRadiusM ?? DEFAULT_RADIUS_M,
+        hasWorkLocation: emp.workLat != null && emp.workLng != null,
+      },
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── EMPLOYEE WORK LOCATION (admin) ─────────────────────
+// One row per employee. Admin / HR sets the GPS coordinates that the
+// employee's mobile check-in must be near. Kiosk tokens cannot edit.
+router.get("/employees/work-locations", async (req, res) => {
+  try {
+    if (denyKiosk(req, res)) return;
+    const cid = guard(req, res); if (!cid) return;
+    if (requireManager(req, res)) return;
+    const rows = await db.select({
+      id: employeesTable.id,
+      code: employeesTable.code,
+      nameAr: employeesTable.nameAr,
+      department: employeesTable.department,
+      jobTitle: employeesTable.jobTitle,
+      photoUrl: employeesTable.photoUrl,
+      workLat: employeesTable.workLat,
+      workLng: employeesTable.workLng,
+      workRadiusM: employeesTable.workRadiusM,
+    }).from(employeesTable)
+      .where(and(eq(employeesTable.companyId, cid), eq(employeesTable.status, "active")))
+      .orderBy(asc(employeesTable.nameAr));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch("/employees/:id/work-location", async (req, res) => {
+  try {
+    if (denyKiosk(req, res)) return;
+    const cid = guard(req, res); if (!cid) return;
+    if (requireManager(req, res)) return;
+    const employeeId = Number(req.params.id);
+    const b = req.body ?? {};
+    // Validate coordinate ranges before persisting — bad data here would
+    // make geofence checks behave unpredictably for the employee.
+    const lat = b.lat != null && b.lat !== "" ? Number(b.lat) : null;
+    const lng = b.lng != null && b.lng !== "" ? Number(b.lng) : null;
+    const radius = b.radiusM != null && b.radiusM !== "" ? Number(b.radiusM) : null;
+    if (lat != null && (lat < -90 || lat > 90 || !Number.isFinite(lat))) {
+      res.status(400).json({ error: "خط العرض غير صالح" }); return;
+    }
+    if (lng != null && (lng < -180 || lng > 180 || !Number.isFinite(lng))) {
+      res.status(400).json({ error: "خط الطول غير صالح" }); return;
+    }
+    if (radius != null && (radius < 10 || radius > 5000 || !Number.isFinite(radius))) {
+      res.status(400).json({ error: "نصف القطر يجب أن يكون بين 10 و 5000 متر" }); return;
+    }
+    const [row] = await db.update(employeesTable).set({
+      workLat: lat != null ? String(lat) : null,
+      workLng: lng != null ? String(lng) : null,
+      workRadiusM: radius,
+      updatedAt: new Date(),
+    }).where(and(eq(employeesTable.id, employeeId), eq(employeesTable.companyId, cid))).returning();
+    if (!row) { res.status(404).json({ error: "موظف غير موجود" }); return; }
+    res.json({
+      id: row.id,
+      workLat: row.workLat,
+      workLng: row.workLng,
+      workRadiusM: row.workRadiusM,
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── ATTENDANCE APPROVALS (manager queue) ───────────────
+// Pending = needs_approval AND approval_status='pending'.
+router.get("/approvals", async (req, res) => {
+  try {
+    if (denyKiosk(req, res)) return;
+    const cid = guard(req, res); if (!cid) return;
+    if (requireManager(req, res)) return;
+    const status = (req.query.status as string) || "pending";
+    const rows = await db.select({
+      id: employeeAttendanceTable.id,
+      date: employeeAttendanceTable.date,
+      checkIn: employeeAttendanceTable.checkIn,
+      checkOut: employeeAttendanceTable.checkOut,
+      employeeId: employeeAttendanceTable.employeeId,
+      employeeName: employeesTable.nameAr,
+      employeeCode: employeesTable.code,
+      employeePhotoUrl: employeesTable.photoUrl,
+      checkInLat: employeeAttendanceTable.checkInLat,
+      checkInLng: employeeAttendanceTable.checkInLng,
+      checkInDistanceM: employeeAttendanceTable.checkInDistanceM,
+      checkInLocStatus: employeeAttendanceTable.checkInLocStatus,
+      checkOutLat: employeeAttendanceTable.checkOutLat,
+      checkOutLng: employeeAttendanceTable.checkOutLng,
+      checkOutDistanceM: employeeAttendanceTable.checkOutDistanceM,
+      checkOutLocStatus: employeeAttendanceTable.checkOutLocStatus,
+      workLat: employeesTable.workLat,
+      workLng: employeesTable.workLng,
+      workRadiusM: employeesTable.workRadiusM,
+      approvalStatus: employeeAttendanceTable.approvalStatus,
+      approvedBy: employeeAttendanceTable.approvedBy,
+      approvedAt: employeeAttendanceTable.approvedAt,
+      approvalNote: employeeAttendanceTable.approvalNote,
+    }).from(employeeAttendanceTable)
+      .innerJoin(employeesTable, and(
+        eq(employeeAttendanceTable.employeeId, employeesTable.id),
+        eq(employeesTable.companyId, cid),
+      ))
+      .where(and(
+        eq(employeeAttendanceTable.companyId, cid),
+        eq(employeeAttendanceTable.needsApproval, true),
+        status === "all" ? sql`true` : eq(employeeAttendanceTable.approvalStatus, status),
+      ))
+      .orderBy(desc(employeeAttendanceTable.date), desc(employeeAttendanceTable.id))
+      .limit(200);
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/approvals/:id/decide", async (req, res) => {
+  try {
+    if (denyKiosk(req, res)) return;
+    const cid = guard(req, res); if (!cid) return;
+    if (requireManager(req, res)) return;
+    const id = Number(req.params.id);
+    const decision = String(req.body?.decision ?? "").toLowerCase();
+    if (decision !== "approved" && decision !== "rejected") {
+      res.status(400).json({ error: "القرار يجب أن يكون approved أو rejected" }); return;
+    }
+    const note = N(req.body?.note);
+    const userId = req.authUser?.id ?? null;
+    const [row] = await db.update(employeeAttendanceTable).set({
+      approvalStatus: decision,
+      approvedBy: userId,
+      approvedAt: new Date(),
+      approvalNote: note,
+      // Keep needs_approval=true for history; the status field is what
+      // distinguishes pending vs decided. Reports filter on status.
+      updatedAt: new Date(),
+    }).where(and(
+      eq(employeeAttendanceTable.id, id),
+      eq(employeeAttendanceTable.companyId, cid),
+      eq(employeeAttendanceTable.needsApproval, true),
+    )).returning();
+    if (!row) { res.status(404).json({ error: "السجل غير موجود أو لا يحتاج موافقة" }); return; }
+    res.json({ ok: true, id: row.id, status: row.approvalStatus });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── EMPLOYEE WORKDAY TIMELINE ──────────────────────────
+// Returns: attendance row(s) for the date range PLUS any face-recognition
+// log entries (every successful scan during the day). The frontend stitches
+// these into a single visual timeline per day.
+router.get("/timeline", async (req, res) => {
+  try {
+    if (denyKiosk(req, res)) return;
+    const cid = guard(req, res); if (!cid) return;
+    if (requireManager(req, res)) return;
+    const employeeId = Number(req.query.employeeId ?? 0);
+    if (!employeeId) { res.status(400).json({ error: "employeeId مطلوب" }); return; }
+    const today = new Date().toISOString().slice(0, 10);
+    const from = (req.query.from as string) || today;
+    const to = (req.query.to as string) || today;
+
+    const [emp] = await db.select({
+      id: employeesTable.id,
+      nameAr: employeesTable.nameAr,
+      code: employeesTable.code,
+      photoUrl: employeesTable.photoUrl,
+      department: employeesTable.department,
+      jobTitle: employeesTable.jobTitle,
+      workLat: employeesTable.workLat,
+      workLng: employeesTable.workLng,
+      workRadiusM: employeesTable.workRadiusM,
+    }).from(employeesTable)
+      .where(and(eq(employeesTable.id, employeeId), eq(employeesTable.companyId, cid))).limit(1);
+    if (!emp) { res.status(404).json({ error: "موظف غير موجود" }); return; }
+
+    const attendance = await db.select().from(employeeAttendanceTable)
+      .where(and(
+        eq(employeeAttendanceTable.companyId, cid),
+        eq(employeeAttendanceTable.employeeId, employeeId),
+        gte(employeeAttendanceTable.date, from),
+        sql`${employeeAttendanceTable.date} <= ${to}`,
+      ))
+      .orderBy(desc(employeeAttendanceTable.date));
+
+    // Face-recognition activity logs (every scan, not just check-in/out).
+    // Each log entry becomes a dot on the timeline.
+    const fromDate = new Date(`${from}T00:00:00Z`);
+    const toDate = new Date(`${to}T23:59:59Z`);
+    const activity = await db.select({
+      id: faceRecognitionLogsTable.id,
+      action: faceRecognitionLogsTable.action,
+      status: faceRecognitionLogsTable.status,
+      cameraId: faceRecognitionLogsTable.cameraId,
+      cameraName: attendanceCamerasTable.name,
+      matchedConfidence: faceRecognitionLogsTable.matchedConfidence,
+      createdAt: faceRecognitionLogsTable.createdAt,
+    }).from(faceRecognitionLogsTable)
+      .leftJoin(attendanceCamerasTable, and(
+        eq(faceRecognitionLogsTable.cameraId, attendanceCamerasTable.id),
+        eq(attendanceCamerasTable.companyId, cid),
+      ))
+      .where(and(
+        eq(faceRecognitionLogsTable.companyId, cid),
+        eq(faceRecognitionLogsTable.employeeId, employeeId),
+        gte(faceRecognitionLogsTable.createdAt, fromDate),
+        sql`${faceRecognitionLogsTable.createdAt} <= ${toDate}`,
+      ))
+      .orderBy(asc(faceRecognitionLogsTable.createdAt));
+
+    // Roll-up totals — used for the report header tiles.
+    const totals = attendance.reduce(
+      (acc, r) => {
+        acc.workedHours += Number(r.workedHours ?? 0);
+        acc.overtimeHours += Number(r.overtimeHours ?? 0);
+        acc.lateMinutes += r.lateMinutes ?? 0;
+        if (r.checkIn) acc.daysPresent += 1;
+        if (r.needsApproval) acc.flagged += 1;
+        return acc;
+      },
+      { workedHours: 0, overtimeHours: 0, lateMinutes: 0, daysPresent: 0, flagged: 0 },
+    );
+
+    res.json({
+      employee: emp,
+      range: { from, to },
+      attendance,
+      activity,
+      totals: {
+        ...totals,
+        workedHours: Number(totals.workedHours.toFixed(2)),
+        overtimeHours: Number(totals.overtimeHours.toFixed(2)),
+        activityCount: activity.length,
+      },
+    });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

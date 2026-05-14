@@ -137,8 +137,59 @@ export const faceApi = {
     req<RecognizeResult>("POST", "/hr/face/recognize", { descriptor, cameraId, livenessPassed: !!livenessPassed }),
   // Server-side identity comes from the signed `ticket` returned by /recognize.
   // Client cannot inject employeeId, confidence, livenessPassed, or cameraId here.
-  check: (data: { ticket: string; action?: "auto" | "check_in" | "check_out"; deviceInfo?: string }) =>
-    req<{ ok: boolean; action?: string; attendanceId?: number; logId?: number; lateMinutes?: number; reason?: string; cooldownSeconds?: number }>("POST", "/hr/face/check", data),
+  check: (data: {
+    ticket: string;
+    action?: "auto" | "check_in" | "check_out";
+    deviceInfo?: string;
+    location?: { lat: number | null; lng: number | null; accuracy: number | null; mocked?: boolean };
+  }) =>
+    req<{
+      ok: boolean;
+      action?: string;
+      attendanceId?: number;
+      logId?: number;
+      lateMinutes?: number;
+      reason?: string;
+      cooldownSeconds?: number;
+      location?: {
+        status: "ok" | "out_of_geofence" | "low_accuracy" | "mock_suspected" | "denied" | "no_gps";
+        distanceM: number | null;
+        flagged: boolean;
+        radiusM: number;
+        hasWorkLocation: boolean;
+      };
+    }>("POST", "/hr/face/check", data),
+
+  // ── Work locations (admin) ──────────────────────────────────────────
+  workLocations: () =>
+    req<Array<{
+      id: number; code: string; nameAr: string;
+      department: string | null; jobTitle: string | null; photoUrl: string | null;
+      workLat: string | null; workLng: string | null; workRadiusM: number | null;
+    }>>("GET", "/hr/face/employees/work-locations"),
+  setWorkLocation: (employeeId: number, data: { lat: number | null; lng: number | null; radiusM: number | null }) =>
+    req<{ id: number; workLat: string | null; workLng: string | null; workRadiusM: number | null }>(
+      "PATCH",
+      `/hr/face/employees/${employeeId}/work-location`,
+      data,
+    ),
+
+  // ── Approvals queue ─────────────────────────────────────────────────
+  approvals: (status: "pending" | "approved" | "rejected" | "all" = "pending") =>
+    req<Array<ApprovalRow>>("GET", `/hr/face/approvals?status=${status}`),
+  decideApproval: (id: number, decision: "approved" | "rejected", note?: string) =>
+    req<{ ok: boolean; id: number; status: string }>(
+      "POST",
+      `/hr/face/approvals/${id}/decide`,
+      { decision, note },
+    ),
+
+  // ── Activity timeline ───────────────────────────────────────────────
+  timeline: (employeeId: number, from: string, to: string) =>
+    req<TimelineResponse>(
+      "GET",
+      `/hr/face/timeline?employeeId=${employeeId}&from=${from}&to=${to}`,
+    ),
 
   // logs / analytics
   logs: (status?: string) => req<FaceLog[]>("GET", `/hr/face/logs${status ? `?status=${status}` : ""}`),
@@ -159,6 +210,80 @@ export const faceApi = {
   revokeKioskToken: (id: number) =>
     req<{ ok: boolean }>("DELETE", `/hr/face/kiosk-tokens/${id}`),
 };
+
+export interface ApprovalRow {
+  id: number;
+  date: string;
+  checkIn: string | null;
+  checkOut: string | null;
+  employeeId: number;
+  employeeName: string | null;
+  employeeCode: string | null;
+  employeePhotoUrl: string | null;
+  checkInLat: string | null;
+  checkInLng: string | null;
+  checkInDistanceM: string | null;
+  checkInLocStatus: string | null;
+  checkOutLat: string | null;
+  checkOutLng: string | null;
+  checkOutDistanceM: string | null;
+  checkOutLocStatus: string | null;
+  workLat: string | null;
+  workLng: string | null;
+  workRadiusM: number | null;
+  approvalStatus: string | null;
+  approvedBy: number | null;
+  approvedAt: string | null;
+  approvalNote: string | null;
+}
+
+export interface TimelineResponse {
+  employee: {
+    id: number;
+    nameAr: string;
+    code: string;
+    photoUrl: string | null;
+    department: string | null;
+    jobTitle: string | null;
+    workLat: string | null;
+    workLng: string | null;
+    workRadiusM: number | null;
+  };
+  range: { from: string; to: string };
+  attendance: Array<{
+    id: number;
+    date: string;
+    checkIn: string | null;
+    checkOut: string | null;
+    workedHours: string | null;
+    overtimeHours: string | null;
+    lateMinutes: number | null;
+    status: string;
+    needsApproval: boolean;
+    approvalStatus: string | null;
+    checkInLocStatus: string | null;
+    checkOutLocStatus: string | null;
+    checkInDistanceM: string | null;
+    checkOutDistanceM: string | null;
+  }>;
+  activity: Array<{
+    id: number;
+    action: string | null;
+    status: string;
+    cameraId: number | null;
+    cameraName: string | null;
+    matchedConfidence: string | null;
+    createdAt: string;
+  }>;
+  totals: {
+    workedHours: number;
+    overtimeHours: number;
+    lateMinutes: number;
+    daysPresent: number;
+    flagged: number;
+    activityCount: number;
+  };
+}
 
 export interface KioskTokenSummary {
   id: number;

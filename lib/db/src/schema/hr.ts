@@ -36,6 +36,14 @@ export const employeesTable = pgTable("employees", {
   payableAccountId:integer("payable_account_id").references(() => accountsTable.id),
   photoUrl:       text("photo_url"),
   notes:          text("notes"),
+  // ─── Mobile face-attendance work location ────────────────────────────
+  // Each employee has their own check-in coordinates (supports field staff
+  // and multiple work-sites). When workLat/workLng are NULL, geofence
+  // checks are skipped — useful for back-office staff already verified
+  // by other means. workRadiusM defaults to 200m if not set.
+  workLat:        decimal("work_lat", { precision: 10, scale: 7 }),
+  workLng:        decimal("work_lng", { precision: 10, scale: 7 }),
+  workRadiusM:    integer("work_radius_m"),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),
 }, (t) => ({
@@ -84,6 +92,31 @@ export const employeeAttendanceTable = pgTable("employee_attendance", {
   aiConfidenceOut: decimal("ai_confidence_out", { precision: 5, scale: 4 }),
   cameraInId:   integer("camera_in_id"),
   cameraOutId:  integer("camera_out_id"),
+  // ─── Live GPS / geofence (one set per check-in, one per check-out) ───
+  // Coordinates captured on the employee's device at the moment of the
+  // event. accuracy_m is the GPS reading's circular error (smaller is
+  // better — values > ~75m are flagged for review). location_status:
+  //   ok | out_of_geofence | low_accuracy | mock_suspected | denied | no_gps
+  checkInLat:        decimal("check_in_lat",  { precision: 10, scale: 7 }),
+  checkInLng:        decimal("check_in_lng",  { precision: 10, scale: 7 }),
+  checkInAccuracyM:  decimal("check_in_accuracy_m", { precision: 8, scale: 2 }),
+  checkInDistanceM:  decimal("check_in_distance_m", { precision: 10, scale: 2 }),
+  checkInLocStatus:  text("check_in_loc_status"),
+  checkOutLat:       decimal("check_out_lat", { precision: 10, scale: 7 }),
+  checkOutLng:       decimal("check_out_lng", { precision: 10, scale: 7 }),
+  checkOutAccuracyM: decimal("check_out_accuracy_m", { precision: 8, scale: 2 }),
+  checkOutDistanceM: decimal("check_out_distance_m", { precision: 10, scale: 2 }),
+  checkOutLocStatus: text("check_out_loc_status"),
+  // Manager-approval workflow (triggered when location is denied or
+  // outside the configured geofence radius for the employee).
+  needsApproval:   boolean("needs_approval").notNull().default(false),
+  approvalStatus:  text("approval_status"),     // pending | approved | rejected
+  approvedBy:      integer("approved_by"),
+  approvedAt:      timestamp("approved_at"),
+  approvalNote:    text("approval_note"),
+  // Snapshot of UA / platform / mock-detection flags at capture time
+  deviceInfoIn:    text("device_info_in"),
+  deviceInfoOut:   text("device_info_out"),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().notNull(),
 }, (t) => ({

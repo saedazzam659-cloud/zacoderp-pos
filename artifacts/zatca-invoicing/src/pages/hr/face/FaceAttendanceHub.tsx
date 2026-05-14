@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   ScanFace, Camera, Settings2, ScrollText, Tv, Sparkles,
   Users, UserCheck, Clock, AlertTriangle, TrendingUp,
+  Smartphone, MapPin, ShieldCheck, Activity,
 } from "lucide-react";
 
 function computeInsight(a: FaceAnalytics | undefined): string {
@@ -55,11 +56,15 @@ export default function FaceAttendanceHub() {
   const insightFromAI = !!aiSummary?.summary;
 
   const cards = [
-    { href: "/hr/face/kiosk",       icon: Tv,         title: "شاشة الحضور المباشرة",   desc: "كاميرا مباشرة + تعرف وتسجيل تلقائي",     color: "from-emerald-500 to-teal-600" },
-    { href: "/hr/face/enrollment",  icon: ScanFace,   title: "تسجيل بصمات الوجوه",     desc: "سجل وجوه الموظفين مع كشف حي",            color: "from-sky-500 to-indigo-600" },
-    { href: "/hr/face/cameras",     icon: Camera,     title: "الكاميرات وأجهزة DVR",   desc: "إدارة كاميرات الفروع",                    color: "from-violet-500 to-purple-600" },
-    { href: "/hr/face/logs",        icon: ScrollText, title: "سجل التعرف",             desc: "تدقيق كامل لكل عمليات التعرف",            color: "from-amber-500 to-orange-600" },
-    { href: "/hr/face/settings",    icon: Settings2,  title: "الإعدادات",              desc: "حساسية، سياسات، حد التطابق",              color: "from-slate-500 to-slate-700" },
+    { href: "/hr/check-in",             icon: Smartphone,  title: "تسجيل من الجوال",        desc: "حضور وانصراف بالوجه + GPS — للموظفين الميدانيين", color: "from-emerald-500 to-teal-600" },
+    { href: "/hr/face/kiosk",           icon: Tv,          title: "شاشة الحضور المباشرة",   desc: "كاميرا مباشرة + تعرف وتسجيل تلقائي",     color: "from-cyan-500 to-blue-600" },
+    { href: "/hr/face/enrollment",      icon: ScanFace,    title: "تسجيل بصمات الوجوه",     desc: "سجل وجوه الموظفين مع كشف حي",            color: "from-sky-500 to-indigo-600" },
+    { href: "/hr/face/work-locations",  icon: MapPin,      title: "مواقع عمل الموظفين",     desc: "إحداثيات GPS ونصف القطر لكل موظف",        color: "from-emerald-500 to-green-600" },
+    { href: "/hr/face/approvals",       icon: ShieldCheck, title: "موافقات الحضور",         desc: "اعتماد سجلات خارج النطاق المسموح",        color: "from-amber-500 to-rose-600" },
+    { href: "/hr/face/timeline",        icon: Activity,    title: "الخط الزمني للنشاط",     desc: "تقرير يومي/أسبوعي بكل عمليات الموظف",     color: "from-indigo-500 to-violet-600" },
+    { href: "/hr/face/cameras",         icon: Camera,      title: "الكاميرات وأجهزة DVR",   desc: "إدارة كاميرات الفروع",                    color: "from-violet-500 to-purple-600" },
+    { href: "/hr/face/logs",            icon: ScrollText,  title: "سجل التعرف",             desc: "تدقيق كامل لكل عمليات التعرف",            color: "from-amber-500 to-orange-600" },
+    { href: "/hr/face/settings",        icon: Settings2,   title: "الإعدادات",              desc: "حساسية، سياسات، حد التطابق",              color: "from-slate-500 to-slate-700" },
   ];
 
   const stats = [

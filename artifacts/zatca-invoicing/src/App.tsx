@@ -161,6 +161,10 @@ import LiveAttendanceKiosk from "@/pages/hr/face/LiveAttendanceKiosk";
 import AttendanceCameras from "@/pages/hr/face/AttendanceCameras";
 import FaceAttendanceLogs from "@/pages/hr/face/FaceAttendanceLogs";
 import FaceAttendanceSettings from "@/pages/hr/face/FaceAttendanceSettings";
+import MobileCheckIn from "@/pages/hr/face/MobileCheckIn";
+import WorkLocations from "@/pages/hr/face/WorkLocations";
+import AttendanceApprovals from "@/pages/hr/face/AttendanceApprovals";
+import AttendanceTimeline from "@/pages/hr/face/AttendanceTimeline";
 import HRReportEmployees from "@/pages/hr/reports/EmployeesReport";
 import HRReportPayroll from "@/pages/hr/reports/PayrollReport";
 import HRReportAttendance from "@/pages/hr/reports/AttendanceReport";
@@ -587,6 +591,10 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/hr/face/cameras"            module="hr_face_attendance" component={AttendanceCameras} />}
             {!isSuperAdmin && <PermRoute path="/hr/face/logs"               module="hr_face_attendance" component={FaceAttendanceLogs} />}
             {!isSuperAdmin && <PermRoute path="/hr/face/settings"           module="hr_face_attendance" component={FaceAttendanceSettings} />}
+            {!isSuperAdmin && <PermRoute path="/hr/check-in"                module="hr_face_attendance" component={MobileCheckIn} />}
+            {!isSuperAdmin && <PermRoute path="/hr/face/work-locations"     module="hr_face_attendance" component={WorkLocations} />}
+            {!isSuperAdmin && <PermRoute path="/hr/face/approvals"          module="hr_face_attendance" component={AttendanceApprovals} />}
+            {!isSuperAdmin && <PermRoute path="/hr/face/timeline"           module="hr_face_attendance" component={AttendanceTimeline} />}
             {!isSuperAdmin && <PermRoute path="/security"        module="security_events" component={SecurityHub} />}
             {!isSuperAdmin && <PermRoute path="/security/events" module="security_events" component={SecurityEvents} />}
             {!isSuperAdmin && <PermRoute path="/security/devices" module="security_events" component={SecurityDevices} />}
