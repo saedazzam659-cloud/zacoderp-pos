@@ -11,6 +11,7 @@ import {
   Plus, FileSignature, Eye, Trash2, ArrowRightLeft, CheckCircle, XCircle, Send, Printer, Copy,
   FileSpreadsheet, FileDown, X, Loader2,
 } from "lucide-react";
+import { BulkPrintMenu } from "@/lib/bulkPrint";
 import * as XLSX from "xlsx";
 import { cn } from "@/lib/utils";
 import {
@@ -53,7 +54,6 @@ export default function SalesQuotations() {
   const [printData, setPrintData] = useState<any>(null);
   const [autoPrintOnOpen, setAutoPrintOnOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
-  const [bulkPrintBusy, setBulkPrintBusy] = useState(false);
 
   async function openPrint(q: any, opts?: { autoPrint?: boolean }) {
     setAutoPrintOnOpen(!!opts?.autoPrint);
@@ -429,29 +429,6 @@ ${sections}
     XLSX.writeFile(wb, `sales-quotations-${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
-  async function handleBulkPrint() {
-    const ids = Array.from(layout.selected);
-    if (ids.length === 0) return;
-    setBulkPrintBusy(true);
-    try {
-      const idSet = new Set(ids.map(Number));
-      const ordered = (filteredQuotations as any[]).filter((r) => idSet.has(Number(r.id)));
-      let failed = 0;
-      const docs = await Promise.all(
-        ordered.map(async (row: any) => {
-          try {
-            const res = await fetch(`${API}/api/sales/sales-quotations/${row.id}${cid ? `?companyId=${cid}` : ""}`, { headers: authH });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return await res.json();
-          } catch { failed += 1; return { ...row, lines: [] }; }
-        }),
-      );
-      openPrintWindow(buildBulkHtml(docs));
-      if (failed > 0) {
-        toast({ title: "تعذّر تحميل تفاصيل بعض العروض", description: `تمت طباعة ${docs.length} مع ${failed} بدون بنود تفصيلية`, variant: "destructive" });
-      }
-    } finally { setBulkPrintBusy(false); }
-  }
 
   function exportCsv() {
     if (filteredQuotations.length === 0) { toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" }); return; }
@@ -621,14 +598,48 @@ ${sections}
           </span>
         </div>
         <AuditGridBulkBar count={layout.selected.size} onClear={clearSelection} busy={bulkBusy}>
-          <Button type="button" size="sm"
-            className="h-7 px-3 text-xs gap-1 bg-blue-700 hover:bg-blue-600 text-white"
-            onClick={handleBulkPrint}
-            disabled={layout.selected.size === 0 || bulkPrintBusy}
-            title={`طباعة (${layout.selected.size})`}>
-            {bulkPrintBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
-            طباعة ({layout.selected.size})
-          </Button>
+          <BulkPrintMenu
+            selectedIds={Array.from(layout.selected).map(Number)}
+            filteredDocs={filteredQuotations as any[]}
+            adapter={{
+              kind: "sales-quotation",
+              title: t("salesQuotations.title"),
+              docTypeLabel: "عرض سعر",
+              partyLabel: "العميل",
+              getHeader: (d: any) => ({
+                docNo: d.docNumber ?? `SQ-${d.id}`,
+                date: d.quotationDate ?? "",
+                partyName: cusMap[d.customerId] ?? "",
+                statusKey: d.status,
+                statusLabel: statusLabel(d.status),
+                currency: d.currencyCode,
+                notes: d.notes,
+              }),
+              getTotals: (d: any) => ({
+                subtotal: Number(d.subtotal ?? 0),
+                vat: Number(d.vatAmount ?? 0),
+                total: Number(d.totalAmount ?? 0),
+              }),
+              getLines: (d: any) => (Array.isArray(d.lines) ? d.lines : []).map((l: any) => ({
+                name: l.itemName ?? l.description ?? `#${l.itemId ?? ""}`,
+                qty: Number(l.quantity ?? l.qty ?? 0),
+                unitPrice: Number(l.unitPrice ?? 0),
+                vatAmount: Number(l.vatAmount ?? 0),
+                total: Number(l.totalAmount ?? l.lineTotal ?? 0),
+              })),
+            }}
+            company={user?.company}
+            buildSummary={(docs) => buildListHtml(docs as any[])}
+            buildDetailed={(docs) => buildBulkHtml(docs as any[])}
+            fetchFull={async (id) => {
+              const res = await fetch(`${API}/api/sales/sales-quotations/${id}${cid ? `?companyId=${cid}` : ""}`, { headers: authH });
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              return res.json();
+            }}
+            onPopupBlocked={() => toast({ title: "تم حظر النافذة المنبثقة", description: "الرجاء السماح بالنوافذ المنبثقة للطباعة", variant: "destructive" })}
+            onFetchFailed={(n) => toast({ title: `تعذّر تحميل ${n} عرض سعر بكامل بنوده`, variant: "destructive" })}
+            primaryLabel="طباعة"
+          />
           <Button type="button" size="sm"
             className="h-7 px-3 text-xs gap-1 bg-blue-600 hover:bg-blue-500 text-white"
             onClick={bulkSend}
