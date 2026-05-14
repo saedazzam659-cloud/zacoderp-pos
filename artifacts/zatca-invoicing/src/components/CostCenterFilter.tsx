@@ -129,16 +129,33 @@ export default function CostCenterFilter({
             <CommandList>
               <CommandEmpty>{t("common.noResults", "لا توجد نتائج")}</CommandEmpty>
               <CommandGroup>
-                {/* "Clear / Select all" pseudo row — fast escape hatch
-                    when the user wants to reset the filter without
-                    closing the popover and reopening it. */}
+                {/* "Select all / Clear" pseudo row — toggles between
+                    every cost-centre id and an empty filter. Picking
+                    "all" actually populates `value` with every id so
+                    downstream UI (e.g. the cost-centre column on the
+                    Account Statement) treats it as an explicit pick. */}
                 <CommandItem
-                  value="__clear__ كل المراكز all centers"
-                  onSelect={() => onChange([])}
-                  className="text-muted-foreground"
+                  value="__all__ كل المراكز all centers"
+                  onSelect={() => {
+                    const allIds = centers.map(c => c.id);
+                    const allSelected = allIds.length > 0 && value.length === allIds.length;
+                    onChange(allSelected ? [] : allIds);
+                  }}
+                  className="font-medium"
                 >
-                  <Check className={cn("h-4 w-4", selectedCount === 0 ? "opacity-100" : "opacity-0", isAr ? "ml-2" : "mr-2")} />
+                  <Check
+                    className={cn(
+                      "h-4 w-4",
+                      centers.length > 0 && value.length === centers.length ? "opacity-100" : "opacity-0",
+                      isAr ? "ml-2" : "mr-2",
+                    )}
+                  />
                   {allLabel}
+                  {centers.length > 0 && (
+                    <span className="ms-auto text-[10px] text-muted-foreground font-mono">
+                      {centers.length}
+                    </span>
+                  )}
                 </CommandItem>
                 {centers.map((c) => {
                   const checked = value.includes(c.id);
