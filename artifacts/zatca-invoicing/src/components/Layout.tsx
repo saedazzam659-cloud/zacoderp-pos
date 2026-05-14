@@ -155,6 +155,7 @@ const companyBusinessNav: NavDef[] = [
   // المتجر الإلكتروني — single-page module gated on the `online_store`
   // menu permission. The page itself contains tabs for products, orders,
   // domains, payments and AI insights.
+  { nameKey: "nav.gettingStarted", href: "/onboarding", icon: Sparkles },
   { nameKey: "nav.onlineStore", href: "/online-store", icon: Store, permKey: "online_store" },
   { nameKey: "nav.integrationsMarketplace", href: "/integrations/marketplace", icon: Plug },
   { nameKey: "nav.integrationsGateway", href: "/integrations/gateway", icon: Plug },

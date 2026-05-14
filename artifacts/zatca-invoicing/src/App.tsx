@@ -96,6 +96,7 @@ import SecurityAI from "@/pages/security/SecurityAI";
 import SecurityReports from "@/pages/security/SecurityReports";
 import PosHub from "@/pages/pos/PosHub";
 import ControlPanelHub from "@/pages/ControlPanelHub";
+import Onboarding from "@/pages/Onboarding";
 // HR
 import Employees from "@/pages/hr/Employees";
 import EmployeeContracts from "@/pages/hr/EmployeeContracts";
@@ -591,6 +592,8 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/online-store" module="online_store" component={OnlineStore} />}
             {/* Control-Panel hub: any tenant user can land here; tile-level perm gating filters which tiles render. */}
             {!isSuperAdmin && <Route path="/control-panel" component={ControlPanelHub} />}
+            {!isSuperAdmin && <Route path="/onboarding" component={Onboarding} />}
+            {!isSuperAdmin && <Route path="/getting-started" component={Onboarding} />}
 
             {/* HR routes — gated per logical screen against the matching hr_* module */}
             {/* HR hub landing: open to any tenant user — the hub itself filters
