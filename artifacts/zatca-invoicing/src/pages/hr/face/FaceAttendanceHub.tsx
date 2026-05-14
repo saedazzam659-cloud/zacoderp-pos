@@ -65,6 +65,7 @@ export default function FaceAttendanceHub() {
     { href: "/hr/face/cameras",         icon: Camera,      title: "الكاميرات وأجهزة DVR",   desc: "إدارة كاميرات الفروع",                    color: "from-violet-500 to-purple-600" },
     { href: "/hr/face/logs",            icon: ScrollText,  title: "سجل التعرف",             desc: "تدقيق كامل لكل عمليات التعرف",            color: "from-amber-500 to-orange-600" },
     { href: "/hr/face/settings",        icon: Settings2,   title: "الإعدادات",              desc: "حساسية، سياسات، حد التطابق",              color: "from-slate-500 to-slate-700" },
+    { href: "/hr/field",                icon: MapPin,      title: "الخدمة الميدانية (FSM)", desc: "زيارات، مسارات، تذاكر صيانة، SLA — للمندوبين والفنيين", color: "from-rose-500 to-pink-600" },
   ];
 
   const stats = [

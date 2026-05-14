@@ -162,6 +162,13 @@ import AttendanceCameras from "@/pages/hr/face/AttendanceCameras";
 import FaceAttendanceLogs from "@/pages/hr/face/FaceAttendanceLogs";
 import FaceAttendanceSettings from "@/pages/hr/face/FaceAttendanceSettings";
 import MobileCheckIn from "@/pages/hr/face/MobileCheckIn";
+import FieldServiceHub from "@/pages/hr/field/FieldServiceHub";
+import FieldLocations from "@/pages/hr/field/FieldLocations";
+import FieldCheckIn from "@/pages/hr/field/FieldCheckIn";
+import FieldVisitPlans from "@/pages/hr/field/FieldVisitPlans";
+import FieldServiceTickets from "@/pages/hr/field/FieldServiceTickets";
+import FieldTracking from "@/pages/hr/field/FieldTracking";
+import FieldReports from "@/pages/hr/field/FieldReports";
 import WorkLocations from "@/pages/hr/face/WorkLocations";
 import AttendanceApprovals from "@/pages/hr/face/AttendanceApprovals";
 import AttendanceTimeline from "@/pages/hr/face/AttendanceTimeline";
@@ -595,6 +602,13 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/hr/face/work-locations"     module="hr_face_attendance" component={WorkLocations} />}
             {!isSuperAdmin && <PermRoute path="/hr/face/approvals"          module="hr_face_attendance" component={AttendanceApprovals} />}
             {!isSuperAdmin && <PermRoute path="/hr/face/timeline"           module="hr_face_attendance" component={AttendanceTimeline} />}
+            {!isSuperAdmin && <PermRoute path="/hr/field"                   module="hr_face_attendance" component={FieldServiceHub} />}
+            {!isSuperAdmin && <PermRoute path="/hr/field/locations"         module="hr_face_attendance" component={FieldLocations} />}
+            {!isSuperAdmin && <PermRoute path="/hr/field/check-in"          module="hr_face_attendance" component={FieldCheckIn} />}
+            {!isSuperAdmin && <PermRoute path="/hr/field/plans"             module="hr_face_attendance" component={FieldVisitPlans} />}
+            {!isSuperAdmin && <PermRoute path="/hr/field/tickets"           module="hr_face_attendance" component={FieldServiceTickets} />}
+            {!isSuperAdmin && <PermRoute path="/hr/field/tracking"          module="hr_face_attendance" component={FieldTracking} />}
+            {!isSuperAdmin && <PermRoute path="/hr/field/reports"           module="hr_face_attendance" component={FieldReports} />}
             {!isSuperAdmin && <PermRoute path="/security"        module="security_events" component={SecurityHub} />}
             {!isSuperAdmin && <PermRoute path="/security/events" module="security_events" component={SecurityEvents} />}
             {!isSuperAdmin && <PermRoute path="/security/devices" module="security_events" component={SecurityDevices} />}
