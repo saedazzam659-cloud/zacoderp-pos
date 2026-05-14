@@ -8,7 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { ArrowRight, RefreshCw, Trash2, CheckCircle2, AlertCircle, Activity, Settings, Key } from "lucide-react";
+import { ArrowRight, RefreshCw, Trash2, CheckCircle2, AlertCircle, Activity, Settings, Key, Eye } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 
 interface Provider {
@@ -25,6 +26,7 @@ interface Connection {
 interface SyncRun {
   id: number; trigger: string; status: string; startedAt: string; finishedAt: string | null;
   invoicesIngested: number; errors: Array<{ ref: string; reason: string }>;
+  rawResponse: unknown;
 }
 
 export default function IntegrationConnection() {
@@ -247,41 +249,125 @@ function CredentialsPanel({ conn, provider, onSaved }: { conn: Connection; provi
 }
 
 function RunsPanel({ runs }: { runs: SyncRun[] }) {
+  const [viewing, setViewing] = useState<SyncRun | null>(null);
   if (runs.length === 0) return <Card className="p-8 text-center text-slate-500">لا توجد عمليات مزامنة بعد. اضغط "مزامنة الآن" لتشغيل أول عملية.</Card>;
   return (
-    <Card className="overflow-hidden">
-      <table className="w-full text-sm">
-        <thead className="bg-slate-50 border-b">
-          <tr>
-            <th className="text-right p-3 font-medium">الحالة</th>
-            <th className="text-right p-3 font-medium">المصدر</th>
-            <th className="text-right p-3 font-medium">البداية</th>
-            <th className="text-right p-3 font-medium">المدة</th>
-            <th className="text-right p-3 font-medium">الفواتير</th>
-            <th className="text-right p-3 font-medium">الأخطاء</th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map(r => {
-            const dur = r.finishedAt ? Math.round((new Date(r.finishedAt).getTime() - new Date(r.startedAt).getTime()) / 1000) : null;
-            return (
-              <tr key={r.id} className="border-b last:border-0 hover:bg-slate-50">
-                <td className="p-3">
-                  {r.status === "success"  && <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">نجاح</Badge>}
-                  {r.status === "partial"  && <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">جزئي</Badge>}
-                  {r.status === "failed"   && <Badge className="bg-rose-100 text-rose-700 hover:bg-rose-100">فشل</Badge>}
-                  {r.status === "running"  && <Badge variant="secondary">قيد التنفيذ</Badge>}
-                </td>
-                <td className="p-3">{r.trigger === "manual" ? "يدوي" : r.trigger === "scheduled" ? "مجدول" : "Push"}</td>
-                <td className="p-3 text-xs text-slate-500" dir="ltr">{new Date(r.startedAt).toLocaleString()}</td>
-                <td className="p-3 text-xs text-slate-500" dir="ltr">{dur !== null ? `${dur}s` : "—"}</td>
-                <td className="p-3 font-mono">{r.invoicesIngested}</td>
-                <td className="p-3">{r.errors.length > 0 && <span className="text-rose-600 text-xs">{r.errors[0].reason}</span>}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </Card>
+    <>
+      <Card className="overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 border-b">
+            <tr>
+              <th className="text-right p-3 font-medium">الحالة</th>
+              <th className="text-right p-3 font-medium">المصدر</th>
+              <th className="text-right p-3 font-medium">البداية</th>
+              <th className="text-right p-3 font-medium">المدة</th>
+              <th className="text-right p-3 font-medium">الفواتير</th>
+              <th className="text-right p-3 font-medium">الأخطاء</th>
+              <th className="text-right p-3 font-medium">المحتوى</th>
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map(r => {
+              const dur = r.finishedAt ? Math.round((new Date(r.finishedAt).getTime() - new Date(r.startedAt).getTime()) / 1000) : null;
+              const hasPayload = r.rawResponse !== null && r.rawResponse !== undefined;
+              return (
+                <tr key={r.id} className="border-b last:border-0 hover:bg-slate-50">
+                  <td className="p-3">
+                    {r.status === "success"  && <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">نجاح</Badge>}
+                    {r.status === "partial"  && <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">جزئي</Badge>}
+                    {r.status === "failed"   && <Badge className="bg-rose-100 text-rose-700 hover:bg-rose-100">فشل</Badge>}
+                    {r.status === "running"  && <Badge variant="secondary">قيد التنفيذ</Badge>}
+                  </td>
+                  <td className="p-3">{r.trigger === "manual" ? "يدوي" : r.trigger === "scheduled" ? "مجدول" : "Push"}</td>
+                  <td className="p-3 text-xs text-slate-500" dir="ltr">{new Date(r.startedAt).toLocaleString()}</td>
+                  <td className="p-3 text-xs text-slate-500" dir="ltr">{dur !== null ? `${dur}s` : "—"}</td>
+                  <td className="p-3 font-mono">{r.invoicesIngested}</td>
+                  <td className="p-3">{r.errors.length > 0 && <span className="text-rose-600 text-xs">{r.errors[0].reason}</span>}</td>
+                  <td className="p-3">
+                    {hasPayload && (
+                      <Button size="sm" variant="ghost" onClick={() => setViewing(r)}>
+                        <Eye className="w-4 h-4 ml-1" /> عرض
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+
+      {viewing && (
+        <Dialog open onOpenChange={() => setViewing(null)}>
+          <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col" dir="rtl">
+            <DialogHeader>
+              <DialogTitle>محتوى عملية المزامنة #{viewing.id}</DialogTitle>
+            </DialogHeader>
+            <CanonicalPreview run={viewing} />
+            <div className="overflow-auto bg-slate-900 text-slate-100 rounded-lg p-4 mt-3 flex-1">
+              <pre dir="ltr" className="text-xs font-mono whitespace-pre-wrap break-all">
+                {JSON.stringify(viewing.rawResponse, null, 2)}
+              </pre>
+            </div>
+            <p className="text-xs text-slate-500 mt-2">
+              ملاحظة: هذه البيانات مُستقبَلة فقط — لم يتم بعد إنشاء فاتورة مبيعات في النظام ولا إرسالها لـ ZATCA. سيتم تفعيل التحويل التلقائي في المرحلة التالية.
+            </p>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
+  );
+}
+
+/**
+ * Tries to render a friendly summary of the canonical invoice payload.
+ * Push runs store the canonical object directly; pull runs wrap it as
+ * { sample: [...] }. Falls back silently when the shape doesn't match.
+ */
+function CanonicalPreview({ run }: { run: SyncRun }) {
+  const raw = run.rawResponse as Record<string, unknown> | null;
+  if (!raw || typeof raw !== "object") return null;
+
+  type Canonical = {
+    invoice?: { number?: string; issueDate?: string; flow?: string; currency?: string };
+    buyer?:   { name?: string | null; vat?: string | null };
+    line?:    { item?: string; qty?: number; unitPrice?: number; vatRate?: number; totalInclVat?: number };
+  };
+
+  const items: Canonical[] = Array.isArray(raw.sample)
+    ? (raw.sample as Canonical[])
+    : raw.invoice ? [raw as Canonical] : [];
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      {items.slice(0, 5).map((c, i) => (
+        <div key={i} className="bg-slate-50 border rounded-lg p-3 text-sm">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">فاتورة #{c.invoice?.number ?? "—"}</div>
+            <Badge variant="outline">{c.invoice?.flow === "simplified" ? "مبسّطة" : "ضريبية"}</Badge>
+          </div>
+          <div className="grid grid-cols-2 gap-2 mt-2 text-xs text-slate-600">
+            <div>التاريخ: <span className="font-mono" dir="ltr">{c.invoice?.issueDate ?? "—"}</span></div>
+            <div>العملة: <span className="font-mono">{c.invoice?.currency ?? "—"}</span></div>
+            <div>العميل: {c.buyer?.name ?? "—"}</div>
+            <div>الرقم الضريبي: <span className="font-mono">{c.buyer?.vat ?? "—"}</span></div>
+            <div className="col-span-2 pt-2 border-t">
+              <div>الصنف: {c.line?.item ?? "—"}</div>
+              <div className="flex gap-4 mt-1">
+                <span>الكمية: <strong>{c.line?.qty ?? "—"}</strong></span>
+                <span>السعر: <strong>{c.line?.unitPrice ?? "—"}</strong></span>
+                <span>الضريبة: <strong>{c.line?.vatRate ?? "—"}%</strong></span>
+                <span className="text-emerald-700">الإجمالي: <strong>{c.line?.totalInclVat ?? "—"}</strong></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+      {items.length > 5 && (
+        <div className="text-xs text-slate-500 text-center">... و {items.length - 5} فاتورة أخرى (شاهدها في JSON أدناه)</div>
+      )}
+    </div>
   );
 }
