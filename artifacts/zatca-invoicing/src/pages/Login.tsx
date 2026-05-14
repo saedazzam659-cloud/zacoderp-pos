@@ -590,8 +590,44 @@ export default function Login() {
           </aside>
 
           {/* ─── FORM COLUMN ──────────────────────────────────────────── */}
-          <main className="order-1 lg:order-2 w-full lg:sticky lg:top-8">
-            <div className="bg-card border border-border rounded-2xl shadow-xl p-8 space-y-6">
+          <main className="order-1 lg:order-2 w-full lg:sticky lg:top-8 space-y-4">
+            {/* Mobile-only welcome hero — gives PWA users a friendly,
+                branded landing before the form. Desktop already has the
+                full intro column on the left, so we hide this on lg+. */}
+            <div className="lg:hidden relative overflow-hidden rounded-3xl bg-gradient-to-br from-primary via-emerald-600 to-teal-600 p-6 text-white shadow-xl">
+              <div className="absolute -top-16 -end-16 h-44 w-44 rounded-full bg-white/10 blur-2xl" />
+              <div className="absolute -bottom-12 -start-10 h-36 w-36 rounded-full bg-white/10 blur-2xl" />
+              <div className="relative flex items-center gap-3">
+                <div className="h-14 w-14 rounded-2xl bg-white/95 p-2 shadow-lg ring-1 ring-white/40 shrink-0">
+                  <img
+                    src={`${import.meta.env.BASE_URL}favicon.svg`}
+                    alt="زاكود"
+                    className="h-full w-full"
+                  />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-bold tracking-widest text-white/80 uppercase">ZacodERP</p>
+                  <h1 className="text-xl font-extrabold leading-tight truncate">أهلاً بعودتك 👋</h1>
+                  <p className="text-xs text-white/85 mt-0.5">سجّل دخولك للمتابعة</p>
+                </div>
+              </div>
+              <div className="relative mt-4 flex flex-wrap gap-1.5">
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/20 backdrop-blur px-2.5 py-1 text-[11px] font-semibold">
+                  <ShieldCheck className="h-3 w-3" />
+                  {visitorCountry === "SA" ? "متوافق مع زاتكا" : countryInfo.policyAr}
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/20 backdrop-blur px-2.5 py-1 text-[11px] font-semibold">
+                  <Sparkles className="h-3 w-3" />
+                  ذكاء اصطناعي
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/20 backdrop-blur px-2.5 py-1 text-[11px] font-semibold">
+                  <Zap className="h-3 w-3" />
+                  سريع وآمن
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-card border border-border rounded-2xl shadow-xl p-6 sm:p-8 space-y-6">
           {/* Step header */}
           <div>
             <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">

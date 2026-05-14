@@ -89,12 +89,18 @@ function KpiTile({
   alert?: boolean;
 }) {
   return (
-    <Card className={alert ? "border-amber-300 bg-amber-50/50" : ""}>
-      <CardContent className="pt-4 pb-3 px-4">
+    <Card className={`relative overflow-hidden transition-shadow active:shadow-inner md:active:shadow-none ${
+      alert
+        ? "border-amber-300 bg-gradient-to-br from-amber-50 to-amber-100/40 md:bg-amber-50/50 md:from-transparent md:to-transparent"
+        : "bg-gradient-to-br from-white to-slate-50 md:from-transparent md:to-transparent md:bg-card"
+    }`}>
+      {/* Mobile-only decorative blob in the brand color of the tile */}
+      <div className={`md:hidden absolute -top-6 -end-6 h-20 w-20 rounded-full opacity-60 blur-2xl ${bg}`} />
+      <CardContent className="pt-4 pb-3 px-4 relative">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-xs text-muted-foreground truncate">{label}</p>
-            <p className={`text-2xl font-bold mt-1 ${color}`}>{value}</p>
+            <p className="text-[11px] md:text-xs text-muted-foreground truncate font-medium">{label}</p>
+            <p className={`text-[1.65rem] leading-tight md:text-2xl font-extrabold md:font-bold mt-1 ${color}`}>{value}</p>
             {delta !== undefined && (
               <div className={`flex items-center gap-1 mt-1 text-[11px] ${
                 delta > 0 ? "text-green-700" : delta < 0 ? "text-rose-700" : "text-muted-foreground"
@@ -163,9 +169,67 @@ export default function SuperAdminDashboard() {
     count: d.count,
   }));
 
+  const healthLevel = data?.health.some(h => h.level === "red")
+    ? "red"
+    : data?.health.some(h => h.level === "amber")
+    ? "amber"
+    : "green";
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-2">
+      {/* Mobile-only hero — gives admins a fast at-a-glance summary
+          (companies / pending requests / active subs / system health) the
+          moment they open the app on their phone. Hidden on md+ so the
+          desktop view is unchanged. */}
+      <div className="md:hidden relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-primary to-emerald-700 p-5 text-white shadow-xl">
+        <div className="absolute -top-12 -end-12 h-40 w-40 rounded-full bg-white/10 blur-2xl" />
+        <div className="absolute -bottom-10 -start-8 h-32 w-32 rounded-full bg-emerald-400/20 blur-2xl" />
+        <div className="relative">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold tracking-widest text-white/70 uppercase">SuperAdmin</p>
+              <h1 className="text-xl font-extrabold leading-tight">لوحة التحكم</h1>
+              <p className="text-xs text-white/80 mt-0.5">
+                نظرة شاملة على الشركات والاشتراكات والصحة العامة
+              </p>
+            </div>
+            <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold backdrop-blur ${
+              healthLevel === "red"   ? "bg-rose-500/30 text-rose-50 ring-1 ring-rose-300/40" :
+              healthLevel === "amber" ? "bg-amber-500/30 text-amber-50 ring-1 ring-amber-300/40" :
+                                        "bg-emerald-500/30 text-emerald-50 ring-1 ring-emerald-300/40"
+            }`}>
+              {healthLevel === "red"
+                ? <><ShieldAlert className="h-3 w-3" /> تحتاج انتباه</>
+                : healthLevel === "amber"
+                ? <><ShieldAlert className="h-3 w-3" /> تنبيهات</>
+                : <><ShieldCheck className="h-3 w-3" /> سليم</>}
+            </span>
+          </div>
+          {/* 3-up KPI strip inside the hero — instant context */}
+          <div className="relative mt-4 grid grid-cols-3 gap-2">
+            <div className="rounded-xl bg-white/10 backdrop-blur px-2.5 py-2 ring-1 ring-white/15">
+              <p className="text-[10px] text-white/70">الشركات</p>
+              <p className="text-lg font-extrabold leading-tight">{fmt(c?.total)}</p>
+            </div>
+            <div className="rounded-xl bg-white/10 backdrop-blur px-2.5 py-2 ring-1 ring-white/15">
+              <p className="text-[10px] text-white/70">طلبات معلقة</p>
+              <p className={`text-lg font-extrabold leading-tight ${(c?.pending ?? 0) > 0 ? "text-amber-200" : ""}`}>{fmt(c?.pending)}</p>
+            </div>
+            <div className="rounded-xl bg-white/10 backdrop-blur px-2.5 py-2 ring-1 ring-white/15">
+              <p className="text-[10px] text-white/70">اشتراكات نشطة</p>
+              <p className="text-lg font-extrabold leading-tight">{fmt(s?.active)}</p>
+            </div>
+          </div>
+          {data?.generatedAt && (
+            <p className="relative mt-3 text-[10px] text-white/70">
+              آخر تحديث: {new Date(data.generatedAt).toLocaleString("ar-SA")}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Desktop header — unchanged */}
+      <div className="hidden md:flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-2xl font-bold text-foreground">لوحة التحكم الرئيسية</h1>
           <p className="text-muted-foreground mt-1 text-sm">
