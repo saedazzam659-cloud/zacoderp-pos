@@ -125,7 +125,8 @@ export async function fireWebhook(opts: WebhookFireOpts): Promise<void> {
       .returning({ id: gatewayWebhookDeliveriesTable.id });
 
     setImmediate(() => {
-      void deliverWithRetry(delivery.id, sub.id, sub.url, secret, fullPayload);
+      void deliverWithRetry(delivery.id, sub.id, sub.url, secret, fullPayload)
+        .catch(err => logger.warn({ err: err instanceof Error ? err.message : String(err), webhookId: sub.id }, "webhook.background-error"));
     });
   }
 }
@@ -195,13 +196,20 @@ async function failDelivery(
   deliveryId: number, webhookId: number, attempts: number,
   httpStatus: number, lastError: string, status: "failed" | "exhausted",
 ): Promise<void> {
-  await db.update(gatewayWebhookDeliveriesTable).set({
-    status, httpStatus: httpStatus || null, attempts, lastError,
-  }).where(eq(gatewayWebhookDeliveriesTable.id, deliveryId));
-  await db.update(gatewayWebhooksTable).set({
-    lastDeliveryAt: new Date(),
-    lastStatus: "failed",
-    lastError,
-    failureCount: sql`${gatewayWebhooksTable.failureCount} + 1`,
-  }).where(eq(gatewayWebhooksTable.id, webhookId));
+  // Background task — pool may already be closed (e.g. test teardown,
+  // process shutdown). Swallow + log so we never produce an unhandled
+  // rejection that crashes the host process.
+  try {
+    await db.update(gatewayWebhookDeliveriesTable).set({
+      status, httpStatus: httpStatus || null, attempts, lastError,
+    }).where(eq(gatewayWebhookDeliveriesTable.id, deliveryId));
+    await db.update(gatewayWebhooksTable).set({
+      lastDeliveryAt: new Date(),
+      lastStatus: "failed",
+      lastError,
+      failureCount: sql`${gatewayWebhooksTable.failureCount} + 1`,
+    }).where(eq(gatewayWebhooksTable.id, webhookId));
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : String(err), deliveryId, webhookId }, "webhook.failDelivery-db-error");
+  }
 }
