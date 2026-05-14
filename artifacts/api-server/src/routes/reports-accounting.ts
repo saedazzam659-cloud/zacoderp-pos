@@ -442,11 +442,22 @@ router.get("/account-statement", async (req, res) => {
         faDepreciationRunId:      faDepreciationRunsTable.id,
         faDisposalId:             faDisposalsTable.id,
         payrollRunId:             payrollRunsTable.id,
-        // Per-line cost center. The line stores the id as text (we
-        // stringify on post), so we LEFT JOIN cost_centers via a CAST
-        // to surface the human-readable code + name. Rows with no
-        // cost-center tag come back with all three fields null.
-        costCenterRaw:    journalEntryLinesTable.costCenter,
+        // Effective cost-centre per row. Many legacy/manual entries
+        // never stamped `journal_entry_lines.cost_center`, but the
+        // owning source document (sales/purchase invoice, receipt /
+        // payment voucher) almost always carries one at the header.
+        // We COALESCE in priority order so the column lights up for
+        // every row that has *any* cost-centre tag anywhere in its
+        // chain. Cast to text — the line column is text, the source
+        // columns are text, and `cost_centers.id` is int (cast on the
+        // join). Rows with no tag at any level still come back null.
+        costCenterRaw: sql<string>`COALESCE(
+          ${journalEntryLinesTable.costCenter},
+          ${salesInvoicesTable.costCenter},
+          ${purchaseInvoicesTable.costCenter},
+          ${receiptVouchersTable.costCenter},
+          ${paymentVouchersTable.costCenter}
+        )`,
         costCenterId:     costCentersTable.id,
         costCenterCode:   costCentersTable.code,
         costCenterNameAr: costCentersTable.nameAr,
@@ -454,10 +465,6 @@ router.get("/account-statement", async (req, res) => {
       })
       .from(journalEntryLinesTable)
       .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
-      .leftJoin(costCentersTable, and(
-        eq(costCentersTable.companyId, cid),
-        sql`${costCentersTable.id}::text = ${journalEntryLinesTable.costCenter}`,
-      ))
       .leftJoin(salesInvoicesTable, and(
         eq(salesInvoicesTable.journalEntryId, journalEntriesTable.id),
         eq(salesInvoicesTable.companyId, cid),
@@ -509,6 +516,19 @@ router.get("/account-statement", async (req, res) => {
       .leftJoin(payrollRunsTable, and(
         eq(payrollRunsTable.postedJournalId, journalEntriesTable.id),
         eq(payrollRunsTable.companyId, cid),
+      ))
+      // Resolve the effective cost-centre (line OR source document) into
+      // its human-readable code/name. Has to come AFTER every source-doc
+      // join above so the COALESCE expression sees their columns.
+      .leftJoin(costCentersTable, and(
+        eq(costCentersTable.companyId, cid),
+        sql`${costCentersTable.id}::text = COALESCE(
+          ${journalEntryLinesTable.costCenter},
+          ${salesInvoicesTable.costCenter},
+          ${purchaseInvoicesTable.costCenter},
+          ${receiptVouchersTable.costCenter},
+          ${paymentVouchersTable.costCenter}
+        )`,
       ))
       .where(and(
         eq(journalEntryLinesTable.accountId, Number(accountId)),
