@@ -10,7 +10,7 @@ const tiles: HubTile[] = [
   { nameKey: "nav.regions",            href: "/org/regions",                  icon: MapPin,      tone: "emerald", permKey: "regions" },
   { nameKey: "nav.branches",           href: "/org/branches",                 icon: Building2,   tone: "sky",     permKey: "branches" },
   { nameKey: "nav.zatcaLink",          href: "/zatca",                        icon: Link2,       tone: "violet",  permKey: "zatca_setup" },
-  { nameKey: "nav.integrationGateway", href: "/integrations/gateway",         icon: Plug,        tone: "fuchsia", permKey: "general_settings" },
+  { nameKey: "nav.integrationsMarketplace", href: "/integrations/marketplace", icon: Plug,        tone: "fuchsia", permKey: "general_settings" },
   { nameKey: "nav.generalSettings",    href: "/general-settings",             icon: Sliders,     tone: "slate",   permKey: "general_settings" },
   { nameKey: "nav.users",              href: "/users",                        icon: Users,       tone: "blue",    permKey: "users", requireAdmin: true },
   { nameKey: "nav.currencies",         href: "/settings/currencies",          icon: DollarSign,  tone: "amber",   permKey: "currencies" },
