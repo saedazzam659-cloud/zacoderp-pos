@@ -10,10 +10,17 @@ export const gatewayClientsTable = pgTable("gateway_clients", {
   contactPhone:      text("contact_phone"),
   addressAr:         text("address_ar"),
   city:              text("city"),
-  zatcaCsidEnc:      text("zatca_csid_enc"),
-  zatcaPcsidEnc:     text("zatca_pcsid_enc"),
-  zatcaPrivateKeyEnc: text("zatca_private_key_enc"),
+  zatcaCsidEnc:      text("zatca_csid_enc"),       // compliance certificate (PEM)
+  zatcaPcsidEnc:     text("zatca_pcsid_enc"),      // production certificate (PEM)
+  zatcaPrivateKeyEnc: text("zatca_private_key_enc"), // EC private key (PEM)
+  // ZATCA Basic-auth token+secret for sandbox (compliance) and production
+  // are NOT just the certificate bytes — they're returned alongside the
+  // CSID and need to be stored separately. Both are AES-256-GCM encrypted
+  // (see lib/encryption.ts) before persistence.
+  zatcaCsidSecretEnc:  text("zatca_csid_secret_enc"),
+  zatcaPcsidSecretEnc: text("zatca_pcsid_secret_enc"),
   zatcaEnv:          text("zatca_env").notNull().default("sandbox"),
+  csidLastRotatedAt: timestamp("csid_last_rotated_at"),
   // ZATCA invoice chain state — must increment monotonically per device
   // (CSID). lastIcv = Invoice Counter Value of the last submitted invoice.
   // lastInvoiceHash = SHA-256 hash of the last invoice (used as PIH —

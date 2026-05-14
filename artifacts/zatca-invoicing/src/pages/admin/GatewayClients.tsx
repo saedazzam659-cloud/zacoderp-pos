@@ -434,6 +434,29 @@ function ClientDetailDialog({ clientId, onClose, onChanged }: { clientId: number
                 <ApiKeysTab clientId={clientId} />
               </TabsContent>
               <TabsContent value="invoices" className="mt-4">
+                <div className="flex items-center justify-end mb-2 gap-2">
+                  <Button variant="outline" size="sm" onClick={() => window.open(`/admin/gateway-clients/${clientId}/reports`, "_blank")} className="text-indigo-700 border-indigo-200">
+                    <TrendingUp className="h-4 w-4 ml-1" />
+                    لوحة التقارير + تصدير CSV
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => {
+                    const token = localStorage.getItem("zatca_token");
+                    const acting = localStorage.getItem("zatca_acting_company_id");
+                    const headers: Record<string,string> = {};
+                    if (token) headers.Authorization = `Bearer ${token}`;
+                    if (acting) headers["x-acting-company-id"] = acting;
+                    fetch(`${API}/api/admin/gateway-clients/${clientId}/template.csv`, { headers })
+                      .then(r => r.blob()).then(blob => {
+                        const a = document.createElement("a");
+                        a.href = URL.createObjectURL(blob);
+                        a.download = `gateway-template-${clientId}.csv`;
+                        a.click(); URL.revokeObjectURL(a.href);
+                      });
+                  }}>
+                    <Download className="h-4 w-4 ml-1" />
+                    تنزيل قالب CSV
+                  </Button>
+                </div>
                 <InvoicesTab clientId={clientId} />
               </TabsContent>
             </Tabs>
@@ -608,7 +631,73 @@ function ManualCredentialsForm({ client, onSaved }: { client: ClientDetail; onSa
           تشفير وحفظ
         </Button>
       </div>
+
+      {/* Phase 1B.2: ZATCA Basic-Auth secret upload (separate from CSID PEM). */}
+      <CsidSecretUpload client={client} onSaved={onSaved} />
     </div>
+  );
+}
+
+// Uploads the ZATCA Basic-auth secret (returned alongside CSID/PCSID
+// from fatoora.zatca.gov.sa). Required for the real /submit-zatca call —
+// without it the API returns 412.
+function CsidSecretUpload({ client, onSaved }: { client: ClientDetail; onSaved: () => void }) {
+  const { toast } = useToast();
+  const [target, setTarget] = useState<"sandbox" | "production">(client.zatcaEnv);
+  const [certPem, setCertPem] = useState("");
+  const [secret, setSecret] = useState("");
+
+  const save = useMutation({
+    mutationFn: () => api(`/api/admin/gateway-clients/${client.id}/csid`, {
+      method: "PATCH",
+      body: JSON.stringify({ certPem, basicAuthSecret: secret, env: target }),
+    }),
+    onSuccess: () => {
+      toast({ title: "تم تشفير وحفظ بيانات اعتماد زاتكا", description: "الآن يمكن إرسال الفواتير فعلياً للبوابة." });
+      setCertPem(""); setSecret(""); onSaved();
+    },
+    onError: (e: Error) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <Card className="border-indigo-200 bg-indigo-50/30">
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center gap-2 font-bold text-indigo-900">
+          <ShieldCheck className="h-4 w-4" /> رفع بيانات الاعتماد الكاملة من زاتكا (Phase 1B.2)
+        </div>
+        <p className="text-xs text-slate-600 leading-relaxed">
+          بعد توليد CSID من بوابة فاتورة، زاتكا ترجع لك زوجاً: <b>الشهادة (Certificate)</b> + <b>السر السري (Secret)</b>.
+          الاثنان لازمان للإرسال الفعلي. كلاهما يُشفّر بـ AES-256-GCM في قاعدة البيانات.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="البيئة">
+            <Select value={target} onValueChange={v => setTarget(v as "sandbox" | "production")}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="sandbox">تجريبي (Compliance)</SelectItem>
+                <SelectItem value="production">إنتاج (Production)</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="السر السري (Basic-Auth Secret)">
+            <Input value={secret} onChange={e => setSecret(e.target.value)} dir="ltr" className="font-mono text-xs" placeholder="ZATCA Secret..." type="password" />
+          </Field>
+        </div>
+        <Field label="الشهادة (Certificate PEM)">
+          <Textarea rows={4} value={certPem} onChange={e => setCertPem(e.target.value)} dir="ltr" className="font-mono text-[10px]"
+            placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----" />
+        </Field>
+        <div className="flex justify-end">
+          <Button onClick={() => save.mutate()} disabled={save.isPending || !certPem || !secret} className="bg-indigo-600 hover:bg-indigo-700">
+            {save.isPending ? <Loader2 className="h-4 w-4 ml-1 animate-spin" /> : <Lock className="h-4 w-4 ml-1" />}
+            تشفير وحفظ بيانات الاعتماد
+          </Button>
+        </div>
+        <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+          ⚠️ ملاحظة: حالياً النظام يُرسل XML غير موقّع رقمياً (XAdES). البيئة التجريبية تقبله لاختبار التدفق، لكن إرسال الإنتاج سيُرفض حتى تكتمل المرحلة 1B.3 (التوقيع الرقمي).
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -903,13 +992,17 @@ function InvoicesTab({ clientId }: { clientId: number }) {
     queued_for_zatca:   "bg-amber-50 text-amber-700 border-amber-200",
     manual_ack:         "bg-amber-50 text-amber-700 border-amber-200",
     cleared:            "bg-emerald-50 text-emerald-700 border-emerald-200",
+    warning:            "bg-orange-50 text-orange-700 border-orange-200",
+    sandbox_warning:    "bg-amber-50 text-amber-700 border-amber-200",
     rejected:           "bg-rose-50 text-rose-700 border-rose-200",
     failed:             "bg-rose-50 text-rose-700 border-rose-200",
+    submission_failed:  "bg-rose-50 text-rose-700 border-rose-200",
   };
   const STATUS_AR: Record<string, string> = {
     received: "مستلمة", sandbox_cleared: "نجاح (تجربة)", queued_for_zatca: "في الانتظار",
     manual_ack: "إقرار يدوي (لم يُرسل لزاتكا)",
-    cleared: "مقبولة", rejected: "مرفوضة", failed: "فشل",
+    cleared: "مقبولة من زاتكا", warning: "تحذيرات", sandbox_warning: "تحذيرات (تجربة)",
+    rejected: "مرفوضة", failed: "فشل", submission_failed: "فشل الإرسال لزاتكا",
   };
 
   const downloadCanonical = async (inv: Inv) => {

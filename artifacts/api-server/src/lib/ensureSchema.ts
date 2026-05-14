@@ -830,6 +830,13 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE gateway_invoices ADD COLUMN IF NOT EXISTS clearance_status TEXT` },
     { label: "gateway_invoices add clearance_notes",
       sql:   `ALTER TABLE gateway_invoices ADD COLUMN IF NOT EXISTS clearance_notes JSONB` },
+    // Phase 1B.2 — explicit Basic-auth secret storage and rotation marker
+    { label: "gateway_clients add zatca_csid_secret_enc",
+      sql:   `ALTER TABLE gateway_clients ADD COLUMN IF NOT EXISTS zatca_csid_secret_enc TEXT` },
+    { label: "gateway_clients add zatca_pcsid_secret_enc",
+      sql:   `ALTER TABLE gateway_clients ADD COLUMN IF NOT EXISTS zatca_pcsid_secret_enc TEXT` },
+    { label: "gateway_clients add csid_last_rotated_at",
+      sql:   `ALTER TABLE gateway_clients ADD COLUMN IF NOT EXISTS csid_last_rotated_at TIMESTAMP` },
 
     { label: "alter journal_entries add createdBy",
       sql:   `ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS created_by INTEGER` },
