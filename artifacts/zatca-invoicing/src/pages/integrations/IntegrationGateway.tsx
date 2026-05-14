@@ -5,8 +5,10 @@ import {
   XCircle, Clock, AlertTriangle, Brain, FileJson, Database, FileSpreadsheet,
   Building2, Boxes, Code2, Eye, EyeOff, ChevronRight, Loader2, X,
   Upload, FileText, FileImage, FileCode, UploadCloud, FileCheck2,
+  Download, ScanLine,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import ZatcaScanPreview, { downloadZatcaTemplate, type ZatcaRow } from "./ZatcaScanPreview";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
@@ -205,6 +207,11 @@ export default function IntegrationGateway() {
   const [connectModal, setConnectModal] = useState<SystemDef | null>(null);
   const [aiWizardOpen, setAiWizardOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  // Files queued for the ZATCA scan/preview modal — opens BEFORE the
+  // file actually hits the upload pipeline so the user can review,
+  // fix errors, and confirm against ZATCA's standard format.
+  const [scanFile, setScanFile] = useState<File | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
 
   useEffect(() => saveLs(LS_KEYS.connections, connections), [connections]);
   useEffect(() => saveLs(LS_KEYS.apiKeys, apiKeys), [apiKeys]);
@@ -350,6 +357,26 @@ export default function IntegrationGateway() {
     } as ActivityEntry, ...prev].slice(0, 50));
   };
 
+  // Formats we can pre-parse + validate client-side. Other formats
+  // (PDF/images) skip the scan modal and go straight to the AI pipeline.
+  const SCANNABLE = new Set(["xlsx", "xls", "csv", "json"]);
+
+  const enqueueForProcessing = (files: File[]) => {
+    const newUploads: UploadedFile[] = files.map(f => ({
+      id: rid(),
+      name: f.name,
+      size: f.size,
+      ext: f.name.split(".").pop()?.toLowerCase() ?? "",
+      ts: Date.now(),
+      status: "queued",
+      progress: 5,
+      invoicesFound: 0,
+      invoicesSubmitted: 0,
+    }));
+    setUploads(prev => [...newUploads, ...prev]);
+    newUploads.forEach((u, i) => setTimeout(() => processUpload(u.id), i * 200));
+  };
+
   const addFiles = (files: FileList | File[]) => {
     if (!zatcaReady) {
       toast({
@@ -368,21 +395,58 @@ export default function IntegrationGateway() {
       toast({ title: "صيغة غير مدعومة", description: `الصيغ المقبولة: ${FILE_TYPES.map(f => f.ext).join(", ")}`, variant: "destructive" });
       return;
     }
-    const newUploads: UploadedFile[] = accepted.map(f => ({
-      id: rid(),
-      name: f.name,
-      size: f.size,
-      ext: f.name.split(".").pop()?.toLowerCase() ?? "",
+    // Split: scannable files trigger the validation modal; the rest go
+    // straight to the AI pipeline (PDF/images need OCR server-side).
+    const scannable = accepted.filter(f => SCANNABLE.has(f.name.split(".").pop()?.toLowerCase() ?? ""));
+    const direct = accepted.filter(f => !SCANNABLE.has(f.name.split(".").pop()?.toLowerCase() ?? ""));
+
+    if (direct.length > 0) {
+      enqueueForProcessing(direct);
+      toast({ title: `تم استلام ${direct.length} ملف`, description: "بدأ التحليل والإرسال إلى زاتكا" });
+    }
+
+    if (scannable.length > 0) {
+      // Open the scan modal for the first file; queue the rest behind it.
+      setScanFile(scannable[0]);
+      setPendingFiles(scannable.slice(1));
+    }
+  };
+
+  const handleScanConfirm = (rows: ZatcaRow[]) => {
+    if (!scanFile) return;
+    // The user has reviewed and approved the parsed rows. Push the file
+    // into the upload pipeline with the validated invoice count baked in
+    // so the UploadRow stats reflect what was actually approved.
+    const id = rid();
+    const u: UploadedFile = {
+      id,
+      name: scanFile.name,
+      size: scanFile.size,
+      ext: scanFile.name.split(".").pop()?.toLowerCase() ?? "",
       ts: Date.now(),
       status: "queued",
       progress: 5,
-      invoicesFound: 0,
+      invoicesFound: rows.length,
       invoicesSubmitted: 0,
-    }));
-    setUploads(prev => [...newUploads, ...prev]);
-    toast({ title: `تم استلام ${accepted.length} ملف`, description: "بدأ التحليل والإرسال إلى زاتكا" });
-    // kick off processing
-    newUploads.forEach((u, i) => setTimeout(() => processUpload(u.id), i * 200));
+    };
+    setUploads(prev => [u, ...prev]);
+    toast({ title: "تم تأكيد الفواتير", description: `${rows.length} فاتورة مطابقة لزاتكا — جاري الإرسال` });
+    setTimeout(() => processUpload(id), 100);
+
+    // Move on to the next pending file (if any)
+    if (pendingFiles.length > 0) {
+      setScanFile(pendingFiles[0]);
+      setPendingFiles(pendingFiles.slice(1));
+    } else {
+      setScanFile(null);
+    }
+  };
+
+  const handleScanClose = () => {
+    // User cancelled — also drop the queue so they don't get hit with
+    // modal after modal unexpectedly.
+    setScanFile(null);
+    setPendingFiles([]);
   };
 
   const removeUpload = (id: string) => setUploads(prev => prev.filter(u => u.id !== id));
@@ -475,11 +539,23 @@ export default function IntegrationGateway() {
             <h2 className="text-lg font-bold text-foreground">رفع مباشر للملفات</h2>
             <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white">بدون ربط</Badge>
           </div>
-          {uploads.some(u => u.status === "done") && (
-            <Button variant="ghost" size="sm" onClick={clearDoneUploads} className="text-xs">
-              مسح المكتملة
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={downloadZatcaTemplate}
+              className="gap-1.5 text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+              title="حمّل قالب Excel بصيغة زاتكا الرسمية"
+            >
+              <Download className="h-3.5 w-3.5" />
+              تحميل قالب زاتكا
             </Button>
-          )}
+            {uploads.some(u => u.status === "done") && (
+              <Button variant="ghost" size="sm" onClick={clearDoneUploads} className="text-xs">
+                مسح المكتملة
+              </Button>
+            )}
+          </div>
         </div>
 
         <Card className="overflow-hidden border-2 border-dashed">
@@ -515,9 +591,13 @@ export default function IntegrationGateway() {
                 </div>
                 <h3 className="font-extrabold text-lg text-foreground">اسحب الملفات هنا أو اضغط للاختيار</h3>
                 <p className="text-sm text-muted-foreground mt-1.5 max-w-md mx-auto leading-relaxed">
-                  ارفع فواتيرك بأي صيغة وسيقوم الذكاء الاصطناعي باستخراج البيانات وإرسالها إلى زاتكا تلقائياً.
-                  مثالي للشركات بدون نظام ERP.
+                  ارفع فواتيرك بأي صيغة — Excel أو CSV أو JSON تظهر لك شاشة معاينة وفحص قبل الإرسال،
+                  مع تصحيح تلقائي لأي مخالفة لمعايير زاتكا.
                 </p>
+                <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-violet-100 text-violet-700 px-3 py-1 text-[11px] font-bold">
+                  <ScanLine className="h-3 w-3" />
+                  فحص ذكي قبل الإصدار + تصحيح حسب معايير زاتكا
+                </div>
                 <div className="flex flex-wrap justify-center gap-2 mt-4">
                   {[...new Map(FILE_TYPES.map(t => [t.label, t])).values()].map(t => (
                     <span key={t.label} className={`inline-flex items-center gap-1 rounded-full ${t.bg} ${t.color} px-2.5 py-1 text-[11px] font-bold`}>
@@ -824,6 +904,15 @@ export default function IntegrationGateway() {
           system={connectModal}
           onClose={() => setConnectModal(null)}
           onConfirm={(label, useAi) => completeConnect(connectModal, label, useAi)}
+        />
+      )}
+
+      {/* ── ZATCA SCAN/PREVIEW MODAL ─────────────────────────────── */}
+      {scanFile && (
+        <ZatcaScanPreview
+          file={scanFile}
+          onClose={handleScanClose}
+          onConfirm={handleScanConfirm}
         />
       )}
 
