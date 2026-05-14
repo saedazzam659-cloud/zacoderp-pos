@@ -157,13 +157,28 @@ export default function GatewayInvoiceView() {
   const isCleared = inv.status === "cleared" || inv.status === "sandbox_cleared";
   const isSimplified = inv.invoiceFlow === "simplified";
   const issueTime = canonical.invoice?.issueTime || "";
+  const currency = canonical.invoice?.currency || "SAR";
+  const sellerInitial = (c.nameAr || "?").trim().charAt(0);
+  const issueDateObj = inv.invoiceDate ? new Date(inv.invoiceDate) : null;
+  const dateGregorian = issueDateObj ? issueDateObj.toLocaleDateString("en-GB") : "—";
+  // Hijri date — graceful fallback if Intl locale unavailable
+  const dateHijri = issueDateObj
+    ? (() => {
+        try {
+          return new Intl.DateTimeFormat("ar-SA-u-ca-islamic-umalqura", {
+            year: "numeric", month: "long", day: "numeric",
+          }).format(issueDateObj);
+        } catch { return ""; }
+      })()
+    : "";
+  const totalInWords = numberToArabicWords(Number(inv.totalAmount ?? 0), currency);
 
   return (
-    <div className="min-h-screen bg-slate-100 py-6 px-4 print:bg-white print:py-0 print:px-0" dir="rtl">
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-stone-100 to-slate-200 py-6 px-4 print:bg-white print:py-0 print:px-0" dir="rtl">
       {/* Top action bar — hidden when printing */}
       <div className="max-w-[210mm] mx-auto mb-4 flex items-center justify-between gap-2 print:hidden">
         <Link href={`${BASE}admin/gateway-clients`}>
-          <Button variant="outline" size="sm"><ArrowRight className="h-4 w-4 ml-2" /> رجوع لقائمة العملاء</Button>
+          <Button variant="outline" size="sm" className="border-slate-300"><ArrowRight className="h-4 w-4 ml-2" /> رجوع لقائمة العملاء</Button>
         </Link>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => window.open(`/api/admin/gateway-clients/${clientId}/invoices/${invId}/ubl`, "_blank")}>
@@ -172,7 +187,8 @@ export default function GatewayInvoiceView() {
           <Button variant="outline" size="sm" onClick={downloadTextPdf}>
             <FileText className="h-4 w-4 ml-2" /> PDF (نص)
           </Button>
-          <Button size="sm" onClick={downloadPdf} disabled={downloading} className="bg-indigo-600 hover:bg-indigo-700">
+          <Button size="sm" onClick={downloadPdf} disabled={downloading}
+            className="bg-gradient-to-l from-[#0d4d4d] to-[#0a6b5e] hover:from-[#063838] hover:to-[#075048] text-white shadow-lg">
             {downloading ? <Loader2 className="h-4 w-4 ml-2 animate-spin" /> : <Printer className="h-4 w-4 ml-2" />}
             طباعة / حفظ PDF
           </Button>
@@ -183,154 +199,295 @@ export default function GatewayInvoiceView() {
       <div
         id="invoice-sheet"
         ref={sheetRef}
-        className="bg-white max-w-[210mm] min-h-[297mm] mx-auto shadow-xl print:shadow-none rounded-lg overflow-hidden"
+        className="bg-white max-w-[210mm] min-h-[297mm] mx-auto shadow-2xl print:shadow-none rounded-xl overflow-hidden relative"
+        style={{ fontFamily: '"Noto Naskh Arabic","Cairo","Segoe UI",system-ui,sans-serif' }}
       >
-        {/* Header band */}
-        <div className="bg-gradient-to-l from-indigo-600 via-indigo-700 to-violet-700 text-white p-8 relative">
-          <div className="flex items-start justify-between gap-6">
-            <div className="flex-1">
-              <div className="text-xs uppercase tracking-widest opacity-80 mb-1">{isSimplified ? "Simplified Tax Invoice" : "Tax Invoice"}</div>
-              <h1 className="text-3xl font-extrabold leading-tight">فاتورة ضريبية{isSimplified ? " مبسطة" : ""}</h1>
-              <div className="mt-3 text-sm opacity-90 space-y-0.5">
-                <div className="font-semibold text-base">{c.nameAr}</div>
-                {c.nameEn && <div className="text-xs opacity-80">{c.nameEn}</div>}
-                {c.addressAr && <div>{c.addressAr}{c.city ? ` — ${c.city}` : ""}</div>}
-                <div className="font-mono text-xs opacity-80" dir="ltr">VAT: {c.vatNumber}{c.crNumber ? ` · CR: ${c.crNumber}` : ""}</div>
+        {/* Decorative top accent — gold strip */}
+        <div className="h-1.5 bg-gradient-to-l from-[#c9a961] via-[#e6c578] to-[#c9a961]" />
+
+        {/* HEADER — royal teal with corner ornament */}
+        <div className="relative bg-gradient-to-bl from-[#0a4f4a] via-[#0d6962] to-[#0a4f4a] text-white px-10 pt-8 pb-9 overflow-hidden">
+          {/* Decorative corner SVG (Islamic-inspired star) */}
+          <svg viewBox="0 0 200 200" className="absolute -left-8 -top-8 w-44 h-44 text-white/[0.06]" fill="currentColor">
+            <path d="M100 10l25 50 55 8-40 38 9 55-49-26-49 26 9-55-40-38 55-8z" />
+          </svg>
+          <svg viewBox="0 0 200 200" className="absolute -right-12 -bottom-16 w-56 h-56 text-white/[0.05]" fill="currentColor">
+            <circle cx="100" cy="100" r="80" stroke="currentColor" strokeWidth="2" fill="none" />
+            <circle cx="100" cy="100" r="55" stroke="currentColor" strokeWidth="2" fill="none" />
+            <circle cx="100" cy="100" r="30" stroke="currentColor" strokeWidth="2" fill="none" />
+          </svg>
+
+          <div className="relative flex items-start justify-between gap-6">
+            {/* Right block (RTL): logo monogram + seller info */}
+            <div className="flex items-start gap-4 flex-1 min-w-0">
+              <div className="shrink-0 w-16 h-16 rounded-xl bg-white/95 border-2 border-[#e6c578] flex items-center justify-center text-[#0a4f4a] text-3xl font-black shadow-xl">
+                {sellerInitial}
+              </div>
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-[0.3em] text-[#e6c578] mb-1">{isSimplified ? "Simplified Tax Invoice" : "Tax Invoice"}</div>
+                <h1 className="text-2xl font-extrabold leading-tight">فاتورة ضريبية{isSimplified ? " مبسطة" : ""}</h1>
+                <div className="mt-2 space-y-0.5 text-sm">
+                  <div className="font-bold text-base text-white">{c.nameAr}</div>
+                  {c.nameEn && <div className="text-xs text-white/75 font-medium">{c.nameEn}</div>}
+                  {c.addressAr && <div className="text-xs text-white/85">{c.addressAr}{c.city ? ` — ${c.city}` : ""}</div>}
+                  <div className="font-mono text-[11px] text-white/80 pt-0.5" dir="ltr">
+                    VAT {c.vatNumber}{c.crNumber ? ` · CR ${c.crNumber}` : ""}
+                  </div>
+                </div>
               </div>
             </div>
-            <div className="text-left">
-              <div className="bg-white/15 backdrop-blur rounded-lg px-4 py-3 text-xs uppercase tracking-wider">
-                <div className="opacity-70 mb-1">Invoice #</div>
-                <div className="font-mono text-lg font-bold" dir="ltr">{inv.invoiceNumber || `#${inv.id}`}</div>
+
+            {/* Left block (RTL): invoice number plate + clearance stamp */}
+            <div className="text-left shrink-0">
+              <div className="bg-white/95 text-[#0a4f4a] rounded-lg px-5 py-3 shadow-lg border-r-4 border-[#c9a961]">
+                <div className="text-[9px] uppercase tracking-[0.2em] opacity-70">رقم الفاتورة</div>
+                <div className="font-mono text-xl font-extrabold" dir="ltr">{inv.invoiceNumber || `#${inv.id}`}</div>
               </div>
               {isCleared && (
-                <div className="mt-2 inline-flex items-center gap-1 bg-emerald-400/90 text-emerald-950 text-[11px] font-bold px-3 py-1 rounded-full">
-                  <ShieldCheck className="h-3.5 w-3.5" /> {inv.status === "sandbox_cleared" ? "مجاز (تجربة)" : "مجاز من زاتكا"}
+                <div className="mt-2 flex justify-end">
+                  <div className="inline-flex items-center gap-1.5 bg-[#e6c578] text-[#3d2c0a] text-[10px] font-extrabold px-3 py-1.5 rounded-full shadow-md">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    {inv.status === "sandbox_cleared" ? "مجاز (وضع التجربة)" : "مجاز من هيئة الزكاة"}
+                  </div>
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        {/* Meta strip */}
-        <div className="grid grid-cols-4 gap-0 border-y border-slate-200 bg-slate-50 text-[11px]">
+        {/* Gold separator */}
+        <div className="h-px bg-gradient-to-l from-transparent via-[#c9a961] to-transparent" />
+
+        {/* META strip — 5 cells */}
+        <div className="grid grid-cols-5 bg-[#fbf8f0] text-[10px]">
           {[
-            { l: "تاريخ الإصدار", v: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString("en-GB") : "—" },
+            { l: "تاريخ الإصدار", v: dateGregorian },
+            { l: "التاريخ الهجري", v: dateHijri || "—" },
             { l: "الوقت", v: issueTime || "—" },
-            { l: "ICV", v: inv.icv ?? "—" },
-            { l: "العملة", v: canonical.invoice?.currency || "SAR" },
+            { l: "تسلسل (ICV)", v: inv.icv ?? "—" },
+            { l: "العملة", v: currency },
           ].map((m, i) => (
-            <div key={i} className={`p-3 ${i < 3 ? "border-l border-slate-200" : ""}`}>
-              <div className="text-slate-500 uppercase tracking-wider mb-0.5">{m.l}</div>
-              <div className="font-mono font-semibold text-slate-800" dir="ltr">{m.v}</div>
+            <div key={i} className={`px-3 py-2.5 ${i < 4 ? "border-l border-[#e6dcc0]/70" : ""}`}>
+              <div className="text-[#8a7a55] uppercase tracking-wider mb-1">{m.l}</div>
+              <div className="font-mono font-bold text-[#3d2c0a] text-xs" dir="ltr">{m.v}</div>
             </div>
           ))}
         </div>
 
-        {/* Customer block */}
-        <div className="p-8 grid grid-cols-2 gap-6">
-          <div className="border border-slate-200 rounded-lg p-4">
-            <div className="text-xs text-slate-500 uppercase tracking-wider mb-2">المورّد / Seller</div>
-            <div className="font-semibold text-slate-800">{c.nameAr}</div>
-            {c.nameEn && <div className="text-xs text-slate-500">{c.nameEn}</div>}
-            <div className="text-xs text-slate-600 mt-1.5 font-mono" dir="ltr">VAT: {c.vatNumber}</div>
-            {c.crNumber && <div className="text-xs text-slate-600 font-mono" dir="ltr">CR: {c.crNumber}</div>}
-            {c.addressAr && <div className="text-xs text-slate-500 mt-1">{c.addressAr}</div>}
-          </div>
-          <div className="border border-slate-200 rounded-lg p-4">
-            <div className="text-xs text-slate-500 uppercase tracking-wider mb-2">العميل / Customer</div>
-            <div className="font-semibold text-slate-800">{buyer.name || (isSimplified ? "عميل أفراد" : "—")}</div>
-            {buyer.vat && <div className="text-xs text-slate-600 mt-1.5 font-mono" dir="ltr">VAT: {buyer.vat}</div>}
-          </div>
+        {/* SELLER + CUSTOMER blocks */}
+        <div className="px-10 pt-7 pb-2 grid grid-cols-2 gap-5">
+          <PartyCard title="المورّد" subtitle="Seller" accent>
+            <div className="font-bold text-slate-900 text-sm">{c.nameAr}</div>
+            {c.nameEn && <div className="text-[11px] text-slate-500">{c.nameEn}</div>}
+            <div className="mt-2 space-y-0.5">
+              <KV k="VAT" v={c.vatNumber} />
+              {c.crNumber && <KV k="CR" v={c.crNumber} />}
+              {c.addressAr && <div className="text-[11px] text-slate-600 mt-1">{c.addressAr}</div>}
+            </div>
+          </PartyCard>
+          <PartyCard title="العميل" subtitle="Customer">
+            <div className="font-bold text-slate-900 text-sm">{buyer.name || (isSimplified ? "عميل أفراد" : "—")}</div>
+            {buyer.vat && <div className="mt-2"><KV k="VAT" v={buyer.vat} /></div>}
+            {!buyer.name && isSimplified && (
+              <div className="text-[10px] text-slate-400 italic mt-1">فاتورة مبسطة B2C — لا تتطلب بيانات تفصيلية</div>
+            )}
+          </PartyCard>
         </div>
 
-        {/* Line items */}
-        <div className="px-8">
+        {/* LINE ITEMS table */}
+        <div className="px-10 mt-5">
           <table className="w-full border-collapse text-sm">
             <thead>
-              <tr className="bg-slate-100 text-slate-700 text-xs uppercase tracking-wider">
-                <th className="p-2.5 text-right border border-slate-200 w-[48%]">الصنف</th>
-                <th className="p-2.5 text-center border border-slate-200">الكمية</th>
-                <th className="p-2.5 text-center border border-slate-200">السعر</th>
-                <th className="p-2.5 text-center border border-slate-200">الضريبة</th>
-                <th className="p-2.5 text-center border border-slate-200">الإجمالي</th>
+              <tr className="bg-[#0a4f4a] text-white text-[11px] uppercase tracking-wider">
+                <th className="p-3 text-right rounded-tr-lg w-[8%]">#</th>
+                <th className="p-3 text-right w-[42%]">وصف الصنف / Description</th>
+                <th className="p-3 text-center">الكمية</th>
+                <th className="p-3 text-center">سعر الوحدة</th>
+                <th className="p-3 text-center">الضريبة</th>
+                <th className="p-3 text-center rounded-tl-lg">الإجمالي</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td className="p-2.5 border border-slate-200">{line.item || "—"}</td>
-                <td className="p-2.5 border border-slate-200 text-center font-mono">{fmt(line.qty)}</td>
-                <td className="p-2.5 border border-slate-200 text-center font-mono">{fmt(line.unitPrice)}</td>
-                <td className="p-2.5 border border-slate-200 text-center font-mono">{fmt(line.vatAmount)}</td>
-                <td className="p-2.5 border border-slate-200 text-center font-mono font-semibold">{fmt(line.totalInclVat)}</td>
+              <tr className="border-b border-slate-200 hover:bg-[#fbf8f0]/50">
+                <td className="p-3 text-right text-slate-400 font-mono">01</td>
+                <td className="p-3 text-right text-slate-800">{line.item || "—"}</td>
+                <td className="p-3 text-center font-mono text-slate-700">{fmt(line.qty)}</td>
+                <td className="p-3 text-center font-mono text-slate-700">{fmt(line.unitPrice)}</td>
+                <td className="p-3 text-center font-mono text-slate-700">{fmt(line.vatAmount)}</td>
+                <td className="p-3 text-center font-mono font-bold text-[#0a4f4a]">{fmt(line.totalInclVat)}</td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        {/* Totals + QR */}
-        <div className="p-8 grid grid-cols-3 gap-6 items-start">
-          <div className="col-span-1 flex flex-col items-center justify-center border border-slate-200 rounded-lg p-4 bg-slate-50">
-            <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">رمز QR — زاتكا</div>
-            {inv.qrTlv ? (
-              <div className="bg-white p-2 rounded">
-                <QRCodeSVG value={inv.qrTlv} size={140} level="M" includeMargin={false} />
+        {/* TOTALS + QR */}
+        <div className="px-10 mt-6 grid grid-cols-5 gap-5 items-start">
+          {/* QR card — left in RTL = visual right of totals */}
+          <div className="col-span-2">
+            <div className="rounded-xl bg-gradient-to-br from-[#fbf8f0] to-white border-2 border-[#e6dcc0] p-4 text-center">
+              <div className="text-[9px] uppercase tracking-[0.2em] text-[#8a7a55] mb-2 flex items-center justify-center gap-1">
+                <ShieldCheck className="h-3 w-3 text-[#c9a961]" /> امسح للتحقق — ZATCA QR
               </div>
-            ) : <div className="text-xs text-rose-500">QR غير متاح</div>}
-            {inv.zatcaUuid && (
-              <div className="mt-3 text-[9px] font-mono text-slate-500 break-all text-center" dir="ltr">{inv.zatcaUuid}</div>
-            )}
+              {inv.qrTlv ? (
+                <div className="inline-block bg-white p-2 rounded-lg border border-[#e6dcc0]">
+                  <QRCodeSVG value={inv.qrTlv} size={130} level="M" includeMargin={false} fgColor="#0a4f4a" />
+                </div>
+              ) : <div className="text-xs text-rose-500 py-8">QR غير متاح</div>}
+              {inv.zatcaUuid && (
+                <div className="mt-2 text-[8px] font-mono text-[#8a7a55] break-all leading-tight" dir="ltr">{inv.zatcaUuid}</div>
+              )}
+            </div>
           </div>
 
-          <div className="col-span-2 space-y-1.5 text-sm">
-            {/* VAT rate is read from canonical line — never hardcoded — so
-                exempt (E), zero-rated (Z), and out-of-scope (O) invoices
-                display the actual percentage instead of "15%". */}
-            {(() => {
-              const vatRate = Number(line.vatRate ?? 15);
-              const vatCat = line.vatCategory || "S";
-              const vatLabel = vatCat === "E" ? "ضريبة القيمة المضافة (معفاة)"
-                : vatCat === "Z" ? "ضريبة القيمة المضافة (صفرية)"
-                : vatCat === "O" ? "ضريبة القيمة المضافة (خارج النطاق)"
-                : `ضريبة القيمة المضافة (${vatRate}%)`;
-              return <>
-                <Row label="المجموع قبل الضريبة" value={`${fmt(line.totalExclVat)} ${canonical.invoice?.currency || "SAR"}`} />
-                <Row label={vatLabel} value={`${fmt(inv.vatAmount)} ${canonical.invoice?.currency || "SAR"}`} />
-                <div className="border-t border-slate-300 my-2" />
-                <Row label="الإجمالي شامل الضريبة" value={`${fmt(inv.totalAmount)} ${canonical.invoice?.currency || "SAR"}`} bold />
-              </>;
-            })()}
+          {/* Totals panel */}
+          <div className="col-span-3">
+            <div className="rounded-xl border border-slate-200 overflow-hidden">
+              {(() => {
+                const vatRate = Number(line.vatRate ?? 15);
+                const vatCat = line.vatCategory || "S";
+                const vatLabel = vatCat === "E" ? "ضريبة القيمة المضافة (معفاة)"
+                  : vatCat === "Z" ? "ضريبة القيمة المضافة (صفرية)"
+                  : vatCat === "O" ? "ضريبة القيمة المضافة (خارج النطاق)"
+                  : `ضريبة القيمة المضافة (${vatRate}%)`;
+                return <>
+                  <Row label="المجموع قبل الضريبة" value={fmt(line.totalExclVat)} suffix={currency} />
+                  <Row label={vatLabel} value={fmt(inv.vatAmount)} suffix={currency} />
+                  <div className="bg-gradient-to-l from-[#0a4f4a] to-[#0d6962] text-white px-5 py-4 flex items-center justify-between">
+                    <span className="text-sm font-bold tracking-wide">الإجمالي شامل الضريبة</span>
+                    <span className="font-mono text-xl font-extrabold" dir="ltr">{fmt(inv.totalAmount)} <span className="text-[#e6c578] text-sm">{currency}</span></span>
+                  </div>
+                </>;
+              })()}
+            </div>
+
+            {/* Amount in words */}
+            <div className="mt-3 rounded-lg bg-[#fbf8f0] border-r-4 border-[#c9a961] px-4 py-2.5">
+              <div className="text-[9px] uppercase tracking-wider text-[#8a7a55] mb-0.5">المبلغ كتابةً</div>
+              <div className="text-xs font-semibold text-[#3d2c0a] leading-relaxed">{totalInWords}</div>
+            </div>
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="border-t border-slate-200 bg-slate-50 px-8 py-4 text-[10px] text-slate-500 flex items-center justify-between">
-          <div>
-            {isCleared && <span className="inline-flex items-center gap-1 text-emerald-700"><ShieldCheck className="h-3 w-3" /> تم الإقرار لزاتكا</span>}
-            <span className="mx-2">·</span>
-            <span>وضع: {c.zatcaEnv === "production" ? "إنتاج" : "تجربة"}</span>
+        {/* Signature / notes strip */}
+        <div className="px-10 mt-6 grid grid-cols-2 gap-5 text-[10px]">
+          <div className="border-t-2 border-dashed border-slate-300 pt-2">
+            <div className="text-slate-500">توقيع المورّد / Authorized Signature</div>
           </div>
-          <div className="font-mono" dir="ltr">Gateway · {new Date(inv.receivedAt).toLocaleString("en-GB")}</div>
+          <div className="border-t-2 border-dashed border-slate-300 pt-2 text-left">
+            <div className="text-slate-500">ختم الشركة / Company Seal</div>
+          </div>
+        </div>
+
+        {/* FOOTER */}
+        <div className="mt-6 border-t border-[#e6dcc0]">
+          <div className="bg-[#fbf8f0] px-10 py-3 text-[10px] text-[#8a7a55] flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {isCleared && <span className="inline-flex items-center gap-1 text-[#0a4f4a] font-semibold"><ShieldCheck className="h-3 w-3" /> تم الإقرار لزاتكا</span>}
+              <span>·</span>
+              <span>وضع: <span className="font-bold text-[#3d2c0a]">{c.zatcaEnv === "production" ? "إنتاج" : "تجربة"}</span></span>
+              {c.contactPhone && <><span>·</span><span dir="ltr" className="font-mono">{c.contactPhone}</span></>}
+              {c.contactEmail && <><span>·</span><span dir="ltr" className="font-mono">{c.contactEmail}</span></>}
+            </div>
+            <div className="font-mono" dir="ltr">{new Date(inv.receivedAt).toLocaleString("en-GB")}</div>
+          </div>
+          <div className="h-1 bg-gradient-to-l from-[#c9a961] via-[#e6c578] to-[#c9a961]" />
         </div>
       </div>
 
-      {/* Status badge bar */}
+      {/* Status badges — UI only */}
       <div className="max-w-[210mm] mx-auto mt-4 print:hidden">
-        <div className="bg-white rounded-lg border p-3 flex items-center gap-2 text-xs text-slate-600">
-          <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">{c.nameAr}</Badge>
-          <Badge variant="outline">{isSimplified ? "B2C — مبسطة" : "B2B — قياسية"}</Badge>
+        <div className="bg-white rounded-lg border border-slate-200 p-3 flex items-center gap-2 text-xs text-slate-600 flex-wrap">
+          <Badge variant="outline" className="bg-[#0a4f4a]/5 text-[#0a4f4a] border-[#0a4f4a]/30">{c.nameAr}</Badge>
+          <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-200">{isSimplified ? "B2C — مبسطة" : "B2B — قياسية"}</Badge>
           {inv.clearanceStatus && <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">حالة الإقرار: {inv.clearanceStatus}</Badge>}
+          <span className="text-slate-400 mr-auto">يمكنك مشاركة هذا الرابط مع العميل — يحتاج صلاحية SuperAdmin للعرض</span>
         </div>
       </div>
     </div>
   );
 }
 
-function Row({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
+// ─── Small presentational helpers ───────────────────────────────────────
+
+function PartyCard({ title, subtitle, accent, children }: { title: string; subtitle: string; accent?: boolean; children: React.ReactNode }) {
   return (
-    <div className={`flex items-center justify-between py-1 ${bold ? "text-base font-bold text-indigo-700" : "text-slate-700"}`}>
-      <span>{label}</span>
-      <span className="font-mono" dir="ltr">{value}</span>
+    <div className={`rounded-xl border ${accent ? "border-[#e6dcc0] bg-gradient-to-bl from-[#fbf8f0]/60 to-white" : "border-slate-200 bg-white"} p-4`}>
+      <div className="flex items-baseline justify-between mb-2">
+        <span className={`text-xs font-bold ${accent ? "text-[#0a4f4a]" : "text-slate-700"}`}>{title}</span>
+        <span className="text-[9px] uppercase tracking-wider text-slate-400">{subtitle}</span>
+      </div>
+      {children}
     </div>
   );
+}
+
+function KV({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex items-center gap-2 text-[11px]">
+      <span className="text-slate-400 font-mono">{k}:</span>
+      <span className="font-mono text-slate-700" dir="ltr">{v}</span>
+    </div>
+  );
+}
+
+function Row({ label, value, suffix, bold }: { label: string; value: string; suffix?: string; bold?: boolean }) {
+  return (
+    <div className={`px-5 py-2.5 flex items-center justify-between border-b last:border-b-0 border-slate-100 ${bold ? "text-base font-bold text-[#0a4f4a] bg-[#fbf8f0]" : "text-sm text-slate-700"}`}>
+      <span>{label}</span>
+      <span className="font-mono" dir="ltr">{value}{suffix && <span className="text-slate-400 text-xs mr-1">{suffix}</span>}</span>
+    </div>
+  );
+}
+
+// ─── Arabic number-to-words (whole + halalas) ───────────────────────────
+// Lightweight in-house implementation: covers 0 – 999,999,999.99 which
+// safely exceeds any single ZATCA invoice amount. No external deps.
+function numberToArabicWords(amount: number, currency: string): string {
+  if (!Number.isFinite(amount) || amount < 0) return "—";
+  const riyals = Math.floor(amount);
+  const halalas = Math.round((amount - riyals) * 100);
+  const currencyName = currency === "SAR" ? "ريال سعودي" : currency;
+  const subUnit = currency === "SAR" ? "هللة" : "";
+
+  const main = numToArabic(riyals);
+  let out = `${main} ${currencyName}`;
+  if (halalas > 0 && subUnit) out += ` و${numToArabic(halalas)} ${subUnit}`;
+  return `${out} فقط لا غير`;
+}
+
+function numToArabic(n: number): string {
+  if (n === 0) return "صفر";
+  const ones = ["","واحد","اثنان","ثلاثة","أربعة","خمسة","ستة","سبعة","ثمانية","تسعة","عشرة","أحد عشر","اثنا عشر","ثلاثة عشر","أربعة عشر","خمسة عشر","ستة عشر","سبعة عشر","ثمانية عشر","تسعة عشر"];
+  const tens = ["","","عشرون","ثلاثون","أربعون","خمسون","ستون","سبعون","ثمانون","تسعون"];
+  const hundreds = ["","مائة","مئتان","ثلاثمائة","أربعمائة","خمسمائة","ستمائة","سبعمائة","ثمانمائة","تسعمائة"];
+
+  const under1000 = (x: number): string => {
+    if (x === 0) return "";
+    const h = Math.floor(x / 100);
+    const r = x % 100;
+    const parts: string[] = [];
+    if (h) parts.push(hundreds[h]);
+    if (r < 20) { if (r) parts.push(ones[r]); }
+    else {
+      const t = Math.floor(r / 10), o = r % 10;
+      if (o) parts.push(`${ones[o]} و${tens[t]}`);
+      else parts.push(tens[t]);
+    }
+    return parts.join(" و");
+  };
+
+  if (n < 1000) return under1000(n);
+
+  const millions = Math.floor(n / 1_000_000);
+  const thousands = Math.floor((n % 1_000_000) / 1000);
+  const rest = n % 1000;
+  const parts: string[] = [];
+  if (millions) {
+    parts.push(millions === 1 ? "مليون" : millions === 2 ? "مليونان" : `${under1000(millions)} ${millions <= 10 ? "ملايين" : "مليون"}`);
+  }
+  if (thousands) {
+    parts.push(thousands === 1 ? "ألف" : thousands === 2 ? "ألفان" : `${under1000(thousands)} ${thousands <= 10 ? "آلاف" : "ألف"}`);
+  }
+  if (rest) parts.push(under1000(rest));
+  return parts.join(" و");
 }
