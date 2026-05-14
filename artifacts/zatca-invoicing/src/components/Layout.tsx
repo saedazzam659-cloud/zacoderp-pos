@@ -157,6 +157,7 @@ const companyBusinessNav: NavDef[] = [
   // domains, payments and AI insights.
   { nameKey: "nav.onlineStore", href: "/online-store", icon: Store, permKey: "online_store" },
   { nameKey: "nav.integrationsMarketplace", href: "/integrations/marketplace", icon: Plug },
+  { nameKey: "nav.integrationsGateway", href: "/integrations/gateway", icon: Plug },
 ];
 
 // ── POS Management submenu ──────────────────────────────────────────────

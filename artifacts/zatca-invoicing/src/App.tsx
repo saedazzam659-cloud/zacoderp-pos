@@ -31,6 +31,7 @@ import SessionsAdmin from "@/pages/SessionsAdmin";
 import SecurityCenter from "@/pages/admin/SecurityCenter";
 import SuperAdminSecurity from "@/pages/admin/SuperAdminSecurity";
 import IntegrationsMarketplace from "@/pages/integrations/IntegrationsMarketplace";
+import IntegrationGateway from "@/pages/integrations/IntegrationGateway";
 import IntegrationConnection from "@/pages/integrations/IntegrationConnection";
 import RecoverSuperAdmin from "@/pages/RecoverSuperAdmin";
 import ReportInvitationAccept from "@/pages/ReportInvitationAccept";
@@ -528,9 +529,9 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
             {isSuperAdmin && <Route path="/admin/security-superadmin" component={SuperAdminSecurity} />}
             {isSuperAdmin && <Route path="/admin/security" component={SecurityCenter} />}
-            {!isSuperAdmin && <Route path="/integrations/gateway"><Redirect to="/integrations/marketplace" /></Route>}
-            {!isSuperAdmin && <Route path="/integrations/marketplace" component={IntegrationsMarketplace} />}
-            {!isSuperAdmin && <Route path="/integrations/connections/:id" component={IntegrationConnection} />}
+            <Route path="/integrations/gateway" component={IntegrationGateway} />
+            <Route path="/integrations/marketplace" component={IntegrationsMarketplace} />
+            <Route path="/integrations/connections/:id" component={IntegrationConnection} />
             {isSuperAdmin && <Route path="/admin/reports" component={ReportsHub} />}
             {isSuperAdmin && <Route path="/admin/reports/company-performance" component={CompanyPerformanceReport} />}
             {isSuperAdmin && <Route path="/admin/reports/operational-summary" component={OperationalSummaryReport} />}
