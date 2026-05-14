@@ -19,7 +19,7 @@ import {
 import {
   Plus, Trash2, PackageMinus, CheckCircle2, Printer, Pencil, FileText,
   ListOrdered, Copy, FileSpreadsheet, FileDown, X, Loader2, Undo2,
-  ArrowRightCircle, ExternalLink,
+  ArrowRightCircle, ExternalLink, User,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -559,6 +559,8 @@ export default function GoodsDeliveries() {
     { key: "journal",  label: tr("listCols.journal"), type: "text", valueOf: (r) => r.journalEntryId ? `JE-${r.journalEntryId}` : "" },
     { key: "linkedInvoice", label: tr("listCols.linkedInvoice"), type: "text", valueOf: (r) => r.linkedInvoiceId ? `SI-${r.linkedInvoiceId}` : "" },
     { key: "status",   label: tr("listCols.status"),  type: "text", valueOf: (r) => statusLabel(r.status) },
+    { key: "createdBy", label: tr("listCols.createdBy", "أنشأه"), type: "text", valueOf: (r) => r.createdByName ?? "" },
+    { key: "postedBy",  label: tr("listCols.postedBy", "رحّله"),  type: "text", valueOf: (r) => r.postedByName ?? "" },
     { key: "_act",     label: tr("listCols.actions"), type: "none", valueOf: () => "" },
   ];
   const DATA_KEYS = COLUMNS.filter(c => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map(c => c.key);
@@ -1441,6 +1443,28 @@ ${sections}
                           return (
                             <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
                               <DocStatusBadge status={r.status} />
+                            </td>
+                          );
+                        }
+                        if (col.key === "createdBy") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                              {r.createdByName ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] rounded-full px-1.5 py-0.5 font-medium border bg-emerald-50 text-emerald-700 border-emerald-200">
+                                  <User className="h-2.5 w-2.5" />{r.createdByName}
+                                </span>
+                              ) : <span className="text-slate-400 text-xs">—</span>}
+                            </td>
+                          );
+                        }
+                        if (col.key === "postedBy") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                              {r.postedByName ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] rounded-full px-1.5 py-0.5 font-medium border bg-blue-50 text-blue-700 border-blue-200">
+                                  <User className="h-2.5 w-2.5" />{r.postedByName}
+                                </span>
+                              ) : <span className="text-slate-400 text-xs">—</span>}
                             </td>
                           );
                         }

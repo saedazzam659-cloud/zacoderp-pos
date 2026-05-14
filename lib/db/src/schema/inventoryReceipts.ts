@@ -31,6 +31,10 @@ export const goodsReceiptsTable = pgTable("goods_receipts", {
   journalEntryId:              integer("journal_entry_id"),
   linkedInvoiceId:             integer("linked_invoice_id").references(() => purchaseInvoicesTable.id, { onDelete: "set null" }),
   notes:                       text("notes"),
+  // Audit: who created this receipt and who clicked /post
+  createdById:                 integer("created_by_id"),
+  postedById:                  integer("posted_by_id"),
+  postedAt:                    timestamp("posted_at"),
   createdAt:                   timestamp("created_at").defaultNow().notNull(),
   updatedAt:                   timestamp("updated_at").defaultNow().notNull(),
 });

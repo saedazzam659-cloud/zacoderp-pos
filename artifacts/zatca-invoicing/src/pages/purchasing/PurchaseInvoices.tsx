@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Plus, ShoppingCart, Eye, Trash2, CheckCircle2, RotateCcw, Printer, Undo2, Copy, Pencil,
-  FileSpreadsheet, FileDown, X, Loader2, Send,
+  FileSpreadsheet, FileDown, X, Loader2, Send, User,
 } from "lucide-react";
 import { BulkPrintMenu } from "@/lib/bulkPrint";
 import * as XLSX from "xlsx";
@@ -178,6 +178,8 @@ export default function PurchaseInvoices() {
     { key: "paystatus",label: t("purchasingPages.purchaseInvoices.cols.paymentStatus"),      type: "text", valueOf: (r) => r.paymentSettlement?.code ?? "" },
     { key: "journal",  label: t("purchasingPages.purchaseInvoices.cols.journal"),            type: "text", valueOf: (r) => r.journalEntryId ? `JE-${r.journalEntryId}` : "" },
     { key: "status",   label: t("purchasingPages.purchaseInvoices.cols.status"),             type: "text", valueOf: (r) => statusLabel(r.status) },
+    { key: "createdBy", label: t("purchasingPages.purchaseInvoices.cols.createdBy", "أنشأه"), type: "text", valueOf: (r) => r.createdByName ?? "" },
+    { key: "postedBy",  label: t("purchasingPages.purchaseInvoices.cols.postedBy", "رحّله"),  type: "text", valueOf: (r) => r.postedByName ?? "" },
     { key: "_act",     label: t("purchasingPages.purchaseInvoices.cols.actions"),            type: "none", valueOf: () => "" },
   ];
   const DATA_KEYS = COLUMNS.filter(c => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map(c => c.key);
@@ -850,6 +852,26 @@ ${sections}
                         return (
                           <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
                             <span className={cn("inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border", stCls)}>{statusLabel(inv.status)}</span>
+                          </td>
+                        );
+                      case "createdBy":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            {inv.createdByName ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] rounded-full px-1.5 py-0.5 font-medium border bg-emerald-50 text-emerald-700 border-emerald-200">
+                                <User className="h-2.5 w-2.5" />{inv.createdByName}
+                              </span>
+                            ) : <span className="text-slate-400 text-xs">—</span>}
+                          </td>
+                        );
+                      case "postedBy":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            {inv.postedByName ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] rounded-full px-1.5 py-0.5 font-medium border bg-blue-50 text-blue-700 border-blue-200">
+                                <User className="h-2.5 w-2.5" />{inv.postedByName}
+                              </span>
+                            ) : <span className="text-slate-400 text-xs">—</span>}
                           </td>
                         );
                       case "_act":

@@ -864,12 +864,32 @@ router.get("/purchase-invoices", async (req, res) => {
       ))
       .orderBy(desc(purchaseInvoicesTable.invoiceDate));
 
+    // Resolve usernames for createdById / postedById so the grid can render
+    // "أنشأه" / "رحّله" columns without an extra round trip.
+    const { usersTable } = await import("@workspace/db");
+    const { inArray: _inArr } = await import("drizzle-orm");
+    const auditUserIds = Array.from(new Set(
+      rows.flatMap(r => [r.createdById, r.postedById])
+        .filter((x): x is number => typeof x === "number")
+    ));
+    const auditUserMap = new Map<number, string>();
+    if (auditUserIds.length > 0) {
+      const us = await db.select({ id: usersTable.id, username: usersTable.username })
+        .from(usersTable).where(_inArr(usersTable.id, auditUserIds));
+      for (const u of us) auditUserMap.set(u.id, u.username);
+    }
+    const enrichedRows = rows.map(r => ({
+      ...r,
+      createdByName: r.createdById != null ? (auditUserMap.get(r.createdById) ?? null) : null,
+      postedByName:  r.postedById  != null ? (auditUserMap.get(r.postedById)  ?? null) : null,
+    }));
+
     // Enrich each invoice with its latest linked payment voucher so the
     // listing can show a "paid via cash/bank" badge in the side row. We
     // pull all linked vouchers for this tenant in a single query and
     // group in memory — cheap, and avoids N+1 even for large tenants.
-    const ids = rows.map(r => r.id);
-    if (ids.length === 0) { res.json(rows); return; }
+    const ids = enrichedRows.map(r => r.id);
+    if (ids.length === 0) { res.json(enrichedRows); return; }
     const { paymentVouchersTable } = await import("@workspace/db");
     const { inArray } = await import("drizzle-orm");
     const links = await db.select({
@@ -899,7 +919,7 @@ router.get("/purchase-invoices", async (req, res) => {
       arr.push(l);
       byInvoice.set(l.purchaseInvoiceId, arr);
     }
-    const enriched = rows.map(r => {
+    const enriched = enrichedRows.map(r => {
       const arr = byInvoice.get(r.id) ?? [];
       const sorted = [...arr].sort((a, b) => {
         const dateCmp = String(b.date).localeCompare(String(a.date));
@@ -989,6 +1009,7 @@ router.post("/purchase-invoices", async (req, res) => {
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
       costCenter:         costCenter ? String(costCenter).trim() || null : null,
       status: "draft", notes: notes || null,
+      createdById: (req as any).authUser?.id ?? null,
     }).returning();
     if (lines?.length) {
       await db.insert(purchaseInvoiceLinesTable).values(
@@ -1342,7 +1363,13 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     });
 
     const [updated] = await db.update(purchaseInvoicesTable)
-      .set({ status: "posted", journalEntryId: journalId, updatedAt: new Date() })
+      .set({
+        status: "posted",
+        journalEntryId: journalId,
+        postedById: (req as any).authUser?.id ?? null,
+        postedAt: new Date(),
+        updatedAt: new Date(),
+      })
       .where(eq(purchaseInvoicesTable.id, id))
       .returning();
 
@@ -1415,7 +1442,7 @@ router.patch("/purchase-invoices/:id/unpost", requireAdminRole, async (req, res)
     }
 
     const [updated] = await db.update(purchaseInvoicesTable)
-      .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+      .set({ status: "draft", journalEntryId: null, postedById: null, postedAt: null, updatedAt: new Date() })
       .where(eq(purchaseInvoicesTable.id, id))
       .returning();
 
@@ -1836,6 +1863,7 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
       notes: isForeign
         ? [ord.notes, `(محوَّل من أمر شراء بعملة ${ord.currencyCode} بسعر صرف ${fxRate} ⇒ ${baseCurrency})`].filter(Boolean).join("\n")
         : ord.notes,
+      createdById: req.authUser?.id ?? null,
     }).returning();
     if (lines.length) {
       await db.insert(purchaseInvoiceLinesTable).values(

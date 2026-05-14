@@ -696,6 +696,35 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS posted_ip TEXT` },
     { label: "alter journal_entries add postedUserAgent",
       sql:   `ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS posted_user_agent TEXT` },
+
+    // ── Document audit columns (created_by_id / posted_by_id / posted_at) ──
+    // Mirrors the journal-entry pattern across the four key business
+    // documents so the list grids can render "أنشأه" / "رحّله" columns.
+    { label: "alter sales_invoices add postedById",
+      sql:   `ALTER TABLE sales_invoices ADD COLUMN IF NOT EXISTS posted_by_id INTEGER` },
+    { label: "alter sales_invoices add postedAt",
+      sql:   `ALTER TABLE sales_invoices ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP` },
+
+    { label: "alter purchase_invoices add createdById",
+      sql:   `ALTER TABLE purchase_invoices ADD COLUMN IF NOT EXISTS created_by_id INTEGER` },
+    { label: "alter purchase_invoices add postedById",
+      sql:   `ALTER TABLE purchase_invoices ADD COLUMN IF NOT EXISTS posted_by_id INTEGER` },
+    { label: "alter purchase_invoices add postedAt",
+      sql:   `ALTER TABLE purchase_invoices ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP` },
+
+    { label: "alter goods_receipts add createdById",
+      sql:   `ALTER TABLE goods_receipts ADD COLUMN IF NOT EXISTS created_by_id INTEGER` },
+    { label: "alter goods_receipts add postedById",
+      sql:   `ALTER TABLE goods_receipts ADD COLUMN IF NOT EXISTS posted_by_id INTEGER` },
+    { label: "alter goods_receipts add postedAt",
+      sql:   `ALTER TABLE goods_receipts ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP` },
+
+    { label: "alter goods_deliveries add createdById",
+      sql:   `ALTER TABLE goods_deliveries ADD COLUMN IF NOT EXISTS created_by_id INTEGER` },
+    { label: "alter goods_deliveries add postedById",
+      sql:   `ALTER TABLE goods_deliveries ADD COLUMN IF NOT EXISTS posted_by_id INTEGER` },
+    { label: "alter goods_deliveries add postedAt",
+      sql:   `ALTER TABLE goods_deliveries ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {

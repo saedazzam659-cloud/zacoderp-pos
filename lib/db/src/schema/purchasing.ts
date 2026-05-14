@@ -100,6 +100,10 @@ export const purchaseInvoicesTable = pgTable("purchase_invoices", {
   // Stored as text to mirror the journal_entry_lines.cost_center convention.
   costCenter:           text("cost_center"),
   notes:                text("notes"),
+  // Audit: who created this invoice and who clicked /post
+  createdById:          integer("created_by_id"),
+  postedById:           integer("posted_by_id"),
+  postedAt:             timestamp("posted_at"),
   createdAt:            timestamp("created_at").defaultNow().notNull(),
   updatedAt:            timestamp("updated_at").defaultNow().notNull(),
 });

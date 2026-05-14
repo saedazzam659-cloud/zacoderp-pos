@@ -211,7 +211,24 @@ router.get("/", async (req, res) => {
         ...branchScopeSpread(req, goodsReceiptsTable.branchId, req.query.branchId),
       ))
       .orderBy(desc(goodsReceiptsTable.receiptDate), desc(goodsReceiptsTable.id));
-    res.json(rows);
+    // Resolve usernames for createdById / postedById in one pass.
+    const { usersTable } = await import("@workspace/db");
+    const { inArray } = await import("drizzle-orm");
+    const uids = Array.from(new Set(
+      rows.flatMap(r => [r.createdById, r.postedById])
+        .filter((x): x is number => typeof x === "number")
+    ));
+    const uMap = new Map<number, string>();
+    if (uids.length > 0) {
+      const us = await db.select({ id: usersTable.id, username: usersTable.username })
+        .from(usersTable).where(inArray(usersTable.id, uids));
+      for (const u of us) uMap.set(u.id, u.username);
+    }
+    res.json(rows.map(r => ({
+      ...r,
+      createdByName: r.createdById != null ? (uMap.get(r.createdById) ?? null) : null,
+      postedByName:  r.postedById  != null ? (uMap.get(r.postedById)  ?? null) : null,
+    })));
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
@@ -282,6 +299,7 @@ router.post("/", async (req, res) => {
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       status: "draft",
       notes: notes || null,
+      createdById: (req as any).authUser?.id ?? null,
     }).returning();
 
     if (lines?.length) {
@@ -520,7 +538,12 @@ router.patch("/:id/post", async (req, res) => {
       // If another request already posted, returning array is empty → throw,
       // which rolls back the whole tx (no stock or JE writes).
       const claimed = await tx.update(goodsReceiptsTable)
-        .set({ status: "posted", updatedAt: new Date() })
+        .set({
+          status: "posted",
+          postedById: (req as any).authUser?.id ?? null,
+          postedAt: new Date(),
+          updatedAt: new Date(),
+        })
         .where(and(
           eq(goodsReceiptsTable.id, id),
           eq(goodsReceiptsTable.companyId, cid),
@@ -649,7 +672,7 @@ router.patch("/:id/unpost", requireAdminRole, async (req, res) => {
       // 1. Race-safe claim: only one concurrent /unpost can flip posted→draft
       // AND it must still be unlinked from any invoice.
       const claimed = await tx.update(goodsReceiptsTable)
-        .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+        .set({ status: "draft", journalEntryId: null, postedById: null, postedAt: null, updatedAt: new Date() })
         .where(and(
           eq(goodsReceiptsTable.id, id),
           eq(goodsReceiptsTable.companyId, cid),
@@ -800,6 +823,7 @@ router.post("/:id/convert-to-invoice", async (req, res) => {
         status: "draft",
         sourceGrnId: id,
         notes: `فاتورة من إذن استلام رقم ${gr.docNumber || gr.id}`,
+        createdById: (req as any).authUser?.id ?? null,
       } as any).returning();
 
       if (lines.length) {

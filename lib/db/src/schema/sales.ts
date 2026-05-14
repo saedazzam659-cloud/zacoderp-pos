@@ -60,6 +60,9 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   // Soft reference to sessions.id (kept nullable; no FK to allow purging).
   sessionId:      integer("session_id"),
   createdById:    integer("created_by_id"),
+  // Audit: who clicked /post (set when status flips draft→posted)
+  postedById:     integer("posted_by_id"),
+  postedAt:       timestamp("posted_at"),
   // Sales rep + commission snapshot (commissionPct copied from rep at save time
   // so historical invoices keep their original % even if the rep's % changes)
   salesRepId:        integer("sales_rep_id"),

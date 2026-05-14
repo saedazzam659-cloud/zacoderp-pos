@@ -7,7 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useFormatters } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, ShoppingBag, Eye, Trash2, CheckCircle, FileText, RotateCcw, Undo2, Copy, Printer, FileSpreadsheet, FileDown } from "lucide-react";
+import { Plus, Search, ShoppingBag, Eye, Trash2, CheckCircle, FileText, RotateCcw, Undo2, Copy, Printer, FileSpreadsheet, FileDown, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import SalesPrintModal from "./SalesPrintModal";
 import { TablePagination, usePagination } from "@/components/TablePagination";
@@ -268,7 +268,10 @@ export default function SalesInvoices() {
     t("salesInvoices.colVat"), t("salesInvoices.colTotal"),
     t("salesInvoices.colPaymentStatus", "حالة السداد"),
     t("salesInvoices.colJournal"),
-    t("salesInvoices.colStatus"), t("salesInvoices.colActions"),
+    t("salesInvoices.colStatus"),
+    t("salesInvoices.colCreatedBy", "أنشأه"),
+    t("salesInvoices.colPostedBy", "رحّله"),
+    t("salesInvoices.colActions"),
   ];
   const align = isRtl ? "text-right" : "text-left";
 
@@ -430,6 +433,20 @@ export default function SalesInvoices() {
                       </td>
                       <td className="px-3 py-2.5">
                         <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border", st.cls)}>{st.label}</span>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        {(inv as any).createdByName ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 font-medium border bg-emerald-50 text-emerald-700 border-emerald-200">
+                            <User className="h-3 w-3" />{(inv as any).createdByName}
+                          </span>
+                        ) : <span className="text-muted-foreground text-xs">—</span>}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        {(inv as any).postedByName ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 font-medium border bg-blue-50 text-blue-700 border-blue-200">
+                            <User className="h-3 w-3" />{(inv as any).postedByName}
+                          </span>
+                        ) : <span className="text-muted-foreground text-xs">—</span>}
                       </td>
                       <td className="px-3 py-2.5">
                         <div className="flex gap-1">
