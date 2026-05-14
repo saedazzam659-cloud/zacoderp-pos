@@ -131,6 +131,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.modules",              href: "/admin/modules",            icon: Layers },
   { nameKey: "nav.industries",           href: "/admin/industries",         icon: Briefcase },
   { nameKey: "nav.menuPermissions",      href: "/admin/menu-permissions",   icon: SlidersHorizontal },
+  { nameKey: "nav.gatewayClients",       href: "/admin/gateway-clients",    icon: KeyRound },
   { nameKey: "nav.orphanStock",          href: "/admin/orphan-stock",       icon: AlertTriangle },
   { nameKey: "nav.databaseStats",        href: "/admin/db-stats",           icon: Database },
   { nameKey: "nav.aiCompanyFix",         href: "/admin/ai-fix",             icon: Sparkles },
