@@ -64,3 +64,4 @@ export * from "./chat";
 export * from "./cobrowse";
 export * from "./fieldService";
 export * from "./gatewayClients";
+export * from "./integrationConnections";

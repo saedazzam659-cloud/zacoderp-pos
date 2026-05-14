@@ -857,17 +857,13 @@ router.post("/:id/invoices/:invId/submit-zatca", async (req, res) => {
     res.status(500).json({ error: "شهادة CSID فارغة بعد التطبيع" }); return;
   }
 
-  // Phase 1B.3 — sign UBL with XAdES-BES if we have the matching private key.
-  // CAVEAT: zatca-xades-signer.parseCertIssuerSerial currently uses
-  // placeholder issuer/serial values (full ASN.1 X.509 parsing is Phase
-  // 1B.3.1). Until that lands we ONLY claim isSigned=true in sandbox so
-  // production submissions never falsely advertise compliance — they fall
-  // back to the unsigned path, which production will explicitly reject
-  // (the desired behaviour: fail loud, not silent corruption).
+  // Phase 1B.3 + Phase 1B.3.1 — sign UBL with XAdES-BES if we have the
+  // matching private key. Real X.509 ASN.1 parsing now lands in both
+  // sandbox AND production paths via node-forge.
   let signedXml = ublXml!;
   let isSigned = false;
   const pkEnc = client.zatcaPrivateKeyEnc ?? client.csrPrivateKeyEnc;
-  if (pkEnc && !isProd) {
+  if (pkEnc) {
     try {
       const privateKeyPem = decryptSecret(pkEnc) || "";
       if (privateKeyPem) {
@@ -882,10 +878,8 @@ router.post("/:id/invoices/:invId/submit-zatca", async (req, res) => {
         isSigned = true;
       }
     } catch (e) {
-      req.log.warn({ err: e instanceof Error ? e.message : String(e), invId }, "xades-sign-failed");
+      req.log.warn({ err: e instanceof Error ? e.message : String(e), invId, isProd }, "xades-sign-failed");
     }
-  } else if (isProd && pkEnc) {
-    req.log.warn({ invId }, "xades-prod-skip: real ASN.1 parsing pending Phase 1B.3.1");
   }
 
   const flow = inv.invoiceFlow === "simplified" ? "simplified" : "standard";

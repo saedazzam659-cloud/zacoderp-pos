@@ -31,6 +31,8 @@ import SessionsAdmin from "@/pages/SessionsAdmin";
 import SecurityCenter from "@/pages/admin/SecurityCenter";
 import SuperAdminSecurity from "@/pages/admin/SuperAdminSecurity";
 import IntegrationGateway from "@/pages/integrations/IntegrationGateway";
+import IntegrationsMarketplace from "@/pages/integrations/IntegrationsMarketplace";
+import IntegrationConnection from "@/pages/integrations/IntegrationConnection";
 import RecoverSuperAdmin from "@/pages/RecoverSuperAdmin";
 import ReportInvitationAccept from "@/pages/ReportInvitationAccept";
 import ReportsHub from "@/pages/admin/reports/ReportsHub";
@@ -528,6 +530,8 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/security-superadmin" component={SuperAdminSecurity} />}
             {isSuperAdmin && <Route path="/admin/security" component={SecurityCenter} />}
             {!isSuperAdmin && <Route path="/integrations/gateway" component={IntegrationGateway} />}
+            {!isSuperAdmin && <Route path="/integrations/marketplace" component={IntegrationsMarketplace} />}
+            {!isSuperAdmin && <Route path="/integrations/connections/:id" component={IntegrationConnection} />}
             {isSuperAdmin && <Route path="/admin/reports" component={ReportsHub} />}
             {isSuperAdmin && <Route path="/admin/reports/company-performance" component={CompanyPerformanceReport} />}
             {isSuperAdmin && <Route path="/admin/reports/operational-summary" component={OperationalSummaryReport} />}

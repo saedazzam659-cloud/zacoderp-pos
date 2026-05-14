@@ -16,6 +16,7 @@ import {
   Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat, Boxes, Megaphone,
   Server, Camera, Monitor,
   GitBranch,
+  Plug,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -155,6 +156,7 @@ const companyBusinessNav: NavDef[] = [
   // menu permission. The page itself contains tabs for products, orders,
   // domains, payments and AI insights.
   { nameKey: "nav.onlineStore", href: "/online-store", icon: Store, permKey: "online_store" },
+  { nameKey: "nav.integrationsMarketplace", href: "/integrations/marketplace", icon: Plug },
 ];
 
 // ── POS Management submenu ──────────────────────────────────────────────

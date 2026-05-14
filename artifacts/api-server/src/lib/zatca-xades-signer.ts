@@ -28,6 +28,7 @@
  *  3. The certificate digest is sha256 of the DER bytes.
  */
 import { createSign, createHash, createPrivateKey, type KeyObject } from "crypto";
+import forge from "node-forge";
 
 export interface SignXadesInput {
   ublXml: string;          // unsigned UBL with placeholder UBLExtensions
@@ -192,21 +193,61 @@ ${opts.signedProperties}
 </ext:UBLExtensions>`;
 }
 
-// Minimal ASN.1 walk just to extract issuer Name (printable form) and
-// serialNumber from a DER-encoded X.509 certificate. Good enough for ZATCA
-// IssuerSerial which only needs a reproducible string + integer.
+// Phase 1B.3.1 — full X.509 ASN.1 parsing via node-forge.
+//
+// Extracts the certificate's Issuer Distinguished Name (RFC 4514 form,
+// e.g. "CN=PRZEINVOICESCA4-CA, DC=extgazt, DC=gov, DC=local") and the
+// integer serial number. ZATCA validates these against the CA registry,
+// so they MUST match the bytes inside the DER — synthetic placeholders
+// would cause production submissions to be rejected with
+// "IssuerSerial mismatch".
+//
+// RFC 4514 attribute-type ordering is most-significant-first (CN first,
+// C last). forge gives us the parsed Name with the original ordering,
+// which we reverse so the output matches xmlsec / openssl conventions.
 function parseCertIssuerSerial(der: Buffer): { issuerName: string; serialNumber: string } {
-  // We don't pull a full ASN.1 lib; instead we surface placeholder values
-  // computed from a stable hash of the cert. ZATCA validates the digest
-  // (which is correct) — issuerName/serialNumber are mostly informational
-  // in compliance mode. For production-ready accuracy this should be
-  // replaced with a real ASN.1 parser like `node-forge`. Tracked as a
-  // Phase 1B.3.1 follow-up.
-  const fp = createHash("sha256").update(der).digest("hex").slice(0, 16);
-  return {
-    issuerName: `CN=ZATCA-CA, O=Saudi Arabia, C=SA`,
-    serialNumber: BigInt("0x" + fp).toString(),
+  const asn1 = forge.asn1.fromDer(forge.util.createBuffer(der.toString("binary")));
+  const cert = forge.pki.certificateFromAsn1(asn1);
+
+  // forge stores attributes in the order they appear in the DER (which is
+  // CA-down to CN — the opposite of RFC 4514). Reverse for the canonical
+  // string.
+  const shortMap: Record<string, string> = {
+    "2.5.4.3":  "CN",  // commonName
+    "2.5.4.6":  "C",   // countryName
+    "2.5.4.7":  "L",   // localityName
+    "2.5.4.8":  "ST",  // stateOrProvinceName
+    "2.5.4.10": "O",   // organizationName
+    "2.5.4.11": "OU",  // organizationalUnitName
+    "0.9.2342.19200300.100.1.25": "DC", // domainComponent
+    "1.2.840.113549.1.9.1":       "E",  // emailAddress
   };
+  const parts: string[] = [];
+  for (const a of cert.issuer.attributes) {
+    const name = shortMap[a.type ?? ""] ?? a.shortName ?? a.name ?? a.type ?? "";
+    const value = String(a.value ?? "");
+    // RFC 4514 quoting: escape ',', '+', '"', '\', '<', '>', ';', leading '#' or ' ', trailing ' '.
+    const escaped = value
+      .replace(/\\/g, "\\\\")
+      .replace(/,/g, "\\,")
+      .replace(/\+/g, "\\+")
+      .replace(/"/g, "\\\"")
+      .replace(/</g, "\\<")
+      .replace(/>/g, "\\>")
+      .replace(/;/g, "\\;")
+      .replace(/^ /, "\\ ")
+      .replace(/^#/, "\\#")
+      .replace(/ $/, "\\ ");
+    parts.push(`${name}=${escaped}`);
+  }
+  const issuerName = parts.reverse().join(", ");
+
+  // forge gives serialNumber as a hex string (no 0x prefix). ZATCA's
+  // ds:X509SerialNumber must be the decimal big-integer form.
+  const serialHex = (cert.serialNumber || "").replace(/^0+/, "") || "0";
+  const serialNumber = BigInt("0x" + serialHex).toString(10);
+
+  return { issuerName, serialNumber };
 }
 
 function escapeXml(s: string): string {
