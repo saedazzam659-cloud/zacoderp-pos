@@ -1,7 +1,14 @@
 import { useTranslation } from "react-i18next";
 
+// Both number and date formatters use Latin (Western) numerals so a
+// printed Arabic report doesn't mix Arabic-Indic digits in amounts
+// (٢٦٬٤٢٠٫٦٦) with Latin digits in dates (2025-05-22). The grouping /
+// decimal *style* still follows the Arabic locale (e.g. NBSP grouping,
+// Arabic comma) — only the digit glyphs are forced to Latin via the
+// `-u-nu-latn` BCP-47 extension. This is the convention used by every
+// Saudi accounting / ZATCA system in production.
 export function getNumberLocale(lang: string): string {
-  return lang.startsWith("ar") ? "ar-SA" : "en-US";
+  return lang.startsWith("ar") ? "ar-SA-u-nu-latn" : "en-US";
 }
 
 export function getDateLocale(lang: string): string {

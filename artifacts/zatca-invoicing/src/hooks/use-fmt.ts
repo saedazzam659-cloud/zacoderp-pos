@@ -37,7 +37,7 @@ export function useFmt() {
     });
 
   const fmtCurrency = (n: number | string | null | undefined): string =>
-    new Intl.NumberFormat("ar-SA", {
+    new Intl.NumberFormat("ar-SA-u-nu-latn", {
       style: "currency",
       currency: "SAR",
       minimumFractionDigits: dp,
