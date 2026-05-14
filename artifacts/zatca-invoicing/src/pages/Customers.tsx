@@ -4,7 +4,7 @@ import { Link } from "wouter";
 import {
   Plus, Users, Search, Phone, Mail, MapPin,
   BadgeCheck, Building2, UserCheck, FileText, Pencil, Trash2,
-  FileSpreadsheet, X,
+  FileSpreadsheet, X, UserPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -340,8 +340,94 @@ export default function Customers() {
           return <div className="px-4 pt-2"><DocColorLegend items={items} separatorAfter={[3]} /></div>;
         })()}
 
-        {/* Audit-grid toolbar */}
-        <div className={cn("border-t shadow-sm transition-colors", theme.border)}>
+        {/* ─────── MOBILE CARDS (visible < md only) ─────── */}
+        <div className="md:hidden p-3 space-y-3" data-testid="mobile-cards-customers">
+          <div className="relative">
+            <Search className="absolute end-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder={t("pages.customers.searchPlaceholder")}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="pe-10 h-11 text-sm rounded-xl border-emerald-200 bg-white shadow-sm focus-visible:ring-emerald-400"
+              data-testid="mobile-search-customers"
+            />
+          </div>
+          <div className="flex items-center justify-between text-xs text-slate-600 px-1">
+            <span className="font-semibold">
+              {isLoading ? t("common.loading") : t("pages.customers.resultsCount", { count: filtered.length })}
+            </span>
+          </div>
+          {isLoading && (
+            <div className="text-center py-10 text-muted-foreground bg-white rounded-xl border">{t("common.loading")}</div>
+          )}
+          {!isLoading && filtered.length === 0 && (
+            <div className="text-center py-10 text-muted-foreground bg-white rounded-xl border">
+              <Users className="h-10 w-10 mx-auto mb-2 opacity-30" />
+              لا يوجد عملاء
+            </div>
+          )}
+          {!isLoading && paged.map((customer: any) => {
+            const initial = (customer.nameAr?.[0] ?? customer.nameEn?.[0] ?? "ع").toUpperCase();
+            const balance = balMap?.[customer.id];
+            const balNum = Number(balance ?? 0);
+            return (
+              <div
+                key={customer.id}
+                className="bg-white rounded-2xl border border-emerald-100/70 shadow-sm overflow-hidden active:scale-[0.99] transition-transform"
+                data-testid={`mobile-card-customer-${customer.id}`}
+              >
+                <Link href={`/customers/${customer.id}`}>
+                  <div className="px-4 py-3.5 flex items-start gap-3 cursor-pointer">
+                    <div className="h-12 w-12 shrink-0 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-white grid place-items-center font-bold text-lg shadow-sm">
+                      {initial}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-sm text-slate-900 leading-tight truncate">{customer.nameAr || customer.nameEn || "—"}</div>
+                      {customer.nameEn && customer.nameAr && (
+                        <div className="text-[11px] text-muted-foreground truncate">{customer.nameEn}</div>
+                      )}
+                      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                        {customer.code && (
+                          <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">{customer.code}</span>
+                        )}
+                        {customer.phone && (
+                          <a href={`tel:${customer.phone}`} className="text-[11px] text-emerald-700 font-medium" onClick={e => e.stopPropagation()}>
+                            📞 {customer.phone}
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                    {balance != null && (
+                      <div className="text-end shrink-0">
+                        <div className="text-[10px] text-muted-foreground">الرصيد</div>
+                        <div className={cn("font-bold tabular-nums text-sm", balNum > 0 ? "text-rose-600" : balNum < 0 ? "text-emerald-600" : "text-slate-500")}>
+                          {Math.abs(balNum).toFixed(2)}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </Link>
+                <div className="border-t border-slate-100 bg-slate-50/60 grid grid-cols-2 divide-x divide-slate-100 [direction:ltr]">
+                  <button type="button" onClick={() => setDeleteTarget(customer)}
+                    className="py-2.5 text-rose-600 active:bg-rose-100 flex items-center justify-center gap-1 text-xs font-medium"
+                    data-testid={`mobile-btn-delete-customer-${customer.id}`}>
+                    <Trash2 className="h-3.5 w-3.5" /> حذف
+                  </button>
+                  <Link href={`/customers/${customer.id}`}>
+                    <button type="button"
+                      className="w-full py-2.5 text-emerald-700 active:bg-emerald-100 flex items-center justify-center gap-1 text-xs font-medium"
+                      data-testid={`mobile-btn-edit-customer-${customer.id}`}>
+                      <Pencil className="h-3.5 w-3.5" /> تعديل
+                    </button>
+                  </Link>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Audit-grid toolbar (DESKTOP ONLY) */}
+        <div className={cn("hidden md:block border-t shadow-sm transition-colors", theme.border)}>
           <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)} dir={isRtl ? "rtl" : "ltr"}>
             <div className={cn("flex-1 text-sm font-bold tracking-wide flex items-center gap-2", theme.text)}>
               <Users className="h-4 w-4 opacity-90" />
@@ -683,6 +769,21 @@ export default function Customers() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ─────── MOBILE FAB ─────── */}
+      <Link href="/customers/new">
+        <button
+          type="button"
+          className="md:hidden fixed bottom-6 end-6 z-40 group"
+          data-testid="mobile-fab-new-customer"
+          aria-label="عميل جديد"
+        >
+          <span className="absolute inset-0 rounded-full bg-emerald-500 opacity-30 group-active:opacity-0 animate-ping" />
+          <span className="relative flex items-center justify-center h-14 w-14 rounded-full bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-800 text-white shadow-xl shadow-emerald-500/40 ring-4 ring-white active:scale-95 transition-transform">
+            <UserPlus className="h-7 w-7" strokeWidth={2.5} />
+          </span>
+        </button>
+      </Link>
     </div>
   );
 }

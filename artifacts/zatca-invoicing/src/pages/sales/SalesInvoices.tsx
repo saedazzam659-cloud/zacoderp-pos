@@ -361,7 +361,117 @@ export default function SalesInvoices() {
         </div>
       </div>
 
-      <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
+      {/* ─────── MOBILE CARDS (visible < md only) ─────── */}
+      <div className="md:hidden space-y-3" data-testid="mobile-cards-sales-invoices">
+        {isLoading && (
+          <div className="text-center py-10 text-muted-foreground bg-white rounded-xl border">{t("common.loading")}</div>
+        )}
+        {!isLoading && filtered.length === 0 && (
+          <div className="text-center py-10 text-muted-foreground bg-white rounded-xl border">
+            <FileText className="h-10 w-10 mx-auto mb-2 opacity-30" />
+            <p className="text-sm">{t("salesInvoices.noInvoices")}</p>
+            <Button size="sm" className="mt-4 gap-2" onClick={guardedNewInvoice}>
+              <Plus className="h-4 w-4" />{t("salesInvoices.createFirst")}
+            </Button>
+          </div>
+        )}
+        {pager.pagedItems.map(inv => {
+          const st = STATUS[inv.status] ?? STATUS.draft;
+          const customerName = cusMap[inv.customerId] ?? "—";
+          return (
+            <div
+              key={inv.id}
+              className="bg-white rounded-2xl border border-blue-100/70 shadow-sm overflow-hidden"
+              data-testid={`mobile-card-invoice-${inv.id}`}
+            >
+              <div className="bg-gradient-to-l from-blue-50 to-blue-100/60 px-4 py-2.5 flex items-center justify-between border-b border-blue-100">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-blue-700" />
+                  <span className="font-mono font-bold text-sm text-blue-900">{inv.docNumber ?? `SI-${inv.id}`}</span>
+                </div>
+                <span className={cn("text-[10px] rounded-full px-2.5 py-1 font-semibold border", st.cls)}>{st.label}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate(`/sales/invoices/${inv.id}`)}
+                className="w-full text-start px-4 py-3 space-y-2"
+                data-testid={`mobile-open-invoice-${inv.id}`}
+              >
+                <div className="flex items-center gap-1.5 text-sm font-bold text-slate-900">
+                  <User className="h-3.5 w-3.5 text-blue-600" /> {customerName}
+                </div>
+                <div className="text-[11px] text-muted-foreground">{inv.invoiceDate}</div>
+                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100">
+                  <div className="text-center">
+                    <div className="text-[10px] text-muted-foreground">المجموع</div>
+                    <div className="font-mono text-xs font-semibold">{fmt(inv.subtotal)}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-[10px] text-muted-foreground">الضريبة</div>
+                    <div className="font-mono text-xs text-amber-700">{fmt(inv.vatAmount)}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-[10px] text-muted-foreground">الإجمالي</div>
+                    <div className="font-mono text-sm font-bold text-blue-700">{fmt(inv.totalAmount)}</div>
+                  </div>
+                </div>
+                {inv.paymentSettlement && (
+                  <div className={cn(
+                    "mt-1 text-[11px] rounded-lg px-2 py-1 font-medium border inline-flex items-center gap-1",
+                    inv.paymentSettlement.paymentType === "bank"
+                      ? "bg-blue-50 text-blue-700 border-blue-200"
+                      : "bg-amber-50 text-amber-700 border-amber-200"
+                  )}>
+                    {inv.paymentSettlement.paymentType === "bank" ? "🏦 سُدِّد بنكاً" : "💵 سُدِّد نقداً"}
+                    <span className="font-mono opacity-80">• {inv.paymentSettlement.code}</span>
+                  </div>
+                )}
+              </button>
+              <div className="border-t border-slate-100 bg-slate-50/60 grid grid-cols-3 divide-x divide-slate-100 [direction:ltr]">
+                <button type="button" onClick={() => openPrint(inv)}
+                  className="py-2.5 text-slate-700 active:bg-slate-200 flex items-center justify-center gap-1 text-xs"
+                  data-testid={`mobile-btn-print-${inv.id}`}>
+                  <Printer className="h-3.5 w-3.5" /> طباعة
+                </button>
+                {inv.status === "draft" ? (
+                  <button type="button" onClick={() => { if (confirm(t("salesInvoices.confirmDelete"))) deleteMut.mutate(inv.id); }}
+                    className="py-2.5 text-rose-600 active:bg-rose-100 flex items-center justify-center gap-1 text-xs"
+                    data-testid={`mobile-btn-delete-${inv.id}`}>
+                    <Trash2 className="h-3.5 w-3.5" /> حذف
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => navigate(`/sales/returns?fromInvoice=${inv.id}`)}
+                    className="py-2.5 text-orange-600 active:bg-orange-100 flex items-center justify-center gap-1 text-xs"
+                    data-testid={`mobile-btn-return-${inv.id}`}>
+                    <RotateCcw className="h-3.5 w-3.5" /> مرتجع
+                  </button>
+                )}
+                <button type="button" onClick={() => navigate(`/sales/invoices/${inv.id}`)}
+                  className="py-2.5 text-blue-700 active:bg-blue-100 flex items-center justify-center gap-1 text-xs font-medium"
+                  data-testid={`mobile-btn-view-${inv.id}`}>
+                  <Eye className="h-3.5 w-3.5" /> عرض
+                </button>
+              </div>
+            </div>
+          );
+        })}
+        {filtered.length > 0 && (
+          <div className="bg-white rounded-xl border p-2">
+            <TablePagination
+              page={pager.page}
+              pageSize={pager.pageSize}
+              pageCount={pager.pageCount}
+              total={pager.total}
+              onPageChange={pager.setPage}
+              onPageSizeChange={pager.setPageSize}
+              itemLabel={t("salesInvoices.itemLabel", { defaultValue: "فاتورة" })}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* ─────── DESKTOP TABLE (md+ only) ─────── */}
+      <div className="hidden md:block rounded-xl border bg-card overflow-hidden shadow-sm">
         {isLoading ? (
           <div className="p-12 text-center text-muted-foreground text-sm">{t("common.loading")}</div>
         ) : filtered.length === 0 ? (

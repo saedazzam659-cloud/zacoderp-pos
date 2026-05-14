@@ -308,7 +308,89 @@ export default function Warehouses() {
         <Input className="pr-9" placeholder={t("pages.warehouses.placeholders.search")} value={search} onChange={e => setSearch(e.target.value)} />
       </div>
 
-      <div className="rounded-xl border bg-card overflow-hidden">
+      {/* ─────── MOBILE CARDS (visible < md only) ─────── */}
+      <div className="md:hidden space-y-3" data-testid="mobile-cards-warehouses">
+        {isLoading && (
+          <div className="text-center py-10 text-muted-foreground bg-white rounded-xl border">{t("common.loading")}</div>
+        )}
+        {!isLoading && filtered.length === 0 && (
+          <div className="text-center py-10 text-muted-foreground bg-white rounded-xl border">
+            <Warehouse className="h-10 w-10 mx-auto mb-2 opacity-30" />
+            {t("pages.warehouses.table.noWarehouses")}
+          </div>
+        )}
+        {!isLoading && pager.pagedItems.map((w: any) => (
+          <div
+            key={w.id}
+            className="bg-white rounded-2xl border border-cyan-100/70 shadow-sm overflow-hidden"
+            data-testid={`mobile-card-warehouse-${w.id}`}
+          >
+            <div className="bg-gradient-to-l from-cyan-50 to-cyan-100/60 px-4 py-2.5 flex items-center justify-between border-b border-cyan-100">
+              <div className="flex items-center gap-2">
+                <Warehouse className="h-4 w-4 text-cyan-700" />
+                <span className="font-mono font-bold text-sm text-cyan-900">{w.code}</span>
+              </div>
+              {w.allowNegative ? (
+                <span className="text-[10px] rounded-full px-2 py-0.5 font-semibold bg-emerald-100 text-emerald-800 inline-flex items-center gap-1">
+                  <CheckCircle2 className="h-3 w-3" /> سحب على المكشوف
+                </span>
+              ) : (
+                <span className="text-[10px] rounded-full px-2 py-0.5 font-semibold bg-slate-100 text-slate-600 inline-flex items-center gap-1">
+                  <XCircle className="h-3 w-3" /> رصيد فقط
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => handleEdit(w)}
+              className="w-full text-start px-4 py-3 space-y-1.5"
+              data-testid={`mobile-open-warehouse-${w.id}`}
+            >
+              <div className="font-bold text-sm text-slate-900 leading-tight">
+                {w.nameAr}
+                {w.nameEn && <span className="block text-[11px] text-muted-foreground font-normal">{w.nameEn}</span>}
+              </div>
+              <div className="flex items-center gap-3 text-[11px] text-slate-600 flex-wrap">
+                {w.group?.nameAr && (
+                  <span className="inline-flex items-center gap-1"><BookMarked className="h-3 w-3" /> {w.group.nameAr}</span>
+                )}
+                {w.city && (
+                  <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" /> {w.city}</span>
+                )}
+              </div>
+            </button>
+            <div className="border-t border-slate-100 bg-slate-50/60 grid grid-cols-2 divide-x divide-slate-100 [direction:ltr]">
+              <button type="button"
+                onClick={() => { if (confirm(t("pages.warehouses.messages.confirmDelete"))) deleteMut.mutate(w.id); }}
+                className="py-2.5 text-rose-600 active:bg-rose-100 flex items-center justify-center gap-1 text-xs"
+                data-testid={`mobile-btn-delete-warehouse-${w.id}`}>
+                <Trash2 className="h-3.5 w-3.5" /> حذف
+              </button>
+              <button type="button" onClick={() => handleEdit(w)}
+                className="py-2.5 text-cyan-700 active:bg-cyan-100 flex items-center justify-center gap-1 text-xs font-medium"
+                data-testid={`mobile-btn-edit-warehouse-${w.id}`}>
+                <Pencil className="h-3.5 w-3.5" /> تعديل
+              </button>
+            </div>
+          </div>
+        ))}
+        {!isLoading && filtered.length > 0 && (
+          <div className="bg-white rounded-xl border p-2">
+            <TablePagination
+              page={pager.page}
+              pageSize={pager.pageSize}
+              pageCount={pager.pageCount}
+              total={pager.total}
+              onPageChange={pager.setPage}
+              onPageSizeChange={pager.setPageSize}
+              itemLabel={t("pages.warehouses.itemLabel", { defaultValue: "مستودع" })}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* ─────── DESKTOP TABLE (md+ only) ─────── */}
+      <div className="hidden md:block rounded-xl border bg-card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
             <tr>
@@ -359,6 +441,20 @@ export default function Warehouses() {
           />
         )}
       </div>
+
+      {/* ─────── MOBILE FAB ─────── */}
+      <button
+        type="button"
+        onClick={() => { reset(); setShowForm(true); }}
+        className="md:hidden fixed bottom-6 end-6 z-40 group"
+        data-testid="mobile-fab-new-warehouse"
+        aria-label="مستودع جديد"
+      >
+        <span className="absolute inset-0 rounded-full bg-cyan-500 opacity-30 group-active:opacity-0 animate-ping" />
+        <span className="relative flex items-center justify-center h-14 w-14 rounded-full bg-gradient-to-br from-cyan-500 via-cyan-600 to-cyan-800 text-white shadow-xl shadow-cyan-500/40 ring-4 ring-white active:scale-95 transition-transform">
+          <Plus className="h-7 w-7" strokeWidth={2.5} />
+        </span>
+      </button>
     </div>
   );
 }
