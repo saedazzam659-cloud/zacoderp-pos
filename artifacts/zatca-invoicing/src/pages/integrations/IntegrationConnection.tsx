@@ -8,9 +8,10 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { ArrowRight, RefreshCw, Trash2, CheckCircle2, AlertCircle, Activity, Settings, Key, Eye } from "lucide-react";
+import { ArrowRight, RefreshCw, Trash2, CheckCircle2, AlertCircle, Activity, Settings, Key, Eye, BookOpen, ExternalLink, AlertTriangle } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { getInstructions } from "./providerInstructions";
 
 interface Provider {
   id: string; nameAr: string; nameEn: string; logoSvg: string;
@@ -126,13 +127,17 @@ export default function IntegrationConnection() {
         )}
       </Card>
 
-      <Tabs defaultValue="settings">
+      <Tabs defaultValue="instructions">
         <TabsList>
+          <TabsTrigger value="instructions"><BookOpen className="w-4 h-4 ml-1"/>كيف أحصل على البيانات؟</TabsTrigger>
           <TabsTrigger value="settings"><Settings className="w-4 h-4 ml-1"/>الإعدادات</TabsTrigger>
           <TabsTrigger value="credentials"><Key className="w-4 h-4 ml-1"/>بيانات الاعتماد</TabsTrigger>
           <TabsTrigger value="runs"><Activity className="w-4 h-4 ml-1"/>سجل المزامنة</TabsTrigger>
         </TabsList>
 
+        <TabsContent value="instructions">
+          <InstructionsPanel providerId={conn.provider} providerNameAr={provider.nameAr} />
+        </TabsContent>
         <TabsContent value="settings">
           <SettingsPanel conn={conn} onSaved={() => qc.invalidateQueries({ queryKey: ["integrations", "connection", id] })} />
         </TabsContent>
@@ -244,6 +249,59 @@ function CredentialsPanel({ conn, provider, onSaved }: { conn: Connection; provi
         );
       })}
       <Button onClick={() => save.mutate()} disabled={save.isPending}>حفظ بيانات الاعتماد</Button>
+    </Card>
+  );
+}
+
+function InstructionsPanel({ providerId, providerNameAr }: { providerId: string; providerNameAr: string }) {
+  const guide = getInstructions(providerId);
+  return (
+    <Card className="p-6 space-y-5">
+      <div className="flex items-start gap-3">
+        <BookOpen className="w-5 h-5 text-violet-600 mt-0.5 shrink-0" />
+        <div>
+          <h2 className="text-lg font-bold">دليل ربط {providerNameAr}</h2>
+          <p className="text-sm text-slate-600 mt-1">{guide.intro}</p>
+        </div>
+      </div>
+
+      {guide.steps.length > 0 ? (
+        <ol className="space-y-3">
+          {guide.steps.map((s, i) => (
+            <li key={i} className="flex gap-3">
+              <span className="shrink-0 w-7 h-7 rounded-full bg-violet-100 text-violet-700 font-bold text-sm flex items-center justify-center">
+                {i + 1}
+              </span>
+              <div className="flex-1 bg-slate-50 border rounded-lg p-3">
+                <div className="font-semibold text-sm">{s.title}</div>
+                <div className="text-sm text-slate-700 mt-1 whitespace-pre-line leading-relaxed">{s.body}</div>
+              </div>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <div className="text-sm text-slate-500 bg-slate-50 border rounded-lg p-4 text-center">
+          الدليل التفصيلي لهذا التكامل قيد الإعداد.
+        </div>
+      )}
+
+      {guide.warningAr && (
+        <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>{guide.warningAr}</span>
+        </div>
+      )}
+
+      {guide.docsUrl && (
+        <a href={guide.docsUrl} target="_blank" rel="noreferrer"
+           className="inline-flex items-center gap-1 text-sm text-violet-700 hover:underline">
+          الوثائق الرسمية للمزوّد <ExternalLink className="w-3 h-3" />
+        </a>
+      )}
+
+      <div className="border-t pt-4 text-sm text-slate-600">
+        بعد جمع البيانات، انتقل لتبويب <strong>"بيانات الاعتماد"</strong> لإدخالها، ثم اضغط زر <strong>"اختبار"</strong> أعلى الصفحة للتأكد من عمل الاتصال.
+      </div>
     </Card>
   );
 }
