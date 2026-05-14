@@ -1557,6 +1557,39 @@ ${sections}
                             <span className={cn("inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border", st.cls)}>{st.label}</span>
                           </td>
                         );
+                      case "createdBy": {
+                        // Audit display: username with a small user icon, or em-dash
+                        // for legacy rows that pre-date the audit columns. Wrapped
+                        // in a soft slate chip so the column reads as metadata.
+                        const name = (entry as any).createdByName as string | null | undefined;
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center whitespace-nowrap">
+                            {name ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-700 px-2 py-0.5 text-[11px] font-medium" data-testid={`cell-createdby-${entry.id}`}>
+                                <UserIcon className="h-3 w-3 opacity-70" />
+                                {name}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-xs">—</span>
+                            )}
+                          </td>
+                        );
+                      }
+                      case "postedBy": {
+                        const name = (entry as any).postedByName as string | null | undefined;
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center whitespace-nowrap">
+                            {name ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 text-[11px] font-medium" data-testid={`cell-postedby-${entry.id}`}>
+                                <UserIcon className="h-3 w-3 opacity-70" />
+                                {name}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-xs">—</span>
+                            )}
+                          </td>
+                        );
+                      }
                       case "_act":
                         // Edit + Duplicate moved to the top toolbar (acts on
                         // the single-selected row). The per-row Delete stays
