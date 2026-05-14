@@ -7,7 +7,7 @@ const tiles: HubTile[] = [
   { nameKey: "nav.maintenanceTechnicians", href: "/maintenance/technicians", icon: HardHat,       tone: "indigo",  permKey: "maintenance" },
   { nameKey: "nav.maintenanceOrders",      href: "/maintenance/orders",      icon: ClipboardList, tone: "emerald", permKey: "maintenance" },
   { nameKey: "الخدمة الميدانية والزيارات", descKey: "تذاكر SLA، خطط الزيارات، وتتبع الفنيين في الميدان",
-    href: "/hr/field", icon: MapPin, tone: "blue", permKey: "hr_face_attendance" },
+    href: "/hr/field", icon: MapPin, tone: "blue", permKey: "field_service_locations" },
 ];
 
 export default function MaintenanceHub() {

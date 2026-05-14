@@ -82,6 +82,16 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   ai_reports: "ai_tools",
   // Tax / general invoices
   vat_declaration: "reports",
+  // Field Service Management — standalone billable module. SuperAdmin
+  // toggles `field_service` per company; all FSM sub-permissions roll
+  // up to it so disabling the toggle hides the entire module + 403s
+  // every /api/hr/field/* call regardless of per-user grants.
+  field_service_locations: "field_service",
+  field_service_visits:    "field_service",
+  field_service_plans:     "field_service",
+  field_service_tickets:   "field_service",
+  field_service_tracking:  "field_service",
+  field_service_reports:   "field_service",
 };
 
 // True when the company has NOT explicitly disabled the high-level module

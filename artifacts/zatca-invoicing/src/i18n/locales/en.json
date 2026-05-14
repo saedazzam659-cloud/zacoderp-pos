@@ -2080,7 +2080,8 @@
       "crm": "Customer Relationship Management (CRM)",
       "fixedAssets": "Fixed Assets",
       "security": "Security & Surveillance",
-      "aiTools": "AI Tools"
+      "aiTools": "AI Tools",
+      "fieldService": "Field Service"
     },
     "actions": {
       "view": "View",
@@ -2145,7 +2146,13 @@
       "hospital": "Hospital & Clinic Management (Facilities, Doctors, Patients, Appointments, Medical Billing, NPHIES FHIR R4)",
       "crm": "Customer Relationship Management (Leads, Opportunities, Activities, Campaigns, Pipeline, AI Lead Scoring)",
       "fixed_assets": "Fixed Assets (asset register, depreciation, maintenance, transfers, disposal, vehicle insurance, reports, AI)",
-      "security_events": "Security & Surveillance (Events, Notification Rules)"
+      "security_events": "Security & Surveillance (Events, Notification Rules)",
+      "field_service_locations": "Field Service — Locations",
+      "field_service_visits": "Field Service — Visits",
+      "field_service_plans": "Field Service — Visit Plans",
+      "field_service_tickets": "Field Service — Tickets & SLA",
+      "field_service_tracking": "Field Service — Live Tracking",
+      "field_service_reports": "Field Service — Reports & KPIs"
     }
   },
   "cashCommon": {

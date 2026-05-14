@@ -12,7 +12,7 @@ import {
   ShieldCheck, BarChart3, Warehouse, ShoppingCart, ShoppingBag, Wallet, BookOpen,
   PieChart, Smartphone, CheckCircle2, XCircle, Save, Copy, RotateCcw, Sparkles,
   ChevronDown, ChevronUp, UserCog, HardHat, Factory, ShieldAlert, TrendingUp,
-  Wrench, Hotel, Stethoscope,
+  Wrench, Hotel, Stethoscope, MapPin,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MENU_ITEMS as MENU_ITEMS_BASE, SECTIONS } from "@/lib/menuItems";
@@ -54,6 +54,7 @@ const MENU_ICONS: Record<string, React.ElementType> = {
   security_events:    ShieldAlert,
   seo_dashboard:      TrendingUp,
   ai_tools:           Sparkles,
+  field_service:      MapPin,
   zatca:              Link2,
 };
 
@@ -81,6 +82,7 @@ const SECTION_THEME: Record<string, { bg: string; text: string; border: string; 
   "تحليلات SEO": { bg: "bg-fuchsia-50", text: "text-fuchsia-700", border: "border-fuchsia-200", ring: "from-fuchsia-500/10" },
   "أدوات الذكاء الاصطناعي": { bg: "bg-violet-50", text: "text-violet-700", border: "border-violet-200", ring: "from-violet-500/10" },
   "النظام":     { bg: "bg-purple-50",  text: "text-purple-700",  border: "border-purple-200",  ring: "from-purple-500/10" },
+  "الخدمة الميدانية": { bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200", ring: "from-blue-500/10" },
 };
 
 const DEFAULT_PERMISSIONS: Record<string, boolean> = MENU_ITEMS.reduce(

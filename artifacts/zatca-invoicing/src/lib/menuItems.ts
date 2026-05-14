@@ -61,6 +61,8 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "online_store",       label: "المتجر الإلكتروني",          section: "المتجر الإلكتروني" },
 
+  { key: "field_service",      label: "الخدمة الميدانية",            section: "الخدمة الميدانية" },
+
   { key: "ai_tools",           label: "أدوات الذكاء الاصطناعي",     section: "أدوات الذكاء الاصطناعي" },
 
   { key: "chat",               label: "الاتصال الداخلي",            section: "الاتصال الداخلي" },
@@ -116,6 +118,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   security_events:    "security",
   seo_dashboard:      null,           // SuperAdmin tool, not billed per-company
   online_store:       null,           // included for now (no separate billable module)
+  field_service:      "field_service", // standalone billable module — Field Service Management (FSM)
   ai_tools:           null,           // SuperAdmin tool, not billed per-company
   installments:       "installments",
   zatca:              "zatca",
@@ -159,4 +162,5 @@ export const SECTION_THEME: Record<string, { bg: string; text: string; border: s
   "النظام":               { bg: "bg-purple-50",   text: "text-purple-700",   border: "border-purple-200" },
   "الاتصال الداخلي":       { bg: "bg-green-50",    text: "text-green-700",    border: "border-green-200" },
   "البيع بالتقسيط":         { bg: "bg-lime-50",     text: "text-lime-700",     border: "border-lime-200" },
+  "الخدمة الميدانية":       { bg: "bg-blue-50",     text: "text-blue-700",     border: "border-blue-200" },
 };

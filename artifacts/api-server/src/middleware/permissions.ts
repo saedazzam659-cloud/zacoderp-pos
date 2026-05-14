@@ -97,6 +97,16 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   ai_reports: "ai_tools",
   // VAT / general invoices
   vat_declaration: "reports",
+  // Field Service Management (FSM) — standalone billable module. Mirror
+  // of frontend COMPANY_MODULE_GATE; keep both maps in sync. Disabling
+  // `field_service` on a company hides the menu AND 403s every
+  // /api/hr/field/* call, regardless of per-user grants.
+  field_service_locations: "field_service",
+  field_service_visits:    "field_service",
+  field_service_plans:     "field_service",
+  field_service_tickets:   "field_service",
+  field_service_tracking:  "field_service",
+  field_service_reports:   "field_service",
 };
 
 // True when the company has NOT explicitly disabled the high-level module

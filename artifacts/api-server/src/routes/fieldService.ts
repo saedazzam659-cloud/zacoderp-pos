@@ -13,9 +13,19 @@ import {
 } from "@workspace/db";
 import { and, eq, desc, asc, sql, gte, lte, isNull, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, denyKiosk, effectiveBranchCondition } from "../middleware/auth.js";
+import { requireModulePermission, moduleAudit } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
+// Company-level module gate: any user from a company whose SuperAdmin
+// has disabled the `field_service` toggle gets a 403 here, regardless
+// of per-user grants. The defaultModule arg is only used to look up
+// the company gate via COMPANY_MODULE_GATE — `field_service_locations`
+// is a member of that map and resolves to the `field_service` parent
+// module. Per-action user permissions are still checked at the route
+// level via the existing requireManager / role gates.
+router.use(requireModulePermission("field_service_locations"));
+router.use(moduleAudit("field_service_locations"));
 
 function guard(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);

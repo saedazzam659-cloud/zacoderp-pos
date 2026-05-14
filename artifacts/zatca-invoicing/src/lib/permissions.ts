@@ -35,6 +35,7 @@ const G = {
   fixedAssets: "perms.groups.fixedAssets",
   security:    "perms.groups.security",
   aiTools:     "perms.groups.aiTools",
+  fieldService: "perms.groups.fieldService",
 };
 
 export const PERMISSION_MODULES: ModuleDef[] = [
@@ -139,6 +140,18 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // screen with non-admin access that needs a permission gate is the
   // import/export data utility.
   { key: "data_io",              label: "perms.modules.data_io",              group: G.aiTools,     actions: ["view", "create", "export"] },
+
+  // ─── Field Service Management (FSM) ──────────────────────────────────
+  // Standalone billable module gated by `field_service` company toggle.
+  // Granular sub-permissions let the company admin govern which FSM
+  // surfaces each user can see/use (locations, visits, plans, tickets,
+  // tracking, reports).
+  { key: "field_service_locations", label: "perms.modules.field_service_locations", group: G.fieldService, actions: ALL },
+  { key: "field_service_visits",    label: "perms.modules.field_service_visits",    group: G.fieldService, actions: ALL },
+  { key: "field_service_plans",     label: "perms.modules.field_service_plans",     group: G.fieldService, actions: ALL },
+  { key: "field_service_tickets",   label: "perms.modules.field_service_tickets",   group: G.fieldService, actions: ALL },
+  { key: "field_service_tracking",  label: "perms.modules.field_service_tracking",  group: G.fieldService, actions: VO },
+  { key: "field_service_reports",   label: "perms.modules.field_service_reports",   group: G.fieldService, actions: ["view", "export"] },
 ];
 
 export const PERMISSION_GROUPS = Array.from(new Set(PERMISSION_MODULES.map(m => m.group)));

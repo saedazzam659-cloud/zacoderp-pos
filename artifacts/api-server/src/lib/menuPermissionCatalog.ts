@@ -79,6 +79,11 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   "chat",
   // ── البيع بالتقسيط الذكي ──
   "installments",
+  // ── الخدمة الميدانية ──
+  // Standalone billable module (Field Service Management). Gates the
+  // entire /hr/field surface — locations, visits, plans, tickets,
+  // tracking, reports — independently of `hr_module`.
+  "field_service",
   // ── النظام ──
   "zatca",
 ]);
