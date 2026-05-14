@@ -560,12 +560,25 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
   /* ── Bulk print: render each selected entry as a full journal-entry sheet
         (header + every debit/credit line), not just a one-row summary. ─── */
   const [bulkPrintBusy, setBulkPrintBusy] = useState(false);
+  // When true, the "detailed" / "professional" templates inject a hard
+  // page-break between every entry so each printed sheet contains exactly
+  // one journal entry — useful for archiving / signing one entry per page.
+  // Persisted to localStorage so the user's choice sticks across sessions.
+  const [oneEntryPerPage, setOneEntryPerPage] = useState<boolean>(() => {
+    try { return localStorage.getItem("zatca_je_one_per_page") === "1"; }
+    catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("zatca_je_one_per_page", oneEntryPerPage ? "1" : "0"); }
+    catch { /* ignore quota / private mode */ }
+  }, [oneEntryPerPage]);
   const acctMap = useMemo(
     () => new Map<number, any>((accountsList as any[]).map((a: any) => [a.id, a])),
     [accountsList],
   );
 
-  const buildBulkPrintHtml = (entriesWithLines: any[]) => {
+  const buildBulkPrintHtml = (entriesWithLines: any[], opts?: { oneEntryPerPage?: boolean }) => {
+    const oneEntryPerPage = !!opts?.oneEntryPerPage;
     const today = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-GB");
     const dir = isRtl ? "rtl" : "ltr";
     const lang = isRtl ? "ar" : "en";
@@ -662,7 +675,7 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
     return `<!DOCTYPE html><html dir="${dir}" lang="${lang}"><head><meta charset="utf-8"><title>${escapeHtml(t("journalEntries.printSheetTitle"))}</title>
 <style>
 @page { size: A4 portrait; margin: 12mm 12mm 22mm 12mm; @bottom-center { content: "صفحة " counter(page) " من " counter(pages); font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; font-size: 9pt; color: #475569; } }
-@media print { thead { display: table-header-group; } .entry { page-break-inside: avoid; } }
+@media print { thead { display: table-header-group; } .entry { page-break-inside: avoid; } ${oneEntryPerPage ? ".entry { page-break-after: always; } .entry:last-of-type { page-break-after: auto; }" : ""} }
 * { box-sizing: border-box; }
 body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; padding:0; direction:${dir}; }
 .h { text-align:center; margin-bottom:10px; }
@@ -833,7 +846,8 @@ ${sections}
 
   // Professional: formal letterhead-style A4 with shaded entry banner, line
   // table, and a signature block per entry (preparer / reviewer / approver).
-  const buildProfessionalPrintHtml = (entriesWithLines: any[]) => {
+  const buildProfessionalPrintHtml = (entriesWithLines: any[], opts?: { oneEntryPerPage?: boolean }) => {
+    const oneEntryPerPage = !!opts?.oneEntryPerPage;
     const today = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-GB");
     const dir = isRtl ? "rtl" : "ltr";
     const align = isRtl ? "right" : "left";
@@ -908,6 +922,7 @@ body { font-family: "Segoe UI","Tahoma","Arial",sans-serif; color:#111; margin:0
 .letterhead .co .reg { font-size:9pt; color:#475569; margin-top:3px; }
 .letterhead .stamp { text-align:${isRtl ? "left" : "right"}; font-size:9pt; color:#475569; }
 .entry { page-break-inside: avoid; margin-bottom:18px; border:1px solid #cbd5e1; border-radius:8px; padding:10px 12px; }
+${oneEntryPerPage ? "@media print { .entry { page-break-after: always; } .entry:last-of-type { page-break-after: auto; } }" : ""}
 .banner { display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:#eef2ff; border-radius:6px; margin-bottom:8px; border-left: 4px solid #1e3a8a; }
 .banner .docno { font-size:11pt; color:#1e3a8a; }
 .banner .docmeta { font-size:9.5pt; color:#475569; margin-top:2px; }
@@ -981,10 +996,10 @@ ${sections}
       let html = "";
       switch (templateId) {
         case "summary":      html = buildPrintHtml(source); break;
-        case "detailed":     html = buildBulkPrintHtml(source); break;
+        case "detailed":     html = buildBulkPrintHtml(source, { oneEntryPerPage }); break;
         case "compact":      html = buildCompactPrintHtml(source); break;
         case "thermal":      html = buildThermalPrintHtml(source); break;
-        case "professional": html = buildProfessionalPrintHtml(source); break;
+        case "professional": html = buildProfessionalPrintHtml(source, { oneEntryPerPage }); break;
       }
       openPrintWindow(html);
     } finally {
@@ -1281,6 +1296,30 @@ ${sections}
               <DropdownMenuLabel className="text-xs text-slate-500 font-normal">
                 قوالب الطباعة — للقيود المحددة ({selectedIds.length})
               </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {/* Page-layout toggle — applies to "تفصيلي" and "احترافي"
+                  (the two per-entry templates). When ON, each selected
+                  journal entry prints on its own A4 sheet — ideal for
+                  archiving / signing one entry per page. Compact / summary
+                  / thermal templates ignore this flag by design. */}
+              <label
+                className="flex items-start gap-2 px-2 py-2 mx-1 my-1 rounded-md bg-amber-50 border border-amber-200 cursor-pointer hover:bg-amber-100 select-none"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <input
+                  type="checkbox"
+                  checked={oneEntryPerPage}
+                  onChange={(e) => setOneEntryPerPage(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-amber-600 cursor-pointer"
+                  data-testid="toggle-one-entry-per-page"
+                />
+                <div className="flex flex-col">
+                  <span className="text-[12px] font-medium text-amber-900">كل قيد في صفحة منفصلة</span>
+                  <span className="text-[10px] text-amber-700 leading-tight">
+                    يطبق على القوالب التفصيلية والاحترافية فقط
+                  </span>
+                </div>
+              </label>
               <DropdownMenuSeparator />
               {PRINT_TEMPLATES.map((tpl) => {
                 const Icon = tpl.icon;
