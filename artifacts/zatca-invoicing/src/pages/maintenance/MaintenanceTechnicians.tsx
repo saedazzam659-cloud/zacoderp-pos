@@ -11,7 +11,7 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Pencil, Trash2, Search, HardHat, Phone, Mail } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, HardHat, Phone, Mail, Briefcase } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -207,7 +207,79 @@ export default function MaintenanceTechnicians() {
         </FormPanel>
       )}
 
-      <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
+      {/* ─────── MOBILE CARDS (visible < md only) ─────── */}
+      <div className="md:hidden space-y-3" data-testid="mobile-cards-techs">
+        {isLoading && (
+          <div className="text-center py-8 text-muted-foreground bg-white rounded-lg border">جاري التحميل…</div>
+        )}
+        {!isLoading && filtered.length === 0 && (
+          <div className="text-center py-10 text-muted-foreground bg-white rounded-lg border">
+            <HardHat className="h-10 w-10 mx-auto mb-2 opacity-30" />
+            لا يوجد فنيون مسجَّلون
+          </div>
+        )}
+        {filtered.map((t) => (
+          <div
+            key={t.id}
+            className="bg-white rounded-xl border border-indigo-100 shadow-sm overflow-hidden"
+            data-testid={`mobile-card-tech-${t.id}`}
+          >
+            <div className="bg-gradient-to-l from-indigo-50 to-indigo-100/50 px-4 py-2.5 flex items-center justify-between border-b border-indigo-100">
+              <div className="flex items-center gap-2">
+                <HardHat className="h-4 w-4 text-indigo-700" />
+                <span className="font-mono font-bold text-sm text-indigo-900">{t.code}</span>
+              </div>
+              <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold ${t.isActive ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>
+                {t.isActive ? "نشط" : "موقوف"}
+              </span>
+            </div>
+            <div className="px-4 py-3 space-y-2">
+              <div className="font-bold text-sm text-slate-900 leading-tight">
+                {t.nameAr}
+                {t.nameEn && <span className="block text-[11px] text-muted-foreground font-normal">{t.nameEn}</span>}
+              </div>
+              {t.specialization && (
+                <div className="flex items-center gap-1 text-[11px] text-slate-600">
+                  <Briefcase className="h-3 w-3" /> {t.specialization}
+                </div>
+              )}
+              <div className="flex flex-col gap-1.5 text-[11px]">
+                {t.phone && (
+                  <a href={`tel:${t.phone}`} className="flex items-center gap-1.5 text-emerald-700 active:underline" data-testid={`mobile-call-${t.id}`}>
+                    <Phone className="h-3 w-3" /> {t.phone}
+                  </a>
+                )}
+                {t.email && (
+                  <a href={`mailto:${t.email}`} className="flex items-center gap-1.5 text-blue-700 active:underline truncate" data-testid={`mobile-email-${t.id}`}>
+                    <Mail className="h-3 w-3" /> {t.email}
+                  </a>
+                )}
+              </div>
+              <div className="flex items-center justify-between pt-1.5 border-t border-slate-100">
+                <span className="text-[11px] text-muted-foreground">أجر الساعة</span>
+                <span className="font-bold tabular-nums text-indigo-700">
+                  {Number(t.hourlyRate).toFixed(2)} <span className="text-[10px] text-muted-foreground">ر.س</span>
+                </span>
+              </div>
+            </div>
+            <div className="border-t border-slate-100 bg-slate-50/60 grid grid-cols-2 divide-x divide-slate-100 [direction:ltr]">
+              <button type="button" onClick={() => setDel(t)}
+                className="py-2.5 text-rose-600 active:bg-rose-100 flex items-center justify-center gap-1 text-xs"
+                data-testid={`mobile-btn-delete-${t.id}`}>
+                <Trash2 className="h-3.5 w-3.5" /> حذف
+              </button>
+              <button type="button" onClick={() => openEdit(t)}
+                className="py-2.5 text-indigo-700 active:bg-indigo-100 flex items-center justify-center gap-1 text-xs font-medium"
+                data-testid={`mobile-btn-edit-${t.id}`}>
+                <Pencil className="h-3.5 w-3.5" /> تعديل
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ─────── DESKTOP TABLE (visible md+ only) ─────── */}
+      <div className="hidden md:block border rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-xs" dir="rtl">
             <thead className="bg-gradient-to-b from-indigo-50 to-indigo-100 text-indigo-900 border-b">
@@ -276,6 +348,20 @@ export default function MaintenanceTechnicians() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ─────── MOBILE FAB ─────── */}
+      <button
+        type="button"
+        onClick={openNew}
+        className="md:hidden fixed bottom-6 end-6 z-40 group"
+        data-testid="mobile-fab-new-tech"
+        aria-label="فني جديد"
+      >
+        <span className="absolute inset-0 rounded-full bg-indigo-500 opacity-30 group-active:opacity-0 animate-ping" />
+        <span className="relative flex items-center justify-center h-14 w-14 rounded-full bg-gradient-to-br from-indigo-500 to-indigo-700 text-white shadow-lg shadow-indigo-500/40 ring-4 ring-white active:scale-95 transition-transform">
+          <Plus className="h-7 w-7" strokeWidth={2.5} />
+        </span>
+      </button>
     </div>
   );
 }

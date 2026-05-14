@@ -11,7 +11,7 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Pencil, Trash2, Search, Boxes, MapPin } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Boxes, MapPin, Tag, Hash } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { fieldApi } from "@/lib/fieldServiceApi";
@@ -257,7 +257,79 @@ export default function MaintenanceAssets() {
         </FormPanel>
       )}
 
-      <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
+      {/* ─────── MOBILE CARDS (visible < md only) ─────── */}
+      <div className="md:hidden space-y-3" data-testid="mobile-cards-assets">
+        {isLoading && (
+          <div className="text-center py-8 text-muted-foreground bg-white rounded-lg border">جاري التحميل…</div>
+        )}
+        {!isLoading && filtered.length === 0 && (
+          <div className="text-center py-10 text-muted-foreground bg-white rounded-lg border">
+            <Boxes className="h-10 w-10 mx-auto mb-2 opacity-30" />
+            لا توجد أصول مسجَّلة
+          </div>
+        )}
+        {filtered.map((a) => {
+          const cat = CATEGORIES.find(([v]) => v === a.category)?.[1] ?? a.category;
+          const st = STATUSES.find(([v]) => v === a.status);
+          return (
+            <div
+              key={a.id}
+              className="bg-white rounded-xl border border-orange-100 shadow-sm overflow-hidden"
+              data-testid={`mobile-card-asset-${a.id}`}
+            >
+              <div className="bg-gradient-to-l from-orange-50 to-orange-100/50 px-4 py-2.5 flex items-center justify-between border-b border-orange-100">
+                <div className="flex items-center gap-2">
+                  <Boxes className="h-4 w-4 text-orange-700" />
+                  <span className="font-mono font-bold text-sm text-orange-900">{a.code}</span>
+                </div>
+                {st && (
+                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold ${st[2]}`}>{st[1]}</span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setVisitsAsset(a)}
+                className="w-full text-start px-4 py-3 space-y-2"
+                data-testid={`mobile-open-asset-${a.id}`}
+              >
+                <div className="font-bold text-sm text-slate-900 leading-tight">
+                  {a.nameAr}
+                  {a.nameEn && <span className="block text-[11px] text-muted-foreground font-normal">{a.nameEn}</span>}
+                </div>
+                <div className="flex items-center gap-3 text-[11px] text-slate-600 flex-wrap">
+                  <span className="flex items-center gap-1"><Tag className="h-3 w-3" /> {cat}</span>
+                  {a.serialNumber && <span className="flex items-center gap-1 font-mono"><Hash className="h-3 w-3" /> {a.serialNumber}</span>}
+                </div>
+                {a.location && (
+                  <div className="flex items-center gap-1 text-[11px] text-slate-600">
+                    <MapPin className="h-3 w-3" /> {a.location}
+                  </div>
+                )}
+              </button>
+              <div className="border-t border-slate-100 bg-slate-50/60 grid grid-cols-3 divide-x divide-slate-100 [direction:ltr]">
+                <button type="button" onClick={() => setDel(a)}
+                  className="py-2.5 text-rose-600 active:bg-rose-100 flex items-center justify-center gap-1 text-xs"
+                  data-testid={`mobile-btn-delete-${a.id}`}>
+                  <Trash2 className="h-3.5 w-3.5" /> حذف
+                </button>
+                <button type="button" onClick={() => openEdit(a)}
+                  className="py-2.5 text-slate-700 active:bg-slate-200 flex items-center justify-center gap-1 text-xs"
+                  data-testid={`mobile-btn-edit-${a.id}`}>
+                  <Pencil className="h-3.5 w-3.5" /> تعديل
+                </button>
+                <button type="button" onClick={() => setVisitsAsset(a)}
+                  className="py-2.5 text-blue-700 active:bg-blue-100 flex items-center justify-center gap-1 text-xs font-medium"
+                  data-testid={`mobile-btn-visits-${a.id}`}>
+                  <MapPin className="h-3.5 w-3.5" /> النشاط
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ─────── DESKTOP TABLE (visible md+ only) ─────── */}
+      <div className="hidden md:block border rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-xs" dir="rtl">
             <thead className="bg-gradient-to-b from-orange-50 to-orange-100 text-orange-900 border-b">
@@ -407,6 +479,20 @@ export default function MaintenanceAssets() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ─────── MOBILE FAB ─────── */}
+      <button
+        type="button"
+        onClick={openNew}
+        className="md:hidden fixed bottom-6 end-6 z-40 group"
+        data-testid="mobile-fab-new-asset"
+        aria-label="أصل جديد"
+      >
+        <span className="absolute inset-0 rounded-full bg-orange-500 opacity-30 group-active:opacity-0 animate-ping" />
+        <span className="relative flex items-center justify-center h-14 w-14 rounded-full bg-gradient-to-br from-orange-500 to-orange-700 text-white shadow-lg shadow-orange-500/40 ring-4 ring-white active:scale-95 transition-transform">
+          <Plus className="h-7 w-7" strokeWidth={2.5} />
+        </span>
+      </button>
     </div>
   );
 }
