@@ -10,7 +10,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import ZatcaScanPreview, { downloadZatcaTemplate, type ZatcaRow, type GatewayClientPick, type SubmitResult } from "./ZatcaScanPreview";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -197,6 +197,15 @@ function timeAgoAr(ts: number): string {
 
 export default function IntegrationGateway() {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
+
+  const openConnectionDetails = (conn: Connection) => {
+    toast({
+      title: "هذه بطاقة تجريبية",
+      description: "لإدخال بيانات API حقيقية، استخدم مركز ربط الأنظمة الجديد.",
+    });
+    setLocation("/integrations/marketplace");
+  };
   const { token, user } = useAuth();
   const [connections, setConnections] = useState<Connection[]>(() => loadLs(LS_KEYS.connections, [] as Connection[]));
   const [apiKeys, setApiKeys] = useState<ApiKey[]>(() => loadLs(LS_KEYS.apiKeys, [] as ApiKey[]));
@@ -744,7 +753,7 @@ export default function IntegrationGateway() {
                       <Button size="sm" variant="ghost" onClick={() => toggleStatus(conn.id)} className="h-8 px-2 text-xs gap-1">
                         {conn.status === "active" ? "إيقاف مؤقت" : "تفعيل"}
                       </Button>
-                      <Button size="sm" variant="ghost" className="h-8 px-2 text-xs gap-1 text-primary">
+                      <Button size="sm" variant="ghost" onClick={() => openConnectionDetails(conn)} className="h-8 px-2 text-xs gap-1 text-primary">
                         تفاصيل <ChevronRight className="h-3.5 w-3.5 rtl:rotate-180" />
                       </Button>
                     </div>
