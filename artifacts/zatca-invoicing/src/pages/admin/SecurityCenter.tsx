@@ -24,8 +24,39 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 interface SessionRow {
   userId: number; username: string; email: string | null;
   role: string; companyId: number | null; companyName: string | null;
+  companyLoginCount: number | null;
   sessionId: string | null; lastLoginAt: string | null;
-  ip: string | null; userAgent: string | null;
+  ip: string | null; country: string | null; userAgent: string | null;
+}
+
+// ─── Country display helpers ────────────────────────────────────────────
+// Convert an ISO-3166-1 alpha-2 code into the matching emoji flag using
+// regional indicator symbols (U+1F1E6 + offset). Pure function, no I/O.
+// Returns the placeholder for invalid/missing codes so the UI never shows
+// a half-rendered surrogate pair.
+function countryFlag(code: string | null | undefined): string {
+  if (!code || !/^[A-Za-z]{2}$/.test(code)) return "🌐";
+  const cc = code.toUpperCase();
+  return String.fromCodePoint(
+    0x1F1E6 + (cc.charCodeAt(0) - 65),
+    0x1F1E6 + (cc.charCodeAt(1) - 65),
+  );
+}
+// Arabic display names for the codes we care about most. Anything not in
+// this map falls back to the raw 2-letter code so the UI is never blank.
+const COUNTRY_AR: Record<string, string> = {
+  SA: "السعودية", AE: "الإمارات", KW: "الكويت", QA: "قطر", BH: "البحرين",
+  OM: "عُمان", YE: "اليمن", EG: "مصر", JO: "الأردن", LB: "لبنان",
+  SY: "سوريا", IQ: "العراق", PS: "فلسطين", SD: "السودان", LY: "ليبيا",
+  TN: "تونس", DZ: "الجزائر", MA: "المغرب", US: "الولايات المتحدة",
+  GB: "بريطانيا", CA: "كندا", DE: "ألمانيا", FR: "فرنسا", IT: "إيطاليا",
+  ES: "إسبانيا", TR: "تركيا", IN: "الهند", PK: "باكستان", BD: "بنغلاديش",
+  CN: "الصين", JP: "اليابان", KR: "كوريا الجنوبية", RU: "روسيا",
+  BR: "البرازيل", AU: "أستراليا", NL: "هولندا", SE: "السويد",
+};
+function countryName(code: string | null | undefined): string {
+  if (!code) return "غير معروف";
+  return COUNTRY_AR[code.toUpperCase()] ?? code.toUpperCase();
 }
 interface LoginHistoryRow {
   id: number; userId: number | null; username: string | null;
@@ -245,6 +276,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                     <th className="px-3 py-2 font-medium">الدور</th>
                     <th className="px-3 py-2 font-medium">الشركة</th>
                     <th className="px-3 py-2 font-medium">آخر تسجيل دخول</th>
+                    <th className="px-3 py-2 font-medium">الدولة</th>
                     <th className="px-3 py-2 font-medium">IP</th>
                     <th className="px-3 py-2 font-medium">المتصفح</th>
                     <th className="px-3 py-2 font-medium w-32">إجراء</th>
@@ -271,8 +303,33 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                                                     "bg-gray-50 text-gray-700 border-gray-200"
                         }>{r.role}</Badge>
                       </td>
-                      <td className="px-3 py-2 text-xs">{r.companyName ?? (r.companyId == null ? "—" : `#${r.companyId}`)}</td>
+                      <td className="px-3 py-2 text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span>{r.companyName ?? (r.companyId == null ? "—" : `#${r.companyId}`)}</span>
+                          {r.companyLoginCount != null && r.companyLoginCount > 0 && (
+                            <Badge
+                              variant="outline"
+                              className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-mono px-1.5 py-0 h-4"
+                              title={`إجمالي تسجيلات الدخول لهذه الشركة: ${r.companyLoginCount.toLocaleString("ar-SA")}`}
+                              data-testid={`session-company-logins-${r.userId}`}
+                            >
+                              {r.companyLoginCount.toLocaleString("ar-SA")}
+                            </Badge>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-3 py-2 text-xs font-mono">{fmtDateTime(r.lastLoginAt)}</td>
+                      <td className="px-3 py-2" data-testid={`session-country-${r.userId}`}>
+                        {r.country ? (
+                          <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-gradient-to-l from-sky-50 to-indigo-50 border border-sky-200 text-xs">
+                            <span className="text-base leading-none" aria-hidden>{countryFlag(r.country)}</span>
+                            <span className="font-medium text-slate-700">{countryName(r.country)}</span>
+                            <span className="text-[10px] font-mono text-slate-400">{r.country}</span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </td>
                       <td className="px-3 py-2 text-xs font-mono text-muted-foreground">{r.ip ?? "—"}</td>
                       <td className="px-3 py-2 text-xs text-muted-foreground" title={r.userAgent ?? ""}>{shortUA(r.userAgent)}</td>
                       <td className="px-3 py-2">

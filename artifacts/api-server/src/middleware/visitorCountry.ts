@@ -109,7 +109,16 @@ function clientIp(req: Request): string {
 async function lookupCountryByIp(ip: string): Promise<string | null> {
   if (isPrivateOrLoopback(ip)) return null;
   const cached = geoCacheGet(ip);
-  if (cached) return cached;
+  // Normalize on read: the cache is shared with `resolveCountryForIp`,
+  // which deliberately stores raw ISO codes (e.g. "US", "FR") for
+  // reporting surfaces. The visitor middleware path, however, must
+  // honor the SUPPORTED_COUNTRIES contract and coerce anything outside
+  // it back to "GLOBAL". Without this normalization, a sessions-page
+  // view would warm the cache with "US" and the next visitor request
+  // would silently leak that unsupported code into req.visitorCountry.
+  if (cached) {
+    return SUPPORTED_COUNTRIES.has(cached) ? cached : "GLOBAL";
+  }
   // api.country.is is free, HTTPS, no API key required, returns a
   // minimal `{ip, country}` payload so we don't waste bytes parsing
   // fields we don't need. We hard-cap the round-trip to a short

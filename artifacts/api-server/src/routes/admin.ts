@@ -40,6 +40,7 @@ import { randomUUID } from "crypto";
 import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegistry.js";
 import { writeAudit } from "../middleware/permissions.js";
 import { resolveBearerToken } from "../middleware/auth.js";
+import { resolveCountryForIp } from "../middleware/visitorCountry.js";
 import { persistSnapshot, restoreFromSnapshotPayload } from "./backup.js";
 import { randomBytes } from "crypto";
 
@@ -2458,19 +2459,40 @@ router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
       Array.from(loginByUser.values()).map(r => r.ip).filter((x): x is string => !!x),
     ));
     const ipCountry = new Map<string, string | null>();
-    await Promise.all(distinctIps.map(async (ip) => {
-      try { ipCountry.set(ip, await resolveCountryForIp(ip)); }
-      catch { ipCountry.set(ip, null); }
-    }));
+    // Bounded concurrency: process IPs in chunks of 10 so a tenant with
+    // dozens of active sessions doesn't fan out into a burst of outbound
+    // calls to the geo-IP service. resolveCountryForIp already enforces
+    // a 1.5s per-call timeout AND caches results, so the second page
+    // load sees ~0ms regardless of chunk size — this only caps the cold
+    // path. Per-IP failures are swallowed so one bad IP can't kill the
+    // whole sessions list.
+    const GEO_BATCH = 10;
+    for (let i = 0; i < distinctIps.length; i += GEO_BATCH) {
+      const batch = distinctIps.slice(i, i + GEO_BATCH);
+      await Promise.all(batch.map(async (ip) => {
+        try { ipCountry.set(ip, await resolveCountryForIp(ip)); }
+        catch { ipCountry.set(ip, null); }
+      }));
+    }
 
     // Aggregate successful logins per company across the whole audit_log so
     // the UI can show how many times each tenant has signed in (lifetime).
     // We filter to action='login' module='auth' (writeAudit's success path);
     // failed attempts use action='denied' so they're naturally excluded.
-    const companyLoginAggRows = await db
+    // Constrain the GROUP BY to only the companies whose users currently
+    // appear in the active-sessions list. This bounds the aggregation cost
+    // by N(active companies) instead of scanning the full audit_log GROUP
+    // BY company_id; on large audit tables (millions of rows) the
+    // unbounded variant could be slow. Skip the query entirely when no
+    // session is tied to a company.
+    const companyLoginAggRows = companyIds.length === 0 ? [] : await db
       .select({ companyId: auditLogTable.companyId, c: sql<number>`count(*)::int` })
       .from(auditLogTable)
-      .where(and(eq(auditLogTable.module, "auth"), eq(auditLogTable.action, "login")))
+      .where(and(
+        eq(auditLogTable.module, "auth"),
+        eq(auditLogTable.action, "login"),
+        inArray(auditLogTable.companyId, companyIds),
+      ))
       .groupBy(auditLogTable.companyId);
     const companyLoginCount = new Map<number, number>();
     for (const r of companyLoginAggRows) {
