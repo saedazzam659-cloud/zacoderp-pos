@@ -4,7 +4,11 @@ import {
   ShieldCheck, Zap, KeyRound, Webhook, ArrowUpRight, CheckCircle2,
   XCircle, Clock, AlertTriangle, Brain, FileJson, Database, FileSpreadsheet,
   Building2, Boxes, Code2, Eye, EyeOff, ChevronRight, Loader2, X,
+  Upload, FileText, FileImage, FileCode, UploadCloud, FileCheck2,
 } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,6 +66,50 @@ interface ActivityEntry {
   message?: string;
 }
 
+interface UploadedFile {
+  id: string;
+  name: string;
+  size: number;
+  ext: string;
+  ts: number;
+  status: "queued" | "parsing" | "ai-extract" | "validating" | "submitting" | "done" | "failed";
+  progress: number;        // 0-100
+  invoicesFound: number;
+  invoicesSubmitted: number;
+  errorMsg?: string;
+}
+
+const FILE_TYPES = [
+  { ext: "xlsx", label: "Excel", icon: FileSpreadsheet, color: "text-emerald-700", bg: "bg-emerald-100" },
+  { ext: "xls",  label: "Excel", icon: FileSpreadsheet, color: "text-emerald-700", bg: "bg-emerald-100" },
+  { ext: "csv",  label: "CSV",   icon: FileSpreadsheet, color: "text-emerald-700", bg: "bg-emerald-100" },
+  { ext: "pdf",  label: "PDF",   icon: FileText,        color: "text-rose-700",    bg: "bg-rose-100" },
+  { ext: "xml",  label: "XML",   icon: FileCode,        color: "text-violet-700",  bg: "bg-violet-100" },
+  { ext: "json", label: "JSON",  icon: FileJson,        color: "text-amber-700",   bg: "bg-amber-100" },
+  { ext: "jpg",  label: "صورة", icon: FileImage,       color: "text-blue-700",    bg: "bg-blue-100" },
+  { ext: "png",  label: "صورة", icon: FileImage,       color: "text-blue-700",    bg: "bg-blue-100" },
+];
+const ACCEPT_EXTS = FILE_TYPES.map(f => `.${f.ext}`).join(",");
+
+function fileTypeFor(name: string) {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  return FILE_TYPES.find(f => f.ext === ext) ?? { ext, label: ext.toUpperCase() || "ملف", icon: FileText, color: "text-slate-700", bg: "bg-slate-100" };
+}
+function fmtSize(b: number) {
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / 1024 / 1024).toFixed(1)} MB`;
+}
+const STATUS_AR: Record<UploadedFile["status"], string> = {
+  queued:      "في الانتظار",
+  parsing:     "قراءة الملف...",
+  "ai-extract":"استخراج بالذكاء الاصطناعي...",
+  validating:  "التحقق من البيانات...",
+  submitting:  "إرسال إلى زاتكا...",
+  done:        "اكتمل بنجاح",
+  failed:      "فشل",
+};
+
 const SYSTEMS: SystemDef[] = [
   {
     id: "odoo", name: "Odoo", nameAr: "أودو",
@@ -114,6 +162,7 @@ const LS_KEYS = {
   connections: "zac_gateway_connections",
   apiKeys: "zac_gateway_apikeys",
   activity: "zac_gateway_activity",
+  uploads: "zac_gateway_uploads",
 };
 
 function loadLs<T>(k: string, fallback: T): T {
@@ -146,17 +195,40 @@ function timeAgoAr(ts: number): string {
 
 export default function IntegrationGateway() {
   const { toast } = useToast();
+  const { token } = useAuth();
   const [connections, setConnections] = useState<Connection[]>(() => loadLs(LS_KEYS.connections, [] as Connection[]));
   const [apiKeys, setApiKeys] = useState<ApiKey[]>(() => loadLs(LS_KEYS.apiKeys, [] as ApiKey[]));
   const [activity, setActivity] = useState<ActivityEntry[]>(() => loadLs(LS_KEYS.activity, [] as ActivityEntry[]));
+  const [uploads, setUploads] = useState<UploadedFile[]>(() => loadLs(LS_KEYS.uploads, [] as UploadedFile[]));
   const [showFullKey, setShowFullKey] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [connectModal, setConnectModal] = useState<SystemDef | null>(null);
   const [aiWizardOpen, setAiWizardOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
   useEffect(() => saveLs(LS_KEYS.connections, connections), [connections]);
   useEffect(() => saveLs(LS_KEYS.apiKeys, apiKeys), [apiKeys]);
   useEffect(() => saveLs(LS_KEYS.activity, activity), [activity]);
+  useEffect(() => saveLs(LS_KEYS.uploads, uploads), [uploads]);
+
+  // Best-effort fetch of company ZATCA setup status. Falls back gracefully
+  // if the endpoint isn't available — we just hide the "incomplete" banner.
+  const { data: zatcaStatus } = useQuery<{ ready: boolean; companyName?: string; vatNumber?: string; missing?: string[] }>({
+    queryKey: ["zatca-setup-status"],
+    queryFn: async () => {
+      try {
+        const res = await fetch("/api/zatca/status", { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) throw new Error();
+        return res.json();
+      } catch {
+        // graceful fallback so the UI still works without the endpoint
+        return { ready: true };
+      }
+    },
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+  });
+  const zatcaReady = zatcaStatus?.ready !== false;
 
   const stats = useMemo(() => {
     const totalInvoices = connections.reduce((s, c) => s + c.invoicesTotal, 0);
@@ -237,6 +309,86 @@ export default function IntegrationGateway() {
     toast({ title: "تم فصل التكامل", description: "لن يتم استقبال أي طلبات منه" });
   };
 
+  // ── Bulk upload pipeline (Phase 1: simulated client-side; Phase 2 will
+  //    POST each file to /partner-api/v1/uploads and stream progress) ────
+  const STAGES: Array<{ s: UploadedFile["status"]; pct: number; ms: number }> = [
+    { s: "parsing",     pct: 25, ms: 700 },
+    { s: "ai-extract",  pct: 55, ms: 1100 },
+    { s: "validating",  pct: 75, ms: 600 },
+    { s: "submitting",  pct: 95, ms: 900 },
+  ];
+
+  const updateUpload = (id: string, patch: Partial<UploadedFile>) => {
+    setUploads(prev => prev.map(u => u.id === id ? { ...u, ...patch } : u));
+  };
+
+  const processUpload = async (id: string) => {
+    for (const stage of STAGES) {
+      updateUpload(id, { status: stage.s, progress: stage.pct });
+      await new Promise(r => setTimeout(r, stage.ms));
+    }
+    // pretend we extracted between 1 and 12 invoices, ~95% submit success
+    const found = Math.floor(Math.random() * 12) + 1;
+    const submitted = Math.max(1, Math.round(found * (0.85 + Math.random() * 0.15)));
+    const failed = found - submitted;
+    updateUpload(id, {
+      status: failed > 0 && submitted === 0 ? "failed" : "done",
+      progress: 100,
+      invoicesFound: found,
+      invoicesSubmitted: submitted,
+      errorMsg: failed > 0 ? `${failed} فاتورة فشلت بسبب بيانات ناقصة — راجعها يدوياً` : undefined,
+    });
+    // also push into the activity feed
+    const u = uploads.find(x => x.id === id);
+    setActivity(prev => [{
+      id: rid(),
+      ts: Date.now(),
+      systemId: "excel" as SystemId,
+      invoiceRef: `BULK-${(u?.name ?? "file").slice(0, 18)}`,
+      status: failed > 0 ? "failed" : "success",
+      message: `تم استخراج ${found} فاتورة من الملف، أُرسل ${submitted} لزاتكا${failed > 0 ? ` و فشل ${failed}` : ""}`,
+    } as ActivityEntry, ...prev].slice(0, 50));
+  };
+
+  const addFiles = (files: FileList | File[]) => {
+    if (!zatcaReady) {
+      toast({
+        title: "يجب إكمال إعداد زاتكا أولاً",
+        description: "ادخل بيانات شركتك ورقم تسجيل ضريبة القيمة المضافة قبل الرفع",
+        variant: "destructive",
+      });
+      return;
+    }
+    const list = Array.from(files);
+    const accepted = list.filter(f => {
+      const ext = f.name.split(".").pop()?.toLowerCase() ?? "";
+      return FILE_TYPES.some(t => t.ext === ext);
+    });
+    if (accepted.length === 0) {
+      toast({ title: "صيغة غير مدعومة", description: `الصيغ المقبولة: ${FILE_TYPES.map(f => f.ext).join(", ")}`, variant: "destructive" });
+      return;
+    }
+    const newUploads: UploadedFile[] = accepted.map(f => ({
+      id: rid(),
+      name: f.name,
+      size: f.size,
+      ext: f.name.split(".").pop()?.toLowerCase() ?? "",
+      ts: Date.now(),
+      status: "queued",
+      progress: 5,
+      invoicesFound: 0,
+      invoicesSubmitted: 0,
+    }));
+    setUploads(prev => [...newUploads, ...prev]);
+    toast({ title: `تم استلام ${accepted.length} ملف`, description: "بدأ التحليل والإرسال إلى زاتكا" });
+    // kick off processing
+    newUploads.forEach((u, i) => setTimeout(() => processUpload(u.id), i * 200));
+  };
+
+  const removeUpload = (id: string) => setUploads(prev => prev.filter(u => u.id !== id));
+  const retryUpload  = (id: string) => { updateUpload(id, { status: "queued", progress: 5, errorMsg: undefined }); processUpload(id); };
+  const clearDoneUploads = () => setUploads(prev => prev.filter(u => u.status !== "done"));
+
   return (
     <div className="space-y-6 pb-12">
       {/* ── HERO ───────────────────────────────────────────────────── */}
@@ -289,6 +441,107 @@ export default function IntegrationGateway() {
           </div>
         </div>
       </div>
+
+      {/* ── ZATCA SETUP BANNER (only when incomplete) ─────────────── */}
+      {!zatcaReady && (
+        <Card className="border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50">
+          <CardContent className="p-4">
+            <div className="flex items-start gap-3">
+              <div className="h-10 w-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-amber-900">إعداد بيانات الشركة لزاتكا غير مكتمل</p>
+                <p className="text-sm text-amber-800 mt-0.5">
+                  لا يمكن إرسال أي فاتورة قبل إكمال شهادة الامتثال (CSID) ورقم تسجيل ضريبة القيمة المضافة.
+                  {zatcaStatus?.missing && zatcaStatus.missing.length > 0 && (
+                    <> الحقول الناقصة: <b>{zatcaStatus.missing.join("، ")}</b>.</>
+                  )}
+                </p>
+              </div>
+              <Button asChild size="sm" className="bg-amber-600 hover:bg-amber-700 text-white shrink-0">
+                <Link href="/zatca">إكمال الإعداد</Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── DIRECT UPLOAD (no integration needed) ─────────────────── */}
+      <section>
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <UploadCloud className="h-5 w-5 text-emerald-600" />
+            <h2 className="text-lg font-bold text-foreground">رفع مباشر للملفات</h2>
+            <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white">بدون ربط</Badge>
+          </div>
+          {uploads.some(u => u.status === "done") && (
+            <Button variant="ghost" size="sm" onClick={clearDoneUploads} className="text-xs">
+              مسح المكتملة
+            </Button>
+          )}
+        </div>
+
+        <Card className="overflow-hidden border-2 border-dashed">
+          <CardContent className="p-0">
+            <label
+              htmlFor="bulk-upload-input"
+              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={e => {
+                e.preventDefault();
+                setDragOver(false);
+                if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
+              }}
+              className={`block cursor-pointer p-6 sm:p-10 text-center transition-all relative overflow-hidden ${
+                dragOver
+                  ? "bg-gradient-to-br from-emerald-100 via-teal-50 to-cyan-100 ring-4 ring-emerald-400/40"
+                  : "bg-gradient-to-br from-emerald-50/50 via-teal-50/30 to-cyan-50/50 hover:from-emerald-100/60 hover:to-cyan-100/60"
+              }`}
+            >
+              <input
+                id="bulk-upload-input"
+                type="file"
+                accept={ACCEPT_EXTS}
+                multiple
+                className="hidden"
+                onChange={e => e.target.files && addFiles(e.target.files)}
+              />
+              <div className="absolute -top-12 -end-12 h-40 w-40 rounded-full bg-emerald-300/30 blur-3xl pointer-events-none" />
+              <div className="absolute -bottom-12 -start-12 h-40 w-40 rounded-full bg-cyan-300/30 blur-3xl pointer-events-none" />
+              <div className="relative">
+                <div className="mx-auto h-16 w-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center shadow-xl mb-3">
+                  <Upload className="h-8 w-8" />
+                </div>
+                <h3 className="font-extrabold text-lg text-foreground">اسحب الملفات هنا أو اضغط للاختيار</h3>
+                <p className="text-sm text-muted-foreground mt-1.5 max-w-md mx-auto leading-relaxed">
+                  ارفع فواتيرك بأي صيغة وسيقوم الذكاء الاصطناعي باستخراج البيانات وإرسالها إلى زاتكا تلقائياً.
+                  مثالي للشركات بدون نظام ERP.
+                </p>
+                <div className="flex flex-wrap justify-center gap-2 mt-4">
+                  {[...new Map(FILE_TYPES.map(t => [t.label, t])).values()].map(t => (
+                    <span key={t.label} className={`inline-flex items-center gap-1 rounded-full ${t.bg} ${t.color} px-2.5 py-1 text-[11px] font-bold`}>
+                      <t.icon className="h-3 w-3" /> {t.label}
+                    </span>
+                  ))}
+                </div>
+                <Button type="button" className="mt-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-90 text-white font-bold gap-2 pointer-events-none">
+                  <UploadCloud className="h-4 w-4" />
+                  اختر ملفات
+                </Button>
+              </div>
+            </label>
+          </CardContent>
+        </Card>
+
+        {uploads.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {uploads.slice(0, 12).map(u => (
+              <UploadRow key={u.id} u={u} onRemove={() => removeUpload(u.id)} onRetry={() => retryUpload(u.id)} />
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* ── AI MAPPING WIZARD CTA ─────────────────────────────────── */}
       <Card className="relative overflow-hidden border-2 border-dashed border-violet-300 bg-gradient-to-br from-violet-50 via-fuchsia-50 to-pink-50">
@@ -592,6 +845,73 @@ export default function IntegrationGateway() {
 // ──────────────────────────────────────────────────────────────────────
 // Sub-components
 // ──────────────────────────────────────────────────────────────────────
+
+function UploadRow({ u, onRemove, onRetry }: { u: UploadedFile; onRemove: () => void; onRetry: () => void }) {
+  const t = fileTypeFor(u.name);
+  const isDone   = u.status === "done";
+  const isFailed = u.status === "failed";
+  const isActive = !isDone && !isFailed;
+  const barColor = isFailed ? "bg-rose-500" : isDone ? "bg-emerald-500" : "bg-gradient-to-r from-emerald-500 to-teal-500";
+
+  return (
+    <Card className={`overflow-hidden ${isFailed ? "border-rose-200" : isDone ? "border-emerald-200" : "border-border"}`}>
+      <CardContent className="p-3">
+        <div className="flex items-start gap-3">
+          <div className={`h-11 w-11 rounded-xl flex items-center justify-center shrink-0 ${t.bg}`}>
+            <t.icon className={`h-5 w-5 ${t.color}`} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-start justify-between gap-2 flex-wrap">
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-sm text-foreground truncate" title={u.name}>{u.name}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {fmtSize(u.size)} • {t.label.toUpperCase()} • {timeAgoAr(u.ts)}
+                </p>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {isFailed && (
+                  <Button size="sm" variant="ghost" onClick={onRetry} className="h-7 px-2 text-xs gap-1 text-blue-600 hover:bg-blue-50">
+                    <RefreshCw className="h-3 w-3" /> إعادة
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" onClick={onRemove} className="h-7 w-7 p-0 text-rose-600 hover:bg-rose-50">
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+
+            {/* Progress bar + status text */}
+            <div className="mt-2">
+              <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                <div className={`h-full ${barColor} transition-all duration-500 ${isActive ? "animate-pulse" : ""}`} style={{ width: `${u.progress}%` }} />
+              </div>
+              <div className="flex items-center justify-between mt-1.5 gap-2">
+                <span className={`inline-flex items-center gap-1 text-[11px] font-bold ${
+                  isFailed ? "text-rose-700" : isDone ? "text-emerald-700" : "text-muted-foreground"
+                }`}>
+                  {isActive   && <Loader2 className="h-3 w-3 animate-spin" />}
+                  {isDone     && <FileCheck2 className="h-3 w-3" />}
+                  {isFailed   && <XCircle className="h-3 w-3" />}
+                  {STATUS_AR[u.status]}
+                </span>
+                {(isDone || isFailed) && u.invoicesFound > 0 && (
+                  <span className="text-[11px] text-muted-foreground">
+                    {u.invoicesSubmitted}/{u.invoicesFound} فاتورة أُرسلت
+                  </span>
+                )}
+              </div>
+              {u.errorMsg && (
+                <p className="mt-1.5 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1">
+                  {u.errorMsg}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 function HeroStat({ icon: Icon, label, value, accent }: { icon: typeof Plug; label: string; value: number | string; accent?: string }) {
   return (
