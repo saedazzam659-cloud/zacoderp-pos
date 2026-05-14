@@ -647,6 +647,51 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "field_tickets_no_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS field_tickets_no_uniq ON field_service_tickets (company_id, ticket_no)` },
 
+    // ── FSM SLA pre-computed deadlines ────────────────────────────────
+    // Background SLA-breach evaluators (and reports) need a deterministic
+    // due-at instead of recomputing `opened_at + sla_xxx_min` everywhere.
+    // Populated by the route layer on insert and on priority change.
+    { label: "alter field_service_tickets add response_due_at",
+      sql:   `ALTER TABLE field_service_tickets ADD COLUMN IF NOT EXISTS response_due_at TIMESTAMP` },
+    { label: "alter field_service_tickets add resolve_due_at",
+      sql:   `ALTER TABLE field_service_tickets ADD COLUMN IF NOT EXISTS resolve_due_at TIMESTAMP` },
+    // Backfill existing rows so old tickets also benefit from the new
+    // breach-detection path. NOT NULL is intentionally NOT enforced — old
+    // imports that lacked an opened_at would otherwise fail.
+    { label: "backfill field_service_tickets response_due_at",
+      sql:   `UPDATE field_service_tickets
+              SET response_due_at = opened_at + (sla_response_min || ' minutes')::interval
+              WHERE response_due_at IS NULL AND opened_at IS NOT NULL` },
+    { label: "backfill field_service_tickets resolve_due_at",
+      sql:   `UPDATE field_service_tickets
+              SET resolve_due_at = opened_at + (sla_resolution_min || ' minutes')::interval
+              WHERE resolve_due_at IS NULL AND opened_at IS NOT NULL` },
+    { label: "field_tickets_response_due_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS field_tickets_response_due_idx ON field_service_tickets (response_due_at)` },
+    { label: "field_tickets_resolve_due_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS field_tickets_resolve_due_idx ON field_service_tickets (resolve_due_at)` },
+    { label: "field_tickets_branch_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS field_tickets_branch_idx ON field_service_tickets (company_id, branch_id)` },
+    { label: "field_tickets_assigned_status_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS field_tickets_assigned_status_idx ON field_service_tickets (assigned_to, status)` },
+    { label: "field_visits_company_arrived_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS field_visits_company_arrived_idx ON field_visits (company_id, arrived_at)` },
+    { label: "field_visits_emp_status_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS field_visits_emp_status_idx ON field_visits (employee_id, status)` },
+    // Branch-scoping for visits — added so branch-restricted users see
+    // only the visits whose location belongs to their assigned branch.
+    // Backfilled from the linked field_location's branch_id so historic
+    // rows participate in branch filters too.
+    { label: "alter field_visits add branch_id",
+      sql:   `ALTER TABLE field_visits ADD COLUMN IF NOT EXISTS branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL` },
+    { label: "backfill field_visits.branch_id from field_locations",
+      sql:   `UPDATE field_visits v
+              SET branch_id = l.branch_id
+              FROM field_locations l
+              WHERE v.location_id = l.id AND v.branch_id IS NULL AND l.branch_id IS NOT NULL` },
+    { label: "field_visits_branch_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS field_visits_branch_idx ON field_visits (company_id, branch_id)` },
+
     // ─── FSM ↔ Maintenance integration ─────────────────────────────────
     // Soft FK from maintenance_orders → field_service_tickets, set when an
     // FSM ticket is converted to a maintenance work order. Allows two-way

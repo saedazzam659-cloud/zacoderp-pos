@@ -12,7 +12,7 @@ import {
   maintenanceOrdersTable,
 } from "@workspace/db";
 import { and, eq, desc, asc, sql, gte, lte, isNull, inArray } from "drizzle-orm";
-import { extractAuth, resolveCompanyId, denyKiosk } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, denyKiosk, effectiveBranchCondition } from "../middleware/auth.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -88,11 +88,17 @@ router.get("/locations", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const type = req.query.type as string | undefined;
     const includeInactive = req.query.includeInactive === "1";
+    // Apply branch-level isolation for users with viewAllBranches=false.
+    // NULL-branch rows (shared/company-wide locations) remain visible from
+    // any branch context per project convention.
+    const branch = effectiveBranchCondition(req as any, fieldLocationsTable.branchId, req.query.branchId);
+    if (branch.deny) { res.json([]); return; }
     const rows = await db.select().from(fieldLocationsTable)
       .where(and(
         eq(fieldLocationsTable.companyId, cid),
         type ? eq(fieldLocationsTable.type, type) : sql`true`,
         includeInactive ? sql`true` : eq(fieldLocationsTable.isActive, true),
+        branch.cond ?? sql`true`,
       ))
       .orderBy(asc(fieldLocationsTable.name))
       .limit(500);
@@ -305,6 +311,9 @@ router.post("/visits/start", async (req, res) => {
 
     const [row] = await db.insert(fieldVisitsTable).values({
       companyId: cid,
+      // Snapshot the branch from the linked location (or explicit override)
+      // so branch-scoped queries on field_visits work without a join.
+      branchId: numOrNull(b.branchId) ?? location?.branchId ?? null,
       employeeId,
       locationId: locationId ?? null,
       locationName: location?.name ?? N(b.locationName),
@@ -455,6 +464,8 @@ router.get("/visits", async (req, res) => {
     const status = req.query.status as string | undefined;
     const from = (req.query.from as string) || null;
     const to = (req.query.to as string) || null;
+    const branch = effectiveBranchCondition(req as any, fieldVisitsTable.branchId, req.query.branchId);
+    if (branch.deny) { res.json([]); return; }
     const rows = await db.select({
       id: fieldVisitsTable.id,
       employeeId: fieldVisitsTable.employeeId,
@@ -485,6 +496,7 @@ router.get("/visits", async (req, res) => {
         status ? eq(fieldVisitsTable.status, status) : sql`true`,
         from ? gte(fieldVisitsTable.arrivedAt, new Date(from)) : sql`true`,
         to ? lte(fieldVisitsTable.arrivedAt, new Date(`${to}T23:59:59`)) : sql`true`,
+        branch.cond ?? sql`true`,
       ))
       .orderBy(desc(fieldVisitsTable.arrivedAt))
       .limit(500);
@@ -717,6 +729,8 @@ router.get("/tickets", async (req, res) => {
     if (requireManager(req, res)) return;
     const status = req.query.status as string | undefined;
     const assignedTo = numOrNull(req.query.assignedTo);
+    const branch = effectiveBranchCondition(req as any, fieldServiceTicketsTable.branchId, req.query.branchId);
+    if (branch.deny) { res.json([]); return; }
     const rows = await db.select({
       id: fieldServiceTicketsTable.id,
       ticketNo: fieldServiceTicketsTable.ticketNo,
@@ -744,6 +758,7 @@ router.get("/tickets", async (req, res) => {
         eq(fieldServiceTicketsTable.companyId, cid),
         status ? eq(fieldServiceTicketsTable.status, status) : sql`true`,
         assignedTo ? eq(fieldServiceTicketsTable.assignedTo, assignedTo) : sql`true`,
+        branch.cond ?? sql`true`,
       ))
       .orderBy(desc(fieldServiceTicketsTable.openedAt))
       .limit(300);
@@ -757,8 +772,14 @@ router.get("/tickets/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     if (requireManager(req, res)) return;
     const id = Number(req.params.id);
+    const branch = effectiveBranchCondition(req as any, fieldServiceTicketsTable.branchId, undefined);
+    if (branch.deny) { res.status(404).json({ error: "تذكرة غير موجودة" }); return; }
     const [t] = await db.select().from(fieldServiceTicketsTable)
-      .where(and(eq(fieldServiceTicketsTable.id, id), eq(fieldServiceTicketsTable.companyId, cid))).limit(1);
+      .where(and(
+        eq(fieldServiceTicketsTable.id, id),
+        eq(fieldServiceTicketsTable.companyId, cid),
+        branch.cond ?? sql`true`,
+      )).limit(1);
     if (!t) { res.status(404).json({ error: "تذكرة غير موجودة" }); return; }
     const visits = await db.select().from(fieldVisitsTable)
       .where(and(
@@ -805,6 +826,10 @@ router.post("/tickets", async (req, res) => {
           openedBy: req.authUser?.id ?? null,
           slaResponseMin: numOrNull(b.slaResponseMin) ?? sla.resp,
           slaResolutionMin: numOrNull(b.slaResolutionMin) ?? sla.res,
+          // Pre-compute SLA deadlines so background sweepers and reports
+          // can detect breaches without recomputing per-row.
+          responseDueAt: new Date(Date.now() + (numOrNull(b.slaResponseMin) ?? sla.resp) * 60_000),
+          resolveDueAt:  new Date(Date.now() + (numOrNull(b.slaResolutionMin) ?? sla.res)  * 60_000),
           notes: N(b.notes),
         }).returning();
       } catch (err: any) {
@@ -830,6 +855,28 @@ router.patch("/tickets/:id", async (req, res) => {
     for (const k of ["customerId","assetId","locationId","branchId","slaResponseMin","slaResolutionMin","customerRating"] as const) {
       if (b[k] !== undefined) patch[k] = numOrNull(b[k]);
     }
+    // If priority or SLA minutes change, re-derive the pre-computed
+    // due-at timestamps from the *original* openedAt so the deadline
+    // tracks the new SLA without drifting based on edit time.
+    if (b.priority !== undefined || b.slaResponseMin !== undefined || b.slaResolutionMin !== undefined) {
+      const [orig] = await db.select({
+        openedAt: fieldServiceTicketsTable.openedAt,
+        slaResponseMin: fieldServiceTicketsTable.slaResponseMin,
+        slaResolutionMin: fieldServiceTicketsTable.slaResolutionMin,
+      }).from(fieldServiceTicketsTable)
+        .where(and(eq(fieldServiceTicketsTable.id, id), eq(fieldServiceTicketsTable.companyId, cid))).limit(1);
+      if (orig) {
+        const newPriority = b.priority !== undefined ? String(b.priority) : null;
+        const slaForPriority = newPriority ? (PRIORITY_SLA[newPriority] ?? PRIORITY_SLA.medium) : null;
+        const respMin = numOrNull(b.slaResponseMin)   ?? slaForPriority?.resp ?? orig.slaResponseMin;
+        const resMin  = numOrNull(b.slaResolutionMin) ?? slaForPriority?.res  ?? orig.slaResolutionMin;
+        patch.slaResponseMin   = respMin;
+        patch.slaResolutionMin = resMin;
+        const opened = new Date(orig.openedAt).getTime();
+        patch.responseDueAt = new Date(opened + respMin * 60_000);
+        patch.resolveDueAt  = new Date(opened + resMin  * 60_000);
+      }
+    }
     // Tenant-validate any soft-FK being mutated. Without this, a manager
     // could (intentionally or via a stale cache) point a ticket at another
     // tenant's customer/asset/location and leak data via subsequent reads.
@@ -850,8 +897,14 @@ router.patch("/tickets/:id", async (req, res) => {
         patch[k] = n != null ? String(n) : null;
       }
     }
+    const branch = effectiveBranchCondition(req as any, fieldServiceTicketsTable.branchId, undefined);
+    if (branch.deny) { res.status(404).json({ error: "تذكرة غير موجودة" }); return; }
     const [row] = await db.update(fieldServiceTicketsTable).set(patch)
-      .where(and(eq(fieldServiceTicketsTable.id, id), eq(fieldServiceTicketsTable.companyId, cid)))
+      .where(and(
+        eq(fieldServiceTicketsTable.id, id),
+        eq(fieldServiceTicketsTable.companyId, cid),
+        branch.cond ?? sql`true`,
+      ))
       .returning();
     if (!row) { res.status(404).json({ error: "تذكرة غير موجودة" }); return; }
     res.json(row);
@@ -869,13 +922,18 @@ router.post("/tickets/:id/assign", async (req, res) => {
     if (!(await assertTenant(employeesTable, employeeId, cid))) {
       res.status(400).json({ error: "موظف غير صالح" }); return;
     }
+    const branch = effectiveBranchCondition(req as any, fieldServiceTicketsTable.branchId, undefined);
+    if (branch.deny) { res.status(404).json({ error: "تذكرة غير موجودة" }); return; }
     const [row] = await db.update(fieldServiceTicketsTable).set({
       assignedTo: employeeId,
       assignedAt: new Date(),
       status: "assigned",
       updatedAt: new Date(),
-    }).where(and(eq(fieldServiceTicketsTable.id, id), eq(fieldServiceTicketsTable.companyId, cid)))
-      .returning();
+    }).where(and(
+      eq(fieldServiceTicketsTable.id, id),
+      eq(fieldServiceTicketsTable.companyId, cid),
+      branch.cond ?? sql`true`,
+    )).returning();
     if (!row) { res.status(404).json({ error: "تذكرة غير موجودة" }); return; }
     res.json(row);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -887,8 +945,14 @@ router.post("/tickets/:id/resolve", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     if (requireManager(req, res)) return;
     const id = Number(req.params.id);
+    const branch = effectiveBranchCondition(req as any, fieldServiceTicketsTable.branchId, undefined);
+    if (branch.deny) { res.status(404).json({ error: "تذكرة غير موجودة" }); return; }
     const [t] = await db.select().from(fieldServiceTicketsTable)
-      .where(and(eq(fieldServiceTicketsTable.id, id), eq(fieldServiceTicketsTable.companyId, cid))).limit(1);
+      .where(and(
+        eq(fieldServiceTicketsTable.id, id),
+        eq(fieldServiceTicketsTable.companyId, cid),
+        branch.cond ?? sql`true`,
+      )).limit(1);
     if (!t) { res.status(404).json({ error: "تذكرة غير موجودة" }); return; }
     if (t.status === "resolved" || t.status === "closed") {
       res.status(409).json({ error: "التذكرة محلولة بالفعل" }); return;
@@ -916,8 +980,14 @@ router.post("/tickets/:id/convert-to-maintenance-order", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     if (requireManager(req, res)) return;
     const id = Number(req.params.id);
+    const branch = effectiveBranchCondition(req as any, fieldServiceTicketsTable.branchId, undefined);
+    if (branch.deny) { res.status(404).json({ error: "تذكرة غير موجودة" }); return; }
     const [t] = await db.select().from(fieldServiceTicketsTable)
-      .where(and(eq(fieldServiceTicketsTable.id, id), eq(fieldServiceTicketsTable.companyId, cid))).limit(1);
+      .where(and(
+        eq(fieldServiceTicketsTable.id, id),
+        eq(fieldServiceTicketsTable.companyId, cid),
+        branch.cond ?? sql`true`,
+      )).limit(1);
     if (!t) { res.status(404).json({ error: "تذكرة غير موجودة" }); return; }
     if (!t.assetId) { res.status(400).json({ error: "يجب ربط الأصل بالتذكرة قبل التحويل" }); return; }
     // Verify asset belongs to tenant.
@@ -1027,11 +1097,16 @@ router.post("/tickets/:id/close", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     if (requireManager(req, res)) return;
     const id = Number(req.params.id);
+    const branch = effectiveBranchCondition(req as any, fieldServiceTicketsTable.branchId, undefined);
+    if (branch.deny) { res.status(404).json({ error: "تذكرة غير موجودة" }); return; }
     const [row] = await db.update(fieldServiceTicketsTable).set({
       status: "closed", closedAt: new Date(), updatedAt: new Date(),
       customerRating: numOrNull(req.body?.customerRating),
-    }).where(and(eq(fieldServiceTicketsTable.id, id), eq(fieldServiceTicketsTable.companyId, cid)))
-      .returning();
+    }).where(and(
+      eq(fieldServiceTicketsTable.id, id),
+      eq(fieldServiceTicketsTable.companyId, cid),
+      branch.cond ?? sql`true`,
+    )).returning();
     if (!row) { res.status(404).json({ error: "تذكرة غير موجودة" }); return; }
     res.json(row);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1051,6 +1126,8 @@ router.get("/reports/summary", async (req, res) => {
     const employeeId = numOrNull(req.query.employeeId);
     const from = (req.query.from as string) || new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
     const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
+    const branch = effectiveBranchCondition(req as any, fieldVisitsTable.branchId, req.query.branchId);
+    if (branch.deny) { res.json({ from, to, rows: [] }); return; }
     const rows = await db.select({
       employeeId: fieldVisitsTable.employeeId,
       employeeName: employeesTable.nameAr,
@@ -1067,6 +1144,7 @@ router.get("/reports/summary", async (req, res) => {
         gte(fieldVisitsTable.arrivedAt, new Date(from)),
         lte(fieldVisitsTable.arrivedAt, new Date(`${to}T23:59:59`)),
         employeeId ? eq(fieldVisitsTable.employeeId, employeeId) : sql`true`,
+        branch.cond ?? sql`true`,
       ))
       .groupBy(fieldVisitsTable.employeeId, employeesTable.nameAr)
       .orderBy(desc(sql`count(*)`));
@@ -1082,6 +1160,8 @@ router.get("/reports/sla", async (req, res) => {
     if (requireManager(req, res)) return;
     const from = (req.query.from as string) || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
     const to = (req.query.to as string) || new Date().toISOString().slice(0, 10);
+    const branch = effectiveBranchCondition(req as any, fieldServiceTicketsTable.branchId, req.query.branchId);
+    if (branch.deny) { res.json({ from, to, summary: null, byPriority: [] }); return; }
     const [agg] = await db.select({
       total: sql<number>`count(*)::int`,
       open: sql<number>`count(*) filter (where ${fieldServiceTicketsTable.status} in ('open','assigned','in_progress','on_hold'))::int`,
@@ -1096,6 +1176,7 @@ router.get("/reports/sla", async (req, res) => {
         eq(fieldServiceTicketsTable.companyId, cid),
         gte(fieldServiceTicketsTable.openedAt, new Date(from)),
         lte(fieldServiceTicketsTable.openedAt, new Date(`${to}T23:59:59`)),
+        branch.cond ?? sql`true`,
       ));
     const byPriority = await db.select({
       priority: fieldServiceTicketsTable.priority,
@@ -1107,6 +1188,7 @@ router.get("/reports/sla", async (req, res) => {
         eq(fieldServiceTicketsTable.companyId, cid),
         gte(fieldServiceTicketsTable.openedAt, new Date(from)),
         lte(fieldServiceTicketsTable.openedAt, new Date(`${to}T23:59:59`)),
+        branch.cond ?? sql`true`,
       ))
       .groupBy(fieldServiceTicketsTable.priority);
     res.json({ from, to, summary: agg, byPriority });
@@ -1121,6 +1203,28 @@ router.get("/tracking/live", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     if (requireManager(req, res)) return;
     const today = new Date(); today.setHours(0,0,0,0);
+    // Branch scope: restrict to the user's allowed branches (or the
+    // explicit ?branchId override). NULL-branch rows stay visible per
+    // project convention. We materialise the allowed list and gate the
+    // raw SQL with `= ANY(...) OR IS NULL`.
+    const u = req.authUser;
+    const restricted = u && u.role !== "superadmin" && u.role !== "admin" && !u.viewAllBranches;
+    const allowed: number[] | null = restricted ? (u!.branchIds ?? []) : null;
+    const explicit = numOrNull(req.query.branchId);
+    if (allowed && explicit != null && !allowed.includes(explicit)) {
+      res.json([]); return;
+    }
+    // Canonical semantics (mirror branchScopeFilter): allowed=[] means
+    // the user has zero branch assignments and must see nothing — NOT
+    // even shared NULL-branch rows. Otherwise NULL rows stay visible
+    // alongside the explicit/allowed branches.
+    const branchScope = explicit != null
+      ? sql`AND (v.branch_id = ${explicit} OR v.branch_id IS NULL)`
+      : (allowed && allowed.length > 0)
+        ? sql`AND (v.branch_id = ANY(${sql.raw(`ARRAY[${allowed.map(Number).join(",")}]::int[]`)}) OR v.branch_id IS NULL)`
+        : (allowed && allowed.length === 0)
+          ? sql`AND FALSE`
+          : sql``;
     const rows = await db.execute(sql`
       SELECT DISTINCT ON (v.employee_id)
         v.employee_id, e.name_ar as employee_name, e.code as employee_code,
@@ -1132,6 +1236,7 @@ router.get("/tracking/live", async (req, res) => {
       JOIN employees e ON e.id = v.employee_id
       WHERE v.company_id = ${cid}
         AND v.arrived_at >= ${today}
+        ${branchScope}
       ORDER BY v.employee_id, v.arrived_at DESC
     `);
     res.json(rows.rows);

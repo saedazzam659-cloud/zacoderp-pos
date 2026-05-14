@@ -68,6 +68,10 @@ export const fieldVisitsTable = pgTable(
   {
     id:                   serial("id").primaryKey(),
     companyId:            integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+    // Snapshot of the location's branch (or explicit override). Allows
+    // branch-scoped users to see only their assigned branches' visits and
+    // makes branch-filtered reports consistent with the rest of the app.
+    branchId:             integer("branch_id").references(() => branchesTable.id, { onDelete: "set null" }),
     employeeId:           integer("employee_id").notNull().references(() => employeesTable.id, { onDelete: "cascade" }),
     locationId:           integer("location_id").references(() => fieldLocationsTable.id, { onDelete: "set null" }),
     // Snapshot of location name/type so reports survive a location rename or
@@ -114,6 +118,9 @@ export const fieldVisitsTable = pgTable(
     byStatus:     index("field_visits_status_idx").on(t.companyId, t.status),
     byArrived:    index("field_visits_arrived_idx").on(t.arrivedAt),
     byTicket:     index("field_visits_ticket_idx").on(t.ticketId),
+    byCompanyArrived: index("field_visits_company_arrived_idx").on(t.companyId, t.arrivedAt),
+    byEmpStatus:      index("field_visits_emp_status_idx").on(t.employeeId, t.status),
+    byBranch:         index("field_visits_branch_idx").on(t.companyId, t.branchId),
   }),
 );
 
@@ -187,6 +194,12 @@ export const fieldServiceTicketsTable = pgTable(
     // Targets in minutes (per priority — defaulted on insert by route)
     slaResponseMin:           integer("sla_response_min").notNull().default(60),
     slaResolutionMin:         integer("sla_resolution_min").notNull().default(480),
+    // Pre-computed deadline timestamps. Populated on insert from
+    // openedAt + slaXxxMin so background jobs and reports can check
+    // breaches without re-deriving from priority. Re-computed on
+    // priority change in PATCH.
+    responseDueAt:            timestamp("response_due_at"),
+    resolveDueAt:             timestamp("resolve_due_at"),
     slaResponseBreached:      boolean("sla_response_breached").notNull().default(false),
     slaResolutionBreached:    boolean("sla_resolution_breached").notNull().default(false),
     resolution:               text("resolution"),
@@ -200,10 +213,14 @@ export const fieldServiceTicketsTable = pgTable(
     updatedAt:                timestamp("updated_at").defaultNow().notNull(),
   },
   (t) => ({
-    byCompany:  index("field_tickets_company_idx").on(t.companyId),
-    byStatus:   index("field_tickets_status_idx").on(t.companyId, t.status),
-    byAssigned: index("field_tickets_assigned_idx").on(t.assignedTo),
-    byTicketNo: index("field_tickets_no_idx").on(t.companyId, t.ticketNo),
+    byCompany:        index("field_tickets_company_idx").on(t.companyId),
+    byStatus:         index("field_tickets_status_idx").on(t.companyId, t.status),
+    byAssigned:       index("field_tickets_assigned_idx").on(t.assignedTo),
+    byTicketNo:       index("field_tickets_no_idx").on(t.companyId, t.ticketNo),
+    byBranch:         index("field_tickets_branch_idx").on(t.companyId, t.branchId),
+    byAssignedStatus: index("field_tickets_assigned_status_idx").on(t.assignedTo, t.status),
+    byResponseDue:    index("field_tickets_response_due_idx").on(t.responseDueAt),
+    byResolveDue:     index("field_tickets_resolve_due_idx").on(t.resolveDueAt),
   }),
 );
 
