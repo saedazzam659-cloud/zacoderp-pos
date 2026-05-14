@@ -355,7 +355,64 @@ export default function HotelBookings() {
         </FormPanel>
       )}
 
-      <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
+      {/* Mobile cards (md-hidden) */}
+      <div className="md:hidden space-y-3">
+        {isLoading && <div className="text-center py-8 text-muted-foreground text-sm">جاري التحميل…</div>}
+        {!isLoading && filtered.length === 0 && <div className="text-center py-8 text-muted-foreground text-sm">لا توجد حجوزات</div>}
+        {filtered.map((b) => {
+          const st = STATUSES.find(([v]) => v === b.status);
+          return (
+            <div key={b.id} className="rounded-2xl bg-white border border-emerald-100 shadow-sm overflow-hidden">
+              <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 px-4 py-2.5 flex items-center justify-between">
+                <span className="text-white font-mono text-sm font-bold">{b.docNumber}</span>
+                {st && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/95 ${st[2].replace(/text-\w+-\d+/g, '').trim() || 'text-emerald-700'}`}>{st[1]}</span>}
+              </div>
+              <div className="p-3 space-y-2">
+                <div className="flex items-start gap-2">
+                  <div className="h-9 w-9 rounded-full bg-emerald-100 grid place-items-center text-emerald-700 font-bold shrink-0">{(b.guestName ?? "ض")[0]}</div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-sm truncate">{b.guestName || "—"}</p>
+                    {b.guestPhone && <a href={`tel:${b.guestPhone}`} className="text-xs text-emerald-600 font-mono">{b.guestPhone}</a>}
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <CalendarRange className="h-3.5 w-3.5" />{b.hotelName} {b.roomNumber && <span className="font-mono">— غرفة {b.roomNumber}</span>}
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center bg-slate-50 rounded-lg p-2">
+                  <div><div className="text-[10px] text-muted-foreground">دخول</div><div className="text-[11px] font-mono font-semibold">{b.checkIn}</div></div>
+                  <div><div className="text-[10px] text-muted-foreground">خروج</div><div className="text-[11px] font-mono font-semibold">{b.checkOut}</div></div>
+                  <div><div className="text-[10px] text-muted-foreground">ليالي</div><div className="text-base font-bold text-emerald-700">{b.nightsCount}</div></div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                  <div className="bg-emerald-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">الإجمالي</div><div className="font-mono font-bold text-emerald-800">{Number(b.totalPrice).toLocaleString("ar-SA")}</div></div>
+                  <div className="bg-blue-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">المدفوع</div><div className="font-mono font-bold text-blue-800">{Number(b.paidAmount).toLocaleString("ar-SA")}</div></div>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 border-t divide-x divide-slate-100 [direction:ltr]">
+                <button onClick={() => setDel(b)} className="py-2.5 text-rose-600 text-xs font-semibold hover:bg-rose-50 flex items-center justify-center gap-1"><Trash2 className="h-3.5 w-3.5" />حذف</button>
+                {b.status === "checked_in" ? (
+                  <button onClick={() => checkAction(b, "checkout")} className="py-2.5 text-blue-700 text-xs font-semibold hover:bg-blue-50 flex items-center justify-center gap-1"><LogOut className="h-3.5 w-3.5" />خروج</button>
+                ) : (b.status === "confirmed" || b.status === "pending") ? (
+                  <button onClick={() => checkAction(b, "checkin")} className="py-2.5 text-emerald-700 text-xs font-semibold hover:bg-emerald-50 flex items-center justify-center gap-1"><LogIn className="h-3.5 w-3.5" />دخول</button>
+                ) : (
+                  <button disabled className="py-2.5 text-muted-foreground/40 text-xs">—</button>
+                )}
+                <button onClick={() => openEdit(b)} className="py-2.5 text-emerald-700 text-xs font-semibold hover:bg-emerald-50 flex items-center justify-center gap-1"><Pencil className="h-3.5 w-3.5" />تعديل</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Mobile FAB */}
+      <button onClick={openNew} className="md:hidden fixed bottom-6 end-6 z-40 group" aria-label="حجز جديد">
+        <span className="absolute inset-0 rounded-full bg-emerald-400/40 animate-ping" />
+        <span className="relative h-14 w-14 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 ring-4 ring-white shadow-2xl grid place-items-center text-white">
+          <Plus className="h-7 w-7" />
+        </span>
+      </button>
+
+      <div className="hidden md:block border rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-xs" dir="rtl">
             <thead className="bg-gradient-to-b from-emerald-50 to-emerald-100 text-emerald-900 border-b">

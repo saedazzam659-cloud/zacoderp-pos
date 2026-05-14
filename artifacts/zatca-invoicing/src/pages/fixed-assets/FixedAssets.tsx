@@ -447,7 +447,53 @@ export default function FixedAssets() {
         </FormPanel>
       )}
 
-      <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
+      {/* Mobile cards (md-hidden) */}
+      <div className="md:hidden space-y-3">
+        {isLoading && <div className="text-center py-8 text-muted-foreground text-sm">جاري التحميل…</div>}
+        {!isLoading && filtered.length === 0 && <div className="text-center py-8 text-muted-foreground text-sm">لا توجد أصول</div>}
+        {filtered.map(a => (
+          <div key={a.id} className="rounded-2xl bg-white border border-teal-100 shadow-sm overflow-hidden">
+            <div className="bg-gradient-to-r from-teal-500 to-teal-600 px-4 py-2.5 flex items-center justify-between">
+              <span className="text-white font-mono text-sm font-bold">{a.code}</span>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/95 ${statusBadge(a.status).replace(/bg-\w+-\d+/g,'').trim()}`}>{statusLabel(a.status)}</span>
+            </div>
+            <div className="p-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <div className="h-10 w-10 rounded-lg bg-teal-100 grid place-items-center text-teal-700 shrink-0"><Package className="h-5 w-5" /></div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-sm truncate">{a.nameAr}</p>
+                  <p className="text-[11px] text-muted-foreground truncate">{[a.brand, a.model].filter(Boolean).join(" — ") || "—"}</p>
+                </div>
+                {a.riskLevel && (
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${riskBadge(a.riskLevel)}`}>
+                    {a.riskLevel === "high" ? "عالي" : a.riskLevel === "medium" ? "متوسط" : "منخفض"}
+                  </span>
+                )}
+              </div>
+              {a.plateNumber && <div className="text-xs bg-slate-50 rounded p-1.5 px-2 font-mono"><span className="text-muted-foreground">اللوحة: </span>{a.plateNumber}</div>}
+              <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">قيمة الشراء</div><div className="font-mono font-bold text-slate-800">{Number(a.purchaseValue).toLocaleString("ar-EG")}</div></div>
+                <div className="bg-teal-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">القيمة الدفترية</div><div className="font-mono font-bold text-teal-800">{Number(a.bookValue).toLocaleString("ar-EG")}</div></div>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 border-t divide-x divide-slate-100 [direction:ltr]">
+              <button onClick={()=>setDel(a)} className="py-2.5 text-rose-600 text-xs font-semibold hover:bg-rose-50 flex items-center justify-center gap-1"><Trash2 className="h-3.5 w-3.5" />حذف</button>
+              <button onClick={()=>setShowQr(a)} className="py-2.5 text-slate-700 text-xs font-semibold hover:bg-slate-50 flex items-center justify-center gap-1"><QrCode className="h-3.5 w-3.5" />QR</button>
+              <button onClick={()=>openEdit(a)} className="py-2.5 text-teal-700 text-xs font-semibold hover:bg-teal-50 flex items-center justify-center gap-1"><Pencil className="h-3.5 w-3.5" />تعديل</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Mobile FAB */}
+      <button onClick={openNew} className="md:hidden fixed bottom-6 end-6 z-40 group" aria-label="أصل جديد">
+        <span className="absolute inset-0 rounded-full bg-teal-400/40 animate-ping" />
+        <span className="relative h-14 w-14 rounded-full bg-gradient-to-br from-teal-500 to-teal-600 ring-4 ring-white shadow-2xl grid place-items-center text-white">
+          <Plus className="h-7 w-7" />
+        </span>
+      </button>
+
+      <div className="hidden md:block border rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-xs" dir="rtl">
             <thead className="bg-gradient-to-b from-emerald-50 to-emerald-100 text-emerald-900 border-b">

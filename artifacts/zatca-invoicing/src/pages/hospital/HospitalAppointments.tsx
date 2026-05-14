@@ -278,7 +278,44 @@ export default function HospitalAppointments() {
         </FormPanel>
       )}
 
-      <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
+      {/* Mobile cards (md-hidden) */}
+      <div className="md:hidden space-y-3">
+        {isLoading && <div className="text-center py-8 text-muted-foreground text-sm">جاري التحميل…</div>}
+        {!isLoading && filtered.length === 0 && <div className="text-center py-8 text-muted-foreground text-sm">لا توجد مواعيد</div>}
+        {filtered.map((a) => (
+          <div key={a.id} className="rounded-2xl bg-white border border-violet-100 shadow-sm overflow-hidden">
+            <div className="bg-gradient-to-r from-violet-500 to-violet-600 px-4 py-2.5 flex items-center justify-between">
+              <span className="text-white font-mono text-sm font-bold">{a.docNumber}</span>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/95 ${statusColor(a.status).replace(/bg-\w+-\d+/g,'').trim()}`}>{statusLabel(a.status)}</span>
+            </div>
+            <div className="p-3 space-y-2">
+              <div className="text-xs font-mono text-muted-foreground flex items-center gap-1.5">
+                <CalendarRange className="h-3.5 w-3.5" />{fmtDt(a.scheduledAt)}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-violet-50 rounded-lg p-2"><div className="text-[10px] text-muted-foreground">المريض</div><div className="text-sm font-semibold truncate">{patientName(a.patientId)}</div></div>
+                <div className="bg-blue-50 rounded-lg p-2"><div className="text-[10px] text-muted-foreground">الطبيب</div><div className="text-sm font-semibold truncate">{doctorName(a.doctorId)}</div></div>
+              </div>
+              <div className="text-xs"><span className="text-muted-foreground">النوع: </span><span className="font-semibold">{visitLabel(a.visitType)}</span></div>
+              {a.diagnosis && <div className="text-xs bg-slate-50 rounded p-2"><span className="text-muted-foreground">التشخيص: </span>{a.diagnosis}</div>}
+            </div>
+            <div className="grid grid-cols-2 border-t divide-x divide-slate-100 [direction:ltr]">
+              <button onClick={() => setDel(a)} className="py-2.5 text-rose-600 text-xs font-semibold hover:bg-rose-50 flex items-center justify-center gap-1"><Trash2 className="h-3.5 w-3.5" />حذف</button>
+              <button onClick={() => openEdit(a)} className="py-2.5 text-violet-700 text-xs font-semibold hover:bg-violet-50 flex items-center justify-center gap-1"><Pencil className="h-3.5 w-3.5" />تعديل</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Mobile FAB */}
+      <button onClick={openNew} className="md:hidden fixed bottom-6 end-6 z-40 group" aria-label="موعد جديد">
+        <span className="absolute inset-0 rounded-full bg-violet-400/40 animate-ping" />
+        <span className="relative h-14 w-14 rounded-full bg-gradient-to-br from-violet-500 to-violet-600 ring-4 ring-white shadow-2xl grid place-items-center text-white">
+          <Plus className="h-7 w-7" />
+        </span>
+      </button>
+
+      <div className="hidden md:block border rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-xs" dir="rtl">
             <thead className="bg-gradient-to-b from-violet-50 to-violet-100 text-violet-900 border-b">

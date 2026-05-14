@@ -252,7 +252,59 @@ export default function ContractingProjects() {
         </Select>
       </div>
 
-      <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
+      {/* Mobile cards (md-hidden) */}
+      <div className="md:hidden space-y-3">
+        {loading && rows.length === 0 && <Skeleton className="h-32 w-full" />}
+        {!loading && rows.length === 0 && (
+          <div className="text-center py-8 text-sm text-slate-500">{t("contracting.projects.empty", "لا توجد مشاريع — اضغط «مشروع جديد» للبدء")}</div>
+        )}
+        {rows.map(p => (
+          <div key={p.id} className="rounded-2xl bg-white border border-amber-100 shadow-sm overflow-hidden">
+            <div className="bg-gradient-to-r from-amber-500 to-amber-600 px-4 py-2.5 flex items-center justify-between">
+              <span className="text-white font-mono text-sm font-bold">{p.code}</span>
+              <Badge variant={STATUS_TONE[p.status] ?? "default"} className="bg-white/95 text-amber-900">{STATUS_LABEL[p.status] ?? p.status}</Badge>
+            </div>
+            <div className="p-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <div className="h-10 w-10 rounded-lg bg-amber-100 grid place-items-center text-amber-700 shrink-0"><Briefcase className="h-5 w-5" /></div>
+                <div className="flex-1 min-w-0">
+                  <Link href={`/contracting/projects/${p.id}`} className="font-bold text-sm hover:underline text-amber-900 block truncate">{p.nameAr}</Link>
+                  {p.location && <p className="text-[11px] text-slate-500 truncate">{p.location}</p>}
+                  {p.clientName && <p className="text-xs text-slate-700 truncate">{p.clientName}</p>}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                <div className="bg-amber-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">قيمة العقد</div><div className="font-mono font-bold text-amber-800">{Number(p.contractValue).toLocaleString()}</div></div>
+                <div className="bg-rose-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">التكلفة الفعلية</div><div className="font-mono font-bold text-rose-800">{Number(p.actualCost).toLocaleString()}</div></div>
+              </div>
+              <div>
+                <div className="flex justify-between items-center mb-1 text-[11px] text-muted-foreground">
+                  <span>الإنجاز</span>
+                  <span className="font-bold text-amber-700">{Number(p.progressPercent).toFixed(0)}%</span>
+                </div>
+                <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                  <div className="h-2 bg-gradient-to-l from-amber-500 to-amber-600 rounded-full" style={{ width: `${Math.min(100, Number(p.progressPercent))}%` }} />
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 border-t divide-x divide-slate-100 [direction:ltr]">
+              <button onClick={() => setDeleting(p)} className="py-2.5 text-rose-600 text-xs font-semibold hover:bg-rose-50 flex items-center justify-center gap-1"><Trash2 className="h-3.5 w-3.5" />حذف</button>
+              <Link href={`/contracting/projects/${p.id}`} className="py-2.5 text-slate-700 text-xs font-semibold hover:bg-slate-50 flex items-center justify-center gap-1"><ExternalLink className="h-3.5 w-3.5" />فتح</Link>
+              <button onClick={() => setEditing(p)} className="py-2.5 text-amber-700 text-xs font-semibold hover:bg-amber-50 flex items-center justify-center gap-1"><Pencil className="h-3.5 w-3.5" />تعديل</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Mobile FAB */}
+      <button onClick={() => setEditing(empty())} className="md:hidden fixed bottom-6 end-6 z-40 group" aria-label="مشروع جديد">
+        <span className="absolute inset-0 rounded-full bg-amber-400/40 animate-ping" />
+        <span className="relative h-14 w-14 rounded-full bg-gradient-to-br from-amber-500 to-amber-600 ring-4 ring-white shadow-2xl grid place-items-center text-white">
+          <Plus className="h-7 w-7" />
+        </span>
+      </button>
+
+      <div className="hidden md:block rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>

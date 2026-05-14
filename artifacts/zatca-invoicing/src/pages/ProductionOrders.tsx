@@ -359,7 +359,52 @@ export default function ProductionOrders() {
             return <DocColorLegend items={items} />;
           })()}
 
-          <div className="rounded-lg border bg-white dark:bg-slate-900">
+          {/* Mobile cards (md-hidden) */}
+          <div className="md:hidden space-y-3">
+            {loading && rows === null && Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32 w-full" />)}
+            {!loading && list.length === 0 && (
+              <div className="text-center py-8 text-sm text-slate-500">{t("production.noOrders")}</div>
+            )}
+            {list.map((o) => (
+              <div key={o.id} data-status={o.status} className="rounded-2xl bg-white border border-orange-100 shadow-sm overflow-hidden">
+                <div className="bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2.5 flex items-center justify-between">
+                  <span className="text-white font-mono text-sm font-bold">{o.orderNumber}</span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/95 ${(STATUS_TONES[o.status] ?? "").replace(/bg-\w+-\d+/g,'').trim() || "text-orange-700"}`}>
+                    {t(`production.status_${o.status}`)}
+                  </span>
+                </div>
+                <div className="p-3 space-y-2">
+                  <div className="flex items-start gap-2">
+                    <div className="h-10 w-10 rounded-lg bg-orange-100 grid place-items-center text-orange-700 shrink-0"><Factory className="h-5 w-5" /></div>
+                    <p className="font-bold text-sm flex-1 min-w-0">{o.title}</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                    <div className="bg-slate-50 rounded-lg p-1.5">
+                      <div className="text-[10px] text-muted-foreground">{t("production.plannedQty")}</div>
+                      <div className="font-mono font-bold text-slate-800">{Number(o.plannedQty).toLocaleString()} <span className="text-[10px] text-slate-400">{o.unitCode}</span></div>
+                    </div>
+                    <div className="bg-orange-50 rounded-lg p-1.5">
+                      <div className="text-[10px] text-muted-foreground">{t("production.producedQty")}</div>
+                      <div className="font-mono font-bold text-orange-800">{Number(o.producedQty).toLocaleString()}</div>
+                    </div>
+                  </div>
+                </div>
+                <Link href={`/production/orders/${o.id}`} className="block py-2.5 text-center bg-orange-50 text-orange-700 text-sm font-semibold hover:bg-orange-100 border-t border-orange-100">
+                  فتح التفاصيل ←
+                </Link>
+              </div>
+            ))}
+          </div>
+
+          {/* Mobile FAB */}
+          <button onClick={() => setOpenCreate(true)} className="md:hidden fixed bottom-6 end-6 z-40 group" aria-label={t("production.newOrder")}>
+            <span className="absolute inset-0 rounded-full bg-orange-400/40 animate-ping" />
+            <span className="relative h-14 w-14 rounded-full bg-gradient-to-br from-orange-500 to-orange-600 ring-4 ring-white shadow-2xl grid place-items-center text-white">
+              <Plus className="h-7 w-7" />
+            </span>
+          </button>
+
+          <div className="hidden md:block rounded-lg border bg-white dark:bg-slate-900">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                 <tr>

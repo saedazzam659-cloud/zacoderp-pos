@@ -200,7 +200,47 @@ export default function CrmLeads() {
         </FormPanel>
       )}
 
-      <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
+      {/* Mobile cards (md-hidden) */}
+      <div className="md:hidden space-y-3">
+        {isLoading && <div className="text-center py-8 text-muted-foreground text-sm">جاري التحميل…</div>}
+        {!isLoading && filtered.length === 0 && <div className="text-center py-8 text-muted-foreground text-sm">لا توجد بيانات</div>}
+        {filtered.map(l => (
+          <div key={l.id} className="rounded-2xl bg-white border border-pink-100 shadow-sm overflow-hidden">
+            <div className="bg-gradient-to-r from-pink-500 to-pink-600 px-4 py-2.5 flex items-center justify-between">
+              <span className="text-white font-mono text-sm font-bold">{l.code}</span>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/95 ${statusColor(l.status).replace(/bg-\w+-\d+/g,'').trim()}`}>{statusLabel(l.status)}</span>
+            </div>
+            <div className="p-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <div className="h-10 w-10 rounded-full bg-pink-100 grid place-items-center text-pink-700 font-bold shrink-0">{(l.name ?? "ع")[0]}</div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-sm truncate">{l.name}</p>
+                  {l.mobile && <a href={`tel:${l.mobile}`} className="text-xs text-pink-600 font-mono">{l.mobile}</a>}
+                </div>
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${interestColor(l.interestLevel)}`}>{interestLabel(l.interestLevel)}</span>
+              </div>
+              {l.source && <div className="text-xs bg-slate-50 rounded p-1.5 px-2"><span className="text-muted-foreground">المصدر: </span><span className="font-semibold">{l.source}</span></div>}
+            </div>
+            <div className={`grid ${l.convertedCustomerId ? 'grid-cols-2' : 'grid-cols-3'} border-t divide-x divide-slate-100 [direction:ltr]`}>
+              <button onClick={()=>setDel(l)} className="py-2.5 text-rose-600 text-xs font-semibold hover:bg-rose-50 flex items-center justify-center gap-1"><Trash2 className="h-3.5 w-3.5" />حذف</button>
+              {!l.convertedCustomerId && (
+                <button onClick={()=>convertMut.mutate(l.id)} className="py-2.5 text-emerald-700 text-xs font-semibold hover:bg-emerald-50 flex items-center justify-center gap-1"><ArrowRightLeft className="h-3.5 w-3.5" />تحويل</button>
+              )}
+              <button onClick={()=>openEdit(l)} className="py-2.5 text-pink-700 text-xs font-semibold hover:bg-pink-50 flex items-center justify-center gap-1"><Pencil className="h-3.5 w-3.5" />تعديل</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Mobile FAB */}
+      <button onClick={openNew} className="md:hidden fixed bottom-6 end-6 z-40 group" aria-label="عميل محتمل جديد">
+        <span className="absolute inset-0 rounded-full bg-pink-400/40 animate-ping" />
+        <span className="relative h-14 w-14 rounded-full bg-gradient-to-br from-pink-500 to-pink-600 ring-4 ring-white shadow-2xl grid place-items-center text-white">
+          <Plus className="h-7 w-7" />
+        </span>
+      </button>
+
+      <div className="hidden md:block border rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-xs" dir="rtl">
             <thead className="bg-gradient-to-b from-pink-50 to-pink-100 text-pink-900 border-b">
