@@ -15,8 +15,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Plus, Pencil, Trash2, BookOpen, ArrowUpDown, ArrowUp, ArrowDown, CheckCircle2, FileText, Printer, Copy,
-  FileSpreadsheet, FileDown, X, Calendar, Loader2, ChevronDown, Receipt, LayoutGrid, Award,
+  FileSpreadsheet, FileDown, X, Calendar, Loader2, ChevronDown, Receipt, LayoutGrid, Award, Eye,
+  ShieldAlert, Globe2, Monitor, MapPin, User as UserIcon, Clock,
 } from "lucide-react";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
   DropdownMenuLabel, DropdownMenuSeparator,
@@ -114,6 +118,13 @@ export default function JournalEntries() {
     { key: "debit",  label: COL_DEBIT_L,  type: "num",  valueOf: (e) => Number(e.totalDebit  ?? 0) },
     { key: "credit", label: COL_CREDIT_L, type: "num",  valueOf: (e) => Number(e.totalCredit ?? 0) },
     { key: "status", label: COL_STATUS_L, type: "text", valueOf: (e, c) => c.statusLabels[e.status] ?? e.status ?? "" },
+    // Audit columns — show who created and who posted each entry. Pure
+    // display columns, populated by the LIST endpoint via a username join;
+    // older rows that pre-date the audit columns render an em-dash.
+    { key: "createdBy", label: t("journalEntries.createdBy", { defaultValue: "أنشأه" }),
+      type: "text", valueOf: (e) => e.createdByName ?? "—" },
+    { key: "postedBy",  label: t("journalEntries.postedBy",  { defaultValue: "رحّله" }),
+      type: "text", valueOf: (e) => e.postedByName  ?? "—" },
     { key: "_act",   label: t("journalEntries.actions"), type: "none", valueOf: () => "" },
   ];
   const DATA_KEYS = useMemo(() => COLUMNS.filter(c => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map(c => c.key), [COLUMNS]);
@@ -186,6 +197,17 @@ export default function JournalEntries() {
   };
 
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  // Manager-only forensic audit dialog. The eye button is rendered only for
+  // admin/superadmin roles; the server enforces the same check on /audit so
+  // even crafted requests can't leak IPs to non-managers.
+  const isManager = user?.role === "admin" || user?.role === "superadmin";
+  const [auditId, setAuditId] = useState<number | null>(null);
+  const auditQuery = useQuery({
+    queryKey: ["journal-audit", auditId],
+    queryFn:  () => journalEntriesApi.audit(auditId!),
+    enabled:  auditId !== null,
+    staleTime: 30_000,
+  });
 
   /* ── Per-column sort (cycles asc → desc → none on header click) ─────────
      Persisted per-tenant in localStorage so the chosen column + direction
@@ -1543,6 +1565,17 @@ ${sections}
                         return (
                           <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
                             <div className="flex items-center justify-center gap-0.5">
+                              {isManager && (
+                                <Button
+                                  variant="ghost" size="icon"
+                                  className="h-6 w-6 text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700"
+                                  onClick={(e) => { e.stopPropagation(); setAuditId(entry.id); }}
+                                  title={t("journalEntries.auditTrail", { defaultValue: "سجل التدقيق (المدير)" })}
+                                  data-testid={`button-audit-${entry.id}`}
+                                >
+                                  <Eye className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost" size="icon"
                                 className="h-6 w-6 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
@@ -1619,6 +1652,84 @@ ${sections}
           unitLabel={t("journalEntries.itemLabel", { defaultValue: "قيد" })}
         />
       </div>
+
+      {/* Audit-trail dialog (manager-only) — surfaces who/where/when created
+          and posted each entry. Renders a tidy two-column layout (created vs
+          posted) with username, timestamp, IP, country, and a friendly
+          browser/OS device label. Older rows missing audit data show "—". */}
+      <Dialog open={auditId !== null} onOpenChange={(o) => !o && setAuditId(null)}>
+        <DialogContent dir={isRtl ? "rtl" : "ltr"} className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <ShieldAlert className="h-5 w-5 text-indigo-600" />
+              {t("journalEntries.auditTrail", { defaultValue: "سجل التدقيق" })}
+              {auditId != null && <span className="text-xs text-muted-foreground">#{auditId}</span>}
+            </DialogTitle>
+            <DialogDescription>
+              {t("journalEntries.auditTrailDesc", {
+                defaultValue: "بيانات التتبع للموظف الذي أنشأ وقام بترحيل القيد (للمدراء فقط).",
+              })}
+            </DialogDescription>
+          </DialogHeader>
+
+          {auditQuery.isLoading ? (
+            <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin me-2" /> جاري التحميل…
+            </div>
+          ) : auditQuery.isError ? (
+            <div className="py-6 text-sm text-rose-700">
+              {(auditQuery.error as any)?.message || "تعذّر تحميل سجل التدقيق"}
+            </div>
+          ) : auditQuery.data ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+              {(["created", "posted"] as const).map((kind) => {
+                const ev = kind === "created" ? auditQuery.data!.created : auditQuery.data!.posted;
+                const titleAr = kind === "created" ? "الإنشاء" : "الترحيل";
+                if (!ev) {
+                  return (
+                    <div key={kind} className="border rounded-md p-3 bg-slate-50">
+                      <div className="font-semibold mb-2">{titleAr}</div>
+                      <div className="text-xs text-muted-foreground">— لم يتم بعد —</div>
+                    </div>
+                  );
+                }
+                const fmtAt = (s: string | null) => {
+                  if (!s) return "—";
+                  try { return new Date(s).toLocaleString(isRtl ? "ar-SA" : undefined); }
+                  catch { return s; }
+                };
+                const Row = ({ icon: Ico, label, value }: { icon: any; label: string; value: string | null }) => (
+                  <div className="flex items-start gap-2 text-xs py-1">
+                    <Ico className="h-3.5 w-3.5 mt-0.5 text-slate-500 shrink-0" />
+                    <div className="text-slate-500 w-20 shrink-0">{label}</div>
+                    <div className="font-medium text-slate-800 break-all">{value || "—"}</div>
+                  </div>
+                );
+                return (
+                  <div key={kind} className="border rounded-md p-3 bg-white" data-testid={`audit-block-${kind}`}>
+                    <div className="font-semibold mb-2 text-indigo-700">{titleAr}</div>
+                    <Row icon={UserIcon} label="المستخدم" value={ev.username || (ev.userId ? `#${ev.userId}` : null)} />
+                    <Row icon={Clock}    label="الوقت"    value={fmtAt(ev.at)} />
+                    <Row icon={MapPin}   label="IP"       value={ev.ip} />
+                    <Row icon={Globe2}   label="الدولة"  value={ev.country} />
+                    <Row icon={Monitor}  label="الجهاز"  value={ev.device} />
+                    {ev.userAgent && (
+                      <details className="mt-2">
+                        <summary className="text-[10px] text-slate-500 cursor-pointer">User-Agent الكامل</summary>
+                        <div className="text-[10px] text-slate-600 mt-1 break-all">{ev.userAgent}</div>
+                      </details>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+
+          <DialogFooter className="flex-row-reverse gap-2">
+            <Button variant="outline" onClick={() => setAuditId(null)}>إغلاق</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete confirm */}
       <AlertDialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>

@@ -662,8 +662,7 @@ router.get("/:id/audit", async (req, res) => {
     function deviceLabel(ua: string | null): string | null {
       if (!ua) return null;
       const fakeReq = { headers: { "user-agent": ua } } as any;
-      const d = describeDevice(fakeReq);
-      return [d.browser, d.os].filter(Boolean).join(" • ") || null;
+      return describeDevice(fakeReq) || null;
     }
 
     res.json({

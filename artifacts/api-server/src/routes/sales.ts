@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { fullAuditFor } from "../lib/journalAudit.js";
 import {
   salesInvoicesTable, salesInvoiceLinesTable,
   salesReturnsTable, salesReturnLinesTable,
@@ -37,6 +38,9 @@ async function createJournalEntry(opts: {
   // explicitly set its own. Lets a single field on the source document
   // (sales invoice, sales return, …) tag the entire JE.
   costCenter?: string | null;
+  // Audit-trail fields (createdBy/Ip/UA + posted*) injected by callers via
+  // `fullAuditFor(req)` so the JE remembers who/where created+posted it.
+  audit?: Record<string, unknown>;
   lines: JLine[];
 }): Promise<number> {
   const cleanLines = opts.lines.filter(l => l.accountId && ((l.debit ?? 0) > 0 || (l.credit ?? 0) > 0));
@@ -76,13 +80,22 @@ async function createJournalEntry(opts: {
     err.status = 423;
     throw err;
   }
+  // Pre-resolve status so the helper can drop the posted_* trail when the
+  // tenant has auto-post OFF — otherwise a draft JE would look "posted"
+  // in the audit dialog. Callers pass `audit: { req }` (or an old-style
+  // pre-baked object); the latter is preserved verbatim for legacy paths.
+  const jeStatus = await resolvePostingStatus(opts.companyId, "sales");
+  const auditFields = opts.audit?.req
+    ? fullAuditFor(opts.audit.req as any, jeStatus)
+    : (opts.audit ?? {});
   const [entry] = await db.insert(journalEntriesTable).values({
     companyId: opts.companyId, branchId: opts.branchId ?? null,
     docNumber: opts.docNumber ?? null, entryDate: opts.date,
     currency: "SAR", exchangeRate: opts.exchangeRate ?? "1",
     description: opts.description, entryType: opts.entryType ?? "general",
-    status: await resolvePostingStatus(opts.companyId, "sales"),
+    status: jeStatus,
     periodId: writability.period?.id ?? null,
+    ...auditFields,
   }).returning();
   await db.insert(journalEntryLinesTable).values(
     cleanLines.map((l, i) => ({
@@ -1012,6 +1025,7 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     // VAT-exclusive sale price.
     journalId = await createJournalEntry({
       companyId: cid,
+      audit: { req },
       branchId: inv.branchId,
       date: inv.invoiceDate,
       docNumber: inv.docNumber,
@@ -1593,6 +1607,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
 
     const journalId = await createJournalEntry({
       companyId: cid,
+      audit: { req },
       branchId: ret.branchId,
       date: ret.returnDate,
       docNumber: ret.docNumber,

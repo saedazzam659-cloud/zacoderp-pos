@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
+import { fullAuditFor } from "../lib/journalAudit.js";
 import {
   warehouseGroupsTable, warehousesTable, itemGroupsTable, unitsTable,
   itemsTable, itemUnitPricesTable, stockBalanceTable, stockLedgerTable,
@@ -1069,12 +1070,14 @@ router.post("/stock-transfers/:id/post", async (req, res) => {
     // Period guard: block stock-transfer posting into a closed period.
     const writability = await assertWritableForDate(cid, tr.transferDate);
     if (!writability.ok) { res.status(423).json({ error: writability.reason }); return; }
+    const jeStatus = await resolvePostingStatus(cid, "stockMovement");
     const [entry] = await db.insert(journalEntriesTable).values({
       companyId: cid, docNumber: tr.transferNumber, entryDate: tr.transferDate,
       currency: "SAR", exchangeRate: "1",
       description: desc, entryType: "stock_transfer",
-      status: await resolvePostingStatus(cid, "stockMovement"),
+      status: jeStatus,
       periodId: writability.period?.id ?? null,
+      ...fullAuditFor(req, jeStatus),
     }).returning();
     await db.insert(journalEntryLinesTable).values([
       { entryId: entry.id, accountId: toAcc,   debit: totalAmount.toFixed(2), credit: "0.00", description: `استلام بالمخزن (${tr.transferNumber})`, sortOrder: 0 },
@@ -1231,14 +1234,16 @@ router.post("/stock-adjustments/:id/post", async (req, res) => {
     // Period guard: block stock-adjustment posting into a closed period.
     const writability = await assertWritableForDate(cid, adj.adjustmentDate);
     if (!writability.ok) { res.status(423).json({ error: writability.reason }); return; }
+    const jeStatus = await resolvePostingStatus(cid, "stockMovement");
     const [je] = await db.insert(journalEntriesTable).values({
       companyId: cid,
       docNumber: `ADJ-JE-${adj.adjustmentNumber}`,
       entryDate: adj.adjustmentDate,
       description: `قيد تسوية مخزنية: ${adj.adjustmentNumber}${adj.reason ? " — " + adj.reason : ""}`,
       entryType: "stock_adjustment",
-      status: await resolvePostingStatus(cid, "stockMovement"),
+      status: jeStatus,
       periodId: writability.period?.id ?? null,
+      ...fullAuditFor(req, jeStatus),
     }).returning();
     journalEntryId = je.id;
     if (debitInv > 0) {

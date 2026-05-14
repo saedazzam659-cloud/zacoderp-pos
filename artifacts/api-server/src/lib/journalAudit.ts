@@ -33,11 +33,20 @@ export function postedAuditFor(req: Request | undefined | null, when: Date = new
   };
 }
 
-// Convenience for system-generated entries that are inserted directly
-// in `posted` status (sales invoices, vouchers, stock movements, …).
-// One call returns BOTH the created* and posted* audit fields, all
-// stamped with the same user/ip/ua + timestamp so the audit dialog
-// shows a coherent "created and posted simultaneously" trail.
-export function fullAuditFor(req: Request | undefined | null) {
-  return { ...createdAuditFor(req), ...postedAuditFor(req) };
+// Convenience for system-generated entries (sales/purchase invoices,
+// vouchers, stock movements, production, …). Always returns the
+// created_* fields; the posted_* fields are included **only** when the
+// JE is actually being inserted with status "posted". This prevents
+// false forensic data when the tenant has auto-post turned OFF and the
+// resolved status comes back as "draft" — in that case the entry hasn't
+// been posted yet and the posted_* trail must remain NULL until a
+// human (or downstream automation) explicitly posts it.
+//
+// Pass the resolved status whenever you have it; omitting it keeps the
+// legacy "stamp both" behaviour for the rare caller that knows the row
+// is going in as posted.
+export function fullAuditFor(req: Request | undefined | null, status?: string) {
+  const created = createdAuditFor(req);
+  if (status !== undefined && status !== "posted") return created;
+  return { ...created, ...postedAuditFor(req) };
 }

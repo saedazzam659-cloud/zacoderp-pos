@@ -13,6 +13,7 @@ import { moduleAudit, requireModulePermission, requireAdminRole } from "../middl
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
+import { fullAuditFor } from "../lib/journalAudit.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 
 const router = Router();
@@ -36,7 +37,7 @@ router.use(moduleAudit("payment_vouchers"));
 // The legacy per-voucher `accountId` override is no longer exposed in
 // the UI; it remains in the table as a still-honored escape hatch for
 // older rows so existing data continues to post correctly.
-async function buildPaymentJournal(cid: number, v: any): Promise<number> {
+async function buildPaymentJournal(cid: number, v: any, req: any): Promise<number> {
   const amount = parseFloat(v.amount || "0");
   if (amount <= 0) throw new Error("المبلغ يجب أن يكون أكبر من صفر");
 
@@ -93,13 +94,17 @@ async function buildPaymentJournal(cid: number, v: any): Promise<number> {
     err.status = 423;
     throw err;
   }
+  // Pre-resolve so audit posted_* fields are stamped only when the
+  // tenant's auto-post setting actually puts the JE in "posted" status.
+  const jeStatus = await resolvePostingStatus(cid, "payment");
   const [entry] = await db.insert(journalEntriesTable).values({
     companyId: cid, branchId: v.branchId ?? null,
     docNumber: v.code, entryDate: v.date,
     currency: "SAR", exchangeRate: String(v.exchangeRate ?? "1"),
     description: desc, entryType: "payment",
-    status: await resolvePostingStatus(cid, "payment"),
+    status: jeStatus,
     periodId: writability.period?.id ?? null,
+    ...fullAuditFor(req, jeStatus),
   }).returning();
   // Header-level cost center propagates to BOTH JE lines so cost-center
   // reports pick up the payment activity.
@@ -271,7 +276,7 @@ router.post("/:id/post", async (req, res) => {
     res.status(400).json({ error: "المبلغ يجب أن يكون أكبر من صفر" }); return;
   }
   try {
-    const journalId = await buildPaymentJournal(existing.companyId, existing);
+    const journalId = await buildPaymentJournal(existing.companyId, existing, req);
     const [row] = await db.update(paymentVouchersTable)
       .set({ status: "posted", journalEntryId: journalId })
       .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();

@@ -66,6 +66,22 @@ async function del(path: string): Promise<void> {
   if (!r.ok) throw await readError(r);
 }
 
+export interface JournalAuditEvent {
+  userId:    number | null;
+  username:  string | null;
+  at:        string | null;
+  ip:        string | null;
+  userAgent: string | null;
+  device:    string | null;
+  country:   string | null;
+}
+export interface JournalAuditResponse {
+  id:      number;
+  status:  string;
+  created: JournalAuditEvent;
+  posted:  JournalAuditEvent | null;
+}
+
 export interface JournalValidationResult {
   isBalanced: boolean;
   totalDebit: number;
@@ -94,6 +110,10 @@ export const journalEntriesApi = {
   // auto-lock and period guards — a non-2xx surfaces a friendly Arabic error.
   post:   (id: number) => post<{ ok: true; alreadyPosted?: boolean }>(`/journal-entries/${id}/post`, {}),
   unpost: (id: number) => post<{ ok: true; alreadyUnposted?: boolean }>(`/journal-entries/${id}/unpost`, {}),
+  // Manager-only forensic audit — returns who/where/when created + posted the
+  // entry. Server resolves country from IP via Geo-IP and returns null fields
+  // for entries that pre-date the audit columns.
+  audit:  (id: number) => get<JournalAuditResponse>(`/journal-entries/${id}/audit`),
   aiValidate: (data: { entry: any; lines: any[] }) =>
     post<JournalValidationResult>("/ai/validate-journal-entry", data),
   suggestVatAccount: (data: { direction: "input" | "output"; companyId?: number }) =>

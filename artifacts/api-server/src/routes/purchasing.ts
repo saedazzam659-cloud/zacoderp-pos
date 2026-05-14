@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { fullAuditFor } from "../lib/journalAudit.js";
 import {
   supplierGroupsTable, lettersOfCreditTable, lcExpensesTable,
   purchaseInvoicesTable, purchaseInvoiceLinesTable,
@@ -37,6 +38,8 @@ async function createJournalEntry(opts: {
   // explicitly set its own. Lets a single field on the source document
   // (purchase invoice, purchase return, …) tag the entire JE.
   costCenter?: string | null;
+  // Audit-trail fields injected by callers via `fullAuditFor(req)`.
+  audit?: Record<string, unknown>;
   lines: JLine[];
 }): Promise<number> {
   // Filter out lines with zero amount or no account
@@ -57,6 +60,14 @@ async function createJournalEntry(opts: {
     err.status = 423;
     throw err;
   }
+  // Pre-resolve status so the helper can drop the posted_* trail when the
+  // tenant has auto-post OFF — otherwise a draft JE would look "posted"
+  // in the audit dialog. Callers pass `audit: { req }` (or an old-style
+  // pre-baked object); the latter is preserved verbatim for legacy paths.
+  const jeStatus = await resolvePostingStatus(opts.companyId, "purchase");
+  const auditFields = opts.audit?.req
+    ? fullAuditFor(opts.audit.req as any, jeStatus)
+    : (opts.audit ?? {});
   const [entry] = await db.insert(journalEntriesTable).values({
     companyId:    opts.companyId,
     branchId:     opts.branchId ?? null,
@@ -66,8 +77,9 @@ async function createJournalEntry(opts: {
     exchangeRate: opts.exchangeRate ?? "1",
     description:  opts.description,
     entryType:    opts.entryType ?? "general",
-    status:       await resolvePostingStatus(opts.companyId, "purchase"),
+    status:       jeStatus,
     periodId:     writability.period?.id ?? null,
+    ...auditFields,
   }).returning();
 
   await db.insert(journalEntryLinesTable).values(
@@ -1313,6 +1325,7 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
 
     const journalId = await createJournalEntry({
       companyId:    cid,
+      audit:        { req },
       branchId:     inv.branchId,
       date:         inv.invoiceDate,
       docNumber:    inv.docNumber,
@@ -2169,6 +2182,7 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
     const desc = `قيد مرتجع مشتريات رقم ${ret.docNumber || ret.id}`;
     const journalId = await createJournalEntry({
       companyId:    cid,
+      audit:        { req },
       branchId:     ret.branchId,
       date:         ret.returnDate,
       docNumber:    ret.docNumber,
@@ -2491,6 +2505,7 @@ ${accountList}
 
     const entryId = await createJournalEntry({
       companyId: cid,
+      audit: { req },
       date: lc.lcDate,
       description,
       docNumber: `LC-${lc.lcNumber}`,

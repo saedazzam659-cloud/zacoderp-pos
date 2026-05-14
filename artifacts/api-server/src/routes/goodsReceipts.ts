@@ -13,6 +13,7 @@ import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { loadMappings } from "../lib/accountingMappings.js";
+import { fullAuditFor } from "../lib/journalAudit.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
@@ -578,6 +579,7 @@ router.patch("/:id/post", async (req, res) => {
         err.status = 423;
         throw err;
       }
+      const grStatus = await resolvePostingStatus(cid, "goodsReceipt");
       const [entry] = await tx.insert(journalEntriesTable).values({
         companyId:    cid,
         branchId:     gr.branchId ?? null,
@@ -587,8 +589,9 @@ router.patch("/:id/post", async (req, res) => {
         exchangeRate: gr.exchangeRate ?? "1",
         description,
         entryType:    "goods_receipt",
-        status:       await resolvePostingStatus(cid, "goodsReceipt"),
+        status:       grStatus,
         periodId:     writability.period?.id ?? null,
+        ...fullAuditFor(req, grStatus),
       }).returning();
       await tx.insert(journalEntryLinesTable).values(
         cleanJeLines.map((l, i) => ({

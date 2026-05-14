@@ -5,6 +5,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { fullAuditFor } from "../lib/journalAudit.js";
 import {
   productionOrdersTable,
   productionOrderItemsTable,
@@ -61,6 +62,8 @@ async function createJournalEntry(opts: {
   entryType?: string;
   exchangeRate?: string | null;
   costCenter?: string | null;
+  // Audit-trail fields injected by callers via `fullAuditFor(req)`.
+  audit?: Record<string, unknown>;
   lines: JLine[];
 }): Promise<number> {
   const cleanLines = opts.lines.filter(
@@ -100,6 +103,14 @@ async function createJournalEntry(opts: {
     err.status = 423;
     throw err;
   }
+  // Pre-resolve status so the helper drops posted_* when the tenant has
+  // auto-post OFF — otherwise a draft JE would look "posted" in the audit
+  // dialog. Callers may pass `audit: { req }` for live wiring or a pre-
+  // baked object for legacy paths; both are honoured.
+  const jeStatus = await resolvePostingStatus(opts.companyId, "production");
+  const auditFields = opts.audit?.req
+    ? fullAuditFor(opts.audit.req as any, jeStatus)
+    : (opts.audit ?? {});
   const [entry] = await db
     .insert(journalEntriesTable)
     .values({
@@ -111,8 +122,9 @@ async function createJournalEntry(opts: {
       exchangeRate: opts.exchangeRate ?? "1",
       description: opts.description,
       entryType: opts.entryType ?? "production",
-      status: await resolvePostingStatus(opts.companyId, "production"),
+      status: jeStatus,
       periodId: writability.period?.id ?? null,
+      ...auditFields,
     })
     .returning();
   await db.insert(journalEntryLinesTable).values(
@@ -1149,6 +1161,7 @@ router.post("/orders/:id/status", async (req, res) => {
       // d) Issue JE: DR WIP / CR Raw Inv (+ CR Labor / CR Overhead).
       const issueJournalId = await createJournalEntry({
         companyId: cid,
+        audit: { req },
         branchId: order.branchId,
         date: todayIso,
         docNumber: order.orderNumber,
@@ -1315,6 +1328,7 @@ router.post("/orders/:id/status", async (req, res) => {
       }
       const receiptJournalId = await createJournalEntry({
         companyId: cid,
+        audit: { req },
         branchId: order.branchId,
         date: todayIso,
         docNumber: order.orderNumber,
@@ -1405,6 +1419,7 @@ router.post("/orders/:id/status", async (req, res) => {
       // Reversing JE: DR Raw / DR Labor / DR Overhead, CR WIP — flips the issue.
       await createJournalEntry({
         companyId: cid,
+        audit: { req },
         branchId: order.branchId,
         date: todayIso,
         docNumber: `${order.orderNumber}-REV`,

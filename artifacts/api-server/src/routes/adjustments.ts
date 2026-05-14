@@ -9,6 +9,7 @@ import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { fullAuditFor } from "../lib/journalAudit.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -302,13 +303,15 @@ router.post("/:id/generate", async (req, res) => {
         continue;
       }
 
+      const jeStatus = await resolvePostingStatus(cid, "adjustment");
       const [entry] = await db.insert(journalEntriesTable).values({
         companyId:   cid,
         entryDate:   isoDate,
         description: `${adj.type === "prepaid" ? "تسوية مصروف مقدم" : "تسوية مصروف مستحق"} — ${adj.name} (${ym})`,
         entryType:   adj.type === "prepaid" ? "adjustment_prepaid" : "adjustment_accrued",
-        status:      await resolvePostingStatus(cid, "adjustment"),
+        status:      jeStatus,
         periodId:    writability.period?.id ?? null,
+        ...fullAuditFor(req, jeStatus),
       }).returning();
 
       await db.insert(journalEntryLinesTable).values([
@@ -384,12 +387,14 @@ router.post("/run-due", async (req, res) => {
         const writability = await assertWritableForDate(cid, isoDate);
         if (!writability.ok) { skipped.push({ ym, reason: writability.reason }); continue; }
 
+        const jeStatus = await resolvePostingStatus(cid, "adjustment");
         const [entry] = await db.insert(journalEntriesTable).values({
           companyId: cid, entryDate: isoDate,
           description: `${adj.type === "prepaid" ? "تسوية مصروف مقدم" : "تسوية مصروف مستحق"} — ${adj.name} (${ym})`,
           entryType: adj.type === "prepaid" ? "adjustment_prepaid" : "adjustment_accrued",
-          status: await resolvePostingStatus(cid, "adjustment"),
+          status: jeStatus,
           periodId: writability.period?.id ?? null,
+          ...fullAuditFor(req, jeStatus),
         }).returning();
         await db.insert(journalEntryLinesTable).values([
           { entryId: entry.id, accountId: adj.expenseAccountId, debit: monthly, credit: "0", sortOrder: 0 },
