@@ -124,7 +124,7 @@ title = "نسخة قاعدة البيانات (database.sql — غيّر الا�
 id = "JAFtd3Kp5p1rMnUU0Sdid"
 uri = "file://.local/exports/deployment-guide.docx"
 type = "word_document"
-title = "دليل النشر على سيرفر محلي وسحابي (Word)"
+title = "دليل رفع السورس على سيرفر محلي أو سحابي (Word)"
 
 [[outputs]]
 id = "2kxROpcbWHg7lzIDxsrBL"
