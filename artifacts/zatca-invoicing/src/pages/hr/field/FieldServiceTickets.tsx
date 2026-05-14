@@ -10,7 +10,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Wrench, Plus, AlertTriangle, CheckCircle2, Clock, UserCheck } from "lucide-react";
+import { Wrench, Plus, AlertTriangle, CheckCircle2, Clock, UserCheck, ArrowRight } from "lucide-react";
+import { Link } from "wouter";
 
 const PRIORITY_COLOR: Record<string, string> = {
   urgent: "bg-rose-500", high: "bg-orange-500", medium: "bg-amber-500", low: "bg-zinc-500",
@@ -48,6 +49,34 @@ export default function FieldServiceTickets() {
     queryKey: ["fsm-ticket", detailId],
     queryFn: () => detailId ? fieldApi.getTicket(detailId) : Promise.resolve(null),
     enabled: !!detailId,
+  });
+
+  const { data: assets } = useQuery<Array<{ id: number; code: string; nameAr: string; status: string }>>({
+    queryKey: ["fsm-maint-assets"],
+    queryFn: async () => {
+      const session = localStorage.getItem("zatca_token");
+      const acting = localStorage.getItem("zatca_acting_company_id");
+      const r = await fetch("/api/maintenance/assets", {
+        headers: {
+          "Content-Type": "application/json",
+          ...(session ? { Authorization: `Bearer ${session}` } : {}),
+          ...(acting ? { "x-acting-company-id": acting } : {}),
+        },
+      });
+      return r.ok ? r.json() : [];
+    },
+  });
+
+  const convert = useMutation({
+    mutationFn: (id: number) => fieldApi.convertTicketToMaintenanceOrder(id),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["fsm-ticket"] });
+      toast({
+        title: data.alreadyExisted ? "أمر الصيانة موجود مسبقاً" : "تم إنشاء أمر الصيانة",
+        description: `رقم الأمر: ${data.order.docNumber}`,
+      });
+    },
+    onError: (e: any) => toast({ title: "تعذّر التحويل", description: e.message, variant: "destructive" }),
   });
 
   const { data: employees } = useQuery<Array<{ id: number; nameAr: string }>>({
@@ -184,6 +213,24 @@ export default function FieldServiceTickets() {
                 </Select>
               </div>
             </div>
+            <div>
+              <Label>الأصل (موديل الصيانة)</Label>
+              <Select value={form.assetId ? String(form.assetId) : "none"}
+                onValueChange={(v) => setForm({ ...form, assetId: v === "none" ? null : Number(v) })}>
+                <SelectTrigger><SelectValue placeholder="بدون أصل" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— بدون أصل —</SelectItem>
+                  {(assets ?? []).map((a) => (
+                    <SelectItem key={a.id} value={String(a.id)}>
+                      {a.code} — {a.nameAr}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                ربط التذكرة بأصل يتيح تحويلها لأمر صيانة لاحقاً
+              </p>
+            </div>
             <div className="text-xs text-muted-foreground">
               SLA افتراضي: عاجل 30/240 د • مرتفع 60/480 د • متوسط 4/24 س • منخفض 8/72 س
             </div>
@@ -244,6 +291,31 @@ export default function FieldServiceTickets() {
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* Maintenance asset link */}
+              {detail.assetId && (
+                <div className="border-t pt-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs">
+                      <span className="text-muted-foreground">الأصل المرتبط: </span>
+                      <span className="font-mono">
+                        {assets?.find(a => a.id === detail.assetId)?.code ?? `#${detail.assetId}`}
+                      </span>
+                      {" — "}
+                      {assets?.find(a => a.id === detail.assetId)?.nameAr ?? ""}
+                    </div>
+                    <Link href={`/maintenance/assets`}>
+                      <Button size="sm" variant="ghost" className="text-xs">
+                        فتح في الصيانة <ArrowRight className="h-3 w-3 ms-1" />
+                      </Button>
+                    </Link>
+                  </div>
+                  <Button size="sm" variant="outline" className="mt-2" onClick={() => convert.mutate(detail.id)}
+                    disabled={convert.isPending}>
+                    <Wrench className="h-4 w-4 ms-2" /> تحويل لأمر صيانة
+                  </Button>
                 </div>
               )}
 

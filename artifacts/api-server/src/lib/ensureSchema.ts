@@ -646,6 +646,36 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE INDEX IF NOT EXISTS field_tickets_assigned_idx ON field_service_tickets (assigned_to)` },
     { label: "field_tickets_no_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS field_tickets_no_uniq ON field_service_tickets (company_id, ticket_no)` },
+
+    // ─── FSM ↔ Maintenance integration ─────────────────────────────────
+    // Soft FK from maintenance_orders → field_service_tickets, set when an
+    // FSM ticket is converted to a maintenance work order. Allows two-way
+    // navigation and a UNIQUE guard prevents double conversion of the same
+    // ticket.
+    { label: "alter maintenance_orders add field_ticket_id",
+      sql:   `ALTER TABLE maintenance_orders ADD COLUMN IF NOT EXISTS field_ticket_id INTEGER` },
+    // Migrate the legacy single-column unique index to a (company_id,
+    // field_ticket_id) scoped one. Safe to drop because the column was
+    // introduced in this same deploy and never globally reused.
+    { label: "drop legacy maintenance_orders_field_ticket_uniq",
+      sql:   `DO $$ BEGIN
+                IF EXISTS (
+                  SELECT 1 FROM pg_indexes
+                  WHERE indexname = 'maintenance_orders_field_ticket_uniq'
+                    AND indexdef NOT LIKE '%(company_id, field_ticket_id)%'
+                ) THEN
+                  EXECUTE 'DROP INDEX maintenance_orders_field_ticket_uniq';
+                END IF;
+              END $$;` },
+    { label: "maintenance_orders_field_ticket_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS maintenance_orders_field_ticket_uniq
+              ON maintenance_orders (company_id, field_ticket_id) WHERE field_ticket_id IS NOT NULL` },
+    { label: "maintenance_orders_asset_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS maintenance_orders_asset_idx
+              ON maintenance_orders (company_id, asset_id)` },
+    { label: "field_tickets_asset_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS field_tickets_asset_idx
+              ON field_service_tickets (company_id, asset_id)` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {

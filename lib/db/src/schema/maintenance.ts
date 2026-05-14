@@ -96,6 +96,10 @@ export const maintenanceOrdersTable = pgTable("maintenance_orders", {
   totalCost:            numeric("total_cost",  { precision: 15, scale: 2 }).notNull().default("0"),
   reportedBy:           text("reported_by"),
   notes:                text("notes"),
+  // Soft FK to field_service_tickets — set when this order was created from
+  // an FSM ticket via "تحويل لأمر صيانة". Lets us round-trip back to the
+  // ticket and prevent duplicate conversions.
+  fieldTicketId:        integer("field_ticket_id"),
   createdAt:            timestamp("created_at").defaultNow().notNull(),
   updatedAt:            timestamp("updated_at").defaultNow().notNull(),
 });

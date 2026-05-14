@@ -218,6 +218,12 @@ export const fieldApi = {
     req<FieldServiceTicket>("POST", `/hr/field/tickets/${id}/resolve`, { resolution }),
   closeTicket: (id: number, customerRating?: number) =>
     req<FieldServiceTicket>("POST", `/hr/field/tickets/${id}/close`, { customerRating }),
+  convertTicketToMaintenanceOrder: (id: number) =>
+    req<{ order: { id: number; docNumber: string; assetId: number; status: string }; alreadyExisted: boolean }>(
+      "POST", `/hr/field/tickets/${id}/convert-to-maintenance-order`,
+    ),
+  byAsset: (assetId: number) =>
+    req<{ tickets: FieldServiceTicket[]; visits: FieldVisit[] }>("GET", `/hr/field/by-asset/${assetId}`),
 
   // Reports
   summary: (params: { employeeId?: number; from?: string; to?: string } = {}) => {

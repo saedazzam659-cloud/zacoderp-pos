@@ -8,6 +8,8 @@ import {
   fieldServiceTicketsTable,
   employeesTable,
   customersTable,
+  maintenanceAssetsTable,
+  maintenanceOrdersTable,
 } from "@workspace/db";
 import { and, eq, desc, asc, sql, gte, lte, isNull, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, denyKiosk } from "../middleware/auth.js";
@@ -869,6 +871,121 @@ router.post("/tickets/:id/resolve", async (req, res) => {
       updatedAt: now,
     }).where(eq(fieldServiceTicketsTable.id, id)).returning();
     res.json(row);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── FSM ↔ Maintenance bridge ─────────────────────────────────────────
+// Convert an FSM ticket into a maintenance_orders work order. Requires the
+// ticket to have a maintenance asset linked (assetId). Idempotent — second
+// call returns the existing order. Manager-only.
+router.post("/tickets/:id/convert-to-maintenance-order", async (req, res) => {
+  try {
+    if (denyKiosk(req, res)) return;
+    const cid = guard(req, res); if (!cid) return;
+    if (requireManager(req, res)) return;
+    const id = Number(req.params.id);
+    const [t] = await db.select().from(fieldServiceTicketsTable)
+      .where(and(eq(fieldServiceTicketsTable.id, id), eq(fieldServiceTicketsTable.companyId, cid))).limit(1);
+    if (!t) { res.status(404).json({ error: "تذكرة غير موجودة" }); return; }
+    if (!t.assetId) { res.status(400).json({ error: "يجب ربط الأصل بالتذكرة قبل التحويل" }); return; }
+    // Verify asset belongs to tenant.
+    const [asset] = await db.select({ id: maintenanceAssetsTable.id })
+      .from(maintenanceAssetsTable)
+      .where(and(eq(maintenanceAssetsTable.id, t.assetId), eq(maintenanceAssetsTable.companyId, cid))).limit(1);
+    if (!asset) { res.status(400).json({ error: "الأصل المرتبط غير صالح" }); return; }
+    // Idempotency: return existing order if already converted.
+    const [existing] = await db.select().from(maintenanceOrdersTable)
+      .where(and(eq(maintenanceOrdersTable.companyId, cid), eq(maintenanceOrdersTable.fieldTicketId, id))).limit(1);
+    if (existing) { res.json({ order: existing, alreadyExisted: true }); return; }
+
+    // Map FSM category → maintenance order_type.
+    const typeMap: Record<string, "preventive" | "corrective" | "emergency" | "inspection"> = {
+      preventive: "preventive", inspection: "inspection",
+      installation: "corrective", repair: "corrective",
+      complaint: "corrective", other: "corrective",
+    };
+    const orderType = typeMap[t.category] ?? "corrective";
+    const priority = (["low","medium","high","urgent"] as const).includes(t.priority as any)
+      ? (t.priority as any) : "medium";
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Insert with race-safe retry: if `docNumber` collides (23505 on doc_number)
+    // we recompute and retry; if `field_ticket_id` collides another concurrent
+    // conversion already won — return its row instead.
+    let order: any = null;
+    for (let attempt = 0; attempt < 5 && !order; attempt++) {
+      const ordersExisting = await db.select({ d: maintenanceOrdersTable.docNumber })
+        .from(maintenanceOrdersTable).where(eq(maintenanceOrdersTable.companyId, cid));
+      let max = 0;
+      for (const r of ordersExisting) {
+        const m = /^MO(\d+)$/.exec(String(r.d).trim());
+        if (m) { const n = parseInt(m[1], 10); if (Number.isFinite(n) && n > max) max = n; }
+      }
+      const docNumber = `MO${String(max + 1).padStart(4, "0")}`;
+      try {
+        [order] = await db.insert(maintenanceOrdersTable).values({
+          companyId:          cid,
+          branchId:           t.branchId ?? null,
+          docNumber,
+          assetId:            t.assetId,
+          technicianId:       null,
+          orderType,
+          priority,
+          status:             "scheduled",
+          reportedDate:       today,
+          scheduledDate:      null,
+          problemDescription: t.title + (t.description ? ` — ${t.description}` : ""),
+          diagnosis:          null,
+          workPerformed:      null,
+          laborHours:         "0",
+          laborCost:          "0",
+          partsCost:          "0",
+          totalCost:          "0",
+          reportedBy:         t.customerId ? null : (req.authUser?.username ?? null),
+          notes:              `تم التحويل من تذكرة الخدمة الميدانية ${t.ticketNo}`,
+          fieldTicketId:      id,
+        }).returning();
+      } catch (err: any) {
+        if (err?.code !== "23505") throw err;
+        // Did we lose the field_ticket_id race? Return existing.
+        const [again] = await db.select().from(maintenanceOrdersTable)
+          .where(and(eq(maintenanceOrdersTable.companyId, cid), eq(maintenanceOrdersTable.fieldTicketId, id))).limit(1);
+        if (again) { res.json({ order: again, alreadyExisted: true }); return; }
+        // Otherwise it was the docNumber collision — loop and retry.
+      }
+    }
+    if (!order) { res.status(500).json({ error: "تعذر إنشاء رقم أمر صيانة فريد" }); return; }
+    res.status(201).json({ order, alreadyExisted: false });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Asset history: visits + tickets + linked orders for a maintenance asset.
+// Used by MaintenanceAssets page to surface field activity per asset.
+router.get("/by-asset/:assetId", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const assetId = Number(req.params.assetId);
+    if (!Number.isFinite(assetId)) { res.status(400).json({ error: "assetId غير صالح" }); return; }
+    if (!(await assertTenant(maintenanceAssetsTable, assetId, cid))) {
+      res.status(404).json({ error: "الأصل غير موجود" }); return;
+    }
+    const tickets = await db.select().from(fieldServiceTicketsTable)
+      .where(and(eq(fieldServiceTicketsTable.companyId, cid), eq(fieldServiceTicketsTable.assetId, assetId)))
+      .orderBy(desc(fieldServiceTicketsTable.openedAt)).limit(100);
+    const visits = await db.select({
+      v: fieldVisitsTable,
+      employeeName: employeesTable.nameAr,
+      locationName: fieldLocationsTable.name,
+    })
+      .from(fieldVisitsTable)
+      .leftJoin(employeesTable, eq(employeesTable.id, fieldVisitsTable.employeeId))
+      .leftJoin(fieldLocationsTable, eq(fieldLocationsTable.id, fieldVisitsTable.locationId))
+      .where(and(eq(fieldVisitsTable.companyId, cid), eq(fieldVisitsTable.assetId, assetId)))
+      .orderBy(desc(fieldVisitsTable.arrivedAt)).limit(100);
+    res.json({
+      tickets,
+      visits: visits.map(r => ({ ...r.v, employeeName: r.employeeName, locationName: r.locationName })),
+    });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

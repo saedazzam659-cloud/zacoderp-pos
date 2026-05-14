@@ -20,6 +20,7 @@ export default function FieldServiceHub() {
     { href: "/hr/field/tickets",   icon: Wrench,       title: "تذاكر الخدمة (FSM)",     desc: "أوامر صيانة مع SLA", color: "from-amber-500 to-orange-600" },
     { href: "/hr/field/tracking",  icon: Activity,     title: "التتبع المباشر",         desc: "آخر موقع لكل موظف ميداني", color: "from-rose-500 to-red-600" },
     { href: "/hr/field/reports",   icon: BarChart3,    title: "التقارير ومؤشرات الأداء", desc: "زيارات، أوقات، انحرافات SLA", color: "from-slate-500 to-slate-700" },
+    { href: "/maintenance",        icon: Wrench,       title: "موديل الصيانة (الأصول والفنيين)", desc: "إدارة الأصول وأوامر الصيانة المرتبطة بالتذاكر", color: "from-orange-500 to-amber-600" },
   ];
 
   const stats = [

@@ -11,7 +11,10 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Pencil, Trash2, Search, Boxes } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Boxes, MapPin } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
+import { fieldApi } from "@/lib/fieldServiceApi";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -55,6 +58,13 @@ export default function MaintenanceAssets() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [del, setDel] = useState<Asset | null>(null);
+  const [visitsAsset, setVisitsAsset] = useState<Asset | null>(null);
+
+  const { data: assetHistory, isLoading: loadingHistory } = useQuery({
+    queryKey: ["asset-field-history", visitsAsset?.id],
+    queryFn: () => visitsAsset ? fieldApi.byAsset(visitsAsset.id) : Promise.resolve(null),
+    enabled: !!visitsAsset,
+  });
 
   const { data: assets = [], isLoading } = useQuery<Asset[]>({
     queryKey: ["maintenance/assets", cid],
@@ -286,6 +296,11 @@ export default function MaintenanceAssets() {
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex items-center justify-center gap-1">
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-blue-600 hover:bg-blue-50"
+                          title="الزيارات الميدانية والتذاكر"
+                          onClick={() => setVisitsAsset(a)} data-testid={`btn-visits-${a.id}`}>
+                          <MapPin className="h-3.5 w-3.5" />
+                        </Button>
                         <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(a)} data-testid={`btn-edit-${a.id}`}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
@@ -301,6 +316,82 @@ export default function MaintenanceAssets() {
           </table>
         </div>
       </div>
+
+      <Dialog open={!!visitsAsset} onOpenChange={(o) => !o && setVisitsAsset(null)}>
+        <DialogContent dir="rtl" className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-blue-600" />
+              النشاط الميداني — {visitsAsset?.code} — {visitsAsset?.nameAr}
+            </DialogTitle>
+          </DialogHeader>
+          {loadingHistory && <div className="text-center py-8 text-muted-foreground">جاري التحميل…</div>}
+          {assetHistory && (
+            <div className="space-y-4 text-sm">
+              <div>
+                <h4 className="font-semibold mb-2">تذاكر الخدمة الميدانية ({assetHistory.tickets.length})</h4>
+                {assetHistory.tickets.length === 0 ? (
+                  <p className="text-muted-foreground text-xs">لا توجد تذاكر مرتبطة بهذا الأصل</p>
+                ) : (
+                  <div className="border rounded overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/50"><tr>
+                        <th className="text-right p-2">رقم</th><th className="text-right p-2">العنوان</th>
+                        <th className="text-right p-2">الأولوية</th><th className="text-right p-2">الحالة</th>
+                        <th className="text-right p-2">فُتحت</th>
+                      </tr></thead>
+                      <tbody>
+                        {assetHistory.tickets.map((t) => (
+                          <tr key={t.id} className="border-t">
+                            <td className="p-2 font-mono">{t.ticketNo}</td>
+                            <td className="p-2">{t.title}</td>
+                            <td className="p-2"><Badge variant="outline">{t.priority}</Badge></td>
+                            <td className="p-2">{t.status}</td>
+                            <td className="p-2">{new Date(t.openedAt).toLocaleDateString("ar-SA")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+              <div>
+                <h4 className="font-semibold mb-2">الزيارات الميدانية ({assetHistory.visits.length})</h4>
+                {assetHistory.visits.length === 0 ? (
+                  <p className="text-muted-foreground text-xs">لا توجد زيارات مسجلة</p>
+                ) : (
+                  <div className="border rounded overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/50"><tr>
+                        <th className="text-right p-2">الفني</th><th className="text-right p-2">الموقع</th>
+                        <th className="text-right p-2">الوصول</th><th className="text-right p-2">الانصراف</th>
+                        <th className="text-right p-2">المدة</th><th className="text-right p-2">النتيجة</th>
+                      </tr></thead>
+                      <tbody>
+                        {assetHistory.visits.map((v: any) => (
+                          <tr key={v.id} className="border-t">
+                            <td className="p-2">{v.employeeName ?? "—"}</td>
+                            <td className="p-2">{v.locationName ?? "—"}</td>
+                            <td className="p-2">{new Date(v.arrivedAt).toLocaleString("ar-SA")}</td>
+                            <td className="p-2">{v.leftAt ? new Date(v.leftAt).toLocaleString("ar-SA") : "—"}</td>
+                            <td className="p-2">{v.durationMin ? `${v.durationMin} د` : "—"}</td>
+                            <td className="p-2">{v.outcome ?? "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end pt-2 border-t">
+                <a href="/hr/field/tickets" className="text-xs text-blue-600 hover:underline">
+                  فتح وحدة الخدمة الميدانية ←
+                </a>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!del} onOpenChange={(o) => !o && setDel(null)}>
         <AlertDialogContent dir="rtl">
