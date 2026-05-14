@@ -25,9 +25,20 @@ interface SessionRow {
   userId: number; username: string; email: string | null;
   role: string; companyId: number | null; companyName: string | null;
   companyLoginCount: number | null;
+  zatcaStatus: "production" | "sandbox" | "not_linked" | null;
   sessionId: string | null; lastLoginAt: string | null;
   ip: string | null; country: string | null; userAgent: string | null;
 }
+
+// Map ZATCA linkage status → presentation. Three states:
+//  • production : real CSID issued, env=production → green
+//  • sandbox    : compliance/sandbox CSID only OR explicit sandbox flag → amber
+//  • not_linked : no CSID at all → neutral gray
+const ZATCA_BADGE: Record<NonNullable<SessionRow["zatcaStatus"]>, { label: string; cls: string; dot: string; title: string }> = {
+  production: { label: "زاتكا: إنتاج",  cls: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "bg-emerald-500", title: "الشركة مربوطة بزاتكا في بيئة الإنتاج (CSID إنتاجي)" },
+  sandbox:    { label: "زاتكا: تجريبي", cls: "bg-amber-50 text-amber-700 border-amber-200",       dot: "bg-amber-500",   title: "الشركة مربوطة في بيئة التجربة فقط (CSID تجريبي/Sandbox)" },
+  not_linked: { label: "غير مربوطة",     cls: "bg-slate-50 text-slate-600 border-slate-200",       dot: "bg-slate-400",   title: "الشركة لم تربط حسابها بزاتكا بعد" },
+};
 
 // ─── Country display helpers ────────────────────────────────────────────
 // Convert an ISO-3166-1 alpha-2 code into the matching emoji flag using
@@ -304,7 +315,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                         }>{r.role}</Badge>
                       </td>
                       <td className="px-3 py-2 text-xs">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <span>{r.companyName ?? (r.companyId == null ? "—" : `#${r.companyId}`)}</span>
                           {r.companyLoginCount != null && r.companyLoginCount > 0 && (
                             <Badge
@@ -316,6 +327,20 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                               {r.companyLoginCount.toLocaleString("ar-SA")}
                             </Badge>
                           )}
+                          {r.zatcaStatus && (() => {
+                            const z = ZATCA_BADGE[r.zatcaStatus];
+                            return (
+                              <Badge
+                                variant="outline"
+                                className={`${z.cls} text-[10px] px-1.5 py-0 h-4 inline-flex items-center gap-1`}
+                                title={z.title}
+                                data-testid={`session-zatca-${r.userId}`}
+                              >
+                                <span className={`inline-block w-1.5 h-1.5 rounded-full ${z.dot}`} aria-hidden />
+                                {z.label}
+                              </Badge>
+                            );
+                          })()}
                         </div>
                       </td>
                       <td className="px-3 py-2 text-xs font-mono">{fmtDateTime(r.lastLoginAt)}</td>

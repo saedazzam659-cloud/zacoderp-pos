@@ -2443,11 +2443,33 @@ router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
       if (!loginByUser.has(k)) loginByUser.set(k, r);
     }
 
-    const companyMap = new Map<number, { id: number; nameAr: string }>();
+    // Pull the same row's ZATCA linkage state so the sessions UI can show
+    // a per-company badge (production / sandbox / not-linked) next to each
+    // session. zatcaPcsid = production CSID (the "real" link), zatcaCsid =
+    // compliance/sandbox CSID (still onboarding). isSandbox is the explicit
+    // env flag the SuperAdmin can flip when the company is intentionally
+    // running in the sandbox environment for testing.
+    type CompanyMeta = {
+      id: number; nameAr: string;
+      zatcaCsid: string | null; zatcaPcsid: string | null; isSandbox: boolean;
+    };
+    const companyMap = new Map<number, CompanyMeta>();
     if (companyIds.length > 0) {
-      const cos = await db.select({ id: companiesTable.id, nameAr: companiesTable.nameAr })
-        .from(companiesTable).where(inArray(companiesTable.id, companyIds));
+      const cos = await db.select({
+        id: companiesTable.id, nameAr: companiesTable.nameAr,
+        zatcaCsid: companiesTable.zatcaCsid, zatcaPcsid: companiesTable.zatcaPcsid,
+        isSandbox: companiesTable.isSandbox,
+      }).from(companiesTable).where(inArray(companiesTable.id, companyIds));
       for (const c of cos) companyMap.set(c.id, c);
+    }
+    // Derive the ZATCA linkage status from the raw fields. Order matters:
+    // a production CSID is the strongest signal even if isSandbox is also
+    // true (which would be a misconfiguration the badge surfaces visually).
+    function zatcaStatus(c: CompanyMeta | undefined): "production" | "sandbox" | "not_linked" {
+      if (!c) return "not_linked";
+      if (c.zatcaPcsid && !c.isSandbox) return "production";
+      if (c.zatcaPcsid || c.zatcaCsid)  return "sandbox";
+      return "not_linked";
     }
 
     // ─── Country resolution + per-company login counter ──────────────────
@@ -2510,6 +2532,7 @@ router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
         companyId:   s.companyId,
         companyName: s.companyId != null ? companyMap.get(s.companyId)?.nameAr ?? null : null,
         companyLoginCount: s.companyId != null ? (companyLoginCount.get(s.companyId) ?? 0) : null,
+        zatcaStatus: s.companyId != null ? zatcaStatus(companyMap.get(s.companyId)) : null,
         sessionId:   s.sessionId,
         lastLoginAt: s.lastLoginAt,
         ip:          lg?.ip ?? null,
