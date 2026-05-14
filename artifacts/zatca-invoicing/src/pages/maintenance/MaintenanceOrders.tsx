@@ -11,7 +11,7 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Pencil, Trash2, Search, ClipboardList, Eye, X } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, ClipboardList, Eye, X, Wrench, Calendar, User, ChevronLeft } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -376,7 +376,109 @@ export default function MaintenanceOrders() {
         </FormPanel>
       )}
 
-      <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
+      {/* ─────── MOBILE CARDS (visible < md only) ─────── */}
+      <div className="md:hidden space-y-3" data-testid="mobile-cards-orders">
+        {isLoading && (
+          <div className="text-center py-8 text-muted-foreground bg-white rounded-lg border">
+            جاري التحميل…
+          </div>
+        )}
+        {!isLoading && filtered.length === 0 && (
+          <div className="text-center py-10 text-muted-foreground bg-white rounded-lg border">
+            <ClipboardList className="h-10 w-10 mx-auto mb-2 opacity-30" />
+            لا توجد أوامر صيانة
+          </div>
+        )}
+        {filtered.map((o) => {
+          const tp = TYPES.find(([v]) => v === o.orderType);
+          const pr = PRIORITIES.find(([v]) => v === o.priority);
+          const st = STATUSES.find(([v]) => v === o.status);
+          return (
+            <div
+              key={o.id}
+              className="bg-white rounded-xl border border-emerald-100 shadow-sm overflow-hidden active:scale-[0.99] transition-transform"
+              data-testid={`mobile-card-order-${o.id}`}
+            >
+              {/* Header strip */}
+              <div className="bg-gradient-to-l from-emerald-50 to-emerald-100/50 px-4 py-2.5 flex items-center justify-between border-b border-emerald-100">
+                <div className="flex items-center gap-2">
+                  <Wrench className="h-4 w-4 text-emerald-700" />
+                  <span className="font-mono font-bold text-sm text-emerald-900">{o.docNumber}</span>
+                </div>
+                {st && (
+                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold ${st[2]}`}>
+                    {st[1]}
+                  </span>
+                )}
+              </div>
+              {/* Body */}
+              <button
+                type="button"
+                onClick={() => setViewing(o)}
+                className="w-full text-start px-4 py-3 space-y-2"
+                data-testid={`mobile-open-order-${o.id}`}
+              >
+                <div className="font-bold text-sm text-slate-900 leading-tight">
+                  {o.assetName || `أصل #${o.assetId}`}
+                </div>
+                {o.assetCode && (
+                  <div className="text-[11px] text-muted-foreground font-mono">{o.assetCode}</div>
+                )}
+                <div className="flex items-center gap-3 text-[11px] text-slate-600 flex-wrap">
+                  <span className="flex items-center gap-1">
+                    <Calendar className="h-3 w-3" /> {o.reportedDate}
+                  </span>
+                  {o.techName && (
+                    <span className="flex items-center gap-1">
+                      <User className="h-3 w-3" /> {o.techName}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {tp && <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${tp[2]}`}>{tp[1]}</span>}
+                  {pr && <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${pr[2]}`}>{pr[1]}</span>}
+                </div>
+                <div className="flex items-center justify-between pt-1.5 border-t border-slate-100">
+                  <span className="text-[11px] text-muted-foreground">الإجمالي</span>
+                  <span className="font-bold tabular-nums text-emerald-700">
+                    {Number(o.totalCost).toFixed(2)} <span className="text-[10px] text-muted-foreground">ر.س</span>
+                  </span>
+                </div>
+              </button>
+              {/* Action bar */}
+              <div className="border-t border-slate-100 bg-slate-50/60 grid grid-cols-3 divide-x divide-slate-100 [direction:ltr]">
+                <button
+                  type="button"
+                  onClick={() => setDel(o)}
+                  className="py-2.5 text-rose-600 hover:bg-rose-50 active:bg-rose-100 flex items-center justify-center gap-1 text-xs"
+                  data-testid={`mobile-btn-delete-${o.id}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> حذف
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openEdit(o)}
+                  className="py-2.5 text-slate-700 hover:bg-slate-100 active:bg-slate-200 flex items-center justify-center gap-1 text-xs"
+                  data-testid={`mobile-btn-edit-${o.id}`}
+                >
+                  <Pencil className="h-3.5 w-3.5" /> تعديل
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewing(o)}
+                  className="py-2.5 text-emerald-700 hover:bg-emerald-50 active:bg-emerald-100 flex items-center justify-center gap-1 text-xs font-medium"
+                  data-testid={`mobile-btn-view-${o.id}`}
+                >
+                  <Eye className="h-3.5 w-3.5" /> عرض
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ─────── DESKTOP TABLE (visible md+ only) ─────── */}
+      <div className="hidden md:block border rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-xs" dir="rtl">
             <thead className="bg-gradient-to-b from-emerald-50 to-emerald-100 text-emerald-900 border-b">
@@ -559,6 +661,20 @@ export default function MaintenanceOrders() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ─────── MOBILE FAB (floating action button) ─────── */}
+      <button
+        type="button"
+        onClick={openNew}
+        className="md:hidden fixed bottom-6 end-6 z-40 group"
+        data-testid="mobile-fab-new-order"
+        aria-label="أمر صيانة جديد"
+      >
+        <span className="absolute inset-0 rounded-full bg-emerald-500 opacity-30 group-active:opacity-0 animate-ping" />
+        <span className="relative flex items-center justify-center h-14 w-14 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-700 text-white shadow-lg shadow-emerald-500/40 ring-4 ring-white active:scale-95 transition-transform">
+          <Plus className="h-7 w-7" strokeWidth={2.5} />
+        </span>
+      </button>
     </div>
   );
 }
