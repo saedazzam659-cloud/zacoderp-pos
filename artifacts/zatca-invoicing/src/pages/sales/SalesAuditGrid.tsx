@@ -26,7 +26,7 @@ import {
   ListChecks, AlertTriangle, AlertCircle, Info, Loader2, Eye,
   CheckCircle2, FileText, Plus, Send, Undo2, RotateCcw, X, Filter,
   Trash2, Settings2, ArrowUp, ArrowDown, RotateCw, EyeOff, Palette, Check,
-  Copy, Pencil, FileDown,
+  Copy, Pencil, FileDown, User,
 } from "lucide-react";
 import SalesPrintModal, { type PrintData } from "./SalesPrintModal";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
@@ -126,6 +126,8 @@ const COLUMNS: ReadonlyArray<{ key: string; label: string; type: ColType; align?
   { key: "je",         label: "القيد",      type: "text",   align: "center" },
   { key: "zatca",      label: "ZATCA",      type: "text",   align: "center" },
   { key: "status",     label: "الحالة",     type: "text",   align: "center" },
+  { key: "createdBy",  label: "أنشأه",       type: "text",   align: "center" },
+  { key: "postedBy",   label: "رحّله",       type: "text",   align: "center" },
   { key: "notes",      label: "ملاحظات",    type: "text",   align: "start"  },
   { key: "_act",       label: "",           type: "none",   align: "center" },
 ];
@@ -1274,6 +1276,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       { header: "الضريبة",           key: "vatAmount",    width: 12 },
       { header: "الإجمالي",          key: "totalAmount",  width: 14 },
       { header: "الحالة",            key: "statusLabel",  width: 10 },
+      { header: "أنشأه",              key: "createdByName", width: 14 },
+      { header: "رحّله",              key: "postedByName",  width: 14 },
     ];
   }
   function buildExportRows() {
@@ -1293,6 +1297,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       vatAmount:    fmt(inv.vatAmount),
       totalAmount:  fmt(inv.totalAmount),
       statusLabel:  STATUS[inv.status]?.label ?? inv.status,
+      createdByName: inv.createdByName ?? "",
+      postedByName:  inv.postedByName ?? "",
     }));
   }
   function buildExportTotals() {
@@ -1316,6 +1322,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       vatAmount:    fmt(sumVat),
       totalAmount:  fmt(sumTot),
       statusLabel:  "",
+      createdByName: "",
+      postedByName:  "",
     };
   }
   function exportFilenameBase() {
@@ -2142,6 +2150,26 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                         return (
                           <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
                             <span className={cn("inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border", st.cls)}>{st.label}</span>
+                          </td>
+                        );
+                      case "createdBy":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            {inv.createdByName ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] rounded-full px-1.5 py-0.5 font-medium border bg-emerald-50 text-emerald-700 border-emerald-200">
+                                <User className="h-2.5 w-2.5" />{inv.createdByName}
+                              </span>
+                            ) : <span className="text-slate-400">—</span>}
+                          </td>
+                        );
+                      case "postedBy":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            {inv.postedByName ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] rounded-full px-1.5 py-0.5 font-medium border bg-blue-50 text-blue-700 border-blue-200">
+                                <User className="h-2.5 w-2.5" />{inv.postedByName}
+                              </span>
+                            ) : <span className="text-slate-400">—</span>}
                           </td>
                         );
                       case "notes":
