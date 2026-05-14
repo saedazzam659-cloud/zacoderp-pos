@@ -2,6 +2,7 @@ import { Switch, Route, Router as WouterRouter, useLocation, Redirect } from "wo
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import CustomerCobrowseWidget from "@/components/cobrowse/CustomerCobrowseWidget";
 import WhatsAppFloat from "@/components/WhatsAppFloat";
+import PwaInstallPrompt from "@/components/PwaInstallPrompt";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
@@ -893,6 +894,7 @@ function App() {
                   public route (Home, Pricing, Login, blog, PosLanding…)
                   without each page needing to opt in. */}
               <WhatsAppFloat />
+              <PwaInstallPrompt />
             </ScreenActionsProvider>
           </AuthProvider>
         </WouterRouter>

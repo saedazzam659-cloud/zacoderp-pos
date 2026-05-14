@@ -568,7 +568,68 @@ export default function InstallmentContracts() {
         </FormPanel>
       )}
 
-      <div className="rounded-lg border bg-white shadow-sm overflow-hidden">
+      {/* Mobile cards (md-hidden) */}
+      <div className="md:hidden space-y-3">
+        {isLoading && <div className="text-center py-8 text-muted-foreground text-sm">جاري التحميل…</div>}
+        {!isLoading && filtered.length === 0 && <div className="text-center py-8 text-muted-foreground text-sm">لا توجد عقود — اضغط الزر العائم للبدء</div>}
+        {filtered.map((c) => {
+          const score = c.creditScore ?? 0;
+          const scoreColor = score >= 75 ? "from-emerald-500 to-emerald-600" : score >= 55 ? "from-amber-500 to-amber-600" : "from-rose-500 to-rose-600";
+          const scoreBadge = score >= 75 ? "bg-emerald-100 text-emerald-800" : score >= 55 ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800";
+          const editable = c.status === "draft" || c.status === "pending";
+          return (
+            <div key={c.id} className="rounded-2xl bg-white border border-indigo-100 shadow-sm overflow-hidden">
+              <div className={`bg-gradient-to-r ${scoreColor} px-4 py-2.5 flex items-center justify-between`}>
+                <span className="text-white font-mono text-sm font-bold">{c.contractNumber}</span>
+                <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/95", STATUS_TONE[c.status].replace(/bg-\w+-\d+/g,'').trim())}>
+                  {STATUS_LABEL[c.status]}
+                </span>
+              </div>
+              <div className="p-3 space-y-2">
+                <div className="flex items-start gap-2">
+                  <div className="h-10 w-10 rounded-full bg-indigo-100 grid place-items-center text-indigo-700 font-bold shrink-0">{(c.customerName ?? "ع")[0]}</div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-sm truncate">{c.customerName}</p>
+                    {c.phone && <a href={`tel:${c.phone}`} className="text-xs text-indigo-600 font-mono flex items-center gap-1"><Phone className="h-3 w-3" />{c.phone}</a>}
+                  </div>
+                  <span className={cn("text-xs font-bold px-2 py-1 rounded-lg shrink-0", scoreBadge)}>
+                    {c.creditScore ?? "—"}
+                  </span>
+                </div>
+                <div className="text-xs bg-slate-50 rounded p-2 truncate" title={c.productDescription}>
+                  <span className="text-muted-foreground">المنتج: </span>{c.productDescription}
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">المموَّل</div><div className="font-mono font-bold text-slate-800 text-[11px]">{fmt(c.financedAmount)}</div></div>
+                  <div className="bg-indigo-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">القسط</div><div className="font-mono font-bold text-indigo-800 text-[11px]">{fmt(c.installmentAmount)}</div></div>
+                  <div className="bg-blue-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">العدد</div><div className="font-bold text-blue-800 text-base">{c.installmentCount}</div></div>
+                </div>
+              </div>
+              <div className={`grid ${editable ? 'grid-cols-5' : 'grid-cols-1'} border-t divide-x divide-slate-100 [direction:ltr]`}>
+                {editable && (
+                  <>
+                    <button onClick={() => setDeleteRow(c)} className="py-2.5 text-rose-600 text-xs font-semibold hover:bg-rose-50 flex items-center justify-center gap-1"><Trash2 className="h-3.5 w-3.5" /></button>
+                    <button onClick={() => { const r = window.prompt("سبب الرفض:") ?? ""; if (r) rejectMut.mutate({ id: c.id, reason: r }); }} className="py-2.5 text-rose-700 text-xs font-semibold hover:bg-rose-50 flex items-center justify-center gap-1"><XCircle className="h-3.5 w-3.5" />رفض</button>
+                    <button onClick={() => approveMut.mutate(c.id)} className="py-2.5 text-emerald-700 text-xs font-semibold hover:bg-emerald-50 flex items-center justify-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" />اعتماد</button>
+                    <button onClick={() => openEdit(c)} className="py-2.5 text-slate-700 text-xs font-semibold hover:bg-slate-50 flex items-center justify-center gap-1"><Pencil className="h-3.5 w-3.5" /></button>
+                  </>
+                )}
+                <Link href={`/installments/contracts/${c.id}`} className="py-2.5 text-indigo-700 text-xs font-semibold hover:bg-indigo-50 flex items-center justify-center gap-1"><Eye className="h-3.5 w-3.5" />الجدول</Link>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Mobile FAB */}
+      <button onClick={openNew} className="md:hidden fixed bottom-6 end-6 z-40 group" aria-label="عقد جديد">
+        <span className="absolute inset-0 rounded-full bg-indigo-400/40 animate-ping" />
+        <span className="relative h-14 w-14 rounded-full bg-gradient-to-br from-indigo-500 to-indigo-600 ring-4 ring-white shadow-2xl grid place-items-center text-white">
+          <Plus className="h-7 w-7" />
+        </span>
+      </button>
+
+      <div className="hidden md:block rounded-lg border bg-white shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs" dir="rtl">
             <thead className="bg-gradient-to-b from-slate-100 to-slate-200 text-slate-700">
