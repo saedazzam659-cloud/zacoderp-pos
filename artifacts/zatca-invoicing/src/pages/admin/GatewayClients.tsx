@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   KeyRound, Plus, Loader2, Building2, ShieldCheck, ShieldAlert, FileText,
   Copy, Check, Trash2, Edit3, Search, TrendingUp, AlertTriangle, Sparkles, Lock, Unlock,
-  Wand2, Download, Upload, ExternalLink, Hash, ArrowRight,
+  Wand2, Download, Upload, ExternalLink, Hash, ArrowRight, Eye,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -901,12 +901,14 @@ function InvoicesTab({ clientId }: { clientId: number }) {
     received:           "bg-sky-50 text-sky-700 border-sky-200",
     sandbox_cleared:    "bg-violet-50 text-violet-700 border-violet-200",
     queued_for_zatca:   "bg-amber-50 text-amber-700 border-amber-200",
+    manual_ack:         "bg-amber-50 text-amber-700 border-amber-200",
     cleared:            "bg-emerald-50 text-emerald-700 border-emerald-200",
     rejected:           "bg-rose-50 text-rose-700 border-rose-200",
     failed:             "bg-rose-50 text-rose-700 border-rose-200",
   };
   const STATUS_AR: Record<string, string> = {
     received: "مستلمة", sandbox_cleared: "نجاح (تجربة)", queued_for_zatca: "في الانتظار",
+    manual_ack: "إقرار يدوي (لم يُرسل لزاتكا)",
     cleared: "مقبولة", rejected: "مرفوضة", failed: "فشل",
   };
 
@@ -975,6 +977,14 @@ function InvoicesTab({ clientId }: { clientId: number }) {
               <div className="flex items-center gap-2 shrink-0">
                 {inv.totalAmount && <span className="font-mono text-sm text-slate-700 hidden sm:inline">{Number(inv.totalAmount).toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>}
                 <Badge variant="outline" className={STATUS_CLR[inv.status] ?? "bg-slate-50"}>{STATUS_AR[inv.status] ?? inv.status}</Badge>
+                <Button
+                  variant="ghost" size="icon"
+                  onClick={() => window.open(`/admin/gateway-clients/${clientId}/invoices/${inv.id}`, "_blank")}
+                  title="عرض الفاتورة الجميلة"
+                  className="text-indigo-600 hover:bg-indigo-50"
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                </Button>
                 <Button variant="ghost" size="icon" onClick={() => downloadCanonical(inv)} title="تنزيل البيانات الكاملة">
                   <Download className="h-3.5 w-3.5" />
                 </Button>

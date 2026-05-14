@@ -69,6 +69,7 @@ import ZatcaReport from "@/pages/ZatcaReport";
 import Users from "@/pages/Users";
 import MenuPermissions from "@/pages/MenuPermissions";
 import GatewayClients from "@/pages/admin/GatewayClients";
+import GatewayInvoiceView from "@/pages/admin/GatewayInvoiceView";
 import Modules from "@/pages/admin/Modules";
 import Industries from "@/pages/admin/Industries";
 import LicenseManagement from "@/pages/LicenseManagement";
@@ -515,6 +516,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
             {isSuperAdmin && <Route path="/admin/gateway-clients" component={GatewayClients} />}
+            {isSuperAdmin && <Route path="/admin/gateway-clients/:id/invoices/:invId" component={GatewayInvoiceView} />}
             {rawIsSuperAdmin && <Route path="/admin/invoice-field-policies" component={InvoiceFieldPolicies} />}
             {isSuperAdmin && <Route path="/admin/modules" component={Modules} />}
             {isSuperAdmin && <Route path="/admin/industries" component={Industries} />}

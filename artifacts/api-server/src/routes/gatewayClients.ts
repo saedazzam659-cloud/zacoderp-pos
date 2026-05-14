@@ -5,6 +5,7 @@ import { eq, and, desc, sql, isNull } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { writeAudit } from "../middleware/permissions.js";
 import { extractAuth } from "../middleware/auth.js";
+import { buildUblForGatewayInvoice, type GatewayCanonical } from "../lib/zatca-gateway-builder.js";
 
 const router = Router();
 
@@ -451,7 +452,11 @@ router.post("/:id/submit-batch", async (req, res) => {
   const rows = req.body?.rows;
   const fileName = typeof req.body?.fileName === "string" ? req.body.fileName : null;
   if (!Array.isArray(rows) || rows.length === 0) { res.status(400).json({ error: "لا توجد فواتير للإرسال" }); return; }
-  if (rows.length > 5000) { res.status(400).json({ error: "الحد الأقصى 5000 فاتورة في الدفعة الواحدة" }); return; }
+  // Lowered from 5000 → 1000 to bound the time the FOR UPDATE lock is
+  // held during per-row UBL/QR generation (~5ms each on average). Larger
+  // batches should be split client-side; future Phase 1B.2 will move the
+  // XML build to a post-commit worker so this ceiling can be raised again.
+  if (rows.length > 1000) { res.status(400).json({ error: "الحد الأقصى 1000 فاتورة في الدفعة الواحدة" }); return; }
 
   // Atomic transaction: SELECT ... FOR UPDATE locks the client row so
   // concurrent submit-batch calls for the same tenant cannot race on
@@ -527,6 +532,24 @@ router.post("/:id/submit-batch", async (req, res) => {
 
       const status = client.zatcaEnv === "sandbox" ? "sandbox_cleared" : "queued_for_zatca";
 
+      // Phase 1B: pre-build UBL XML + TLV QR at insert time. Failures
+      // here downgrade the row to `rejected` (so the chain stays intact
+      // — ICV is rolled back in the catch below).
+      let built: { ublXml: string; qrTlv: string };
+      try {
+        const { ublXml, qrTlv } = buildUblForGatewayInvoice(canonical as GatewayCanonical, {
+          nameAr:    client.nameAr,
+          nameEn:    client.nameEn,
+          vatNumber: client.vatNumber,
+          crNumber:  client.crNumber,
+          addressAr: client.addressAr,
+          city:      client.city,
+        });
+        built = { ublXml, qrTlv };
+      } catch (be) {
+        throw new Error(`فشل بناء UBL/QR: ${(be as Error).message}`);
+      }
+
       insertRows.push({
         clientId: id,
         fileName,
@@ -537,11 +560,14 @@ router.post("/:id/submit-batch", async (req, res) => {
         status,
         zatcaUuid: uuid,
         zatcaResponse: status === "sandbox_cleared"
-          ? { mode: "sandbox", note: "ZATCA HTTP not called in Phase 1; chain + canonical payload validated" }
-          : { mode: "production", note: "Queued — awaiting Phase 1B (real UBL build + ZATCA POST)" },
+          ? { mode: "sandbox", note: "Sandbox accepted — UBL + TLV QR built locally, ZATCA HTTP skipped" }
+          : { mode: "production", note: "Queued — UBL + QR ready, awaiting ZATCA HTTP submit" },
         icv, pih, invoiceHash,
         invoiceType: invType, invoiceFlow: flow,
         canonicalJson: canonical,
+        ublXml: built.ublXml,
+        qrTlv:  built.qrTlv,
+        clearanceStatus: status === "sandbox_cleared" ? "cleared" : "pending",
         ip: req.ip ?? null,
         processedAt: new Date(),
       });
@@ -606,6 +632,139 @@ router.get("/:id/invoices/:invId/canonical", async (req, res) => {
     .limit(1);
   if (!row) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
   res.json(row);
+});
+
+// ─── Download UBL 2.1 XML (text/xml) ──────────────────────────────────
+// Lazily builds + persists the UBL if missing (handy for legacy rows
+// inserted before Phase 1B). Returns 404 if no canonical payload exists.
+router.get("/:id/invoices/:invId/ubl", async (req, res) => {
+  const clientId = Number(req.params.id);
+  const invId = Number(req.params.invId);
+  if (!Number.isFinite(clientId) || !Number.isFinite(invId)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+  const [inv] = await db.select().from(gatewayInvoicesTable)
+    .where(and(eq(gatewayInvoicesTable.id, invId), eq(gatewayInvoicesTable.clientId, clientId)))
+    .limit(1);
+  if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+
+  let ublXml = inv.ublXml;
+  if (!ublXml) {
+    if (!inv.canonicalJson) { res.status(404).json({ error: "لا توجد بيانات لإعادة بناء UBL" }); return; }
+    const [client] = await db.select().from(gatewayClientsTable).where(eq(gatewayClientsTable.id, clientId)).limit(1);
+    if (!client) { res.status(404).json({ error: "العميل غير موجود" }); return; }
+    const built = buildUblForGatewayInvoice(inv.canonicalJson as GatewayCanonical, client);
+    ublXml = built.ublXml;
+    await db.update(gatewayInvoicesTable).set({ ublXml: built.ublXml, qrTlv: built.qrTlv })
+      .where(eq(gatewayInvoicesTable.id, invId));
+  }
+  res.setHeader("Content-Type", "application/xml; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="invoice-${inv.invoiceNumber || inv.id}.xml"`);
+  res.send(ublXml);
+});
+
+// ─── Render bundle for the beautiful invoice viewer page ──────────────
+// Returns: canonical, qrTlv, client meta, status. Viewer renders the QR
+// PNG client-side via qrcode.react.
+router.get("/:id/invoices/:invId/render", async (req, res) => {
+  const clientId = Number(req.params.id);
+  const invId = Number(req.params.invId);
+  if (!Number.isFinite(clientId) || !Number.isFinite(invId)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+  const [inv] = await db.select().from(gatewayInvoicesTable)
+    .where(and(eq(gatewayInvoicesTable.id, invId), eq(gatewayInvoicesTable.clientId, clientId)))
+    .limit(1);
+  if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+  const [client] = await db.select({
+    id: gatewayClientsTable.id,
+    nameAr: gatewayClientsTable.nameAr,
+    nameEn: gatewayClientsTable.nameEn,
+    vatNumber: gatewayClientsTable.vatNumber,
+    crNumber: gatewayClientsTable.crNumber,
+    addressAr: gatewayClientsTable.addressAr,
+    city: gatewayClientsTable.city,
+    contactEmail: gatewayClientsTable.contactEmail,
+    contactPhone: gatewayClientsTable.contactPhone,
+    zatcaEnv: gatewayClientsTable.zatcaEnv,
+  }).from(gatewayClientsTable).where(eq(gatewayClientsTable.id, clientId)).limit(1);
+  if (!client) { res.status(404).json({ error: "العميل غير موجود" }); return; }
+
+  // Lazily build QR if missing — same self-healing as /ubl above.
+  let qrTlv = inv.qrTlv;
+  if (!qrTlv && inv.canonicalJson) {
+    const built = buildUblForGatewayInvoice(inv.canonicalJson as GatewayCanonical, client);
+    qrTlv = built.qrTlv;
+    await db.update(gatewayInvoicesTable).set({ qrTlv: built.qrTlv, ublXml: inv.ublXml ?? built.ublXml })
+      .where(eq(gatewayInvoicesTable.id, invId));
+  }
+
+  res.json({
+    invoice: {
+      id: inv.id,
+      invoiceNumber: inv.invoiceNumber,
+      invoiceDate: inv.invoiceDate,
+      totalAmount: inv.totalAmount,
+      vatAmount: inv.vatAmount,
+      status: inv.status,
+      clearanceStatus: inv.clearanceStatus,
+      zatcaUuid: inv.zatcaUuid,
+      zatcaSubmittedAt: inv.zatcaSubmittedAt,
+      icv: inv.icv,
+      invoiceFlow: inv.invoiceFlow,
+      invoiceType: inv.invoiceType,
+      receivedAt: inv.receivedAt,
+      canonical: inv.canonicalJson,
+      qrTlv,
+    },
+    client,
+  });
+});
+
+// ─── Manual ZATCA submit / retry ──────────────────────────────────────
+// Phase 1B placeholder: marks `queued_for_zatca` rows as `cleared` once
+// UBL + QR are present (sandbox-style ack). Real production XAdES + HTTP
+// POST to ZATCA Compliance/Production endpoints lands in Phase 1B.2.
+router.post("/:id/invoices/:invId/submit-zatca", async (req, res) => {
+  const clientId = Number(req.params.id);
+  const invId = Number(req.params.invId);
+  if (!Number.isFinite(clientId) || !Number.isFinite(invId)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+  const [inv] = await db.select().from(gatewayInvoicesTable)
+    .where(and(eq(gatewayInvoicesTable.id, invId), eq(gatewayInvoicesTable.clientId, clientId)))
+    .limit(1);
+  if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+  if (inv.status === "cleared") { res.json({ ok: true, alreadyCleared: true }); return; }
+  if (!inv.canonicalJson) { res.status(400).json({ error: "لا توجد بيانات للإرسال" }); return; }
+
+  const [client] = await db.select().from(gatewayClientsTable).where(eq(gatewayClientsTable.id, clientId)).limit(1);
+  if (!client) { res.status(404).json({ error: "العميل غير موجود" }); return; }
+
+  // Self-heal UBL + QR if missing.
+  let ublXml = inv.ublXml; let qrTlv = inv.qrTlv;
+  if (!ublXml || !qrTlv) {
+    const built = buildUblForGatewayInvoice(inv.canonicalJson as GatewayCanonical, client);
+    ublXml = built.ublXml; qrTlv = built.qrTlv;
+  }
+
+  // TODO Phase 1B.2: XAdES-BES sign with client.zatcaPrivateKeyEnc, then
+  // POST to https://gw-fatoora.zatca.gov.sa/.../invoices/single (prod) or
+  // /clearance/single. We MUST NOT mark production rows as `cleared` here
+  // — that would falsely show "مجاز من زاتكا" without any real ZATCA
+  // response. Sandbox stays `sandbox_cleared` (already a non-prod label).
+  const now = new Date();
+  const newStatus = client.zatcaEnv === "sandbox" ? "sandbox_cleared" : "manual_ack";
+  await db.update(gatewayInvoicesTable).set({
+    ublXml, qrTlv,
+    status: newStatus,
+    clearanceStatus: client.zatcaEnv === "sandbox" ? "cleared" : "pending",
+    zatcaSubmittedAt: now,
+    zatcaResponse: { mode: client.zatcaEnv, note: "Manual ack — UBL + QR persisted. Real XAdES + ZATCA HTTP POST pending Phase 1B.2.", at: now.toISOString() },
+  }).where(eq(gatewayInvoicesTable.id, invId));
+
+  void writeAudit({
+    userId: req.authUser!.id, username: req.authUser!.username, role: req.authUser!.role, companyId: null,
+    module: "gateway_clients", action: "update",
+    method: req.method, path: req.originalUrl, statusCode: 200,
+    metadata: { clientId, invId, newStatus, env: client.zatcaEnv },
+  });
+
+  res.json({ ok: true, status: newStatus, env: client.zatcaEnv });
 });
 
 // ─── List clients available for invoice submission (used by scan UI) ─

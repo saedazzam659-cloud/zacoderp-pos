@@ -79,6 +79,13 @@ export const gatewayInvoicesTable = pgTable("gateway_invoices", {
   invoiceType:     text("invoice_type"),         // 388 / 381 / 383
   invoiceFlow:     text("invoice_flow"),         // standard / simplified
   canonicalJson:   jsonb("canonical_json"),      // normalized invoice payload
+  // Phase 1B: built UBL XML + base64 TLV QR (used by viewer + PDF)
+  ublXml:          text("ubl_xml"),
+  qrTlv:           text("qr_tlv"),
+  // Phase 1B: ZATCA HTTP submission tracking
+  zatcaSubmittedAt: timestamp("zatca_submitted_at"),
+  clearanceStatus:  text("clearance_status"),    // pending | cleared | rejected | warning
+  clearanceNotes:   jsonb("clearance_notes"),    // raw warnings/errors from ZATCA
   receivedAt:      timestamp("received_at").defaultNow().notNull(),
   processedAt:     timestamp("processed_at"),
   ip:              text("ip"),
