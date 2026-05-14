@@ -3,7 +3,8 @@ import * as XLSX from "xlsx";
 import {
   X, FileSpreadsheet, ShieldCheck, AlertTriangle, CheckCircle2,
   Wand2, Download, Send, Search, Filter, Pencil, RefreshCw,
-  TrendingUp, FileWarning, FileCheck2, Eye, Sparkles,
+  TrendingUp, FileWarning, FileCheck2, Eye, Sparkles, Building2,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -287,13 +288,40 @@ export function downloadZatcaTemplate() {
 // ──────────────────────────────────────────────────────────────────────
 // MAIN PREVIEW MODAL
 // ──────────────────────────────────────────────────────────────────────
+// Picker option supplied by IntegrationGateway after fetching
+// /api/admin/gateway-clients/picker/list. Only "active" clients appear.
+export interface GatewayClientPick {
+  id: number;
+  nameAr: string;
+  nameEn: string | null;
+  vatNumber: string;
+  zatcaEnv: "sandbox" | "production";
+  hasCredentials: boolean;
+  monthlyQuota: number;
+  invoicesThisMonth: number;
+  lastIcv: number;
+}
+
+export interface SubmitResult {
+  submitted: number;
+  rejected: number;
+  env: "sandbox" | "production";
+  results: Array<{ invoiceNumber: string; status: string; uuid?: string; icv?: number; error?: string }>;
+  chain: { lastIcv: number; lastPih: string };
+}
+
 interface Props {
   file: File;
   onClose: () => void;
-  onConfirm: (rows: ZatcaRow[]) => void;
+  // Legacy callback (used when no real-submit path is wired). When clients
+  // is supplied, submission goes directly to the API and onConfirm is
+  // invoked with the result for parent toasts/cleanup.
+  onConfirm: (rows: ZatcaRow[], result?: SubmitResult) => void;
+  clients?: GatewayClientPick[];
+  loadingClients?: boolean;
 }
 
-export default function ZatcaScanPreview({ file, onClose, onConfirm }: Props) {
+export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, loadingClients }: Props) {
   const { toast } = useToast();
   const [rows, setRows] = useState<ZatcaRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -301,6 +329,12 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm }: Props) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "errors" | "warnings" | "ok">("all");
   const [editingCell, setEditingCell] = useState<{ row: number; key: keyof ZatcaRow } | null>(null);
+  const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const selectedClient = useMemo(
+    () => clients?.find(c => c.id === selectedClientId) ?? null,
+    [clients, selectedClientId],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -371,7 +405,7 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm }: Props) {
     }));
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (stats.errors > 0) {
       toast({
         title: "لا يمكن الإصدار قبل تصحيح الأخطاء",
@@ -380,7 +414,49 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm }: Props) {
       });
       return;
     }
-    onConfirm(rows);
+    // No clients prop means legacy demo flow — just bubble up.
+    if (!clients) { onConfirm(rows); return; }
+
+    if (!selectedClient) {
+      toast({ title: "اختر الشركة المُرسِلة", description: "يجب اختيار شركة مُسجَّلة لإرسال الفواتير لزاتكا باسمها.", variant: "destructive" });
+      return;
+    }
+    if (selectedClient.zatcaEnv === "production" && !selectedClient.hasCredentials) {
+      toast({ title: "مفاتيح زاتكا غير مكتملة", description: "هذه الشركة في وضع الإنتاج لكن بدون CSID — لا يمكن الإرسال.", variant: "destructive" });
+      return;
+    }
+    const remaining = selectedClient.monthlyQuota - selectedClient.invoicesThisMonth;
+    if (remaining < rows.length) {
+      toast({ title: "الحصة الشهرية غير كافية", description: `المتبقي للشركة ${remaining.toLocaleString("ar-EG")} فاتورة، والدفعة ${rows.length.toLocaleString("ar-EG")}.`, variant: "destructive" });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const token = localStorage.getItem("zatca_token");
+      const res = await fetch(`/api/admin/gateway-clients/${selectedClient.id}/submit-batch`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ rows, fileName: file.name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "فشل الإرسال");
+      const result = data as SubmitResult;
+      const isSandbox = result.env === "sandbox";
+      toast({
+        title: isSandbox ? "تم الإرسال (وضع التجربة)" : "تم تجهيز الدفعة للإنتاج",
+        description: `${result.submitted.toLocaleString("ar-EG")} ناجحة، ${result.rejected.toLocaleString("ar-EG")} مرفوضة. ICV: ${result.chain.lastIcv}`,
+      });
+      onConfirm(rows, result);
+    } catch (e) {
+      toast({ title: "تعذّر الإرسال", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleExportValidated = () => {
@@ -601,37 +677,78 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm }: Props) {
         </div>
 
         {/* ── FOOTER ─────────────────────────────────────────────── */}
-        <div className="border-t bg-white p-3 sm:p-4 flex items-center justify-between gap-3 flex-wrap shrink-0">
-          <div className="text-sm">
-            {stats.errors > 0 ? (
-              <span className="text-rose-700 font-bold flex items-center gap-1.5">
-                <AlertTriangle className="h-4 w-4" />
-                لا يمكن الإصدار — {stats.errors} فاتورة بحاجة تصحيح
-              </span>
-            ) : stats.warnings > 0 ? (
-              <span className="text-amber-700 font-semibold">
-                ⚠️ {stats.warnings} تحذير — يمكن المتابعة لكن يُنصح بالمراجعة
-              </span>
-            ) : rows.length > 0 ? (
-              <span className="text-emerald-700 font-bold flex items-center gap-1.5">
-                <CheckCircle2 className="h-4 w-4" />
-                كل الفواتير مطابقة لمعايير زاتكا — جاهزة للإرسال
-              </span>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={onClose}>
-              إلغاء
-            </Button>
-            <Button
-              onClick={handleConfirm}
-              disabled={loading || rows.length === 0 || stats.errors > 0}
-              className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-90 text-white font-bold gap-2 min-w-[160px]"
-              size="lg"
-            >
-              <Send className="h-4 w-4" />
-              إرسال {rows.length > 0 ? `(${rows.length})` : ""} إلى زاتكا
-            </Button>
+        <div className="border-t bg-white p-3 sm:p-4 space-y-3 shrink-0">
+          {/* Company picker — only shown when integrated with the gateway */}
+          {clients && (
+            <div className="rounded-xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 to-violet-50 p-3 flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2 text-indigo-900 font-bold text-sm shrink-0">
+                <Building2 className="h-4 w-4" />
+                إرسال نيابةً عن:
+              </div>
+              {loadingClients ? (
+                <div className="text-xs text-slate-500 flex items-center gap-1"><Loader2 className="h-3.5 w-3.5 animate-spin" />جاري تحميل الشركات...</div>
+              ) : clients.length === 0 ? (
+                <div className="text-xs text-amber-800 bg-amber-100 rounded-lg px-2.5 py-1.5">
+                  ⚠️ لا توجد شركات مُفعَّلة. أضف شركة من صفحة "بوابة زاتكا" أولاً.
+                </div>
+              ) : (
+                <>
+                  <select
+                    value={selectedClientId ?? ""}
+                    onChange={e => setSelectedClientId(e.target.value ? Number(e.target.value) : null)}
+                    className="flex-1 min-w-[220px] h-9 rounded-md border-2 border-indigo-300 bg-white px-3 text-sm font-medium focus:border-indigo-500 focus:outline-none"
+                  >
+                    <option value="">— اختر شركة —</option>
+                    {clients.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.nameAr} • {c.vatNumber} {c.zatcaEnv === "production" ? "🟢 إنتاج" : "🟡 تجربة"} {!c.hasCredentials ? "⚠️" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedClient && (
+                    <div className="text-[11px] text-slate-700 flex items-center gap-3 font-mono">
+                      <span>المتبقي: <b className="text-emerald-700">{(selectedClient.monthlyQuota - selectedClient.invoicesThisMonth).toLocaleString("ar-EG")}</b></span>
+                      <span>•</span>
+                      <span>ICV الحالي: <b>{selectedClient.lastIcv}</b></span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-sm">
+              {stats.errors > 0 ? (
+                <span className="text-rose-700 font-bold flex items-center gap-1.5">
+                  <AlertTriangle className="h-4 w-4" />
+                  لا يمكن الإصدار — {stats.errors} فاتورة بحاجة تصحيح
+                </span>
+              ) : stats.warnings > 0 ? (
+                <span className="text-amber-700 font-semibold">
+                  ⚠️ {stats.warnings} تحذير — يمكن المتابعة لكن يُنصح بالمراجعة
+                </span>
+              ) : rows.length > 0 ? (
+                <span className="text-emerald-700 font-bold flex items-center gap-1.5">
+                  <CheckCircle2 className="h-4 w-4" />
+                  كل الفواتير مطابقة لمعايير زاتكا — جاهزة للإرسال
+                </span>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={onClose} disabled={submitting}>
+                إلغاء
+              </Button>
+              <Button
+                onClick={handleConfirm}
+                disabled={loading || rows.length === 0 || stats.errors > 0 || submitting || (clients !== undefined && !selectedClient)}
+                className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-90 text-white font-bold gap-2 min-w-[180px]"
+                size="lg"
+              >
+                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                {submitting ? "جاري الإرسال..." : `إرسال ${rows.length > 0 ? `(${rows.length})` : ""} إلى زاتكا`}
+              </Button>
+            </div>
           </div>
         </div>
       </div>

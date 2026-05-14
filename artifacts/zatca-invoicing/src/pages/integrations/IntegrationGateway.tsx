@@ -8,7 +8,7 @@ import {
   Download, ScanLine,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import ZatcaScanPreview, { downloadZatcaTemplate, type ZatcaRow } from "./ZatcaScanPreview";
+import ZatcaScanPreview, { downloadZatcaTemplate, type ZatcaRow, type GatewayClientPick, type SubmitResult } from "./ZatcaScanPreview";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
@@ -197,7 +197,7 @@ function timeAgoAr(ts: number): string {
 
 export default function IntegrationGateway() {
   const { toast } = useToast();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [connections, setConnections] = useState<Connection[]>(() => loadLs(LS_KEYS.connections, [] as Connection[]));
   const [apiKeys, setApiKeys] = useState<ApiKey[]>(() => loadLs(LS_KEYS.apiKeys, [] as ApiKey[]));
   const [activity, setActivity] = useState<ActivityEntry[]>(() => loadLs(LS_KEYS.activity, [] as ActivityEntry[]));
@@ -236,6 +236,25 @@ export default function IntegrationGateway() {
     staleTime: 60_000,
   });
   const zatcaReady = zatcaStatus?.ready !== false;
+
+  // Active gateway clients (multi-tenant) for the scan-preview picker.
+  // Loaded lazily — when the modal opens. Falls back to [] silently for
+  // non-SuperAdmin users (the endpoint 403s) so the legacy demo flow
+  // remains usable.
+  const { data: gwClientsData, isLoading: loadingGwClients } = useQuery<{ clients: GatewayClientPick[] }>({
+    queryKey: ["gateway-clients-picker"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/gateway-clients/picker/list", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return { clients: [] as GatewayClientPick[] };
+      return res.json();
+    },
+    enabled: !!scanFile && user?.role === "superadmin",
+    refetchOnWindowFocus: false,
+    staleTime: 30_000,
+  });
+  const gwClients = gwClientsData?.clients;
 
   const stats = useMemo(() => {
     const totalInvoices = connections.reduce((s, c) => s + c.invoicesTotal, 0);
@@ -412,26 +431,32 @@ export default function IntegrationGateway() {
     }
   };
 
-  const handleScanConfirm = (rows: ZatcaRow[]) => {
+  const handleScanConfirm = (rows: ZatcaRow[], result?: SubmitResult) => {
     if (!scanFile) return;
     // The user has reviewed and approved the parsed rows. Push the file
-    // into the upload pipeline with the validated invoice count baked in
-    // so the UploadRow stats reflect what was actually approved.
+    // into the upload pipeline. When `result` is supplied (real gateway
+    // submission via the picker) we use the server-reported counts as
+    // the authoritative source-of-truth for the UploadRow.
     const id = rid();
+    const submitted = result?.submitted ?? 0;
+    const isFailed = result ? result.submitted === 0 && result.rejected > 0 : false;
     const u: UploadedFile = {
       id,
       name: scanFile.name,
       size: scanFile.size,
       ext: scanFile.name.split(".").pop()?.toLowerCase() ?? "",
       ts: Date.now(),
-      status: "queued",
-      progress: 5,
+      status: result ? (isFailed ? "failed" : "done") : "queued",
+      progress: result ? 100 : 5,
       invoicesFound: rows.length,
-      invoicesSubmitted: 0,
+      invoicesSubmitted: result ? submitted : 0,
+      errorMsg: isFailed ? `جميع الفواتير مرفوضة (${result?.rejected})` : undefined,
     };
     setUploads(prev => [u, ...prev]);
-    toast({ title: "تم تأكيد الفواتير", description: `${rows.length} فاتورة مطابقة لزاتكا — جاري الإرسال` });
-    setTimeout(() => processUpload(id), 100);
+    if (!result) {
+      toast({ title: "تم تأكيد الفواتير", description: `${rows.length} فاتورة مطابقة لزاتكا — جاري الإرسال` });
+      setTimeout(() => processUpload(id), 100);
+    }
 
     // Move on to the next pending file (if any)
     if (pendingFiles.length > 0) {
@@ -913,6 +938,8 @@ export default function IntegrationGateway() {
           file={scanFile}
           onClose={handleScanClose}
           onConfirm={handleScanConfirm}
+          clients={user?.role === "superadmin" ? gwClients : undefined}
+          loadingClients={loadingGwClients}
         />
       )}
 

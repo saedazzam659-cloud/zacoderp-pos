@@ -14,6 +14,20 @@ export const gatewayClientsTable = pgTable("gateway_clients", {
   zatcaPcsidEnc:     text("zatca_pcsid_enc"),
   zatcaPrivateKeyEnc: text("zatca_private_key_enc"),
   zatcaEnv:          text("zatca_env").notNull().default("sandbox"),
+  // ZATCA invoice chain state — must increment monotonically per device
+  // (CSID). lastIcv = Invoice Counter Value of the last submitted invoice.
+  // lastInvoiceHash = SHA-256 hash of the last invoice (used as PIH —
+  // Previous Invoice Hash — for the next one). Both reset only when a
+  // new device serial is registered.
+  lastIcv:           integer("last_icv").notNull().default(0),
+  lastInvoiceHash:   text("last_invoice_hash"),
+  egsSerial:         text("egs_serial"),
+  // Onboarding-wizard artifacts (Option B). When the SuperAdmin generates
+  // a CSR through our wizard we store the public CSR (so they can re-
+  // download it) plus the encrypted private key so we can use it for
+  // signing once ZATCA returns the matching CSID.
+  csrPem:            text("csr_pem"),
+  csrPrivateKeyEnc:  text("csr_private_key_enc"),
   status:            text("status").notNull().default("pending"),
   notes:             text("notes"),
   monthlyQuota:      integer("monthly_quota").notNull().default(1000),
@@ -58,6 +72,13 @@ export const gatewayInvoicesTable = pgTable("gateway_invoices", {
   zatcaUuid:       text("zatca_uuid"),
   zatcaResponse:   jsonb("zatca_response"),
   errorMessage:    text("error_message"),
+  // ZATCA chain fields snapshot (for audit + replay)
+  icv:             integer("icv"),
+  pih:             text("pih"),                  // previous invoice hash used
+  invoiceHash:     text("invoice_hash"),         // sha256 of canonical payload (becomes PIH for next)
+  invoiceType:     text("invoice_type"),         // 388 / 381 / 383
+  invoiceFlow:     text("invoice_flow"),         // standard / simplified
+  canonicalJson:   jsonb("canonical_json"),      // normalized invoice payload
   receivedAt:      timestamp("received_at").defaultNow().notNull(),
   processedAt:     timestamp("processed_at"),
   ip:              text("ip"),

@@ -192,6 +192,20 @@ router.post("/:id/credentials", async (req, res) => {
   if (typeof pcsid === "string" && pcsid.trim()) patch["zatcaPcsidEnc"] = encryptValue(pcsid.trim());
   if (typeof privateKey === "string" && privateKey.trim()) patch["zatcaPrivateKeyEnc"] = encryptValue(privateKey.trim());
 
+  // CSR-wizard alignment: if the user pasted a CSID without an explicit
+  // private key, promote the CSR-generated key (csr_private_key_enc) to
+  // be the active signing key so production submit-batch passes the
+  // hasFullCreds check.
+  if (patch["zatcaCsidEnc"] && !patch["zatcaPrivateKeyEnc"]) {
+    const [existing] = await db.select({
+      hasZatcaPK: sql<boolean>`${gatewayClientsTable.zatcaPrivateKeyEnc} IS NOT NULL`,
+      csrPK: gatewayClientsTable.csrPrivateKeyEnc,
+    }).from(gatewayClientsTable).where(eq(gatewayClientsTable.id, id)).limit(1);
+    if (existing && !existing.hasZatcaPK && existing.csrPK) {
+      patch["zatcaPrivateKeyEnc"] = existing.csrPK;
+    }
+  }
+
   const [updated] = await db.update(gatewayClientsTable).set(patch).where(eq(gatewayClientsTable.id, id)).returning({ id: gatewayClientsTable.id });
   if (!updated) { res.status(404).json({ error: "العميل غير موجود" }); return; }
 
@@ -320,6 +334,299 @@ router.get("/:id/invoices", async (req, res) => {
     .orderBy(desc(gatewayInvoicesTable.receivedAt))
     .limit(limit);
   res.json({ invoices: rows });
+});
+
+// ─── Generate CSR + private key for ZATCA onboarding (Option B) ──────
+// Wizard step 1: produce a CSR the SuperAdmin downloads and uploads to
+// ZATCA's Fatoora portal (or to ZATCA's compliance API in a later phase).
+// We persist the public CSR so it can be re-downloaded any time, plus the
+// matching private key encrypted at rest. Once ZATCA returns the CSID,
+// the existing /credentials endpoint stores it next to the same key.
+import { execFileSync } from "child_process";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+
+router.post("/:id/generate-csr", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+  const [client] = await db.select().from(gatewayClientsTable).where(eq(gatewayClientsTable.id, id)).limit(1);
+  if (!client) { res.status(404).json({ error: "العميل غير موجود" }); return; }
+  const { commonName, organizationName, organizationalUnit, countryCode, invoiceType, locationAddress, businessCategory, egsSerial: egsIn } = req.body ?? {};
+  const cn = (typeof commonName === "string" && commonName.trim()) || `${client.nameEn || client.nameAr}-EGS`;
+  const org = (typeof organizationName === "string" && organizationName.trim()) || (client.nameEn || client.nameAr);
+  const ou = (typeof organizationalUnit === "string" && organizationalUnit.trim()) || "Main Branch";
+  const cc = (typeof countryCode === "string" && countryCode.length === 2) ? countryCode.toUpperCase() : "SA";
+  const invType = (typeof invoiceType === "string" && /^[01]{4}$/.test(invoiceType)) ? invoiceType : "1100"; // standard+simplified
+  const loc = (typeof locationAddress === "string" && locationAddress.trim()) || (client.addressAr || client.city || "Saudi Arabia");
+  const cat = (typeof businessCategory === "string" && businessCategory.trim()) || "General";
+  const serial = (typeof egsIn === "string" && egsIn.trim()) || `1-Solution|2-${id}|3-${randomBytes(6).toString("hex").toUpperCase()}`;
+
+  const dir = mkdtempSync(join(tmpdir(), "zgw-csr-"));
+  try {
+    const cnf = join(dir, "csr.cnf");
+    const keyFile = join(dir, "key.pem");
+    const csrFile = join(dir, "req.pem");
+    // ZATCA requires custom OIDs in the CSR (see Fatoora taxpayer portal docs).
+    // The OID 1.3.6.1.4.1.311.20.2 = Microsoft template name (used by ZATCA
+    // to flag the CSR profile: ZATCA-Code-Signing). The subjectAltName carries
+    // EGS serial (DIR), invoice type (DIR), business category (DIR).
+    writeFileSync(cnf, `
+[ req ]
+default_bits        = 2048
+prompt              = no
+default_md          = sha256
+distinguished_name  = dn
+req_extensions      = v3_req
+
+[ dn ]
+CN = ${cn}
+O  = ${org}
+OU = ${ou}
+C  = ${cc}
+
+[ v3_req ]
+basicConstraints     = CA:FALSE
+keyUsage             = digitalSignature, nonRepudiation, keyEncipherment
+1.3.6.1.4.1.311.20.2 = ASN1:UTF8String:ZATCA-Code-Signing
+subjectAltName       = dirName:alt_names
+
+[ alt_names ]
+SN = ${serial}
+UID = ${client.vatNumber}
+title = ${invType}
+registeredAddress = ${loc}
+businessCategory = ${cat}
+`.trim() + "\n");
+
+    execFileSync("openssl", ["genrsa", "-out", keyFile, "2048"], { stdio: "ignore" });
+    execFileSync("openssl", ["req", "-new", "-key", keyFile, "-out", csrFile, "-config", cnf], { stdio: "ignore" });
+    const csrPem = readFileSync(csrFile, "utf8").trim();
+    const keyPem = readFileSync(keyFile, "utf8").trim();
+
+    await db.update(gatewayClientsTable).set({
+      csrPem,
+      csrPrivateKeyEnc: encryptValue(keyPem),
+      egsSerial: serial,
+      updatedAt: new Date(),
+    }).where(eq(gatewayClientsTable.id, id));
+
+    void writeAudit({
+      userId: req.authUser!.id, username: req.authUser!.username, role: req.authUser!.role, companyId: null,
+      module: "gateway_clients", action: "create",
+      method: req.method, path: req.originalUrl, statusCode: 200,
+      metadata: { clientId: id, action: "generate_csr", egsSerial: serial },
+    });
+
+    res.json({ csrPem, egsSerial: serial });
+  } catch (err) {
+    req.log?.error({ err }, "CSR generation failed");
+    res.status(500).json({ error: "فشل توليد طلب الشهادة (CSR)", detail: String((err as Error).message ?? err) });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+router.get("/:id/csr", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+  const [c] = await db.select({ csrPem: gatewayClientsTable.csrPem, egsSerial: gatewayClientsTable.egsSerial })
+    .from(gatewayClientsTable).where(eq(gatewayClientsTable.id, id)).limit(1);
+  if (!c?.csrPem) { res.status(404).json({ error: "لم يتم توليد CSR لهذا العميل بعد" }); return; }
+  res.json({ csrPem: c.csrPem, egsSerial: c.egsSerial });
+});
+
+// ─── Submit a validated invoice batch from the scan-preview UI ────────
+// Each row is normalized into a canonical JSON payload, the ICV/PIH chain
+// is advanced, and the result is persisted to gateway_invoices. For the
+// first phase we DO NOT yet POST the signed UBL to ZATCA's HTTP endpoint
+// — that requires per-tenant UBL building + xades signing which lives in
+// the existing zatca.ts pipeline and will be wired in Phase 1B. Status is
+// set to 'queued_for_zatca' (production env) or 'sandbox_cleared'
+// (sandbox env) so the UI can show progress honestly.
+import { createHash as createHashSubmit } from "crypto";
+router.post("/:id/submit-batch", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+  const rows = req.body?.rows;
+  const fileName = typeof req.body?.fileName === "string" ? req.body.fileName : null;
+  if (!Array.isArray(rows) || rows.length === 0) { res.status(400).json({ error: "لا توجد فواتير للإرسال" }); return; }
+  if (rows.length > 5000) { res.status(400).json({ error: "الحد الأقصى 5000 فاتورة في الدفعة الواحدة" }); return; }
+
+  // Atomic transaction: SELECT ... FOR UPDATE locks the client row so
+  // concurrent submit-batch calls for the same tenant cannot race on
+  // ICV/PIH chain progression or quota counters.
+  type ErrOut = { kind: "err"; status: number; body: { error: string } };
+  type OkOut = { kind: "ok"; submitted: number; rejected: number; env: string; results: Array<{ invoiceNumber: string; status: string; uuid?: string; icv?: number; error?: string }>; chain: { lastIcv: number; lastPih: string }; totalAmt: number; totalVat: number };
+
+  const txResult: ErrOut | OkOut = await db.transaction(async (tx) => {
+    const lockRes = await tx.execute(
+      sql`SELECT * FROM ${gatewayClientsTable} WHERE ${gatewayClientsTable.id} = ${id} FOR UPDATE`
+    );
+    const lockedRows = ((lockRes as unknown as { rows?: unknown[] }).rows ?? (lockRes as unknown as unknown[])) as Array<typeof gatewayClientsTable.$inferSelect>;
+    const client = lockedRows[0];
+
+    if (!client) return { kind: "err", status: 404, body: { error: "العميل غير موجود" } } as ErrOut;
+    if (client.status !== "active") return { kind: "err", status: 403, body: { error: "العميل غير مُفعَّل — يرجى تفعيله أولاً" } } as ErrOut;
+
+    const hasFullCreds = !!(client.zatcaCsidEnc && client.zatcaPrivateKeyEnc);
+    if (client.zatcaEnv === "production" && !hasFullCreds) {
+      return { kind: "err", status: 400, body: { error: "ينقص CSID أو المفتاح الخاص — لا يمكن الإرسال للإنتاج بدونها" } } as ErrOut;
+    }
+
+    const remaining = client.monthlyQuota - client.invoicesThisMonth;
+    if (remaining < rows.length) {
+      return { kind: "err", status: 429, body: { error: `الحصة الشهرية المتبقية (${remaining}) أقل من عدد الفواتير (${rows.length})` } } as ErrOut;
+    }
+
+    let icv = client.lastIcv;
+    let pih = client.lastInvoiceHash || "0".repeat(64);
+    const results: Array<{ invoiceNumber: string; status: string; uuid?: string; icv?: number; error?: string }> = [];
+    const insertRows: Array<typeof gatewayInvoicesTable.$inferInsert> = [];
+    let totalAmt = 0; let totalVat = 0;
+
+    for (const r of rows) {
+    try {
+      icv += 1;
+      const invoiceNumber = String(r.invoiceNumber || "").trim();
+      if (!invoiceNumber) throw new Error("رقم الفاتورة مفقود");
+      const total = Number(r.totalInclVat) || 0;
+      const vat = Number(r.vatAmount) || 0;
+      const flow = (r.buyerVat && /^\d{15}$/.test(String(r.buyerVat))) ? "standard" : "simplified";
+      const invType = String(r.invoiceType || "388");
+
+      const canonical = {
+        seller: { name: r.sellerName, vat: r.sellerVat },
+        buyer:  { name: r.buyerName, vat: r.buyerVat || null },
+        invoice: {
+          number: invoiceNumber, type: invType, flow,
+          issueDate: r.issueDate, issueTime: r.issueTime || "00:00:00",
+          currency: r.currency || "SAR",
+          icv, pih,
+        },
+        line: {
+          item: r.itemName, qty: Number(r.quantity) || 0,
+          unitPrice: Number(r.unitPrice) || 0,
+          vatRate: Number(r.vatRate) || 0, vatCategory: r.vatCategory || "S",
+          totalExclVat: Number(r.totalExclVat) || 0,
+          vatAmount: vat, totalInclVat: total,
+        },
+        egs: { serial: client.egsSerial || null, vat: client.vatNumber },
+      };
+      // Hash the canonical payload (this becomes PIH for next invoice)
+      const invoiceHash = createHashSubmit("sha256")
+        .update(JSON.stringify(canonical))
+        .digest("hex");
+
+      // UUID v4-ish from hash
+      const uuid = [
+        invoiceHash.slice(0, 8), invoiceHash.slice(8, 12), "4" + invoiceHash.slice(13, 16),
+        ((parseInt(invoiceHash[16], 16) & 0x3) | 0x8).toString(16) + invoiceHash.slice(17, 20),
+        invoiceHash.slice(20, 32),
+      ].join("-");
+
+      const status = client.zatcaEnv === "sandbox" ? "sandbox_cleared" : "queued_for_zatca";
+
+      insertRows.push({
+        clientId: id,
+        fileName,
+        invoiceNumber,
+        invoiceDate: r.issueDate ? new Date(r.issueDate) : null,
+        totalAmount: String(total),
+        vatAmount: String(vat),
+        status,
+        zatcaUuid: uuid,
+        zatcaResponse: status === "sandbox_cleared"
+          ? { mode: "sandbox", note: "ZATCA HTTP not called in Phase 1; chain + canonical payload validated" }
+          : { mode: "production", note: "Queued — awaiting Phase 1B (real UBL build + ZATCA POST)" },
+        icv, pih, invoiceHash,
+        invoiceType: invType, invoiceFlow: flow,
+        canonicalJson: canonical,
+        ip: req.ip ?? null,
+        processedAt: new Date(),
+      });
+
+      results.push({ invoiceNumber, status, uuid, icv });
+      pih = invoiceHash;
+      totalAmt += total; totalVat += vat;
+      } catch (e) {
+        results.push({ invoiceNumber: String(r.invoiceNumber || ""), status: "rejected", error: (e as Error).message });
+        icv -= 1; // do not consume ICV on validation failure
+      }
+    }
+
+    if (insertRows.length > 0) {
+      await tx.insert(gatewayInvoicesTable).values(insertRows);
+      await tx.update(gatewayClientsTable).set({
+        lastIcv: icv,
+        lastInvoiceHash: pih,
+        invoicesThisMonth: client.invoicesThisMonth + insertRows.length,
+        totalInvoices: client.totalInvoices + insertRows.length,
+        lastInvoiceAt: new Date(),
+        updatedAt: new Date(),
+      }).where(eq(gatewayClientsTable.id, id));
+    }
+
+    return {
+      kind: "ok",
+      submitted: insertRows.length,
+      rejected: results.length - insertRows.length,
+      env: client.zatcaEnv,
+      results,
+      chain: { lastIcv: icv, lastPih: pih },
+      totalAmt, totalVat,
+    } as OkOut;
+  });
+
+  if (txResult.kind === "err") { res.status(txResult.status).json(txResult.body); return; }
+
+  void writeAudit({
+    userId: req.authUser!.id, username: req.authUser!.username, role: req.authUser!.role, companyId: null,
+    module: "gateway_clients", action: "create",
+    method: req.method, path: req.originalUrl, statusCode: 200,
+    metadata: { clientId: id, submitted: txResult.submitted, rejected: txResult.rejected, totalAmt: txResult.totalAmt, totalVat: txResult.totalVat, env: txResult.env },
+  });
+
+  res.json({
+    submitted: txResult.submitted,
+    rejected: txResult.rejected,
+    env: txResult.env,
+    results: txResult.results,
+    chain: txResult.chain,
+  });
+});
+
+// ─── Download canonical JSON for a single invoice ─────────────────────
+router.get("/:id/invoices/:invId/canonical", async (req, res) => {
+  const clientId = Number(req.params.id);
+  const invId = Number(req.params.invId);
+  if (!Number.isFinite(clientId) || !Number.isFinite(invId)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+  const [row] = await db.select().from(gatewayInvoicesTable)
+    .where(and(eq(gatewayInvoicesTable.id, invId), eq(gatewayInvoicesTable.clientId, clientId)))
+    .limit(1);
+  if (!row) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+  res.json(row);
+});
+
+// ─── List clients available for invoice submission (used by scan UI) ─
+// Lightweight endpoint: only id, name, env, hasCredentials, quota left.
+router.get("/picker/list", async (_req, res) => {
+  const rows = await db.select({
+    id: gatewayClientsTable.id,
+    nameAr: gatewayClientsTable.nameAr,
+    nameEn: gatewayClientsTable.nameEn,
+    vatNumber: gatewayClientsTable.vatNumber,
+    zatcaEnv: gatewayClientsTable.zatcaEnv,
+    status: gatewayClientsTable.status,
+    monthlyQuota: gatewayClientsTable.monthlyQuota,
+    invoicesThisMonth: gatewayClientsTable.invoicesThisMonth,
+    lastIcv: gatewayClientsTable.lastIcv,
+    hasCredentials: sql<boolean>`(${gatewayClientsTable.zatcaCsidEnc} IS NOT NULL AND ${gatewayClientsTable.zatcaPrivateKeyEnc} IS NOT NULL)`,
+  })
+    .from(gatewayClientsTable)
+    .where(eq(gatewayClientsTable.status, "active"))
+    .orderBy(gatewayClientsTable.nameAr);
+  res.json({ clients: rows });
 });
 
 // ─── Aggregate stats for the SuperAdmin dashboard card ────────────────

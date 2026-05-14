@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   KeyRound, Plus, Loader2, Building2, ShieldCheck, ShieldAlert, FileText,
   Copy, Check, Trash2, Edit3, Search, TrendingUp, AlertTriangle, Sparkles, Lock, Unlock,
+  Wand2, Download, Upload, ExternalLink, Hash, ArrowRight,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -42,6 +43,8 @@ interface ClientDetail extends Omit<Client, "hasCredentials" | "activeKeys"> {
   notes: string | null;
   hasCsid: boolean; hasPcsid: boolean; hasPrivateKey: boolean;
   updatedAt: string;
+  lastIcv?: number;
+  egsSerial?: string | null;
 }
 
 interface ApiKey {
@@ -522,6 +525,43 @@ function ClientInfoTab({ client, onSaved, onDeleted }: { client: ClientDetail; o
 }
 
 function CredentialsTab({ client, onSaved }: { client: ClientDetail; onSaved: () => void }) {
+  const [mode, setMode] = useState<"manual" | "wizard">("manual");
+  const allReady = client.hasCsid && client.hasPrivateKey;
+
+  return (
+    <div className="space-y-4">
+      {/* Mode selector — two onboarding paths */}
+      <div className="grid grid-cols-2 gap-3">
+        <button
+          onClick={() => setMode("manual")}
+          className={`rounded-xl border-2 p-3 text-right transition-all ${mode === "manual" ? "border-indigo-500 bg-indigo-50 shadow-md" : "border-slate-200 bg-white hover:border-slate-300"}`}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <Upload className={`h-4 w-4 ${mode === "manual" ? "text-indigo-600" : "text-slate-500"}`} />
+            <span className="font-bold text-sm">عند الشركة CSID جاهز</span>
+            {allReady && <Check className="h-3.5 w-3.5 text-emerald-600 mr-auto" />}
+          </div>
+          <p className="text-[11px] text-slate-600 leading-relaxed">الشركة تجيب CSID والمفتاح الخاص من بوابة فاتورة، وأنت تلصقهم هنا. الأسهل والأسرع.</p>
+        </button>
+        <button
+          onClick={() => setMode("wizard")}
+          className={`rounded-xl border-2 p-3 text-right transition-all ${mode === "wizard" ? "border-violet-500 bg-violet-50 shadow-md" : "border-slate-200 bg-white hover:border-slate-300"}`}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <Wand2 className={`h-4 w-4 ${mode === "wizard" ? "text-violet-600" : "text-slate-500"}`} />
+            <span className="font-bold text-sm">إصدار CSR من البوابة</span>
+            <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-[9px] mr-auto">جديد</Badge>
+          </div>
+          <p className="text-[11px] text-slate-600 leading-relaxed">نولّد طلب الشهادة (CSR) ومفتاح خاص هنا، الشركة تحمّله لزاتكا، ثم ترجعلنا الـ CSID.</p>
+        </button>
+      </div>
+
+      {mode === "manual" ? <ManualCredentialsForm client={client} onSaved={onSaved} /> : <CsrWizard client={client} onSaved={onSaved} />}
+    </div>
+  );
+}
+
+function ManualCredentialsForm({ client, onSaved }: { client: ClientDetail; onSaved: () => void }) {
   const { toast } = useToast();
   const [csid, setCsid] = useState("");
   const [pcsid, setPcsid] = useState("");
@@ -568,6 +608,163 @@ function CredentialsTab({ client, onSaved }: { client: ClientDetail; onSaved: ()
           تشفير وحفظ
         </Button>
       </div>
+    </div>
+  );
+}
+
+// CSR onboarding wizard (Option B). 3 visible steps:
+// 1) Generate CSR — server runs openssl with ZATCA-required OIDs.
+// 2) Download + submit to ZATCA Fatoora portal (manual step out of band).
+// 3) Paste returned CSID/PCSID — same form as manual flow.
+function CsrWizard({ client, onSaved }: { client: ClientDetail; onSaved: () => void }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [csrPem, setCsrPem] = useState<string | null>(null);
+  const [egsSerial, setEgsSerial] = useState<string | null>(client.egsSerial ?? null);
+  const [businessCategory, setBusinessCategory] = useState("Retail");
+  const [invoiceType, setInvoiceType] = useState("1100");
+
+  const existingCsr = useQuery<{ csrPem: string; egsSerial: string | null }>({
+    queryKey: ["gateway-client", client.id, "csr"],
+    queryFn: () => api(`/api/admin/gateway-clients/${client.id}/csr`).catch(() => ({ csrPem: "", egsSerial: null })),
+    refetchOnWindowFocus: false,
+  });
+
+  const generate = useMutation({
+    mutationFn: () => api<{ csrPem: string; egsSerial: string }>(`/api/admin/gateway-clients/${client.id}/generate-csr`, {
+      method: "POST",
+      body: JSON.stringify({ businessCategory, invoiceType }),
+    }),
+    onSuccess: (d) => {
+      setCsrPem(d.csrPem); setEgsSerial(d.egsSerial);
+      toast({ title: "تم توليد طلب الشهادة (CSR)", description: "حمّله من الزر أدناه ثم ارفعه على بوابة فاتورة." });
+      qc.invalidateQueries({ queryKey: ["gateway-client", client.id, "csr"] });
+    },
+    onError: (e: Error) => toast({ title: "تعذّر توليد CSR", description: e.message, variant: "destructive" }),
+  });
+
+  const csr = csrPem ?? existingCsr.data?.csrPem ?? "";
+  const serial = egsSerial ?? existingCsr.data?.egsSerial ?? null;
+
+  const downloadCsr = () => {
+    const blob = new Blob([csr], { type: "application/x-pem-file" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${client.vatNumber}-csr.pem`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Stepper visualization */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        <Step n={1} label="توليد CSR" done={!!csr} active={!csr} />
+        <ArrowRight className="h-4 w-4 text-slate-300 shrink-0 rtl:rotate-180" />
+        <Step n={2} label="رفع لزاتكا" done={!!csr && client.hasCsid} active={!!csr && !client.hasCsid} />
+        <ArrowRight className="h-4 w-4 text-slate-300 shrink-0 rtl:rotate-180" />
+        <Step n={3} label="حفظ CSID" done={client.hasCsid} active={!!csr && !client.hasCsid} />
+        <ArrowRight className="h-4 w-4 text-slate-300 shrink-0 rtl:rotate-180" />
+        <Step n={4} label="ترقية للإنتاج" done={client.hasPcsid} active={client.hasCsid && !client.hasPcsid} />
+      </div>
+
+      {/* Step 1: parameters + generate */}
+      <Card className="border-violet-200 bg-violet-50/30">
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-center gap-2 font-bold text-violet-900">
+            <Wand2 className="h-4 w-4" /> الخطوة 1 — توليد طلب الشهادة (CSR)
+          </div>
+          <p className="text-xs text-slate-600">
+            نُنشئ زوج مفاتيح RSA-2048 + CSR موقّع بحقول زاتكا الإلزامية (EGS Serial، VAT، invoice type).
+            المفتاح الخاص يُحفظ مُشفَّراً في قاعدة بياناتنا — لا يخرج أبداً.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="نوع الفاتورة">
+              <Select value={invoiceType} onValueChange={setInvoiceType}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1100">قياسي + مبسّط (موصى به)</SelectItem>
+                  <SelectItem value="1000">قياسي فقط (B2B)</SelectItem>
+                  <SelectItem value="0100">مبسّط فقط (B2C)</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="فئة النشاط التجاري">
+              <Input value={businessCategory} onChange={e => setBusinessCategory(e.target.value)} placeholder="Retail / Wholesale / Services..." />
+            </Field>
+          </div>
+          <Button onClick={() => generate.mutate()} disabled={generate.isPending} className="bg-violet-600 hover:bg-violet-700">
+            {generate.isPending ? <Loader2 className="h-4 w-4 ml-1 animate-spin" /> : <Sparkles className="h-4 w-4 ml-1" />}
+            {csr ? "إعادة توليد CSR (سيُلغي القديم)" : "توليد CSR الآن"}
+          </Button>
+          {serial && (
+            <div className="text-xs font-mono bg-white border rounded-lg px-3 py-2 text-slate-700" dir="ltr">
+              <Hash className="inline h-3 w-3 me-1 text-violet-500" />
+              EGS: {serial}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Step 2: download + portal link */}
+      {csr && (
+        <Card className="border-sky-200 bg-sky-50/30">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center gap-2 font-bold text-sky-900">
+              <Upload className="h-4 w-4" /> الخطوة 2 — رفع CSR على بوابة فاتورة
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              حمّل ملف CSR، ثم سجّل دخول لـ <a href="https://fatoora.zatca.gov.sa" target="_blank" rel="noopener noreferrer" className="text-sky-700 font-semibold underline">بوابة فاتورة</a> بحساب الشركة، وارفعه في صفحة "تسجيل جهاز جديد". سترجع الشركة بـ CSID + Secret.
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              <Button variant="outline" onClick={downloadCsr} className="border-sky-300">
+                <Download className="h-4 w-4 ml-1" />
+                تنزيل ملف CSR
+              </Button>
+              <Button variant="outline" onClick={() => { navigator.clipboard.writeText(csr); toast({ title: "نُسخ CSR للحافظة" }); }}>
+                <Copy className="h-4 w-4 ml-1" />
+                نسخ نص CSR
+              </Button>
+              <Button variant="outline" asChild>
+                <a href="https://fatoora.zatca.gov.sa" target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-4 w-4 ml-1" />
+                  فتح بوابة فاتورة
+                </a>
+              </Button>
+            </div>
+            <details className="rounded-lg border bg-white">
+              <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">عرض نص CSR</summary>
+              <Textarea readOnly value={csr} dir="ltr" className="font-mono text-[10px] leading-tight border-0 rounded-none rounded-b-lg" rows={10} />
+            </details>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Step 3: paste CSID back — reuses manual form */}
+      {csr && (
+        <Card className="border-emerald-200 bg-emerald-50/30">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center gap-2 font-bold text-emerald-900">
+              <ShieldCheck className="h-4 w-4" /> الخطوة 3 — لصق CSID المُسترجَع
+            </div>
+            <p className="text-xs text-slate-600">
+              بعد ما تستلم الشركة الـ Compliance CSID من زاتكا، الصقه هنا. المفتاح الخاص محفوظ تلقائياً من الخطوة 1.
+              {client.hasCsid && <span className="block mt-1 text-emerald-700 font-semibold">✓ CSID محفوظ بالفعل لهذا العميل.</span>}
+            </p>
+            <ManualCredentialsForm client={client} onSaved={onSaved} />
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function Step({ n, label, done, active }: { n: number; label: string; done: boolean; active: boolean }) {
+  return (
+    <div className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 shrink-0 ${done ? "bg-emerald-100 text-emerald-800" : active ? "bg-violet-100 text-violet-800 ring-2 ring-violet-300" : "bg-slate-100 text-slate-500"}`}>
+      <span className={`h-5 w-5 rounded-full flex items-center justify-center text-[11px] font-bold ${done ? "bg-emerald-600 text-white" : active ? "bg-violet-600 text-white" : "bg-slate-300 text-white"}`}>
+        {done ? <Check className="h-3 w-3" /> : n}
+      </span>
+      <span className="text-xs font-bold whitespace-nowrap">{label}</span>
     </div>
   );
 }
@@ -685,48 +882,116 @@ function ApiKeysTab({ clientId }: { clientId: number }) {
 }
 
 function InvoicesTab({ clientId }: { clientId: number }) {
-  const { data, isLoading } = useQuery<{ invoices: Array<{ id: number; fileName: string | null; invoiceNumber: string | null; totalAmount: string | null; status: string; receivedAt: string; errorMessage: string | null }> }>({
+  const { toast } = useToast();
+  type Inv = {
+    id: number; fileName: string | null; invoiceNumber: string | null;
+    totalAmount: string | null; vatAmount: string | null;
+    status: string; receivedAt: string; errorMessage: string | null;
+    icv: number | null; invoiceFlow: string | null; invoiceType: string | null;
+    zatcaUuid: string | null;
+  };
+  const { data, isLoading } = useQuery<{ invoices: Inv[] }>({
     queryKey: ["gateway-client", clientId, "invoices"],
-    queryFn: () => api(`/api/admin/gateway-clients/${clientId}/invoices`),
+    queryFn: () => api(`/api/admin/gateway-clients/${clientId}/invoices?limit=200`),
+    refetchInterval: 10_000,
   });
+  const [filter, setFilter] = useState<"all" | "ok" | "failed">("all");
 
   const STATUS_CLR: Record<string, string> = {
-    received:  "bg-sky-50 text-sky-700 border-sky-200",
-    cleared:   "bg-emerald-50 text-emerald-700 border-emerald-200",
-    rejected:  "bg-rose-50 text-rose-700 border-rose-200",
-    failed:    "bg-rose-50 text-rose-700 border-rose-200",
+    received:           "bg-sky-50 text-sky-700 border-sky-200",
+    sandbox_cleared:    "bg-violet-50 text-violet-700 border-violet-200",
+    queued_for_zatca:   "bg-amber-50 text-amber-700 border-amber-200",
+    cleared:            "bg-emerald-50 text-emerald-700 border-emerald-200",
+    rejected:           "bg-rose-50 text-rose-700 border-rose-200",
+    failed:             "bg-rose-50 text-rose-700 border-rose-200",
   };
   const STATUS_AR: Record<string, string> = {
-    received: "مستلمة", cleared: "مقبولة", rejected: "مرفوضة", failed: "فشل",
+    received: "مستلمة", sandbox_cleared: "نجاح (تجربة)", queued_for_zatca: "في الانتظار",
+    cleared: "مقبولة", rejected: "مرفوضة", failed: "فشل",
+  };
+
+  const downloadCanonical = async (inv: Inv) => {
+    try {
+      const data = await api<unknown>(`/api/admin/gateway-clients/${clientId}/invoices/${inv.id}/canonical`);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `invoice-${inv.invoiceNumber || inv.id}.json`; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) { toast({ title: "تعذّر التنزيل", description: (e as Error).message, variant: "destructive" }); }
   };
 
   if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-indigo-600" /></div>;
-  const list = data?.invoices ?? [];
-  if (list.length === 0) return (
-    <div className="text-center py-12 text-slate-500">
-      <FileText className="h-12 w-12 mx-auto mb-2 text-slate-300" />
-      <p>لا توجد فواتير مرفوعة بعد</p>
-    </div>
-  );
+  const all = data?.invoices ?? [];
+  const list = all.filter(i => filter === "all" || (filter === "ok" ? i.status === "cleared" || i.status === "sandbox_cleared" : i.status === "rejected" || i.status === "failed"));
+  const stats = {
+    total: all.length,
+    ok: all.filter(i => i.status === "cleared" || i.status === "sandbox_cleared").length,
+    failed: all.filter(i => i.status === "rejected" || i.status === "failed").length,
+    queued: all.filter(i => i.status === "queued_for_zatca" || i.status === "received").length,
+  };
 
   return (
-    <div className="space-y-2">
-      {list.map(inv => (
-        <div key={inv.id} className="rounded-lg border bg-white p-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <FileText className="h-5 w-5 text-slate-400 shrink-0" />
-            <div className="min-w-0">
-              <div className="font-medium text-sm truncate">{inv.invoiceNumber ?? inv.fileName ?? `#${inv.id}`}</div>
-              <div className="text-xs text-slate-500">{new Date(inv.receivedAt).toLocaleString("ar-SA")}</div>
-              {inv.errorMessage && <div className="text-xs text-rose-600 mt-0.5">{inv.errorMessage}</div>}
-            </div>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            {inv.totalAmount && <span className="font-mono text-sm text-slate-700">{Number(inv.totalAmount).toLocaleString("ar-EG")} ر.س</span>}
-            <Badge variant="outline" className={STATUS_CLR[inv.status] ?? "bg-slate-50"}>{STATUS_AR[inv.status] ?? inv.status}</Badge>
-          </div>
+    <div className="space-y-3">
+      <div className="grid grid-cols-4 gap-2">
+        <MiniStat label="الإجمالي" value={stats.total} cls="text-slate-700 bg-slate-100" />
+        <MiniStat label="ناجحة" value={stats.ok} cls="text-emerald-700 bg-emerald-100" />
+        <MiniStat label="فاشلة" value={stats.failed} cls="text-rose-700 bg-rose-100" />
+        <MiniStat label="بالانتظار" value={stats.queued} cls="text-amber-700 bg-amber-100" />
+      </div>
+
+      <Tabs value={filter} onValueChange={v => setFilter(v as typeof filter)}>
+        <TabsList>
+          <TabsTrigger value="all">الكل</TabsTrigger>
+          <TabsTrigger value="ok">الناجحة</TabsTrigger>
+          <TabsTrigger value="failed">الفاشلة</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {list.length === 0 ? (
+        <div className="text-center py-12 text-slate-500">
+          <FileText className="h-12 w-12 mx-auto mb-2 text-slate-300" />
+          <p>لا توجد فواتير</p>
         </div>
-      ))}
+      ) : (
+        <div className="space-y-2 max-h-[500px] overflow-y-auto">
+          {list.map(inv => (
+            <div key={inv.id} className="rounded-lg border bg-white p-3 flex items-center justify-between gap-3 hover:shadow-sm transition-shadow">
+              <div className="flex items-center gap-3 min-w-0">
+                <FileText className="h-5 w-5 text-slate-400 shrink-0" />
+                <div className="min-w-0">
+                  <div className="font-medium text-sm truncate flex items-center gap-2">
+                    {inv.invoiceNumber ?? inv.fileName ?? `#${inv.id}`}
+                    {inv.icv != null && <span className="text-[10px] text-violet-600 font-mono bg-violet-50 px-1.5 py-0.5 rounded">ICV: {inv.icv}</span>}
+                    {inv.invoiceFlow && <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded">{inv.invoiceFlow === "standard" ? "B2B" : "B2C"}</span>}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {new Date(inv.receivedAt).toLocaleString("ar-SA")}
+                    {inv.zatcaUuid && <span className="ml-2 font-mono text-[10px]" dir="ltr">{inv.zatcaUuid.slice(0, 8)}...</span>}
+                  </div>
+                  {inv.errorMessage && <div className="text-xs text-rose-600 mt-0.5">{inv.errorMessage}</div>}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {inv.totalAmount && <span className="font-mono text-sm text-slate-700 hidden sm:inline">{Number(inv.totalAmount).toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>}
+                <Badge variant="outline" className={STATUS_CLR[inv.status] ?? "bg-slate-50"}>{STATUS_AR[inv.status] ?? inv.status}</Badge>
+                <Button variant="ghost" size="icon" onClick={() => downloadCanonical(inv)} title="تنزيل البيانات الكاملة">
+                  <Download className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MiniStat({ label, value, cls }: { label: string; value: number; cls: string }) {
+  return (
+    <div className={`rounded-lg p-2 text-center ${cls}`}>
+      <div className="font-mono text-lg font-bold leading-none">{value.toLocaleString("ar-EG")}</div>
+      <div className="text-[10px] mt-1 opacity-80">{label}</div>
     </div>
   );
 }
