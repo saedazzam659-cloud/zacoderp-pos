@@ -676,6 +676,26 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "field_tickets_asset_idx",
       sql:   `CREATE INDEX IF NOT EXISTS field_tickets_asset_idx
               ON field_service_tickets (company_id, asset_id)` },
+
+    // ── Journal-entry audit columns ─────────────────────────────────────
+    // Captures who created and who posted each entry, with the IP and
+    // user-agent at the time, plus the posted-at timestamp. Country is
+    // resolved on demand from the IP via the same Geo-IP service used by
+    // the visitor-country middleware, so no column is needed for it.
+    { label: "alter journal_entries add createdBy",
+      sql:   `ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS created_by INTEGER` },
+    { label: "alter journal_entries add createdIp",
+      sql:   `ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS created_ip TEXT` },
+    { label: "alter journal_entries add createdUserAgent",
+      sql:   `ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS created_user_agent TEXT` },
+    { label: "alter journal_entries add postedBy",
+      sql:   `ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS posted_by INTEGER` },
+    { label: "alter journal_entries add postedAt",
+      sql:   `ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP` },
+    { label: "alter journal_entries add postedIp",
+      sql:   `ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS posted_ip TEXT` },
+    { label: "alter journal_entries add postedUserAgent",
+      sql:   `ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS posted_user_agent TEXT` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {

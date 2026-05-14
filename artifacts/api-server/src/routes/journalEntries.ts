@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import {
-  journalEntriesTable, journalEntryLinesTable, branchesTable,
+  journalEntriesTable, journalEntryLinesTable, branchesTable, usersTable,
   salesInvoicesTable, salesReturnsTable, customerSettlementsTable,
   purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable,
   receiptVouchersTable, paymentVouchersTable,
@@ -14,6 +14,8 @@ import { moduleAudit, requireModulePermission } from "../middleware/permissions.
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate, assertWritableForPeriodId } from "../lib/periodGuard.js";
+import { createdAuditFor, postedAuditFor, fullAuditFor } from "../lib/journalAudit.js";
+import { describeDevice } from "../lib/deviceFingerprint.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -158,13 +160,27 @@ router.get("/", async (req, res) => {
       }
     }
 
+    // Resolve usernames for the createdBy / postedBy ids in one pass so the
+    // grid can render "أنشأه" / "رحّله" columns without an extra round trip.
+    const userIds = Array.from(new Set(
+      rows.flatMap(r => [r.createdBy, r.postedBy]).filter((x): x is number => typeof x === "number")
+    ));
+    const userMap = new Map<number, string>();
+    if (userIds.length > 0) {
+      const us = await db.select({ id: usersTable.id, username: usersTable.username })
+        .from(usersTable).where(inArray(usersTable.id, userIds));
+      for (const u of us) userMap.set(u.id, u.username);
+    }
+
     res.json(rows.map(r => {
       const s = sumByEntry.get(r.id);
       return {
         ...r,
-        totalDebit:  s?.totalDebit  ?? "0",
-        totalCredit: s?.totalCredit ?? "0",
-        sourceId:    sourceIdByEntry.get(r.id) ?? null,
+        totalDebit:    s?.totalDebit  ?? "0",
+        totalCredit:   s?.totalCredit ?? "0",
+        sourceId:      sourceIdByEntry.get(r.id) ?? null,
+        createdByName: r.createdBy != null ? (userMap.get(r.createdBy) ?? null) : null,
+        postedByName:  r.postedBy  != null ? (userMap.get(r.postedBy)  ?? null) : null,
       };
     }));
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -284,6 +300,10 @@ router.post("/", async (req, res) => {
         branchId:     resolvedBranchId,
         periodId:     writability.period?.id ?? null,
         status:       canPost ? "posted" : "draft",
+        // Audit trail — when the entry lands as "posted" on the same save,
+        // we stamp BOTH the created* and posted* fields so the audit dialog
+        // can attribute creation and posting to the same user/IP/UA.
+        ...(canPost ? fullAuditFor(req) : createdAuditFor(req)),
       }).returning();
 
       // Legacy QYD fallback: when no central sequence is configured AND the
@@ -507,7 +527,7 @@ router.post("/:id/post", async (req, res) => {
     }
 
     await db.update(journalEntriesTable)
-      .set({ status: "posted", updatedAt: new Date() })
+      .set({ status: "posted", updatedAt: new Date(), ...postedAuditFor(req) })
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -569,6 +589,105 @@ router.delete("/:id", async (req, res) => {
     await db.delete(journalEntriesTable)
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
     res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── GET /:id/audit — manager-only forensic audit dialog ──────────────────
+// Returns the captured create + post audit fields, the resolved usernames,
+// a friendly device label (browser + OS) parsed from the user-agent, and
+// the country resolved on demand from the stored IP via the same free
+// Geo-IP service the visitor-country middleware uses. Restricted to
+// admin/superadmin so regular users can't snoop on each other's IPs.
+router.get("/:id/audit", async (req, res) => {
+  try {
+    const role = req.authUser?.role;
+    if (role !== "admin" && role !== "superadmin") {
+      res.status(403).json({ error: "صلاحية المدير مطلوبة لعرض سجل التدقيق" });
+      return;
+    }
+    const cid = guard(req, res); if (!cid) return;
+    const id  = Number(req.params.id);
+
+    const [e] = await db.select({
+      id:               journalEntriesTable.id,
+      createdAt:        journalEntriesTable.createdAt,
+      createdBy:        journalEntriesTable.createdBy,
+      createdIp:        journalEntriesTable.createdIp,
+      createdUserAgent: journalEntriesTable.createdUserAgent,
+      postedAt:         journalEntriesTable.postedAt,
+      postedBy:         journalEntriesTable.postedBy,
+      postedIp:         journalEntriesTable.postedIp,
+      postedUserAgent:  journalEntriesTable.postedUserAgent,
+      status:           journalEntriesTable.status,
+    }).from(journalEntriesTable)
+      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    if (!e) { res.status(404).json({ error: "القيد غير موجود" }); return; }
+
+    // Resolve usernames in one pass.
+    const userIds = [e.createdBy, e.postedBy].filter((x): x is number => typeof x === "number");
+    const userMap = new Map<number, string>();
+    if (userIds.length > 0) {
+      const us = await db.select({ id: usersTable.id, username: usersTable.username })
+        .from(usersTable).where(inArray(usersTable.id, userIds));
+      for (const u of us) userMap.set(u.id, u.username);
+    }
+
+    // Tiny inline geo-IP — the visitorCountry middleware keeps its own
+    // cache but doesn't expose a lookup-by-ip helper, so we issue the
+    // same upstream call here. Failures degrade silently to null so
+    // the dialog still renders the rest of the audit info.
+    async function lookupCountry(ip: string | null): Promise<string | null> {
+      if (!ip) return null;
+      // Skip private/loopback ranges — they have no public country.
+      if (/^(10\.|192\.168\.|127\.|169\.254\.|::1$|fe80:|fc|fd)/i.test(ip)) return null;
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 1500);
+        const r = await fetch(`https://api.country.is/${encodeURIComponent(ip)}`, { signal: ctrl.signal });
+        clearTimeout(t);
+        if (!r.ok) return null;
+        const j: any = await r.json();
+        return String(j?.country || "").toUpperCase() || null;
+      } catch { return null; }
+    }
+
+    const [createdCountry, postedCountry] = await Promise.all([
+      lookupCountry(e.createdIp),
+      // Don't double-lookup when create+post share the same IP.
+      e.postedIp && e.postedIp === e.createdIp
+        ? Promise.resolve(null)
+        : lookupCountry(e.postedIp),
+    ]);
+
+    function deviceLabel(ua: string | null): string | null {
+      if (!ua) return null;
+      const fakeReq = { headers: { "user-agent": ua } } as any;
+      const d = describeDevice(fakeReq);
+      return [d.browser, d.os].filter(Boolean).join(" • ") || null;
+    }
+
+    res.json({
+      id: e.id,
+      status: e.status,
+      created: {
+        userId:    e.createdBy,
+        username:  e.createdBy != null ? (userMap.get(e.createdBy) ?? null) : null,
+        at:        e.createdAt,
+        ip:        e.createdIp,
+        userAgent: e.createdUserAgent,
+        device:    deviceLabel(e.createdUserAgent),
+        country:   createdCountry,
+      },
+      posted: e.postedAt ? {
+        userId:    e.postedBy,
+        username:  e.postedBy != null ? (userMap.get(e.postedBy) ?? null) : null,
+        at:        e.postedAt,
+        ip:        e.postedIp,
+        userAgent: e.postedUserAgent,
+        device:    deviceLabel(e.postedUserAgent),
+        country:   e.postedIp && e.postedIp === e.createdIp ? createdCountry : postedCountry,
+      } : null,
+    });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
