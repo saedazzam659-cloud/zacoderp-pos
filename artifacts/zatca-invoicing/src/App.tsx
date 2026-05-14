@@ -30,6 +30,7 @@ import VoiceAssistantSettings from "@/pages/VoiceAssistantSettings";
 import SessionsAdmin from "@/pages/SessionsAdmin";
 import SecurityCenter from "@/pages/admin/SecurityCenter";
 import SuperAdminSecurity from "@/pages/admin/SuperAdminSecurity";
+import IntegrationGateway from "@/pages/integrations/IntegrationGateway";
 import RecoverSuperAdmin from "@/pages/RecoverSuperAdmin";
 import ReportInvitationAccept from "@/pages/ReportInvitationAccept";
 import ReportsHub from "@/pages/admin/reports/ReportsHub";
@@ -518,6 +519,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
             {isSuperAdmin && <Route path="/admin/security-superadmin" component={SuperAdminSecurity} />}
             {isSuperAdmin && <Route path="/admin/security" component={SecurityCenter} />}
+            {!isSuperAdmin && <Route path="/integrations/gateway" component={IntegrationGateway} />}
             {isSuperAdmin && <Route path="/admin/reports" component={ReportsHub} />}
             {isSuperAdmin && <Route path="/admin/reports/company-performance" component={CompanyPerformanceReport} />}
             {isSuperAdmin && <Route path="/admin/reports/operational-summary" component={OperationalSummaryReport} />}
