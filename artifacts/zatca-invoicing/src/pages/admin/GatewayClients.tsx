@@ -730,7 +730,7 @@ function CsrWizard({ client, onSaved }: { client: ClientDetail; onSaved: () => v
 
   const existingCsr = useQuery<{ csrPem: string; egsSerial: string | null }>({
     queryKey: ["gateway-client", client.id, "csr"],
-    queryFn: () => api(`/api/admin/gateway-clients/${client.id}/csr`).catch(() => ({ csrPem: "", egsSerial: null })),
+    queryFn: () => api<{ csrPem: string; egsSerial: string | null }>(`/api/admin/gateway-clients/${client.id}/csr`).catch(() => ({ csrPem: "", egsSerial: null as string | null })),
     refetchOnWindowFocus: false,
   });
 
