@@ -637,8 +637,25 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
             </tr>`;
           }).join("");
 
+      // When one-entry-per-page mode is on, each section becomes a self-contained
+      // printed page: prepend a mini letterhead + entry meta, and append a
+      // prominent per-entry debit/credit totals banner (so each page reads as
+      // its own complete journal-entry document, ready for filing/signing).
+      const perPageHead = oneEntryPerPage ? `
+  <header class="page-head">
+    ${logoHtml}${companyNameHtml}
+    <div class="page-title">${escapeHtml(t("journalEntries.printSheetTitle"))}</div>
+    <div class="page-meta">${escapeHtml(L.doc)}: <b>${escapeHtml(docNo)}</b> &nbsp;•&nbsp; ${escapeHtml(L.date)}: <b>${escapeHtml(e.entryDate ?? "")}</b></div>
+  </header>` : "";
+      const perPageTotals = oneEntryPerPage ? `
+  <div class="page-totals">
+    <span>${escapeHtml(t("journalEntries.totalDebit"))}: <b>${subDebit.toFixed(2)}</b></span>
+    <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${subCredit.toFixed(2)}</b></span>
+  </div>` : "";
+
       return `
 <section class="entry">
+  ${perPageHead}
   <div class="entry-head">
     <div class="entry-title">
       <span class="badge">${escapeHtml(L.doc)}: ${escapeHtml(docNo)}</span>
@@ -669,6 +686,7 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
       </tr>
     </tfoot>
   </table>
+  ${perPageTotals}
 </section>`;
     }).join("");
 
@@ -697,18 +715,24 @@ table.lines tfoot td { padding:5px 7px; border:1px solid #cbd5e1; background:#f1
 .end { text-align:${isRtl ? "left" : "right"}; }
 .center { text-align:center; }
 .grand { margin-top:6px; padding:8px 12px; background:#1e3a8a; color:#fff; border-radius:6px; display:flex; justify-content:space-between; gap:18px; font-size:12px; }
+.page-head { text-align:center; margin: 0 0 8px; padding-bottom:6px; border-bottom:2px solid #1e3a8a; }
+.page-head .page-title { margin:4px 0 2px; font-size:14px; font-weight:600; color:#1e3a8a; }
+.page-head .page-meta { font-size:10.5px; color:#475569; }
+.page-totals { display:flex; gap:18px; justify-content:space-around; margin-top:8px; padding:8px 12px; background:#1e3a8a; color:#fff; border-radius:6px; font-size:12px; }
+.page-totals span { color:#fff; }
+.page-totals b { color:#fff; }
 .print-btn { position:fixed; top:10px; ${isRtl ? "left" : "right"}:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
-@media print { .print-btn { display:none; } }
+@media print { .print-btn { display:none; } ${oneEntryPerPage ? ".doc-global { display:none !important; }" : ""} }
 </style></head><body>
 <button class="print-btn" onclick="window.print()">${escapeHtml(t("journalEntries.printPdf"))}</button>
-<div class="h">${logoHtml}${companyNameHtml}<h1>${escapeHtml(t("journalEntries.printSheetTitle"))}</h1>
+<div class="h doc-global">${logoHtml}${companyNameHtml}<h1>${escapeHtml(t("journalEntries.printSheetTitle"))}</h1>
 <div class="meta">${escapeHtml(t("journalEntries.reportDate"))}: ${escapeHtml(today)} — ${escapeHtml(t("journalEntries.entriesCount", { count: entriesWithLines.length }))}</div></div>
-<div class="totals">
+<div class="totals doc-global">
   <span>${escapeHtml(t("journalEntries.totalDebit"))}: <b>${grandDebit.toFixed(2)}</b></span>
   <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${grandCredit.toFixed(2)}</b></span>
 </div>
 ${entrySections}
-<div class="grand">
+<div class="grand doc-global">
   <span>${escapeHtml(L.grandTotal)} — ${escapeHtml(t("journalEntries.totalDebit"))}: <b>${grandDebit.toFixed(2)}</b></span>
   <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${grandCredit.toFixed(2)}</b></span>
 </div>
@@ -874,7 +898,25 @@ ${sections}
               <td class="num end">${Number(ln.credit ?? 0).toFixed(2)}</td>
             </tr>`;
           }).join("");
+      // One-per-page: each section becomes a complete printable document with
+      // its own letterhead at the top and a prominent debit/credit total banner
+      // before the signature block. The global letterhead is hidden in print.
+      const perPageLetterhead = oneEntryPerPage ? `
+        <div class="page-letterhead">
+          ${safeLogo ? `<img src="${safeLogo}" alt="" />` : ""}
+          <div class="co">
+            <h1>${escapeHtml(companyName)}</h1>
+            <div class="reg">${cr ? `س.ت: ${escapeHtml(cr)}` : ""}${cr && vat ? " • " : ""}${vat ? `الرقم الضريبي: ${escapeHtml(vat)}` : ""}</div>
+          </div>
+          <div class="stamp">تاريخ الطباعة<br/><b>${escapeHtml(today)}</b></div>
+        </div>` : "";
+      const perPageTotals = oneEntryPerPage ? `
+        <div class="page-totals">
+          <span>إجمالي المدين: <b>${subDebit.toFixed(2)}</b></span>
+          <span>إجمالي الدائن: <b>${subCredit.toFixed(2)}</b></span>
+        </div>` : "";
       return `<section class="entry">
+        ${perPageLetterhead}
         <div class="banner">
           <div class="banner-l">
             <div class="docno">قيد رقم: <b>${escapeHtml(docNo)}</b></div>
@@ -904,6 +946,7 @@ ${sections}
             </tr>
           </tfoot>
         </table>
+        ${perPageTotals}
         <div class="signs">
           <div class="sign"><div class="sign-line"></div><div class="sign-label">المحاسب / المُعدّ</div></div>
           <div class="sign"><div class="sign-line"></div><div class="sign-label">المراجع</div></div>
@@ -944,11 +987,19 @@ tfoot td { padding:6px 8px; border:1px solid #cbd5e1; background:#f1f5f9; }
 .sign { flex:1; text-align:center; }
 .sign-line { border-top:1.5px solid #475569; margin-top:36px; }
 .sign-label { margin-top:4px; font-size:9pt; color:#475569; }
+.page-letterhead { display:flex; align-items:center; gap:12px; padding-bottom:8px; border-bottom:3px double #1e3a8a; margin-bottom:10px; }
+.page-letterhead img { max-height:54px; max-width:130px; object-fit:contain; }
+.page-letterhead .co { flex:1; }
+.page-letterhead .co h1 { margin:0; font-size:14pt; color:#1e3a8a; }
+.page-letterhead .co .reg { font-size:9pt; color:#475569; margin-top:2px; }
+.page-letterhead .stamp { text-align:${isRtl ? "left" : "right"}; font-size:9pt; color:#475569; }
+.page-totals { display:flex; gap:18px; justify-content:space-around; margin-top:10px; padding:9px 14px; background:#1e3a8a; color:#fff; border-radius:6px; font-size:11pt; font-weight:600; }
+.page-totals span, .page-totals b { color:#fff; }
 .print-btn { position:fixed; top:10px; ${isRtl ? "left" : "right"}:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:11pt; }
-@media print { .print-btn { display:none; } }
+@media print { .print-btn { display:none; } ${oneEntryPerPage ? ".doc-global { display:none !important; }" : ""} }
 </style></head><body>
 <button class="print-btn" onclick="window.print()">طباعة</button>
-<div class="letterhead">
+<div class="letterhead doc-global">
   ${safeLogo ? `<img src="${safeLogo}" alt="" />` : ""}
   <div class="co">
     <h1>${escapeHtml(companyName)}</h1>
