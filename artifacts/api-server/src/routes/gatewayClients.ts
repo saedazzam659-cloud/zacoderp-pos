@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { gatewayClientsTable, gatewayApiKeysTable, gatewayInvoicesTable } from "@workspace/db";
+import { gatewayClientsTable, gatewayApiKeysTable, gatewayInvoicesTable, gatewayWebhooksTable, gatewayWebhookDeliveriesTable } from "@workspace/db";
 import { eq, and, desc, sql, isNull, gte, lte, inArray } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { writeAudit } from "../middleware/permissions.js";
@@ -8,6 +8,9 @@ import { extractAuth } from "../middleware/auth.js";
 import { buildUblForGatewayInvoice, type GatewayCanonical } from "../lib/zatca-gateway-builder.js";
 import { encryptSecret, decryptSecret } from "../lib/encryption.js";
 import { submitToZatca } from "../lib/zatca-http-client.js";
+import { signZatcaUbl } from "../lib/zatca-xades-signer.js";
+import { fireWebhook, assertSafeUrl, type GatewayWebhookEvent } from "../lib/webhookDispatcher.js";
+import { sendEmail } from "../lib/email.js";
 
 const router = Router();
 
@@ -182,6 +185,12 @@ function getKek(): Buffer {
   }
   return scryptSync(secret, "gateway-kek-v1", 32);
 }
+// DEPRECATED: previously used a different KDF salt ("gateway-kek-v1") than
+// the shared lib/encryption.ts ("zatca-gw-v1"), which silently broke
+// decryption at submit-zatca time (the gateway side could write but never
+// read back). Routes below now use encryptSecret/decryptSecret from the
+// shared lib so writes and reads share one key. Kept only for back-compat
+// of any test or script that still imports decryptValue.
 function encryptValue(plain: string): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", getKek(), iv);
@@ -207,9 +216,9 @@ router.post("/:id/credentials", async (req, res) => {
   if (!csid && !pcsid && !privateKey) { res.status(400).json({ error: "أدخل أحد الحقول على الأقل" }); return; }
 
   const patch: Record<string, unknown> = { updatedAt: new Date() };
-  if (typeof csid === "string" && csid.trim()) patch["zatcaCsidEnc"] = encryptValue(csid.trim());
-  if (typeof pcsid === "string" && pcsid.trim()) patch["zatcaPcsidEnc"] = encryptValue(pcsid.trim());
-  if (typeof privateKey === "string" && privateKey.trim()) patch["zatcaPrivateKeyEnc"] = encryptValue(privateKey.trim());
+  if (typeof csid === "string" && csid.trim()) patch["zatcaCsidEnc"] = encryptSecret(csid.trim());
+  if (typeof pcsid === "string" && pcsid.trim()) patch["zatcaPcsidEnc"] = encryptSecret(pcsid.trim());
+  if (typeof privateKey === "string" && privateKey.trim()) patch["zatcaPrivateKeyEnc"] = encryptSecret(privateKey.trim());
 
   // CSR-wizard alignment: if the user pasted a CSID without an explicit
   // private key, promote the CSR-generated key (csr_private_key_enc) to
@@ -425,7 +434,7 @@ businessCategory = ${cat}
 
     await db.update(gatewayClientsTable).set({
       csrPem,
-      csrPrivateKeyEnc: encryptValue(keyPem),
+      csrPrivateKeyEnc: encryptSecret(keyPem),
       egsSerial: serial,
       updatedAt: new Date(),
     }).where(eq(gatewayClientsTable.id, id));
@@ -848,15 +857,46 @@ router.post("/:id/invoices/:invId/submit-zatca", async (req, res) => {
     res.status(500).json({ error: "شهادة CSID فارغة بعد التطبيع" }); return;
   }
 
+  // Phase 1B.3 — sign UBL with XAdES-BES if we have the matching private key.
+  // CAVEAT: zatca-xades-signer.parseCertIssuerSerial currently uses
+  // placeholder issuer/serial values (full ASN.1 X.509 parsing is Phase
+  // 1B.3.1). Until that lands we ONLY claim isSigned=true in sandbox so
+  // production submissions never falsely advertise compliance — they fall
+  // back to the unsigned path, which production will explicitly reject
+  // (the desired behaviour: fail loud, not silent corruption).
+  let signedXml = ublXml!;
+  let isSigned = false;
+  const pkEnc = client.zatcaPrivateKeyEnc ?? client.csrPrivateKeyEnc;
+  if (pkEnc && !isProd) {
+    try {
+      const privateKeyPem = decryptSecret(pkEnc) || "";
+      if (privateKeyPem) {
+        const baseHash = createHash("sha256").update(ublXml!, "utf8").digest("base64");
+        const out = signZatcaUbl({
+          ublXml: ublXml!,
+          certificatePem: certPem,
+          privateKeyPem,
+          invoiceHash: baseHash,
+        });
+        signedXml = out.signedXml;
+        isSigned = true;
+      }
+    } catch (e) {
+      req.log.warn({ err: e instanceof Error ? e.message : String(e), invId }, "xades-sign-failed");
+    }
+  } else if (isProd && pkEnc) {
+    req.log.warn({ invId }, "xades-prod-skip: real ASN.1 parsing pending Phase 1B.3.1");
+  }
+
   const flow = inv.invoiceFlow === "simplified" ? "simplified" : "standard";
   const result = await submitToZatca({
-    ublXml: ublXml!,
-    invoiceHash: createHash("sha256").update(ublXml!, "utf8").digest("base64"),
+    ublXml: signedXml,
+    invoiceHash: createHash("sha256").update(signedXml, "utf8").digest("base64"),
     uuid: inv.zatcaUuid || crypto.randomUUID(),
     env: isProd ? "production" : "sandbox",
     flow,
     credentials: { basicAuthToken, basicAuthSecret },
-    isSigned: false, // Phase 1B.3 will flip this once XAdES-BES landing
+    isSigned,
   });
 
   // Map normalized status → row status. Sandbox cleared = sandbox_cleared.
@@ -885,12 +925,168 @@ router.post("/:id/invoices/:invId/submit-zatca", async (req, res) => {
     metadata: { clientId, invId, env: client.zatcaEnv, status: result.status, httpStatus: result.httpStatus, errors: result.errors.length, warnings: result.warnings.length },
   });
 
+  // ─── Side effects: webhook + email notification ────────────────────────
+  // Both run async; we don't let either block the response.
+  let event: GatewayWebhookEvent | null = null;
+  if (rowStatus === "cleared" || rowStatus === "sandbox_cleared") event = "invoice.cleared";
+  else if (rowStatus === "rejected" || rowStatus === "submission_failed") event = "invoice.rejected";
+  else if (rowStatus === "warning" || rowStatus === "sandbox_warning") event = "invoice.warning";
+  if (event) {
+    void fireWebhook({
+      clientId, event,
+      payload: {
+        invoiceId: invId,
+        invoiceNumber: inv.invoiceNumber,
+        invoiceDate: inv.invoiceDate,
+        env: client.zatcaEnv,
+        status: rowStatus,
+        zatcaStatus: result.zatcaStatus,
+        warnings: result.warnings,
+        errors: result.errors,
+        signed: isSigned,
+      },
+    }).catch(e => req.log.warn({ err: e instanceof Error ? e.message : String(e) }, "webhook-fire-failed"));
+  }
+  if (client.contactEmail && (rowStatus === "rejected" || rowStatus === "submission_failed")) {
+    const errLines = result.errors.slice(0, 5).map(e => `<li>${e.code}: ${e.message}</li>`).join("");
+    void sendEmail({
+      to: client.contactEmail,
+      subject: `❌ زاتكا رفضت الفاتورة ${inv.invoiceNumber ?? invId}`,
+      html: `<div dir="rtl"><h3>تم رفض الفاتورة من زاتكا</h3>
+        <p><b>الشركة:</b> ${client.nameAr}</p>
+        <p><b>رقم الفاتورة:</b> ${inv.invoiceNumber ?? "—"}</p>
+        <p><b>البيئة:</b> ${client.zatcaEnv}</p>
+        <p><b>الأخطاء:</b></p><ul>${errLines || "<li>غير محدد</li>"}</ul>
+        <p>سجّل الدخول للوحة الإدارة لمراجعة التفاصيل وإعادة الإرسال.</p></div>`,
+    }).catch(e => req.log.warn({ err: e instanceof Error ? e.message : String(e) }, "email-rejected-failed"));
+  }
+
   res.json({
     ok: result.status === "cleared" || result.status === "reported",
     status: rowStatus,
     env: client.zatcaEnv,
+    signed: isSigned,
     zatca: { status: result.status, zatcaStatus: result.zatcaStatus, warnings: result.warnings, errors: result.errors, httpStatus: result.httpStatus },
   });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Phase 4 — Webhook subscription management (per-tenant)
+// ═════════════════════════════════════════════════════════════════════════
+router.get("/:id/webhooks", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+  const rows = await db.select({
+    id: gatewayWebhooksTable.id,
+    url: gatewayWebhooksTable.url,
+    events: gatewayWebhooksTable.events,
+    active: gatewayWebhooksTable.active,
+    createdAt: gatewayWebhooksTable.createdAt,
+    lastDeliveryAt: gatewayWebhooksTable.lastDeliveryAt,
+    lastStatus: gatewayWebhooksTable.lastStatus,
+    lastError: gatewayWebhooksTable.lastError,
+    failureCount: gatewayWebhooksTable.failureCount,
+  }).from(gatewayWebhooksTable)
+    .where(eq(gatewayWebhooksTable.clientId, id))
+    .orderBy(desc(gatewayWebhooksTable.createdAt));
+  res.json({ webhooks: rows });
+});
+
+router.post("/:id/webhooks", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+  const url    = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+  const events = Array.isArray(req.body?.events) ? (req.body.events as unknown[]).filter(e => typeof e === "string") as string[] : [];
+  if (events.length === 0) { res.status(400).json({ error: "اختر حدث واحد على الأقل" }); return; }
+  try { await assertSafeUrl(url); }
+  catch (e) { res.status(400).json({ error: e instanceof Error ? e.message : "URL غير صالح" }); return; }
+  const secret = randomBytes(32).toString("hex");
+  const [row] = await db.insert(gatewayWebhooksTable).values({
+    clientId: id, url, secretEnc: encryptSecret(secret), events, active: true,
+  }).returning({ id: gatewayWebhooksTable.id });
+  res.status(201).json({ id: row.id, secret, hint: "احفظ هذا السر — لن يُعرض مرة أخرى. يُستخدم للتحقق من توقيع HMAC في رؤوس الـ webhook." });
+});
+
+router.patch("/:id/webhooks/:wid", async (req, res) => {
+  const id  = Number(req.params.id);
+  const wid = Number(req.params.wid);
+  if (!Number.isFinite(id) || !Number.isFinite(wid)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+  const updates: Record<string, unknown> = {};
+  if (typeof req.body?.url === "string") {
+    try { await assertSafeUrl(req.body.url.trim()); }
+    catch (e) { res.status(400).json({ error: e instanceof Error ? e.message : "URL غير صالح" }); return; }
+    updates.url = req.body.url.trim();
+  }
+  if (Array.isArray(req.body?.events))   updates.events = (req.body.events as unknown[]).filter(e => typeof e === "string");
+  if (typeof req.body?.active === "boolean") updates.active = req.body.active;
+  if (Object.keys(updates).length === 0) { res.json({ ok: true, noop: true }); return; }
+  await db.update(gatewayWebhooksTable).set(updates)
+    .where(and(eq(gatewayWebhooksTable.id, wid), eq(gatewayWebhooksTable.clientId, id)));
+  res.json({ ok: true });
+});
+
+router.delete("/:id/webhooks/:wid", async (req, res) => {
+  const id  = Number(req.params.id);
+  const wid = Number(req.params.wid);
+  if (!Number.isFinite(id) || !Number.isFinite(wid)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+  await db.delete(gatewayWebhooksTable)
+    .where(and(eq(gatewayWebhooksTable.id, wid), eq(gatewayWebhooksTable.clientId, id)));
+  res.json({ ok: true });
+});
+
+router.get("/:id/webhooks/:wid/deliveries", async (req, res) => {
+  const id  = Number(req.params.id);
+  const wid = Number(req.params.wid);
+  if (!Number.isFinite(id) || !Number.isFinite(wid)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+  const [hook] = await db.select().from(gatewayWebhooksTable)
+    .where(and(eq(gatewayWebhooksTable.id, wid), eq(gatewayWebhooksTable.clientId, id))).limit(1);
+  if (!hook) { res.status(404).json({ error: "الـ webhook غير موجود" }); return; }
+  const rows = await db.select().from(gatewayWebhookDeliveriesTable)
+    .where(eq(gatewayWebhookDeliveriesTable.webhookId, wid))
+    .orderBy(desc(gatewayWebhookDeliveriesTable.createdAt))
+    .limit(50);
+  res.json({ deliveries: rows });
+});
+
+router.post("/:id/webhooks/:wid/test", async (req, res) => {
+  const id  = Number(req.params.id);
+  const wid = Number(req.params.wid);
+  if (!Number.isFinite(id) || !Number.isFinite(wid)) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+  const [hook] = await db.select().from(gatewayWebhooksTable)
+    .where(and(eq(gatewayWebhooksTable.id, wid), eq(gatewayWebhooksTable.clientId, id))).limit(1);
+  if (!hook) { res.status(404).json({ error: "غير موجود" }); return; }
+  await fireWebhook({
+    clientId: id,
+    event: "invoice.cleared",
+    payload: { test: true, message: "هذه رسالة تجريبية من بوابة زاتكا للتحقق من الـ webhook الخاص بك." },
+  });
+  res.json({ ok: true, hint: "تم إرسال حدث تجريبي. تحقق من سجل التسليمات بعد قليل." });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Cross-tenant SuperAdmin overview — combined stats per client
+// ═════════════════════════════════════════════════════════════════════════
+router.get("/overview/clients-summary", async (_req, res) => {
+  // For each client: total invoices in last 30 days, success rate, quota
+  // utilisation %, last submission, env. Used by the cross-client dashboard.
+  const since = new Date();
+  since.setUTCDate(since.getUTCDate() - 30);
+  const rows = await db.execute(sql`
+    SELECT
+      c.id, c.name_ar AS "nameAr", c.name_en AS "nameEn",
+      c.zatca_env AS env, c.status, c.monthly_quota AS "monthlyQuota",
+      c.invoices_this_month AS "invoicesThisMonth",
+      c.last_invoice_at AS "lastInvoiceAt",
+      COALESCE(SUM(CASE WHEN i.received_at >= ${since.toISOString()} THEN 1 ELSE 0 END), 0)::int AS "last30",
+      COALESCE(SUM(CASE WHEN i.status IN ('cleared','sandbox_cleared') AND i.received_at >= ${since.toISOString()} THEN 1 ELSE 0 END), 0)::int AS "cleared30",
+      COALESCE(SUM(CASE WHEN i.status IN ('rejected','submission_failed') AND i.received_at >= ${since.toISOString()} THEN 1 ELSE 0 END), 0)::int AS "rejected30",
+      COALESCE(SUM(CASE WHEN i.received_at >= ${since.toISOString()} THEN COALESCE(i.total_amount, 0) ELSE 0 END), 0)::numeric AS "totalSar30"
+    FROM gateway_clients c
+    LEFT JOIN gateway_invoices i ON i.client_id = c.id
+    GROUP BY c.id
+    ORDER BY c.name_ar
+  `);
+  res.json({ clients: rows.rows });
 });
 
 // ─── Phase 2: Reports — monthly summary + status breakdown + top customers

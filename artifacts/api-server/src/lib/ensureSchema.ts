@@ -838,6 +838,41 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "gateway_clients add csid_last_rotated_at",
       sql:   `ALTER TABLE gateway_clients ADD COLUMN IF NOT EXISTS csid_last_rotated_at TIMESTAMP` },
 
+    // Phase 4 — webhooks + delivery log
+    { label: "create gateway_webhooks",
+      sql: `CREATE TABLE IF NOT EXISTS gateway_webhooks (
+        id SERIAL PRIMARY KEY,
+        client_id INTEGER NOT NULL REFERENCES gateway_clients(id) ON DELETE CASCADE,
+        url TEXT NOT NULL,
+        secret_enc TEXT NOT NULL,
+        events JSONB NOT NULL,
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_delivery_at TIMESTAMP,
+        last_status TEXT,
+        last_error TEXT,
+        failure_count INTEGER NOT NULL DEFAULT 0
+      )` },
+    { label: "create gateway_webhooks idx",
+      sql: `CREATE INDEX IF NOT EXISTS gateway_webhooks_client_idx ON gateway_webhooks(client_id)` },
+    { label: "create gateway_webhook_deliveries",
+      sql: `CREATE TABLE IF NOT EXISTS gateway_webhook_deliveries (
+        id SERIAL PRIMARY KEY,
+        webhook_id INTEGER NOT NULL REFERENCES gateway_webhooks(id) ON DELETE CASCADE,
+        event TEXT NOT NULL,
+        payload JSONB NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        http_status INTEGER,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        delivered_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "create gateway_webhook_deliveries idx",
+      sql: `CREATE INDEX IF NOT EXISTS gateway_webhook_deliveries_webhook_idx ON gateway_webhook_deliveries(webhook_id, created_at)` },
+    { label: "create gateway_webhook_deliveries status idx",
+      sql: `CREATE INDEX IF NOT EXISTS gateway_webhook_deliveries_status_idx ON gateway_webhook_deliveries(status)` },
+
     { label: "alter journal_entries add createdBy",
       sql:   `ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS created_by INTEGER` },
     { label: "alter journal_entries add createdIp",

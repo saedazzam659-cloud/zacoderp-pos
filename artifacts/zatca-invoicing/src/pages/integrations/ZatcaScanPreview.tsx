@@ -132,20 +132,48 @@ function num(v: unknown, def = 0): number {
 }
 
 // ── Parse any input (xlsx/csv/json) into ZatcaRow[] ──────────────────
-export async function parseToZatcaRows(file: File): Promise<ZatcaRow[]> {
+// Returns both the normalized rows AND the original raw objects so the UI
+// can re-apply a different (e.g. AI-suggested) header mapping later
+// without re-reading the file.
+export async function parseToZatcaRowsWithRaw(file: File): Promise<{ rows: ZatcaRow[]; raw: Record<string, unknown>[] }> {
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+  let raw: Record<string, unknown>[];
   if (ext === "json") {
     const text = await file.text();
     const data = JSON.parse(text);
-    const arr = Array.isArray(data) ? data : (data.invoices ?? data.rows ?? data.data ?? [data]);
-    return arr.map(rowFromObject);
+    raw = Array.isArray(data) ? data : (data.invoices ?? data.rows ?? data.data ?? [data]);
+  } else {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array", cellDates: true });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: false });
   }
-  // xlsx, xls, csv — all handled by sheetjs
-  const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type: "array", cellDates: true });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: false });
-  return json.map(rowFromObject);
+  return { rows: raw.map(o => rowFromObject(o)), raw };
+}
+export async function parseToZatcaRows(file: File): Promise<ZatcaRow[]> {
+  return (await parseToZatcaRowsWithRaw(file)).rows;
+}
+
+// AI mapping returns canonical keys like "invoice_number". Map them to ZatcaRow keys.
+const AI_KEY_TO_ROW: Record<string, keyof ZatcaRow> = {
+  invoice_number: "invoiceNumber", invoice_date: "issueDate", invoice_time: "issueTime", invoice_type: "invoiceType",
+  seller_name: "sellerName", seller_vat: "sellerVat",
+  buyer_name: "buyerName", buyer_vat: "buyerVat",
+  item_name: "itemName", quantity: "quantity", unit_price: "unitPrice",
+  vat_rate: "vatRate", vat_category: "vatCategory",
+  subtotal: "totalExclVat", vat: "vatAmount", total: "totalInclVat", currency: "currency",
+};
+export function rowsFromRawWithMapping(raw: Record<string, unknown>[], aiMapping: Record<string, string | null>): ZatcaRow[] {
+  return raw.map(obj => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      // Prefer AI mapping when provided, fall back to deterministic normHeader
+      const aiKey = aiMapping[k];
+      const mapped = aiKey ? AI_KEY_TO_ROW[aiKey] ?? null : normHeader(k);
+      if (mapped) out[mapped] = v;
+    }
+    return finalizeRow(out);
+  });
 }
 
 function rowFromObject(obj: Record<string, unknown>): ZatcaRow {
@@ -154,6 +182,10 @@ function rowFromObject(obj: Record<string, unknown>): ZatcaRow {
     const mapped = normHeader(k);
     if (mapped) out[mapped] = v;
   }
+  return finalizeRow(out);
+}
+
+function finalizeRow(out: Record<string, unknown>): ZatcaRow {
   return {
     invoiceNumber: String(out.invoiceNumber ?? "").trim(),
     issueDate:     parseDate(out.issueDate),
@@ -324,6 +356,7 @@ interface Props {
 export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, loadingClients }: Props) {
   const { toast } = useToast();
   const [rows, setRows] = useState<ZatcaRow[]>([]);
+  const [rawRows, setRawRows] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [parseErr, setParseErr] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -331,6 +364,47 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, lo
   const [editingCell, setEditingCell] = useState<{ row: number; key: keyof ZatcaRow } | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [aiMapping, setAiMapping] = useState<Record<string, string | null> | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+
+  // Detect headers that the deterministic parser couldn't map — those are
+  // the ones the user benefits from running through AI.
+  const unmappedHeaders = useMemo(() => {
+    if (rawRows.length === 0) return [] as string[];
+    const headers = Array.from(new Set(rawRows.flatMap(r => Object.keys(r))));
+    return headers.filter(h => normHeader(h) === null);
+  }, [rawRows]);
+
+  const handleAiMap = async () => {
+    if (!selectedClientId || rawRows.length === 0) return;
+    const headers = Array.from(new Set(rawRows.flatMap(r => Object.keys(r))));
+    setAiLoading(true);
+    try {
+      const token = localStorage.getItem("zatca_token");
+      const acting = localStorage.getItem("zatca_acting_company_id");
+      const headersInit: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headersInit.Authorization = `Bearer ${token}`;
+      if (acting) headersInit["x-acting-company-id"] = acting;
+      const res = await fetch(`/api/admin/gateway-clients/${selectedClientId}/ai-map-columns`, {
+        method: "POST", headers: headersInit, credentials: "include",
+        body: JSON.stringify({ headers }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const j = await res.json() as { mapping: Record<string, string | null>; source: string };
+      setAiMapping(j.mapping);
+      const newRows = rowsFromRawWithMapping(rawRows, j.mapping);
+      setRows(newRows);
+      const mappedCount = Object.values(j.mapping).filter(v => v !== null).length;
+      toast({
+        title: `تم ربط ${mappedCount} من ${headers.length} عمود`,
+        description: j.source === "openai" ? "اقتراح بالذكاء الاصطناعي طُبّق على الصفوف." : "تم استخدام مطابقة احتمالية محلية.",
+      });
+    } catch (e) {
+      toast({ title: "تعذّر الاقتراح", description: e instanceof Error ? e.message : "خطأ غير معروف", variant: "destructive" });
+    } finally {
+      setAiLoading(false);
+    }
+  };
   const selectedClient = useMemo(
     () => clients?.find(c => c.id === selectedClientId) ?? null,
     [clients, selectedClientId],
@@ -340,12 +414,13 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, lo
     let cancelled = false;
     (async () => {
       try {
-        const parsed = await parseToZatcaRows(file);
+        const { rows: parsed, raw } = await parseToZatcaRowsWithRaw(file);
         if (cancelled) return;
         if (parsed.length === 0) {
           setParseErr("لم يتم العثور على أي صف في الملف. تأكد من أن الملف يحتوي على رؤوس أعمدة في الصف الأول.");
         } else {
           setRows(parsed);
+          setRawRows(raw);
         }
       } catch (e) {
         if (!cancelled) setParseErr(e instanceof Error ? e.message : "تعذّر قراءة الملف");
@@ -566,6 +641,21 @@ export default function ZatcaScanPreview({ file, onClose, onConfirm, clients, lo
                   <Wand2 className="h-4 w-4" />
                   تصحيح تلقائي للكل
                 </Button>
+                {unmappedHeaders.length > 0 && (
+                  <Button
+                    onClick={handleAiMap}
+                    disabled={!selectedClientId || aiLoading}
+                    title={!selectedClientId ? "اختر العميل أولاً" : `${unmappedHeaders.length} عمود غير معرّف`}
+                    className="gap-1.5 bg-gradient-to-r from-sky-600 to-cyan-600 hover:opacity-90 text-white"
+                  >
+                    {aiLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    ربط الأعمدة بالذكاء الاصطناعي
+                    <Badge variant="outline" className="bg-white/20 text-white border-white/40 text-[10px]">{unmappedHeaders.length}</Badge>
+                  </Button>
+                )}
+                {aiMapping && (
+                  <span className="text-xs text-emerald-700 font-medium">✓ تم تطبيق الاقتراح</span>
+                )}
                 <Button onClick={downloadZatcaTemplate} variant="outline" size="sm" className="gap-1.5">
                   <Download className="h-3.5 w-3.5" />
                   قالب زاتكا

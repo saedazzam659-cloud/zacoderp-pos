@@ -101,6 +101,45 @@ export const gatewayInvoicesTable = pgTable("gateway_invoices", {
   byStatus:  index("gateway_invoices_status_idx").on(t.status),
 }));
 
+// Per-tenant outbound webhooks. The gateway POSTs JSON to `url` whenever
+// an event the tenant subscribed to fires (invoice.cleared / .rejected /
+// .warning / quota.threshold). Each delivery is HMAC-SHA256 signed with
+// `secret` (sent in `X-Gateway-Signature: sha256=<hex>`). Idempotency:
+// each delivery has a unique `id` echoed in `X-Gateway-Delivery-Id`.
+export const gatewayWebhooksTable = pgTable("gateway_webhooks", {
+  id:             serial("id").primaryKey(),
+  clientId:       integer("client_id").notNull().references(() => gatewayClientsTable.id, { onDelete: "cascade" }),
+  url:            text("url").notNull(),
+  secretEnc:      text("secret_enc").notNull(),
+  events:         jsonb("events").notNull(),               // string[] e.g. ["invoice.cleared","invoice.rejected"]
+  active:         boolean("active").notNull().default(true),
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+  lastDeliveryAt: timestamp("last_delivery_at"),
+  lastStatus:     text("last_status"),                     // "success" | "failed"
+  lastError:      text("last_error"),
+  failureCount:   integer("failure_count").notNull().default(0),
+}, (t) => ({
+  byClient: index("gateway_webhooks_client_idx").on(t.clientId),
+}));
+
+export const gatewayWebhookDeliveriesTable = pgTable("gateway_webhook_deliveries", {
+  id:          serial("id").primaryKey(),
+  webhookId:   integer("webhook_id").notNull().references(() => gatewayWebhooksTable.id, { onDelete: "cascade" }),
+  event:       text("event").notNull(),
+  payload:     jsonb("payload").notNull(),
+  status:      text("status").notNull().default("pending"),  // pending | success | failed | exhausted
+  httpStatus:  integer("http_status"),
+  attempts:    integer("attempts").notNull().default(0),
+  lastError:   text("last_error"),
+  deliveredAt: timestamp("delivered_at"),
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  byWebhook: index("gateway_webhook_deliveries_webhook_idx").on(t.webhookId, t.createdAt),
+  byStatus:  index("gateway_webhook_deliveries_status_idx").on(t.status),
+}));
+
 export type GatewayClient = typeof gatewayClientsTable.$inferSelect;
 export type GatewayApiKey = typeof gatewayApiKeysTable.$inferSelect;
 export type GatewayInvoice = typeof gatewayInvoicesTable.$inferSelect;
+export type GatewayWebhook = typeof gatewayWebhooksTable.$inferSelect;
+export type GatewayWebhookDelivery = typeof gatewayWebhookDeliveriesTable.$inferSelect;

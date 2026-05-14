@@ -20,6 +20,7 @@ import {
   KeyRound, Plus, Loader2, Building2, ShieldCheck, ShieldAlert, FileText,
   Copy, Check, Trash2, Edit3, Search, TrendingUp, AlertTriangle, Sparkles, Lock, Unlock,
   Wand2, Download, Upload, ExternalLink, Hash, ArrowRight, Eye,
+  Webhook, Send, RefreshCcw, Power, PowerOff, Activity,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -133,7 +134,17 @@ export default function GatewayClients() {
               </div>
             </div>
           </div>
-          <CreateClientDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={() => qc.invalidateQueries({ queryKey: ["gateway-clients"] })} />
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => window.location.assign("/admin/gateway-overview")}
+              className="bg-white/10 border-white/30 text-white hover:bg-white/20 hover:text-white gap-1.5"
+            >
+              <Activity className="h-4 w-4" />
+              نظرة عامة (كل العملاء)
+            </Button>
+            <CreateClientDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={() => qc.invalidateQueries({ queryKey: ["gateway-clients"] })} />
+          </div>
         </div>
 
         {/* Inline stats */}
@@ -384,7 +395,7 @@ function Field({ label, required, children }: { label: string; required?: boolea
 function ClientDetailDialog({ clientId, onClose, onChanged }: { clientId: number; onClose: () => void; onChanged: () => void }) {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const [tab, setTab] = useState<"info" | "credentials" | "keys" | "invoices">("info");
+  const [tab, setTab] = useState<"info" | "credentials" | "keys" | "invoices" | "webhooks">("info");
 
   const { data, isLoading } = useQuery<{ client: ClientDetail }>({
     queryKey: ["gateway-client", clientId],
@@ -417,11 +428,12 @@ function ClientDetailDialog({ clientId, onClose, onChanged }: { clientId: number
             </DialogHeader>
 
             <Tabs value={tab} onValueChange={v => setTab(v as typeof tab)} className="mt-2">
-              <TabsList className="grid grid-cols-4">
+              <TabsList className="grid grid-cols-5">
                 <TabsTrigger value="info">المعلومات</TabsTrigger>
                 <TabsTrigger value="credentials">مفاتيح زاتكا</TabsTrigger>
                 <TabsTrigger value="keys">مفاتيح API</TabsTrigger>
                 <TabsTrigger value="invoices">الفواتير</TabsTrigger>
+                <TabsTrigger value="webhooks"><Webhook className="h-3.5 w-3.5 ml-1" />Webhooks</TabsTrigger>
               </TabsList>
 
               <TabsContent value="info" className="mt-4">
@@ -432,6 +444,9 @@ function ClientDetailDialog({ clientId, onClose, onChanged }: { clientId: number
               </TabsContent>
               <TabsContent value="keys" className="mt-4">
                 <ApiKeysTab clientId={clientId} />
+              </TabsContent>
+              <TabsContent value="webhooks" className="mt-4">
+                <WebhooksTab clientId={clientId} />
               </TabsContent>
               <TabsContent value="invoices" className="mt-4">
                 <div className="flex items-center justify-end mb-2 gap-2">
@@ -866,6 +881,184 @@ function CredStatus({ label, present }: { label: string; present: boolean }) {
         <div className="text-xs text-slate-500">{label}</div>
         <div className={`text-sm font-medium ${present ? "text-emerald-700" : "text-slate-500"}`}>{present ? "محفوظ" : "غير محفوظ"}</div>
       </div>
+    </div>
+  );
+}
+
+// ─── Webhooks (Phase 4) ────────────────────────────────────────────────
+interface WebhookRow {
+  id: number; url: string; events: string[]; active: boolean;
+  createdAt: string; lastDeliveryAt: string | null;
+  lastStatus: "success" | "failed" | null; lastError: string | null;
+  failureCount: number;
+}
+interface DeliveryRow {
+  id: number; event: string; status: string; httpStatus: number | null;
+  attempts: number; lastError: string | null; deliveredAt: string | null; createdAt: string;
+}
+const ALL_EVENTS = [
+  { key: "invoice.cleared",  label: "فاتورة مقبولة" },
+  { key: "invoice.rejected", label: "فاتورة مرفوضة" },
+  { key: "invoice.warning",  label: "فاتورة بتحذيرات" },
+  { key: "invoice.received", label: "فاتورة مستلمة" },
+  { key: "quota.threshold",  label: "تجاوز حد الحصة" },
+];
+
+function WebhooksTab({ clientId }: { clientId: number }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [url, setUrl] = useState("");
+  const [events, setEvents] = useState<string[]>(["invoice.cleared", "invoice.rejected"]);
+  const [newSecret, setNewSecret] = useState<string | null>(null);
+  const [openHookId, setOpenHookId] = useState<number | null>(null);
+
+  const { data, isLoading } = useQuery<{ webhooks: WebhookRow[] }>({
+    queryKey: ["gateway-client", clientId, "webhooks"],
+    queryFn: () => api(`/api/admin/gateway-clients/${clientId}/webhooks`),
+  });
+
+  const create = useMutation({
+    mutationFn: () => api<{ id: number; secret: string }>(`/api/admin/gateway-clients/${clientId}/webhooks`, { method: "POST", body: JSON.stringify({ url, events }) }),
+    onSuccess: (d) => { setNewSecret(d.secret); setUrl(""); qc.invalidateQueries({ queryKey: ["gateway-client", clientId, "webhooks"] }); },
+    onError: (e: Error) => toast({ title: "تعذّر الإضافة", description: e.message, variant: "destructive" }),
+  });
+  const toggle = useMutation({
+    mutationFn: (h: WebhookRow) => api(`/api/admin/gateway-clients/${clientId}/webhooks/${h.id}`, { method: "PATCH", body: JSON.stringify({ active: !h.active }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["gateway-client", clientId, "webhooks"] }),
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => api(`/api/admin/gateway-clients/${clientId}/webhooks/${id}`, { method: "DELETE" }),
+    onSuccess: () => { toast({ title: "تم الحذف" }); qc.invalidateQueries({ queryKey: ["gateway-client", clientId, "webhooks"] }); },
+  });
+  const test = useMutation({
+    mutationFn: (id: number) => api(`/api/admin/gateway-clients/${clientId}/webhooks/${id}/test`, { method: "POST" }),
+    onSuccess: () => toast({ title: "تم إرسال حدث تجريبي", description: "افتح \"السجل\" بعد ثانيتين لرؤية النتيجة." }),
+  });
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Webhook className="h-4 w-4 text-indigo-600" />
+            إضافة Webhook جديد
+          </div>
+          <Input placeholder="https://yourapp.com/zatca/webhook" value={url} onChange={e => setUrl(e.target.value)} dir="ltr" className="font-mono text-sm" />
+          <div className="flex flex-wrap gap-2">
+            {ALL_EVENTS.map(ev => (
+              <label key={ev.key} className="flex items-center gap-1.5 text-xs px-2 py-1 rounded border cursor-pointer hover:bg-muted/40">
+                <input type="checkbox" checked={events.includes(ev.key)}
+                  onChange={e => setEvents(prev => e.target.checked ? [...prev, ev.key] : prev.filter(k => k !== ev.key))} />
+                {ev.label}
+              </label>
+            ))}
+          </div>
+          <Button onClick={() => create.mutate()} disabled={!url.trim() || events.length === 0 || create.isPending} className="bg-indigo-600 hover:bg-indigo-700">
+            {create.isPending ? <Loader2 className="h-4 w-4 ml-1 animate-spin" /> : <Plus className="h-4 w-4 ml-1" />}
+            إضافة
+          </Button>
+        </CardContent>
+      </Card>
+
+      {newSecret && (
+        <Card className="border-amber-300 bg-amber-50">
+          <CardContent className="p-4">
+            <div className="font-semibold text-amber-900 mb-2 flex items-center gap-2">
+              <ShieldAlert className="h-4 w-4" />
+              احفظ هذا السر الآن — لن يُعرض مرة أخرى
+            </div>
+            <div className="font-mono text-xs bg-white border border-amber-200 p-2 rounded break-all" dir="ltr">{newSecret}</div>
+            <div className="text-xs text-amber-800 mt-2">يُستخدم هذا السر للتحقق من توقيع HMAC-SHA256 في رأس <code>X-Gateway-Signature</code> لكل طلب.</div>
+            <Button variant="outline" size="sm" className="mt-2" onClick={() => { navigator.clipboard.writeText(newSecret); setNewSecret(null); toast({ title: "تم النسخ" }); }}>
+              <Copy className="h-3.5 w-3.5 ml-1" />
+              نسخ وإغلاق
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {isLoading ? <div className="py-12 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto" /></div>
+        : (data?.webhooks ?? []).length === 0 ? <div className="text-center py-8 text-muted-foreground text-sm">لا يوجد webhooks بعد.</div>
+        : (
+          <div className="space-y-2">
+            {data!.webhooks.map(h => (
+              <Card key={h.id} className={h.active ? "" : "opacity-60"}>
+                <CardContent className="p-3 space-y-2">
+                  <div className="flex items-start justify-between gap-2 flex-wrap">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-mono text-xs break-all" dir="ltr">{h.url}</div>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {(h.events as string[]).map(e => <Badge key={e} variant="outline" className="text-[10px]">{ALL_EVENTS.find(x => x.key === e)?.label ?? e}</Badge>)}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button variant="ghost" size="sm" onClick={() => test.mutate(h.id)} title="إرسال حدث تجريبي">
+                        <Send className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setOpenHookId(openHookId === h.id ? null : h.id)} title="السجل">
+                        <Activity className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => toggle.mutate(h)} title={h.active ? "تعطيل" : "تفعيل"}>
+                        {h.active ? <PowerOff className="h-3.5 w-3.5" /> : <Power className="h-3.5 w-3.5 text-emerald-600" />}
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => { if (confirm("حذف هذا الـ webhook؟")) remove.mutate(h.id); }} className="text-rose-600 hover:text-rose-700">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                    {h.lastStatus === "success" ? <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">آخر تسليم: نجح</Badge>
+                      : h.lastStatus === "failed" ? <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200">آخر تسليم: فشل ({h.failureCount})</Badge>
+                      : <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">لم يُجرّب بعد</Badge>}
+                    {h.lastDeliveryAt && <span>{new Date(h.lastDeliveryAt).toLocaleString("ar-EG")}</span>}
+                  </div>
+                  {openHookId === h.id && <DeliveriesPanel clientId={clientId} hookId={h.id} />}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+    </div>
+  );
+}
+
+function DeliveriesPanel({ clientId, hookId }: { clientId: number; hookId: number }) {
+  const { data, isLoading, refetch, isFetching } = useQuery<{ deliveries: DeliveryRow[] }>({
+    queryKey: ["gateway-client", clientId, "webhooks", hookId, "deliveries"],
+    queryFn: () => api(`/api/admin/gateway-clients/${clientId}/webhooks/${hookId}/deliveries`),
+  });
+  return (
+    <div className="border-t pt-2 mt-2">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs font-semibold">آخر 50 تسليم</div>
+        <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching}>
+          <RefreshCcw className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`} />
+        </Button>
+      </div>
+      {isLoading ? <Loader2 className="h-4 w-4 animate-spin mx-auto" />
+        : (data?.deliveries ?? []).length === 0 ? <div className="text-xs text-muted-foreground text-center py-4">لا توجد محاولات تسليم بعد.</div>
+        : (
+          <div className="max-h-60 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/40 sticky top-0">
+                <tr><th className="p-1.5 text-right">الحدث</th><th className="p-1.5">الحالة</th><th className="p-1.5">HTTP</th><th className="p-1.5">محاولات</th><th className="p-1.5">الوقت</th></tr>
+              </thead>
+              <tbody>
+                {data!.deliveries.map(d => (
+                  <tr key={d.id} className="border-t">
+                    <td className="p-1.5">{d.event}</td>
+                    <td className="p-1.5">
+                      <Badge variant="outline" className={d.status === "success" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : d.status === "pending" ? "bg-sky-50 text-sky-700 border-sky-200" : "bg-rose-50 text-rose-700 border-rose-200"}>{d.status}</Badge>
+                    </td>
+                    <td className="p-1.5 font-mono">{d.httpStatus ?? "—"}</td>
+                    <td className="p-1.5 text-center">{d.attempts}</td>
+                    <td className="p-1.5 text-[10px] text-muted-foreground">{new Date(d.createdAt).toLocaleString("ar-EG")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
     </div>
   );
 }
