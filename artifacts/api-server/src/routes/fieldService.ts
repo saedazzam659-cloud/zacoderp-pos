@@ -570,7 +570,13 @@ router.get("/plans/:id", async (req, res) => {
       lng: fieldLocationsTable.lng,
       address: fieldLocationsTable.address,
     }).from(fieldVisitPlanItemsTable)
-      .leftJoin(fieldLocationsTable, eq(fieldLocationsTable.id, fieldVisitPlanItemsTable.locationId))
+      // Tenant-scoped join — even if a foreign locationId was somehow stored
+      // historically, the leftJoin will yield NULL fields rather than leak
+      // another tenant's location metadata.
+      .leftJoin(fieldLocationsTable, and(
+        eq(fieldLocationsTable.id, fieldVisitPlanItemsTable.locationId),
+        eq(fieldLocationsTable.companyId, cid),
+      ))
       .where(eq(fieldVisitPlanItemsTable.planId, id))
       .orderBy(asc(fieldVisitPlanItemsTable.sequenceNo));
     res.json({ ...plan, items });
@@ -599,6 +605,15 @@ router.post("/plans", async (req, res) => {
       const locs = locIds.length > 0 ? await db.select().from(fieldLocationsTable)
         .where(and(eq(fieldLocationsTable.companyId, cid), inArray(fieldLocationsTable.id, locIds))) : [];
       const locMap = new Map(locs.map(l => [l.id, l.name]));
+      // Reject any item whose locationId is set but does NOT belong to this
+      // tenant — prevents cross-tenant FK injection (foreign locationId would
+      // otherwise be persisted and later joined back, leaking metadata).
+      for (const it of items) {
+        const lid = numOrNull(it.locationId);
+        if (lid != null && !locMap.has(lid)) {
+          res.status(400).json({ error: `موقع غير صالح في بنود الخطة (id=${lid})` }); return;
+        }
+      }
       await db.insert(fieldVisitPlanItemsTable).values(items.map((it: any, i: number) => ({
         planId: plan.id,
         sequenceNo: numOrNull(it.sequenceNo) ?? (i + 1),
@@ -657,7 +672,10 @@ router.get("/plans/today/:employeeId", async (req, res) => {
       address: fieldLocationsTable.address,
       radiusM: fieldLocationsTable.radiusM,
     }).from(fieldVisitPlanItemsTable)
-      .leftJoin(fieldLocationsTable, eq(fieldLocationsTable.id, fieldVisitPlanItemsTable.locationId))
+      .leftJoin(fieldLocationsTable, and(
+        eq(fieldLocationsTable.id, fieldVisitPlanItemsTable.locationId),
+        eq(fieldLocationsTable.companyId, cid),
+      ))
       .where(eq(fieldVisitPlanItemsTable.planId, plan.id))
       .orderBy(asc(fieldVisitPlanItemsTable.sequenceNo));
     res.json({ plan, items });
@@ -811,6 +829,20 @@ router.patch("/tickets/:id", async (req, res) => {
     }
     for (const k of ["customerId","assetId","locationId","branchId","slaResponseMin","slaResolutionMin","customerRating"] as const) {
       if (b[k] !== undefined) patch[k] = numOrNull(b[k]);
+    }
+    // Tenant-validate any soft-FK being mutated. Without this, a manager
+    // could (intentionally or via a stale cache) point a ticket at another
+    // tenant's customer/asset/location and leak data via subsequent reads.
+    const fkChecks: Array<[string, any]> = [
+      ["customerId", customersTable],
+      ["assetId", maintenanceAssetsTable],
+      ["locationId", fieldLocationsTable],
+    ];
+    for (const [field, table] of fkChecks) {
+      const v = patch[field];
+      if (v != null && !(await assertTenant(table, v, cid))) {
+        res.status(400).json({ error: `قيمة ${field} غير صالحة للشركة الحالية` }); return;
+      }
     }
     for (const k of ["laborHours","laborCost","partsCost","totalCost"] as const) {
       if (b[k] !== undefined) {
