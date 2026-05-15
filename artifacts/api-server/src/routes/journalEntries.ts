@@ -393,6 +393,16 @@ router.put("/:id", async (req, res) => {
       return;
     }
 
+    // Posted-status guard — refuse to edit a posted JE. The user must
+    // unpost it first (POST /:id/unpost) before any field/line change.
+    const [statusRow] = await db.select({ status: journalEntriesTable.status })
+      .from(journalEntriesTable)
+      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    if (statusRow?.status === "posted") {
+      res.status(423).json({ error: "هذا القيد مُرحَّل ولا يمكن تعديله. قم بفك الترحيل أولاً ثم أعد المحاولة." });
+      return;
+    }
+
     // docNumber is intentionally not destructured — immutable on edit.
     const { entryDate, currency, exchangeRate, description, entryType, branchId, lines } = req.body;
 
@@ -577,11 +587,20 @@ router.delete("/:id", async (req, res) => {
       return;
     }
 
-    // Period guard — refuse to delete entries inside a closed period
-    const [pre] = await db.select({ periodId: journalEntriesTable.periodId })
+    // Period guard + posted-status guard — refuse to delete entries inside
+    // a closed period AND refuse to delete any posted JE (must unpost first
+    // so the financial reports stay consistent with the audit trail).
+    const [pre] = await db.select({
+      periodId: journalEntriesTable.periodId,
+      status:   journalEntriesTable.status,
+    })
       .from(journalEntriesTable)
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
     if (pre) {
+      if (pre.status === "posted") {
+        res.status(423).json({ error: "هذا القيد مُرحَّل ولا يمكن حذفه. قم بفك الترحيل أولاً ثم أعد المحاولة." });
+        return;
+      }
       const delGuard = await assertWritableForPeriodId(cid, pre.periodId);
       if (!delGuard.ok) { res.status(423).json({ error: delGuard.reason }); return; }
     }
