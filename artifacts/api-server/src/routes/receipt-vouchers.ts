@@ -8,7 +8,7 @@ import {
   journalEntriesTable, journalEntryLinesTable,
 } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, multiBranchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, requireAdminRole } from "../middleware/permissions.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
@@ -117,11 +117,16 @@ async function buildReceiptJournal(cid: number, v: any, req: any): Promise<numbe
 
 router.get("/", async (req, res) => {
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
+  // Branch-Level Data Isolation: respect user scope and accept manager
+  // multi-branch filter via ?branchIds=1,2,3 (or legacy ?branchId=).
+  const branchScope = multiBranchScopeSpread(req, receiptVouchersTable.branchId, req.query.branchIds ?? req.query.branchId);
   const rows = cid
     ? await db.select().from(receiptVouchersTable)
-        .where(eq(receiptVouchersTable.companyId, cid))
+        .where(and(eq(receiptVouchersTable.companyId, cid), ...branchScope))
         .orderBy(desc(receiptVouchersTable.createdAt))
-    : await db.select().from(receiptVouchersTable).orderBy(desc(receiptVouchersTable.createdAt));
+    : await db.select().from(receiptVouchersTable)
+        .where(branchScope.length ? and(...branchScope) : undefined)
+        .orderBy(desc(receiptVouchersTable.createdAt));
   res.json(rows);
 });
 

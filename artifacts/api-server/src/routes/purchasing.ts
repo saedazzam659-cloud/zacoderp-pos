@@ -14,7 +14,7 @@ import {
   currenciesTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql, inArray } from "drizzle-orm";
-import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread, multiBranchScopeSpread } from "../middleware/auth.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
@@ -860,7 +860,7 @@ router.get("/purchase-invoices", async (req, res) => {
     const rows = await db.select().from(purchaseInvoicesTable)
       .where(and(
         eq(purchaseInvoicesTable.companyId, cid),
-        ...branchScopeSpread(req, purchaseInvoicesTable.branchId, req.query.branchId),
+        ...multiBranchScopeSpread(req, purchaseInvoicesTable.branchId, req.query.branchIds ?? req.query.branchId),
       ))
       .orderBy(desc(purchaseInvoicesTable.invoiceDate));
 
@@ -1931,7 +1931,7 @@ router.get("/purchase-returns", async (req, res) => {
     const rows = await db.select().from(purchaseReturnsTable)
       .where(and(
         eq(purchaseReturnsTable.companyId, cid),
-        ...branchScopeSpread(req, purchaseReturnsTable.branchId, req.query.branchId),
+        ...multiBranchScopeSpread(req, purchaseReturnsTable.branchId, req.query.branchIds ?? req.query.branchId),
       ))
       .orderBy(desc(purchaseReturnsTable.returnDate));
     res.json(rows);

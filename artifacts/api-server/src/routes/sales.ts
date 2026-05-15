@@ -1302,7 +1302,7 @@ router.get("/sales-returns", async (req, res) => {
       .where(and(
         eq(salesReturnsTable.companyId, cid),
         ...sourceFilter,
-        ...branchScopeSpread(req, salesReturnsTable.branchId, req.query.branchId),
+        ...multiBranchScopeSpread(req, salesReturnsTable.branchId, req.query.branchIds ?? req.query.branchId),
       ))
       .orderBy(desc(salesReturnsTable.returnDate));
     res.json(rows);
