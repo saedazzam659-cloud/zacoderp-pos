@@ -2365,6 +2365,23 @@ router.patch("/supplier-settlements/:id/post", async (req, res) => {
       .set({ status: "posted", updatedAt: new Date() })
       .where(and(eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid)))
       .returning();
+    if (!row) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
+    res.json(row);
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
+// Mirrors the unpost flow on purchase-invoices / purchase-returns: admin-only,
+// flips status back to draft so the user can edit or delete the row.
+// Without this the DELETE guard above would be a dead-end for posted rows.
+router.patch("/supplier-settlements/:id/unpost", requireAdminRole, async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [row] = await db.update(supplierSettlementsTable)
+      .set({ status: "draft", updatedAt: new Date() })
+      .where(and(eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid)))
+      .returning();
+    if (!row) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
     res.json(row);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
@@ -2373,6 +2390,17 @@ router.delete("/supplier-settlements/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
+    // Posted-status guard — same rule as every other financial doc:
+    // a posted settlement cannot be deleted. The user must unpost it
+    // first so the audit trail and ledger stay consistent.
+    const [existing] = await db.select({ status: supplierSettlementsTable.status })
+      .from(supplierSettlementsTable)
+      .where(and(eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
+    if (existing.status === "posted") {
+      res.status(400).json({ error: "لا يمكن حذف تسوية مُرحَّلة. قم بإلغاء الترحيل أولاً ثم احذفها." });
+      return;
+    }
     await db.delete(supplierSettlementsTable).where(and(eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid)));
     res.json({ ok: true });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
