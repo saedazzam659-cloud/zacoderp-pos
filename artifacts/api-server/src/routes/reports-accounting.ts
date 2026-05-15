@@ -167,9 +167,19 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
   if (openingFromTrialBalance) {
     openingMap = new Map();
     // Source 1: latest imported trial balance details (Excel-imported
-    // opening balances).
+    // opening balances) whose period ends STRICTLY BEFORE fromDate.
+    // Without the date bound a TB imported for a later period (e.g.
+    // 2026-12-31) would be added to a 2025 trial balance opening, and
+    // would also overlap with Source 3 (prior-period regular movements)
+    // for any subsequent year — overstating opening on both counts.
+    const tbWhere = fromDate
+      ? and(
+          eq(trialBalancesTable.companyId, cid),
+          sql`${trialBalancesTable.periodEnd} < ${fromDate}`,
+        )
+      : eq(trialBalancesTable.companyId, cid);
     const [latestTb] = await db.select({ id: trialBalancesTable.id }).from(trialBalancesTable)
-      .where(eq(trialBalancesTable.companyId, cid))
+      .where(tbWhere)
       .orderBy(desc(trialBalancesTable.periodEnd), desc(trialBalancesTable.createdAt))
       .limit(1);
     if (latestTb) {
@@ -192,8 +202,18 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
     // Source 2: journal entries flagged as opening (entryType='opening').
     // These are opening-balance JEs entered directly through the JE
     // workflow (not via the TB Excel import). They feed the Opening
-    // column and are excluded from the Period column above.
+    // column and are excluded from the Period column above (regardless
+    // of date — periodFilters drop entryType='opening' wholesale). When
+    // a `fromDate` is supplied we restrict to opening JEs dated ON OR
+    // BEFORE it (`<=`). The inclusive bound is critical: users
+    // routinely post the opening JE on the fiscal year's first day
+    // (2025-01-01) and then run a trial balance starting that same
+    // day; a strict `<` would drop the opening JE on its boundary,
+    // making the opening column show zero. A future-dated opening JE
+    // (e.g. 2026-01-01 entered while running a 2025 report) is still
+    // correctly excluded.
     const openingJeFilters = [...baseFilters, eq(journalEntriesTable.entryType, "opening")];
+    if (fromDate) openingJeFilters.push(sql`${journalEntriesTable.entryDate} <= ${fromDate}`);
     const openingJeMap = await aggregate(openingJeFilters);
     for (const [accountId, v] of openingJeMap) {
       const cur = openingMap.get(accountId) ?? { debit: 0, credit: 0 };
@@ -201,6 +221,31 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
         debit:  cur.debit  + v.debit,
         credit: cur.credit + v.credit,
       });
+    }
+    // Source 3: prior-period REGULAR posted movements (sales, purchases,
+    // vouchers, manual JEs, etc). Without this the opening balance for any
+    // fiscal year after the first one would be frozen at the original
+    // opening JE — i.e. closing balance of 2025 would NOT roll forward
+    // into the 2026 opening balance. This is the IFRS-aligned
+    // brought-forward semantic: the opening of period [from..to] is the
+    // ledger balance as of (from − 1 day), regardless of how that balance
+    // was built up. Excludes opening / trial_balance_adjustment so they
+    // are not double-counted with Sources 1 and 2 above.
+    if (fromDate) {
+      const priorMovementFilters = [
+        ...baseFilters,
+        sql`${journalEntriesTable.entryDate} < ${fromDate}`,
+        ne(journalEntriesTable.entryType, "opening"),
+        ne(journalEntriesTable.entryType, "trial_balance_adjustment"),
+      ];
+      const priorMap = await aggregate(priorMovementFilters);
+      for (const [accountId, v] of priorMap) {
+        const cur = openingMap.get(accountId) ?? { debit: 0, credit: 0 };
+        openingMap.set(accountId, {
+          debit:  cur.debit  + v.debit,
+          credit: cur.credit + v.credit,
+        });
+      }
     }
   } else if (fromDate) {
     const openingFilters = [...baseFilters, sql`${journalEntriesTable.entryDate} < ${fromDate}`];
