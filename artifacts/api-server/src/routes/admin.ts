@@ -2725,12 +2725,59 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
       for (const c of cos) companyNameMap.set(c.id, c.nameAr);
     }
 
+    // ── Session-duration enrichment ────────────────────────────────────────
+    // For each distinct userId in the result set, fetch ALL their login/logout
+    // events in the same time-window (or 30 days if unspecified), order by
+    // time ASC, and pair each login with its next logout. Stamp the duration
+    // (in seconds) onto BOTH the login row and the matching logout row so
+    // either appearance in the table shows how long the session lasted. A
+    // dangling login (still active or never logged out) gets `null`.
+    const distinctUserIds = Array.from(new Set(rows.map(r => r.userId).filter((x): x is number => typeof x === "number")));
+    const sessionDurations = new Map<number, number>(); // auditLogId → seconds
+    if (distinctUserIds.length > 0) {
+      const winConds: SQL[] = [
+        inArray(auditLogTable.userId, distinctUserIds),
+        inArray(auditLogTable.action, ["login", "logout"]),
+      ];
+      if (from && !isNaN(from.getTime())) winConds.push(gte(auditLogTable.createdAt, from));
+      else winConds.push(sql`${auditLogTable.createdAt} >= NOW() - INTERVAL '30 days'`);
+      if (to && !isNaN(to.getTime())) winConds.push(lte(auditLogTable.createdAt, to));
+      const events = await db
+        .select({
+          id: auditLogTable.id,
+          userId: auditLogTable.userId,
+          action: auditLogTable.action,
+          createdAt: auditLogTable.createdAt,
+        })
+        .from(auditLogTable)
+        .where(and(...winConds))
+        .orderBy(asc(auditLogTable.userId), asc(auditLogTable.createdAt));
+
+      let currentUser: number | null = null;
+      let pendingLogin: { id: number; t: number } | null = null;
+      for (const e of events) {
+        if (e.userId !== currentUser) {
+          currentUser = e.userId;
+          pendingLogin = null;
+        }
+        if (e.action === "login") {
+          pendingLogin = { id: e.id, t: e.createdAt.getTime() };
+        } else if (e.action === "logout" && pendingLogin) {
+          const dur = Math.max(0, Math.floor((e.createdAt.getTime() - pendingLogin.t) / 1000));
+          sessionDurations.set(pendingLogin.id, dur);
+          sessionDurations.set(e.id, dur);
+          pendingLogin = null;
+        }
+      }
+    }
+
     // Stitch enrichment back onto each row.
     const enriched = rows.map(r => ({
       ...r,
       country:      r.ip ? (ipCountry.get(r.ip) ?? null) : null,
       attemptCount: r.username ? (attemptCount.get(r.username) ?? null) : null,
       companyName:  r.companyId != null ? (companyNameMap.get(r.companyId) ?? null) : null,
+      sessionDurationSec: sessionDurations.get(r.id) ?? null,
     }));
 
     // Lightweight 30-day denied-per-day series for the UI mini-chart.

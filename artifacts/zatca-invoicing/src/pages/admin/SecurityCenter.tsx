@@ -72,6 +72,7 @@ function countryName(code: string | null | undefined): string {
 interface LoginHistoryRow {
   id: number; userId: number | null; username: string | null;
   role: string | null; companyId: number | null; companyName: string | null; action: string;
+  sessionDurationSec?: number | null;
   module?: string | null;
   method: string | null; path: string | null; statusCode: number | null;
   ip: string | null; userAgent: string | null;
@@ -136,6 +137,21 @@ function fmtDateTime(s: string | null): string {
   const d = new Date(s);
   if (isNaN(d.getTime())) return "—";
   return d.toLocaleString("ar-SA", { hour12: false });
+}
+// Format a session duration in seconds → human-readable Arabic string.
+// Examples: 45 → "٤٥ ث", 130 → "٢ د ١٠ ث", 3700 → "١ س ١ د", 90061 → "١ ي ١ س ١ د".
+function formatSessionDuration(sec: number): string {
+  if (sec < 60) return `${sec.toLocaleString("ar-SA")} ث`;
+  const days = Math.floor(sec / 86400);
+  const hours = Math.floor((sec % 86400) / 3600);
+  const mins = Math.floor((sec % 3600) / 60);
+  const secs = sec % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days.toLocaleString("ar-SA")} ي`);
+  if (hours > 0) parts.push(`${hours.toLocaleString("ar-SA")} س`);
+  if (mins > 0 && days === 0) parts.push(`${mins.toLocaleString("ar-SA")} د`);
+  if (days === 0 && hours === 0 && secs > 0) parts.push(`${secs.toLocaleString("ar-SA")} ث`);
+  return parts.join(" ");
 }
 function shortUA(ua: string | null): string {
   if (!ua) return "—";
@@ -552,8 +568,9 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                   <tr className="text-right text-xs text-muted-foreground">
                     <th className="px-3 py-2 font-medium">الوقت</th>
                     <th className="px-3 py-2 font-medium">المستخدم</th>
-                    <th className="px-3 py-2 font-medium">الشركة</th>
+                    <th className="px-3 py-2 font-medium min-w-[180px]">الشركة</th>
                     <th className="px-3 py-2 font-medium">الإجراء</th>
+                    <th className="px-3 py-2 font-medium" title="مدة الجلسة من الدخول حتى الخروج">مدة الجلسة</th>
                     <th className="px-3 py-2 font-medium">الوحدة</th>
                     <th className="px-3 py-2 font-medium">السبب</th>
                     <th className="px-3 py-2 font-medium">الدولة</th>
@@ -573,7 +590,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                           <div className="font-medium">{r.username ?? "—"}</div>
                           {r.role && <div className="text-[10px] text-muted-foreground">{r.role}</div>}
                         </td>
-                        <td className="px-3 py-2 text-xs">
+                        <td className="px-3 py-2 text-xs min-w-[180px] whitespace-normal break-words">
                           {r.companyName ?? (r.companyId == null ? "—" : `#${r.companyId}`)}
                         </td>
                         <td className="px-3 py-2">
@@ -584,6 +601,21 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                           }>
                             {r.action === "login" ? "دخول" : r.action === "logout" ? "خروج" : "مرفوض"}
                           </Badge>
+                        </td>
+                        <td className="px-3 py-2 text-xs whitespace-nowrap" data-testid={`session-duration-${r.id}`}>
+                          {typeof r.sessionDurationSec === "number" ? (
+                            <Badge
+                              variant="outline"
+                              className="bg-indigo-50 text-indigo-700 border-indigo-200 font-mono text-[11px]"
+                              title={`${r.sessionDurationSec.toLocaleString("ar-SA")} ثانية`}
+                            >
+                              {formatSessionDuration(r.sessionDurationSec)}
+                            </Badge>
+                          ) : r.action === "denied" ? (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground" title="جلسة لم تنتهِ بعد أو لم يتم تسجيل خروج">—</span>
+                          )}
                         </td>
                         <td className="px-3 py-2">
                           {/* Distinguish authentication failures from RBAC permission denials */}
