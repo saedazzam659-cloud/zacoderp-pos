@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useAutoFocusOnMount } from "@/hooks/useAutoFocusOnMount";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
@@ -100,6 +101,8 @@ export default function SalesReturns() {
   const [form, setForm]         = useState<any>({ ...EMPTY, priceIncludesVat: stickyPriceIncl.initial });
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
   const [printData, setPrintData] = useState<any>(null);
+  const [branchIds, setBranchIds] = useState<number[]>([]);
+  const branchKey = branchIds.length ? branchIds.slice().sort((a, b) => a - b).join(",") : "all";
 
   // Pull next return number from the central sequence engine while creating
   // a new return. Skip when editing an existing record (its number is fixed)
@@ -140,8 +143,14 @@ export default function SalesReturns() {
   );
 
   const { data: returns_ = [], isLoading } = useQuery<any[]>({
-    queryKey: ["sales-returns", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/sales/sales-returns?companyId=${cid}` : `${API}/api/sales/sales-returns`, { headers: authH }); return r.json(); },
+    queryKey: ["sales-returns", cid, branchKey],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (cid) params.set("companyId", String(cid));
+      if (branchIds.length) params.set("branchIds", branchIds.join(","));
+      const r = await fetch(`${API}/api/sales/sales-returns?${params.toString()}`, { headers: authH });
+      return r.json();
+    },
     enabled: !!user,
   });
 
@@ -1575,6 +1584,7 @@ ${sections}
             onChange={(e) => setTableSearch(e.target.value)}
             className="h-7 text-xs w-56"
           />
+          <MultiBranchFilter value={branchIds} onChange={setBranchIds} size="sm" />
           <div className="flex gap-1">
             {(["all", "draft", "posted"] as const).map((s) => (
               <button

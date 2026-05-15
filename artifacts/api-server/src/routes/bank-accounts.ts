@@ -32,6 +32,39 @@ function branchOrNullScope(req: any): any {
   );
 }
 
+/**
+ * Multi-branch scope for bank accounts. Honours an explicit `?branchIds=1,2`
+ * query param (intersected with the user's allowed list) and falls back to
+ * the legacy `branchOrNullScope` when no explicit list is supplied.
+ */
+function multiBranchOrNullScope(req: any, requestedRaw: unknown): any {
+  const requested: number[] = [];
+  const push = (v: unknown) => {
+    if (v === undefined || v === null) return;
+    const s = String(v).trim();
+    if (s === "" || s.toLowerCase() === "all") return;
+    for (const part of s.split(",")) {
+      const n = Number(part.trim());
+      if (Number.isFinite(n) && n > 0) requested.push(n);
+    }
+  };
+  if (Array.isArray(requestedRaw)) requestedRaw.forEach(push);
+  else push(requestedRaw);
+
+  if (requested.length === 0) return branchOrNullScope(req);
+
+  const allowed = getAllowedBranchIds(req);
+  const intersected = allowed === null
+    ? Array.from(new Set(requested))
+    : Array.from(new Set(requested.filter(id => allowed.includes(id))));
+  if (intersected.length === 0) return sql`false`;
+  return or(
+    and(isNull(bankAccountsTable.branchIds), isNull(bankAccountsTable.branchId)),
+    arrayOverlaps(bankAccountsTable.branchIds, intersected),
+    and(isNull(bankAccountsTable.branchIds), inArray(bankAccountsTable.branchId, intersected)),
+  );
+}
+
 // Validate that every id in `ids` belongs to the same company. Returns a
 // list of invalid ids (empty when all good).
 async function invalidBranchIds(cid: number, ids: number[]): Promise<number[]> {
@@ -56,7 +89,7 @@ function normaliseBranchIds(raw: any): number[] | null {
 
 router.get("/", async (req, res) => {
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
-  const branchCond = branchOrNullScope(req);
+  const branchCond = multiBranchOrNullScope(req, req.query.branchIds ?? req.query.branchId);
   const conds: any[] = [];
   if (cid) conds.push(eq(bankAccountsTable.companyId, cid));
   if (branchCond) conds.push(branchCond);

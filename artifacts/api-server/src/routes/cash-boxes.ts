@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { cashBoxesTable, receiptVouchersTable, paymentVouchersTable } from "@workspace/db";
 import { eq, and, sql, or, isNull, inArray } from "drizzle-orm";
-import { extractAuth, resolveCompanyId, getAllowedBranchIds } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, getAllowedBranchIds, multiBranchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureCashBoxAccount } from "../lib/entityAccounts.js";
 
@@ -27,10 +27,9 @@ function branchOrNullScope(req: any, branchCol: any): any {
 
 router.get("/", async (req, res) => {
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
-  const branchCond = branchOrNullScope(req, cashBoxesTable.branchId);
   const conds: any[] = [];
   if (cid) conds.push(eq(cashBoxesTable.companyId, cid));
-  if (branchCond) conds.push(branchCond);
+  conds.push(...multiBranchScopeSpread(req, cashBoxesTable.branchId, req.query.branchIds ?? req.query.branchId));
   const rows = conds.length
     ? await db.select().from(cashBoxesTable).where(and(...conds))
     : await db.select().from(cashBoxesTable);

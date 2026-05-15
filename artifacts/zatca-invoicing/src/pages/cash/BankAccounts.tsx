@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useFormatters } from "@/lib/format";
@@ -178,6 +179,8 @@ export default function BankAccounts() {
   const cid = user?.companyId;
 
   const [search,  setSearch]  = useState("");
+  const [branchIds, setBranchIds] = useState<number[]>([]);
+  const branchKey = branchIds.length ? branchIds.slice().sort((a, b) => a - b).join(",") : "all";
   const [panel,   setPanel]   = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [form,    setForm]    = useState<typeof EMPTY>(EMPTY);
@@ -185,8 +188,13 @@ export default function BankAccounts() {
   const [delRow,  setDelRow]  = useState<any>(null);
 
   const { data: banks = [], isLoading } = useQuery({
-    queryKey: ["bank-accounts", cid],
-    queryFn: () => fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    queryKey: ["bank-accounts", cid, branchKey],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (cid) params.set("companyId", String(cid));
+      if (branchIds.length) params.set("branchIds", branchIds.join(","));
+      return fetch(`${API}/api/bank-accounts?${params.toString()}`, { headers: h }).then(r => r.json());
+    },
     enabled: !!cid,
   });
   const { data: balances = [] } = useQuery({
@@ -384,9 +392,12 @@ export default function BankAccounts() {
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <p className="text-sm font-medium">{t("bankAccounts.list")}</p>
-          <div className="relative">
-            <Search className={`absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground`} />
-            <Input className={`${isRtl ? "pr-9" : "pl-9"} h-8 w-56 text-sm`} placeholder={t("cashCommon.search")} value={search} onChange={e => setSearch(e.target.value)} />
+          <div className="flex items-center gap-2">
+            <MultiBranchFilter value={branchIds} onChange={setBranchIds} size="sm" />
+            <div className="relative">
+              <Search className={`absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground`} />
+              <Input className={`${isRtl ? "pr-9" : "pl-9"} h-8 w-56 text-sm`} placeholder={t("cashCommon.search")} value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
           </div>
         </div>
         <div className="overflow-x-auto">

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
@@ -50,14 +51,18 @@ export default function PurchaseInvoices() {
 
   const [printData, setPrintData] = useState<any>(null);
   const [tableSearch, setTableSearch] = useState("");
+  const [branchIds, setBranchIds] = useState<number[]>([]);
+  const branchKey = branchIds.length ? branchIds.slice().sort((a, b) => a - b).join(",") : "all";
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "posted" | "cancelled">("all");
   const [bulkBusy, setBulkBusy] = useState(false);
 
   const { data: invoices = [], isLoading } = useQuery<any[]>({
-    queryKey: ["purchase-invoices", cid],
+    queryKey: ["purchase-invoices", cid, branchKey],
     queryFn: async () => {
-      const url = cid ? `${API}/api/purchasing/purchase-invoices?companyId=${cid}` : `${API}/api/purchasing/purchase-invoices`;
-      const res = await fetch(url, { headers: authH }); return res.json();
+      const params = new URLSearchParams();
+      if (cid) params.set("companyId", String(cid));
+      if (branchIds.length) params.set("branchIds", branchIds.join(","));
+      const res = await fetch(`${API}/api/purchasing/purchase-invoices?${params.toString()}`, { headers: authH }); return res.json();
     },
     enabled: !!user,
   });
@@ -584,6 +589,7 @@ ${sections}
             onChange={(e) => setTableSearch(e.target.value)}
             className="h-7 text-xs w-56"
           />
+          <MultiBranchFilter value={branchIds} onChange={setBranchIds} size="sm" />
           <div className="flex gap-1">
             {(["all", "draft", "posted", "cancelled"] as const).map((s) => (
               <button key={s} type="button" onClick={() => setStatusFilter(s)}

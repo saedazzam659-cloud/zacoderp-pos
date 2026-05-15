@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -125,11 +126,16 @@ export default function PurchaseReturns() {
   );
   const docNumberRef = useRef<HTMLInputElement>(null);
   const [printData, setPrintData] = useState<any>(null);
+  const [branchIds, setBranchIds] = useState<number[]>([]);
+  const branchKey = branchIds.length ? branchIds.slice().sort((a, b) => a - b).join(",") : "all";
 
   const { data: returns_ = [], isLoading } = useQuery<any[]>({
-    queryKey: ["purchase-returns", cid],
+    queryKey: ["purchase-returns", cid, branchKey],
     queryFn: async () => {
-      const r = await fetch(cid ? `${API}/api/purchasing/purchase-returns?companyId=${cid}` : `${API}/api/purchasing/purchase-returns`, { headers: authH });
+      const params = new URLSearchParams();
+      if (cid) params.set("companyId", String(cid));
+      if (branchIds.length) params.set("branchIds", branchIds.join(","));
+      const r = await fetch(`${API}/api/purchasing/purchase-returns?${params.toString()}`, { headers: authH });
       return r.json();
     },
     enabled: !!user,
@@ -1638,6 +1644,7 @@ ${sections}
             onChange={(e) => setTableSearch(e.target.value)}
             className="h-7 text-xs w-56"
           />
+          <MultiBranchFilter value={branchIds} onChange={setBranchIds} size="sm" />
           <div className="flex gap-1">
             {(["all", "draft", "posted"] as const).map((s) => (
               <button key={s} type="button" onClick={() => setStatusFilter(s)}

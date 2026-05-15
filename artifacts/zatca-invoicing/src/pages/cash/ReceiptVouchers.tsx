@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "wouter";
+import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -48,13 +49,20 @@ export default function ReceiptVouchers() {
   };
 
   const [search, setSearch] = useState("");
+  const [branchIds, setBranchIds] = useState<number[]>([]);
+  const branchKey = branchIds.length ? branchIds.slice().sort((a, b) => a - b).join(",") : "all";
   const [postRow,   setPostRow]   = useState<any>(null);
   const [delRow,    setDelRow]    = useState<any>(null);
   const [unpostRow, setUnpostRow] = useState<any>(null);
 
   const { data: vouchers = [], isLoading } = useQuery({
-    queryKey: ["receipt-vouchers", cid],
-    queryFn: () => fetch(`${API}/api/receipt-vouchers?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    queryKey: ["receipt-vouchers", cid, branchKey],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (cid) params.set("companyId", String(cid));
+      if (branchIds.length) params.set("branchIds", branchIds.join(","));
+      return fetch(`${API}/api/receipt-vouchers?${params.toString()}`, { headers: h }).then(r => r.json());
+    },
     enabled: !!cid,
   });
 
@@ -121,9 +129,12 @@ export default function ReceiptVouchers() {
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <p className="text-sm font-medium">{t(`${NS}.list`)}</p>
-          <div className="relative">
-            <Search className={`absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground`} />
-            <Input className={`${isRtl ? "pr-9" : "pl-9"} h-8 w-56 text-sm`} placeholder={t("cashCommon.search")} value={search} onChange={e => setSearch(e.target.value)} />
+          <div className="flex items-center gap-2">
+            <MultiBranchFilter value={branchIds} onChange={setBranchIds} size="sm" />
+            <div className="relative">
+              <Search className={`absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground`} />
+              <Input className={`${isRtl ? "pr-9" : "pl-9"} h-8 w-56 text-sm`} placeholder={t("cashCommon.search")} value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
           </div>
         </div>
         {(() => {
