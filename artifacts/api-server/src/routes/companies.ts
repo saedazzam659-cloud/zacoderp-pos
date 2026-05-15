@@ -127,6 +127,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     // Per-doc-type auto-posting toggles. Each one independently decides
     // whether saving that document immediately posts the resulting journal
     // entry. Validated as plain booleans below.
+    autoPostJournalEntry,
     autoPostSales, autoPostPurchase, autoPostReceipt, autoPostPayment,
     autoPostFinancial, autoPostCashTransfer, autoPostPayroll,
     // Phase-1 additions: every other module that produces a JE.
@@ -153,6 +154,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     journalEntryFormMode,
   } = req.body as {
     logo?: string; decimalPlaces?: number; autoPostingEnabled?: boolean;
+    autoPostJournalEntry?: boolean;
     autoPostSales?: boolean; autoPostPurchase?: boolean;
     autoPostReceipt?: boolean; autoPostPayment?: boolean;
     autoPostFinancial?: boolean; autoPostCashTransfer?: boolean;
@@ -192,6 +194,7 @@ router.patch("/:id/general-settings", async (req, res) => {
   }
   // Per-doc-type auto-posting toggles — coerce to boolean so we never persist
   // a string "false" (which would be truthy in the form layer) by accident.
+  if (autoPostJournalEntry !== undefined) updates.autoPostJournalEntry = !!autoPostJournalEntry;
   if (autoPostSales        !== undefined) updates.autoPostSales        = !!autoPostSales;
   if (autoPostPurchase     !== undefined) updates.autoPostPurchase     = !!autoPostPurchase;
   if (autoPostReceipt      !== undefined) updates.autoPostReceipt      = !!autoPostReceipt;

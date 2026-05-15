@@ -53,6 +53,12 @@ export const companiesTable = pgTable("companies", {
   // posts the resulting journal entry (true) or leaves it as a draft for
   // manual posting from the Posting Center (false). Default true so newly
   // added columns don't silently change behavior on upgrade.
+  // Manual journal entries (POST /api/journal-entries). When false, a
+  // newly-saved balanced JE lands as `draft` instead of `posted` so the
+  // accountant can review it from مركز الترحيل before it touches any
+  // financial report. Drafts have ZERO impact on trial balance / B-S /
+  // P&L per the financial-reports gotcha in replit.md.
+  autoPostJournalEntry:  boolean("auto_post_journal_entry").notNull().default(true),
   autoPostSales:         boolean("auto_post_sales").notNull().default(true),
   autoPostPurchase:      boolean("auto_post_purchase").notNull().default(true),
   autoPostReceipt:       boolean("auto_post_receipt").notNull().default(true),

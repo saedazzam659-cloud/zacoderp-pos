@@ -30,6 +30,7 @@ import { db, companiesTable } from "@workspace/db";
  * surface a new toggle on /general-settings.
  */
 export type AutoPostDocType =
+  | "journalEntry"
   | "sales"
   | "purchase"
   | "receipt"
@@ -66,6 +67,7 @@ export async function resolvePostingStatus(
   const [c] = await db
     .select({
       master:        companiesTable.autoPostingEnabled,
+      journalEntry:  companiesTable.autoPostJournalEntry,
       sales:         companiesTable.autoPostSales,
       purchase:      companiesTable.autoPostPurchase,
       receipt:       companiesTable.autoPostReceipt,

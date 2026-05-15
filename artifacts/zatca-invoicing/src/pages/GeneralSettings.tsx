@@ -57,6 +57,7 @@ export default function GeneralSettings() {
   // from i18n with sensible Arabic fallbacks so this works even before
   // the translations are added.
   const POST_DOC_TYPES: { key: string; label: string; desc: string }[] = [
+    { key: "autoPostJournalEntry", label: "القيود المحاسبية",         desc: "ترحيل القيد اليدوي تلقائياً عند الحفظ (إن كان متوازناً)" },
     { key: "autoPostSales",        label: "فواتير المبيعات",          desc: "ترحيل قيد فاتورة المبيعات تلقائياً عند الحفظ" },
     { key: "autoPostPurchase",     label: "فواتير المشتريات",         desc: "ترحيل قيد فاتورة الشراء تلقائياً عند الحفظ" },
     { key: "autoPostReceipt",      label: "سندات القبض",              desc: "ترحيل قيد سند القبض تلقائياً عند الحفظ" },
@@ -558,7 +559,16 @@ export default function GeneralSettings() {
           <Switch
             checked={autoPostingEnabled}
             disabled={postingSaving}
-            onCheckedChange={(v) => togglePostingMode({ autoPostingEnabled: !!v })}
+            onCheckedChange={(v) => {
+              // Cascade: the master switch acts as a "select all / unselect all"
+              // for every per-doc-type flag so the user doesn't have to flip
+              // 18 toggles one-by-one. ON unblocks every module from posting,
+              // OFF blocks every module — exactly how the user described it.
+              const next = !!v;
+              const payload: Record<string, boolean> = { autoPostingEnabled: next };
+              for (const dt of POST_DOC_TYPES) payload[dt.key] = next;
+              togglePostingMode(payload);
+            }}
             data-testid="toggle-auto-posting-master"
           />
         </div>

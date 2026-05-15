@@ -16,6 +16,7 @@ import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate, assertWritableForPeriodId } from "../lib/periodGuard.js";
 import { createdAuditFor, postedAuditFor, fullAuditFor } from "../lib/journalAudit.js";
 import { describeDevice } from "../lib/deviceFingerprint.js";
+import { resolvePostingStatus } from "../lib/postingStatus.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -276,7 +277,16 @@ router.post("/", async (req, res) => {
     );
     const hasMovement = totalDebit > 0 || totalCredit > 0;
     const isBalanced  = Math.abs(totalDebit - totalCredit) < 0.001 && hasMovement;
-    const canPost     = isBalanced && validLines.length >= 2;
+    // A balanced 2+-line entry is technically postable — but the company may
+    // have flipped the manual-JE auto-post toggle off in /general-settings,
+    // in which case we honour their choice and save as draft regardless.
+    // Per replit.md the draft will have ZERO impact on financial reports
+    // until an admin posts it from مركز الترحيل.
+    const technicallyPostable = isBalanced && validLines.length >= 2;
+    const desiredStatus = technicallyPostable
+      ? await resolvePostingStatus(cid, "journalEntry")
+      : "draft";
+    const canPost = desiredStatus === "posted";
 
     // Wrap the INSERT + (optional) QYD fallback assignment in a single
     // transaction guarded by a per-company advisory lock. Without the lock,

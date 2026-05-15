@@ -830,6 +830,11 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE gateway_invoices ADD COLUMN IF NOT EXISTS clearance_status TEXT` },
     { label: "gateway_invoices add clearance_notes",
       sql:   `ALTER TABLE gateway_invoices ADD COLUMN IF NOT EXISTS clearance_notes JSONB` },
+    // Manual-JE auto-posting toggle (companion to auto_post_sales / etc.).
+    // Default true so upgrading tenants keep the legacy "post on save"
+    // behavior; flipping it to false makes new manual JEs land as drafts.
+    { label: "companies add auto_post_journal_entry",
+      sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS auto_post_journal_entry BOOLEAN NOT NULL DEFAULT TRUE` },
     // Phase 1B.2 — explicit Basic-auth secret storage and rotation marker
     { label: "gateway_clients add zatca_csid_secret_enc",
       sql:   `ALTER TABLE gateway_clients ADD COLUMN IF NOT EXISTS zatca_csid_secret_enc TEXT` },
