@@ -630,6 +630,21 @@ export default function PurchaseInvoiceForm() {
   });
 
   function handleSave() {
+    // Required-fields gate (mirrors the server's 400 in /purchase-invoices):
+    // every purchase invoice must carry an explicit supplier + branch.
+    // Surfaced as a destructive toast BEFORE the network round-trip so the
+    // user sees the failure instantly with both missing fields listed.
+    const missing: string[] = [];
+    if (!supplierId) missing.push("المورد");
+    if (!branchId)   missing.push("الفرع");
+    if (missing.length) {
+      toast({
+        title: "⚠️ بيانات ناقصة — لا يمكن حفظ الفاتورة",
+        description: `الحقول التالية مطلوبة: ${missing.join("، ")}`,
+        variant: "destructive",
+      });
+      return;
+    }
     saveMut.mutate({
       companyId: cid, branchId: branchId || null,
       docNumber: docNumber || null, supplierInvoiceNumber: supplierInvoiceNumber || null, invoiceDate,

@@ -1061,6 +1061,34 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   });
 
   function handleSave() {
+    // Required-fields gate (mirrors the server's 400 in /sales-invoices):
+    // every sales invoice must carry an explicit customer + branch. We
+    // surface this as an attractive destructive toast BEFORE the network
+    // round-trip so the user sees the failure instantly. Quotations don't
+    // use a branch field, so the branch check is gated on isInvoice/isOrder
+    // (i.e. the `usesOps` modes that actually render the picker).
+    if (isInvoice || isOrder) {
+      const missing: string[] = [];
+      if (!customerId) missing.push(t("salesDocForm.customer", { defaultValue: "العميل" }));
+      if (!branchId)   missing.push(t("salesDocForm.branch",   { defaultValue: "الفرع" }));
+      if (missing.length) {
+        toast({
+          title: "⚠️ بيانات ناقصة — لا يمكن حفظ الفاتورة",
+          description: `الحقول التالية مطلوبة: ${missing.join("، ")}`,
+          variant: "destructive",
+        });
+        return;
+      }
+    } else if (!customerId) {
+      // Quotation mode: still require a customer (a quotation without
+      // an addressed party isn't a meaningful document).
+      toast({
+        title: "⚠️ بيانات ناقصة — لا يمكن حفظ المستند",
+        description: "يجب اختيار العميل قبل الحفظ",
+        variant: "destructive",
+      });
+      return;
+    }
     const base: any = {
       companyId: cid, docNumber: docNumber || null,
       customerId: customerId || null, currencyCode, exchangeRate,

@@ -615,6 +615,12 @@ router.post("/sales-invoices", async (req, res) => {
       validatedSourceQuotation = { id: sq.id, docNumber: sq.docNumber };
     }
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
+    // Required-fields gate (per company policy): every sales invoice must
+    // have an explicit customer + branch. Server-side enforcement here is
+    // the safety net — the form prevalidates too. Returning 400 with the
+    // field key lets the client highlight the offending input.
+    if (!customerId) { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ الفاتورة", field: "customerId" }); return; }
+    if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ الفاتورة",  field: "branchId"   }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
@@ -766,6 +772,11 @@ router.put("/sales-invoices/:id", async (req, res) => {
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             documentOfferId, costCenter } = req.body;
+    // Same required-fields gate as the POST path so a direct PUT (e.g.
+    // from a script or a stale draft that pre-dates the policy) cannot
+    // strip the customer/branch off an existing invoice on edit.
+    if (!customerId) { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ الفاتورة", field: "customerId" }); return; }
+    if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ الفاتورة",  field: "branchId"   }); return; }
     // Snapshot offer ids that were already attached to this invoice BEFORE
     // we delete-and-reinsert lines, so we can bump times_used for the offers
     // that are NEW on this update (and not double-count the ones already
