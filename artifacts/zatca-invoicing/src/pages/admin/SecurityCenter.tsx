@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Shield, ShieldAlert, Loader2, RefreshCw, LogOut, Users, History, KeyRound, Activity,
   LogIn, XCircle, Timer, Lock, AlertTriangle, Building2,
+  ChevronRight, ChevronLeft, ChevronsRight, ChevronsLeft,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -439,6 +440,12 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [success, setSuccess] = useState<"all" | "true" | "false">("all");
+  const [pageSize, setPageSize] = useState<number>(25);
+  const [page, setPage] = useState<number>(1);
+
+  // Reset to page 1 whenever any filter changes so the user doesn't end up on
+  // an empty page after narrowing the result set.
+  useEffect(() => { setPage(1); }, [username, companyId, from, to, success, pageSize]);
 
   // Companies dropdown for the filter — minimal payload from existing endpoint.
   const { data: companies } = useQuery<{ id: number; nameAr: string }[]>({
@@ -458,9 +465,10 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
     if (from)              p.set("from", new Date(from).toISOString());
     if (to)                p.set("to",   new Date(to + "T23:59:59").toISOString());
     if (success !== "all") p.set("success", success);
-    p.set("limit", "100");
+    p.set("limit", String(pageSize));
+    p.set("offset", String((page - 1) * pageSize));
     return p.toString();
-  }, [username, companyId, from, to, success]);
+  }, [username, companyId, from, to, success, pageSize, page]);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery<{
     rows: LoginHistoryRow[]; total: number; deniedSeries30d: { day: string; n: number }[];
@@ -705,7 +713,146 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
             </div>
           )}
         </CardContent>
+        {!isLoading && !error && rows.length > 0 && (
+          <PaginationFooter
+            page={page}
+            pageSize={pageSize}
+            total={data?.total ?? 0}
+            isFetching={isFetching}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
+        )}
       </Card>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  PAGINATION FOOTER — reusable, RTL-aware, responsive
+// ─────────────────────────────────────────────────────────────────────────
+function PaginationFooter({
+  page, pageSize, total, isFetching, onPageChange, onPageSizeChange,
+}: {
+  page: number; pageSize: number; total: number; isFetching: boolean;
+  onPageChange: (p: number) => void; onPageSizeChange: (s: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const fromIdx = (page - 1) * pageSize + 1;
+  const toIdx = Math.min(page * pageSize, total);
+
+  // Build a windowed list of page numbers around the current page with
+  // ellipses for gaps. Always shows first + last + 1 neighbour each side.
+  const pageList = useMemo<(number | "…")[]>(() => {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
+    const out: (number | "…")[] = [1];
+    const left = Math.max(2, page - 1);
+    const right = Math.min(totalPages - 1, page + 1);
+    if (left > 2) out.push("…");
+    for (let i = left; i <= right; i++) out.push(i);
+    if (right < totalPages - 1) out.push("…");
+    out.push(totalPages);
+    return out;
+  }, [page, totalPages]);
+
+  const canPrev = page > 1;
+  const canNext = page < totalPages;
+
+  return (
+    <div className="border-t bg-gradient-to-l from-slate-50 via-white to-slate-50 px-3 sm:px-4 py-3">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+        {/* Range + page-size selector */}
+        <div className="flex items-center gap-3 text-xs">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-200 shadow-sm">
+            <span className="text-muted-foreground">عرض</span>
+            <span className="font-mono font-semibold text-slate-800">{fromIdx.toLocaleString("ar-SA")}</span>
+            <span className="text-muted-foreground">–</span>
+            <span className="font-mono font-semibold text-slate-800">{toIdx.toLocaleString("ar-SA")}</span>
+            <span className="text-muted-foreground">من</span>
+            <span className="font-mono font-bold text-indigo-700">{total.toLocaleString("ar-SA")}</span>
+          </div>
+          <div className="hidden sm:flex items-center gap-1.5">
+            <span className="text-muted-foreground">لكل صفحة:</span>
+            <select
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-mono shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              value={pageSize}
+              onChange={(e) => onPageSizeChange(Number(e.target.value))}
+              data-testid="pagination-page-size"
+            >
+              {[10, 25, 50, 100, 200].map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </div>
+          {isFetching && (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" />
+          )}
+        </div>
+
+        {/* Page navigation */}
+        <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-white border border-slate-200 shadow-sm">
+          <button
+            type="button"
+            disabled={!canPrev}
+            onClick={() => onPageChange(1)}
+            className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="الصفحة الأولى"
+            data-testid="pagination-first"
+          >
+            <ChevronsRight className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            disabled={!canPrev}
+            onClick={() => onPageChange(page - 1)}
+            className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="السابق"
+            data-testid="pagination-prev"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+          {pageList.map((p, i) =>
+            p === "…" ? (
+              <span key={`e${i}`} className="px-2 text-slate-400 select-none">…</span>
+            ) : (
+              <button
+                key={p}
+                type="button"
+                onClick={() => onPageChange(p)}
+                aria-current={p === page ? "page" : undefined}
+                className={`min-w-[2rem] h-8 px-2 rounded-lg text-xs font-mono font-semibold transition-all ${
+                  p === page
+                    ? "bg-gradient-to-l from-indigo-500 to-violet-500 text-white shadow-md shadow-indigo-200 scale-105"
+                    : "text-slate-700 hover:bg-slate-100 hover:text-indigo-600"
+                }`}
+                data-testid={`pagination-page-${p}`}
+              >
+                {p.toLocaleString("ar-SA")}
+              </button>
+            )
+          )}
+          <button
+            type="button"
+            disabled={!canNext}
+            onClick={() => onPageChange(page + 1)}
+            className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="التالي"
+            data-testid="pagination-next"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            disabled={!canNext}
+            onClick={() => onPageChange(totalPages)}
+            className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="الصفحة الأخيرة"
+            data-testid="pagination-last"
+          >
+            <ChevronsLeft className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
