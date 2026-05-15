@@ -12,6 +12,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Tag } from "lucide-react";
+import { YearMonthInput } from "@/components/YearMonthInput";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -121,8 +122,7 @@ export default function FaCategories() {
               <Input value={form.nameAr} onChange={(e)=>setForm({...form,nameAr:e.target.value})} placeholder="سيارات، معدات…" /></div>
             <div><Label>الاسم (إنجليزي)</Label>
               <Input value={form.nameEn} onChange={(e)=>setForm({...form,nameEn:e.target.value})} /></div>
-            <div><Label>العمر الافتراضي (سنوات)</Label>
-              <Input type="number" value={form.defaultLifeYears} onChange={(e)=>setForm({...form,defaultLifeYears:e.target.value})} /></div>
+            <YearMonthInput value={form.defaultLifeYears} onChange={(v)=>setForm({...form,defaultLifeYears:v})} />
             <div><Label>طريقة الإهلاك الافتراضية</Label>
               <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                 value={form.defaultDepreciationMethod} onChange={(e)=>setForm({...form,defaultDepreciationMethod:e.target.value})}>

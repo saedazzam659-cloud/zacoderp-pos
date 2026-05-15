@@ -389,8 +389,8 @@ router.get("/depreciation/preview", async (req, res) => {
       const purchase = Number(a.purchaseValue || 0);
       const scrap    = Number(a.scrapValue || 0);
       const accum    = Number(a.accumulatedDepreciation || 0);
-      const years    = Math.max(1, Number(a.lifeYears || 1));
-      const months   = years * 12;
+      const years    = Math.max(1/12, Number(a.lifeYears || 1));
+      const months   = Math.max(1, Math.round(years * 12));
       const method   = String(a.depreciationMethod || "straight_line");
       const book     = Math.max(scrap, purchase - accum);
       let monthly: number;

@@ -31,7 +31,7 @@ export const faCategoriesTable = pgTable("fa_categories", {
   code:                text("code").notNull(),
   nameAr:              text("name_ar").notNull(),
   nameEn:              text("name_en"),
-  defaultLifeYears:    integer("default_life_years").notNull().default(5),
+  defaultLifeYears:    numeric("default_life_years", { precision: 8, scale: 4 }).notNull().default("5"),
   defaultDepreciationMethod: faDepreciationMethodEnum("default_depreciation_method").notNull().default("straight_line"),
   defaultScrapRate:    numeric("default_scrap_rate", { precision: 5, scale: 2 }).notNull().default("10"),
   isActive:            boolean("is_active").notNull().default(true),
@@ -86,7 +86,7 @@ export const fixedAssetsTable = pgTable("fixed_assets", {
   currentKm:           integer("current_km"),
 
   // ── Depreciation ─────────────────────────────────────────────
-  lifeYears:           integer("life_years").notNull().default(5),
+  lifeYears:           numeric("life_years", { precision: 8, scale: 4 }).notNull().default("5"),
   depreciationMethod:  faDepreciationMethodEnum("depreciation_method").notNull().default("straight_line"),
   scrapValue:          numeric("scrap_value", { precision: 15, scale: 2 }).notNull().default("0"),
   depreciationStart:   date("depreciation_start"),

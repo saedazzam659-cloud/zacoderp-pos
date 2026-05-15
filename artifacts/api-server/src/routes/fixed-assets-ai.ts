@@ -41,7 +41,7 @@ function computeRisk(asset: any, maintCost: number): {
   const purchase = Number(asset.purchaseValue || 0) || 1;
   const accum    = Number(asset.accumulatedDepreciation || 0);
   const lifeYears = Number(asset.lifeYears || 5);
-  const totalMonths = lifeYears * 12;
+  const totalMonths = Math.max(1, Math.round(lifeYears * 12));
   const start = asset.depreciationStart ? new Date(asset.depreciationStart) : (asset.purchaseDate ? new Date(asset.purchaseDate) : new Date());
   const now = new Date();
   const ageMonths = Math.max(0, Math.floor((now.getTime() - start.getTime()) / (30 * 86_400_000)));
@@ -139,7 +139,7 @@ router.get("/forecast", async (req, res) => {
       for (const a of assets) {
         const purchase = Number(a.purchaseValue || 0);
         const scrap    = Number(a.scrapValue || 0);
-        const totalMonths = Math.max(1, Number(a.lifeYears || 5) * 12);
+        const totalMonths = Math.max(1, Math.round(Number(a.lifeYears || 5) * 12));
         const monthly = (purchase - scrap) / totalMonths;
         total += monthly;
       }

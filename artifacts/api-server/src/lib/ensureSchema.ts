@@ -838,6 +838,12 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "gateway_clients add csid_last_rotated_at",
       sql:   `ALTER TABLE gateway_clients ADD COLUMN IF NOT EXISTS csid_last_rotated_at TIMESTAMP` },
 
+    // Allow fractional years (years + months) on fixed-asset useful life.
+    { label: "fixed_assets life_years to numeric",
+      sql:   `ALTER TABLE fixed_assets ALTER COLUMN life_years TYPE NUMERIC(8,4) USING life_years::NUMERIC(8,4)` },
+    { label: "fa_categories default_life_years to numeric",
+      sql:   `ALTER TABLE fa_categories ALTER COLUMN default_life_years TYPE NUMERIC(8,4) USING default_life_years::NUMERIC(8,4)` },
+
     // Phase 4 — webhooks + delivery log
     { label: "create gateway_webhooks",
       sql: `CREATE TABLE IF NOT EXISTS gateway_webhooks (

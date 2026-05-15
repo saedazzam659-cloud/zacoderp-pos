@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Search, Package, QrCode,
   Info, ShoppingCart, Cog, TrendingDown, Shield, FileText } from "lucide-react";
+import { YearMonthInput } from "@/components/YearMonthInput";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -391,8 +392,7 @@ export default function FixedAssets() {
                 <TrendingDown className="h-4 w-4" /> بيانات الإهلاك
               </legend>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div><Label>العمر الافتراضي (سنوات)</Label>
-                  <Input type="number" value={form.lifeYears} onChange={(e)=>setForm({...form,lifeYears:e.target.value})} /></div>
+                <YearMonthInput value={form.lifeYears} onChange={(v)=>setForm({...form,lifeYears:v})} />
                 <div><Label>طريقة الإهلاك</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     value={form.depreciationMethod} onChange={(e)=>setForm({...form,depreciationMethod:e.target.value})}>
