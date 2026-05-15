@@ -16,6 +16,7 @@ import {
   Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat, Boxes, Megaphone,
   Server, Camera, Monitor,
   GitBranch,
+  Plug,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -156,6 +157,8 @@ const companyBusinessNav: NavDef[] = [
   // domains, payments and AI insights.
   { nameKey: "nav.gettingStarted", href: "/onboarding", icon: Sparkles },
   { nameKey: "nav.onlineStore", href: "/online-store", icon: Store, permKey: "online_store" },
+  { nameKey: "nav.integrationsMarketplace", href: "/integrations/marketplace", icon: Plug },
+  { nameKey: "nav.integrationsGateway", href: "/integrations/gateway", icon: Plug },
 ];
 
 // ── POS Management submenu ──────────────────────────────────────────────
