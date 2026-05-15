@@ -16,6 +16,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import {
   Shield, ShieldAlert, Loader2, RefreshCw, LogOut, Users, History, KeyRound, Activity,
+  LogIn, XCircle, Timer, Lock, AlertTriangle, Building2,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -591,40 +592,76 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                           {r.role && <div className="text-[10px] text-muted-foreground">{r.role}</div>}
                         </td>
                         <td className="px-3 py-2 text-xs min-w-[180px] whitespace-normal break-words">
-                          {r.companyName ?? (r.companyId == null ? "—" : `#${r.companyId}`)}
+                          {r.companyName ? (
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gradient-to-l from-violet-50 to-fuchsia-50 border border-violet-200 shadow-sm">
+                              <Building2 className="h-3.5 w-3.5 text-violet-600 flex-shrink-0" />
+                              <span className="font-medium text-slate-800 text-xs leading-tight">{r.companyName}</span>
+                            </div>
+                          ) : r.companyId != null ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200 text-xs text-slate-600 font-mono">
+                              #{r.companyId}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </td>
                         <td className="px-3 py-2">
-                          <Badge variant="outline" className={
-                            r.action === "login"  ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                            r.action === "logout" ? "bg-slate-50 text-slate-700 border-slate-200" :
-                                                    "bg-rose-100 text-rose-800 border-rose-300"
-                          }>
-                            {r.action === "login" ? "دخول" : r.action === "logout" ? "خروج" : "مرفوض"}
-                          </Badge>
+                          {r.action === "login" ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gradient-to-l from-emerald-500 to-green-500 text-white text-xs font-semibold shadow-sm shadow-emerald-200">
+                              <LogIn className="h-3 w-3" />
+                              دخول
+                            </span>
+                          ) : r.action === "logout" ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gradient-to-l from-slate-400 to-slate-500 text-white text-xs font-semibold shadow-sm shadow-slate-200">
+                              <LogOut className="h-3 w-3" />
+                              خروج
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gradient-to-l from-rose-500 to-red-600 text-white text-xs font-semibold shadow-sm shadow-rose-200 animate-pulse">
+                              <XCircle className="h-3 w-3" />
+                              مرفوض
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-xs whitespace-nowrap" data-testid={`session-duration-${r.id}`}>
                           {typeof r.sessionDurationSec === "number" ? (
-                            <Badge
-                              variant="outline"
-                              className="bg-indigo-50 text-indigo-700 border-indigo-200 font-mono text-[11px]"
+                            <span
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border shadow-sm font-mono text-[11px] font-semibold ${
+                                r.sessionDurationSec >= 28800
+                                  ? "bg-gradient-to-l from-purple-50 to-pink-50 border-purple-200 text-purple-700"
+                                  : r.sessionDurationSec >= 3600
+                                    ? "bg-gradient-to-l from-indigo-50 to-blue-50 border-indigo-200 text-indigo-700"
+                                    : r.sessionDurationSec >= 60
+                                      ? "bg-gradient-to-l from-cyan-50 to-teal-50 border-cyan-200 text-cyan-700"
+                                      : "bg-gradient-to-l from-amber-50 to-yellow-50 border-amber-200 text-amber-700"
+                              }`}
                               title={`${r.sessionDurationSec.toLocaleString("ar-SA")} ثانية`}
                             >
+                              <Timer className="h-3 w-3" />
                               {formatSessionDuration(r.sessionDurationSec)}
-                            </Badge>
+                            </span>
                           ) : r.action === "denied" ? (
                             <span className="text-xs text-muted-foreground">—</span>
                           ) : (
-                            <span className="text-xs text-muted-foreground" title="جلسة لم تنتهِ بعد أو لم يتم تسجيل خروج">—</span>
+                            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground italic" title="جلسة لم تنتهِ بعد أو لم يتم تسجيل خروج">
+                              <Activity className="h-3 w-3 text-emerald-500 animate-pulse" />
+                              نشطة
+                            </span>
                           )}
                         </td>
                         <td className="px-3 py-2">
                           {/* Distinguish authentication failures from RBAC permission denials */}
-                          <Badge variant="outline" className={isAuth
-                            ? "bg-blue-50 text-blue-700 border-blue-200 text-[10px] font-mono"
-                            : "bg-amber-50 text-amber-700 border-amber-200 text-[10px] font-mono"
-                          }>
-                            {r.module ?? "—"}
-                          </Badge>
+                          {isAuth ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-gradient-to-l from-blue-50 to-sky-50 border border-blue-200 text-blue-700 text-[10px] font-mono font-semibold">
+                              <Lock className="h-3 w-3" />
+                              {r.module ?? "—"}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-gradient-to-l from-amber-50 to-orange-50 border border-amber-200 text-amber-700 text-[10px] font-mono font-semibold">
+                              <AlertTriangle className="h-3 w-3" />
+                              {r.module ?? "—"}
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-xs text-muted-foreground">
                           {r.metadata?.reason ?? r.metadata?.attemptedAction ?? (r.action === "denied" ? "—" : "")}
