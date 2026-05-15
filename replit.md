@@ -49,6 +49,8 @@ _Populate as you build_
 
 I prefer detailed explanations and a clear, concise communication style. I value iterative development and would like to be asked before any major architectural changes or significant code refactoring are implemented. Do not make changes to the `pnpm-workspace` skill.
 
+**Always confirm the route → component mapping in `App.tsx` BEFORE editing any page.** A path like `/sales/invoices` does NOT necessarily map to `SalesInvoices.tsx`. For example `/sales/invoices` is wired to `SalesAuditGrid.tsx`, not `SalesInvoices.tsx`. Run `rg -n 'path="/the/path"' artifacts/zatca-invoicing/src/App.tsx` first, identify the actual component imported there, and edit THAT file. Do not assume by filename.
+
 ## Gotchas
 
 - **Branch-Level Data Isolation**: For users with `view_all_branches=false`, data is scoped to assigned branches across `/api/org/branches`, `/api/cash-boxes`, `/api/bank-accounts`, and `/api/inventory/warehouses`. Shared rows (NULL `branch_id`) are read-only for restricted users. **Branch filter semantics**: when an explicit `?branchId=X` is passed (or implied by user scope), `effectiveBranchCondition` matches `branch_id = X OR branch_id IS NULL` — NULL-branch rows are company-wide/shared (opening JEs, system-generated entries, shared resources) and must remain visible from any branch context. Otherwise picking the only branch in a single-branch company would yield different totals than "all branches" because NULL rows would be silently excluded.

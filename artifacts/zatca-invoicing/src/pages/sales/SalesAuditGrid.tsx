@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import SalesPrintModal, { type PrintData } from "./SalesPrintModal";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+import MultiBranchFilter from "@/components/MultiBranchFilter";
 
 // ── Header color theme palette ────────────────────────────────────────────
 // Default is "white" (light header with dark text). Selecting any other color
@@ -352,6 +353,9 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   // ── Filters ────────────────────────────────────────────────────────────
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "posted" | "cancelled">("all");
+  // Multi-branch filter (managers only — auto-hidden for single-branch users
+  // by MultiBranchFilter itself). Empty array = "all allowed branches".
+  const [branchIds, setBranchIds] = useState<number[]>([]);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [colFilters, setColFilters] = useState<Record<string, string>>({});
@@ -639,13 +643,19 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     }
   }
 
+  // Sorted CSV so equivalent selections share a cache slot. Empty when "all".
+  const branchKey = branchIds.length
+    ? branchIds.slice().sort((a, b) => a - b).join(",")
+    : "all";
   const { data: invoices = [], isLoading, refetch, isFetching, error: invoicesError } = useQuery<any[]>({
-    queryKey: ["sales-invoices", cid, "audit-grid", source],
-    queryFn: () => getList(
-      cid
-        ? `${API}/api/sales/sales-invoices?companyId=${cid}&source=${source}`
-        : `${API}/api/sales/sales-invoices?source=${source}`
-    ),
+    queryKey: ["sales-invoices", cid, "audit-grid", source, branchKey],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (cid) params.set("companyId", String(cid));
+      params.set("source", source);
+      if (branchIds.length) params.set("branchIds", branchIds.join(","));
+      return getList(`${API}/api/sales/sales-invoices?${params.toString()}`);
+    },
     enabled: !!user,
   });
 
@@ -1749,6 +1759,9 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
             onChange={e => setSearch(e.target.value)}
             className="h-7 text-xs w-56"
           />
+          {/* Multi-branch filter — auto-hides when the user has access to a
+              single branch only (legacy single-branch UX is preserved). */}
+          <MultiBranchFilter value={branchIds} onChange={setBranchIds} size="sm" />
           <div className="flex gap-1">
             {(["all","draft","posted","cancelled"] as const).map(s => (
               <button
