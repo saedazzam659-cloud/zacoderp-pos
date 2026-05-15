@@ -72,11 +72,11 @@ export default function Onboarding() {
     done: (d.customers?.length ?? 0) > 0,
     detail: d.customers?.length ? `${d.customers.length} عميل` : undefined,
   }));
-  const items     = useStep<ApiItems>("/api/items", d => ({
+  const items     = useStep<ApiItems>("/api/inventory/items", d => ({
     done: (d.items?.length ?? 0) > 0,
     detail: d.items?.length ? `${d.items.length} صنف` : undefined,
   }));
-  const invoices  = useStep<ApiInvoices>("/api/sales-invoices", d => ({
+  const invoices  = useStep<ApiInvoices>("/api/sales/invoices", d => ({
     done: (d.invoices?.length ?? 0) > 0,
     detail: d.invoices?.length ? `${d.invoices.length} فاتورة` : undefined,
   }));
@@ -86,7 +86,7 @@ export default function Onboarding() {
       n: 1, key: "company",
       title: "بيانات الشركة",
       desc: "أكمل الرقم الضريبي والسجل التجاري وبيانات العنوان",
-      href: "/settings/company",
+      href: "/general-settings",
       icon: Building2,
       gradient: "from-emerald-500 to-teal-600",
       state: company,
@@ -113,7 +113,7 @@ export default function Onboarding() {
       n: 4, key: "zatca",
       title: "شهادة زاتكا (CSID)",
       desc: "ربط حسابك مع زاتكا بشهادة التشفير — مطلوب لإرسال الفواتير",
-      href: "/settings/zatca",
+      href: "/zatca",
       icon: ShieldCheck,
       gradient: "from-purple-500 to-pink-600",
       state: zatca,
