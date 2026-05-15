@@ -227,3 +227,9 @@ id = "AZVS8Ec60ozJmTWzlRcnd"
 uri = "file://.local/exports/source.tar.gz"
 type = "unspecified"
 title = "السورس كود الكامل (tar.gz - 536MB)"
+
+[[outputs]]
+id = "hNzwdGEoeaN14JCNaEQVq"
+uri = "file://.local/security_roadmap.md"
+type = "text"
+title = "خطة رفع مستوى الحماية - 3 شهور"
