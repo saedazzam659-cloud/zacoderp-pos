@@ -1,0 +1,359 @@
+# معالجة مشكلة ترحيل الأرصدة الافتتاحية وفق المعايير المحاسبية العالمية
+# ERP Accounting System - Fiscal Year Closing & Opening Balance Carry Forward
+
+==================================================
+وصف المشكلة
+==================================================
+
+يوجد خلل في آلية ترحيل الأرصدة بين السنوات المالية داخل النظام المحاسبي.
+
+النظام الحالي يعتمد على:
+
+Original Opening Balance
+
+الموجود داخل جدول الحسابات الأساسي:
+
+accounts.opening_balance
+
+وذلك عند إنشاء أي سنة مالية جديدة.
+
+وهذا مخالف للمعايير المحاسبية المتبعة في أنظمة ERP الاحترافية.
+
+==================================================
+المعيار المحاسبي الصحيح
+==================================================
+
+في الأنظمة المحاسبية الاحترافية:
+
+Opening Balance For New Fiscal Year
+=
+Closing Balance From Previous Fiscal Year
+
+أي أن:
+
+الرصيد الختامي للسنة السابقة
+يصبح تلقائيًا
+الرصيد الافتتاحي للسنة الجديدة.
+
+==================================================
+مثال عملي
+==================================================
+
+Fiscal Year 2025
+
+Account:
+Al Rajhi Bank
+
+Opening Balance:
+3,444.45 Debit
+
+Net Movement During Period:
++13,111.10 Debit
+
+Closing Balance:
+16,555.55 Debit
+
+==================================================
+
+Fiscal Year 2026
+
+Expected Opening Balance:
+16,555.55 Debit
+
+لكن النظام الحالي يعرض:
+
+3,444.45 Debit
+
+وهذا يعني أن النظام يعيد استخدام:
+Initial Opening Balance
+
+بدلاً من:
+Year-End Closing Balance Carry Forward
+
+==================================================
+المطلوب تنفيذه
+==================================================
+
+1- إنشاء آلية رسمية لإقفال السنة المالية.
+
+2- إنشاء نظام Carry Forward للأرصدة.
+
+3- إنشاء جدول مستقل لحفظ:
+Fiscal Year Opening Balances
+
+4- تعديل ميزان المراجعة ليقرأ:
+Opening Balances
+من جدول السنة المالية.
+
+5- منع استخدام:
+accounts.opening_balance
+بعد أول سنة مالية.
+
+6- ترحيل فقط:
+Balance Sheet Accounts
+
+وتشمل:
+
+- Assets
+- Liabilities
+- Equity
+
+7- عدم ترحيل:
+Temporary Accounts
+
+وتشمل:
+
+- Revenue
+- Expenses
+
+==================================================
+إنشاء جدول الأرصدة المرحّلة
+==================================================
+
+CREATE TABLE fiscal_year_opening_balances (
+
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+
+    company_id BIGINT NOT NULL,
+
+    fiscal_year_id BIGINT NOT NULL,
+
+    account_id BIGINT NOT NULL,
+
+    opening_debit DECIMAL(18,2) DEFAULT 0,
+
+    opening_credit DECIMAL(18,2) DEFAULT 0,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+);
+
+==================================================
+مبدأ العمل الصحيح
+==================================================
+
+First Fiscal Year Only:
+Use Manual Opening Balances.
+
+All Next Fiscal Years:
+Use Closing Balance Carry Forward.
+
+==================================================
+آلية إقفال السنة المالية
+==================================================
+
+عند تنفيذ:
+
+Close Fiscal Year
+
+يقوم النظام بالخطوات التالية:
+
+==================================================
+STEP 1
+Trial Balance Validation
+==================================================
+
+التحقق من أن:
+
+Total Debit = Total Credit
+
+إذا لم يكن الميزان متوازنًا:
+يتم منع الإقفال.
+
+==================================================
+STEP 2
+Calculate Year-End Closing Balance
+==================================================
+
+حساب الرصيد الختامي لكل حساب.
+
+المعادلة:
+
+Closing Balance =
+Opening Balance
++ Debit Transactions
+- Credit Transactions
+
+حسب الطبيعة المحاسبية للحساب.
+
+==================================================
+STEP 3
+Carry Forward Process
+==================================================
+
+ترحيل أرصدة حسابات الميزانية فقط.
+
+إذا كان الحساب:
+
+- Asset
+- Liability
+- Equity
+
+فيتم إنشاء:
+
+Opening Balance
+للسنة المالية الجديدة.
+
+==================================================
+مثال
+==================================================
+
+Account:
+Al Rajhi Bank
+
+Closing Balance:
+16,555.55 Debit
+
+Generated Opening Balance:
+
+opening_debit = 16555.55
+opening_credit = 0
+
+==================================================
+STEP 4
+Temporary Accounts Reset
+==================================================
+
+عدم ترحيل:
+
+- Revenue Accounts
+- Expense Accounts
+
+ويتم تصفيرها تلقائيًا مع الإقفال.
+
+==================================================
+STEP 5
+Fiscal Year Locking
+==================================================
+
+بعد الإقفال:
+
+يتم قفل السنة المالية.
+
+ويُمنع:
+
+- إنشاء قيود
+- تعديل قيود
+- حذف قيود
+
+إلا من خلال صلاحيات إدارية خاصة.
+
+==================================================
+تصحيح ميزان المراجعة
+==================================================
+
+المنطق الحالي الخاطئ:
+
+Opening Balance =
+accounts.opening_balance
+
+==================================================
+
+المنطق الصحيح:
+
+IF First Fiscal Year:
+Use accounts.opening_balance
+
+ELSE:
+Use fiscal_year_opening_balances
+
+==================================================
+SQL Query Standard
+==================================================
+
+SELECT
+
+    a.id,
+    a.account_name,
+
+    fy.opening_debit,
+    fy.opening_credit,
+
+    SUM(j.debit) AS total_debit,
+    SUM(j.credit) AS total_credit,
+
+    (
+        fy.opening_debit
+        +
+        SUM(j.debit)
+        -
+        fy.opening_credit
+        -
+        SUM(j.credit)
+    ) AS closing_balance
+
+FROM accounts a
+
+LEFT JOIN fiscal_year_opening_balances fy
+ON fy.account_id = a.id
+
+LEFT JOIN journal_entry_lines j
+ON j.account_id = a.id
+
+WHERE fy.fiscal_year_id = :currentFiscalYear
+
+GROUP BY a.id
+
+==================================================
+إضافة حالة السنة المالية
+==================================================
+
+ALTER TABLE fiscal_years
+ADD COLUMN is_closed BOOLEAN DEFAULT FALSE;
+
+==================================================
+Fiscal Year Status Logic
+==================================================
+
+IF is_closed = TRUE
+
+THEN:
+
+- Disable Journal Posting
+- Disable Edit
+- Disable Delete
+
+==================================================
+التعديلات المطلوبة على الواجهة
+==================================================
+
+إضافة زر:
+
+Close Fiscal Year
+
+وإضافة نافذة تأكيد تحتوي على:
+
+"This process will carry forward balances,
+generate opening balances for the next fiscal year,
+and lock the current fiscal year."
+
+==================================================
+النتيجة المطلوبة
+==================================================
+
+Fiscal Year 2025:
+
+Closing Balance:
+16,555.55 Debit
+
+==================================================
+
+Fiscal Year 2026:
+
+Opening Balance:
+16,555.55 Debit
+
+==================================================
+معيار الأنظمة الاحترافية
+==================================================
+
+ERP systems must never reuse
+the original account opening balance
+for all fiscal years.
+
+Each fiscal year must maintain
+its own independent opening balances
+generated from the previous fiscal year's closing balances.
+
+==================================================
+END OF DOCUMENT
