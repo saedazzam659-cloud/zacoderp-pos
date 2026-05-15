@@ -421,9 +421,13 @@ export default function FixedAssets() {
                       // Re-interpret the currently-entered figure when toggling:
                       //   off→on: user's number was a NET, now treat it as GROSS → back-out new net
                       //   on→off: user's number was a NET (unchanged storage), no recalc needed
+                      // Symmetric reinterpretation so toggling is fully reversible:
+                      //   off→on: previously-entered figure was a NET → treat as GROSS, back-out new net
+                      //   on→off: stored value is the back-calculated net → multiply back to restore the figure the user originally typed
                       let newNet = v;
-                      if (nowIncl && !incl && rate > 0 && v > 0) {
-                        newNet = +(v / (1 + rate / 100)).toFixed(2);
+                      if (rate > 0 && v > 0) {
+                        if (nowIncl && !incl) newNet = +(v / (1 + rate / 100)).toFixed(2);
+                        else if (!nowIncl && incl) newNet = +(v * (1 + rate / 100)).toFixed(2);
                       }
                       setForm({ ...form, priceIncludesVat: nowIncl, purchaseValue: String(newNet) });
                     }}
