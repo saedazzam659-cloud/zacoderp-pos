@@ -619,7 +619,11 @@ router.post("/sales-invoices", async (req, res) => {
     // have an explicit customer + branch. Server-side enforcement here is
     // the safety net — the form prevalidates too. Returning 400 with the
     // field key lets the client highlight the offending input.
-    if (!customerId) { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ الفاتورة", field: "customerId" }); return; }
+    //
+    // POS exemption: walk-in customers are a first-class POS feature, so
+    // when the request carries a posSessionId we skip the customer-required
+    // rule. Branch is ALWAYS required (POS auto-fills it from the session).
+    if (!posSessionId && !customerId) { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ الفاتورة", field: "customerId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ الفاتورة",  field: "branchId"   }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
@@ -1341,6 +1345,43 @@ router.post("/sales-returns", async (req, res) => {
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat, salesRepId,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
+    // Required-fields gate: every sales return must carry an explicit
+    // customer + branch — same policy as the parent sales-invoice flow,
+    // so cost-center and customer-statement reports stay consistent.
+    //
+    // Server-side fall-back: when the caller supplied an invoiceId (linked
+    // return) but no customerId, derive the customer from the source
+    // invoice. This keeps POS walk-in returns working — the POS payload
+    // sets customerId=null because the original invoice has no customer,
+    // and we'd otherwise 400 a perfectly legitimate return. Same fall-back
+    // for branch so POS returns inherit the source-invoice branch when
+    // the cashier didn't override it.
+    let resolvedCustomerId: number | null = customerId ? Number(customerId) : null;
+    let resolvedBranchId:   number | null = branchId   ? Number(branchId)   : null;
+    if ((!resolvedCustomerId || !resolvedBranchId) && invoiceId) {
+      const [src] = await db.select({
+        customerId: salesInvoicesTable.customerId,
+        branchId:   salesInvoicesTable.branchId,
+        posSessionId: salesInvoicesTable.posSessionId,
+      }).from(salesInvoicesTable)
+        .where(and(eq(salesInvoicesTable.id, Number(invoiceId)), eq(salesInvoicesTable.companyId, cid)));
+      if (src) {
+        if (!resolvedCustomerId) resolvedCustomerId = src.customerId ?? null;
+        if (!resolvedBranchId)   resolvedBranchId   = src.branchId   ?? null;
+        // POS walk-in source: customer legitimately null. Skip the
+        // customer-required check so the return can post.
+        if (!resolvedCustomerId && src.posSessionId) {
+          // intentional — POS walk-in returns have no customer.
+        } else if (!resolvedCustomerId) {
+          res.status(400).json({ error: "يجب اختيار العميل قبل حفظ المرتجع", field: "customerId" }); return;
+        }
+      } else {
+        res.status(400).json({ error: "يجب اختيار العميل قبل حفظ المرتجع", field: "customerId" }); return;
+      }
+    } else if (!resolvedCustomerId) {
+      res.status(400).json({ error: "يجب اختيار العميل قبل حفظ المرتجع", field: "customerId" }); return;
+    }
+    if (!resolvedBranchId) { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ المرتجع", field: "branchId" }); return; }
     // Validate sales rep belongs to current tenant (prevents cross-tenant FK assignment).
     let resolvedRepId: number | null = null;
     if (salesRepId) {
@@ -1374,9 +1415,9 @@ router.post("/sales-returns", async (req, res) => {
       return;
     }
     const [ret] = await db.insert(salesReturnsTable).values({
-      companyId: cid, branchId: branchId ? Number(branchId) : null,
+      companyId: cid, branchId: resolvedBranchId,
       docNumber: resolvedDocNumber, returnDate,
-      customerId: customerId ? Number(customerId) : null,
+      customerId: resolvedCustomerId,
       invoiceId: invoiceId ? Number(invoiceId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
@@ -1434,6 +1475,10 @@ router.put("/sales-returns/:id", async (req, res) => {
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat, salesRepId,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
+    // Same required-fields gate as the POST path so a stale-draft PUT
+    // can't strip customer/branch off an existing sales return.
+    if (!customerId) { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ المرتجع", field: "customerId" }); return; }
+    if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ المرتجع",  field: "branchId"   }); return; }
     // Patch-safe rep update: only touch salesRepId when the client explicitly
     // sent the key. Validate company scope when present (cross-tenant guard).
     const hasRepKey = Object.prototype.hasOwnProperty.call(req.body ?? {}, "salesRepId");

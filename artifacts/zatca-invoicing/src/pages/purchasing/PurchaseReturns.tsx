@@ -652,6 +652,21 @@ export default function PurchaseReturns() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Required-fields gate (mirrors the server's 400 in /purchase-returns):
+    // every purchase return must carry an explicit supplier + branch.
+    // Surfaced as a destructive Arabic toast BEFORE the network round-trip
+    // so the user sees the failure instantly with both missing fields listed.
+    const missing: string[] = [];
+    if (!form.supplierId) missing.push("المورد");
+    if (!form.branchId)   missing.push("الفرع");
+    if (missing.length) {
+      toast({
+        title: "⚠️ بيانات ناقصة — لا يمكن حفظ المرتجع",
+        description: `الحقول التالية مطلوبة: ${missing.join("، ")}`,
+        variant: "destructive",
+      });
+      return;
+    }
     saveMut.mutate({
       ...form,
       supplierId: form.supplierId || null,

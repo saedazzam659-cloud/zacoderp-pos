@@ -1968,10 +1968,15 @@ router.post("/purchase-returns", async (req, res) => {
             currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
+    // Required-fields gate (per company policy): every purchase return
+    // must carry an explicit supplier + branch. Tightened from the
+    // older "credit-only" supplier requirement so cash/bank returns
+    // also need an identified vendor for accurate supplier statements.
+    if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ المرتجع", field: "supplierId" }); return; }
+    if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ المرتجع",  field: "branchId"   }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند استرداد المبلغ بنكياً" }); return; }
-    if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند تسوية المرتجع على الحساب" }); return; }
     // Central sequence engine is authoritative when an active sequence
     // exists for "purchase_return"; otherwise fall back to client-supplied
     // value or null. Server allocation is atomic so concurrent submits
@@ -2041,10 +2046,13 @@ router.put("/purchase-returns/:id", async (req, res) => {
       .where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid)));
     if (!existing) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     if (existing.status === "posted") { res.status(400).json({ error: "لا يمكن تعديل مرتجع مُرحَّل. قم بفك الترحيل أولاً." }); return; }
+    // Same required-fields gate as the POST path so a stale-draft PUT
+    // can't strip supplier/branch off an existing purchase return.
+    if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ المرتجع", field: "supplierId" }); return; }
+    if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ المرتجع",  field: "branchId"   }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند استرداد المبلغ بنكياً" }); return; }
-    if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند تسوية المرتجع على الحساب" }); return; }
     // docNumber is intentionally omitted — once assigned, it is immutable.
     const [ret] = await db.update(purchaseReturnsTable).set({
       branchId: branchId ? Number(branchId) : null,

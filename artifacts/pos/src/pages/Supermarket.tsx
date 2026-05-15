@@ -380,6 +380,11 @@ export default function SupermarketPage() {
         const ret = await api.createSalesReturn({
           returnDate: today, branchId, paymentType,
           cashBoxId: cashBoxIdForPayment, bankAccountId: bankAccountIdForPayment,
+          // POS returns inherit the customer from the source invoice so the
+          // server's required-customer guard on /sales-returns is satisfied.
+          // Walk-in invoices (posSessionId path) have customerId=null on the
+          // source — server fall-back will then derive from invoiceId.
+          customerId: sourceInvoice?.customerId ?? null,
           invoiceId: sourceInvoice?.id ?? null,
           totalAmount: retTotal, vatAmount: retVat, discountAmount: 0,
           priceIncludesVat: false,

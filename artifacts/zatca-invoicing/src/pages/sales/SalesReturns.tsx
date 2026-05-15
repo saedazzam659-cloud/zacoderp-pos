@@ -691,6 +691,21 @@ export default function SalesReturns() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Required-fields gate (mirrors the server's 400 in /sales-returns):
+    // every sales return must carry an explicit customer + branch.
+    // Surfaced as a destructive Arabic toast BEFORE the network round-trip
+    // so the user sees the failure instantly with both missing fields listed.
+    const missing: string[] = [];
+    if (!form.customerId) missing.push(t("salesReturns.customer", { defaultValue: "العميل" }));
+    if (!form.branchId)   missing.push(t("salesReturns.branch",   { defaultValue: "الفرع" }));
+    if (missing.length) {
+      toast({
+        title: "⚠️ بيانات ناقصة — لا يمكن حفظ المرتجع",
+        description: `الحقول التالية مطلوبة: ${missing.join("، ")}`,
+        variant: "destructive",
+      });
+      return;
+    }
     saveMut.mutate({
       ...form,
       customerId: form.customerId || null,
