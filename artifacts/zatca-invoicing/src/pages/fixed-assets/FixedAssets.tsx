@@ -415,7 +415,18 @@ export default function FixedAssets() {
                   incl ? "border-teal-500 bg-teal-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300"
                 }`}>
                   <input type="checkbox" checked={incl}
-                    onChange={(e) => setForm({ ...form, priceIncludesVat: e.target.checked })}
+                    onChange={(e) => {
+                      const nowIncl = e.target.checked;
+                      const v = Number(form.purchaseValue || 0);
+                      // Re-interpret the currently-entered figure when toggling:
+                      //   off→on: user's number was a NET, now treat it as GROSS → back-out new net
+                      //   on→off: user's number was a NET (unchanged storage), no recalc needed
+                      let newNet = v;
+                      if (nowIncl && !incl && rate > 0 && v > 0) {
+                        newNet = +(v / (1 + rate / 100)).toFixed(2);
+                      }
+                      setForm({ ...form, priceIncludesVat: nowIncl, purchaseValue: String(newNet) });
+                    }}
                     className="h-5 w-5 rounded accent-teal-600" />
                   <div className="flex-1">
                     <p className="text-sm font-semibold text-slate-800">الإجمالي شامل الضريبة</p>
