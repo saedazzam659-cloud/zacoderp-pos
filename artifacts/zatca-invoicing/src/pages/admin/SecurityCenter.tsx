@@ -80,6 +80,12 @@ interface LoginHistoryRow {
   // password / company_suspended) and `attemptedAction` (RBAC denial action).
   metadata: { reason?: string; attemptedAction?: string } | Record<string, unknown> | null;
   createdAt: string;
+  // Server-side enrichment (admin.ts /security/login-history): country code
+  // resolved from `ip` via the 24h-cached resolveCountryForIp helper, and
+  // the total auth-attempt count for this username within the filter window
+  // (or the past 30d when no window was specified).
+  country?: string | null;
+  attemptCount?: number | null;
 }
 
 // Small helper: extract a human-readable message from an unknown error
@@ -549,6 +555,8 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                     <th className="px-3 py-2 font-medium">الإجراء</th>
                     <th className="px-3 py-2 font-medium">الوحدة</th>
                     <th className="px-3 py-2 font-medium">السبب</th>
+                    <th className="px-3 py-2 font-medium">الدولة</th>
+                    <th className="px-3 py-2 font-medium" title="إجمالي محاولات الدخول لهذا المستخدم في الفترة المحددة (أو 30 يوماً افتراضياً)">عدد المحاولات</th>
                     <th className="px-3 py-2 font-medium">IP</th>
                     <th className="px-3 py-2 font-medium">المتصفح</th>
                   </tr>
@@ -584,6 +592,35 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                         </td>
                         <td className="px-3 py-2 text-xs text-muted-foreground">
                           {r.metadata?.reason ?? r.metadata?.attemptedAction ?? (r.action === "denied" ? "—" : "")}
+                        </td>
+                        <td className="px-3 py-2" data-testid={`history-country-${r.id}`}>
+                          {r.country ? (
+                            <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-gradient-to-l from-sky-50 to-indigo-50 border border-sky-200 text-xs">
+                              <span className="text-base leading-none" aria-hidden>{countryFlag(r.country)}</span>
+                              <span className="font-medium text-slate-700">{countryName(r.country)}</span>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2" data-testid={`history-attempts-${r.id}`}>
+                          {r.attemptCount != null && r.attemptCount > 0 ? (
+                            <Badge
+                              variant="outline"
+                              className={
+                                r.attemptCount >= 10
+                                  ? "bg-rose-50 text-rose-700 border-rose-300 font-mono text-[11px]"
+                                  : r.attemptCount >= 5
+                                    ? "bg-amber-50 text-amber-700 border-amber-300 font-mono text-[11px]"
+                                    : "bg-slate-50 text-slate-700 border-slate-200 font-mono text-[11px]"
+                              }
+                              title={`${r.attemptCount.toLocaleString("ar-SA")} محاولة دخول لهذا المستخدم`}
+                            >
+                              {r.attemptCount.toLocaleString("ar-SA")}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-xs font-mono text-muted-foreground">{r.ip ?? "—"}</td>
                         <td className="px-3 py-2 text-xs text-muted-foreground" title={r.userAgent ?? ""}>{shortUA(r.userAgent)}</td>

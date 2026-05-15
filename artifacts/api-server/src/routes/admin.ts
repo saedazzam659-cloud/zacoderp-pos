@@ -2669,6 +2669,56 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
       .orderBy(desc(auditLogTable.createdAt))
       .limit(limit).offset(offset);
 
+    // ── Country enrichment ─────────────────────────────────────────────────
+    // Resolve country for every distinct IP in the result set. Uses the same
+    // 24h-cached resolver as the active sessions endpoint, so repeat IPs are
+    // free. Per-IP failures degrade to null and never break the response.
+    const distinctIps = Array.from(new Set(rows.map(r => r.ip).filter((x): x is string => !!x)));
+    const ipCountry = new Map<string, string | null>();
+    const GEO_BATCH = 10;
+    for (let i = 0; i < distinctIps.length; i += GEO_BATCH) {
+      const batch = distinctIps.slice(i, i + GEO_BATCH);
+      await Promise.all(batch.map(async (ip) => {
+        try { ipCountry.set(ip, await resolveCountryForIp(ip)); }
+        catch { ipCountry.set(ip, null); }
+      }));
+    }
+
+    // ── Attempt-count per username ─────────────────────────────────────────
+    // For each (username) appearing in the result set, count ALL their auth
+    // events (login + denied) within the same time-window the user filtered
+    // by — or the past 30 days if no window was set. Lets superadmins spot
+    // brute-force patterns at a glance ("this user tried 47 times today").
+    const distinctUsernames = Array.from(new Set(rows.map(r => r.username).filter((x): x is string => !!x)));
+    const attemptCount = new Map<string, number>();
+    if (distinctUsernames.length > 0) {
+      const countConds: SQL[] = [
+        inArray(auditLogTable.username, distinctUsernames),
+        inArray(auditLogTable.action, ["login", "denied"]),
+      ];
+      if (from && !isNaN(from.getTime())) countConds.push(gte(auditLogTable.createdAt, from));
+      else countConds.push(sql`${auditLogTable.createdAt} >= NOW() - INTERVAL '30 days'`);
+      if (to && !isNaN(to.getTime())) countConds.push(lte(auditLogTable.createdAt, to));
+      const counts = await db
+        .select({
+          username: auditLogTable.username,
+          n: sql<number>`count(*)::int`,
+        })
+        .from(auditLogTable)
+        .where(and(...countConds))
+        .groupBy(auditLogTable.username);
+      for (const c of counts) {
+        if (c.username) attemptCount.set(c.username, Number(c.n));
+      }
+    }
+
+    // Stitch enrichment back onto each row.
+    const enriched = rows.map(r => ({
+      ...r,
+      country:      r.ip ? (ipCountry.get(r.ip) ?? null) : null,
+      attemptCount: r.username ? (attemptCount.get(r.username) ?? null) : null,
+    }));
+
     // Lightweight 30-day denied-per-day series for the UI mini-chart.
     const seriesResult = await db.execute<{ day: string; n: number }>(sql`
       SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day,
@@ -2681,7 +2731,7 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
     `);
     const series = sqlRows<{ day: string; n: number }>(seriesResult as SqlExecuteResult<{ day: string; n: number }>);
 
-    res.json({ rows, total: Number(total ?? 0), limit, offset, deniedSeries30d: series });
+    res.json({ rows: enriched, total: Number(total ?? 0), limit, offset, deniedSeries30d: series });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر جلب تاريخ الدخول";
     res.status(500).json({ error: msg });
