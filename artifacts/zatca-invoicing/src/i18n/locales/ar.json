@@ -1,7 +1,13 @@
 {
   "common": {
     "branch": "الفرع",
+    "branches": "فروع",
     "allBranches": "كل الفروع",
+    "filterByBranches": "تصفية حسب الفروع",
+    "noBranches": "لا توجد فروع متاحة",
+    "selectAll": "اختيار الكل",
+    "clear": "مسح",
+    "loading": "جارٍ التحميل…",
     "save": "حفظ",
     "cancel": "إلغاء",
     "delete": "حذف",

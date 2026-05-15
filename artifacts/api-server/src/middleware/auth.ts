@@ -471,3 +471,58 @@ export function branchScopeSpread(
   if (r.deny) return [sql`false`];
   return r.cond ? [r.cond] : [];
 }
+
+/**
+ * Multi-branch variant of {@link branchScopeSpread}.
+ *
+ * Accepts a CSV string, repeated query value (`?branchIds=1&branchIds=2`),
+ * a number array, or a single number/string. Empty / undefined / "all"
+ * means "no explicit filter" and falls back to the user's allowed scope.
+ *
+ * Each requested id is intersected with `getAllowedBranchIds()`; ids that
+ * the caller is not entitled to view are silently dropped (rather than
+ * denied) so a manager who is technically restricted can still pick the
+ * subset they DO have access to without the entire list collapsing to
+ * zero rows. If after intersection nothing remains AND the user passed
+ * an explicit non-empty list, returns `[sql\`false\`]`.
+ *
+ * Like the single-branch helper, NULL-branch rows are always included
+ * because they represent shared/company-wide entries (opening JEs,
+ * shared cash boxes, etc.).
+ */
+export function multiBranchScopeSpread(
+  req: Request,
+  branchColumn: any,
+  requestedRaw: unknown,
+): any[] {
+  // Normalise the input into a number[] (empty = "no explicit filter").
+  const requested: number[] = [];
+  const push = (v: unknown) => {
+    if (v === undefined || v === null) return;
+    const s = String(v).trim();
+    if (s === "" || s.toLowerCase() === "all") return;
+    for (const part of s.split(",")) {
+      const n = Number(part.trim());
+      if (Number.isFinite(n) && n > 0) requested.push(n);
+    }
+  };
+  if (Array.isArray(requestedRaw)) requestedRaw.forEach(push);
+  else push(requestedRaw);
+
+  // No explicit list → defer to the user's allowed scope (single-branch path).
+  if (requested.length === 0) {
+    const cond = branchScopeFilter(req, branchColumn);
+    return cond ? [cond] : [];
+  }
+
+  const allowed = getAllowedBranchIds(req);
+  // null = unrestricted (admin / superadmin / viewAllBranches=true).
+  const intersected =
+    allowed === null
+      ? Array.from(new Set(requested))
+      : Array.from(new Set(requested.filter((id) => allowed.includes(id))));
+
+  if (intersected.length === 0) return [sql`false`];
+
+  return [or(inArray(branchColumn, intersected), isNull(branchColumn))];
+}

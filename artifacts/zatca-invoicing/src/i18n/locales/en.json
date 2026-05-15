@@ -1,7 +1,13 @@
 {
   "common": {
     "branch": "Branch",
+    "branches": "branches",
     "allBranches": "All Branches",
+    "filterByBranches": "Filter by Branches",
+    "noBranches": "No branches available",
+    "selectAll": "Select All",
+    "clear": "Clear",
+    "loading": "Loading…",
     "save": "Save",
     "cancel": "Cancel",
     "delete": "Delete",

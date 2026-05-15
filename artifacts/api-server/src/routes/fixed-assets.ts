@@ -89,7 +89,7 @@ router.post("/categories", async (req, res) => {
     const [row] = await db.insert(faCategoriesTable).values({
       companyId: cid, code, nameAr,
       nameEn: b.nameEn || null,
-      defaultLifeYears: Number(b.defaultLifeYears ?? 5),
+      defaultLifeYears: String(b.defaultLifeYears ?? 5),
       defaultDepreciationMethod: method as any,
       defaultScrapRate: String(b.defaultScrapRate ?? "10"),
       isActive: b.isActive !== false,
@@ -180,7 +180,7 @@ router.post("/assets", async (req, res) => {
       color: b.color || null,
       initialKm: b.initialKm ? Number(b.initialKm) : null,
       currentKm: b.currentKm ? Number(b.currentKm) : null,
-      lifeYears: Number(b.lifeYears ?? 5),
+      lifeYears: String(b.lifeYears ?? 5),
       vatRate: String(b.vatRate ?? "15"),
       priceIncludesVat: !!b.priceIncludesVat,
       depreciationMethod: method as any,
@@ -233,7 +233,7 @@ router.put("/assets/:id", async (req, res) => {
     for (const k of dateFields) if (b[k] !== undefined) patch[k] = b[k] || null;
     const intFields = ["branchId","costCenterId","categoryId","custodianEmployeeId","initialKm","currentKm","supplierId","cashBoxId","bankAccountId"];
     for (const k of intFields) if (b[k] !== undefined) patch[k] = b[k] ? Number(b[k]) : null;
-    if (b.lifeYears !== undefined) patch.lifeYears = Number(b.lifeYears || 5);
+    if (b.lifeYears !== undefined) patch.lifeYears = String(b.lifeYears || 5);
     if (b.vatRate !== undefined) patch.vatRate = String(b.vatRate || "15");
     if (b.priceIncludesVat !== undefined) patch.priceIncludesVat = !!b.priceIncludesVat;
     if ((STATUSES as readonly string[]).includes(b.status)) patch.status = b.status;

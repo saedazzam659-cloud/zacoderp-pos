@@ -17,7 +17,7 @@ import {
 } from "@workspace/db";
 import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
 import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte } from "drizzle-orm";
-import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter, multiBranchScopeSpread } from "../middleware/auth.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
@@ -328,7 +328,14 @@ router.get("/sales-invoices", async (req, res) => {
       .where(and(
         eq(salesInvoicesTable.companyId, cid),
         ...sourceFilter,
-        ...branchScopeSpread(req, salesInvoicesTable.branchId, req.query.branchId),
+        // Accept multi-branch filter (?branchIds=1,2,3 or repeated
+        // ?branchIds=1&branchIds=2) for managers with view-all-branches.
+        // Falls back to legacy single ?branchId when branchIds is absent.
+        ...multiBranchScopeSpread(
+          req,
+          salesInvoicesTable.branchId,
+          req.query.branchIds ?? req.query.branchId,
+        ),
       ))
       .orderBy(desc(salesInvoicesTable.invoiceDate));
 
@@ -429,8 +436,16 @@ router.get("/sales-invoices/:id", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
     const id = Number(req.params.id);
+    // Branch-level isolation: prevent IDOR-within-tenant. A restricted user
+    // (viewAllBranches=false) must not be able to fetch a single invoice
+    // belonging to a branch they aren't linked to, even if they discover
+    // the id externally. Shared rows (branch_id IS NULL) remain visible.
     const [inv] = await db.select().from(salesInvoicesTable)
-      .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
+      .where(and(
+        eq(salesInvoicesTable.id, id),
+        eq(salesInvoicesTable.companyId, cid),
+        ...branchScopeSpread(req, salesInvoicesTable.branchId, undefined),
+      ));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     const lines = await db.select().from(salesInvoiceLinesTable)
       .where(eq(salesInvoiceLinesTable.invoiceId, id))

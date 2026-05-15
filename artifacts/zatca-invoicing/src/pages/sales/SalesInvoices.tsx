@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import SalesPrintModal from "./SalesPrintModal";
 import { TablePagination, usePagination } from "@/components/TablePagination";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+import MultiBranchFilter from "@/components/MultiBranchFilter";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -34,6 +35,11 @@ export default function SalesInvoices() {
 
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
+  // Multi-branch filter — empty array = "all branches the user can see".
+  // Only managers (admin/superadmin/viewAllBranches=true) actually see the
+  // picker UI; for restricted users the array stays empty and the backend
+  // applies the legacy single-scope filter automatically.
+  const [branchIds, setBranchIds] = useState<number[]>([]);
   const [printData, setPrintData] = useState<any>(null);
   // Holds the user-chosen template for the currently-open print modal.
   // Defaulted to the company's saved sales template so the modal opens
@@ -60,9 +66,19 @@ export default function SalesInvoices() {
 
   const autoPrintHandledRef = useRef(false);
 
+  const branchKey = branchIds.length ? branchIds.slice().sort((a,b)=>a-b).join(",") : "all";
   const { data: invoices = [], isLoading } = useQuery<any[]>({
-    queryKey: ["sales-invoices", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/sales/sales-invoices?companyId=${cid}` : `${API}/api/sales/sales-invoices`, { headers: authH }); return r.json(); },
+    queryKey: ["sales-invoices", cid, branchKey],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (cid) params.set("companyId", String(cid));
+      if (branchIds.length) params.set("branchIds", branchIds.join(","));
+      const url = params.toString()
+        ? `${API}/api/sales/sales-invoices?${params.toString()}`
+        : `${API}/api/sales/sales-invoices`;
+      const r = await fetch(url, { headers: authH });
+      return r.json();
+    },
     enabled: !!user,
   });
 
@@ -349,6 +365,9 @@ export default function SalesInvoices() {
           <Search className={cn("absolute top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground", isRtl ? "right-3" : "left-3")} />
           <Input className={isRtl ? "pr-9" : "pl-9"} placeholder={t("salesInvoices.searchPlaceholder")} value={search} onChange={e => setSearch(e.target.value)} />
         </div>
+        {/* Multi-branch filter — auto-hides when the user has access to a
+            single branch only (preserving the legacy single-branch UI). */}
+        <MultiBranchFilter value={branchIds} onChange={setBranchIds} />
         <div className="flex gap-1">
           {["all", "draft", "posted", "cancelled"].map(s => (
             <button key={s} onClick={() => setFilterStatus(s)}
