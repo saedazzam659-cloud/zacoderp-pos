@@ -2712,11 +2712,25 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
       }
     }
 
+    // ── Company-name enrichment ────────────────────────────────────────────
+    // Resolve the friendly Arabic company name for every distinct companyId
+    // in the result set so the table can show it instead of just an ID.
+    const distinctCompanyIds = Array.from(new Set(rows.map(r => r.companyId).filter((x): x is number => typeof x === "number")));
+    const companyNameMap = new Map<number, string>();
+    if (distinctCompanyIds.length > 0) {
+      const cos = await db
+        .select({ id: companiesTable.id, nameAr: companiesTable.nameAr })
+        .from(companiesTable)
+        .where(inArray(companiesTable.id, distinctCompanyIds));
+      for (const c of cos) companyNameMap.set(c.id, c.nameAr);
+    }
+
     // Stitch enrichment back onto each row.
     const enriched = rows.map(r => ({
       ...r,
       country:      r.ip ? (ipCountry.get(r.ip) ?? null) : null,
       attemptCount: r.username ? (attemptCount.get(r.username) ?? null) : null,
+      companyName:  r.companyId != null ? (companyNameMap.get(r.companyId) ?? null) : null,
     }));
 
     // Lightweight 30-day denied-per-day series for the UI mini-chart.

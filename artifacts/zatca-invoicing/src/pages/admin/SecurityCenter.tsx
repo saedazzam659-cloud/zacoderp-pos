@@ -71,7 +71,7 @@ function countryName(code: string | null | undefined): string {
 }
 interface LoginHistoryRow {
   id: number; userId: number | null; username: string | null;
-  role: string | null; companyId: number | null; action: string;
+  role: string | null; companyId: number | null; companyName: string | null; action: string;
   module?: string | null;
   method: string | null; path: string | null; statusCode: number | null;
   ip: string | null; userAgent: string | null;
@@ -552,6 +552,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                   <tr className="text-right text-xs text-muted-foreground">
                     <th className="px-3 py-2 font-medium">الوقت</th>
                     <th className="px-3 py-2 font-medium">المستخدم</th>
+                    <th className="px-3 py-2 font-medium">الشركة</th>
                     <th className="px-3 py-2 font-medium">الإجراء</th>
                     <th className="px-3 py-2 font-medium">الوحدة</th>
                     <th className="px-3 py-2 font-medium">السبب</th>
@@ -571,6 +572,9 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                         <td className="px-3 py-2">
                           <div className="font-medium">{r.username ?? "—"}</div>
                           {r.role && <div className="text-[10px] text-muted-foreground">{r.role}</div>}
+                        </td>
+                        <td className="px-3 py-2 text-xs">
+                          {r.companyName ?? (r.companyId == null ? "—" : `#${r.companyId}`)}
                         </td>
                         <td className="px-3 py-2">
                           <Badge variant="outline" className={
