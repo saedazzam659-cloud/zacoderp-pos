@@ -79,6 +79,7 @@ import Industries from "@/pages/admin/Industries";
 import LicenseManagement from "@/pages/LicenseManagement";
 import BackupOperations from "@/pages/BackupOperations";
 import GeneralSettings from "@/pages/GeneralSettings";
+import CompanyProfile from "@/pages/CompanyProfile";
 import VATDeclaration from "@/pages/VATDeclaration";
 // Hubs (Odoo-style large-tile landing pages)
 import SalesHub from "@/pages/sales/SalesHub";
@@ -577,6 +578,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/zatca-bridge"  module="zatca_bridge"  component={ZatcaBridge} />}
             {!isSuperAdmin && <PermRoute path="/zatca-report"  module="zatca_report"  component={ZatcaReport} />}
             {!isSuperAdmin && <PermRoute path="/general-settings" module="general_settings" component={GeneralSettings} />}
+            {!isSuperAdmin && <PermRoute path="/company-profile" module="company_profile" component={CompanyProfile} />}
             {!isSuperAdmin && user?.role === "admin" && <PermRoute path="/users" module="users" component={Users} />}
             {isSuperAdmin && <Route path="/users" component={Users} />}
             {!isSuperAdmin && <PermRoute path="/vat-declaration" module="vat_declaration" component={VATDeclaration} />}

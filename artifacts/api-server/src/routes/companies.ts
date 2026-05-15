@@ -276,6 +276,77 @@ router.patch("/:id/general-settings", async (req, res) => {
   res.json(company);
 });
 
+// PATCH /:id/profile — tenant-facing identity edit (name, VAT, CR, address).
+// Previously these fields were only editable by SuperAdmin via PUT /:id from
+// the companies admin screen, which forced tenants to call support to fix a
+// typo in their own VAT/CR. This endpoint exposes a narrow, whitelisted
+// subset to anyone with the `company_profile.edit` permission on their own
+// company — no other company can be touched.
+router.patch("/:id/profile", async (req, res) => {
+  const id = parseInt(req.params.id);
+  const u = (req as any).authUser;
+  if (!u) { res.status(401).json({ error: "غير مصرّح" }); return; }
+  // SuperAdmin always allowed; otherwise must belong to THIS company AND
+  // either be admin OR carry the company_profile.edit granular permission.
+  if (u.role !== "superadmin") {
+    if (u.companyId !== id) {
+      res.status(403).json({ error: "لا يمكنك تعديل بيانات شركة أخرى" }); return;
+    }
+    const perms = (u.permissions || {}) as Record<string, any>;
+    const cp = perms.company_profile;
+    const hasEdit = u.role === "admin" || (cp && (cp.edit === true || cp === true));
+    if (!hasEdit) {
+      res.status(403).json({ error: "ليست لديك صلاحية تعديل بيانات الشركة" }); return;
+    }
+  }
+  const {
+    nameAr, nameEn, vatNumber, crNumber, country, city, district,
+    street, buildingNumber, postalCode, additionalNumber, industryName,
+  } = req.body as Record<string, string | undefined>;
+  const updates: Record<string, any> = { updatedAt: new Date() };
+  const setStr = (k: string, v: string | undefined, max = 200, min = 0) => {
+    if (v === undefined) return null;
+    const s = String(v).trim();
+    if (s.length < min) return `${k} قصير جداً`;
+    if (s.length > max) return `${k} يتجاوز الحد المسموح`;
+    updates[k] = s;
+    return null;
+  };
+  for (const [k, v, max, min] of [
+    ["nameAr", nameAr, 200, 1], ["nameEn", nameEn, 200, 0],
+    ["country", country, 2, 0], ["city", city, 100, 0],
+    ["district", district, 100, 0], ["street", street, 200, 0],
+    ["buildingNumber", buildingNumber, 20, 0], ["postalCode", postalCode, 10, 0],
+    ["additionalNumber", additionalNumber, 20, 0], ["industryName", industryName, 100, 0],
+  ] as const) {
+    const err = setStr(k, v as any, max, min);
+    if (err) { res.status(400).json({ error: err }); return; }
+  }
+  // VAT: ZATCA spec — exactly 15 digits, starts and ends with "3".
+  if (vatNumber !== undefined) {
+    const v = String(vatNumber).trim();
+    if (v && !/^3\d{13}3$/.test(v)) {
+      res.status(400).json({ error: "الرقم الضريبي يجب أن يكون 15 رقماً يبدأ وينتهي بـ 3" }); return;
+    }
+    updates.vatNumber = v;
+  }
+  if (crNumber !== undefined) {
+    const v = String(crNumber).trim();
+    if (v && !/^\d{4,15}$/.test(v)) {
+      res.status(400).json({ error: "رقم السجل التجاري يجب أن يكون أرقاماً (4–15)" }); return;
+    }
+    updates.crNumber = v;
+  }
+  if (Object.keys(updates).length === 1) {
+    res.status(400).json({ error: "لا يوجد ما يتم تحديثه" }); return;
+  }
+  const [company] = await db.update(companiesTable).set(updates)
+    .where(and(eq(companiesTable.id, id), isNull(companiesTable.deletedAt))).returning();
+  if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+  req.log?.info?.({ companyId: id, by: u.id, fields: Object.keys(updates) }, "company.profile.updated");
+  res.json(company);
+});
+
 // PATCH /:id/menu-permissions — update which menus are visible for company users
 router.patch("/:id/menu-permissions", async (req, res) => {
   const id = parseInt(req.params.id);

@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import {
   MapPin, Building2, Link2, Sliders, Users, DollarSign,
   BookMarked, Database, ListOrdered, FileText, BarChart3, ScrollText,
-  LayoutDashboard, Plug,
+  LayoutDashboard, Plug, BadgeCheck,
 } from "lucide-react";
 import { MenuHub, type HubTile } from "@/components/MenuHub";
 
@@ -12,6 +12,7 @@ const tiles: HubTile[] = [
   { nameKey: "nav.zatcaLink",          href: "/zatca",                        icon: Link2,       tone: "violet",  permKey: "zatca_setup" },
   { nameKey: "nav.integrationsMarketplace", href: "/integrations/marketplace", icon: Plug,        tone: "fuchsia", permKey: "general_settings" },
   { nameKey: "nav.generalSettings",    href: "/general-settings",             icon: Sliders,     tone: "slate",   permKey: "general_settings" },
+  { nameKey: "nav.companyProfile",     href: "/company-profile",              icon: BadgeCheck,  tone: "emerald", permKey: "company_profile" },
   { nameKey: "nav.users",              href: "/users",                        icon: Users,       tone: "blue",    permKey: "users", requireAdmin: true },
   { nameKey: "nav.currencies",         href: "/settings/currencies",          icon: DollarSign,  tone: "amber",   permKey: "currencies" },
   { nameKey: "nav.accountingMappings", href: "/settings/accounting-mappings", icon: BookMarked,  tone: "indigo",  permKey: "general_settings" },

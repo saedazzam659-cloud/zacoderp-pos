@@ -45,6 +45,7 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "branches",             label: "perms.modules.branches",             group: G.dashboard,  actions: VC },
   { key: "zatca_setup",          label: "perms.modules.zatca_setup",          group: G.dashboard,  actions: ["view", "edit"] },
   { key: "general_settings",     label: "perms.modules.general_settings",     group: G.dashboard,  actions: ["view", "edit"] },
+  { key: "company_profile",      label: "perms.modules.company_profile",      group: G.dashboard,  actions: ["view", "edit"] },
   { key: "users",                label: "perms.modules.users",                group: G.dashboard,  actions: VC },
   { key: "currencies",           label: "perms.modules.currencies",           group: G.dashboard,  actions: VC },
   { key: "sequences",            label: "perms.modules.sequences",            group: G.dashboard,  actions: VC },
