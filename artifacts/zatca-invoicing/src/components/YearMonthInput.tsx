@@ -50,17 +50,14 @@ export function YearMonthInput({ label = "العمر الافتراضي", value,
 
           <span className="text-violet-300 font-bold">+</span>
 
-          {/* Months */}
+          {/* Months — accepts any number, auto-rolls into years (e.g. 60 → 5 سنة 0 شهر) */}
           <div className="flex-1 flex items-center gap-1.5 bg-white rounded-lg px-2 py-1 border border-indigo-100">
             <Input
               type="number"
               min={0}
-              max={11}
               value={months}
               onChange={(e) => {
-                let m = Number(e.target.value);
-                if (m > 11) m = 11;
-                if (m < 0) m = 0;
+                const m = Math.max(0, Math.floor(Number(e.target.value) || 0));
                 onChange(encode(years, m));
               }}
               className="h-8 text-center text-base font-bold text-indigo-900 border-0 shadow-none focus-visible:ring-0 px-0 bg-transparent"
