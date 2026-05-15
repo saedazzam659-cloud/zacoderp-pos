@@ -181,6 +181,8 @@ router.post("/assets", async (req, res) => {
       initialKm: b.initialKm ? Number(b.initialKm) : null,
       currentKm: b.currentKm ? Number(b.currentKm) : null,
       lifeYears: Number(b.lifeYears ?? 5),
+      vatRate: String(b.vatRate ?? "15"),
+      priceIncludesVat: !!b.priceIncludesVat,
       depreciationMethod: method as any,
       scrapValue,
       depreciationStart: b.depreciationStart || null,
@@ -232,6 +234,8 @@ router.put("/assets/:id", async (req, res) => {
     const intFields = ["branchId","costCenterId","categoryId","custodianEmployeeId","initialKm","currentKm","supplierId","cashBoxId","bankAccountId"];
     for (const k of intFields) if (b[k] !== undefined) patch[k] = b[k] ? Number(b[k]) : null;
     if (b.lifeYears !== undefined) patch.lifeYears = Number(b.lifeYears || 5);
+    if (b.vatRate !== undefined) patch.vatRate = String(b.vatRate || "15");
+    if (b.priceIncludesVat !== undefined) patch.priceIncludesVat = !!b.priceIncludesVat;
     if ((STATUSES as readonly string[]).includes(b.status)) patch.status = b.status;
     if ((DEP_METHODS as readonly string[]).includes(b.depreciationMethod)) patch.depreciationMethod = b.depreciationMethod;
     const [row] = await db.update(fixedAssetsTable).set(patch)

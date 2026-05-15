@@ -844,6 +844,12 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "fa_categories default_life_years to numeric",
       sql:   `ALTER TABLE fa_categories ALTER COLUMN default_life_years TYPE NUMERIC(8,4) USING default_life_years::NUMERIC(8,4)` },
 
+    // Fixed-asset tax tab — KSA VAT defaults
+    { label: "fixed_assets add vat_rate",
+      sql:   `ALTER TABLE fixed_assets ADD COLUMN IF NOT EXISTS vat_rate NUMERIC(5,2) NOT NULL DEFAULT 15` },
+    { label: "fixed_assets add price_includes_vat",
+      sql:   `ALTER TABLE fixed_assets ADD COLUMN IF NOT EXISTS price_includes_vat BOOLEAN NOT NULL DEFAULT FALSE` },
+
     // Phase 4 — webhooks + delivery log
     { label: "create gateway_webhooks",
       sql: `CREATE TABLE IF NOT EXISTS gateway_webhooks (

@@ -12,7 +12,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Search, Package, QrCode,
-  Info, ShoppingCart, Cog, TrendingDown, Shield, FileText } from "lucide-react";
+  Info, ShoppingCart, Cog, TrendingDown, Shield, FileText, Receipt, Calculator } from "lucide-react";
 import { YearMonthInput } from "@/components/YearMonthInput";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -28,6 +28,7 @@ type Asset = {
   plateNumber: string | null; color: string | null;
   initialKm: number | null; currentKm: number | null;
   lifeYears: number; depreciationMethod: string;
+  vatRate: string; priceIncludesVat: boolean;
   scrapValue: string; depreciationStart: string | null;
   accumulatedDepreciation: string; bookValue: string;
   insuranceCompany: string | null; insurancePolicyNo: string | null;
@@ -54,6 +55,7 @@ const EMPTY = {
   model:"", brand:"", serialNo:"", plateNumber:"", color:"",
   initialKm:"", currentKm:"",
   lifeYears:"5", depreciationMethod:"straight_line",
+  vatRate:"15", priceIncludesVat:false,
   scrapValue:"0", depreciationStart:"",
   accumulatedDepreciation:"0", bookValue:"0",
   insuranceCompany:"", insurancePolicyNo:"",
@@ -123,6 +125,7 @@ export default function FixedAssets() {
       plateNumber:a.plateNumber??"", color:a.color??"",
       initialKm:a.initialKm?String(a.initialKm):"", currentKm:a.currentKm?String(a.currentKm):"",
       lifeYears:String(a.lifeYears??5), depreciationMethod:a.depreciationMethod??"straight_line",
+      vatRate:String((a as any).vatRate??"15"), priceIncludesVat:!!(a as any).priceIncludesVat,
       scrapValue:String(a.scrapValue??"0"), depreciationStart:a.depreciationStart??"",
       accumulatedDepreciation:String(a.accumulatedDepreciation??"0"),
       bookValue:String(a.bookValue??"0"),
@@ -139,6 +142,7 @@ export default function FixedAssets() {
     { id:"basic",        label:"البيانات الأساسية", icon: Info,          grad:"from-emerald-500 to-emerald-600", text:"text-emerald-700",  border:"border-emerald-200" },
     { id:"purchase",     label:"بيانات الشراء",      icon: ShoppingCart,  grad:"from-blue-500 to-blue-600",       text:"text-blue-700",     border:"border-blue-200" },
     { id:"tech",         label:"بيانات فنية",        icon: Cog,           grad:"from-amber-500 to-amber-600",     text:"text-amber-700",    border:"border-amber-200" },
+    { id:"tax",          label:"الضرائب",           icon: Receipt,       grad:"from-teal-500 to-teal-600",        text:"text-teal-700",    border:"border-teal-200" },
     { id:"depreciation", label:"الإهلاك",            icon: TrendingDown,  grad:"from-violet-500 to-violet-600",   text:"text-violet-700",   border:"border-violet-200" },
     { id:"insurance",    label:"التأمين",            icon: Shield,        grad:"from-pink-500 to-pink-600",        text:"text-pink-700",    border:"border-pink-200" },
     { id:"extra",        label:"إضافي / ملاحظات",   icon: FileText,      grad:"from-slate-500 to-slate-600",      text:"text-slate-700",   border:"border-slate-200" },
@@ -155,6 +159,8 @@ export default function FixedAssets() {
         initialKm:  form.initialKm  ? Number(form.initialKm)  : null,
         currentKm:  form.currentKm  ? Number(form.currentKm)  : null,
         lifeYears:  Number(form.lifeYears || 5),
+        vatRate:    String(form.vatRate || "15"),
+        priceIncludesVat: !!form.priceIncludesVat,
         purchaseDate: form.purchaseDate || null,
         depreciationStart: form.depreciationStart || null,
         insuranceStart: form.insuranceStart || null,
@@ -385,6 +391,118 @@ export default function FixedAssets() {
               </div>
             </fieldset>
             )}
+
+            {activeTab === "tax" && (() => {
+              const rate = Math.max(0, Number(form.vatRate || 0));
+              const incl = !!form.priceIncludesVat;
+              const stored = Math.max(0, Number(form.purchaseValue || 0));
+              const net   = stored;
+              const vatAmt = +(net * rate / 100).toFixed(2);
+              const gross  = +(net + vatAmt).toFixed(2);
+              const setNet = (n: number) => setForm({ ...form, purchaseValue: String(Math.max(0, +n.toFixed(2))) });
+              const setGross = (g: number) => {
+                const newNet = rate > 0 ? +(g / (1 + rate / 100)).toFixed(2) : g;
+                setNet(newNet);
+              };
+              return (
+              <fieldset className="border border-teal-200 rounded-lg p-4 bg-teal-50/20">
+                <legend className="px-2 text-sm font-bold text-teal-700 flex items-center gap-1">
+                  <Receipt className="h-4 w-4" /> الضرائب
+                </legend>
+
+                {/* Inclusive checkbox card */}
+                <label className={`flex items-center gap-3 p-3 mb-4 rounded-xl border-2 cursor-pointer transition-all ${
+                  incl ? "border-teal-500 bg-teal-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300"
+                }`}>
+                  <input type="checkbox" checked={incl}
+                    onChange={(e) => setForm({ ...form, priceIncludesVat: e.target.checked })}
+                    className="h-5 w-5 rounded accent-teal-600" />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-slate-800">الإجمالي شامل الضريبة</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {incl
+                        ? "أدخل المبلغ الإجمالي شاملاً الضريبة وسيتم حساب الصافي تلقائياً"
+                        : "أدخل قيمة الأصل قبل الضريبة وسيتم حساب الإجمالي تلقائياً"}
+                    </p>
+                  </div>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded ${incl ? "bg-teal-600 text-white" : "bg-slate-200 text-slate-600"}`}>
+                    {incl ? "شامل" : "غير شامل"}
+                  </span>
+                </label>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* قيمة الأصل قبل الضريبة */}
+                  <div>
+                    <Label className="text-slate-700">قيمة الأصل قبل الضريبة</Label>
+                    <Input type="number" step="0.01" min="0"
+                      value={form.purchaseValue}
+                      readOnly={incl}
+                      onChange={(e) => setNet(Number(e.target.value) || 0)}
+                      className={`mt-1 font-mono text-base ${incl ? "bg-slate-100 text-slate-600 cursor-not-allowed" : "bg-white"}`} />
+                  </div>
+
+                  {/* نسبة الضريبة */}
+                  <div>
+                    <Label className="text-slate-700">نسبة الضريبة %</Label>
+                    <div className="mt-1 relative">
+                      <Input type="number" step="0.01" min="0" max="100"
+                        value={form.vatRate}
+                        onChange={(e) => setForm({ ...form, vatRate: e.target.value.replace(/[^0-9.]/g, "") })}
+                        className="font-mono text-base pl-9" />
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-teal-600 pointer-events-none">%</span>
+                    </div>
+                  </div>
+
+                  {/* قيمة الضريبة (مشتقة) */}
+                  <div>
+                    <Label className="text-amber-700 flex items-center gap-1">
+                      <Calculator className="h-3.5 w-3.5" /> قيمة الضريبة (محسوبة)
+                    </Label>
+                    <div className="mt-1 h-10 px-3 flex items-center justify-end rounded-md border-2 border-amber-200 bg-amber-50 font-mono text-base font-bold text-amber-800">
+                      {vatAmt.toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+
+                  {/* الإجمالي بعد الضريبة */}
+                  <div>
+                    <Label className="text-emerald-700 font-bold">الإجمالي بعد الضريبة</Label>
+                    <Input type="number" step="0.01" min="0"
+                      value={incl ? form.purchaseValue && rate >= 0 ? gross.toFixed(2) : "0" : gross.toFixed(2)}
+                      readOnly={!incl}
+                      onChange={(e) => incl && setGross(Number(e.target.value) || 0)}
+                      className={`mt-1 font-mono text-base font-bold ${incl ? "bg-white text-emerald-900 border-2 border-emerald-300" : "bg-emerald-50 text-emerald-800 border-emerald-200 cursor-not-allowed"}`} />
+                  </div>
+                </div>
+
+                {/* Summary footer */}
+                <div className="mt-4 p-3 rounded-xl bg-gradient-to-l from-teal-50 to-emerald-50 border border-teal-200">
+                  <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                    <div>
+                      <div className="text-slate-500">الصافي</div>
+                      <div className="font-mono font-bold text-slate-800 text-sm mt-0.5">
+                        {net.toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <div className="border-x border-teal-200">
+                      <div className="text-amber-600">+ ضريبة {rate}%</div>
+                      <div className="font-mono font-bold text-amber-700 text-sm mt-0.5">
+                        {vatAmt.toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-emerald-600">= الإجمالي</div>
+                      <div className="font-mono font-bold text-emerald-800 text-sm mt-0.5">
+                        {gross.toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-[11px] text-slate-500 text-center">
+                    💡 قيمة الإهلاك تُحسب على أساس <span className="font-bold text-slate-700">الصافي قبل الضريبة</span> وفقاً لمعايير المحاسبة
+                  </p>
+                </div>
+              </fieldset>
+              );
+            })()}
 
             {activeTab === "depreciation" && (
             <fieldset className="border border-violet-200 rounded-lg p-4 bg-violet-50/20">

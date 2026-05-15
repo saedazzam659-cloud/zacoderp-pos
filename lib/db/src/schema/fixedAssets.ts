@@ -62,6 +62,12 @@ export const fixedAssetsTable = pgTable("fixed_assets", {
   // ── Purchase data ────────────────────────────────────────────
   purchaseDate:        date("purchase_date"),
   purchaseValue:       numeric("purchase_value", { precision: 15, scale: 2 }).notNull().default("0"),
+  // Tax tab: rate is the VAT % (default 15 KSA), priceIncludesVat marks
+  // whether the user-entered figure was already gross. purchaseValue is
+  // ALWAYS stored as the NET (before-VAT) amount because depreciation,
+  // book-value and JE acquisition all run on the net basis.
+  vatRate:             numeric("vat_rate", { precision: 5, scale: 2 }).notNull().default("15"),
+  priceIncludesVat:    boolean("price_includes_vat").notNull().default(false),
   supplierName:        text("supplier_name"),
   // FK to suppliers.id — preferred over the free-text snapshot above.
   // Kept nullable + no FK constraint so legacy rows (and rows where the
