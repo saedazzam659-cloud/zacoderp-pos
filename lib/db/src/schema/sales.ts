@@ -96,6 +96,12 @@ export const salesInvoiceLinesTable = pgTable("sales_invoice_lines", {
   freeQty:     numeric("free_qty",   { precision: 15, scale: 4 }).notNull().default("0"),
   unitPrice:   numeric("unit_price", { precision: 15, scale: 4 }).notNull().default("0"),
   discount:    numeric("discount",   { precision: 15, scale: 2 }).default("0"),
+  // Per-line fixed-amount discount (in the line's currency, same VAT-inclusion
+  // basis as `unitPrice`). Applied AFTER the percent discount, i.e.
+  //   gross = qty * unitPrice * (1 - discount%/100) - discountAmount
+  // Rolled into the same "خصم مسموح به" debit on the JE as the percent
+  // discount, so both lever the same chart-of-accounts discount account.
+  discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   vatRate:     numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
   lineTotal:   numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
   notes:       text("notes"),
@@ -152,6 +158,7 @@ export const salesReturnLinesTable = pgTable("sales_return_lines", {
   freeQty:     numeric("free_qty",   { precision: 15, scale: 4 }).notNull().default("0"),
   unitPrice:   numeric("unit_price", { precision: 15, scale: 4 }).notNull().default("0"),
   discount:    numeric("discount",   { precision: 5,  scale: 2 }).notNull().default("0"),
+  discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   vatRate:     numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
   lineTotal:   numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
   notes:       text("notes"),
@@ -196,6 +203,7 @@ export const salesQuotationLinesTable = pgTable("sales_quotation_lines", {
   freeQty:     numeric("free_qty",   { precision: 15, scale: 4 }).notNull().default("0"),
   unitPrice:   numeric("unit_price", { precision: 15, scale: 4 }).notNull().default("0"),
   discount:    numeric("discount",   { precision: 15, scale: 2 }).default("0"),
+  discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   vatRate:     numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
   lineTotal:   numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
   notes:       text("notes"),
@@ -255,6 +263,7 @@ export const salesOrderLinesTable = pgTable("sales_order_lines", {
   freeQty:          numeric("free_qty",   { precision: 15, scale: 4 }).notNull().default("0"),
   unitPrice:        numeric("unit_price", { precision: 15, scale: 4 }).notNull().default("0"),
   discount:         numeric("discount",   { precision: 15, scale: 2 }).default("0"),
+  discountAmount:   numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   vatRate:          numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
   lineTotal:        numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
   notes:            text("notes"),

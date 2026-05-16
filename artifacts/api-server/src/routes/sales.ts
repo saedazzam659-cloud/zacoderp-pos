@@ -489,6 +489,7 @@ function mapInvoiceLine(l: any, invoiceId: number, cid: number) {
     freeQty:     String(l.freeQty   || "0"),
     unitPrice:   String(l.unitPrice || "0"),
     discount:    String(l.discount  || "0"),
+    discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
     vatRate:     String(l.vatRate   || "15"),
     lineTotal:   String(l.lineTotal || "0"),
     notes:       l.notes || null,
@@ -1016,21 +1017,25 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     const headerDiscAmt = Number(inv.discountAmount || 0);
     const totalAmt    = Number(inv.totalAmount || 0);
 
-    // Roll line-level discounts (per-line `discount` %) into a single
-    // "خصم مسموح به" debit so promotions like Buy-X-Get-Y / line-pricing
-    // surface as a discrete journal line instead of being silently absorbed
-    // into a smaller revenue figure. The amount is computed as the
-    // VAT-exclusive saving per line so it stacks cleanly with the existing
-    // VAT-exclusive `subtotal`.
+    // Roll line-level discounts (per-line `discount` % + `discountAmount`)
+    // into a single "خصم مسموح به" debit so promotions like Buy-X-Get-Y /
+    // line-pricing / fixed-amount discounts surface as a discrete journal
+    // line instead of being silently absorbed into a smaller revenue figure.
+    // The amount is computed as the VAT-exclusive saving per line so it
+    // stacks cleanly with the existing VAT-exclusive `subtotal`.
     const priceIncludesVat = !!(inv as any).priceIncludesVat;
     let lineDiscountTotal = 0;
     for (const ln of lines) {
       const qty     = Number(ln.qty)       || 0;
       const price   = Number(ln.unitPrice) || 0;
       const discPct = Number(ln.discount)  || 0;
-      if (qty <= 0 || price <= 0 || discPct <= 0) continue;
+      const discAmt = Number((ln as any).discountAmount) || 0;
+      if (qty <= 0 || price <= 0) continue;
       const grossPre = qty * price;
-      const discGross = grossPre * (discPct / 100);
+      // Percent first, then fixed-amount (matches form's calcLine). Clamp at
+      // grossPre so an over-discount never makes the JE line go negative.
+      const discGross = Math.min(grossPre, grossPre * (discPct / 100) + discAmt);
+      if (discGross <= 0) continue;
       const rate    = (Number(ln.vatRate) || 0) / 100;
       // When prices are VAT-inclusive, the gross saving carries VAT — strip
       // it so we only book the net portion against revenue. VAT line stays
@@ -1452,6 +1457,7 @@ router.post("/sales-returns", async (req, res) => {
           freeQty: String(l.freeQty || "0"),
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
+          discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
           vatRate: String(l.vatRate || "15"),
           lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
         }))
@@ -1543,6 +1549,7 @@ router.put("/sales-returns/:id", async (req, res) => {
           freeQty: String(l.freeQty || "0"),
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
+          discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
           vatRate: String(l.vatRate || "15"),
           lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
         }))
@@ -1666,9 +1673,11 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       const qty     = Number(ln.qty)       || 0;
       const price   = Number(ln.unitPrice) || 0;
       const discPct = Number(ln.discount)  || 0;
-      if (qty <= 0 || price <= 0 || discPct <= 0) continue;
+      const discAmt = Number((ln as any).discountAmount) || 0;
+      if (qty <= 0 || price <= 0) continue;
       const grossPre = qty * price;
-      const discGross = grossPre * (discPct / 100);
+      const discGross = Math.min(grossPre, grossPre * (discPct / 100) + discAmt);
+      if (discGross <= 0) continue;
       const rate    = (Number(ln.vatRate) || 0) / 100;
       lineDiscountTotal += priceIncludesVat && rate > -1
         ? discGross / (1 + rate)
@@ -1863,6 +1872,7 @@ function mapQuotationLine(l: any, quotationId: number, cid: number) {
     freeQty:   String(l.freeQty   || "0"),
     unitPrice: String(l.unitPrice || "0"),
     discount:  String(l.discount  || "0"),
+    discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
     vatRate:   String(l.vatRate   || "15"),
     lineTotal: String(l.lineTotal || "0"),
     notes:     l.notes || null,
@@ -1991,6 +2001,7 @@ router.post("/sales-quotations/:id/convert", async (req, res) => {
         itemId: l.itemId, itemName: l.itemName, itemCode: l.itemCode,
         unit: l.unit, unitId: l.unitId, warehouseId: null,
         qty: l.qty, freeQty: l.freeQty, unitPrice: l.unitPrice, discount: l.discount,
+        discountAmount: String(Math.max(0, Number((l as any).discountAmount) || 0)),
         vatRate: l.vatRate, lineTotal: l.lineTotal, notes: l.notes,
       })));
     }
@@ -2043,6 +2054,7 @@ function mapOrderLine(l: any, orderId: number, cid: number) {
     freeQty:          String(l.freeQty   || "0"),
     unitPrice:        String(l.unitPrice || "0"),
     discount:         String(l.discount  || "0"),
+    discountAmount:   String(Math.max(0, Number(l.discountAmount) || 0)),
     vatRate:          String(l.vatRate   || "15"),
     lineTotal:        String(l.lineTotal || "0"),
     notes:            l.notes || null,
@@ -2290,6 +2302,7 @@ router.post("/sales-orders/:id/convert", async (req, res) => {
         freeQty:          l.freeQty,
         unitPrice:        l.unitPrice,
         discount:         l.discount,
+        discountAmount:   String(Math.max(0, Number((l as any).discountAmount) || 0)),
         vatRate:          l.vatRate,
         lineTotal:        l.lineTotal,
         notes:            l.notes,

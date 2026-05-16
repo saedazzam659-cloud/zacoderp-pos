@@ -50,6 +50,10 @@ interface DocLine {
   freeQty: string;
   unitPrice: string;
   discount: string;
+  // Fixed-amount discount on the line, applied AFTER the percent discount.
+  // Stored in the same VAT-inclusion basis as `unitPrice`. Posts to the
+  // SAME discount account on the JE as the percent discount.
+  discountAmount: string;
   vatRate: string;
   lineTotal: string;
   notes: string;
@@ -79,7 +83,7 @@ function newLine(): DocLine {
   return {
     _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
     unitId: "", unit: "", conversionFactor: "1", warehouseId: "",
-    qty: "1", freeQty: "0", unitPrice: "0", discount: "0", vatRate: "15",
+    qty: "1", freeQty: "0", unitPrice: "0", discount: "0", discountAmount: "0", vatRate: "15",
     lineTotal: "0", notes: "",
     appliedOfferId: null, appliedOfferName: null,
     engineUnitPrice: null, engineDiscount: null,
@@ -96,8 +100,11 @@ function calcLine(l: DocLine, priceIncludesVat = false) {
   const qty   = Number(l.qty) || 0;
   const price = Number(l.unitPrice) || 0;
   const disc  = Number(l.discount) || 0;
+  const discAmt = Number(l.discountAmount) || 0;
   const rate  = (Number(l.vatRate) || 0) / 100;
-  const gross = qty * price * (1 - disc / 100);
+  // Apply percent first, then fixed amount. Clamp at 0 so an over-discount
+  // never flips the line negative (server enforces the same clamp).
+  const gross = Math.max(0, qty * price * (1 - disc / 100) - discAmt);
   if (priceIncludesVat) {
     const net = rate > -1 ? gross / (1 + rate) : gross;
     const vat = gross - net;
@@ -330,6 +337,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         freeQty:     String(l.freeQty ?? "0"),
         unitPrice:   String(l.unitPrice),
         discount:    String(l.discount ?? "0"),
+        discountAmount: String(l.discountAmount ?? "0"),
         vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
         lineTotal:   String(l.lineTotal),
         notes:       l.notes ?? "",
@@ -616,6 +624,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       freeQty:     String(l.freeQty ?? "0"),
       unitPrice:   String(l.unitPrice),
       discount:    String(l.discount ?? "0"),
+      discountAmount: String(l.discountAmount ?? "0"),
       vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
       lineTotal:   String(l.lineTotal),
       notes:       l.notes ?? "",
@@ -690,6 +699,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           freeQty:     String(l.freeQty ?? "0"),
           unitPrice:   String(l.unitPrice),
           discount:    String(l.discount ?? "0"),
+          discountAmount: String(l.discountAmount ?? "0"),
           vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
           lineTotal:   String(l.lineTotal),
           notes:       l.notes ?? "",
@@ -1299,12 +1309,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     <div className="pt-2 space-y-3">
               {(() => {
                 const gridCols = isInvoice
-                  ? "110px minmax(260px,1.4fr) 160px 120px 90px 80px 110px 80px 80px 130px 180px 40px"
-                  : "110px minmax(280px,1.4fr) 120px 90px 80px 110px 80px 80px 130px 200px 40px";
+                  ? "110px minmax(260px,1.4fr) 160px 120px 90px 80px 110px 80px 100px 80px 130px 180px 40px"
+                  : "110px minmax(280px,1.4fr) 120px 90px 80px 110px 80px 100px 80px 130px 200px 40px";
                 const totalLabel = t("salesDocForm.colTotal");
                 const headers = isInvoice
-                  ? [t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""]
-                  : [t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""];
+                  ? [t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colDiscAmount"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""]
+                  : [t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colDiscAmount"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""];
                 return (
               <div data-enter-nav-container="lines" className="rounded-xl border bg-card overflow-x-auto">
                 <div className="min-w-max">
@@ -1384,41 +1394,31 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         readOnly={fp.isReadOnly("unitPrice")}
                         title={fp.isReadOnly("unitPrice") ? "للقراءة فقط حسب السياسة" : undefined}
                         onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
-                      {/* الخصم% + قيمة الخصم المحسوبة بالعملة (قراءة فقط).
-                          القيمة = الكمية × سعر البيع × (الخصم% / 100)
-                          تُعرض أسفل الحقل بخط صغير ولون أحمر باهت كي يرى
-                          المستخدم الأثر النقدي للخصم لحظيًا دون إضافة عمود
-                          جديد للجدول يكسر تخطيطه الحالي. تظهر فقط عندما
-                          يكون الخصم > 0 لتفادي الضوضاء البصرية في الفواتير
-                          العادية. */}
-                      <div className="flex flex-col">
-                        <Input
-                          className={cn(
-                            "h-8 text-xs",
-                            l.appliedOfferId && "bg-emerald-50 border-emerald-300 text-emerald-800 font-semibold",
-                            fp.isReadOnly("discount") && "bg-muted/40 cursor-not-allowed"
-                          )}
-                          type="text" inputMode="decimal" dir="ltr" value={l.discount}
-                          readOnly={fp.isReadOnly("discount")}
-                          title={fp.isReadOnly("discount") ? "للقراءة فقط حسب السياسة" : "النسبة المئوية للخصم على هذا السطر"}
-                          onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
-                        {(() => {
-                          const qty   = Number(l.qty) || 0;
-                          const price = Number(l.unitPrice) || 0;
-                          const pct   = Number(l.discount) || 0;
-                          const amt   = qty * price * (pct / 100);
-                          if (amt <= 0) return null;
-                          return (
-                            <span
-                              className="mt-0.5 text-[10px] leading-tight text-rose-600 text-center font-mono tabular-nums"
-                              data-testid={`line-discount-amount-${l._id}`}
-                              title={`قيمة الخصم على هذا السطر = ${fmt(amt)} ${currencyCode}`}
-                            >
-                              − {fmt(amt)}
-                            </span>
-                          );
-                        })()}
-                      </div>
+                      {/* خصم% — نسبة مئوية تُطبَّق على (الكمية × سعر البيع). */}
+                      <Input
+                        className={cn(
+                          "h-8 text-xs",
+                          l.appliedOfferId && "bg-emerald-50 border-emerald-300 text-emerald-800 font-semibold",
+                          fp.isReadOnly("discount") && "bg-muted/40 cursor-not-allowed"
+                        )}
+                        type="text" inputMode="decimal" dir="ltr" value={l.discount}
+                        readOnly={fp.isReadOnly("discount")}
+                        title={fp.isReadOnly("discount") ? "للقراءة فقط حسب السياسة" : "النسبة المئوية للخصم على هذا السطر"}
+                        onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      {/* قيمة الخصم — مبلغ ثابت بالعملة يُطرح بعد الخصم بالنسبة.
+                          الصيغة: الإجمالي = الكمية × سعر البيع × (1 − خصم%/100) − قيمة الخصم
+                          يُرحَّل على نفس حساب "الخصم المسموح به" في شجرة الحسابات
+                          تمامًا كما يُرحَّل الخصم بالنسبة. */}
+                      <Input
+                        className={cn(
+                          "h-8 text-xs font-mono tabular-nums",
+                          fp.isReadOnly("discount") && "bg-muted/40 cursor-not-allowed"
+                        )}
+                        type="text" inputMode="decimal" dir="ltr" value={l.discountAmount}
+                        readOnly={fp.isReadOnly("discount")}
+                        title={fp.isReadOnly("discount") ? "للقراءة فقط حسب السياسة" : `قيمة الخصم بالعملة — تُطرح بعد الخصم بالنسبة وتُرحَّل على حساب الخصم المسموح به`}
+                        data-testid={`line-discount-amount-${l._id}`}
+                        onChange={e => updateLine(l._id, "discountAmount", e.target.value.replace(/[^0-9.]/g, ""))} />
                       <Input
                         className={cn("h-8 text-xs", fp.isReadOnly("taxRate") && "bg-muted/40 cursor-not-allowed")}
                         type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
@@ -1648,6 +1648,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         freeQty: "0",
         unitPrice: finalPrice,
         discount: String(resolvedDiscount ?? "0"),
+        discountAmount: "0",
         vatRate: String(item.vatRate ?? "15"),
         lineTotal: "0",
         notes: "",

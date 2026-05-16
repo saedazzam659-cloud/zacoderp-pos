@@ -842,6 +842,16 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE gateway_clients ADD COLUMN IF NOT EXISTS zatca_pcsid_secret_enc TEXT` },
     { label: "gateway_clients add csid_last_rotated_at",
       sql:   `ALTER TABLE gateway_clients ADD COLUMN IF NOT EXISTS csid_last_rotated_at TIMESTAMP` },
+    // Per-line fixed-amount discount (companion to existing per-line percent
+    // discount). NOT NULL with default 0 so legacy rows reconcile cleanly.
+    { label: "sales_invoice_lines add discount_amount",
+      sql:   `ALTER TABLE sales_invoice_lines ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(15,2) NOT NULL DEFAULT 0` },
+    { label: "sales_return_lines add discount_amount",
+      sql:   `ALTER TABLE sales_return_lines ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(15,2) NOT NULL DEFAULT 0` },
+    { label: "sales_quotation_lines add discount_amount",
+      sql:   `ALTER TABLE sales_quotation_lines ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(15,2) NOT NULL DEFAULT 0` },
+    { label: "sales_order_lines add discount_amount",
+      sql:   `ALTER TABLE sales_order_lines ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(15,2) NOT NULL DEFAULT 0` },
 
     // Allow fractional years (years + months) on fixed-asset useful life.
     { label: "fixed_assets life_years to numeric",
