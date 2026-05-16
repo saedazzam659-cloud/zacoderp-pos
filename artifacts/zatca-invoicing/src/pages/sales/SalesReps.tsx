@@ -22,6 +22,7 @@ import {
   Phone, Mail, MapPin, Percent, Target, Users, Sparkles, Loader2,
   FileSpreadsheet, X, KeyRound, Wand2,
   ListChecks, BarChart3, TrendingUp, Award, Wallet, Trophy,
+  Link2, CheckCircle2, Clock, Hash, AtSign, IdCard,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
@@ -61,7 +62,11 @@ type CompanyUser = {
   username: string;
   nameAr: string | null;
   nameEn: string | null;
+  email: string | null;
+  code: string | null;
+  role: string;
   isActive: boolean;
+  lastLoginAt: string | null;
 };
 
 const EMPTY_FORM = {
@@ -648,7 +653,28 @@ export default function SalesReps() {
               <select
                 className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                 value={form.userId}
-                onChange={(e) => setForm({ ...form, userId: e.target.value })}
+                onChange={(e) => {
+                  const newUserId = e.target.value;
+                  // Auto-fill the rep form from the selected user's profile.
+                  // Strategy: copy code / nameAr / nameEn / email ONLY when
+                  // the corresponding rep field is empty — never overwrite
+                  // data the admin already typed. Lets the admin "snap" a
+                  // rep to a system user in one click and get a fully
+                  // pre-populated form to confirm and save.
+                  setForm((f) => {
+                    const next = { ...f, userId: newUserId };
+                    if (newUserId) {
+                      const u = users.find((x) => String(x.id) === newUserId);
+                      if (u) {
+                        if (!f.code.trim() && u.code)   next.code   = u.code;
+                        if (!f.nameAr.trim() && u.nameAr) next.nameAr = u.nameAr;
+                        if (!f.nameEn.trim() && u.nameEn) next.nameEn = u.nameEn;
+                        if (!f.email.trim() && u.email)   next.email  = u.email;
+                      }
+                    }
+                    return next;
+                  });
+                }}
                 data-testid="select-rep-user"
               >
                 <option value="">— بدون حساب دخول (مندوب خارجي) —</option>
@@ -670,6 +696,126 @@ export default function SalesReps() {
               <p className="text-xs text-muted-foreground mt-1">
                 عند ربط حساب دخول، فواتير هذا المستخدم تُسنَد تلقائياً للمندوب وتُحسب عمولته بدون تدخّل يدوي.
               </p>
+
+              {/* ─── Linked-user preview card ─────────────────────────────
+                  When a system account is selected, show an attractive
+                  summary card with the user's basic info (name, username,
+                  email, role, active status, last login). Helps the admin
+                  confirm they picked the right account before saving and
+                  surfaces problems early (e.g. account is deactivated). */}
+              {(() => {
+                const selectedUser = users.find((u) => String(u.id) === form.userId);
+                if (!selectedUser) return null;
+                const fullName = selectedUser.nameAr || selectedUser.nameEn || selectedUser.username;
+                const initials = (fullName || "?").trim().slice(0, 2);
+                const lastLogin = selectedUser.lastLoginAt
+                  ? new Date(selectedUser.lastLoginAt).toLocaleString("ar-SA", {
+                      dateStyle: "medium", timeStyle: "short",
+                    })
+                  : "لم يسجّل دخول بعد";
+                const roleLabel = selectedUser.role === "admin" ? "مدير" : selectedUser.role === "superadmin" ? "سوبر أدمن" : "مستخدم";
+                return (
+                  <div
+                    className="mt-3 rounded-xl overflow-hidden border-2 border-blue-200 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300"
+                    data-testid="linked-user-preview"
+                  >
+                    {/* Header strip with avatar + status */}
+                    <div className={cn(
+                      "px-4 py-3 flex items-center gap-3 text-white",
+                      selectedUser.isActive
+                        ? "bg-gradient-to-l from-blue-600 via-cyan-600 to-teal-500"
+                        : "bg-gradient-to-l from-slate-500 via-slate-600 to-slate-700",
+                    )}>
+                      <div className="size-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center text-lg font-bold ring-2 ring-white/30 shadow-inner">
+                        {initials}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div className="font-bold text-base truncate">{fullName}</div>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/25 text-[10px] font-semibold backdrop-blur-sm">
+                            <Link2 className="size-2.5" /> مربوط
+                          </span>
+                        </div>
+                        <div className="text-xs opacity-90 flex items-center gap-1">
+                          <AtSign className="size-3" /> {selectedUser.username}
+                        </div>
+                      </div>
+                      {selectedUser.isActive ? (
+                        <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-400/30 backdrop-blur-sm text-xs font-bold ring-1 ring-emerald-200/40">
+                          <CheckCircle2 className="size-3.5" /> نشط
+                        </div>
+                      ) : (
+                        <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-500/40 backdrop-blur-sm text-xs font-bold ring-1 ring-rose-200/40">
+                          <UserX className="size-3.5" /> موقوف
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Body grid with detail badges */}
+                    <div className="bg-gradient-to-bl from-blue-50/60 via-white to-cyan-50/60 px-4 py-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                      <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white border border-slate-200 shadow-sm">
+                        <Hash className="size-3.5 text-indigo-500 shrink-0" />
+                        <div className="min-w-0">
+                          <div className="text-[10px] text-slate-500">الكود</div>
+                          <div className="font-mono font-semibold truncate">{selectedUser.code || "—"}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white border border-slate-200 shadow-sm">
+                        <IdCard className="size-3.5 text-violet-500 shrink-0" />
+                        <div className="min-w-0">
+                          <div className="text-[10px] text-slate-500">الدور</div>
+                          <div className="font-semibold truncate">{roleLabel}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white border border-slate-200 shadow-sm col-span-2">
+                        <Mail className="size-3.5 text-amber-500 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[10px] text-slate-500">البريد الإلكتروني</div>
+                          <div className="font-mono text-[11px] truncate" dir="ltr">{selectedUser.email || "—"}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white border border-slate-200 shadow-sm col-span-2 md:col-span-4">
+                        <Clock className="size-3.5 text-rose-500 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[10px] text-slate-500">آخر تسجيل دخول</div>
+                          <div className="font-medium text-[11px] truncate">{lastLogin}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Auto-fill helper — re-applies the auto-population on demand */}
+                    <div className="px-4 py-2 border-t bg-gradient-to-l from-sky-50 to-cyan-50 flex items-center justify-between gap-3">
+                      <div className="text-[11px] text-slate-700 flex items-center gap-1.5">
+                        <Sparkles className="size-3.5 text-cyan-600" />
+                        تم تعبئة الحقول الفارغة تلقائياً من حساب المستخدم.
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-[11px] bg-white border-cyan-300 text-cyan-700 hover:bg-cyan-50"
+                        onClick={() => {
+                          // Force-overwrite: copy ALL fields from the user
+                          // regardless of what's currently in the form.
+                          // Useful when the admin typed something wrong and
+                          // wants a clean snap to the user's profile.
+                          setForm((f) => ({
+                            ...f,
+                            code:   selectedUser.code   ?? f.code,
+                            nameAr: selectedUser.nameAr ?? f.nameAr,
+                            nameEn: selectedUser.nameEn ?? f.nameEn,
+                            email:  selectedUser.email  ?? f.email,
+                          }));
+                          toast({ title: "✨ تم تحديث البيانات من حساب المستخدم" });
+                        }}
+                        data-testid="button-resync-user"
+                      >
+                        <Wand2 className="size-3 me-1" /> إعادة المزامنة
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
             <div className="md:col-span-2 flex items-center gap-2">
               <input
