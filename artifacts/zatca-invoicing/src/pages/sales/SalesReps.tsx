@@ -680,6 +680,15 @@ export default function SalesReps() {
                 <option value="">— بدون حساب دخول (مندوب خارجي) —</option>
                 {users
                   .filter((u) => {
+                    // Hide admins / superadmins — a rep is a regular employee
+                    // user, never a manager. Keeps the dropdown short and
+                    // prevents accidentally linking the company owner to a
+                    // commission row. (If the rep is currently linked to an
+                    // admin account from a legacy install, we still keep it
+                    // visible so the admin can re-pick it.)
+                    if (u.role === "admin" || u.role === "superadmin") {
+                      if (editing?.userId !== u.id) return false;
+                    }
                     // Hide users already linked to a *different* rep so the
                     // unique constraint can't bite at save time. Always keep
                     // the currently-edited rep's own user in the list.
