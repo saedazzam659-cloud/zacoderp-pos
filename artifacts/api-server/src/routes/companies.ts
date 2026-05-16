@@ -140,6 +140,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     faDepreciationExpenseAccountId, faAcquisitionClearingAccountId,
     faDisposalGainAccountId, faDisposalLossAccountId,
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
+    printEnabledTemplates, printDefaultTemplate,
     // Per-doc-type print preferences (auto-print toggle + template name).
     // Each `printAutoAfterSave*` is a boolean; each `printTemplate*` is
     // either "a4" or "thermal".  Validated below before write so we never
@@ -174,6 +175,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     faDisposalLossAccountId?: number | null;
     printFooterInvoice?: string; printFooterReturn?: string;
     printShowTimestamp?: boolean; printShowZatcaBrand?: boolean;
+    printEnabledTemplates?: number[] | null; printDefaultTemplate?: number;
     printAutoAfterSaveSales?: boolean; printAutoAfterSaveReceipt?: boolean;
     printAutoAfterSavePayment?: boolean; printAutoAfterSaveJournal?: boolean;
     printTemplateSales?: string; printTemplateReceipt?: string;
@@ -242,6 +244,30 @@ router.patch("/:id/general-settings", async (req, res) => {
   }
   if (printShowTimestamp !== undefined) updates.printShowTimestamp = !!printShowTimestamp;
   if (printShowZatcaBrand !== undefined) updates.printShowZatcaBrand = !!printShowZatcaBrand;
+  // Print template visibility list — accept an array of integer ids
+  // (1..12), de-dup, drop garbage. Pass `null` (or empty array) to
+  // reset to "all templates visible".
+  if (printEnabledTemplates !== undefined) {
+    if (printEnabledTemplates === null) {
+      updates.printEnabledTemplates = null;
+    } else if (!Array.isArray(printEnabledTemplates)) {
+      res.status(400).json({ error: "قائمة النماذج المرئية يجب أن تكون مصفوفة" }); return;
+    } else {
+      const cleaned = Array.from(new Set(
+        printEnabledTemplates
+          .map((x) => Number(x))
+          .filter((n) => Number.isInteger(n) && n >= 1 && n <= 12),
+      )).sort((a, b) => a - b);
+      updates.printEnabledTemplates = cleaned.length === 0 ? null : cleaned;
+    }
+  }
+  if (printDefaultTemplate !== undefined) {
+    const n = Number(printDefaultTemplate);
+    if (!Number.isInteger(n) || n < 1 || n > 12) {
+      res.status(400).json({ error: "النموذج الافتراضي يجب أن يكون رقماً بين 1 و 12" }); return;
+    }
+    updates.printDefaultTemplate = n;
+  }
   // Auto-print toggles — coerce to boolean.
   if (printAutoAfterSaveSales   !== undefined) updates.printAutoAfterSaveSales   = !!printAutoAfterSaveSales;
   if (printAutoAfterSaveReceipt !== undefined) updates.printAutoAfterSaveReceipt = !!printAutoAfterSaveReceipt;

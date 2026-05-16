@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Printer, X } from "lucide-react";
@@ -1411,12 +1411,43 @@ interface Props {
 }
 
 export default function SalesPrintModal({ open, onClose, data, defaultTemplate, autoPrintOnOpen }: Props) {
-  const initialId = defaultTemplate === "thermal" ? 7 : 1;
-  const [selected, setSelected] = useState(initialId);
+  // ── Visibility filter ────────────────────────────────────────────────
+  // Honour the per-company `printEnabledTemplates` (jsonb int[]) and
+  // `printDefaultTemplate` (int) settings from the General Settings →
+  // Print tab. NULL / empty array means "show all" (legacy behaviour).
+  // If the configured default isn't visible (e.g. admin disabled it
+  // after picking it), fall back to the first visible id.
+  const companyCfg: any = (data as any)?.company ?? {};
+  const visibleTemplates = useMemo(() => {
+    const enabled = Array.isArray(companyCfg.printEnabledTemplates) && companyCfg.printEnabledTemplates.length > 0
+      ? new Set<number>(companyCfg.printEnabledTemplates.map((n: any) => Number(n)))
+      : null;
+    const filtered = enabled ? TEMPLATES.filter(t => enabled.has(t.id)) : TEMPLATES;
+    return filtered.length > 0 ? filtered : TEMPLATES; // never let the modal go empty
+  }, [companyCfg.printEnabledTemplates]);
+
+  function resolveInitialId(): number {
+    // Caller's preference wins when it points at a visible template.
+    if (defaultTemplate === "thermal") {
+      const t = visibleTemplates.find(x => x.thermal);
+      if (t) return t.id;
+    }
+    if (defaultTemplate === "a4") {
+      const t = visibleTemplates.find(x => !x.thermal);
+      if (t) return t.id;
+    }
+    // Otherwise use the company's configured default if it's visible.
+    const cfgDefault = Number(companyCfg.printDefaultTemplate);
+    if (Number.isInteger(cfgDefault) && visibleTemplates.some(t => t.id === cfgDefault)) {
+      return cfgDefault;
+    }
+    return visibleTemplates[0]?.id ?? 1;
+  }
+  const [selected, setSelected] = useState<number>(resolveInitialId);
   const { toast } = useToast();
-  // Re-sync the selected template when the caller's preference changes
-  // (e.g. opening the modal a second time for a different template).
-  useEffect(() => { setSelected(defaultTemplate === "thermal" ? 7 : 1); }, [defaultTemplate]);
+  // Re-sync the selected template when the caller's preference or the
+  // company's visibility config changes.
+  useEffect(() => { setSelected(resolveInitialId()); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [defaultTemplate, companyCfg.printEnabledTemplates, companyCfg.printDefaultTemplate]);
   // Fire-and-forget auto-print on open. We track the last id we auto-
   // printed so we don't loop on re-renders, and reset when the modal
   // closes so the next "open" can auto-print again.
@@ -1505,7 +1536,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
         </DialogHeader>
 
         <div className="grid grid-cols-3 md:grid-cols-6 gap-3 my-4 max-h-[55vh] overflow-y-auto pr-1">
-          {TEMPLATES.map(t => (
+          {visibleTemplates.map(t => (
             <button
               key={t.id}
               onClick={() => setSelected(t.id)}

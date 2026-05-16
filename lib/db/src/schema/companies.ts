@@ -138,6 +138,12 @@ export const companiesTable = pgTable("companies", {
   printFooterReturn:    text("print_footer_return").notNull().default("تم استلام المرتجع — شكراً لتعاملكم"),
   printShowTimestamp:   boolean("print_show_timestamp").notNull().default(true),
   printShowZatcaBrand:  boolean("print_show_zatca_brand").notNull().default(true),
+  // Which sales-print templates are visible to end-users in the print
+  // modal. NULL or empty array = show all 12 (default behavior). Stored
+  // as a JSONB int[] (template ids 1..12). The "default" id below picks
+  // which one is preselected when the modal opens.
+  printEnabledTemplates: jsonb("print_enabled_templates").$type<number[]>(),
+  printDefaultTemplate:  integer("print_default_template").notNull().default(1),
   // ─── Auto-print after save + per-doc-type template (a4 | thermal) ─────
   // When `printAutoAfterSave*` is true, the matching form opens a print
   // window automatically right after the save mutation succeeds. The

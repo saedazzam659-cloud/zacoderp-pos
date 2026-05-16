@@ -798,6 +798,10 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "gateway_invoices_status_idx",
       sql:   `CREATE INDEX IF NOT EXISTS gateway_invoices_status_idx ON gateway_invoices (status)` },
     // ── Phase 2: real submission chain (ICV/PIH) + onboarding wizard ──
+    { label: "companies add print_enabled_templates",
+      sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS print_enabled_templates JSONB` },
+    { label: "companies add print_default_template",
+      sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS print_default_template INTEGER NOT NULL DEFAULT 1` },
     { label: "gateway_clients add last_icv",
       sql:   `ALTER TABLE gateway_clients ADD COLUMN IF NOT EXISTS last_icv INTEGER NOT NULL DEFAULT 0` },
     { label: "gateway_clients add last_invoice_hash",

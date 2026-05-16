@@ -1082,12 +1082,72 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
   const [showTimestamp, setShowTimestamp] = useState<boolean>(company.printShowTimestamp !== false);
   const [showZatca,     setShowZatca]     = useState<boolean>(company.printShowZatcaBrand !== false);
 
+  // ─── Template visibility / default selection ─────────────────────────
+  // The full catalog mirrors SalesPrintModal.TEMPLATES (kept in sync by
+  // template id — names/colors are display-only). NULL on the company
+  // row means "show all".
+  const TEMPLATE_CATALOG: { id: number; name: string; desc: string; color: string; thermal: boolean }[] = [
+    { id: 1,  name: "كلاسيكي",       desc: "حدود وجداول تقليدية",       color: "#2563eb", thermal: false },
+    { id: 2,  name: "حديث",          desc: "تصميم نظيف بهيدر أخضر",     color: "#059669", thermal: false },
+    { id: 3,  name: "مؤسسي",         desc: "هيدر داكن احترافي",         color: "#1e3a5f", thermal: false },
+    { id: 4,  name: "ملوّن",         desc: "ألوان دافئة مع تدرج",       color: "#d97706", thermal: false },
+    { id: 5,  name: "ZATCA رسمي",    desc: "النموذج الحكومي مع QR",     color: "#1a6e3d", thermal: false },
+    { id: 8,  name: "نقي أنيق",      desc: "أبيض وأسود ولمسة ذهبية",    color: "#0f172a", thermal: false },
+    { id: 9,  name: "ذهبي فاخر",     desc: "خلفية داكنة ولمسات ذهبية",  color: "#1c1917", thermal: false },
+    { id: 10, name: "بحري عميق",     desc: "تدرج أزرق مع موجة سفلية",   color: "#0e7490", thermal: false },
+    { id: 11, name: "حيوي",          desc: "تدرجات بنفسجية ووردية",     color: "#a855f7", thermal: false },
+    { id: 12, name: "تنفيذي",        desc: "شريط جانبي ببيانات الشركة", color: "#0f172a", thermal: false },
+    { id: 6,  name: "حراري كلاسيكي", desc: "إيصال 80mm أبيض/أسود",      color: "#111111", thermal: true  },
+    { id: 7,  name: "حراري عصري",    desc: "إيصال 80mm ملوّن",           color: "#0f766e", thermal: true  },
+  ];
+  const ALL_IDS = TEMPLATE_CATALOG.map(t => t.id);
+
+  // null = "show all" (default behavior). Storing as a Set for cheap toggles.
+  const initialEnabled: Set<number> = (() => {
+    const raw = company.printEnabledTemplates;
+    if (Array.isArray(raw) && raw.length > 0) return new Set(raw.filter((n: any) => ALL_IDS.includes(Number(n))).map(Number));
+    return new Set(ALL_IDS);
+  })();
+  const [enabledIds, setEnabledIds] = useState<Set<number>>(initialEnabled);
+  const [defaultTplId, setDefaultTplId] = useState<number>(
+    Number.isInteger(company.printDefaultTemplate) ? Number(company.printDefaultTemplate) : 1,
+  );
+
   useEffect(() => {
     setInvoiceFooter(company.printFooterInvoice ?? DEFAULT_INVOICE);
     setReturnFooter(company.printFooterReturn ?? DEFAULT_RETURN);
     setShowTimestamp(company.printShowTimestamp !== false);
     setShowZatca(company.printShowZatcaBrand !== false);
-  }, [company.printFooterInvoice, company.printFooterReturn, company.printShowTimestamp, company.printShowZatcaBrand, DEFAULT_INVOICE, DEFAULT_RETURN]);
+    const raw = company.printEnabledTemplates;
+    setEnabledIds(Array.isArray(raw) && raw.length > 0
+      ? new Set(raw.filter((n: any) => ALL_IDS.includes(Number(n))).map(Number))
+      : new Set(ALL_IDS));
+    setDefaultTplId(Number.isInteger(company.printDefaultTemplate) ? Number(company.printDefaultTemplate) : 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company.printFooterInvoice, company.printFooterReturn, company.printShowTimestamp, company.printShowZatcaBrand, company.printEnabledTemplates, company.printDefaultTemplate, DEFAULT_INVOICE, DEFAULT_RETURN]);
+
+  function toggleTemplate(id: number) {
+    setEnabledIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        // Never let the user disable the last visible template — they
+        // must always have at least one to print with.
+        if (next.size <= 1) return prev;
+        next.delete(id);
+        // If they disabled the current default, fall back to the first
+        // remaining enabled id so the saved default is always valid.
+        if (id === defaultTplId) {
+          const first = Array.from(next).sort((a, b) => a - b)[0];
+          if (first !== undefined) setDefaultTplId(first);
+        }
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+  function selectAllTemplates() { setEnabledIds(new Set(ALL_IDS)); }
+  function selectOnlyDefault()  { setEnabledIds(new Set([defaultTplId])); }
 
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -1104,6 +1164,10 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
           printFooterReturn:  returnFooter.trim(),
           printShowTimestamp: showTimestamp,
           printShowZatcaBrand: showZatca,
+          // Send `null` when all templates are enabled so we don't bloat
+          // the row with a long array that means the same as the default.
+          printEnabledTemplates: enabledIds.size === ALL_IDS.length ? null : Array.from(enabledIds).sort((a,b)=>a-b),
+          printDefaultTemplate: defaultTplId,
         }),
       });
       const json = await res.json();
@@ -1116,10 +1180,12 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
           ...u,
           company: {
             ...u.company,
-            printFooterInvoice:   data.printFooterInvoice,
-            printFooterReturn:    data.printFooterReturn,
-            printShowTimestamp:   data.printShowTimestamp,
-            printShowZatcaBrand:  data.printShowZatcaBrand,
+            printFooterInvoice:    data.printFooterInvoice,
+            printFooterReturn:     data.printFooterReturn,
+            printShowTimestamp:    data.printShowTimestamp,
+            printShowZatcaBrand:   data.printShowZatcaBrand,
+            printEnabledTemplates: data.printEnabledTemplates,
+            printDefaultTemplate:  data.printDefaultTemplate,
           },
         }));
       }
@@ -1134,6 +1200,8 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setReturnFooter(DEFAULT_RETURN);
     setShowTimestamp(true);
     setShowZatca(true);
+    setEnabledIds(new Set(ALL_IDS));
+    setDefaultTplId(1);
   }
 
   const invoiceLen = invoiceFooter.length;
@@ -1223,6 +1291,117 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
             <Switch checked={showZatca} onCheckedChange={setShowZatca} />
           </div>
         </div>
+      </div>
+
+      {/* ── النماذج المتاحة للطباعة ─────────────────────────────────── */}
+      <div className="rounded-xl border bg-card p-5 space-y-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="space-y-1">
+            <h3 className="font-semibold text-base flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-muted-foreground" />
+              النماذج المتاحة للطباعة
+            </h3>
+            <p className="text-xs text-muted-foreground leading-6">
+              اختر النماذج التي ستظهر للمستخدمين عند طباعة الفاتورة، وحدّد النموذج الافتراضي الذي يُفتح أوّلاً. النماذج التي تُلغى لن تظهر في نافذة الطباعة.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <Button type="button" variant="outline" size="sm" onClick={selectAllTemplates}>
+              تفعيل الكل ({ALL_IDS.length})
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={selectOnlyDefault}>
+              نموذج واحد فقط
+            </Button>
+            <span className="rounded-full bg-muted px-2 py-1 font-medium">
+              {enabledIds.size} / {ALL_IDS.length}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          {TEMPLATE_CATALOG.map((tpl) => {
+            const isOn = enabledIds.has(tpl.id);
+            const isDefault = defaultTplId === tpl.id;
+            return (
+              <div
+                key={tpl.id}
+                onClick={() => toggleTemplate(tpl.id)}
+                className={cn(
+                  "relative cursor-pointer rounded-xl border-2 p-3 transition-all overflow-hidden group select-none",
+                  isOn
+                    ? "border-primary/70 bg-primary/5 shadow-sm hover:shadow-md"
+                    : "border-border bg-muted/30 opacity-60 hover:opacity-90",
+                )}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleTemplate(tpl.id); } }}
+              >
+                {/* Color stripe */}
+                <div
+                  className="absolute inset-x-0 top-0 h-1.5"
+                  style={{ background: tpl.color }}
+                />
+                {/* Check / cross indicator */}
+                <div className="absolute top-2 left-2">
+                  {isOn ? (
+                    <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-primary text-primary-foreground shadow">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-muted-foreground/30 text-background">
+                      <span className="h-2 w-2 rounded-full bg-background" />
+                    </span>
+                  )}
+                </div>
+                {/* Default badge */}
+                {isDefault && (
+                  <span className="absolute top-2 right-2 text-[10px] font-bold rounded-full bg-amber-500 text-white px-2 py-0.5 shadow">
+                    افتراضي
+                  </span>
+                )}
+
+                {/* Body */}
+                <div className="pt-4 space-y-2" dir="rtl">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="inline-flex items-center justify-center h-9 w-9 rounded-lg text-white text-sm font-bold shadow-sm"
+                      style={{ background: tpl.color }}
+                    >
+                      {tpl.id}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="font-semibold text-sm truncate">{tpl.name}</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {tpl.thermal ? "حراري 80mm" : "A4"}
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-5 line-clamp-2 min-h-[2.5rem]">
+                    {tpl.desc}
+                  </p>
+
+                  {/* Default toggle */}
+                  <Button
+                    type="button"
+                    variant={isDefault ? "default" : "outline"}
+                    size="sm"
+                    disabled={!isOn}
+                    onClick={(e) => { e.stopPropagation(); if (isOn) setDefaultTplId(tpl.id); }}
+                    className="w-full h-7 text-[11px]"
+                  >
+                    {isDefault ? "النموذج الافتراضي ✓" : "اجعله الافتراضي"}
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {enabledIds.size <= 1 && (
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+            ⚠ يجب أن يبقى نموذج واحد على الأقل مفعّلاً حتى يتمكّن المستخدمون من الطباعة.
+          </p>
+        )}
       </div>
 
       {/* Live preview */}
