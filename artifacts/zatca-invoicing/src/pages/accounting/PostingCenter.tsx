@@ -643,6 +643,18 @@ export default function PostingCenter() {
                    placeholder="بحث في رقم المستند، الجهة، الوصف، رقم القيد..."
                    className="ps-8" data-testid="input-search" />
           </div>
+          {selectedModule !== "journal_entries" && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSelectedModule("journal_entries")}
+              className="text-violet-700 border-violet-200 hover:bg-violet-50"
+              title="التبديل إلى وحدة القيود المحاسبية للبحث برقم القيد"
+              data-testid="button-jump-to-je"
+            >
+              <Layers className="size-4 me-1" /> القيود
+            </Button>
+          )}
           {(search || dateFrom || dateTo) && (
             <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setDateFrom(""); setDateTo(""); }}
                     data-testid="button-clear-filters">
@@ -654,6 +666,30 @@ export default function PostingCenter() {
             من <span className="font-bold">{(data?.total ?? 0).toLocaleString("ar-EG")}</span> عملية
           </div>
         </div>
+        {/* Smart hint: when user pasted/typed a search but got 0 hits in the
+            current module, suggest switching to "القيود المحاسبية" — the most
+            common pitfall is pasting a JE doc number while still on the
+            default sales-invoices module. */}
+        {search.trim() && !isLoading && allRows.length > 0 && filtered.length === 0 && selectedModule !== "journal_entries" && (
+          <div className="mt-2 rounded-lg border border-violet-300 bg-gradient-to-l from-violet-50 to-fuchsia-50 px-3 py-2 text-xs text-violet-900 flex items-start gap-2"
+               data-testid="banner-try-je">
+            <Info className="size-4 mt-0.5 shrink-0 text-violet-600" />
+            <div className="flex-1">
+              لا توجد نتائج لـ <span className="font-mono font-bold">"{search}"</span> داخل
+              «{MODULES.find(m => m.key === selectedModule)?.label}».
+              لو ده <span className="font-bold">رقم قيد</span>، اضغط الزر للبحث في القيود المحاسبية.
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-[11px] bg-white text-violet-700 border-violet-300 hover:bg-violet-100"
+              onClick={() => setSelectedModule("journal_entries")}
+              data-testid="button-switch-to-je"
+            >
+              <Layers className="size-3.5 me-1" /> ابحث في القيود
+            </Button>
+          </div>
+        )}
         {truncated && (
           <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 flex items-start gap-2"
                data-testid="banner-truncated">
