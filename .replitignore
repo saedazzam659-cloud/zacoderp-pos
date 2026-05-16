@@ -3,3 +3,26 @@
 
 # No need to store the pnpm store twice.
 .local
+
+# Historic source-code snapshots (~117 MB) used for download/backup only.
+# They have no role in the production runtime and bloated the publish
+# snapshot enough to make the deployer time out before it could begin
+# building. Keep the local copies, just don't ship them.
+exports/*.tar
+exports/*.tar.gz
+exports/*.zip
+
+# Build artefacts — Replit rebuilds these in the cloud, so shipping the
+# local `dist/` (api-server alone is ~28 MB with source maps) wastes
+# bandwidth and snapshot time.
+artifacts/*/dist
+artifacts/*/.next
+artifacts/*/.vite
+artifacts/*/node_modules
+
+# Repo-wide caches that should never leave the dev container.
+node_modules
+.cache
+.pnpm-store
+*.log
+.git
