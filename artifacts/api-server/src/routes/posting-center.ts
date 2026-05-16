@@ -674,10 +674,18 @@ async function listJournalEntries(
     .groupBy(journalEntryLinesTable.entryId);
   const totalMap = new Map(totals.map(t => [t.entryId, parseFloat(t.totalDebit || "0")] as const));
 
+  // When docNumber is NULL (most common case — the form shows "تلقائي" in the
+  // رقم المستند input), the JournalEntryForm synthesizes a display badge of
+  // the form `QYD-{id-padded-to-4}`. We mirror that exact fallback here so
+  // that copy-pasting the QYD-XXXX badge from the form into the posting
+  // center search box returns the matching row instead of zero hits.
+  const synthesizeDoc = (id: number, real: string | null) =>
+    real ?? `QYD-${String(id).padStart(4, "0")}`;
+
   return docs.map(d => ({
     id: d.id,
     module: "journal_entries",
-    docNumber: d.docNumber,
+    docNumber: synthesizeDoc(d.id, d.docNumber),
     date: d.entryDate,
     type: MODULE_LABELS_AR.journal_entries,
     description: d.description,
@@ -686,7 +694,7 @@ async function listJournalEntries(
     status: d.status,
     posted: d.status === "posted",
     journalEntryId: d.id,            // self-reference: the JE is itself
-    journalEntryDocNumber: d.docNumber,
+    journalEntryDocNumber: synthesizeDoc(d.id, d.docNumber),
   }));
 }
 
