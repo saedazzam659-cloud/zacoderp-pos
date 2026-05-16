@@ -5,8 +5,200 @@ import { Printer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { safeLogoSrc } from "@/lib/export";
 import { useToast } from "@/hooks/use-toast";
+import QRCode from "qrcode";
 
 const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
+
+// ── Arabic number-to-words (tafqeet) ─────────────────────────────────────────
+// Copied verbatim from voucherPrint.ts so the print modal stays self-contained
+// (no cross-page coupling). Handles values up to 999,999,999.99.
+function numberToArabicWords(n: number): string {
+  if (!isFinite(n) || n < 0 || n > 999999999.99) return String(n);
+  const ones = ["", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة",
+    "عشرة", "أحد عشر", "اثنا عشر", "ثلاثة عشر", "أربعة عشر",
+    "خمسة عشر", "ستة عشر", "سبعة عشر", "ثمانية عشر", "تسعة عشر"];
+  const tens = ["", "", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"];
+  const hundreds = ["", "مائة", "مائتان", "ثلاثمائة", "أربعمائة", "خمسمائة",
+    "ستمائة", "سبعمائة", "ثمانمائة", "تسعمائة"];
+  const under1000 = (x: number): string => {
+    if (x === 0) return "";
+    const h = Math.floor(x / 100); const r = x % 100; const parts: string[] = [];
+    if (h) parts.push(hundreds[h]!);
+    if (r < 20) { if (r) parts.push(ones[r]!); }
+    else {
+      const t = Math.floor(r / 10); const o = r % 10;
+      if (o) parts.push(`${ones[o]} و${tens[t]}`); else parts.push(tens[t]!);
+    }
+    return parts.join(" و");
+  };
+  const intPart = Math.floor(n);
+  const fracPart = Math.round((n - intPart) * 100);
+  const millions = Math.floor(intPart / 1000000);
+  const thousands = Math.floor((intPart % 1000000) / 1000);
+  const rest = intPart % 1000;
+  const segments: string[] = [];
+  if (millions) {
+    if (millions === 1) segments.push("مليون");
+    else if (millions === 2) segments.push("مليونان");
+    else if (millions <= 10) segments.push(`${under1000(millions)} ملايين`);
+    else segments.push(`${under1000(millions)} مليون`);
+  }
+  if (thousands) {
+    if (thousands === 1) segments.push("ألف");
+    else if (thousands === 2) segments.push("ألفان");
+    else if (thousands <= 10) segments.push(`${under1000(thousands)} آلاف`);
+    else segments.push(`${under1000(thousands)} ألف`);
+  }
+  if (rest) segments.push(under1000(rest));
+  let out = segments.join(" و") || "صفر";
+  if (fracPart > 0) out += ` و ${under1000(fracPart)} هللة`;
+  return `فقط ${out} ريال سعودي لا غير`;
+}
+
+// ── Full totals computation ──────────────────────────────────────────────────
+// Derives the 5 standard print totals from lines (so it works even when the
+// server-side aggregates haven't refreshed yet). Combines BOTH percent‑based
+// (`discount` as %) and value‑based (`discountAmount` as absolute SAR) per‑line
+// discounts — clamped so the line discount can never exceed the gross.
+interface FullTotals {
+  subtotalPreDiscount: number;
+  discountTotal: number;
+  netPreVat: number;
+  vatAmount: number;
+  grandTotal: number;
+  totalQty: number;
+  totalFreeQty: number;
+  itemsCount: number;
+  currency: string;
+  amountWords: string;
+}
+function computeFullTotals(doc: any, lines: any[]): FullTotals {
+  let subtotalPreDiscount = 0, discountTotal = 0, netPreVat = 0, vatAmount = 0;
+  let totalQty = 0, totalFreeQty = 0;
+  for (const l of (lines ?? [])) {
+    const qty   = Number(l.qty)         || 0;
+    const free  = Number(l.freeQty)     || 0;
+    const price = Number(l.unitPrice)   || 0;
+    const dPct  = Math.max(0, Math.min(100, Number(l.discount) || 0));
+    const dAmt  = Math.max(0, Number(l.discountAmount) || 0);
+    const gross = qty * price;
+    const disc  = Math.min(gross, gross * dPct / 100 + dAmt);
+    const net   = gross - disc;
+    const vat   = net * ((Number(l.vatRate) || 0) / 100);
+    subtotalPreDiscount += gross;
+    discountTotal       += disc;
+    netPreVat           += net;
+    vatAmount           += vat;
+    totalQty            += qty;
+    totalFreeQty        += free;
+  }
+  const grandTotal = netPreVat + vatAmount;
+  const currency = doc?.currencyCode ?? "SAR";
+  return {
+    subtotalPreDiscount, discountTotal, netPreVat, vatAmount, grandTotal,
+    totalQty, totalFreeQty, itemsCount: (lines ?? []).length, currency,
+    amountWords: numberToArabicWords(grandTotal),
+  };
+}
+
+// Standardised 5‑row totals body matching the screenshot reference. Caller
+// provides the CSS row class (so each template keeps its native styling)
+// plus an optional grand‑row class for the final highlighted line.
+function totalRowsHtml(t: FullTotals, rowClass = "totals-row", grandClass = "grand"): string {
+  return `
+    <div class="${rowClass}"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(t.subtotalPreDiscount)} ${t.currency}</span></div>
+    <div class="${rowClass}"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(t.discountTotal)} ${t.currency}</span></div>
+    <div class="${rowClass}"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currency}</span></div>
+    <div class="${rowClass}"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(t.vatAmount)} ${t.currency}</span></div>
+    <div class="${rowClass} ${grandClass}"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currency}</span></div>`;
+}
+
+// Universal summary footer (tafqeet + total items + total qty inc. free) shown
+// directly under every totals card. Self‑contained styling so it renders the
+// same in every template regardless of accent colour.
+function summaryFooterHtml(t: FullTotals): string {
+  return `
+    <div style="margin-top:10px;border:1px solid #e5e7eb;border-radius:6px;padding:8px 12px;font-size:11px;background:#fafafa;">
+      <div style="font-weight:700;color:#0f172a;margin-bottom:6px;line-height:1.5;">${t.amountWords}</div>
+      <div style="display:flex;justify-content:space-between;border-top:1px dashed #cbd5e1;padding-top:6px;">
+        <span>إجمالي أصناف الفاتورة</span>
+        <span class="mono" style="font-weight:700;">${t.itemsCount}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:3px;">
+        <span>إجمالي كميات الفاتورة (شاملة المجانية)</span>
+        <span class="mono" style="font-weight:700;">${fmt(t.totalQty + t.totalFreeQty)}${t.totalFreeQty > 0 ? ` <span style="color:#b45309;font-weight:600;">(منها ${fmt(t.totalFreeQty)} مجاني)</span>` : ""}</span>
+      </div>
+    </div>`;
+}
+
+// ── ZATCA TLV QR builder ─────────────────────────────────────────────────────
+// Phase‑1 e‑invoicing TLV spec (5 mandatory tags). Returns a data URL for an
+// <img> tag. Falls back to "" on any error so print never breaks.
+//   Tag 1: seller name (UTF‑8)
+//   Tag 2: VAT registration number
+//   Tag 3: timestamp (ISO 8601 ZULU)
+//   Tag 4: invoice total (with VAT)
+//   Tag 5: VAT total
+function buildTlvBase64(company: any, doc: any, t: FullTotals): string {
+  const enc = new TextEncoder();
+  const pieces: Uint8Array[] = [];
+  const push = (tag: number, val: string) => {
+    const bytes = enc.encode(val);
+    pieces.push(Uint8Array.from([tag, bytes.length]));
+    pieces.push(bytes);
+  };
+  push(1, String(company?.nameAr ?? company?.nameEn ?? ""));
+  push(2, String(company?.vatNumber ?? ""));
+  // Prefer an ISO timestamp if the doc has one; otherwise build a UTC stamp
+  // from `invoiceDate` + 00:00:00. ZATCA accepts ISO 8601 UTC.
+  let ts = "";
+  const raw = doc?.invoiceDate ?? doc?.issueDate ?? doc?.createdAt ?? doc?.returnDate ?? doc?.orderDate ?? doc?.quotationDate;
+  if (raw) {
+    try {
+      const dt = new Date(raw);
+      if (!isNaN(dt.getTime())) ts = dt.toISOString().replace(/\.\d{3}Z$/, "Z");
+    } catch { /* noop */ }
+  }
+  if (!ts) ts = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  push(3, ts);
+  push(4, t.grandTotal.toFixed(2));
+  push(5, t.vatAmount.toFixed(2));
+  // Concatenate
+  const total = pieces.reduce((sum, p) => sum + p.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of pieces) { out.set(p, off); off += p.length; }
+  // base64 encode
+  let bin = "";
+  for (let i = 0; i < out.length; i++) bin += String.fromCharCode(out[i]!);
+  return btoa(bin);
+}
+
+async function buildZatcaQrDataUrl(company: any, doc: any, t: FullTotals): Promise<string> {
+  try {
+    // ZATCA spec: the QR content is the base64 string of the TLV byte stream.
+    // Scanners base64-decode it and parse the tags. Encoding the raw bytes
+    // here would produce an unscannable result, since `qrcode` treats a
+    // number array as segments rather than binary input.
+    const b64 = buildTlvBase64(company, doc, t);
+    return await QRCode.toDataURL(b64, {
+      width: 220, margin: 1, errorCorrectionLevel: "M",
+    });
+  } catch { return ""; }
+}
+
+// Reusable QR rendering helper — uses the real ZATCA data URL when available,
+// falls back to a labelled placeholder so layouts don't collapse during
+// development / when QRCode generation fails.
+function qrImgHtml(d: PrintData, opts: { size?: number; border?: string; bg?: string; color?: string } = {}): string {
+  const size = opts.size ?? 110;
+  const url = (d as any)._qrDataUrl as string | undefined;
+  if (url) {
+    return `<img src="${url}" alt="QR ZATCA" width="${size}" height="${size}" style="display:block;${opts.border ? `border:${opts.border};` : ""}${opts.bg ? `background:${opts.bg};` : ""}padding:3px;border-radius:4px;" />`;
+  }
+  // Fallback placeholder
+  return `<div style="width:${size}px;height:${size}px;border:1.5px dashed ${opts.color ?? "#999"};border-radius:4px;display:flex;align-items:center;justify-content:center;color:${opts.color ?? "#999"};font-size:10px;text-align:center;background:${opts.bg ?? "#fafafa"};">QR<br/>ZATCA</div>`;
+}
 
 // "order" prints exactly like a quotation: same finance-free, no-VAT-reporting
 // document. The header label and field names differ; everything else (lines,
@@ -151,23 +343,25 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
     </table>`;
 }
 
-function totalsBlock(doc: any, align = "right") {
+function totalsBlock(doc: any, lines: any[], align: "right" | "left" = "right") {
+  const t = computeFullTotals(doc, lines);
+  const rows = `
+    <style>
+      .__totalsRow { display:flex; justify-content:space-between; margin-bottom:6px; color:#374151; font-size:12px; }
+      .__totalsRow.grand { border-top:2px solid #ddd; padding-top:6px; margin-top:4px; font-size:14px; font-weight:700; color:#0f172a; }
+    </style>
+    <div class="__totalsRow"><span style="color:#666">الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(t.subtotalPreDiscount)} ${t.currency}</span></div>
+    <div class="__totalsRow"><span style="color:#666">مبلغ الخصم — Discount</span><span class="mono" style="color:#b91c1c;">${fmt(t.discountTotal)} ${t.currency}</span></div>
+    <div class="__totalsRow"><span style="color:#666">الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currency}</span></div>
+    <div class="__totalsRow"><span style="color:#666">ضريبة القيمة المضافة — VAT</span><span class="mono" style="color:#b45309;">${fmt(t.vatAmount)} ${t.currency}</span></div>
+    <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currency}</span></div>`;
   return `
-    <div style="display:flex;justify-content:${align === "right" ? "flex-start" : "flex-end"}">
-      <div style="min-width:220px;border:1px solid #ddd;border-radius:6px;padding:10px 14px;font-size:12px;">
-        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
-          <span style="color:#666">المجموع قبل الضريبة:</span>
-          <span class="mono">${fmt(doc.subtotal)} ${doc.currencyCode ?? "SAR"}</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
-          <span style="color:#666">ضريبة القيمة المضافة (15%):</span>
-          <span class="mono" style="color:#b45309;">${fmt(doc.vatAmount)} ${doc.currencyCode ?? "SAR"}</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;border-top:2px solid #ddd;padding-top:6px;font-size:14px;font-weight:700;">
-          <span>الإجمالي الشامل:</span>
-          <span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span>
-        </div>
+    <div style="display:flex;justify-content:${align === "right" ? "flex-start" : "flex-end"};gap:14px;align-items:flex-start;">
+      <div style="${align === "right" ? "" : "margin-left:auto;"}">
+        ${qrImgHtml(doc.__pd ?? { _qrDataUrl: (doc as any)._qrDataUrl }, { size: 110 })}
+        <div style="font-size:9px;color:#666;text-align:center;margin-top:4px;">رمز QR — ZATCA</div>
       </div>
+      <div style="min-width:280px;border:1px solid #ddd;border-radius:6px;padding:10px 14px;">${rows}${summaryFooterHtml(t)}</div>
     </div>`;
 }
 
@@ -206,7 +400,7 @@ function template1(d: PrintData): string {
     ${linesTable(lines, "", "background:#eff6ff")}
   </div>
   <br>
-  ${totalsBlock(doc)}
+  ${totalsBlock({ ...doc, _qrDataUrl: (d as any)._qrDataUrl }, lines)}
   ${doc.notes ? `<div class="section" style="margin-top:12px;"><h4>ملاحظات</h4><p>${doc.notes}</p></div>` : ""}
   <div class="footer">
     <div>
@@ -267,7 +461,7 @@ function template2(d: PrintData): string {
     ${linesTable(lines, "", "")}
   </div>
   <br>
-  ${totalsBlock(doc, "left")}
+  ${totalsBlock({ ...doc, _qrDataUrl: (d as any)._qrDataUrl }, lines, "left")}
   ${doc.notes ? `<div class="card" style="margin-top:12px;"><h4>ملاحظات</h4>${doc.notes}</div>` : ""}
   <div class="footer-line">
     <span>نظام الفاتورة الإلكترونية — ZATCA Compliant</span>
@@ -327,11 +521,14 @@ function template3(d: PrintData): string {
       <div class="party-box"><h4>المنشأة</h4>${companyBlock(company)}</div>
     </div>
     ${linesTable(lines, "", "")}
-    <div style="display:flex;justify-content:flex-start;margin-top:16px;">
-      <div class="totals-box">
-        <div class="totals-row"><span>المجموع:</span><span class="mono">${fmt(doc.subtotal)} ${doc.currencyCode ?? "SAR"}</span></div>
-        <div class="totals-row"><span>الضريبة:</span><span class="mono">${fmt(doc.vatAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
-        <div class="totals-row total"><span>الإجمالي:</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+    <div style="display:flex;justify-content:space-between;margin-top:16px;gap:14px;align-items:flex-start;">
+      <div style="text-align:center;">
+        ${qrImgHtml(d, { size: 110 })}
+        <div style="font-size:9px;color:#1e3a5f;margin-top:4px;font-weight:700;">رمز QR — ZATCA</div>
+      </div>
+      <div style="flex:1;max-width:340px;">
+        <div class="totals-box">${totalRowsHtml(computeFullTotals(doc, lines), "totals-row", "total")}</div>
+        ${summaryFooterHtml(computeFullTotals(doc, lines))}
       </div>
     </div>
     ${doc.notes ? `<div style="margin-top:14px;padding:10px 14px;background:#f1f5f9;border-radius:6px;font-size:11px;"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
@@ -402,11 +599,14 @@ function template4(d: PrintData): string {
     <div class="section-title">أصناف ${docTitle(d.type)}</div>
     ${linesTable(lines, "", "")}
   </div>
-  <div style="display:flex;justify-content:flex-start;margin-top:12px;">
-    <div class="total-area">
-      <div class="t-row"><span>المجموع:</span><span class="mono">${fmt(doc.subtotal)}</span></div>
-      <div class="t-row"><span>الضريبة 15%:</span><span class="mono">${fmt(doc.vatAmount)}</span></div>
-      <div class="t-row grand"><span>الإجمالي:</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+  <div style="display:flex;justify-content:space-between;margin-top:12px;gap:14px;align-items:flex-start;">
+    <div style="text-align:center;">
+      ${qrImgHtml(d, { size: 110, border: "1.5px solid #d97706", bg: "#fff" })}
+      <div style="font-size:9px;color:#92400e;margin-top:4px;font-weight:700;">رمز QR — ZATCA</div>
+    </div>
+    <div style="flex:1;max-width:340px;">
+      <div class="total-area">${totalRowsHtml(computeFullTotals(doc, lines), "t-row", "grand")}</div>
+      ${summaryFooterHtml(computeFullTotals(doc, lines))}
     </div>
   </div>
   ${doc.notes ? `<div class="box" style="margin-top:12px;"><div class="section-title">ملاحظات</div>${doc.notes}</div>` : ""}
@@ -492,15 +692,14 @@ function template5(d: PrintData): string {
 
   ${linesTable(lines, "", "")}
 
-  <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:16px;">
-    <div>
-      <div style="font-size:10px;color:#1a6e3d;font-weight:700;margin-bottom:6px;">رمز QR للتحقق</div>
-      <div class="qr-box">QR Code<br>ZATCA<br>رمز التحقق</div>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-top:16px;gap:14px;">
+    <div style="text-align:center;">
+      <div style="font-size:10px;color:#1a6e3d;font-weight:700;margin-bottom:6px;">رمز QR للتحقق — ZATCA</div>
+      ${qrImgHtml(d, { size: 110, border: "1.5px solid #1a6e3d", bg: "#f0fdf4", color: "#1a6e3d" })}
     </div>
-    <div class="totals">
-      <div class="row"><span>المجموع الخاضع للضريبة:</span><span class="mono">${fmt(doc.subtotal)} ${doc.currencyCode ?? "SAR"}</span></div>
-      <div class="row"><span>ضريبة القيمة المضافة (15%):</span><span class="mono" style="color:#b45309;">${fmt(doc.vatAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
-      <div class="row grand"><span>الإجمالي الشامل:</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+    <div style="flex:1;max-width:360px;">
+      <div class="totals">${totalRowsHtml(computeFullTotals(doc, lines), "row", "grand")}</div>
+      ${summaryFooterHtml(computeFullTotals(doc, lines))}
     </div>
   </div>
 
@@ -624,17 +823,19 @@ function template6(d: PrintData): string {
       <tbody>${itemsRows}</tbody>
     </table>
 
-    <div class="totals">
-      <div class="row"><span>المجموع قبل الضريبة:</span><span class="mono">${fmt(doc.subtotal)}</span></div>
-      <div class="row"><span>ض.ق.م (15%):</span><span class="mono">${fmt(doc.vatAmount)}</span></div>
-      <div class="row grand"><span>${isReturn ? "إجمالي المرتجع" : "الإجمالي الشامل"}:</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
-    </div>
+    <div class="totals">${totalRowsHtml(computeFullTotals(doc, lines), "row", "grand")}</div>
+    ${(() => { const t = computeFullTotals(doc, lines); return `
+      <div style="margin-top:6px;font-size:10px;line-height:1.5;border-top:1px dashed #555;padding-top:5px;">
+        <div style="font-weight:700;margin-bottom:3px;">${t.amountWords}</div>
+        <div style="display:flex;justify-content:space-between;"><span>إجمالي الأصناف:</span><span class="mono"><b>${t.itemsCount}</b></span></div>
+        <div style="display:flex;justify-content:space-between;"><span>إجمالي الكميات (مع المجاني):</span><span class="mono"><b>${fmt(t.totalQty + t.totalFreeQty)}</b></span></div>
+      </div>`; })()}
 
     ${doc.notes ? `<div class="sep"></div><div class="info"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
 
     <div class="qr-box">
-      <div class="qr-ph">QR ZATCA</div>
-      <div>رمز ZATCA — تحقّق من الفاتورة</div>
+      ${qrImgHtml(d, { size: 110 })}
+      <div style="margin-top:3px;">رمز ZATCA — تحقّق من الفاتورة</div>
     </div>
 
     <div class="sep-solid"></div>
@@ -742,16 +943,18 @@ function template7(d: PrintData): string {
       <div class="lines-title">بنود ${docTitle(d.type)} (${lines.length})</div>
       ${itemsRows}
 
-      <div class="totals">
-        <div class="row"><span>المجموع قبل الضريبة:</span><span class="mono">${fmt(doc.subtotal)}</span></div>
-        <div class="row"><span>ض.ق.م (15%):</span><span class="mono">${fmt(doc.vatAmount)}</span></div>
-        <div class="row grand"><span>${isReturn ? "إجمالي المرتجع" : "الإجمالي الشامل"}:</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
-      </div>
+      <div class="totals">${totalRowsHtml(computeFullTotals(doc, lines), "row", "grand")}</div>
+      ${(() => { const t = computeFullTotals(doc, lines); return `
+        <div style="margin-top:6px;font-size:10px;line-height:1.5;background:#f9fafb;border-radius:4px;padding:6px 8px;">
+          <div style="font-weight:700;color:${accent};margin-bottom:3px;">${t.amountWords}</div>
+          <div style="display:flex;justify-content:space-between;"><span>إجمالي الأصناف:</span><span class="mono"><b>${t.itemsCount}</b></span></div>
+          <div style="display:flex;justify-content:space-between;"><span>إجمالي الكميات (مع المجاني):</span><span class="mono"><b>${fmt(t.totalQty + t.totalFreeQty)}</b></span></div>
+        </div>`; })()}
 
       ${doc.notes ? `<div class="info-card" style="margin-top:8px;"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
 
       <div class="qr-box">
-        <div class="qr-ph">QR<br/>ZATCA</div>
+        ${qrImgHtml(d, { size: 105, color: accent })}
         <div class="qr-cap">امسح للتحقق من الفاتورة</div>
       </div>
     </div>
@@ -822,11 +1025,14 @@ function template8(d: PrintData): string {
     <div class="party"><h4>من</h4>${companyBlock(company)}</div>
   </div>
   ${linesTable(lines, "", "")}
-  <div class="totals">
-    <div class="totals-card">
-      <div class="totals-row"><span>المجموع قبل الضريبة</span><span class="mono">${fmt(doc.subtotal)} ${doc.currencyCode ?? "SAR"}</span></div>
-      <div class="totals-row"><span>ضريبة القيمة المضافة</span><span class="mono">${fmt(doc.vatAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
-      <div class="totals-row grand"><span>الإجمالي الشامل</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+  <div class="totals" style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;">
+    <div style="text-align:center;">
+      ${qrImgHtml(d, { size: 110, border: "1px solid #0f172a", bg: "#fff" })}
+      <div style="font-size:9px;color:#0f172a;margin-top:4px;letter-spacing:2px;text-transform:uppercase;">QR — ZATCA</div>
+    </div>
+    <div class="totals-card" style="flex:1;max-width:360px;">
+      ${totalRowsHtml(computeFullTotals(doc, lines), "totals-row", "grand")}
+      ${summaryFooterHtml(computeFullTotals(doc, lines))}
     </div>
   </div>
   ${doc.notes ? `<div style="margin-top:18px;padding:12px 14px;background:#f8fafc;border-right:3px solid #d4af37;font-size:11px;"><b>ملاحظات: </b>${doc.notes}</div>` : ""}
@@ -898,11 +1104,14 @@ function template9(d: PrintData): string {
         <div class="panel"><h4>المنشأة</h4>${companyBlock(company)}</div>
       </div>
       ${linesTable(lines, "", "")}
-      <div style="display:flex;justify-content:flex-start;">
-        <div class="totals-area">
-          <div class="t-row"><span>المجموع</span><span class="mono">${fmt(doc.subtotal)}</span></div>
-          <div class="t-row"><span>الضريبة 15%</span><span class="mono">${fmt(doc.vatAmount)}</span></div>
-          <div class="t-row grand"><span>الإجمالي</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+      <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
+        <div style="text-align:center;">
+          ${qrImgHtml(d, { size: 110, border: "1px solid #d4af37", bg: "#fff" })}
+          <div style="font-size:9px;color:#d4af37;margin-top:4px;font-weight:700;letter-spacing:1px;">QR — ZATCA</div>
+        </div>
+        <div style="flex:1;max-width:360px;">
+          <div class="totals-area">${totalRowsHtml(computeFullTotals(doc, lines), "t-row", "grand")}</div>
+          ${summaryFooterHtml(computeFullTotals(doc, lines))}
         </div>
       </div>
       ${doc.notes ? `<div class="panel" style="margin-top:14px;"><h4>ملاحظات</h4>${doc.notes}</div>` : ""}
@@ -975,11 +1184,14 @@ function template10(d: PrintData): string {
       <div class="card"><h4>المنشأة</h4>${companyBlock(company)}</div>
     </div>
     ${linesTable(lines, "", "")}
-    <div style="display:flex;justify-content:flex-start;margin-top:14px;">
-      <div class="totals-area">
-        <div class="t-row"><span>المجموع</span><span class="mono">${fmt(doc.subtotal)} ${doc.currencyCode ?? "SAR"}</span></div>
-        <div class="t-row"><span>الضريبة 15%</span><span class="mono">${fmt(doc.vatAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
-        <div class="t-row grand"><span>الإجمالي</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+    <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
+      <div style="text-align:center;">
+        ${qrImgHtml(d, { size: 110, bg: "#fff" })}
+        <div style="font-size:9px;margin-top:4px;font-weight:700;">QR — ZATCA</div>
+      </div>
+      <div style="flex:1;max-width:360px;">
+        <div class="totals-area">${totalRowsHtml(computeFullTotals(doc, lines), "t-row", "grand")}</div>
+        ${summaryFooterHtml(computeFullTotals(doc, lines))}
       </div>
     </div>
     ${doc.notes ? `<div class="card" style="margin-top:14px;"><h4>ملاحظات</h4>${doc.notes}</div>` : ""}
@@ -1050,11 +1262,14 @@ function template11(d: PrintData): string {
       <div class="card"><h4>المنشأة</h4>${companyBlock(company)}</div>
     </div>
     ${linesTable(lines, "", "")}
-    <div style="display:flex;justify-content:flex-start;margin-top:14px;">
-      <div class="totals-area">
-        <div class="t-row"><span>المجموع</span><span class="mono">${fmt(doc.subtotal)} ${doc.currencyCode ?? "SAR"}</span></div>
-        <div class="t-row"><span>الضريبة 15%</span><span class="mono">${fmt(doc.vatAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
-        <div class="t-row grand"><span>الإجمالي</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+    <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
+      <div style="text-align:center;">
+        ${qrImgHtml(d, { size: 110, bg: "#fff" })}
+        <div style="font-size:9px;margin-top:4px;font-weight:700;">QR — ZATCA</div>
+      </div>
+      <div style="flex:1;max-width:360px;">
+        <div class="totals-area">${totalRowsHtml(computeFullTotals(doc, lines), "t-row", "grand")}</div>
+        ${summaryFooterHtml(computeFullTotals(doc, lines))}
       </div>
     </div>
     ${doc.notes ? `<div class="card" style="margin-top:14px;"><h4>ملاحظات</h4>${doc.notes}</div>` : ""}
@@ -1145,11 +1360,14 @@ function template12(d: PrintData): string {
         ${customerBlock(customer)}
       </div>
       ${linesTable(lines, "", "")}
-      <div class="totals-area">
-        <div class="totals-card">
-          <div class="t-row"><span>المجموع قبل الضريبة</span><span class="mono">${fmt(doc.subtotal)} ${doc.currencyCode ?? "SAR"}</span></div>
-          <div class="t-row"><span>ضريبة القيمة المضافة 15%</span><span class="mono">${fmt(doc.vatAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
-          <div class="t-row grand"><span>الإجمالي الشامل</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+      <div class="totals-area" style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;">
+        <div style="text-align:center;">
+          ${qrImgHtml(d, { size: 110, border: "1px solid #0f172a", bg: "#fff" })}
+          <div style="font-size:9px;color:#0f172a;margin-top:4px;font-weight:700;letter-spacing:1px;">QR — ZATCA</div>
+        </div>
+        <div class="totals-card" style="flex:1;max-width:360px;">
+          ${totalRowsHtml(computeFullTotals(doc, lines), "t-row", "grand")}
+          ${summaryFooterHtml(computeFullTotals(doc, lines))}
         </div>
       </div>
       ${doc.notes ? `<div class="notes-box"><b>ملاحظات: </b>${doc.notes}</div>` : ""}
@@ -1216,7 +1434,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, autoPrintOnOpen, data, defaultTemplate]);
 
-  function handlePrint() {
+  async function handlePrint() {
     if (!data) return;
     // No "preferred printer" gate: the browser's system print dialog
     // is the real selector and lets the user pick any installed
@@ -1225,6 +1443,15 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     // General Settings, which is what the user reported.
     const tmpl = TEMPLATES.find(t => t.id === selected);
     if (!tmpl) return;
+    // Pre-compute the real ZATCA TLV QR (base64-encoded) so every
+    // template can render it as a normal <img> — async so the QR png
+    // is ready before the iframe document is built (otherwise the
+    // print job would capture a placeholder).
+    try {
+      const totals = computeFullTotals(data.doc, data.lines);
+      const qr = await buildZatcaQrDataUrl(data.company, data.doc, totals);
+      (data as any)._qrDataUrl = qr;
+    } catch { /* fallback to placeholder inside qrImgHtml */ }
     const html = tmpl.fn(data);
     // Use a hidden same-origin iframe instead of `window.open` so popup
     // blockers don't kill auto-print after save (no user-gesture path)
