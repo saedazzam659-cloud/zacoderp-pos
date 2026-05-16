@@ -140,12 +140,18 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
           <Plus className="h-2.5 w-2.5" />عميل جديد
         </button>
       </div>
+      {/* الرقم الضريبي السعودي: 15 رقم بالضبط — نمنع إدخال أكثر من 15
+          (maxLength) ونحجب أي حرف غير رقمي عبر تنقية القيمة قبل التحديث،
+          لتجنّب أخطاء التحقق لاحقًا عند الحفظ/الإرسال إلى زاتكا. */}
       <Input
         className="h-9 text-sm font-mono text-left"
         dir="ltr"
+        inputMode="numeric"
+        pattern="\d*"
+        maxLength={15}
         placeholder={selected ? "31xxxxxxxxxxxx3" : "اختر العميل أو أضف عميل جديد"}
         value={vat}
-        onChange={(e) => setVat(e.target.value)}
+        onChange={(e) => setVat(e.target.value.replace(/\D/g, "").slice(0, 15))}
         onBlur={handleBlur}
         disabled={!selected || updateVat.isPending}
       />
@@ -163,7 +169,7 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
             </div>
             <div className="space-y-1.5">
               <Label className="text-sm">الرقم الضريبي (VAT)</Label>
-              <Input value={newVat} onChange={(e) => setNewVat(e.target.value)} placeholder="310000000000003" dir="ltr" className="text-left font-mono" maxLength={15} />
+              <Input value={newVat} onChange={(e) => setNewVat(e.target.value.replace(/\D/g, "").slice(0, 15))} placeholder="310000000000003" dir="ltr" inputMode="numeric" pattern="\d*" className="text-left font-mono" maxLength={15} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-sm">رقم الهاتف</Label>

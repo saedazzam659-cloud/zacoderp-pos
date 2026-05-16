@@ -589,6 +589,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setCostCenter(existing.costCenter ?? "");
     if (usesOps) setSalesRepId(existing.salesRepId ? String(existing.salesRepId) : "");
     setPriceIncludesVat(!!existing.priceIncludesVat);
+    // استرجاع نوع الفاتورة المحفوظ — وعلامة المستخدم على «اختاره يدويًا»
+    // حتى لا يقوم تأثير الاكتشاف التلقائي بتغييره عند إعادة فتح الفاتورة.
+    if (isInvoice && (existing as any).invoiceType) {
+      setInvoiceType((existing as any).invoiceType === "standard" ? "standard" : "simplified");
+      invoiceTypeUserPickedRef.current = true;
+    }
     setDocDiscount(String(existing.discountAmount ?? "0"));
     if (isInvoice) {
       setCogsAccountId(existing.cogsAccountId ? String(existing.cogsAccountId) : "");
@@ -1180,6 +1186,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       subtotal: subtotal.toFixed(2), vatAmount: vatAmount.toFixed(2),
       discountAmount: discountAmt.toFixed(2), totalAmount: totalAmount.toFixed(2),
       priceIncludesVat,
+      // نوع الفاتورة (ZATCA): "standard" أو "simplified" — يُرسل فقط
+      // لفواتير المبيعات حتى يظهر في الطباعة والتقارير ويتحكم في مسار
+      // التقديم لزاتكا (Clearance vs Reporting).
+      ...(isInvoice ? { invoiceType } : {}),
       notes: notes || null,
       // Header-level cost center — when set, the /post handler tags every
       // generated JE line with this code so cost-center reports pick it up.
