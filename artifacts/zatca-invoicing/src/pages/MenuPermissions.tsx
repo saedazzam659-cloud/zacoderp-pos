@@ -56,6 +56,7 @@ const MENU_ICONS: Record<string, React.ElementType> = {
   ai_tools:           Sparkles,
   field_service:      MapPin,
   zatca:              Link2,
+  multi_link:         Link2,
 };
 
 const MENU_ITEMS: MenuItem[] = MENU_ITEMS_BASE.map(m => ({
@@ -83,6 +84,7 @@ const SECTION_THEME: Record<string, { bg: string; text: string; border: string; 
   "أدوات الذكاء الاصطناعي": { bg: "bg-violet-50", text: "text-violet-700", border: "border-violet-200", ring: "from-violet-500/10" },
   "النظام":     { bg: "bg-purple-50",  text: "text-purple-700",  border: "border-purple-200",  ring: "from-purple-500/10" },
   "الخدمة الميدانية": { bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200", ring: "from-blue-500/10" },
+  "ربط متعدد": { bg: "bg-cyan-50",   text: "text-cyan-700",    border: "border-cyan-200",   ring: "from-cyan-500/10" },
 };
 
 const DEFAULT_PERMISSIONS: Record<string, boolean> = MENU_ITEMS.reduce(

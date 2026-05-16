@@ -36,6 +36,7 @@ const G = {
   security:    "perms.groups.security",
   aiTools:     "perms.groups.aiTools",
   fieldService: "perms.groups.fieldService",
+  multiLink:    "perms.groups.multiLink",
 };
 
 export const PERMISSION_MODULES: ModuleDef[] = [
@@ -153,6 +154,12 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "field_service_tickets",   label: "perms.modules.field_service_tickets",   group: G.fieldService, actions: ALL },
   { key: "field_service_tracking",  label: "perms.modules.field_service_tracking",  group: G.fieldService, actions: VO },
   { key: "field_service_reports",   label: "perms.modules.field_service_reports",   group: G.fieldService, actions: ["view", "export"] },
+
+  // ─── ربط متعدد (Multi-tenant External Gateway) ───────────────────────
+  // Single permission gates the whole gateway-clients surface for the
+  // company admin (onboarding 3rd-party companies, uploading their
+  // invoices, dispatching to ZATCA, viewing reports, managing CSID).
+  { key: "multi_link",              label: "perms.modules.multi_link",              group: G.multiLink,    actions: ALL },
 ];
 
 export const PERMISSION_GROUPS = Array.from(new Set(PERMISSION_MODULES.map(m => m.group)));

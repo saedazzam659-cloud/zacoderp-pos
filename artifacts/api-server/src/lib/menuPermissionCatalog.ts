@@ -86,6 +86,11 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   "field_service",
   // ── النظام ──
   "zatca",
+  // ── ربط متعدد ──
+  // Multi-tenant external invoice gateway (onboarding 3rd-party
+  // companies, invoice intake, ZATCA dispatch, CSID management,
+  // reports). Single permission key gates the entire sidebar group.
+  "multi_link",
 ]);
 
 // Convenience helper: drop unknown keys, dedupe, preserve order.

@@ -648,7 +648,10 @@
     "workCenters": "Work Centers",
     "manufacturingSettings": "Manufacturing Settings",
     "dashboardGroup": "Control Panel",
-    "aiToolsGroup": "AI Tools"
+    "aiToolsGroup": "AI Tools",
+    "multiLinkGroup": "Multi-Link Gateway",
+    "multiLinkClients": "Gateway Clients",
+    "multiLinkReports": "Gateway Reports"
   },
   "security": {
     "title": "Security & Monitoring",
@@ -2092,7 +2095,8 @@
       "fixedAssets": "Fixed Assets",
       "security": "Security & Surveillance",
       "aiTools": "AI Tools",
-      "fieldService": "Field Service"
+      "fieldService": "Field Service",
+      "multiLink": "Multi-Link Gateway"
     },
     "actions": {
       "view": "View",
@@ -2158,6 +2162,7 @@
       "hospital": "Hospital & Clinic Management (Facilities, Doctors, Patients, Appointments, Medical Billing, NPHIES FHIR R4)",
       "crm": "Customer Relationship Management (Leads, Opportunities, Activities, Campaigns, Pipeline, AI Lead Scoring)",
       "fixed_assets": "Fixed Assets (asset register, depreciation, maintenance, transfers, disposal, vehicle insurance, reports, AI)",
+      "multi_link": "Multi-Link Gateway (multi-tenant external invoice gateway, upload + dispatch to ZATCA, reports, CSID management)",
       "security_events": "Security & Surveillance (Events, Notification Rules)",
       "field_service_locations": "Field Service — Locations",
       "field_service_visits": "Field Service — Visits",

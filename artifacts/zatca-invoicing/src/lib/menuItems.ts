@@ -70,6 +70,14 @@ export const MENU_ITEMS: MenuItem[] = [
   { key: "installments",       label: "البيع بالتقسيط الذكي",       section: "البيع بالتقسيط" },
 
   { key: "zatca",              label: "ربط ZATCA",                   section: "النظام" },
+
+  // ── ربط متعدد ──────────────────────────────────────────────────
+  // Multi-tenant external invoice gateway: a top-level group housing
+  // every screen related to onboarding 3rd-party companies, uploading
+  // their invoices, monitoring submission status, reports & CSID
+  // management. Single permission key drives the whole collapsible
+  // sidebar group + the per-company MenuPermissions toggle.
+  { key: "multi_link",         label: "ربط متعدد",                  section: "ربط متعدد" },
 ];
 
 export const SECTIONS: string[] = Array.from(new Set(MENU_ITEMS.map(m => m.section)));
@@ -122,6 +130,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   ai_tools:           null,           // SuperAdmin tool, not billed per-company
   installments:       "installments",
   zatca:              "zatca",
+  multi_link:         null,           // SuperAdmin / partner tool, not billed per-company
 };
 
 // Resolve the unique set of high-level module keys implied by a list of
@@ -163,4 +172,5 @@ export const SECTION_THEME: Record<string, { bg: string; text: string; border: s
   "الاتصال الداخلي":       { bg: "bg-green-50",    text: "text-green-700",    border: "border-green-200" },
   "البيع بالتقسيط":         { bg: "bg-lime-50",     text: "text-lime-700",     border: "border-lime-200" },
   "الخدمة الميدانية":       { bg: "bg-blue-50",     text: "text-blue-700",     border: "border-blue-200" },
+  "ربط متعدد":              { bg: "bg-cyan-50",     text: "text-cyan-700",     border: "border-cyan-200" },
 };

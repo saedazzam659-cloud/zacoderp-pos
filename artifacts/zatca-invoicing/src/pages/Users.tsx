@@ -55,6 +55,7 @@ const GROUP_TO_MENU_KEYS: Record<string, string[]> = {
   "perms.groups.fixedAssets":           ["fixed_assets"],
   "perms.groups.security":              ["security_events"],
   "perms.groups.aiTools":               ["ai_tools"],
+  "perms.groups.multiLink":             ["multi_link"],
 };
 
 function parseCompanyMenuPerms(raw: string | null | undefined): Record<string, boolean> {

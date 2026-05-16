@@ -267,6 +267,19 @@ const fixedAssetsSubNav: NavDef[] = [
 ];
 const FIXED_ASSETS_GROUP_PERMS = ["fixed_assets"];
 
+// ── Multi-Link Gateway submenu ─────────────────────────────────────────
+// Top-level "ربط متعدد" group housing every screen related to the
+// multi-tenant external invoice gateway (onboarding 3rd-party companies,
+// CSID management, invoice intake, ZATCA dispatch, reports). Gated by a
+// single `multi_link` permission key. Both child routes already exist —
+// /admin/gateway-clients (SuperAdmin only, was in superAdminNav) and a
+// future reports hub that surfaces aggregated stats per gateway client.
+const multiLinkSubNav: NavDef[] = [
+  { nameKey: "nav.multiLinkClients", href: "/admin/gateway-clients", icon: KeyRound, permKey: "multi_link" },
+  { nameKey: "nav.multiLinkReports", href: "/admin/gateway-clients", icon: BarChart3, permKey: "multi_link" },
+];
+const MULTI_LINK_GROUP_PERMS = ["multi_link"];
+
 const crmSubNav: NavDef[] = [
   { nameKey: "nav.crmHub",           href: "/crm",               icon: Users,         permKey: "crm", exact: true },
   { nameKey: "nav.crmLeads",         href: "/crm/leads",         icon: UserSquare2,   permKey: "crm" },
@@ -709,6 +722,7 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   pos:         ["pos"],
   security:    ["security", "security_events"],
   aiTools:     ["ai_tools"],
+  multiLink:   ["multi_link"],
 };
 
 // Returns true when the user may see the given top-level sidebar group.
@@ -1651,6 +1665,41 @@ function AIToolsNavGroup({
   );
 }
 
+// ─── MultiLinkNavGroup ───────────────────────────────────────────────────────
+// Collapsible "ربط متعدد" group — multi-tenant external invoice gateway
+// (gateway clients management, CSID upload, reports, dispatch monitor).
+// Single `multi_link` permission key gates the whole group; SA bypasses
+// via groupVisible.
+function MultiLinkNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  if (!groupVisible(user, MULTI_LINK_GROUP_PERMS)) return null;
+  const isOnSub = multiLinkSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref="/admin/gateway-clients"
+        icon={Link2}
+        label={t("nav.multiLinkGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {multiLinkSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── SecurityNavGroup ────────────────────────────────────────────────────────
 // Collapsible "الأمن والمراقبة" group — mirrors ProductionNavGroup, gated
 // by the `security_events` permission.
@@ -1733,6 +1782,8 @@ function SidebarInner({
   onCrmToggle,
   fixedAssetsOpen,
   onFixedAssetsToggle,
+  multiLinkOpen,
+  onMultiLinkToggle,
   posOpen,
   onPosToggle,
   securityOpen,
@@ -1789,6 +1840,8 @@ function SidebarInner({
   onCrmToggle: () => void;
   fixedAssetsOpen: boolean;
   onFixedAssetsToggle: () => void;
+  multiLinkOpen: boolean;
+  onMultiLinkToggle: () => void;
   posOpen: boolean;
   onPosToggle: () => void;
   securityOpen: boolean;
@@ -2083,6 +2136,17 @@ function SidebarInner({
                   onNavigate={onNavigate}
                   open={fixedAssetsOpen}
                   onToggle={onFixedAssetsToggle}
+                />
+              </div>
+            )}
+
+            {isGroupAllowed(menuPerms, "multiLink", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <MultiLinkNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={multiLinkOpen}
+                  onToggle={onMultiLinkToggle}
                 />
               </div>
             )}
@@ -2524,6 +2588,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [hospitalOpen,     setHospitalOpen]    = useState(() => location.startsWith("/hospital"));
   const [crmOpen,          setCrmOpen]         = useState(() => location.startsWith("/crm"));
   const [fixedAssetsOpen,  setFixedAssetsOpen] = useState(() => location.startsWith("/fixed-assets"));
+  const [multiLinkOpen,    setMultiLinkOpen]   = useState(() => location.startsWith("/admin/gateway-clients"));
   // Auto-expand the POS group when the user lands directly on any of the
   // pos-monitoring / pos-terminals / pos-settings routes.
   const [posOpen,        setPosOpen]          = useState(() =>
@@ -2554,7 +2619,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "accounting"
     | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting" | "maintenance" | "installments" | "hotel" | "hospital" | "crm" | "fixedAssets"
-    | "pos" | "security" | "aiTools";
+    | "multiLink" | "pos" | "security" | "aiTools";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
     if (keep !== "zatcaGroup") setZatcaGroupOpen(false);
@@ -2572,6 +2637,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (keep !== "hospital")    setHospitalOpen(false);
     if (keep !== "crm")         setCrmOpen(false);
     if (keep !== "fixedAssets") setFixedAssetsOpen(false);
+    if (keep !== "multiLink")   setMultiLinkOpen(false);
     if (keep !== "pos")         setPosOpen(false);
     if (keep !== "security")    setSecurityOpen(false);
     if (keep !== "aiTools")     setAiToolsOpen(false);
@@ -2608,6 +2674,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleHospitalToggle    = makeAccordionToggle("hospital",    hospitalOpen,    setHospitalOpen);
   const handleCrmToggle         = makeAccordionToggle("crm",         crmOpen,         setCrmOpen);
   const handleFixedAssetsToggle = makeAccordionToggle("fixedAssets", fixedAssetsOpen, setFixedAssetsOpen);
+  const handleMultiLinkToggle   = makeAccordionToggle("multiLink",   multiLinkOpen,   setMultiLinkOpen);
   const handlePosToggle         = makeAccordionToggle("pos",         posOpen,         setPosOpen);
   const handleSecurityToggle   = makeAccordionToggle("security",   securityOpen,   setSecurityOpen);
   const handleAiToolsToggle    = makeAccordionToggle("aiTools",    aiToolsOpen,    setAiToolsOpen);
@@ -2666,6 +2733,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     else if (location.startsWith("/hospital")) target = "hospital";
     else if (location.startsWith("/crm")) target = "crm";
     else if (location.startsWith("/fixed-assets")) target = "fixedAssets";
+    else if (location.startsWith("/admin/gateway-clients")) target = "multiLink";
     else if (location.startsWith("/hr/") || location === "/hr") target = "hr";
     else if (location.startsWith("/security")) target = "security";
     else if (
@@ -2707,6 +2775,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         hospital:    setHospitalOpen,
         crm:         setCrmOpen,
         fixedAssets: setFixedAssetsOpen,
+        multiLink:   setMultiLinkOpen,
         pos:         setPosOpen,
         security:    setSecurityOpen,
         aiTools:     setAiToolsOpen,
@@ -2763,6 +2832,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onCrmToggle: handleCrmToggle,
     fixedAssetsOpen,
     onFixedAssetsToggle: handleFixedAssetsToggle,
+    multiLinkOpen,
+    onMultiLinkToggle: handleMultiLinkToggle,
     posOpen,
     onPosToggle: handlePosToggle,
     securityOpen,

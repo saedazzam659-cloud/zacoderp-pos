@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -449,7 +449,8 @@ function ClientDetailDialog({ clientId, onClose, onChanged }: { clientId: number
                 <WebhooksTab clientId={clientId} />
               </TabsContent>
               <TabsContent value="invoices" className="mt-4">
-                <div className="flex items-center justify-end mb-2 gap-2">
+                <div className="flex items-center justify-end mb-2 gap-2 flex-wrap">
+                  <UploadInvoicesModal client={c} onUploaded={() => qc.invalidateQueries({ queryKey: ["gateway-client", clientId, "invoices"] })} />
                   <Button variant="outline" size="sm" onClick={() => window.open(`/admin/gateway-clients/${clientId}/reports`, "_blank")} className="text-indigo-700 border-indigo-200">
                     <TrendingUp className="h-4 w-4 ml-1" />
                     لوحة التقارير + تصدير CSV
@@ -1289,5 +1290,440 @@ function MiniStat({ label, value, cls }: { label: string; value: number; cls: st
       <div className="font-mono text-lg font-bold leading-none">{value.toLocaleString("ar-EG")}</div>
       <div className="text-[10px] mt-1 opacity-80">{label}</div>
     </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Phase 3 — Bulk-upload modal with AI column mapping + pre-commit preview
+// ════════════════════════════════════════════════════════════════════════════
+// Three-step wizard:
+//   1) File select — parses CSV client-side (handles quoted fields, BOM)
+//   2) Mapping — calls /ai-map-columns; user can override each header→canonical
+//   3) Preview — calls /preview-upload; shows sample 10 + validation issues +
+//      totals, then on confirm POSTs to /submit-batch using the existing
+//      legacy field names (invoiceNumber, totalInclVat, etc.)
+// Seller info is auto-filled from the client (not parsed from the file).
+
+const CANONICAL_FIELDS = [
+  "invoice_number","invoice_date","buyer_name","buyer_vat",
+  "item","qty","unit_price","vat_rate","vat_category","currency",
+  "total","vat",
+] as const;
+type CanonicalField = typeof CANONICAL_FIELDS[number];
+
+const CANONICAL_LABEL_AR: Record<CanonicalField, string> = {
+  invoice_number: "رقم الفاتورة", invoice_date: "تاريخ الفاتورة",
+  buyer_name: "اسم العميل", buyer_vat: "ضريبي العميل",
+  item: "البيان/الصنف", qty: "الكمية", unit_price: "سعر الوحدة",
+  vat_rate: "نسبة الضريبة %", vat_category: "تصنيف الضريبة",
+  currency: "العملة", total: "الإجمالي (يُحسب لو فاضي)",
+  vat: "قيمة الضريبة (تُحسب لو فاضي)",
+};
+
+// Minimal CSV parser: handles BOM, quoted fields with embedded commas
+// and newlines, and \r\n endings. No deps — Papa would add ~30KB.
+function parseCsv(text: string): { headers: string[]; rows: Record<string, string>[] } {
+  let t = text.replace(/^\uFEFF/, "");
+  const out: string[][] = [];
+  let cur: string[] = [];
+  let field = "";
+  let i = 0;
+  let inQuote = false;
+  while (i < t.length) {
+    const ch = t[i];
+    if (inQuote) {
+      if (ch === '"') {
+        if (t[i + 1] === '"') { field += '"'; i += 2; continue; }
+        inQuote = false; i++; continue;
+      }
+      field += ch; i++; continue;
+    }
+    if (ch === '"') { inQuote = true; i++; continue; }
+    if (ch === ",") { cur.push(field); field = ""; i++; continue; }
+    if (ch === "\r") { i++; continue; }
+    if (ch === "\n") { cur.push(field); out.push(cur); cur = []; field = ""; i++; continue; }
+    field += ch; i++;
+  }
+  if (field.length > 0 || cur.length > 0) { cur.push(field); out.push(cur); }
+  const headers = (out.shift() ?? []).map(h => h.trim());
+  const rows = out
+    .filter(r => r.some(c => c.trim() !== ""))
+    .map(r => {
+      const obj: Record<string, string> = {};
+      headers.forEach((h, idx) => { obj[h] = (r[idx] ?? "").trim(); });
+      return obj;
+    });
+  return { headers, rows };
+}
+
+function UploadInvoicesModal({ client, onUploaded }: { client: ClientDetail; onUploaded: () => void }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [fileName, setFileName] = useState("");
+  const [rawHeaders, setRawHeaders] = useState<string[]>([]);
+  const [rawRows, setRawRows] = useState<Record<string, string>[]>([]);
+  const [mapping, setMapping] = useState<Record<string, CanonicalField | "">>({});
+  const [mapSource, setMapSource] = useState<"ai" | "fuzzy" | null>(null);
+  // Monotonic counter to discard stale /ai-map-columns responses when the
+  // user picks a second file before the first request resolves.
+  const fileTokenRef = useRef(0);
+
+  type Preview = {
+    totalRows: number;
+    sample: Array<Record<string, unknown>>;
+    issues: Array<{ row: number; field: string; message: string; severity: "error" | "warning" }>;
+    issueCount: number;
+    aggregate: { totalAmount: number; totalVat: number; b2b: number; b2c: number };
+    autoFlow: "standard" | "simplified";
+  };
+  const [preview, setPreview] = useState<Preview | null>(null);
+
+  const reset = () => {
+    setStep(1); setFileName(""); setRawHeaders([]); setRawRows([]);
+    setMapping({}); setMapSource(null); setPreview(null);
+  };
+
+  const onFile = async (file: File) => {
+    if (!file) return;
+    if (file.size > 20 * 1024 * 1024) {
+      toast({ title: "الملف كبير", description: "الحد الأقصى 20 ميغابايت", variant: "destructive" });
+      return;
+    }
+    const text = await file.text();
+    const { headers, rows } = parseCsv(text);
+    if (headers.length === 0 || rows.length === 0) {
+      toast({ title: "ملف فارغ أو غير صالح", variant: "destructive" });
+      return;
+    }
+    if (rows.length > 1000) {
+      toast({ title: "حد الدفعة 1000 صف", description: `الملف يحتوي ${rows.length}`, variant: "destructive" });
+      return;
+    }
+    const myToken = ++fileTokenRef.current;
+    setFileName(file.name);
+    setRawHeaders(headers);
+    setRawRows(rows);
+    setMapSource(null); // reset before async — avoids stale "AI" badge if remap fails
+    setMapping({});
+    try {
+      const r = await api<{ mapping: Record<string, CanonicalField | null>; source: "ai" | "fuzzy" }>(
+        `/api/admin/gateway-clients/${client.id}/ai-map-columns`,
+        { method: "POST", body: JSON.stringify({ headers }) },
+      );
+      if (myToken !== fileTokenRef.current) return; // a newer file replaced us
+      const m: Record<string, CanonicalField | ""> = {};
+      headers.forEach(h => { m[h] = (r.mapping[h] ?? "") as CanonicalField | ""; });
+      setMapping(m);
+      setMapSource(r.source);
+    } catch (e) {
+      if (myToken !== fileTokenRef.current) return;
+      toast({ title: "تعذّر التخطيط التلقائي", description: (e as Error).message, variant: "destructive" });
+      const m: Record<string, CanonicalField | ""> = {};
+      headers.forEach(h => { m[h] = ""; });
+      setMapping(m);
+    }
+    if (myToken === fileTokenRef.current) setStep(2);
+  };
+
+  // Build the canonical-keyed rows from the user's mapping. We deliberately
+  // BACKFILL `total` and `vat` here from `qty * unit_price * (1+rate)` when
+  // the source CSV omits them, so the preview endpoint (which only sees
+  // total/vat columns) computes the same aggregates the submit step will use.
+  const numOrNull = (s: string | undefined): number | null => {
+    if (s == null) return null;
+    const t = String(s).trim();
+    if (t === "") return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  };
+  const buildCanonicalRows = (): Record<string, string>[] => rawRows.map(r => {
+    const out: Record<string, string> = {};
+    for (const [rawH, canon] of Object.entries(mapping)) {
+      if (!canon) continue;
+      out[canon] = r[rawH] ?? "";
+    }
+    const qty = numOrNull(out.qty);
+    const unitPrice = numOrNull(out.unit_price);
+    const vatRate = numOrNull(out.vat_rate);
+    if (out.total == null || out.total === "") {
+      if (qty != null && unitPrice != null) {
+        const excl = qty * unitPrice;
+        const incl = excl * (1 + (vatRate ?? 0) / 100);
+        out.total = String(incl);
+      }
+    }
+    if (out.vat == null || out.vat === "") {
+      if (qty != null && unitPrice != null && vatRate != null) {
+        out.vat = String(qty * unitPrice * (vatRate / 100));
+      }
+    }
+    return out;
+  });
+
+  const goPreview = async () => {
+    try {
+      const rows = buildCanonicalRows();
+      const p = await api<Preview>(`/api/admin/gateway-clients/${client.id}/preview-upload`, {
+        method: "POST",
+        body: JSON.stringify({ rows }),
+      });
+      setPreview(p);
+      setStep(3);
+    } catch (e) {
+      toast({ title: "تعذّرت المعاينة", description: (e as Error).message, variant: "destructive" });
+    }
+  };
+
+  // Transform canonical rows → submit-batch row shape
+  const buildSubmitRows = () => buildCanonicalRows().map(r => {
+    const qty = numOrNull(r.qty) ?? 0;
+    const unitPrice = numOrNull(r.unit_price) ?? 0;
+    const vatRate = numOrNull(r.vat_rate) ?? 0;
+    const totalExclVat = qty * unitPrice;
+    const computedVat = totalExclVat * (vatRate / 100);
+    const explicitTotal = numOrNull(r.total);
+    const explicitVat = numOrNull(r.vat);
+    const totalInclVat = explicitTotal ?? (totalExclVat + computedVat);
+    const vatAmount = explicitVat ?? computedVat;
+    return {
+      invoiceNumber: r.invoice_number,
+      issueDate: r.invoice_date,
+      issueTime: "00:00:00",
+      buyerName: r.buyer_name || null,
+      buyerVat: r.buyer_vat || null,
+      itemName: r.item || "",
+      quantity: qty,
+      unitPrice,
+      vatRate,
+      vatCategory: r.vat_category || "S",
+      currency: r.currency || "SAR",
+      totalExclVat,
+      vatAmount,
+      totalInclVat,
+      invoiceType: "388",
+      sellerName: client.nameAr,
+      sellerVat: client.vatNumber,
+    };
+  });
+
+  const submit = useMutation({
+    mutationFn: () => api<{ submitted: number; rejected: number; env: string }>(
+      `/api/admin/gateway-clients/${client.id}/submit-batch`,
+      { method: "POST", body: JSON.stringify({ rows: buildSubmitRows(), fileName }) },
+    ),
+    onSuccess: (r) => {
+      toast({
+        title: "تم الإرسال",
+        description: `نجحت ${r.submitted}، فشلت ${r.rejected} (${r.env === "sandbox" ? "تجريبي" : "إنتاج"})`,
+      });
+      onUploaded();
+      setOpen(false);
+      reset();
+    },
+    onError: (e: Error) => toast({ title: "فشل الإرسال", description: e.message, variant: "destructive" }),
+  });
+
+  const errorCount = preview?.issues.filter(i => i.severity === "error").length ?? 0;
+  const requiredMapped = ["invoice_number", "invoice_date", "item", "qty", "unit_price"]
+    .every(k => Object.values(mapping).includes(k as CanonicalField));
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset(); }}>
+      <DialogTrigger asChild>
+        <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700">
+          <Upload className="h-4 w-4 ml-1" />
+          رفع فواتير (CSV)
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto" dir="rtl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Upload className="h-5 w-5 text-emerald-600" />
+            رفع فواتير دفعة واحدة — {client.nameAr}
+          </DialogTitle>
+          <DialogDescription>
+            معالج من 3 خطوات: اختيار الملف ← مراجعة تخطيط الأعمدة ← معاينة وإرسال.
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Stepper */}
+        <div className="flex items-center justify-between gap-2 mb-2">
+          {[1, 2, 3].map(n => (
+            <div key={n} className={`flex-1 rounded-lg p-2 text-center text-xs font-semibold border
+              ${step === n ? "bg-emerald-50 border-emerald-300 text-emerald-800"
+                : step > n ? "bg-slate-100 border-slate-200 text-slate-600"
+                : "bg-white border-slate-200 text-slate-400"}`}>
+              {n === 1 ? "١. الملف" : n === 2 ? "٢. تخطيط الأعمدة" : "٣. معاينة وإرسال"}
+            </div>
+          ))}
+        </div>
+
+        {/* Step 1 — file picker */}
+        {step === 1 && (
+          <div className="space-y-3">
+            <div className="rounded-xl border-2 border-dashed border-emerald-200 bg-emerald-50/30 p-8 text-center">
+              <Upload className="h-12 w-12 mx-auto text-emerald-400 mb-3" />
+              <p className="text-sm text-slate-700 mb-3">اختر ملف CSV (UTF-8) — العناوين العربية والإنجليزية مدعومة.</p>
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                id="gw-upload-file"
+                className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }}
+              />
+              <label htmlFor="gw-upload-file">
+                <Button asChild className="bg-emerald-600 hover:bg-emerald-700"><span>اختيار ملف</span></Button>
+              </label>
+              <p className="text-[11px] text-slate-500 mt-3">حد أقصى 1000 فاتورة · 20 ميغابايت · لا يلزم ترتيب الأعمدة.</p>
+            </div>
+            <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+              💡 نصيحة: نزّل قالب CSV الجاهز من الزر بجوار "رفع فواتير" ليكون مرجعاً لتسمية الأعمدة.
+            </div>
+          </div>
+        )}
+
+        {/* Step 2 — column mapping */}
+        {step === 2 && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="text-sm">
+                <span className="font-semibold">{fileName}</span>
+                <span className="text-slate-500"> · {rawRows.length} صف · {rawHeaders.length} عمود</span>
+              </div>
+              <Badge variant="outline" className={mapSource === "ai" ? "bg-violet-50 text-violet-700 border-violet-200" : "bg-slate-50"}>
+                {mapSource === "ai" ? <><Sparkles className="h-3 w-3 ml-1 inline" />تخطيط ذكي</> : "تخطيط تلقائي"}
+              </Badge>
+            </div>
+
+            <div className="rounded-lg border bg-white max-h-[400px] overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 sticky top-0">
+                  <tr>
+                    <th className="text-right p-2 font-semibold">العمود في الملف</th>
+                    <th className="text-right p-2 font-semibold">مثال</th>
+                    <th className="text-right p-2 font-semibold">الحقل القياسي</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rawHeaders.map(h => (
+                    <tr key={h} className="border-t">
+                      <td className="p-2 font-medium" dir="ltr">{h}</td>
+                      <td className="p-2 text-slate-500 max-w-[160px] truncate" title={rawRows[0]?.[h] ?? ""}>{rawRows[0]?.[h] ?? ""}</td>
+                      <td className="p-2">
+                        <Select
+                          value={mapping[h] || "__skip__"}
+                          onValueChange={v => setMapping({ ...mapping, [h]: v === "__skip__" ? "" : v as CanonicalField })}
+                        >
+                          <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__skip__"><span className="text-slate-400">— تجاهل —</span></SelectItem>
+                            {CANONICAL_FIELDS.map(f => (
+                              <SelectItem key={f} value={f}>{CANONICAL_LABEL_AR[f]}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {!requiredMapped && (
+              <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2 flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" />
+                الحقول الإلزامية ناقصة: رقم الفاتورة، تاريخ الفاتورة، الصنف، الكمية، سعر الوحدة.
+              </div>
+            )}
+
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setStep(1)}>رجوع</Button>
+              <Button onClick={goPreview} disabled={!requiredMapped} className="bg-emerald-600 hover:bg-emerald-700">
+                المتابعة للمعاينة <ArrowRight className="h-4 w-4 mr-1 rtl:rotate-180" />
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+
+        {/* Step 3 — preview & submit */}
+        {step === 3 && preview && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+              <MiniStat label="إجمالي الصفوف" value={preview.totalRows} cls="bg-slate-100 text-slate-800" />
+              <MiniStat label="مشكلات" value={preview.issueCount} cls={errorCount > 0 ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"} />
+              <MiniStat label="B2B" value={preview.aggregate.b2b} cls="bg-indigo-100 text-indigo-800" />
+              <MiniStat label="B2C" value={preview.aggregate.b2c} cls="bg-sky-100 text-sky-800" />
+              <div className="rounded-lg p-2 text-center bg-emerald-100 text-emerald-800">
+                <div className="font-mono text-sm font-bold leading-none">
+                  {preview.aggregate.totalAmount.toLocaleString("ar-EG", { maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] mt-1 opacity-80">إجمالي (ر.س)</div>
+              </div>
+            </div>
+
+            {preview.issues.length > 0 && (
+              <div className="rounded-lg border bg-white p-2 max-h-[150px] overflow-y-auto">
+                <div className="text-xs font-semibold mb-1 text-slate-700">المشكلات (أول 100):</div>
+                {preview.issues.slice(0, 100).map((iss, i) => (
+                  <div key={i} className={`text-xs py-0.5 ${iss.severity === "error" ? "text-rose-700" : "text-amber-700"}`}>
+                    صف {iss.row} · {iss.field}: {iss.message}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="rounded-lg border bg-white max-h-[280px] overflow-y-auto">
+              <div className="text-xs font-semibold p-2 bg-slate-50 border-b">عينة (أول 10 صفوف)</div>
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="text-right p-2">#</th>
+                    <th className="text-right p-2">رقم</th>
+                    <th className="text-right p-2">تاريخ</th>
+                    <th className="text-right p-2">العميل</th>
+                    <th className="text-right p-2">إجمالي</th>
+                    <th className="text-right p-2">ضريبة</th>
+                    <th className="text-right p-2">نوع</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.sample.map((s, i) => (
+                    <tr key={i} className="border-t">
+                      <td className="p-2">{String(s.row)}</td>
+                      <td className="p-2 font-mono" dir="ltr">{String(s.invoiceNumber ?? "—")}</td>
+                      <td className="p-2 font-mono" dir="ltr">{String(s.invoiceDate ?? "—")}</td>
+                      <td className="p-2 truncate max-w-[120px]">{String(s.buyerName ?? (s.flow === "simplified" ? "تجزئة" : "—"))}</td>
+                      <td className="p-2 font-mono">{Number(s.total ?? 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td>
+                      <td className="p-2 font-mono">{Number(s.vat ?? 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td>
+                      <td className="p-2"><Badge variant="outline" className="text-[10px]">{s.flow === "standard" ? "B2B" : "B2C"}</Badge></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="rounded-lg bg-sky-50 border border-sky-200 p-2 text-xs text-sky-800 flex items-start gap-2">
+              <ShieldCheck className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>
+                سيُستخدم تدفّق <b>{preview.autoFlow === "standard" ? "B2B (Standard — Clearance)" : "B2C (Simplified — Reporting)"}</b> تلقائياً لكل فاتورة بناءً على وجود الرقم الضريبي للعميل. البيئة الحالية: <b>{client.zatcaEnv === "production" ? "إنتاج" : "تجريبي"}</b>.
+              </span>
+            </div>
+
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setStep(2)}>رجوع للتخطيط</Button>
+              <Button
+                onClick={() => submit.mutate()}
+                disabled={submit.isPending || errorCount > 0}
+                className="bg-emerald-600 hover:bg-emerald-700"
+              >
+                {submit.isPending && <Loader2 className="h-4 w-4 ml-1 animate-spin" />}
+                {errorCount > 0 ? `يوجد ${errorCount} خطأ — صحّحها أولاً` : `إرسال ${preview.totalRows} فاتورة`}
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
