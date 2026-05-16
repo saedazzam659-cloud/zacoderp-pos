@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import {
   Users as UsersIcon, Plus, Pencil, Trash2, Shield, Search, KeyRound,
   CheckCircle2, XCircle, Loader2, X, Save, Check, ShieldCheck, PowerOff, Power,
+  Copy, ArrowLeftRight, Sparkles,
 } from "lucide-react";
 import {
   PERMISSION_MODULES, PERMISSION_GROUPS, ACTION_LABELS,
@@ -464,6 +465,65 @@ export default function Users() {
     setForm(f => ({ ...f, permissions: p }));
   };
 
+  // ─── Copy permissions from another user ──────────────────────────────────
+  // Lets the admin pick any other user in the same company as a "template"
+  // and instantly mirror their permission matrix into the form. Used when
+  // onboarding a batch of users with the same role (e.g. 3 accountants who
+  // should all match an existing accountant). Branch assignments + approval
+  // workflow settings are intentionally NOT copied — they are user-specific.
+  const [copyFromUserId, setCopyFromUserId] = useState<string>("");
+  const copyPermissionsFrom = (sourceId: number) => {
+    const src = users.find(x => x.id === sourceId);
+    if (!src) return;
+    const srcPerms = { ...viewOnlyPermissions(), ...(src.permissions ?? {}) };
+    setForm(f => ({ ...f, permissions: srcPerms }));
+    toast({
+      title: "✅ تم نسخ الصلاحيات",
+      description: `تم نسخ صلاحيات المستخدم «${src.nameAr || src.username}». اضغط «حفظ التعديلات» للتأكيد.`,
+    });
+  };
+
+  // Bulk copy from current user → multiple target users in one shot.
+  // Saves each user via PATCH with the same permissions blob. Used by the
+  // "نسخ هذه الصلاحيات لمستخدمين آخرين" dialog in the permissions tab.
+  const [bulkCopyOpen, setBulkCopyOpen] = useState(false);
+  const [bulkTargetIds, setBulkTargetIds] = useState<Set<number>>(new Set());
+  const bulkCopyMut = useMutation({
+    mutationFn: async (targetIds: number[]) => {
+      const results = await Promise.allSettled(
+        targetIds.map(id =>
+          fetch(`${API}/api/users/${id}?companyId=${cid ?? ""}`, {
+            method: "PATCH",
+            headers: { ...authH, "Content-Type": "application/json" },
+            body: JSON.stringify({ permissions: form.permissions }),
+          }).then(async r => {
+            if (!r.ok) {
+              const d = await r.json().catch(() => ({}));
+              throw new Error(d?.error || `فشل تحديث المستخدم #${id}`);
+            }
+          }),
+        ),
+      );
+      const okCount = results.filter(r => r.status === "fulfilled").length;
+      const failCount = results.length - okCount;
+      return { okCount, failCount };
+    },
+    onSuccess: ({ okCount, failCount }) => {
+      toast({
+        title: failCount === 0 ? "✨ تم النسخ بنجاح" : "⚠️ تم النسخ جزئياً",
+        description:
+          failCount === 0
+            ? `تم تطبيق الصلاحيات على ${okCount} مستخدم.`
+            : `نجح ${okCount}، فشل ${failCount}.`,
+        variant: failCount === 0 ? "default" : "destructive",
+      });
+      qc.invalidateQueries({ queryKey: ["users", cid] });
+      setBulkCopyOpen(false);
+      setBulkTargetIds(new Set());
+    },
+    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+  });
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -753,12 +813,219 @@ export default function Users() {
                     {t("users.permsHint")}
                     {form.role === "admin" && <span className="text-amber-600 font-semibold">{t("users.adminNote")}</span>}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 flex-wrap">
                     <Button size="sm" variant="outline" onClick={() => applyPreset("full")}>{t("users.presetFull")}</Button>
                     <Button size="sm" variant="outline" onClick={() => applyPreset("view")}>{t("users.presetView")}</Button>
                     <Button size="sm" variant="outline" onClick={() => applyPreset("none")}>{t("users.presetNone")}</Button>
                   </div>
                 </div>
+
+                {/* ─── Copy permissions toolbar ─────────────────────────────
+                    Two-way clone:
+                    1) RIGHT panel: pull permissions FROM another user INTO
+                       the current form (works for both new + existing users).
+                    2) LEFT panel: push the current form's permissions TO
+                       one or more other users in bulk (existing users only).
+                    Both operate within the active company only. */}
+                {form.role !== "admin" && users.length > 1 && (
+                  <div className="grid md:grid-cols-2 gap-3">
+                    {/* ── Copy FROM another user ── */}
+                    <div className="rounded-xl border-2 border-cyan-200 bg-gradient-to-bl from-cyan-50 via-white to-sky-50 p-3 shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="p-1.5 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow">
+                          <Copy className="h-3.5 w-3.5" />
+                        </div>
+                        <div className="font-semibold text-sm text-slate-800">نسخ صلاحيات <span className="text-cyan-700">من</span> مستخدم آخر</div>
+                      </div>
+                      <div className="text-[11px] text-slate-600 mb-2">
+                        اختر مستخدم كقالب وستُنسخ صلاحياته إلى هذا النموذج فوراً (لا تُحفظ تلقائياً).
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Select value={copyFromUserId} onValueChange={setCopyFromUserId}>
+                          <SelectTrigger className="flex-1 bg-white" data-testid="select-copy-from-user">
+                            <SelectValue placeholder="اختر المستخدم المصدر..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {users
+                              .filter(u => u.id !== editingId && u.role !== "admin")
+                              .map(u => (
+                                <SelectItem key={u.id} value={String(u.id)}>
+                                  {u.nameAr || u.username} {u.code ? `(${u.code})` : ""}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          size="sm"
+                          disabled={!copyFromUserId}
+                          onClick={() => {
+                            const id = Number(copyFromUserId);
+                            if (Number.isFinite(id)) copyPermissionsFrom(id);
+                          }}
+                          className="bg-gradient-to-l from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white shadow-sm"
+                          data-testid="button-copy-from-user"
+                        >
+                          <ArrowLeftRight className="h-3.5 w-3.5 me-1" />
+                          نسخ
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* ── Copy TO multiple users (only when editing existing) ── */}
+                    {editingId != null && (
+                      <div className="rounded-xl border-2 border-violet-200 bg-gradient-to-bl from-violet-50 via-white to-fuchsia-50 p-3 shadow-sm">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="p-1.5 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow">
+                            <Sparkles className="h-3.5 w-3.5" />
+                          </div>
+                          <div className="font-semibold text-sm text-slate-800">نسخ هذه الصلاحيات <span className="text-violet-700">إلى</span> مستخدمين آخرين</div>
+                        </div>
+                        <div className="text-[11px] text-slate-600 mb-2">
+                          طبّق نفس صلاحيات هذا المستخدم على عدة مستخدمين دفعة واحدة (سيُحفظ فوراً).
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => { setBulkTargetIds(new Set()); setBulkCopyOpen(true); }}
+                          className="w-full bg-gradient-to-l from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white shadow-sm"
+                          data-testid="button-open-bulk-copy"
+                        >
+                          <Copy className="h-3.5 w-3.5 me-1" />
+                          اختر المستخدمين المستهدفين...
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ─── Bulk-copy dialog ───────────────────────────────────── */}
+                {bulkCopyOpen && (
+                  <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+                    onClick={() => !bulkCopyMut.isPending && setBulkCopyOpen(false)}
+                    data-testid="bulk-copy-modal"
+                  >
+                    <div
+                      className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col overflow-hidden"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="px-5 py-4 bg-gradient-to-l from-violet-600 to-fuchsia-600 text-white flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="h-5 w-5" />
+                          <div className="font-bold">نسخ الصلاحيات لمستخدمين متعددين</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => !bulkCopyMut.isPending && setBulkCopyOpen(false)}
+                          className="p-1 hover:bg-white/20 rounded-md transition"
+                          aria-label="إغلاق"
+                        >
+                          <X className="h-5 w-5" />
+                        </button>
+                      </div>
+                      <div className="px-5 py-3 bg-violet-50 border-b text-xs text-violet-900 flex items-start gap-2">
+                        <Shield className="h-4 w-4 shrink-0 mt-0.5 text-violet-600" />
+                        <div>
+                          سيتم تطبيق صلاحيات <span className="font-bold">{form.nameAr || form.username}</span> الحالية على المستخدمين المحددين.
+                          <br />
+                          <span className="text-[11px] opacity-80">⚠️ لن يتم نسخ تعيين الفروع أو إعدادات الاعتماد — فقط مصفوفة الصلاحيات.</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between px-5 py-2 border-b bg-slate-50">
+                        <div className="text-xs text-slate-700">
+                          محدد: <span className="font-bold text-violet-700">{bulkTargetIds.size}</span> مستخدم
+                        </div>
+                        <div className="flex gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-xs"
+                            onClick={() => {
+                              const all = new Set(
+                                users.filter(u => u.id !== editingId && u.role !== "admin").map(u => u.id),
+                              );
+                              setBulkTargetIds(all);
+                            }}
+                          >
+                            تحديد الكل
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-xs"
+                            onClick={() => setBulkTargetIds(new Set())}
+                          >
+                            مسح
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="overflow-y-auto flex-1 px-5 py-3 space-y-1">
+                        {users
+                          .filter(u => u.id !== editingId && u.role !== "admin")
+                          .map(u => {
+                            const checked = bulkTargetIds.has(u.id);
+                            return (
+                              <label
+                                key={u.id}
+                                className={cn(
+                                  "flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition",
+                                  checked
+                                    ? "bg-violet-50 border-violet-300 shadow-sm"
+                                    : "border-slate-200 hover:bg-slate-50",
+                                )}
+                              >
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(v) => {
+                                    setBulkTargetIds(prev => {
+                                      const next = new Set(prev);
+                                      if (v) next.add(u.id);
+                                      else next.delete(u.id);
+                                      return next;
+                                    });
+                                  }}
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium text-sm truncate">{u.nameAr || u.username}</div>
+                                  <div className="text-[11px] text-slate-500 truncate">
+                                    {u.username}{u.code ? ` • ${u.code}` : ""}{u.email ? ` • ${u.email}` : ""}
+                                  </div>
+                                </div>
+                                {!u.isActive && (
+                                  <Badge variant="outline" className="text-[10px] border-rose-300 text-rose-700 bg-rose-50">معطّل</Badge>
+                                )}
+                              </label>
+                            );
+                          })}
+                        {users.filter(u => u.id !== editingId && u.role !== "admin").length === 0 && (
+                          <div className="text-center text-sm text-slate-500 py-6">
+                            لا يوجد مستخدمون آخرون متاحون للنسخ.
+                          </div>
+                        )}
+                      </div>
+                      <div className="px-5 py-3 border-t bg-slate-50 flex items-center justify-between">
+                        <Button
+                          variant="ghost"
+                          onClick={() => setBulkCopyOpen(false)}
+                          disabled={bulkCopyMut.isPending}
+                        >
+                          إلغاء
+                        </Button>
+                        <Button
+                          disabled={bulkTargetIds.size === 0 || bulkCopyMut.isPending}
+                          onClick={() => bulkCopyMut.mutate(Array.from(bulkTargetIds))}
+                          className="bg-gradient-to-l from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white shadow"
+                          data-testid="button-confirm-bulk-copy"
+                        >
+                          {bulkCopyMut.isPending ? (
+                            <><Loader2 className="h-4 w-4 me-1 animate-spin" /> جاري النسخ...</>
+                          ) : (
+                            <><Copy className="h-4 w-4 me-1" /> نسخ إلى {bulkTargetIds.size} مستخدم</>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {hiddenGroupsCount > 0 && (
                   <div className="flex items-start gap-2 p-3 rounded-lg border border-blue-200 bg-blue-50/60 dark:bg-blue-950/20 text-xs">
