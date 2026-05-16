@@ -144,6 +144,16 @@ export const companiesTable = pgTable("companies", {
   // which one is preselected when the modal opens.
   printEnabledTemplates: jsonb("print_enabled_templates").$type<number[]>(),
   printDefaultTemplate:  integer("print_default_template").notNull().default(1),
+  // Which date the `{MM}`/`{YY}`/`{YYYY}` tokens in a document-number
+  // sequence pattern should read from:
+  //   - "system"   = today's date at the moment of issuance (default,
+  //                  matches legacy behaviour).
+  //   - "document" = the date the user actually entered on the
+  //                  document being saved (e.g. a JE backdated to
+  //                  1-1-2026 produces "01" even if today is May).
+  // The sequences library honours this per call; callers that don't
+  // pass a `docDate` always fall back to system date regardless.
+  sequenceDateSource: text("sequence_date_source").notNull().default("system"),
   // ─── Auto-print after save + per-doc-type template (a4 | thermal) ─────
   // When `printAutoAfterSave*` is true, the matching form opens a print
   // window automatically right after the save mutation succeeds. The

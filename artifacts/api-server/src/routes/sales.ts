@@ -658,6 +658,7 @@ router.post("/sales-invoices", async (req, res) => {
         userId:   req.authUser?.id ?? null,
         refTable: "sales_invoices",
         branchId: branchId ? Number(branchId) : null,
+        docDate:  invoiceDate,
       });
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {
@@ -1413,6 +1414,7 @@ router.post("/sales-returns", async (req, res) => {
         userId:   (req as any).authUser?.id ?? null,
         refTable: "sales_returns",
         branchId: branchId ? Number(branchId) : null,
+        docDate:  returnDate,
       });
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {
@@ -2108,6 +2110,7 @@ router.post("/sales-orders", async (req, res) => {
         userId:   req.authUser?.id ?? null,
         refTable: "sales_orders",
         branchId: branchId ? Number(branchId) : null,
+        docDate:  orderDate,
       });
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {

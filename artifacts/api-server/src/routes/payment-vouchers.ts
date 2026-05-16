@@ -184,6 +184,7 @@ router.post("/", async (req, res) => {
       branchId: d.branchId ? parseInt(d.branchId) : null,
       userId:   (req as any).authUser?.id ?? null,
       refTable: "payment_vouchers",
+      docDate:  d.date ?? null,
     });
     if (seq) {
       code = seq;

@@ -53,6 +53,15 @@ export type NextSequenceCtx = {
   /** Active branch for this operation. `null`/`undefined` → company-wide
    *  counter (sentinel branchId = 0 in the table). */
   branchId?: number | null;
+  /** The date the user actually entered on the document (e.g. entryDate
+   *  for JEs, invoiceDate for sales/purchase invoices, deliveryDate for
+   *  goods deliveries…).  When the company has opted into
+   *  `sequenceDateSource = "document"` in General Settings, this is the
+   *  date used to render `{MM}/{YY}/{YYYY}` tokens in the sequence
+   *  pattern — so a backdated JE produces the month it actually belongs
+   *  to, not the month it was entered. When omitted (or when the company
+   *  is on the default `"system"` setting), today's date is used. */
+  docDate?: Date | string | null;
 };
 
 export class SequenceCapacityExceededError extends Error {
@@ -82,10 +91,23 @@ function renderMonthPattern(pattern: string | null | undefined, now: Date = new 
     .replace(/\{YY\}/g,   YY);
 }
 
-function format(prefix: string, n: number, padLength: number, monthPattern?: string | null): string {
+function format(prefix: string, n: number, padLength: number, monthPattern: string | null | undefined, effectiveDate: Date): string {
   const padded = padLength > 0 ? String(n).padStart(padLength, "0") : String(n);
-  const month  = renderMonthPattern(monthPattern);
+  const month  = renderMonthPattern(monthPattern, effectiveDate);
   return `${prefix ?? ""}${month}${padded}`;
+}
+
+/** Resolve the date to feed into the `{MM}/{YY}/{YYYY}` substitution.
+ *  When the company opted into "document" date AND the caller supplied
+ *  a usable `docDate`, that date wins. Otherwise we use today.  Invalid
+ *  date inputs are silently ignored so a bad client payload can never
+ *  corrupt the issued number. */
+function resolveEffectiveDate(source: string | null | undefined, docDate: Date | string | null | undefined): Date {
+  if (source === "document" && docDate != null && docDate !== "") {
+    const d = docDate instanceof Date ? docDate : new Date(String(docDate));
+    if (!isNaN(d.getTime())) return d;
+  }
+  return new Date();
 }
 
 /**
@@ -129,6 +151,15 @@ export async function nextSequenceNumber(
       LIMIT 1
       FOR UPDATE
     `);
+
+    // Pull the company-wide date-source setting once per issuance. The
+    // column was added in Phase-2 print/sequence settings and defaults
+    // to "system" so existing tenants keep their legacy behaviour.
+    const cfgRows = await tx.execute<{ sequence_date_source: string | null }>(sql`
+      SELECT sequence_date_source FROM companies WHERE id = ${companyId} LIMIT 1
+    `);
+    const dateSource = cfgRows.rows?.[0]?.sequence_date_source ?? "system";
+    const effectiveDate = resolveEffectiveDate(dateSource, ctx.docDate);
 
     const seq = seqRows.rows?.[0];
     if (!seq) return null;
@@ -181,7 +212,7 @@ export async function nextSequenceNumber(
       throw new SequenceCapacityExceededError(seq.code);
     }
 
-    const generated = format(seq.prefix ?? "", issuedNumber, seq.pad_length ?? 0, seq.month_pattern);
+    const generated = format(seq.prefix ?? "", issuedNumber, seq.pad_length ?? 0, seq.month_pattern, effectiveDate);
 
     // 4. Bump the per-branch counter only. Master sequences row is NEVER
     //    written to during issuance (per spec).

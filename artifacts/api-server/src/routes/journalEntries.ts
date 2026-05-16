@@ -254,6 +254,7 @@ router.post("/", async (req, res) => {
         userId:   (req as any).authUser?.id ?? null,
         refTable: "journal_entries",
         branchId: resolvedBranchId,
+        docDate:  entryDate,
       });
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {

@@ -141,6 +141,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     faDisposalGainAccountId, faDisposalLossAccountId,
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
     printEnabledTemplates, printDefaultTemplate,
+    sequenceDateSource,
     // Per-doc-type print preferences (auto-print toggle + template name).
     // Each `printAutoAfterSave*` is a boolean; each `printTemplate*` is
     // either "a4" or "thermal".  Validated below before write so we never
@@ -176,6 +177,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     printFooterInvoice?: string; printFooterReturn?: string;
     printShowTimestamp?: boolean; printShowZatcaBrand?: boolean;
     printEnabledTemplates?: number[] | null; printDefaultTemplate?: number;
+    sequenceDateSource?: string;
     printAutoAfterSaveSales?: boolean; printAutoAfterSaveReceipt?: boolean;
     printAutoAfterSavePayment?: boolean; printAutoAfterSaveJournal?: boolean;
     printTemplateSales?: string; printTemplateReceipt?: string;
@@ -267,6 +269,13 @@ router.patch("/:id/general-settings", async (req, res) => {
       res.status(400).json({ error: "النموذج الافتراضي يجب أن يكون رقماً بين 1 و 12" }); return;
     }
     updates.printDefaultTemplate = n;
+  }
+  if (sequenceDateSource !== undefined) {
+    const v = String(sequenceDateSource);
+    if (v !== "system" && v !== "document") {
+      res.status(400).json({ error: "مصدر التاريخ للمسلسل يجب أن يكون 'system' أو 'document'" }); return;
+    }
+    updates.sequenceDateSource = v;
   }
   // Auto-print toggles — coerce to boolean.
   if (printAutoAfterSaveSales   !== undefined) updates.printAutoAfterSaveSales   = !!printAutoAfterSaveSales;

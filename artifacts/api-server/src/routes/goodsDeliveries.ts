@@ -262,6 +262,7 @@ router.post("/", async (req, res) => {
           userId:   (req as any).authUser?.id ?? null,
           refTable: "goods_deliveries",
           branchId: branchId ? Number(branchId) : null,
+          docDate:  deliveryDate,
         });
       } catch {
         resolvedDocNumber = null;

@@ -11,7 +11,7 @@ import {
   Hash, Building2, Loader2, Package, Boxes, Download, FileSpreadsheet,
   DatabaseBackup, DatabaseZap, Sparkles, FileJson, AlertTriangle,
   Clock, Repeat, Trash, History, Play, Zap, Hand, Printer, Save,
-  LogOut, Timer, ShieldCheck
+  LogOut, Timer, ShieldCheck, CalendarDays, CalendarClock
 } from "lucide-react";
 import { getIdleLogoutMinutes, setIdleLogoutMinutes } from "@/hooks/useIdleLogout";
 import { Input } from "@/components/ui/input";
@@ -145,7 +145,7 @@ export default function GeneralSettings() {
   // them to the server in one request. Used by both the master switch
   // (autoPostingEnabled) and the per-doc-type toggles below so we keep a
   // single network/error path.
-  async function togglePostingMode(payload: Record<string, boolean>) {
+  async function togglePostingMode(payload: Record<string, boolean | string | number | null>) {
     const cid = user?.company?.id ?? user?.companyId;
     if (!cid || postingSaving) return;
     setPostingSaving(true);
@@ -452,6 +452,13 @@ export default function GeneralSettings() {
           >
             <Save className="h-4 w-4 shrink-0" />
             <span className="truncate">نظام إدخال القيود</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="sequenceDate"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <CalendarDays className="h-4 w-4 shrink-0" />
+            <span className="truncate">تاريخ المسلسل</span>
           </TabsTrigger>
         </TabsList>
 
@@ -1054,6 +1061,113 @@ export default function GeneralSettings() {
                       جارٍ الحفظ…
                     </p>
                   )}
+                </>
+              );
+            })()}
+          </div>
+        </TabsContent>
+
+        {/* ═══ TAB 11: Sequence Date Source (System vs Document) ═════════════ */}
+        <TabsContent value="sequenceDate" className="mt-5 space-y-6">
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <h2 className="font-semibold text-base flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-muted-foreground" />
+              مصدر التاريخ في الأرقام التسلسلية للمستندات
+            </h2>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              يحدّد هذا الإعداد من أين يقرأ الـ <code className="font-mono text-[11px]">{"{MM}"}</code> /
+              {" "}<code className="font-mono text-[11px]">{"{YY}"}</code> /
+              {" "}<code className="font-mono text-[11px]">{"{YYYY}"}</code> في نمط المسلسل عند إصدار رقم مستند جديد
+              (قيد محاسبي، فاتورة بيع/شراء، سند قبض/صرف، إذن تسليم/استلام…).
+              {" "}<span className="font-medium text-foreground">تاريخ النظام (الافتراضي):</span> يستخدم تاريخ اليوم وقت الحفظ.
+              {" "}<span className="font-medium text-foreground">تاريخ المستند:</span> يستخدم التاريخ الذي أدخله المستخدم على المستند نفسه — لذا قيد بتاريخ 1-1-2026 يصدر برقم شهر <span className="font-mono">01</span> حتى لو حُفظ في مايو.
+            </p>
+
+            {(() => {
+              const src = (user?.company?.sequenceDateSource === "document") ? "document" : "system";
+              const isSystem = src === "system";
+              return (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {/* SYSTEM card */}
+                    <button
+                      type="button"
+                      disabled={postingSaving}
+                      onClick={() => togglePostingMode({ sequenceDateSource: "system" })}
+                      className={cn(
+                        "flex flex-col items-start gap-2 rounded-xl border-2 p-4 text-right transition-all",
+                        isSystem
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-border bg-background hover:border-primary/40"
+                      )}
+                      data-testid="card-sequence-date-system"
+                    >
+                      <div className="flex items-center gap-2 w-full">
+                        <div className={cn(
+                          "h-8 w-8 rounded-md flex items-center justify-center",
+                          isSystem ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        )}>
+                          <CalendarClock className="h-4 w-4" />
+                        </div>
+                        <span className="font-semibold text-sm">تاريخ النظام (الافتراضي)</span>
+                        {isSystem && (
+                          <span className="ms-auto text-[10.5px] font-semibold rounded px-1.5 py-0.5 border bg-emerald-50 text-emerald-700 border-emerald-200">
+                            مفعَّل
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                        يقرأ شهر وسنة الرقم التسلسلي من تاريخ اليوم الحالي وقت الحفظ — السلوك التقليدي.
+                      </p>
+                    </button>
+
+                    {/* DOCUMENT card */}
+                    <button
+                      type="button"
+                      disabled={postingSaving}
+                      onClick={() => togglePostingMode({ sequenceDateSource: "document" })}
+                      className={cn(
+                        "flex flex-col items-start gap-2 rounded-xl border-2 p-4 text-right transition-all",
+                        !isSystem
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-border bg-background hover:border-primary/40"
+                      )}
+                      data-testid="card-sequence-date-document"
+                    >
+                      <div className="flex items-center gap-2 w-full">
+                        <div className={cn(
+                          "h-8 w-8 rounded-md flex items-center justify-center",
+                          !isSystem ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        )}>
+                          <CalendarDays className="h-4 w-4" />
+                        </div>
+                        <span className="font-semibold text-sm">تاريخ المستند</span>
+                        {!isSystem && (
+                          <span className="ms-auto text-[10.5px] font-semibold rounded px-1.5 py-0.5 border bg-amber-50 text-amber-700 border-amber-200">
+                            مفعَّل
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                        يقرأ شهر وسنة الرقم من التاريخ المُدخل على المستند — مفيد للقيود الرجعية ومستندات الفترات السابقة.
+                      </p>
+                    </button>
+                  </div>
+
+                  {postingSaving && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-2">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      جارٍ الحفظ…
+                    </p>
+                  )}
+
+                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] text-amber-900 leading-relaxed">
+                    <strong>ملاحظة:</strong> يؤثّر هذا الإعداد فقط على المسلسلات التي تحتوي نمطها على
+                    {" "}<code className="font-mono">{"{MM}"}</code> أو
+                    {" "}<code className="font-mono">{"{YY}"}</code> /
+                    {" "}<code className="font-mono">{"{YYYY}"}</code>.
+                    العدّاد الرقمي نفسه لا يُعاد تصفيره شهرياً — يبقى يتصاعد كما هو معرّف في إعدادات المسلسلات.
+                  </div>
                 </>
               );
             })()}
