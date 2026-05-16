@@ -28,8 +28,9 @@ import { AccountCombobox } from "@/components/AccountCombobox";
 import { CustomerVatControl } from "@/components/CustomerVatControl";
 import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck } from "lucide-react";
 import { offersApi } from "@/lib/offersApi";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -176,6 +177,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // user manually clicking the checkbox updates the persisted preference.
   const stickyPriceIncl = useStickyPriceIncludesVat();
   const [priceIncludesVat, setPriceIncludesVat] = useState(stickyPriceIncl.initial);
+  // ── نوع الفاتورة (ZATCA) ─────────────────────────────────────────────────
+  // "standard"   = فاتورة ضريبية B2B  → يلزم رقم ضريبي + سجل تجاري + عنوان
+  //                                     وطني كامل للعميل (متطلبات زاتكا)
+  // "simplified" = فاتورة ضريبية مبسطة B2C → يكفي اسم العميل
+  // الاختيار يبدأ افتراضيًا "مبسطة"؛ ويُرفع إلى "ضريبية" تلقائيًا عند اختيار
+  // عميل لديه رقم ضريبي مسجَّل (سلوك ودود لا يربك مستخدم التجزئة).
+  const [invoiceType, setInvoiceType] = useState<"standard" | "simplified">("simplified");
+  const invoiceTypeUserPickedRef = useRef(false);
   const [docDiscount, setDocDiscount]   = useState("0");
   // Document-level promotion that the engine applied (drives docDiscount when
   // non-null). Cleared automatically when the cart no longer qualifies. Saved
@@ -243,6 +252,24 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
+
+  // ── Auto-detect نوع الفاتورة من العميل ─────────────────────────────────
+  // عند اختيار عميل لديه رقم ضريبي → نرفع تلقائيًا إلى "ضريبية" (standard).
+  // إذا اختار المستخدم النوع يدويًا (invoiceTypeUserPickedRef = true) لا
+  // نتدخّل أبدًا — احترامًا لقصد المستخدم. كذلك لا نطبّق التخفيض (إلى مبسطة)
+  // تلقائيًا إذا غاب الرقم الضريبي، لأن المستخدم قد يكون يبحث عن البيانات
+  // الناقصة لتعبئتها قبل الحفظ.
+  useEffect(() => {
+    if (!isInvoice || !customerId || invoiceTypeUserPickedRef.current) return;
+    const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId));
+    // ⚠️ يجب أن يستخدم نفس مُتحقّق الحفظ (`isValidSaudiVat`) تمامًا، حتى
+    // لا نرفع المستخدم تلقائيًا إلى "ضريبية" برقم 15-خانة لكنه غير مطابق
+    // للنمط /^3\d{13}3$/ ثم نمنعه من الحفظ — تجربة محبطة.
+    if (cust && isValidSaudiVat(cust.vatNumber)) {
+      setInvoiceType("standard");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId, customers, isInvoice]);
 
   // Source-quotation picker: load every quotation for this tenant; we then
   // filter client-side to the only ones that the backend will actually let
@@ -1060,6 +1087,36 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
+  // ── ZATCA validators (B2B / فاتورة ضريبية) ────────────────────────────
+  // الرقم الضريبي السعودي: 15 رقم، يبدأ وينتهي بـ "3"، الرقمان قبل الأخير
+  // يمثلان رمز نوع المنشأة. هذه القاعدة من زاتكا (TIN format).
+  function isValidSaudiVat(v: string | null | undefined): boolean {
+    const s = String(v ?? "").trim();
+    return /^3\d{13}3$/.test(s);
+  }
+  // العنوان الوطني (Saudi Post / National Address Standard) — لزاتكا في
+  // الفواتير الضريبية B2B تتطلب الحقول التالية بصيغ صارمة:
+  //   • رقم المبنى: 4 أرقام بالضبط          (^\d{4}$)
+  //   • اسم الشارع: نص غير فارغ              (مطلوب من زاتكا — ليس مجرّد مستحب)
+  //   • الحي:        نص غير فارغ
+  //   • المدينة:     نص غير فارغ
+  //   • الرمز البريدي: 5 أرقام بالضبط         (^\d{5}$)
+  // الحقول الناقصة *أو غير المطابقة للصيغة* تُعاد كلها بنفس القائمة حتى
+  // يرى المستخدم بالضبط ما يحتاج إلى تصحيحه قبل الحفظ.
+  function missingNationalAddress(c: any): string[] {
+    const out: string[] = [];
+    const bn = String(c?.buildingNumber ?? "").trim();
+    if (!bn) out.push("رقم المبنى");
+    else if (!/^\d{4}$/.test(bn)) out.push("رقم المبنى (4 أرقام بالضبط)");
+    if (!String(c?.street   ?? "").trim()) out.push("اسم الشارع");
+    if (!String(c?.district ?? "").trim()) out.push("الحي");
+    if (!String(c?.city     ?? "").trim()) out.push("المدينة");
+    const pc = String(c?.postalCode ?? "").trim();
+    if (!pc) out.push("الرمز البريدي");
+    else if (!/^\d{5}$/.test(pc)) out.push("الرمز البريدي (5 أرقام بالضبط)");
+    return out;
+  }
+
   function handleSave() {
     // Required-fields gate (mirrors the server's 400 in /sales-invoices):
     // every sales invoice must carry an explicit customer + branch. We
@@ -1078,6 +1135,34 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           variant: "destructive",
         });
         return;
+      }
+      // ── متطلبات زاتكا للفاتورة الضريبية (Standard / B2B) ────────────────
+      // المبسطة (Simplified / B2C) لا تحتاج إلى أي بيانات إضافية للعميل.
+      if (isInvoice && invoiceType === "standard") {
+        const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId));
+        const reasons: string[] = [];
+        if (!cust) {
+          reasons.push("بيانات العميل غير محمَّلة");
+        } else {
+          if (!isValidSaudiVat(cust.vatNumber)) {
+            reasons.push("رقم ضريبي سعودي صحيح (15 رقم يبدأ وينتهي بـ 3)");
+          }
+          if (!String(cust.crNumber ?? "").trim()) {
+            reasons.push("رقم السجل التجاري");
+          }
+          const addrMissing = missingNationalAddress(cust);
+          if (addrMissing.length) {
+            reasons.push(`العنوان الوطني (${addrMissing.join("، ")})`);
+          }
+        }
+        if (reasons.length) {
+          toast({
+            title: "⛔ الفاتورة الضريبية تتطلّب بيانات زاتكا الكاملة",
+            description: `بيانات العميل الناقصة: ${reasons.join(" — ")}. يمكنك تعديل بيانات العميل من شاشة العملاء، أو تحويل الفاتورة إلى «فاتورة ضريبية مبسّطة» إذا كان البيع للأفراد.`,
+            variant: "destructive",
+          });
+          return;
+        }
       }
     } else if (!customerId) {
       // Quotation mode: still require a customer (a quotation without
@@ -1334,18 +1419,27 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               </Button>
 
               <div className="mt-5 flex flex-wrap justify-between gap-4">
+                {/* Toggle ‹السعر شامل الضريبة› — يخضع الآن لسياسة الحقول
+                    (Field Policy / الحوكمة): إذا أخفاه المسؤول للمستخدم
+                    تختفي البطاقة وتسقط من الصفّ بالكامل، وإذا جعله للقراءة
+                    فقط لا يستطيع المستخدم تبديله. مفتاح القاموس: priceIncludesVat */}
+                {fp.isVisible("priceIncludesVat") ? (
                 <label
                   data-testid="price-includes-vat-toggle"
                   className={cn(
-                    "flex items-start gap-2.5 rounded-xl border-2 p-3 cursor-pointer select-none transition-colors max-w-sm",
+                    "flex items-start gap-2.5 rounded-xl border-2 p-3 select-none transition-colors max-w-sm",
+                    fp.isReadOnly("priceIncludesVat") ? "cursor-not-allowed opacity-70" : "cursor-pointer",
                     priceIncludesVat ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
                   )}
+                  title={fp.isReadOnly("priceIncludesVat") ? "للقراءة فقط حسب سياسة الحقول" : undefined}
                 >
                   <input
                     type="checkbox"
-                    className="mt-0.5 h-4 w-4 accent-primary cursor-pointer"
+                    className="mt-0.5 h-4 w-4 accent-primary cursor-pointer disabled:cursor-not-allowed"
                     checked={priceIncludesVat}
+                    disabled={fp.isReadOnly("priceIncludesVat")}
                     onChange={e => {
+                      if (fp.isReadOnly("priceIncludesVat")) return;
                       setPriceIncludesVat(e.target.checked);
                       stickyPriceIncl.persist(e.target.checked);
                     }}
@@ -1359,6 +1453,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </p>
                   </div>
                 </label>
+                ) : <span /> /* keeps justify-between layout when hidden */}
 
                 <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">
@@ -1876,6 +1971,130 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <span>{t("salesDocForm.postedReadOnly", "هذه الفاتورة مُرحَّلة — للعرض فقط. لتعديلها قم بفك الترحيل أولاً من شاشة قائمة الفواتير.")}</span>
         </div>
       )}
+
+      {/* ── نوع الفاتورة (ZATCA) ──────────────────────────────────────────
+          مفتاح اختيار جذاب بين «فاتورة ضريبية» (B2B / Standard) و«فاتورة
+          ضريبية مبسطة» (B2C / Simplified). يظهر فقط في وضع الفاتورة
+          (لا للعروض/الطلبات). يحدِّد قواعد التحقق قبل الحفظ:
+          - الضريبية: يلزم رقم ضريبي صحيح + سجل تجاري + عنوان وطني كامل
+          - المبسطة: يكفي اختيار اسم العميل
+          القاعدة الذهبية من زاتكا: تستخدم الفاتورة الضريبية عند البيع
+          لشركات (B2B) ⩾ 1000 ريال، والمبسّطة لمبيعات التجزئة (B2C). */}
+      {isInvoice && (() => {
+        const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId)) ?? null;
+        const vatOk = cust ? isValidSaudiVat(cust.vatNumber) : false;
+        const crOk = cust ? !!String(cust.crNumber ?? "").trim() : false;
+        const addrMissing = cust ? missingNationalAddress(cust) : ["العميل غير مختار"];
+        const standardReady = vatOk && crOk && addrMissing.length === 0;
+        const isStd = invoiceType === "standard";
+        const isSimp = invoiceType === "simplified";
+        return (
+          <div className="rounded-2xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 via-background to-background p-3 shadow-sm">
+            <div className="flex items-center gap-2 mb-2.5 px-1">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
+                <Receipt className="h-4 w-4 text-primary" />
+              </div>
+              <div className="flex-1">
+                <p className="text-xs font-bold text-foreground">نوع الفاتورة</p>
+                <p className="text-[10px] text-muted-foreground">اختر نوع الفاتورة وفق متطلّبات هيئة الزكاة والضريبة (ZATCA)</p>
+              </div>
+              {standardReady && isStd && (
+                <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] gap-1">
+                  <ShieldCheck className="h-3 w-3" />جاهز للإرسال إلى زاتكا
+                </Badge>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {/* ── فاتورة ضريبية (Standard / B2B) ── */}
+              <button
+                type="button"
+                data-testid="invoice-type-standard"
+                onClick={() => { setInvoiceType("standard"); invoiceTypeUserPickedRef.current = true; }}
+                className={cn(
+                  "group relative text-right rounded-xl border-2 p-3 transition-all duration-150",
+                  isStd
+                    ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/20"
+                    : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
+                )}
+              >
+                <div className="flex items-start gap-2">
+                  <div className={cn(
+                    "mt-0.5 h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
+                    isStd ? "border-primary bg-primary" : "border-muted-foreground/30"
+                  )}>
+                    {isStd && <div className="h-full w-full rounded-full bg-background scale-[0.4]" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-sm font-bold text-foreground">فاتورة ضريبية</span>
+                      <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-primary/30 text-primary">B2B · Standard</Badge>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
+                      للبيع لشركات/منشآت مسجَّلة بضريبة القيمة المضافة. تتطلّب اعتماد زاتكا (Clearance).
+                    </p>
+                    {isStd && cust && (
+                      <div className="mt-2 space-y-0.5 text-[10px]">
+                        <div className={cn("flex items-center gap-1", vatOk ? "text-emerald-700" : "text-rose-700")}>
+                          <span>{vatOk ? "✓" : "✗"}</span><span>رقم ضريبي سعودي صحيح (15 رقم)</span>
+                        </div>
+                        <div className={cn("flex items-center gap-1", crOk ? "text-emerald-700" : "text-rose-700")}>
+                          <span>{crOk ? "✓" : "✗"}</span><span>رقم السجل التجاري</span>
+                        </div>
+                        <div className={cn("flex items-center gap-1", addrMissing.length === 0 ? "text-emerald-700" : "text-rose-700")}>
+                          <span>{addrMissing.length === 0 ? "✓" : "✗"}</span>
+                          <span>العنوان الوطني{addrMissing.length > 0 ? ` (ينقص: ${addrMissing.join("، ")})` : ""}</span>
+                        </div>
+                      </div>
+                    )}
+                    {isStd && !cust && (
+                      <p className="mt-2 text-[10px] text-amber-700 flex items-center gap-1">
+                        <span>⚠</span><span>اختر العميل أولاً للتحقق من اكتمال البيانات</span>
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </button>
+
+              {/* ── فاتورة ضريبية مبسّطة (Simplified / B2C) ── */}
+              <button
+                type="button"
+                data-testid="invoice-type-simplified"
+                onClick={() => { setInvoiceType("simplified"); invoiceTypeUserPickedRef.current = true; }}
+                className={cn(
+                  "group relative text-right rounded-xl border-2 p-3 transition-all duration-150",
+                  isSimp
+                    ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/20"
+                    : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
+                )}
+              >
+                <div className="flex items-start gap-2">
+                  <div className={cn(
+                    "mt-0.5 h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
+                    isSimp ? "border-primary bg-primary" : "border-muted-foreground/30"
+                  )}>
+                    {isSimp && <div className="h-full w-full rounded-full bg-background scale-[0.4]" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-sm font-bold text-foreground">فاتورة ضريبية مبسّطة</span>
+                      <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-sky-300 text-sky-700">B2C · Simplified</Badge>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
+                      لمبيعات التجزئة والأفراد. يكفي اسم العميل فقط، ويتم الإبلاغ عنها لزاتكا (Reporting).
+                    </p>
+                    {isSimp && (
+                      <p className="mt-2 text-[10px] text-emerald-700 flex items-center gap-1">
+                        <span>✓</span><span>{customerId ? "تم اختيار العميل — جاهزة للحفظ" : "اختر اسم العميل لإكمال الحفظ"}</span>
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       <fieldset disabled={isInvoice && !isNew && (existing as any)?.status === "posted"} className="contents">
       <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
         <Card className="border-2">

@@ -98,6 +98,7 @@ export const FIELD_CATALOGUE: Record<PolicyScope, FieldDef[]> = {
     { key: "notes",           labelAr: "ملاحظات",              labelEn: "Notes" },
     { key: "attachments",     labelAr: "المرفقات",             labelEn: "Attachments" },
     { key: "docNumber",       labelAr: "رقم الفاتورة",         labelEn: "Invoice number" },
+    { key: "priceIncludesVat", labelAr: "السعر شامل الضريبة",  labelEn: "Price includes VAT" },
   ],
   purchase: [
     { key: "date",                  labelAr: "تاريخ الفاتورة",       labelEn: "Invoice date", isDate: true },
