@@ -49,7 +49,9 @@ async function buildAll() {
       "pg-native",
       "oracledb",
       "mongodb-client-encryption",
-      "nodemailer",
+      // "nodemailer" — pure-JS, bundles cleanly. Keeping it external caused
+      // ERR_MODULE_NOT_FOUND in production because the runtime image only
+      // ships the esbuild bundle, not node_modules.
       "pdf-parse",
       "mammoth",
       "handlebars",
