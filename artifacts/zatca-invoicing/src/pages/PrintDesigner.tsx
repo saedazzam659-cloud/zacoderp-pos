@@ -12,7 +12,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   Plus, Trash2, Save, Copy, FileText, Image as ImageIcon, Type, Square,
   Minus, Table as TableIcon, Tag, Star, Download, Printer, ZoomIn, ZoomOut,
-  LayoutTemplate, X, CheckCircle2,
+  LayoutTemplate, X, CheckCircle2, Maximize2,
 } from "lucide-react";
 import { PRESETS_BY_DOC, type PresetDescriptor } from "./printDesigner/presets";
 
@@ -292,7 +292,24 @@ export default function PrintDesigner() {
   const [heightMm, setHeightMm] = useState(297);
   const [templateName, setTemplateName] = useState("قالب جديد");
   const [selectedElId, setSelectedElId] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(0.85);
+  const [zoom, setZoom] = useState(0.6);
+  const canvasViewportRef = useRef<HTMLDivElement>(null);
+
+  // Fit the page to the visible canvas viewport (subtracts padding).
+  const fitToPage = () => {
+    const vp = canvasViewportRef.current;
+    if (!vp) return;
+    const padX = 48, padY = 48; // p-6 = 24px each side
+    const availW = vp.clientWidth  - padX;
+    const availH = vp.clientHeight - padY;
+    const pageW = widthMm  * MM;
+    const pageH = heightMm * MM;
+    const z = Math.min(availW / pageW, availH / pageH);
+    setZoom(Math.max(0.2, Math.min(2, z)));
+  };
+
+  // Auto-fit on first mount and when paper size changes.
+  useEffect(() => { fitToPage(); }, [widthMm, heightMm]); // eslint-disable-line react-hooks/exhaustive-deps
   const [dirty, setDirty] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
   // Doc types for which we've already auto-opened the gallery this session,
@@ -585,9 +602,14 @@ export default function PrintDesigner() {
         </button>
         <div className="mx-2 h-6 w-px bg-slate-200" />
         <div className="flex items-center gap-1 text-sm">
-          <button onClick={() => setZoom(z => Math.max(0.4, z - 0.1))} className="p-1 rounded hover:bg-slate-100"><ZoomOut className="w-4 h-4"/></button>
+          <button onClick={() => setZoom(z => Math.max(0.2, z - 0.1))} className="p-1 rounded hover:bg-slate-100" title="تصغير"><ZoomOut className="w-4 h-4"/></button>
           <span className="w-12 text-center">{Math.round(zoom * 100)}%</span>
-          <button onClick={() => setZoom(z => Math.min(2, z + 0.1))} className="p-1 rounded hover:bg-slate-100"><ZoomIn className="w-4 h-4"/></button>
+          <button onClick={() => setZoom(z => Math.min(2, z + 0.1))} className="p-1 rounded hover:bg-slate-100" title="تكبير"><ZoomIn className="w-4 h-4"/></button>
+          <button onClick={fitToPage}
+            className="ml-1 flex items-center gap-1 px-2 py-1 text-xs rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700"
+            title="ملاءمة الصفحة كاملة في الشاشة">
+            <Maximize2 className="w-3.5 h-3.5"/> ملاءمة
+          </button>
         </div>
       </div>
 
@@ -647,7 +669,7 @@ export default function PrintDesigner() {
         </div>
 
         {/* Canvas */}
-        <div className="flex-1 overflow-auto p-6 flex items-start justify-center">
+        <div ref={canvasViewportRef} className="flex-1 overflow-auto p-6 flex items-start justify-center">
           <div
             ref={canvasRef}
             onMouseDown={e => { if (e.target === canvasRef.current) setSelectedElId(null); }}
