@@ -67,10 +67,19 @@ async function buildAll() {
       "@aws-sdk/*",
       "@azure/*",
       "@opentelemetry/*",
-      "@google-cloud/*",
+      "@google-cloud/pubsub",
+      "@google-cloud/bigquery",
+      "@google-cloud/firestore",
+      "@google-cloud/secret-manager",
       "@google/*",
       "googleapis",
       "firebase-admin",
+      // Note: @google-cloud/storage is imported at module top-level in
+      // src/lib/objectStorage.ts and objectAcl.ts. We intentionally let
+      // esbuild bundle it (do NOT add "@google-cloud/storage" to
+      // "@google-cloud/*"-style globs) — the runtime image does not
+      // ship node_modules, so externalizing it causes ERR_MODULE_NOT_FOUND
+      // on boot.
       "@parcel/watcher",
       "@sentry/profiling-node",
       "@tree-sitter/*",
