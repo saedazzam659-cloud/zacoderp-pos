@@ -12,7 +12,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   Plus, Trash2, Save, Copy, FileText, Image as ImageIcon, Type, Square,
   Minus, Table as TableIcon, Tag, Star, Download, Printer, ZoomIn, ZoomOut,
+  LayoutTemplate, X, CheckCircle2,
 } from "lucide-react";
+import { PRESETS_BY_DOC, type PresetDescriptor } from "./printDesigner/presets";
 
 // ───────────────────────────── Types ─────────────────────────────
 
@@ -292,6 +294,10 @@ export default function PrintDesigner() {
   const [selectedElId, setSelectedElId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(0.85);
   const [dirty, setDirty] = useState(false);
+  const [showPresets, setShowPresets] = useState(false);
+  // Doc types for which we've already auto-opened the gallery this session,
+  // so the user isn't pestered every time they switch back.
+  const autoOpenedRef = useRef<Set<string>>(new Set());
   const canvasRef = useRef<HTMLDivElement>(null);
 
   // Fetch templates for the current doc type ------------------------------
@@ -308,6 +314,15 @@ export default function PrintDesigner() {
   useEffect(() => {
     if (templates.length === 0) {
       setSelectedTemplateId(null);
+      // Auto-apply the first preset so the user sees a ready-to-edit
+      // design immediately instead of a blank canvas. The "فارغ جديد"
+      // button still gives them a blank starting point on demand.
+      const presets = PRESETS_BY_DOC[documentType] ?? [];
+      if (presets.length > 0 && !autoOpenedRef.current.has(documentType)) {
+        autoOpenedRef.current.add(documentType);
+        applyPreset(presets[0]);
+        return;
+      }
       setLayout(emptyLayout());
       setTemplateName("قالب جديد");
       setPaperSize("A4"); setWidthMm(210); setHeightMm(297);
@@ -317,6 +332,14 @@ export default function PrintDesigner() {
     const preferred = templates.find(t => t.isDefault) ?? templates[0];
     setSelectedTemplateId(preferred.id);
   }, [templates.length, documentType]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Esc closes the preset gallery modal.
+  useEffect(() => {
+    if (!showPresets) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setShowPresets(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showPresets]);
 
   // Load selected template into editor state ------------------------------
   useEffect(() => {
@@ -453,6 +476,30 @@ export default function PrintDesigner() {
     setDirty(true);
   }
 
+  // Apply a starter preset: deep-clone the layout (presets may reuse element
+  // refs across calls), give every element a fresh id so subsequent edits
+  // don't collide, and mark the editor dirty so the user is prompted to save.
+  function applyPreset(p: PresetDescriptor) {
+    const raw = p.build();
+    const cloned = {
+      ...raw,
+      elements: raw.elements.map(el => ({
+        ...el,
+        id: `el_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      })),
+    };
+    setSelectedTemplateId(null);
+    setLayout(cloned);
+    setTemplateName(`${p.name} — ${DOC_TYPES.find(d => d.value === documentType)?.label ?? ""}`);
+    setPaperSize(p.paperSize);
+    setWidthMm(p.widthMm);
+    setHeightMm(p.heightMm);
+    setSelectedElId(null);
+    setDirty(true);
+    setShowPresets(false);
+    toast({ title: "تم تحميل القالب الجاهز", description: "يمكنك الآن التعديل ثم الحفظ" });
+  }
+
   function exportJson() {
     const blob = new Blob([JSON.stringify({ documentType, name: templateName, paperSize, widthMm, heightMm, layoutJson: layout }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -504,8 +551,14 @@ export default function PrintDesigner() {
           className="border rounded px-2 py-1 text-sm bg-white min-w-[180px]"
           placeholder="اسم القالب"
         />
-        <button onClick={createNew} className="flex items-center gap-1 px-3 py-1 text-sm rounded bg-slate-100 hover:bg-slate-200">
-          <Plus className="w-4 h-4" /> جديد
+        <button onClick={() => setShowPresets(true)}
+          className="flex items-center gap-1 px-3 py-1 text-sm rounded bg-indigo-600 text-white hover:bg-indigo-700"
+          title="ابدأ من قالب جاهز قابل للتعديل">
+          <LayoutTemplate className="w-4 h-4" /> قوالب جاهزة
+        </button>
+        <button onClick={createNew} className="flex items-center gap-1 px-3 py-1 text-sm rounded bg-slate-100 hover:bg-slate-200"
+          title="صفحة بيضاء فارغة">
+          <Plus className="w-4 h-4" /> فارغ جديد
         </button>
         <button onClick={save} disabled={updateMut.isPending || createMut.isPending}
           className="flex items-center gap-1 px-3 py-1 text-sm rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
@@ -641,6 +694,81 @@ export default function PrintDesigner() {
           )}
         </div>
       </div>
+
+      {/* ───────────── Preset gallery modal ───────────── */}
+      {showPresets && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+          onMouseDown={e => { if (e.target === e.currentTarget) setShowPresets(false); }}
+          role="dialog" aria-modal="true" aria-labelledby="preset-gallery-title"
+        >
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b">
+              <div>
+                <h2 id="preset-gallery-title" className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                  <LayoutTemplate className="w-5 h-5 text-indigo-600" />
+                  اختر قالباً جاهزاً —{" "}
+                  <span className="text-indigo-600">
+                    {DOC_TYPES.find(d => d.value === documentType)?.label}
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  حمّل تصميماً جاهزاً وعدّل عليه، أو اختر "فارغ جديد" لتبدأ من صفحة بيضاء.
+                </p>
+              </div>
+              <button onClick={() => setShowPresets(false)}
+                aria-label="إغلاق"
+                className="p-1.5 rounded hover:bg-slate-100 text-slate-500">
+                <X className="w-5 h-5"/>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5">
+              {(PRESETS_BY_DOC[documentType]?.length ?? 0) === 0 ? (
+                <div className="text-center py-12 text-slate-500 text-sm">
+                  لا توجد قوالب جاهزة لهذا النوع من المستندات بعد.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {(PRESETS_BY_DOC[documentType] ?? []).map(p => (
+                    <button key={p.key}
+                      onClick={() => applyPreset(p)}
+                      className="group text-start border border-slate-200 rounded-lg overflow-hidden hover:border-indigo-400 hover:shadow-md transition bg-white">
+                      <div className={`h-28 bg-gradient-to-br ${p.accent} relative flex items-center justify-center`}>
+                        <LayoutTemplate className="w-12 h-12 text-white/80"/>
+                        <span className="absolute top-2 start-2 text-[10px] bg-white/90 text-slate-700 px-2 py-0.5 rounded-full font-medium">
+                          {p.paperSize}
+                        </span>
+                      </div>
+                      <div className="p-3">
+                        <div className="font-bold text-sm text-slate-800 mb-1 flex items-center gap-1">
+                          {p.name}
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500 opacity-0 group-hover:opacity-100 transition"/>
+                        </div>
+                        <div className="text-xs text-slate-500 leading-relaxed line-clamp-2">
+                          {p.description}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+
+                  {/* Blank option */}
+                  <button onClick={() => { setShowPresets(false); createNew(); }}
+                    className="group text-start border-2 border-dashed border-slate-300 rounded-lg overflow-hidden hover:border-slate-500 hover:bg-slate-50 transition">
+                    <div className="h-28 bg-slate-50 flex items-center justify-center">
+                      <Plus className="w-12 h-12 text-slate-400 group-hover:text-slate-600"/>
+                    </div>
+                    <div className="p-3">
+                      <div className="font-bold text-sm text-slate-700 mb-1">صفحة فارغة</div>
+                      <div className="text-xs text-slate-500">ابدأ التصميم من الصفر بدون أي عناصر مسبقة</div>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
