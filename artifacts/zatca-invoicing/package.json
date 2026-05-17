@@ -92,6 +92,7 @@
     "react-helmet-async": "^3.0.0",
     "react-i18next": "^17.0.4",
     "react-markdown": "^10.1.0",
+    "react-rnd": "^10.5.3",
     "remark-gfm": "^4.0.1",
     "rrweb": "2.0.0-alpha.4",
     "rrweb-player": "1.0.0-alpha.4",

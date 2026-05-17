@@ -399,6 +399,24 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "store_order_items_order_idx",
       sql:   `CREATE INDEX IF NOT EXISTS store_order_items_order_idx ON store_order_items (order_id)` },
 
+    { label: "create custom_print_templates table",
+      sql:   `CREATE TABLE IF NOT EXISTS custom_print_templates (
+        id            SERIAL PRIMARY KEY,
+        company_id    INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        document_type TEXT NOT NULL,
+        name          TEXT NOT NULL,
+        is_default    BOOLEAN NOT NULL DEFAULT FALSE,
+        paper_size    TEXT NOT NULL DEFAULT 'A4',
+        width_mm      INTEGER NOT NULL DEFAULT 210,
+        height_mm     INTEGER NOT NULL DEFAULT 297,
+        layout_json   JSONB NOT NULL DEFAULT '{"elements":[]}'::jsonb,
+        created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at    TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "cpt_company_doc_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS cpt_company_doc_idx ON custom_print_templates (company_id, document_type)` },
+
     { label: "create store_payment_settings table",
       sql:   `CREATE TABLE IF NOT EXISTS store_payment_settings (
         id           SERIAL PRIMARY KEY,

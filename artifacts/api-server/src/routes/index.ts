@@ -77,6 +77,7 @@ import securityReportsRouter from "./security-reports";
 import inboxRouter from "./inbox";
 import aiReportsRouter from "./ai-reports";
 import dataDoctorRouter from "./data-doctor";
+import printDesignerRouter from "./print-designer";
 import contractingRouter from "./contracting";
 import contractingAiRouter from "./contracting-ai";
 import maintenanceRouter from "./maintenance";
@@ -208,5 +209,6 @@ router.use("/chat-ai", chatAiRouter);
 router.use("/support-ai", supportAiRouter);
 router.use("/accounting-ai", accountingAiRouter);
 router.use("/cobrowse", cobrowseRouter);
+router.use("/print-designer", printDesignerRouter);
 
 export default router;

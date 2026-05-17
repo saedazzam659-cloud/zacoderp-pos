@@ -99,6 +99,7 @@ import SecurityAI from "@/pages/security/SecurityAI";
 import SecurityReports from "@/pages/security/SecurityReports";
 import PosHub from "@/pages/pos/PosHub";
 import ControlPanelHub from "@/pages/ControlPanelHub";
+import PrintDesigner from "@/pages/PrintDesigner";
 import Onboarding from "@/pages/Onboarding";
 // HR
 import Employees from "@/pages/hr/Employees";
@@ -596,6 +597,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/online-store" module="online_store" component={OnlineStore} />}
             {/* Control-Panel hub: any tenant user can land here; tile-level perm gating filters which tiles render. */}
             {!isSuperAdmin && <Route path="/control-panel" component={ControlPanelHub} />}
+            {!isSuperAdmin && <PermRoute path="/control-panel/print-designer" module="general_settings" component={PrintDesigner} />}
             {!isSuperAdmin && <Route path="/onboarding" component={Onboarding} />}
             {!isSuperAdmin && <Route path="/getting-started" component={Onboarding} />}
 
