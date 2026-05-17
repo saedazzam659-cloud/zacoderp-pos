@@ -4,9 +4,6 @@ modules = ["nodejs-24", "javascript", "python-3.11", "postgresql-16"]
 router = "application"
 deploymentTarget = "autoscale"
 
-[deployment.postBuild]
-args = ["pnpm", "store", "prune"]
-env = { "CI" = "true" }
 
 [workflows]
 runButton = "Project"
