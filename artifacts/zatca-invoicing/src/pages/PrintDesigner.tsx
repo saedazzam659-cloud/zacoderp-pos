@@ -292,20 +292,27 @@ export default function PrintDesigner() {
   const [heightMm, setHeightMm] = useState(297);
   const [templateName, setTemplateName] = useState("قالب جديد");
   const [selectedElId, setSelectedElId] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(0.6);
+  const [zoom, setZoom] = useState(0.85);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
 
-  // Fit the page to the visible canvas viewport (subtracts padding).
+  // Stretch the page to fill the horizontal viewport (much more attractive
+  // for portrait A4 — the page fills the workspace edge-to-edge and the
+  // user scrolls vertically). For very tall pages we still cap the zoom so
+  // a 80mm thermal page doesn't balloon to absurd sizes.
   const fitToPage = () => {
     const vp = canvasViewportRef.current;
     if (!vp) return;
-    const padX = 48, padY = 48; // p-6 = 24px each side
-    const availW = vp.clientWidth  - padX;
-    const availH = vp.clientHeight - padY;
+    const padX = 32; // ~16px breathing room on each side
+    const availW = vp.clientWidth - padX;
+    const availH = vp.clientHeight - 32;
     const pageW = widthMm  * MM;
     const pageH = heightMm * MM;
-    const z = Math.min(availW / pageW, availH / pageH);
-    setZoom(Math.max(0.2, Math.min(2, z)));
+    // Width-fit by default. If the page is much shorter than wide (landscape
+    // or thermal), fall back to fitting both axes so it isn't blown up.
+    const zByWidth  = availW / pageW;
+    const zByHeight = availH / pageH;
+    const z = pageH > pageW ? zByWidth : Math.min(zByWidth, zByHeight);
+    setZoom(Math.max(0.3, Math.min(1.6, z)));
   };
 
   // Auto-fit on first mount and when paper size changes.
@@ -616,7 +623,7 @@ export default function PrintDesigner() {
       {/* Body */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left palette */}
-        <div className="w-64 bg-white border-l overflow-y-auto p-3 text-sm space-y-4">
+        <div className="w-56 bg-white border-l overflow-y-auto p-3 text-sm space-y-4">
           <div>
             <div className="font-semibold mb-2 text-slate-700">العناصر</div>
             <div className="grid grid-cols-2 gap-2">
@@ -669,7 +676,8 @@ export default function PrintDesigner() {
         </div>
 
         {/* Canvas */}
-        <div ref={canvasViewportRef} className="flex-1 overflow-auto p-6 flex items-start justify-center">
+        <div ref={canvasViewportRef}
+          className="flex-1 overflow-auto p-4 flex items-start justify-center bg-gradient-to-b from-slate-100 to-slate-200">
           <div
             ref={canvasRef}
             onMouseDown={e => { if (e.target === canvasRef.current) setSelectedElId(null); }}
@@ -700,7 +708,7 @@ export default function PrintDesigner() {
         </div>
 
         {/* Right inspector */}
-        <div className="w-72 bg-white border-r overflow-y-auto p-3 text-sm">
+        <div className="w-60 bg-white border-r overflow-y-auto p-3 text-sm">
           {!selectedEl ? (
             <div className="text-slate-500 text-center mt-10 text-xs">
               اختر عنصراً لتعديل خصائصه<br/>أو اسحب عنصراً من اللوحة اليمنى
