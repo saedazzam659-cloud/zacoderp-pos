@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -35,6 +36,8 @@ import {
   Loader2, Save, Sparkles, Eye, EyeOff, Lock, Asterisk,
   ShieldCheck, ArrowRight, Receipt, ShoppingCart, Store, Calendar,
   Plus, Trash2, Users, Star, StarOff, Pencil,
+  Search, RefreshCw, Printer, FileText, FileSpreadsheet, Download,
+  ArrowUpDown, Filter, X, Palette,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -95,6 +98,11 @@ function authHeaders(): Record<string, string> {
   if (acting) h["x-acting-company-id"] = acting;
   return h;
 }
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[c] as string);
+}
 async function jget<T>(path: string): Promise<T> {
   const r = await fetch(`${API}/api/invoice-field-policies${path}`, { headers: authHeaders() });
   if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error ?? `HTTP ${r.status}`);
@@ -128,6 +136,16 @@ export default function InvoiceFieldPoliciesPage() {
   const [editing, setEditing] = useState<Profile | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Profile | null>(null);
+
+  // ── Toolbar state (search / sort / status filter) ──────────────────────
+  // Mirrors the polished operational toolbars used across the sales/inventory
+  // grids so the SuperAdmin gets the same affordances here: instant search,
+  // sort, status pills with live counts, and bulk export/print actions.
+  type SortKey = "updated" | "name" | "users" | "default";
+  type StatusFilter = "all" | "default" | "in_use" | "unused";
+  const [query, setQuery]           = useState("");
+  const [sortKey, setSortKey]       = useState<SortKey>("updated");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   const { data: catData } = useQuery<{ catalogue: Catalogue }>({
     queryKey: ["ifp", "catalogue"],
@@ -173,6 +191,162 @@ export default function InvoiceFieldPoliciesPage() {
     onError: (e: any) => toast({ title: "تعذر الحفظ", description: e?.message ?? "", variant: "destructive" }),
   });
 
+  // ── Status counts (live, for filter pills) ─────────────────────────────
+  const counts = useMemo(() => {
+    const c = { all: profiles.length, default: 0, in_use: 0, unused: 0 };
+    for (const p of profiles) {
+      if (p.isDefault) c.default++;
+      if (p.assignedCount > 0) c.in_use++;
+      else c.unused++;
+    }
+    return c;
+  }, [profiles]);
+
+  // ── Derived list (search → status filter → sort) ───────────────────────
+  const visibleProfiles = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let list = profiles;
+    if (q) list = list.filter((p) => p.name.toLowerCase().includes(q));
+    if (statusFilter === "default") list = list.filter((p) => p.isDefault);
+    else if (statusFilter === "in_use") list = list.filter((p) => p.assignedCount > 0);
+    else if (statusFilter === "unused") list = list.filter((p) => p.assignedCount === 0);
+    list = [...list].sort((a, b) => {
+      switch (sortKey) {
+        case "name":    return a.name.localeCompare(b.name, "ar");
+        case "users":   return b.assignedCount - a.assignedCount;
+        case "default": return Number(b.isDefault) - Number(a.isDefault);
+        case "updated":
+        default:        return (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");
+      }
+    });
+    return list;
+  }, [profiles, query, statusFilter, sortKey]);
+
+  // Same search box also filters the assignments tab for symmetry.
+  const visibleUsers = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter((u) =>
+      (u.nameAr ?? "").toLowerCase().includes(q) ||
+      (u.nameEn ?? "").toLowerCase().includes(q) ||
+      u.username.toLowerCase().includes(q) ||
+      (u.email ?? "").toLowerCase().includes(q),
+    );
+  }, [users, query]);
+
+  // ── Export helpers ─────────────────────────────────────────────────────
+  // Plain client-side CSV/Excel/print. Excel reads CSV with a UTF-8 BOM
+  // happily, so we re-use the same generator for both. PDF is produced via
+  // the browser's print dialog (window.print on the dedicated print sheet)
+  // — no extra deps, perfect Arabic rendering, RTL preserved.
+  const downloadBlob = (filename: string, mime: string, body: string) => {
+    const bom = "\uFEFF"; // Excel needs this to detect UTF-8 / show Arabic
+    const blob = new Blob([bom + body], { type: mime });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+  const csvEscape = (v: any) => {
+    const s = v == null ? "" : String(v);
+    return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const buildProfilesCsv = () => {
+    const header = ["#", "الاسم", "افتراضي", "عدد المستخدمين", "اللون", "آخر تحديث"];
+    const rows   = visibleProfiles.map((p) => [
+      p.id, p.name, p.isDefault ? "نعم" : "لا",
+      p.assignedCount, p.color ?? pickColor(p.id),
+      new Date(p.updatedAt).toLocaleString("ar-SA"),
+    ]);
+    return [header, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n");
+  };
+  const buildAssignmentsCsv = () => {
+    const header = ["#", "المستخدم", "البريد", "الدور", "القالب"];
+    const rows   = visibleUsers.map((u) => {
+      const prof = profiles.find((p) => p.id === u.profileId);
+      return [
+        u.id, userDisplayName(u), u.email ?? "", u.role,
+        prof?.name ?? (u.role === "admin" || u.role === "superadmin"
+          ? "(يتجاوز الحوكمة)" : "(الافتراضي)"),
+      ];
+    });
+    return [header, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n");
+  };
+  const exportCsv = (kind: "csv" | "excel") => {
+    const body = tab === "profiles" ? buildProfilesCsv() : buildAssignmentsCsv();
+    const ext  = kind === "excel" ? "xls" : "csv";
+    const mime = kind === "excel"
+      ? "application/vnd.ms-excel;charset=utf-8"
+      : "text/csv;charset=utf-8";
+    downloadBlob(`governance-${tab}-${new Date().toISOString().slice(0,10)}.${ext}`, mime, body);
+    toast({ title: kind === "excel" ? "تم تصدير Excel" : "تم تصدير CSV" });
+  };
+  const printOrPdf = () => {
+    // Builds an Arabic-friendly printable sheet in a hidden iframe and
+    // launches the OS print dialog (the user can pick "Save as PDF").
+    const rows = tab === "profiles"
+      ? visibleProfiles.map((p) => `
+          <tr>
+            <td>${p.id}</td>
+            <td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${p.color ?? pickColor(p.id)};margin-inline-end:6px;"></span>${escapeHtml(p.name)}</td>
+            <td>${p.isDefault ? "نعم" : "لا"}</td>
+            <td>${p.assignedCount}</td>
+            <td>${new Date(p.updatedAt).toLocaleString("ar-SA")}</td>
+          </tr>`).join("")
+      : visibleUsers.map((u) => {
+          const prof = profiles.find((p) => p.id === u.profileId);
+          return `
+          <tr>
+            <td>${u.id}</td>
+            <td>${escapeHtml(userDisplayName(u))}</td>
+            <td>${escapeHtml(u.email ?? "")}</td>
+            <td>${escapeHtml(u.role)}</td>
+            <td>${escapeHtml(prof?.name ?? (u.role === "admin" || u.role === "superadmin" ? "(يتجاوز الحوكمة)" : "(الافتراضي)"))}</td>
+          </tr>`;
+        }).join("");
+    const headers = tab === "profiles"
+      ? ["#", "الاسم", "افتراضي", "عدد المستخدمين", "آخر تحديث"]
+      : ["#", "المستخدم", "البريد", "الدور", "القالب"];
+    const html = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8">
+      <title>حوكمة حقول الفواتير</title>
+      <style>
+        @page { size: A4; margin: 14mm; }
+        body { font-family: "Segoe UI","Tahoma","Arial",sans-serif; color:#0f172a; }
+        h1 { font-size:20px;margin:0 0 4px; }
+        .sub { color:#64748b;font-size:12px;margin-bottom:14px; }
+        table { width:100%;border-collapse:collapse;font-size:12px; }
+        th,td { border:1px solid #e2e8f0;padding:6px 8px;text-align:right; }
+        th { background:#f1f5f9;font-weight:600; }
+        tr:nth-child(even) td { background:#fafafa; }
+      </style></head><body>
+      <h1>${tab === "profiles" ? "قوالب الحوكمة" : "تعيين القوالب للمستخدمين"}</h1>
+      <div class="sub">طُبع في ${new Date().toLocaleString("ar-SA")}</div>
+      <table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
+        <tbody>${rows || `<tr><td colspan="${headers.length}" style="text-align:center;color:#94a3b8;padding:18px;">لا توجد سجلات</td></tr>`}</tbody>
+      </table>
+      </body></html>`;
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed"; iframe.style.right = "-9999px";
+    iframe.style.bottom = "0"; iframe.style.width = "0"; iframe.style.height = "0";
+    document.body.appendChild(iframe);
+    const doc = iframe.contentDocument!;
+    doc.open(); doc.write(html); doc.close();
+    iframe.onload = () => {
+      try {
+        iframe.contentWindow!.focus();
+        iframe.contentWindow!.print();
+      } finally {
+        setTimeout(() => document.body.removeChild(iframe), 1500);
+      }
+    };
+  };
+
+  const refreshAll = () => {
+    qc.invalidateQueries({ queryKey: ["ifp"] });
+    toast({ title: "تم التحديث" });
+  };
+
   return (
     <div className="space-y-6 p-6 bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 min-h-screen">
       {/* ── Header ── */}
@@ -193,29 +367,156 @@ export default function InvoiceFieldPoliciesPage() {
         </Button>
       </div>
 
+      {/* ── Polished Toolbar ─────────────────────────────────────────────
+          Mirrors the operational sales/inventory audit grids: search,
+          sort, refresh, AI suggest, exports, print/PDF, and a primary
+          "قالب جديد" CTA — all in one glassy card. */}
+      <Card className="border-slate-200/70 shadow-sm overflow-hidden">
+        <div className="h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500" />
+        <CardContent className="p-3 space-y-3">
+          {/* Row 1 — action buttons */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Primary CTA */}
+            <Button
+              onClick={() => setCreating(true)}
+              className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+            >
+              <Plus className="w-4 h-4" /> قالب جديد
+            </Button>
+
+            {/* AI gradient button */}
+            <Button
+              onClick={() => setCreating(true)}
+              className="gap-2 bg-gradient-to-l from-purple-600 to-fuchsia-600 hover:from-purple-700 hover:to-fuchsia-700 text-white shadow-sm"
+              title="ابدأ قالب جديد بمقترح ذكاء اصطناعي"
+            >
+              <Sparkles className="w-4 h-4" /> تدقيق بالذكاء الاصطناعي
+            </Button>
+
+            <Separator orientation="vertical" className="hidden sm:block h-8 mx-1" />
+
+            {/* Export cluster */}
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={printOrPdf}>
+              <Printer className="w-4 h-4 text-slate-600" /> طباعة
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={printOrPdf}>
+              <FileText className="w-4 h-4 text-rose-600" /> تصدير PDF
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => exportCsv("excel")}>
+              <FileSpreadsheet className="w-4 h-4 text-emerald-600" /> تصدير Excel
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => exportCsv("csv")}>
+              <Download className="w-4 h-4 text-sky-600" /> تصدير CSV
+            </Button>
+
+            <Separator orientation="vertical" className="hidden sm:block h-8 mx-1" />
+
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={refreshAll}>
+              <RefreshCw className="w-4 h-4 text-indigo-600" /> تحديث
+            </Button>
+
+            {/* Sort */}
+            <Select value={sortKey} onValueChange={(v) => setSortKey(v as any)}>
+              <SelectTrigger className="h-9 w-[170px]">
+                <span className="flex items-center gap-1.5 text-sm">
+                  <ArrowUpDown className="w-3.5 h-3.5 text-amber-600" />
+                  <SelectValue />
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="updated">ترتيب: الأحدث</SelectItem>
+                <SelectItem value="name">ترتيب: الاسم</SelectItem>
+                <SelectItem value="users">ترتيب: الأكثر استخداماً</SelectItem>
+                <SelectItem value="default">ترتيب: الافتراضي أولاً</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Row 2 — search + status pills */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Status pills */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <FilterPill active={statusFilter === "all"}      onClick={() => setStatusFilter("all")}
+                tone="slate"   label="الكل"        count={counts.all}     />
+              <FilterPill active={statusFilter === "default"}  onClick={() => setStatusFilter("default")}
+                tone="amber"   label="افتراضي"     count={counts.default} />
+              <FilterPill active={statusFilter === "in_use"}   onClick={() => setStatusFilter("in_use")}
+                tone="emerald" label="قيد الاستخدام" count={counts.in_use}  />
+              <FilterPill active={statusFilter === "unused"}   onClick={() => setStatusFilter("unused")}
+                tone="rose"    label="غير مستخدم"  count={counts.unused}  />
+            </div>
+
+            <div className="flex-1" />
+
+            {/* Search */}
+            <div className="relative w-full sm:w-80">
+              <Search className="w-4 h-4 absolute top-1/2 -translate-y-1/2 right-3 text-slate-400 pointer-events-none" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={tab === "profiles" ? "ابحث باسم القالب…" : "ابحث باسم/بريد المستخدم…"}
+                className="pr-9 pl-8 h-9"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  className="absolute top-1/2 -translate-y-1/2 left-2 p-0.5 rounded hover:bg-slate-100"
+                  aria-label="مسح"
+                >
+                  <X className="w-3.5 h-3.5 text-slate-500" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Row 3 — Mode color legend */}
+          <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-dashed border-slate-200">
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium">
+              <Palette className="w-3.5 h-3.5" /> دلالة الأوضاع:
+            </span>
+            {(Object.keys(MODE_META) as FieldMode[]).map((m) => {
+              const meta = MODE_META[m];
+              const Icon = meta.icon;
+              return (
+                <span key={m} className={`flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] ${meta.tone}`}>
+                  <Icon className="w-3 h-3" /> {meta.labelAr}
+                </span>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* ── Tabs ── */}
       <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
         <TabsList className="grid w-full max-w-md grid-cols-2">
           <TabsTrigger value="profiles" className="gap-2">
-            <ShieldCheck className="w-4 h-4" /> القوالب ({profiles.length})
+            <ShieldCheck className="w-4 h-4" /> القوالب ({visibleProfiles.length}
+            {visibleProfiles.length !== profiles.length ? `/${profiles.length}` : ""})
           </TabsTrigger>
           <TabsTrigger value="assignments" className="gap-2">
             <Users className="w-4 h-4" /> تعيين المستخدمين
+            {users.length > 0 && (
+              <span className="text-xs opacity-70">
+                ({visibleUsers.length}{visibleUsers.length !== users.length ? `/${users.length}` : ""})
+              </span>
+            )}
           </TabsTrigger>
         </TabsList>
 
         {/* ── Profiles tab ── */}
         <TabsContent value="profiles" className="mt-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">
-              أنشئ قوالب باسامي مفهومة (مثال: <span className="font-medium">"كاشير"</span>،
-              <span className="font-medium"> "محاسب مبتدئ"</span>،
-              <span className="font-medium"> "مدير فرع"</span>) ثم عيّنها للمستخدمين من التبويب التالي.
-            </p>
-            <Button onClick={() => setCreating(true)} className="gap-2">
-              <Plus className="w-4 h-4" /> قالب جديد
-            </Button>
-          </div>
+          <p className="text-sm text-muted-foreground">
+            أنشئ قوالب باسامي مفهومة (مثال: <span className="font-medium">"كاشير"</span>،
+            <span className="font-medium"> "محاسب مبتدئ"</span>،
+            <span className="font-medium"> "مدير فرع"</span>) ثم عيّنها للمستخدمين من التبويب التالي.
+            {query || statusFilter !== "all" ? (
+              <span className="ms-2 text-indigo-600 font-medium">
+                · معروض {visibleProfiles.length} من {profiles.length}
+              </span>
+            ) : null}
+          </p>
 
           {profLoading ? (
             <div className="flex items-center justify-center py-12 text-muted-foreground">
@@ -236,9 +537,19 @@ export default function InvoiceFieldPoliciesPage() {
                 </Button>
               </CardContent>
             </Card>
+          ) : visibleProfiles.length === 0 ? (
+            <Card className="border-dashed">
+              <CardContent className="py-10 flex flex-col items-center gap-2 text-center text-muted-foreground">
+                <Filter className="w-8 h-8" />
+                <p className="text-sm">لا توجد قوالب مطابقة للبحث/الفلتر الحالي.</p>
+                <Button size="sm" variant="outline" onClick={() => { setQuery(""); setStatusFilter("all"); }}>
+                  مسح الفلاتر
+                </Button>
+              </CardContent>
+            </Card>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {profiles.map((p) => {
+              {visibleProfiles.map((p) => {
                 const color = p.color ?? pickColor(p.id);
                 return (
                   <Card key={p.id} className="overflow-hidden hover:shadow-md transition-shadow">
@@ -316,9 +627,15 @@ export default function InvoiceFieldPoliciesPage() {
                 </div>
               ) : users.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-6 text-center">لا يوجد مستخدمون.</p>
+              ) : visibleUsers.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                  <Filter className="w-8 h-8" />
+                  <p className="text-sm">لا يوجد مستخدمون مطابقون للبحث.</p>
+                  <Button size="sm" variant="outline" onClick={() => setQuery("")}>مسح البحث</Button>
+                </div>
               ) : (
                 <div className="divide-y">
-                  {users.map((u) => {
+                  {visibleUsers.map((u) => {
                     const isAdminUser = u.role === "admin" || u.role === "superadmin";
                     const assignedProfile = profiles.find((p) => p.id === u.profileId);
                     return (
@@ -435,6 +752,44 @@ export default function InvoiceFieldPoliciesPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+// ── Reusable filter-pill (mirrors the colored status pills in the sales
+//    audit grid). Active state fills the pill, inactive shows a subtle
+//    bordered chip with the count.
+function FilterPill({
+  active, onClick, tone, label, count,
+}: {
+  active: boolean; onClick: () => void;
+  tone: "slate" | "amber" | "emerald" | "rose";
+  label: string; count: number;
+}) {
+  const toneMap: Record<string, { dot: string; activeBg: string; activeText: string; border: string }> = {
+    slate:   { dot: "bg-slate-500",   activeBg: "bg-slate-900",   activeText: "text-white", border: "border-slate-200"   },
+    amber:   { dot: "bg-amber-500",   activeBg: "bg-amber-500",   activeText: "text-white", border: "border-amber-200"   },
+    emerald: { dot: "bg-emerald-500", activeBg: "bg-emerald-600", activeText: "text-white", border: "border-emerald-200" },
+    rose:    { dot: "bg-rose-500",    activeBg: "bg-rose-600",    activeText: "text-white", border: "border-rose-200"    },
+  };
+  const t = toneMap[tone];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`group inline-flex items-center gap-1.5 h-8 px-3 rounded-full border text-xs transition-colors ${
+        active
+          ? `${t.activeBg} ${t.activeText} ${t.border} shadow-sm`
+          : `bg-white hover:bg-slate-50 ${t.border} text-slate-700`
+      }`}
+    >
+      <span className={`w-2 h-2 rounded-full ${active ? "bg-white/80" : t.dot}`} />
+      <span className="font-medium">{label}</span>
+      <span className={`min-w-[1.25rem] text-center rounded-full px-1.5 py-px text-[10px] ${
+        active ? "bg-white/20" : "bg-slate-100 text-slate-600 group-hover:bg-slate-200"
+      }`}>
+        {count}
+      </span>
+    </button>
   );
 }
 
