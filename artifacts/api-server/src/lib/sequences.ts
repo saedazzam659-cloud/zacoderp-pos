@@ -143,12 +143,23 @@ export async function nextSequenceNumber(
     const dateSource = cfgRows.rows?.[0]?.sequence_date_source ?? "system";
     const effectiveDate = resolveEffectiveDate(dateSource, ctx.docDate);
 
-    // Resolve the fiscal period the effective date belongs to so we can
-    // route the issuance to a period-scoped sequence (when one exists).
-    // Universal sequences (empty fiscalPeriodIds) remain matchable for
-    // every date — they're the legacy default and the fallback when no
-    // year-specific override is configured.
-    const periodDateStr = `${effectiveDate.getUTCFullYear()}-${String(effectiveDate.getUTCMonth() + 1).padStart(2, "0")}-${String(effectiveDate.getUTCDate()).padStart(2, "0")}`;
+    // Resolve the fiscal period for routing. CRITICAL: we use the document
+    // date here unconditionally, NOT `effectiveDate` — `sequence_date_source`
+    // only controls whether `{YY}/{MM}` pattern tokens render today's date
+    // or the document's date. The fiscal-period filter is a hard business
+    // rule ("this sequence is for FY 2026 docs only"), so a backdated 2025
+    // entry must always pick the 2025-eligible sequence regardless of the
+    // pattern-token setting. Falling back to `effectiveDate` (today) would
+    // let a 2026-scoped sequence steal numbers from 2025 documents — the
+    // exact bug we hit when `sequence_date_source = "system"`.
+    const periodResolveDate: Date = (() => {
+      if (ctx.docDate != null && ctx.docDate !== "") {
+        const d = ctx.docDate instanceof Date ? ctx.docDate : new Date(String(ctx.docDate));
+        if (!isNaN(d.getTime())) return d;
+      }
+      return effectiveDate;
+    })();
+    const periodDateStr = `${periodResolveDate.getUTCFullYear()}-${String(periodResolveDate.getUTCMonth() + 1).padStart(2, "0")}-${String(periodResolveDate.getUTCDate()).padStart(2, "0")}`;
     const periodRows = await tx.execute<{ id: number }>(sql`
       SELECT id FROM fiscal_periods
       WHERE company_id = ${companyId}
