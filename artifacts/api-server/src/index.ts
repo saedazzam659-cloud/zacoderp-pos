@@ -336,6 +336,15 @@ async function bootstrap() {
     seedSuperAdmin();
     seedPlanConfigs();
     seedIndustries();
+    // Idempotent seeds for the new AI assistance KBs. Both create the
+    // table on first run (raw CREATE TABLE IF NOT EXISTS) and ON CONFLICT
+    // DO NOTHING on subsequent runs, so they cost ~ms after the first boot.
+    import("./lib/seedSupportKB.js").then(m => m.seedSupportKB()).catch(err =>
+      logger.error({ err }, "seedSupportKB failed (assistant will still work without seed)"),
+    );
+    import("./lib/seedAccountingStandardsKb.js").then(m => m.seedAccountingStandardsKb()).catch(err =>
+      logger.error({ err }, "seedAccountingStandardsKb failed (accounting AI will still work without seed)"),
+    );
     // Start automatic-backup scheduler (checks every 15 min; creates snapshot per
     // company on its configured frequency).
     import("./routes/backup.js").then(m => m.startBackupScheduler?.()).catch(() => {});

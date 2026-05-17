@@ -26,8 +26,7 @@ const router = Router();
 router.use(extractAuth);
 router.use(requireModulePermission("chat"));
 
-const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+import { chat as aiChat } from "../lib/aiClient.js";
 
 function getCid(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.query.companyId ?? req.body?.companyId ?? req.authUser?.companyId);
@@ -45,29 +44,13 @@ async function ensureParticipant(convId: number, cid: number, userId: number): P
   return !!(r.rows?.length);
 }
 
+// Thin shim over the unified aiClient — keeps the existing call sites
+// (and their rule-based fallbacks) untouched while gaining the OpenAI →
+// Anthropic provider failover automatically.
 async function callAI(messages: any[], opts?: { json?: boolean }): Promise<{ ok: boolean; data?: any; text?: string }> {
-  if (!OPENAI_BASE || !OPENAI_KEY) return { ok: false };
-  try {
-    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
-      body: JSON.stringify({
-        model: "gpt-5.4",
-        max_completion_tokens: 2048,
-        ...(opts?.json ? { response_format: { type: "json_object" } } : {}),
-        messages,
-      }),
-    });
-    if (!r.ok) return { ok: false };
-    const j: any = await r.json();
-    const txt = j?.choices?.[0]?.message?.content;
-    if (!txt) return { ok: false };
-    if (opts?.json) {
-      try { return { ok: true, data: JSON.parse(txt) }; }
-      catch { return { ok: false }; }
-    }
-    return { ok: true, text: String(txt) };
-  } catch { return { ok: false }; }
+  const r = await aiChat(messages, { json: opts?.json });
+  if (!r.ok) return { ok: false };
+  return { ok: true, text: r.text, data: r.data };
 }
 
 // Pulls the last N non-deleted messages of a conversation as plain text.

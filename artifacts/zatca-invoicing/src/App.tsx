@@ -86,6 +86,8 @@ import SalesHub from "@/pages/sales/SalesHub";
 import PurchasingHub from "@/pages/purchasing/PurchasingHub";
 import CashHub from "@/pages/cash/CashHub";
 import AccountingHub from "@/pages/accounting/AccountingHub";
+import AccountingStandards from "@/pages/accounting/AccountingStandards";
+import SupportAssistant from "@/pages/SupportAssistant";
 import HrHub from "@/pages/hr/HrHub";
 import SecurityHub from "@/pages/security/SecurityHub";
 import SecurityEvents from "@/pages/security/SecurityEvents";
@@ -751,6 +753,8 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/alerts"                   module="items" component={SmartAlerts} />}
 
             {/* Accounting routes */}
+            {!isSuperAdmin && <Route path="/support-assistant" component={SupportAssistant} />}
+            {!isSuperAdmin && <Route path="/accounting/standards" component={AccountingStandards} />}
             {!isSuperAdmin && <Route path="/accounting" component={AccountingHub} />}
             {!isSuperAdmin && <PermRoute path="/accounting/accounts"       module="accounts"        component={ChartOfAccounts} />}
             {!isSuperAdmin && <PermRoute path="/accounting/cost-centers"   module="accounts"        component={CostCenters} />}

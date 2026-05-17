@@ -19,8 +19,7 @@ router.use((req, res, next) => {
   next();
 });
 
-const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+import { chat as aiChat } from "../lib/aiClient.js";
 
 function getCid(req: any, res: any): number | null {
   const raw = req.body?.companyId ?? req.query.companyId;
@@ -29,24 +28,13 @@ function getCid(req: any, res: any): number | null {
   return cid;
 }
 
+// Routes here pass `jsonMode=true` to get a parsed object back, or `false`
+// to get raw text (wrapped in `{ text }` for symmetry with the old shim).
+// Provider failover (OpenAI → Anthropic) is handled by the unified client.
 async function callAI(messages: any[], jsonMode = true): Promise<any | null> {
-  if (!OPENAI_BASE || !OPENAI_KEY) return null;
-  try {
-    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
-      body: JSON.stringify({
-        model: "gpt-5.4",
-        max_completion_tokens: 4096,
-        ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
-        messages,
-      }),
-    });
-    const j: any = await r.json();
-    const txt = j?.choices?.[0]?.message?.content;
-    if (!txt) return null;
-    return jsonMode ? JSON.parse(txt) : { text: txt };
-  } catch { return null; }
+  const r = await aiChat(messages, { json: jsonMode, maxTokens: 4096 });
+  if (!r.ok) return null;
+  return jsonMode ? (r.data ?? null) : { text: r.text };
 }
 
 // ─── Sales analysis: top products, revenue trend, payment-method split ───

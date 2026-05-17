@@ -94,6 +94,8 @@ import onlineStoreAiRouter from "./online-store-ai";
 import posOperationsRouter from "./pos-operations";
 import chatRouter from "./chat";
 import chatAiRouter from "./chat-ai";
+import supportAiRouter from "./support-ai";
+import accountingAiRouter from "./accounting-ai";
 import cobrowseRouter from "./cobrowse";
 import posOperationsAiRouter from "./pos-operations-ai";
 import reportInvitationsRouter from "./report-invitations";
@@ -203,6 +205,8 @@ router.use("/pos-operations", posOperationsRouter);
 router.use("/pos-operations-ai", posOperationsAiRouter);
 router.use("/chat", chatRouter);
 router.use("/chat-ai", chatAiRouter);
+router.use("/support-ai", supportAiRouter);
+router.use("/accounting-ai", accountingAiRouter);
 router.use("/cobrowse", cobrowseRouter);
 
 export default router;

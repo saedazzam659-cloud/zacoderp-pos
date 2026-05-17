@@ -18,6 +18,7 @@ import {
   GitBranch,
   Plug,
   X,
+  Library,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -403,6 +404,9 @@ const accountingSubNav: NavDef[] = [
   { nameKey: "nav.journals",        href: "/accounting/journals",       icon: BookOpen,      permKey: "journal_entries" },
   { nameKey: "nav.postingCenter",   href: "/accounting/posting-center", icon: Layers,        permKey: "journal_entries" },
   { nameKey: "nav.accountingMaintenance", href: "/accounting/maintenance", icon: Wrench,    permKey: "accounting_maintenance" },
+  // New: bilingual library of IFRS / GAAP / ZATCA standards with a free AI Q&A panel.
+  // Permission piggy-backs on accounts since everyone with accounting access should see it.
+  { nameKey: "nav.accountingStandards", href: "/accounting/standards", icon: Library, permKey: "accounts" },
 ];
 const reportsSubNav: NavDef[] = [
   { nameKey: "nav.accountStatement", href: "/accounting/reports/account-statement", icon: FileText,   permKey: "accounting_reports" },
@@ -2450,7 +2454,13 @@ function TopBar({
           </Button>
           <div className="hidden md:block h-5 w-px bg-border mx-1" />
           <div className="hidden md:flex"><LanguageSwitcher variant="compact" /></div>
-          <Button variant="ghost" size="icon" className="hidden md:inline-flex h-9 w-9 text-muted-foreground hover:text-foreground" title={t("topbar.help")}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="hidden md:inline-flex h-9 w-9 text-muted-foreground hover:text-amber-600 hover:bg-amber-50"
+            title={t("topbar.help")}
+            onClick={() => navigate("/support-assistant")}
+          >
             <HelpCircle className="h-[18px] w-[18px]" />
           </Button>
           <NotificationBell />

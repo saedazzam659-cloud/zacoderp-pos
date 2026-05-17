@@ -13,8 +13,7 @@ const router = Router();
 router.use(extractAuth);
 router.use(requireModulePermission("pos"));
 
-const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+import { chat as aiChat } from "../lib/aiClient.js";
 
 function getCid(req: any, res: any): number | null {
   const raw = req.query.companyId ?? req.body?.companyId;
@@ -23,24 +22,13 @@ function getCid(req: any, res: any): number | null {
   return cid;
 }
 
+// Always JSON mode here — every caller in this file structures its
+// system prompt to demand a JSON object back. Provider failover is
+// transparent via the unified aiClient.
 async function callAI(messages: any[]): Promise<any | null> {
-  if (!OPENAI_BASE || !OPENAI_KEY) return null;
-  try {
-    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
-      body: JSON.stringify({
-        model: "gpt-5.4",
-        max_completion_tokens: 4096,
-        response_format: { type: "json_object" },
-        messages,
-      }),
-    });
-    const j: any = await r.json();
-    const txt = j?.choices?.[0]?.message?.content;
-    if (!txt) return null;
-    return JSON.parse(txt);
-  } catch { return null; }
+  const r = await aiChat(messages, { json: true, maxTokens: 4096 });
+  if (!r.ok) return null;
+  return r.data ?? null;
 }
 
 // ─── GET /pos-operations-ai/insights ─────────────────────────────────────

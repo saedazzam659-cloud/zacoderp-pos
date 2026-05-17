@@ -65,3 +65,5 @@ export * from "./cobrowse";
 export * from "./fieldService";
 export * from "./gatewayClients";
 export * from "./integrationConnections";
+export * from "./supportKnowledgeBase";
+export * from "./accountingStandardsKb";

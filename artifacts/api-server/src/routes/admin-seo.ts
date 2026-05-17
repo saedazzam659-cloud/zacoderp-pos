@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db, usersTable, systemSettingsTable, seoGeneratedArticlesTable } from "@workspace/db";
 import { eq, desc, sql } from "drizzle-orm";
-import Anthropic from "@anthropic-ai/sdk";
+import { chat as aiChat } from "../lib/aiClient.js";
 import dns from "node:dns/promises";
 import net from "node:net";
 import http from "node:http";
@@ -757,21 +757,15 @@ router.post("/ai-suggestions", requireSuperAdmin, async (req: any, res): Promise
       `لا تكتب أي شيء خارج كتلة JSON.`,
     ].filter(Boolean).join("\n");
 
-    const client = new Anthropic({
-      apiKey:  process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-    });
-
-    const message = await client.messages.create({
-      model:      settings.model || "claude-sonnet-4-6",
-      max_tokens: 1024,
-      messages:   [{ role: "user", content: prompt }],
-    });
-
-    const rawText = message.content
-      .map(b => (b.type === "text" ? b.text : ""))
-      .join("\n")
-      .trim();
+    const aiRes = await aiChat(
+      [{ role: "user", content: prompt }],
+      { maxTokens: 1024 },
+    );
+    if (!aiRes.ok) {
+      res.status(503).json({ error: "تعذّر الاتصال بخدمة الذكاء الاصطناعي. حاول لاحقاً." });
+      return;
+    }
+    const rawText = (aiRes.text ?? "").trim();
 
     let parsed: any = null;
     const fenced = rawText.match(/```json\s*([\s\S]*?)```/i);
@@ -895,23 +889,14 @@ router.post("/ai-articles/generate", requireSuperAdmin, async (req: any, res) =>
       `لا تكتب أي شيء خارج كتلة JSON.`,
     ].filter(Boolean).join("\n");
 
-    const client = new Anthropic({
-      apiKey:  process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-    });
-
-    const message = await client.messages.create({
-      model:      settings.model || "claude-sonnet-4-6",
-      max_tokens: 8192,
-      messages:   [{ role: "user", content: prompt }],
-    });
-
-    // Concatenate all text blocks; the model occasionally splits into more
-    // than one block when reasoning is enabled.
-    const rawText = message.content
-      .map(b => (b.type === "text" ? b.text : ""))
-      .join("\n")
-      .trim();
+    const aiRes = await aiChat(
+      [{ role: "user", content: prompt }],
+      { maxTokens: 8192 },
+    );
+    if (!aiRes.ok) {
+      return res.status(503).json({ error: "تعذّر الاتصال بخدمة الذكاء الاصطناعي. حاول لاحقاً." });
+    }
+    const rawText = (aiRes.text ?? "").trim();
 
     // Extract the fenced JSON block; fall back to the largest {…} substring.
     let parsed: any = null;
@@ -1645,20 +1630,14 @@ router.post("/connection/suggest", requireSuperAdmin, async (req: any, res): Pro
       ].join("\n");
 
       try {
-        const client = new Anthropic({
-          apiKey:  process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-          baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-        });
-        const completion = await client.messages.create({
-          model: settings.model || "claude-sonnet-4-5",
-          max_tokens: 400,
-          temperature: 0.2,
-          messages: [{ role: "user", content: prompt }],
-        });
-        const text = completion.content
-          .filter((c: any) => c.type === "text")
-          .map((c: any) => c.text)
-          .join("\n");
+        const aiRes = await aiChat(
+          [{ role: "user", content: prompt }],
+          { maxTokens: 400 },
+        );
+        if (!aiRes.ok) {
+          throw new Error(aiRes.reason || "ai-unavailable");
+        }
+        const text = aiRes.text ?? "";
         const jsonBlock = text.match(/```json\s*([\s\S]*?)```/i);
         const raw = jsonBlock ? jsonBlock[1] : text;
         const parsed = JSON.parse(raw);
