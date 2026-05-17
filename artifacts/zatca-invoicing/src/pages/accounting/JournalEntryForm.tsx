@@ -262,7 +262,12 @@ export default function JournalEntryForm() {
   //
   // The peek is read-only and is recomputed after each save so the badge
   // immediately advances to the next number for the user's next entry.
-  const seqPeek = useNextSequenceNumber("journal_entry", isNew);
+  // Pass the user-entered `entryDate` so the peek is resolved against the
+  // fiscal period of THAT date. Without this, changing the date from today
+  // (2026) to a backdated 2025 would still show the 2026-scoped sequence
+  // number — and then on Save the server would correctly pick the 2025
+  // sequence, leaving the user confused about why the badge didn't match.
+  const seqPeek = useNextSequenceNumber("journal_entry", isNew, entryDate);
   useEffect(() => {
     if (!isNew) return;
     if (seqPeek.hasSequence && seqPeek.number) setDocNumber(seqPeek.number);

@@ -48,7 +48,16 @@ export interface PeekResult {
  * Pass `enabled=false` to skip the fetch (useful when editing an existing
  * record, where the saved docNumber is shown instead).
  */
-export function useNextSequenceNumber(txType: SequenceTxType, enabled = true) {
+export function useNextSequenceNumber(
+  txType: SequenceTxType,
+  enabled = true,
+  /** Optional document date (YYYY-MM-DD). When supplied, the peek is
+   *  resolved against the fiscal period containing this date — so a JE
+   *  the user backdated to 2025 reflects the 2025-eligible sequence, not
+   *  the FY 2026 scoped sequence the form opened on. Re-fetches whenever
+   *  the date string changes. */
+  date?: string | null,
+) {
   const [data, setData] = useState<PeekResult>({ number: null, hasSequence: false });
   const [loading, setLoading] = useState(false);
   const seq = useRef(0);
@@ -58,7 +67,10 @@ export function useNextSequenceNumber(txType: SequenceTxType, enabled = true) {
     const my = ++seq.current;
     setLoading(true);
     try {
-      const r = await fetch(`${API_BASE}/api/sequences/peek/${txType}`, { headers: authHeaders() });
+      const url = date && date !== ""
+        ? `${API_BASE}/api/sequences/peek/${txType}?date=${encodeURIComponent(date)}`
+        : `${API_BASE}/api/sequences/peek/${txType}`;
+      const r = await fetch(url, { headers: authHeaders() });
       if (!r.ok) {
         if (my === seq.current) setData({ number: null, hasSequence: false });
         return;
@@ -70,7 +82,7 @@ export function useNextSequenceNumber(txType: SequenceTxType, enabled = true) {
     } finally {
       if (my === seq.current) setLoading(false);
     }
-  }, [txType, enabled]);
+  }, [txType, enabled, date]);
 
   useEffect(() => { refetch(); }, [refetch]);
 
