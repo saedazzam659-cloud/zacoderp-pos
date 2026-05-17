@@ -3,7 +3,7 @@ export type DocumentType =
   | "receipt_voucher" | "payment_voucher" | "bank_receipt" | "treasury_receipt"
   | "account_statement" | "journal_entry";
 
-export type ElementType = "text" | "image" | "rect" | "line" | "table" | "field";
+export type ElementType = "text" | "image" | "rect" | "line" | "table" | "field" | "container";
 
 export interface TableColumn {
   key: string; label: string; width?: number; align?: "start" | "end" | "center";

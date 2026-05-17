@@ -13,6 +13,7 @@ import {
   Plus, Trash2, Save, Copy, FileText, Image as ImageIcon, Type, Square,
   Minus, Table as TableIcon, Tag, Star, Download, Printer, ZoomIn, ZoomOut,
   LayoutTemplate, X, CheckCircle2, Maximize2, PanelLeftOpen, PanelRightOpen,
+  Box, MousePointer2,
 } from "lucide-react";
 import { PRESETS_BY_DOC, type PresetDescriptor } from "./printDesigner/presets";
 
@@ -23,7 +24,7 @@ type DocumentType =
   | "receipt_voucher" | "payment_voucher" | "bank_receipt" | "treasury_receipt"
   | "account_statement" | "journal_entry";
 
-type ElementType = "text" | "image" | "rect" | "line" | "table" | "field";
+type ElementType = "text" | "image" | "rect" | "line" | "table" | "field" | "container";
 
 interface TableColumn {
   key: string; label: string; width?: number; align?: "start" | "end" | "center";
@@ -259,6 +260,12 @@ function defaultElement(type: ElementType, docType: DocumentType, fieldKey?: str
   if (type === "image") return { ...base, src: "", width: 140, height: 140, background: "#f3f4f6" };
   if (type === "rect")  return { ...base, background: "#e5e7eb", borderColor: "#9ca3af", borderWidth: 1, borderStyle: "solid", width: 200, height: 80 };
   if (type === "line")  return { ...base, background: "#111827", height: 2, width: 240 };
+  if (type === "container") return {
+    ...base, width: 360, height: 220, zIndex: 0,
+    background: "transparent",
+    borderColor: "#94a3b8", borderWidth: 1, borderStyle: "dashed",
+    text: "صندوق",
+  };
   if (type === "table") return {
     ...base, width: 520, height: 200, background: "#ffffff",
     tableSpec: {
@@ -292,6 +299,8 @@ export default function PrintDesigner() {
   const [heightMm, setHeightMm] = useState(297);
   const [templateName, setTemplateName] = useState("قالب جديد");
   const [selectedElId, setSelectedElId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [zoom, setZoom] = useState(0.85);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
   const [showLeftPanel, setShowLeftPanel]   = useState(true);  // elements + fields palette
@@ -371,6 +380,22 @@ export default function PrintDesigner() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [showPresets]);
+
+  // Delete-key removes all currently-selected elements; Esc clears selection.
+  // Ignored when typing inside a form field so the inspector stays usable.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (selectedIds.length > 0) { e.preventDefault(); deleteSelected(); }
+      } else if (e.key === "Escape") {
+        clearSelection();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedIds, layout]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load selected template into editor state ------------------------------
   useEffect(() => {
@@ -458,9 +483,57 @@ export default function PrintDesigner() {
 
   function addElement(type: ElementType, fieldKey?: string, fieldLabel?: string) {
     const el = defaultElement(type, documentType, fieldKey, fieldLabel);
-    el.zIndex = (Math.max(0, ...layout.elements.map(e => e.zIndex ?? 0)) + 1);
+    if (type !== "container") {
+      el.zIndex = (Math.max(0, ...layout.elements.map(e => e.zIndex ?? 0)) + 1);
+    }
     patchLayout({ ...layout, elements: [...layout.elements, el] });
-    setSelectedElId(el.id);
+    selectOnly(el.id);
+  }
+
+  function selectOnly(id: string) {
+    setSelectedElId(id);
+    setSelectedIds([id]);
+  }
+
+  function toggleInSelection(id: string) {
+    setSelectedIds(prev => {
+      if (prev.includes(id)) {
+        const next = prev.filter(x => x !== id);
+        setSelectedElId(next[next.length - 1] ?? null);
+        return next;
+      }
+      setSelectedElId(id);
+      return [...prev, id];
+    });
+  }
+
+  function clearSelection() {
+    setSelectedElId(null);
+    setSelectedIds([]);
+  }
+
+  function moveBy(ids: string[], dx: number, dy: number) {
+    if ((dx === 0 && dy === 0) || ids.length === 0) return;
+    const set = new Set(ids);
+    patchLayout({
+      ...layout,
+      elements: layout.elements.map(e =>
+        set.has(e.id) ? { ...e, x: e.x + dx, y: e.y + dy } : e
+      ),
+    });
+  }
+
+  function containedChildIds(container: Element): string[] {
+    const cx1 = container.x, cy1 = container.y;
+    const cx2 = container.x + container.width, cy2 = container.y + container.height;
+    return layout.elements
+      .filter(e => e.id !== container.id && e.type !== "container")
+      .filter(e => {
+        const mx = e.x + e.width / 2;
+        const my = e.y + e.height / 2;
+        return mx >= cx1 && mx <= cx2 && my >= cy1 && my <= cy2;
+      })
+      .map(e => e.id);
   }
 
   function updateElement(id: string, patch: Partial<Element>) {
@@ -473,6 +546,14 @@ export default function PrintDesigner() {
   function deleteElement(id: string) {
     patchLayout({ ...layout, elements: layout.elements.filter(e => e.id !== id) });
     if (selectedElId === id) setSelectedElId(null);
+    setSelectedIds(prev => prev.filter(x => x !== id));
+  }
+
+  function deleteSelected() {
+    if (selectedIds.length === 0) return;
+    const set = new Set(selectedIds);
+    patchLayout({ ...layout, elements: layout.elements.filter(e => !set.has(e.id)) });
+    clearSelection();
   }
 
   function duplicateElement(id: string) {
@@ -480,7 +561,7 @@ export default function PrintDesigner() {
     if (!el) return;
     const copy: Element = { ...el, id: uid(), x: el.x + 20, y: el.y + 20 };
     patchLayout({ ...layout, elements: [...layout.elements, copy] });
-    setSelectedElId(copy.id);
+    selectOnly(copy.id);
   }
 
   function bringForward(id: string) {
@@ -644,6 +725,19 @@ export default function PrintDesigner() {
           title="وضع التركيز — يخفي اللوحات الجانبية لرؤية النموذج كاملاً">
           <Maximize2 className="w-3.5 h-3.5"/> وضع التركيز
         </button>
+        <div className="mx-2 h-6 w-px bg-slate-200" />
+        <button
+          onClick={() => setMultiSelectMode(v => !v)}
+          className={`flex items-center gap-1 px-2 py-1 text-xs rounded ${multiSelectMode ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-slate-100 hover:bg-slate-200 text-slate-700"}`}
+          title="أداة التحديد المتعدد — اضغط على عدة عناصر لتحديدها ثم اسحبها معاً (أو استخدم Shift+click)">
+          <MousePointer2 className="w-3.5 h-3.5"/>
+          {multiSelectMode ? `تحديد متعدد (${selectedIds.length})` : "تحديد متعدد"}
+        </button>
+        {selectedIds.length > 1 && (
+          <span className="text-xs text-indigo-700 bg-indigo-50 px-2 py-1 rounded">
+            {selectedIds.length} عناصر محددة — اسحب أحدها لتحريك الكل
+          </span>
+        )}
       </div>
 
       {/* Body */}
@@ -659,6 +753,7 @@ export default function PrintDesigner() {
               <PaletteBtn icon={<TableIcon className="w-4 h-4"/>} label="جدول"   onClick={() => addElement("table")} />
               <PaletteBtn icon={<Square className="w-4 h-4"/>}    label="مستطيل" onClick={() => addElement("rect")} />
               <PaletteBtn icon={<Minus className="w-4 h-4"/>}     label="خط"     onClick={() => addElement("line")} />
+              <PaletteBtn icon={<Box className="w-4 h-4"/>}       label="صندوق"  onClick={() => addElement("container")} />
             </div>
           </div>
           <div>
@@ -708,7 +803,7 @@ export default function PrintDesigner() {
           className="flex-1 overflow-auto p-4 flex items-start justify-center bg-gradient-to-b from-slate-100 to-slate-200">
           <div
             ref={canvasRef}
-            onMouseDown={e => { if (e.target === canvasRef.current) setSelectedElId(null); }}
+            onMouseDown={e => { if (e.target === canvasRef.current) clearSelection(); }}
             style={{
               width:  widthMm * MM * zoom,
               height: heightMm * MM * zoom,
@@ -725,10 +820,35 @@ export default function PrintDesigner() {
             }}>
               {layout.elements.map(el => (
                 <ElementRnd key={el.id} el={el}
-                  selected={el.id === selectedElId}
-                  onSelect={() => setSelectedElId(el.id)}
+                  selected={selectedIds.includes(el.id)}
+                  primary={el.id === selectedElId}
+                  onSelect={(shift) => {
+                    if (shift || multiSelectMode) {
+                      toggleInSelection(el.id);
+                    } else if (selectedIds.includes(el.id) && selectedIds.length > 1) {
+                      // Preserve the existing multi-selection so the drag that
+                      // typically follows can move the whole group. Just promote
+                      // this element to "primary" so the inspector targets it.
+                      setSelectedElId(el.id);
+                    } else {
+                      selectOnly(el.id);
+                    }
+                  }}
                   onChange={p => updateElement(el.id, p)}
                   onDelete={() => deleteElement(el.id)}
+                  onGroupMove={(dx, dy) => {
+                    // Multi-selection wins over container auto-grouping so the
+                    // user always gets exactly what they selected. Container's
+                    // implicit children are only used when no multi-set exists.
+                    if (selectedIds.length > 1 && selectedIds.includes(el.id)) {
+                      const extras = el.type === "container" ? containedChildIds(el) : [];
+                      moveBy(Array.from(new Set([...selectedIds, ...extras])), dx, dy);
+                    } else if (el.type === "container") {
+                      moveBy([el.id, ...containedChildIds(el)], dx, dy);
+                    } else {
+                      updateElement(el.id, { x: el.x + dx, y: el.y + dy });
+                    }
+                  }}
                 />
               ))}
             </div>
@@ -846,32 +966,69 @@ function PaletteBtn({ icon, label, onClick }: { icon: React.ReactNode; label: st
 }
 
 function ElementRnd({
-  el, selected, onSelect, onChange, onDelete,
+  el, selected, primary, onSelect, onChange, onDelete, onGroupMove,
 }: {
   el: Element;
   selected: boolean;
-  onSelect: () => void;
+  primary: boolean;
+  onSelect: (shiftKey: boolean) => void;
   onChange: (p: Partial<Element>) => void;
   onDelete: () => void;
+  onGroupMove: (dx: number, dy: number) => void;
 }) {
+  const isContainer = el.type === "container";
+  // Containers use only the title-bar as drag handle so children placed
+  // visually inside remain clickable. Other element types are draggable
+  // anywhere on their body (default Rnd behavior).
+  const handleClass = isContainer ? `pd-container-handle-${el.id}` : undefined;
+  const outline = primary
+    ? "2px solid #6366f1"
+    : selected
+      ? "2px dashed #6366f1"
+      : isContainer
+        ? "1px dashed #94a3b8"
+        : "1px dashed transparent";
   return (
     <Rnd
       size={{ width: el.width, height: el.height }}
       position={{ x: el.x, y: el.y }}
       bounds="parent"
-      onDragStop={(_e, d) => onChange({ x: d.x, y: d.y })}
+      dragHandleClassName={handleClass}
+      onDragStop={(_e, d) => {
+        const dx = d.x - el.x;
+        const dy = d.y - el.y;
+        if (dx === 0 && dy === 0) return;
+        onGroupMove(dx, dy);
+      }}
       onResizeStop={(_e, _dir, ref, _delta, pos) => onChange({
         width: parseInt(ref.style.width), height: parseInt(ref.style.height), x: pos.x, y: pos.y,
       })}
-      onMouseDown={e => { e.stopPropagation(); onSelect(); }}
+      onMouseDown={e => { e.stopPropagation(); onSelect(e.shiftKey); }}
       style={{
-        outline: selected ? "2px solid #6366f1" : "1px dashed transparent",
-        zIndex: el.zIndex ?? 1,
+        outline,
+        zIndex: el.zIndex ?? (isContainer ? 0 : 1),
       }}
       enableResizing={el.type !== "line"}
     >
-      <ElementView el={el} />
-      {selected && (
+      {isContainer ? (
+        <div style={{ width: "100%", height: "100%", position: "relative", boxSizing: "border-box",
+          background: el.background ?? "transparent",
+          border: `${el.borderWidth ?? 1}px ${el.borderStyle ?? "dashed"} ${el.borderColor ?? "#94a3b8"}`,
+          borderRadius: 4, opacity: el.opacity ?? 1 }}>
+          <div className={handleClass}
+            style={{ position: "absolute", top: 0, insetInlineStart: 0, insetInlineEnd: 0, height: 20,
+              background: primary ? "#6366f1" : "#cbd5e1", color: "#fff",
+              fontSize: 11, padding: "2px 8px", cursor: "move",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              borderTopRightRadius: 4, borderTopLeftRadius: 4 }}>
+            <span>{el.text || "صندوق"}</span>
+            <span style={{ opacity: 0.85 }}>{Math.round(el.width)}×{Math.round(el.height)}</span>
+          </div>
+        </div>
+      ) : (
+        <ElementView el={el} />
+      )}
+      {primary && (
         <button onClick={(e) => { e.stopPropagation(); onDelete(); }}
           className="absolute -top-3 -start-3 bg-rose-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs shadow">
           ×
@@ -906,6 +1063,7 @@ function ElementView({ el }: { el: Element }) {
       : <div style={{ ...common, color: "#9ca3af", justifyContent: "center" }}>📷 صورة</div>;
   }
   if (el.type === "rect") return <div style={common} />;
+  if (el.type === "container") return <div style={{ ...common, background: el.background ?? "transparent" }} />;
   if (el.type === "line") return <div style={{ ...common, background: el.background ?? "#111827" }} />;
   if (el.type === "table") {
     const spec = el.tableSpec!;
@@ -954,7 +1112,8 @@ function Inspector({
         <div className="font-semibold text-slate-800 text-sm">
           {el.type === "text" ? "نص" : el.type === "field" ? "حقل بيانات"
             : el.type === "image" ? "صورة" : el.type === "rect" ? "مستطيل"
-            : el.type === "line" ? "خط" : "جدول"}
+            : el.type === "line" ? "خط" : el.type === "container" ? "صندوق"
+            : "جدول"}
         </div>
         <div className="flex gap-1">
           <button onClick={onDuplicate} title="نسخ" className="p-1 rounded hover:bg-slate-100"><Copy className="w-4 h-4"/></button>
@@ -983,6 +1142,18 @@ function Inspector({
               rows={2} className="w-full border rounded px-2 py-1 text-sm"/>
           </label>
         </>
+      )}
+
+      {el.type === "container" && (
+        <label className="block">
+          <span className="text-xs text-slate-600">عنوان الصندوق</span>
+          <input type="text" value={el.text ?? ""}
+            onChange={e => onChange({ text: e.target.value })}
+            className="w-full border rounded px-2 py-1 text-sm"/>
+          <p className="text-[11px] text-slate-500 mt-1">
+            ضع العناصر بصرياً داخل الصندوق؛ عند سحب شريط العنوان تتحرك تلقائياً معه.
+          </p>
+        </label>
       )}
 
       {(el.type === "text" || el.type === "field" || el.type === "table") && (
