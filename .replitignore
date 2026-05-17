@@ -12,10 +12,11 @@ exports/*.tar
 exports/*.tar.gz
 exports/*.zip
 
-# Build artefacts — Replit rebuilds these in the cloud, so shipping the
-# local `dist/` (api-server alone is ~28 MB with source maps) wastes
-# bandwidth and snapshot time.
-artifacts/*/dist
+# Local caches that must never ship. Note: do NOT exclude artifacts/*/dist
+# here — the cloud build writes the production bundles into those folders
+# and the runtime image needs them. Excluding them caused the runtime to
+# fail with "Cannot find module artifacts/api-server/dist/index.mjs" and
+# "static artifact publicDir does not exist".
 artifacts/*/.next
 artifacts/*/.vite
 artifacts/*/node_modules
