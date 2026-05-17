@@ -738,6 +738,30 @@ export default function PrintDesigner() {
             {selectedIds.length} عناصر محددة — اسحب أحدها لتحريك الكل
           </span>
         )}
+        <div className="mx-2 h-6 w-px bg-slate-200" />
+        <button
+          onClick={() => {
+            // Pull every element back inside the page bounds. Useful when a
+            // template was authored on a larger paper size or got dragged off
+            // the visible area — without this the boxes stay invisible at
+            // export time and the user can't reach them with the mouse.
+            const pageW = widthMm * MM;
+            const pageH = heightMm * MM;
+            setLayout(prev => ({
+              ...prev,
+              elements: prev.elements.map(el => {
+                const w = Math.min(el.width,  pageW);
+                const h = Math.min(el.height, pageH);
+                const x = Math.min(Math.max(0, el.x), Math.max(0, pageW - w));
+                const y = Math.min(Math.max(0, el.y), Math.max(0, pageH - h));
+                return { ...el, x, y, width: w, height: h };
+              }),
+            }));
+          }}
+          className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-amber-50 hover:bg-amber-100 text-amber-700"
+          title="ارجاع كل العناصر الخارجة من حدود الصفحة إلى داخل الإطار">
+          <Maximize2 className="w-3.5 h-3.5"/> إرجاع للإطار
+        </button>
       </div>
 
       {/* Body */}
@@ -812,7 +836,7 @@ export default function PrintDesigner() {
               position: "relative",
               transformOrigin: "top right",
             }}
-            className="overflow-hidden"
+            className="overflow-visible"
           >
             <div style={{
               position: "absolute", inset: 0, transform: `scale(${zoom})`,
