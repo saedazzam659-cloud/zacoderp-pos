@@ -41,6 +41,13 @@ export type SequenceRow = {
   // Optional whitelist of branch IDs allowed to use this sequence. An empty
   // array means "all branches" (preserves the original behavior).
   branchIds: number[];
+  // Optional whitelist of fiscal-period IDs this sequence applies to. An
+  // empty array means "all periods" (universal — the legacy default). When
+  // non-empty, this sequence is ONLY used for documents whose effective
+  // date falls inside one of the listed periods. Scoped sequences take
+  // priority over universal ones during issuance, so a tenant can keep a
+  // single all-years sequence and add an override per fiscal year.
+  fiscalPeriodIds: number[];
   createdAt: string;
   updatedAt: string;
   // Computed by backend:

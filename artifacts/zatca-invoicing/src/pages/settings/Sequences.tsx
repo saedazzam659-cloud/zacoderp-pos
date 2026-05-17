@@ -38,6 +38,13 @@ const EMPTY_FORM = {
   isActive: true,
   transactionTypes: [] as string[],
   branchIds: [] as number[],
+  // Whitelist of fiscal-period IDs this sequence applies to. Empty = all
+  // periods (universal). The UI picks at fiscal-YEAR granularity, but the
+  // value the server stores (and we send) is a flat list of period IDs —
+  // each year expands to all of its periods on save. This lets one tenant
+  // run independent counter streams per fiscal year without changing the
+  // existing universal sequence.
+  fiscalPeriodIds: [] as number[],
 };
 
 // ─── Searchable multi-select for branches ──────────────────────────────────
@@ -169,6 +176,186 @@ function BranchMultiSelect({
   );
 }
 
+// ─── Fiscal year picker — selects whole years, stores period IDs ───────────
+// The user request is "scope this sequence to FY 2026", but the engine
+// resolves by fiscal-PERIOD id (one per month) — that's the table that
+// holds the date range. We bridge the two layers here:
+//   • Fetch each year along with the flat list of its period IDs.
+//   • The picker shows years; selecting one means "ALL of this year's
+//     period ids are in the value array".
+//   • Partial selections (a subset of a year's periods is in the value)
+//     render as unchecked + a "(partial)" hint, so editing such a row
+//     doesn't silently drop the unselected periods on the next save —
+//     we keep them in `value` until the user toggles the year off.
+type FiscalYearOption = { id: number; name: string; periodIds: number[] };
+
+async function fetchFiscalYearsWithPeriods(): Promise<FiscalYearOption[]> {
+  const headers: Record<string, string> = {};
+  const token = localStorage.getItem("zatca_token");
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const base = import.meta.env.VITE_API_URL ?? "";
+  const yearsRes = await fetch(`${base}/api/fiscal/years`, { headers });
+  if (!yearsRes.ok) throw new Error(await yearsRes.text());
+  const years = (await yearsRes.json()) as Array<{ id: number; name: string }>;
+  // Fetch every year's periods in parallel so the picker doesn't block on
+  // a serial fan-out (typical tenant has 1–5 years; that's a handful of
+  // small parallel requests, well within HTTP/2 multiplexing).
+  const detailed = await Promise.all(years.map(async (y) => {
+    const r = await fetch(`${base}/api/fiscal/years/${y.id}`, { headers });
+    if (!r.ok) throw new Error(await r.text());
+    const body = (await r.json()) as { periods: Array<{ id: number }> };
+    return {
+      id: y.id,
+      name: y.name,
+      periodIds: (body.periods ?? []).map((p) => Number(p.id)),
+    };
+  }));
+  return detailed;
+}
+
+function FiscalYearMultiSelect({
+  years, value, onChange, t,
+}: {
+  years: FiscalYearOption[];
+  value: number[];                       // flat list of period ids
+  onChange: (next: number[]) => void;
+  t: (k: string) => string;
+}) {
+  const [open, setOpen]   = useState(false);
+  const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const valueSet = useMemo(() => new Set(value.map(Number)), [value]);
+
+  // Classify each year as "all", "some", or "none" against the current
+  // value set. "all" is the only state that toggles cleanly off; "some"
+  // (partial) is preserved across renders so we never silently lose
+  // period ids the user can't see from this UI.
+  const yearStates = useMemo(() => years.map((y) => {
+    const inCount = y.periodIds.reduce((acc, pid) => acc + (valueSet.has(pid) ? 1 : 0), 0);
+    const state: "all" | "some" | "none" =
+      inCount === 0 ? "none" : inCount === y.periodIds.length ? "all" : "some";
+    return { ...y, state, inCount };
+  }), [years, valueSet]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return yearStates;
+    return yearStates.filter(y => y.name.toLowerCase().includes(q));
+  }, [yearStates, query]);
+
+  // Count YEARS (not periods) that are fully selected for the label.
+  const selectedYears = yearStates.filter(y => y.state === "all").length;
+  const triggerLabel = value.length === 0
+    ? t("sequences.boundPeriodsAll")
+    : selectedYears <= 2 && selectedYears > 0
+      ? yearStates.filter(y => y.state === "all").map(y => y.name).join(" • ")
+      : selectedYears > 0
+        ? t("sequences.periodsSelected").replace("{count}", String(selectedYears))
+        // No fully-selected year (only partials) — surface that so the
+        // user knows something is scoped, even if no year reads as "all".
+        : t("sequences.periodsPartial");
+
+  function toggleYear(y: FiscalYearOption & { state: "all" | "some" | "none" }) {
+    if (y.state === "all") {
+      // Remove every period of this year from the value.
+      const remove = new Set(y.periodIds.map(Number));
+      onChange(value.filter(v => !remove.has(Number(v))));
+    } else {
+      // Add (union) all of this year's period ids — covers both "none"
+      // (fresh add) and "some" (promote a partial to a full year).
+      const merged = new Set<number>(value.map(Number));
+      for (const pid of y.periodIds) merged.add(Number(pid));
+      onChange(Array.from(merged));
+    }
+  }
+  function clearAll() { onChange([]); }
+  function selectAll() {
+    const merged = new Set<number>();
+    for (const y of years) for (const pid of y.periodIds) merged.add(Number(pid));
+    onChange(Array.from(merged));
+  }
+
+  return (
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) setTimeout(() => inputRef.current?.focus(), 50); }}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button" variant="outline"
+          className="w-full justify-between font-normal"
+          data-testid="trigger-period-multiselect"
+        >
+          <span className="truncate text-start flex-1">{triggerLabel}</span>
+          <ChevronsUpDown className="w-4 h-4 opacity-50 ms-2 flex-shrink-0" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="p-0 w-[--radix-popover-trigger-width] min-w-[260px]"
+        align="start"
+      >
+        <div className="flex items-center gap-2 border-b px-2 py-1.5">
+          <Search className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder={t("sequences.periodsSearch")}
+            className="flex-1 bg-transparent text-sm outline-none py-1"
+            data-testid="input-period-search"
+          />
+          {query && (
+            <button
+              type="button" onClick={() => setQuery("")}
+              className="text-muted-foreground hover:text-foreground"
+              aria-label="clear"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center justify-between gap-2 border-b px-2 py-1 text-xs">
+          <button
+            type="button" onClick={selectAll}
+            className="text-primary hover:underline disabled:opacity-50"
+            disabled={years.length === 0 || selectedYears === years.length}
+            data-testid="button-period-select-all"
+          >
+            {t("sequences.periodsSelectAll")}
+          </button>
+          <button
+            type="button" onClick={clearAll}
+            className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+            disabled={value.length === 0}
+            data-testid="button-period-clear"
+          >
+            {t("sequences.periodsClear")}
+          </button>
+        </div>
+        <div className="max-h-60 overflow-auto py-1">
+          {filtered.length === 0 ? (
+            <p className="text-center text-xs text-muted-foreground py-4">{t("sequences.periodsEmpty")}</p>
+          ) : (
+            filtered.map(y => (
+              <label
+                key={y.id}
+                className="flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-muted/40"
+                data-testid={`option-period-year-${y.id}`}
+              >
+                <Checkbox checked={y.state === "all"} onCheckedChange={() => toggleYear(y)} />
+                <span className="flex-1 truncate">
+                  {y.name}
+                  {y.state === "some" && (
+                    <span className="text-amber-600 ms-2 text-xs">{t("sequences.periodsPartial")}</span>
+                  )}
+                </span>
+              </label>
+            ))
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // Pretty-format a transaction type key for display. Falls back to the raw
 // snake_case key if no i18n translation exists yet.
 function txLabel(t: (k: string) => string, key: string) {
@@ -239,6 +426,23 @@ export default function Sequences() {
     enabled:  !!user && !!cid,
   });
 
+  // Fiscal years (with the ids of their periods) for the period-scope
+  // picker. The user thinks "FY 2026", but the server stores period IDs —
+  // so we resolve year → periodIds here once, then translate selections
+  // back-and-forth in the picker. SuperAdmin (no cid) is intentionally
+  // skipped: the period-to-sequence link is per-tenant, like branches.
+  //
+  // Fetch strategy: one round-trip to list the years, then a parallel
+  // fetch per year for its periods (the existing /years/:id endpoint
+  // already returns `{ year, periods }`). For a typical tenant this is
+  // 1 + N small requests where N is single-digit — adding a flat
+  // /periods endpoint would be over-engineering for this surface.
+  const { data: yearsWithPeriods = [] } = useQuery<FiscalYearOption[]>({
+    queryKey: ["fiscal-years-for-sequence", cid],
+    queryFn:  fetchFiscalYearsWithPeriods,
+    enabled:  !!user && !!cid,
+  });
+
   const { data: logs = [] } = useQuery<SequenceLogRow[]>({
     queryKey: ["sequence-logs", logsId],
     queryFn:  () => sequencesApi.logs(logsId!),
@@ -302,6 +506,10 @@ export default function Sequences() {
       // Coerce in case the column round-trips strings (older rows or when
       // jsonb is read back unparsed). The backend stores numeric ids.
       branchIds:        Array.isArray(r.branchIds) ? r.branchIds.map(Number) : [],
+      // Same defensive coercion as branchIds — older rows or unparsed
+      // jsonb might surface as strings; normalize to integer ids so the
+      // year-level checkbox state computes correctly.
+      fiscalPeriodIds:  Array.isArray(r.fiscalPeriodIds) ? r.fiscalPeriodIds.map(Number) : [],
     });
     setEditingId(r.id);
     setEditingRow(r);
@@ -578,6 +786,22 @@ export default function Sequences() {
                     summaryFn={(n) => t("sequences.branchesSelected").replace("{count}", String(n))}
                   />
                   <p className="text-xs text-muted-foreground mt-1">{t("sequences.boundBranchesHelp")}</p>
+                </div>
+              )}
+
+              {/* Fiscal-year picker — empty = applies to all years. Hidden
+                  for SuperAdmin for the same reason as the branch picker
+                  (the period-to-sequence link is a per-tenant concept). */}
+              {!!cid && (
+                <div>
+                  <Label className="block mb-2">{t("sequences.boundPeriods")}</Label>
+                  <FiscalYearMultiSelect
+                    years={yearsWithPeriods}
+                    value={form.fiscalPeriodIds}
+                    onChange={(next) => setForm(f => ({ ...f, fiscalPeriodIds: next }))}
+                    t={t}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">{t("sequences.boundPeriodsHelp")}</p>
                 </div>
               )}
 

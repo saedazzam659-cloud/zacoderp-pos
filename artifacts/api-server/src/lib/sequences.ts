@@ -134,10 +134,41 @@ export async function nextSequenceNumber(
     : 0;
 
   return await db.transaction(async (tx) => {
-    // 1. Lock the candidate master sequence row. We match on companyId +
-    //    isActive + the type being present in the JSONB array. Order by id
-    //    so the choice is deterministic and concurrent callers wait on the
-    //    SAME row.
+    // Pull the company-wide date-source setting once per issuance. The
+    // column was added in Phase-2 print/sequence settings and defaults
+    // to "system" so existing tenants keep their legacy behaviour.
+    const cfgRows = await tx.execute<{ sequence_date_source: string | null }>(sql`
+      SELECT sequence_date_source FROM companies WHERE id = ${companyId} LIMIT 1
+    `);
+    const dateSource = cfgRows.rows?.[0]?.sequence_date_source ?? "system";
+    const effectiveDate = resolveEffectiveDate(dateSource, ctx.docDate);
+
+    // Resolve the fiscal period the effective date belongs to so we can
+    // route the issuance to a period-scoped sequence (when one exists).
+    // Universal sequences (empty fiscalPeriodIds) remain matchable for
+    // every date — they're the legacy default and the fallback when no
+    // year-specific override is configured.
+    const periodDateStr = `${effectiveDate.getUTCFullYear()}-${String(effectiveDate.getUTCMonth() + 1).padStart(2, "0")}-${String(effectiveDate.getUTCDate()).padStart(2, "0")}`;
+    const periodRows = await tx.execute<{ id: number }>(sql`
+      SELECT id FROM fiscal_periods
+      WHERE company_id = ${companyId}
+        AND start_date <= ${periodDateStr}
+        AND end_date   >= ${periodDateStr}
+      ORDER BY id ASC
+      LIMIT 1
+    `);
+    const periodId = periodRows.rows?.[0]?.id ?? null;
+    // When the date falls outside every configured period (early tenants,
+    // pre-fiscal-year data), only universal sequences may match.
+    const periodMatchSql = periodId != null
+      ? sql`OR fiscal_period_ids @> ${JSON.stringify([periodId])}::jsonb`
+      : sql``;
+
+    // 1. Lock the candidate master sequence row.
+    //    Resolution preference (mirrors /peek/:txType):
+    //      • scoped sequence whose fiscal_period_ids includes this date's period → wins
+    //      • universal sequence (empty fiscal_period_ids)                        → fallback
+    //    Ties within the same bucket break by lowest id (deterministic).
     const seqRows = await tx.execute<{
       id: number; prefix: string; start_number: number; current_number: number;
       end_number: number; pad_length: number; code: string; month_pattern: string | null;
@@ -147,19 +178,13 @@ export async function nextSequenceNumber(
       WHERE company_id = ${companyId}
         AND is_active = true
         AND transaction_types ? ${transactionType}
-      ORDER BY id ASC
+        AND (jsonb_array_length(fiscal_period_ids) = 0 ${periodMatchSql})
+      ORDER BY
+        CASE WHEN jsonb_array_length(fiscal_period_ids) > 0 THEN 0 ELSE 1 END ASC,
+        id ASC
       LIMIT 1
       FOR UPDATE
     `);
-
-    // Pull the company-wide date-source setting once per issuance. The
-    // column was added in Phase-2 print/sequence settings and defaults
-    // to "system" so existing tenants keep their legacy behaviour.
-    const cfgRows = await tx.execute<{ sequence_date_source: string | null }>(sql`
-      SELECT sequence_date_source FROM companies WHERE id = ${companyId} LIMIT 1
-    `);
-    const dateSource = cfgRows.rows?.[0]?.sequence_date_source ?? "system";
-    const effectiveDate = resolveEffectiveDate(dateSource, ctx.docDate);
 
     const seq = seqRows.rows?.[0];
     if (!seq) return null;

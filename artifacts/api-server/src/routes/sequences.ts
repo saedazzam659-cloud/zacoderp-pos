@@ -85,6 +85,36 @@ router.get("/peek/:txType", async (req: any, res) => {
   const parsedBranch = rawBranch != null && rawBranch !== "" ? Number(rawBranch) : 0;
   const branchKey = Number.isFinite(parsedBranch) && parsedBranch > 0 ? parsedBranch : 0;
 
+  // Optional ?date=YYYY-MM-DD lets the client preview the number for a
+  // specific document date (e.g. the editable invoiceDate on a form). When
+  // omitted we use today — the natural default for a fresh document. The
+  // date drives fiscal-period resolution: a sequence scoped to FY 2026 will
+  // only be picked here when the date lands inside one of its periods.
+  const rawDate = req.query?.date;
+  const dateInput = rawDate != null && rawDate !== "" ? new Date(String(rawDate)) : new Date();
+  const previewDate = isNaN(dateInput.getTime()) ? new Date() : dateInput;
+  const dateStr = `${previewDate.getUTCFullYear()}-${String(previewDate.getUTCMonth() + 1).padStart(2, "0")}-${String(previewDate.getUTCDate()).padStart(2, "0")}`;
+
+  // Find the fiscal period containing the preview date (if any). When the
+  // date falls outside every configured period (e.g. before the first
+  // fiscal year was created) we leave periodId as null — only universal
+  // (empty fiscalPeriodIds) sequences then match.
+  const periodRows = await db.execute<{ id: number }>(sql`
+    SELECT id FROM fiscal_periods
+    WHERE company_id = ${cid}
+      AND start_date <= ${dateStr}
+      AND end_date   >= ${dateStr}
+    ORDER BY id ASC
+    LIMIT 1
+  `);
+  const periodId = periodRows.rows?.[0]?.id ?? null;
+  const periodMatchSql = periodId != null
+    ? sql`OR fiscal_period_ids @> ${JSON.stringify([periodId])}::jsonb`
+    : sql``;
+
+  // ORDER BY puts scoped matches first so a "FY 2026 override" sequence
+  // wins over a tenant's existing universal sequence for documents that
+  // belong to 2026 — matching the resolution logic in nextSequenceNumber.
   const rows = await db.execute<{
     id: number;
     prefix: string | null; start_number: number; current_number: number;
@@ -96,7 +126,10 @@ router.get("/peek/:txType", async (req: any, res) => {
     WHERE company_id = ${cid}
       AND is_active = true
       AND transaction_types ? ${txType}
-    ORDER BY id ASC
+      AND (jsonb_array_length(fiscal_period_ids) = 0 ${periodMatchSql})
+    ORDER BY
+      CASE WHEN jsonb_array_length(fiscal_period_ids) > 0 THEN 0 ELSE 1 END ASC,
+      id ASC
     LIMIT 1
   `);
   const seq = rows.rows?.[0];
@@ -151,6 +184,10 @@ function validatePayload(body: any): string | null {
   // When provided, every entry must be a positive integer (branches.id is
   // serial starting at 1, so 0 / negatives are rejected).
   const branchIds = Array.isArray(body?.branchIds) ? body.branchIds : [];
+  // fiscalPeriodIds is optional; an empty array (or omitted) means "all
+  // periods" (universal). When non-empty, every entry must be a positive
+  // integer matching fiscal_periods.id.
+  const fiscalPeriodIds = Array.isArray(body?.fiscalPeriodIds) ? body.fiscalPeriodIds : [];
 
   if (!code)   return "الكود مطلوب";
   if (!nameAr) return "الاسم العربي مطلوب";
@@ -167,6 +204,10 @@ function validatePayload(body: any): string | null {
   for (const b of branchIds) {
     const n = Number(b);
     if (!Number.isInteger(n) || n <= 0) return "قائمة الفروع غير صالحة";
+  }
+  for (const p of fiscalPeriodIds) {
+    const n = Number(p);
+    if (!Number.isInteger(n) || n <= 0) return "قائمة الفترات المالية غير صالحة";
   }
   // Disallow embedded prefix length pushing the formatted string beyond a
   // sane bound. Keeps DB indexes / printouts predictable.
@@ -236,28 +277,58 @@ router.get("/:id/logs", async (req, res) => {
 });
 
 // Helper: ensure no OTHER active sequence in this company already binds any
-// of the requested transaction types. Prevents two competing counters for
-// the same screen — the helper would non-deterministically pick one and
-// users would see number jumps.
+// of the requested transaction types **within an overlapping fiscal-period
+// scope**. The fiscal-period dimension lets a tenant run independent
+// counters per year (FY2025 stays on old counter, FY2026 starts fresh), so
+// two active sequences for the SAME tx-type are only in conflict when
+// their period coverage truly overlaps:
+//
+//   • Both universal (empty fiscalPeriodIds) → CONFLICT
+//       (both would claim every period — non-deterministic pick)
+//   • One universal + one scoped               → ALLOWED
+//       (the scoped one wins for its periods, universal covers the rest;
+//        nextSequenceNumber orders scoped matches first)
+//   • Both scoped, period sets disjoint        → ALLOWED
+//       (each owns a distinct slice of the calendar)
+//   • Both scoped, any shared period id        → CONFLICT
 //
 // `dbx` accepts either the global `db` or a transaction handle so callers
 // can run the check + the subsequent write inside the same transaction
 // (combined with the per-company advisory lock below) for atomic safety.
 async function ensureNoTypeConflict(
-  dbx: any, cid: number, types: string[], excludeId?: number,
+  dbx: any,
+  cid: number,
+  types: string[],
+  candidateFiscalPeriodIds: number[] | null | undefined,
+  excludeId?: number,
 ): Promise<string | null> {
   if (!types.length) return null;
   const conflicts = await dbx.execute(sql`
-    SELECT id, code, transaction_types
+    SELECT id, code, transaction_types, fiscal_period_ids
     FROM sequences
     WHERE company_id = ${cid}
       AND is_active = true
       ${excludeId ? sql`AND id <> ${excludeId}` : sql``}
       AND transaction_types ?| array[${sql.join(types.map((t: string) => sql`${t}`), sql`, `)}]
   `);
-  const r = conflicts.rows?.[0] as any;
-  if (!r) return null;
-  return `الشاشة مرتبطة بالفعل بالمسلسل "${r.code}". قم بإلغاء تنشيطه أولاً أو ربط الشاشة منه.`;
+  const candidateSet = new Set((candidateFiscalPeriodIds ?? []).map(Number));
+  const candidateUniversal = candidateSet.size === 0;
+  for (const r of (conflicts.rows ?? []) as any[]) {
+    const otherIdsRaw: unknown[] = Array.isArray(r.fiscal_period_ids) ? r.fiscal_period_ids : [];
+    const otherIds: number[] = otherIdsRaw.map((x) => Number(x));
+    const otherUniversal = otherIds.length === 0;
+    if (candidateUniversal && otherUniversal) {
+      return `الشاشة مرتبطة بالفعل بالمسلسل "${r.code}" (يغطي كل الفترات). قم بإلغاء تنشيطه، أو قَيِّد أحدهما بفترة مالية محددة.`;
+    }
+    if (!candidateUniversal && !otherUniversal) {
+      const overlap = otherIds.some(id => candidateSet.has(id));
+      if (overlap) {
+        return `الشاشة مرتبطة بالفعل بالمسلسل "${r.code}" في فترة مالية متداخلة. اختر فترات مالية مختلفة لكل مسلسل.`;
+      }
+    }
+    // universal × scoped → allowed; scoped wins for its periods.
+  }
+  return null;
 }
 
 // Two distinct advisory-lock keys (company-scoped). pg_advisory_xact_lock(int, int)
@@ -282,8 +353,14 @@ router.post("/", audit("sequences", "create"), async (req, res) => {
     const result = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(${SEQ_LOCK_NS}, ${cid})`);
 
+      // Normalize the candidate's fiscal period ids ONCE so the conflict
+      // check and the insert use the exact same set (dedupe + integer cast).
+      const candidatePeriodIds: number[] = Array.isArray(req.body.fiscalPeriodIds)
+        ? Array.from(new Set<number>(req.body.fiscalPeriodIds.map((x: any) => Number(x))))
+        : [];
+
       if (isActive) {
-        const conflict = await ensureNoTypeConflict(tx, cid, req.body.transactionTypes);
+        const conflict = await ensureNoTypeConflict(tx, cid, req.body.transactionTypes, candidatePeriodIds);
         if (conflict) return { status: 409, body: { error: conflict } };
       }
 
@@ -312,6 +389,7 @@ router.post("/", audit("sequences", "create"), async (req, res) => {
         branchIds: Array.isArray(req.body.branchIds)
           ? Array.from(new Set(req.body.branchIds.map((x: any) => Number(x))))
           : [],
+        fiscalPeriodIds: candidatePeriodIds,
       }).returning();
       return { status: 201, body: withUsage(row) };
     });
@@ -352,6 +430,7 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
       existing.isActive      = existing.is_active      ?? existing.isActive;
       existing.transactionTypes = existing.transaction_types ?? existing.transactionTypes;
       existing.branchIds     = existing.branch_ids     ?? existing.branchIds ?? [];
+      existing.fiscalPeriodIds = existing.fiscal_period_ids ?? existing.fiscalPeriodIds ?? [];
       existing.nameAr        = existing.name_ar        ?? existing.nameAr;
       existing.nameEn        = existing.name_en        ?? existing.nameEn;
       existing.monthPattern  = existing.month_pattern  ?? existing.monthPattern ?? null;
@@ -377,6 +456,7 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         isActive:         req.body.isActive         ?? existing.isActive,
         transactionTypes: req.body.transactionTypes ?? existing.transactionTypes,
         branchIds:        req.body.branchIds        ?? existing.branchIds,
+        fiscalPeriodIds:  req.body.fiscalPeriodIds  ?? existing.fiscalPeriodIds,
       };
       const err = validatePayload(merged);
       if (err) return { status: 400, body: { error: err } };
@@ -433,8 +513,17 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         }
       }
 
+      // Normalize the merged candidate set ONCE so the conflict check and
+      // the UPDATE write see the exact same array — otherwise an admin could
+      // pass duplicates that slip past the overlap check but reach the row.
+      const mergedPeriodIds: number[] = Array.isArray(merged.fiscalPeriodIds)
+        ? Array.from(new Set<number>((merged.fiscalPeriodIds as any[]).map((x) => Number(x))))
+        : [];
+
       if (merged.isActive) {
-        const conflict = await ensureNoTypeConflict(tx, cid, merged.transactionTypes as string[], id);
+        const conflict = await ensureNoTypeConflict(
+          tx, cid, merged.transactionTypes as string[], mergedPeriodIds, id,
+        );
         if (conflict) return { status: 409, body: { error: conflict } };
       }
 
@@ -461,6 +550,7 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         branchIds: Array.isArray(merged.branchIds)
           ? Array.from(new Set((merged.branchIds as any[]).map((x) => Number(x))))
           : [],
+        fiscalPeriodIds: mergedPeriodIds,
         updatedAt:        new Date(),
       }).where(and(eq(sequencesTable.id, id), eq(sequencesTable.companyId, cid))).returning();
       return { status: 200, body: withUsage(row) };

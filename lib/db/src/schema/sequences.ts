@@ -90,6 +90,21 @@ export const sequencesTable = pgTable("sequences", {
   // resolution they would normally pick (or to a free-typed number when no
   // sequence applies). Stored as a JSON array of integers (branches.id).
   branchIds:        jsonb("branch_ids").notNull().default([]),
+  // Optional whitelist of fiscal-period IDs this sequence applies to. Empty
+  // array (the default) means "all periods" — keeps every existing tenant
+  // on a single continuous counter regardless of fiscal year.
+  //
+  // When non-empty, this sequence is ONLY used for documents whose
+  // effective date falls inside one of the listed periods. This lets
+  // tenants run two separate counters across years (e.g. fiscal 2025
+  // keeps INV-####, fiscal 2026 starts a fresh INV-2026-#### stream)
+  // OR share a single counter across multiple periods (list them all).
+  //
+  // Resolution order in nextSequenceNumber: scoped sequences win over
+  // unscoped ones for the same tx-type, so a tenant can keep a default
+  // "any-period" sequence and add narrow overrides per fiscal year.
+  // Stored as a JSON array of integers (fiscal_periods.id).
+  fiscalPeriodIds:  jsonb("fiscal_period_ids").notNull().default([]),
   createdAt:        timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt:        timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
