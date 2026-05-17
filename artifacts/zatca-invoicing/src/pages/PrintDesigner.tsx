@@ -12,7 +12,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   Plus, Trash2, Save, Copy, FileText, Image as ImageIcon, Type, Square,
   Minus, Table as TableIcon, Tag, Star, Download, Printer, ZoomIn, ZoomOut,
-  LayoutTemplate, X, CheckCircle2, Maximize2,
+  LayoutTemplate, X, CheckCircle2, Maximize2, PanelLeftOpen, PanelRightOpen,
 } from "lucide-react";
 import { PRESETS_BY_DOC, type PresetDescriptor } from "./printDesigner/presets";
 
@@ -294,6 +294,8 @@ export default function PrintDesigner() {
   const [selectedElId, setSelectedElId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(0.85);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
+  const [showLeftPanel, setShowLeftPanel]   = useState(true);  // elements + fields palette
+  const [showRightPanel, setShowRightPanel] = useState(true);  // inspector
 
   // Stretch the page to fill the horizontal viewport (much more attractive
   // for portrait A4 — the page fills the workspace edge-to-edge and the
@@ -315,8 +317,13 @@ export default function PrintDesigner() {
     setZoom(Math.max(0.3, Math.min(1.6, z)));
   };
 
-  // Auto-fit on first mount and when paper size changes.
-  useEffect(() => { fitToPage(); }, [widthMm, heightMm]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Auto-fit on first mount, when paper size changes, or when a side panel
+  // is collapsed/expanded (the available viewport width just changed).
+  useEffect(() => {
+    // Wait one frame so the flex layout reflows before we measure.
+    const id = requestAnimationFrame(() => fitToPage());
+    return () => cancelAnimationFrame(id);
+  }, [widthMm, heightMm, showLeftPanel, showRightPanel]); // eslint-disable-line react-hooks/exhaustive-deps
   const [dirty, setDirty] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
   // Doc types for which we've already auto-opened the gallery this session,
@@ -618,12 +625,32 @@ export default function PrintDesigner() {
             <Maximize2 className="w-3.5 h-3.5"/> ملاءمة
           </button>
         </div>
+        <div className="mx-2 h-6 w-px bg-slate-200" />
+        <button onClick={() => setShowLeftPanel(v => !v)}
+          className={`flex items-center gap-1 px-2 py-1 text-xs rounded ${showLeftPanel ? "bg-slate-100 hover:bg-slate-200 text-slate-700" : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700"}`}
+          title={showLeftPanel ? "إخفاء لوحة العناصر" : "إظهار لوحة العناصر"}>
+          <PanelRightOpen className="w-3.5 h-3.5"/>
+          {showLeftPanel ? "إخفاء العناصر" : "إظهار العناصر"}
+        </button>
+        <button onClick={() => setShowRightPanel(v => !v)}
+          className={`flex items-center gap-1 px-2 py-1 text-xs rounded ${showRightPanel ? "bg-slate-100 hover:bg-slate-200 text-slate-700" : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700"}`}
+          title={showRightPanel ? "إخفاء لوحة الخصائص" : "إظهار لوحة الخصائص"}>
+          <PanelLeftOpen className="w-3.5 h-3.5"/>
+          {showRightPanel ? "إخفاء الخصائص" : "إظهار الخصائص"}
+        </button>
+        <button
+          onClick={() => { setShowLeftPanel(false); setShowRightPanel(false); }}
+          className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-violet-50 hover:bg-violet-100 text-violet-700"
+          title="وضع التركيز — يخفي اللوحات الجانبية لرؤية النموذج كاملاً">
+          <Maximize2 className="w-3.5 h-3.5"/> وضع التركيز
+        </button>
       </div>
 
       {/* Body */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left palette */}
-        <div className="w-56 bg-white border-l overflow-y-auto p-3 text-sm space-y-4">
+        {showLeftPanel && (
+        <div className="w-56 shrink-0 bg-white border-l overflow-y-auto p-3 text-sm space-y-4">
           <div>
             <div className="font-semibold mb-2 text-slate-700">العناصر</div>
             <div className="grid grid-cols-2 gap-2">
@@ -674,6 +701,7 @@ export default function PrintDesigner() {
             </div>
           </div>
         </div>
+        )}
 
         {/* Canvas */}
         <div ref={canvasViewportRef}
@@ -708,7 +736,8 @@ export default function PrintDesigner() {
         </div>
 
         {/* Right inspector */}
-        <div className="w-60 bg-white border-r overflow-y-auto p-3 text-sm">
+        {showRightPanel && (
+        <div className="w-60 shrink-0 bg-white border-r overflow-y-auto p-3 text-sm">
           {!selectedEl ? (
             <div className="text-slate-500 text-center mt-10 text-xs">
               اختر عنصراً لتعديل خصائصه<br/>أو اسحب عنصراً من اللوحة اليمنى
@@ -723,6 +752,7 @@ export default function PrintDesigner() {
             />
           )}
         </div>
+        )}
       </div>
 
       {/* ───────────── Preset gallery modal ───────────── */}
