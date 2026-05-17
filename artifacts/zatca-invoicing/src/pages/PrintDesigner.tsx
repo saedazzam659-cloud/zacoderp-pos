@@ -13,7 +13,7 @@ import {
   Plus, Trash2, Save, Copy, FileText, Image as ImageIcon, Type, Square,
   Minus, Table as TableIcon, Tag, Star, Download, Printer, ZoomIn, ZoomOut,
   LayoutTemplate, X, CheckCircle2, Maximize2, PanelLeftOpen, PanelRightOpen,
-  Box, MousePointer2,
+  Box, MousePointer2, Undo2, Redo2,
 } from "lucide-react";
 import { PRESETS_BY_DOC, type PresetDescriptor } from "./printDesigner/presets";
 
@@ -303,6 +303,19 @@ export default function PrintDesigner() {
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [zoom, setZoom] = useState(0.85);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
+  // Undo / redo history — every call to patchLayout pushes the BEFORE state
+  // onto `past` and clears `future`. Direct setLayout calls (template load,
+  // first mount) intentionally do NOT touch the stacks so Ctrl+Z cannot
+  // accidentally rewind to a different template's layout.
+  const [past, setPast]     = useState<Layout[]>([]);
+  const [future, setFuture] = useState<Layout[]>([]);
+  // Marquee (rubber-band) selection. Coordinates are in page-space (unzoomed
+  // pixels relative to the page top-right corner). `additive` is set when the
+  // user holds Shift/Ctrl so the marquee adds to the existing selection
+  // instead of replacing it.
+  const [marquee, setMarquee] = useState<
+    { x1: number; y1: number; x2: number; y2: number; additive: boolean } | null
+  >(null);
   const [showLeftPanel, setShowLeftPanel]   = useState(true);  // elements + fields palette
   const [showRightPanel, setShowRightPanel] = useState(true);  // inspector
 
@@ -373,6 +386,52 @@ export default function PrintDesigner() {
     setSelectedTemplateId(preferred.id);
   }, [templates.length, documentType]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Marquee drag — once started by mousedown on the empty canvas, we attach
+  // window-level move/up listeners so the rect keeps tracking even if the
+  // cursor leaves the canvas. On release we pick every element whose bounding
+  // box intersects the marquee rect and (depending on `additive`) either
+  // replace or extend the current selection.
+  useEffect(() => {
+    if (!marquee) return;
+    const onMove = (ev: MouseEvent) => {
+      const node = canvasRef.current;
+      if (!node) return;
+      const rect = node.getBoundingClientRect();
+      const x = (ev.clientX - rect.left) / zoom;
+      const y = (ev.clientY - rect.top)  / zoom;
+      setMarquee(m => (m ? { ...m, x2: x, y2: y } : m));
+    };
+    const onUp = () => {
+      setMarquee(m => {
+        if (!m) return null;
+        const x1 = Math.min(m.x1, m.x2), x2 = Math.max(m.x1, m.x2);
+        const y1 = Math.min(m.y1, m.y2), y2 = Math.max(m.y1, m.y2);
+        // Tiny rects (a stray click) shouldn't change selection.
+        if (x2 - x1 < 3 && y2 - y1 < 3) return null;
+        const hit = layout.elements
+          .filter(el => {
+            const ex2 = el.x + el.width, ey2 = el.y + el.height;
+            return el.x < x2 && ex2 > x1 && el.y < y2 && ey2 > y1;
+          })
+          .map(el => el.id);
+        if (hit.length === 0) return null;
+        if (m.additive) {
+          setSelectedIds(prev => Array.from(new Set([...prev, ...hit])));
+        } else {
+          setSelectedIds(hit);
+        }
+        setSelectedElId(hit[hit.length - 1]);
+        return null;
+      });
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [marquee, zoom, layout]);
+
   // Esc closes the preset gallery modal.
   useEffect(() => {
     if (!showPresets) return;
@@ -391,6 +450,12 @@ export default function PrintDesigner() {
         if (selectedIds.length > 0) { e.preventDefault(); deleteSelected(); }
       } else if (e.key === "Escape") {
         clearSelection();
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        undo();
+      } else if ((e.ctrlKey || e.metaKey) && ((e.shiftKey && (e.key === "z" || e.key === "Z")) || e.key === "y" || e.key === "Y")) {
+        e.preventDefault();
+        redo();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -477,8 +542,36 @@ export default function PrintDesigner() {
   );
 
   function patchLayout(next: Layout) {
+    // Snapshot the BEFORE state so Ctrl+Z can roll back to it. Any new edit
+    // invalidates the redo stack — standard editor semantics.
+    setPast(p => [...p, layout]);
+    setFuture([]);
     setLayout(next);
     setDirty(true);
+  }
+
+  function undo() {
+    if (past.length === 0) return;
+    const prev = past[past.length - 1];
+    setPast(p => p.slice(0, -1));
+    setFuture(f => [layout, ...f]);
+    setLayout(prev);
+    setDirty(true);
+    // Clear selection — the element a user had highlighted may no longer
+    // exist (or have a different position) in the restored layout.
+    setSelectedElId(null);
+    setSelectedIds([]);
+  }
+
+  function redo() {
+    if (future.length === 0) return;
+    const next = future[0];
+    setFuture(f => f.slice(1));
+    setPast(p => [...p, layout]);
+    setLayout(next);
+    setDirty(true);
+    setSelectedElId(null);
+    setSelectedIds([]);
   }
 
   function addElement(type: ElementType, fieldKey?: string, fieldLabel?: string) {
@@ -672,6 +765,16 @@ export default function PrintDesigner() {
           title="صفحة بيضاء فارغة">
           <Plus className="w-4 h-4" /> فارغ جديد
         </button>
+        <button onClick={undo} disabled={past.length === 0}
+          className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
+          title="تراجع (Ctrl+Z)">
+          <Undo2 className="w-3.5 h-3.5" /> تراجع
+        </button>
+        <button onClick={redo} disabled={future.length === 0}
+          className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
+          title="إعادة (Ctrl+Y)">
+          <Redo2 className="w-3.5 h-3.5" /> إعادة
+        </button>
         <button onClick={save} disabled={updateMut.isPending || createMut.isPending}
           className="flex items-center gap-1 px-3 py-1 text-sm rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
           <Save className="w-4 h-4" /> حفظ {dirty && "•"}
@@ -827,7 +930,20 @@ export default function PrintDesigner() {
           className="flex-1 overflow-auto p-4 flex items-start justify-center bg-gradient-to-b from-slate-100 to-slate-200">
           <div
             ref={canvasRef}
-            onMouseDown={e => { if (e.target === canvasRef.current) clearSelection(); }}
+            onMouseDown={e => {
+              // Marquee selection: only fires when the click lands directly on
+              // the empty canvas background (not on an existing element). The
+              // canvas is zoom-scaled, so we convert client coords back to
+              // page-space (unzoomed pixels) so the rect matches element data.
+              if (e.target !== canvasRef.current) return;
+              if (e.button !== 0) return;
+              const rect = canvasRef.current.getBoundingClientRect();
+              const x = (e.clientX - rect.left) / zoom;
+              const y = (e.clientY - rect.top)  / zoom;
+              const additive = e.shiftKey || e.ctrlKey || e.metaKey || multiSelectMode;
+              if (!additive) clearSelection();
+              setMarquee({ x1: x, y1: y, x2: x, y2: y, additive });
+            }}
             style={{
               width:  widthMm * MM * zoom,
               height: heightMm * MM * zoom,
@@ -842,6 +958,21 @@ export default function PrintDesigner() {
               position: "absolute", inset: 0, transform: `scale(${zoom})`,
               transformOrigin: "top right", width: widthMm * MM, height: heightMm * MM,
             }}>
+              {marquee && (
+                <div
+                  style={{
+                    position: "absolute",
+                    left:   Math.min(marquee.x1, marquee.x2),
+                    top:    Math.min(marquee.y1, marquee.y2),
+                    width:  Math.abs(marquee.x2 - marquee.x1),
+                    height: Math.abs(marquee.y2 - marquee.y1),
+                    border: "1.5px dashed #4f46e5",
+                    background: "rgba(99,102,241,0.10)",
+                    pointerEvents: "none",
+                    zIndex: 9999,
+                  }}
+                />
+              )}
               {layout.elements.map(el => (
                 <ElementRnd key={el.id} el={el}
                   selected={selectedIds.includes(el.id)}
