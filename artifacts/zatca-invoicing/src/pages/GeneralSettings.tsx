@@ -460,6 +460,13 @@ export default function GeneralSettings() {
             <CalendarDays className="h-4 w-4 shrink-0" />
             <span className="truncate">تاريخ المسلسل</span>
           </TabsTrigger>
+          <TabsTrigger
+            value="salesReturnsRules"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <Repeat className="h-4 w-4 shrink-0" />
+            <span className="truncate">إعدادات مرتجعات المبيعات</span>
+          </TabsTrigger>
         </TabsList>
 
         {/* ═══ TAB 1: General (Logo + Decimals + Save) ═══════════════════════ */}
@@ -1171,6 +1178,50 @@ export default function GeneralSettings() {
                 </>
               );
             })()}
+          </div>
+        </TabsContent>
+
+        {/* ═══ TAB: Sales-Returns rules (informational, always-on) ═══════ */}
+        <TabsContent value="salesReturnsRules" className="mt-5 space-y-6">
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <h2 className="font-semibold text-base flex items-center gap-2">
+              <Repeat className="h-4 w-4 text-muted-foreground" />
+              قواعد مرتجعات المبيعات
+            </h2>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              القواعد التالية مفعَّلة افتراضياً على جميع مرتجعات المبيعات في النظام لضمان دقة المخزون والمحاسبة.
+              لا توجد إعدادات قابلة للتعديل حالياً — هذا التاب محجوز لإعدادات مستقبلية يمكن للشركة تخصيصها.
+            </p>
+            <ul className="space-y-2.5 text-sm">
+              <li className="flex items-start gap-2.5 rounded-lg border bg-background p-3">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-medium">الشرح (الملاحظات) إلزامي</p>
+                  <p className="text-xs text-muted-foreground">لا يمكن حفظ مرتجع بدون شرح يوضح سبب الإرجاع.</p>
+                </div>
+              </li>
+              <li className="flex items-start gap-2.5 rounded-lg border bg-background p-3">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-medium">سقف كمية المرتجع = كمية البيع</p>
+                  <p className="text-xs text-muted-foreground">عند ربط المرتجع بفاتورة مصدر، لا يمكن إرجاع كمية تتجاوز ما تم بيعه فعلياً لكل صنف (مع احتساب المرتجعات السابقة).</p>
+                </div>
+              </li>
+              <li className="flex items-start gap-2.5 rounded-lg border bg-background p-3">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-medium">الكمية والوحدة الرئيسية إلزاميتان</p>
+                  <p className="text-xs text-muted-foreground">يجب أن يحتوي كل سطر على كمية أكبر من صفر ووحدة رئيسية محدّدة قبل الحفظ.</p>
+                </div>
+              </li>
+              <li className="flex items-start gap-2.5 rounded-lg border bg-background p-3">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-medium">اختيار جزئي للأصناف من الفاتورة المصدر</p>
+                  <p className="text-xs text-muted-foreground">عند تحميل فاتورة مصدر، تُعرض نافذة لاختيار الأصناف المراد إرجاعها فقط بدلاً من نسخ كل أسطر الفاتورة تلقائياً.</p>
+                </div>
+              </li>
+            </ul>
           </div>
         </TabsContent>
       </Tabs>

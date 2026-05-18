@@ -29,6 +29,8 @@ import {
 } from "@/lib/docRowTone";
 import SalesPrintModal from "./SalesPrintModal";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
@@ -101,6 +103,21 @@ export default function SalesReturns() {
   const [form, setForm]         = useState<any>({ ...EMPTY, priceIncludesVat: stickyPriceIncl.initial });
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
   const [printData, setPrintData] = useState<any>(null);
+  // Source-invoice picker — when a sales invoice is selected as the source,
+  // open this modal instead of auto-importing every line. Lets the user
+  // pick exactly which items to return + the qty for each (capped at the
+  // sold qty per line). Default: nothing pre-selected so the user has
+  // to actively pick.
+  const [picker, setPicker] = useState<{
+    open: boolean;
+    invoice: any;
+    rows: Array<{
+      srcLine: any;
+      selected: boolean;
+      returnQty: string;  // editable, capped at maxQty
+      maxQty: number;     // source line qty
+    }>;
+  } | null>(null);
   const [branchIds, setBranchIds] = useState<number[]>([]);
   const branchKey = branchIds.length ? branchIds.slice().sort((a, b) => a - b).join(",") : "all";
 
@@ -503,27 +520,71 @@ export default function SalesReturns() {
         taxAccountId:       inv.taxAccountId       ? String(inv.taxAccountId)       : prev.taxAccountId,
         discountAccountId:  inv.discountAccountId  ? String(inv.discountAccountId)  : prev.discountAccountId,
       }));
-      if (inv.lines?.length) {
-        setLines(inv.lines.map((l: any) => ({
-          _id: crypto.randomUUID(),
-          itemId:      l.itemId      ? String(l.itemId)      : "",
-          itemName:    l.itemName    ?? "",
-          itemCode:    l.itemCode    ?? "",
-          unitId:      l.unitId      ? String(l.unitId)      : "",
-          unit:        l.unit        ?? "",
-          conversionFactor: String(l.conversionFactor ?? "1"),
-          warehouseId: l.warehouseId ? String(l.warehouseId) : "",
-          qty:         String(Math.round(Number(l.qty ?? 1))),
-          freeQty:     String(l.freeQty ?? "0"),
-          unitPrice:   String(l.unitPrice ?? 0),
-          discount:    String(l.discount  ?? "0"),
-          vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
-          lineTotal:   String(l.lineTotal ?? 0),
-          notes:       l.notes ?? "",
-        })));
-      }
       if (opts.openForm) setShowForm(true);
+      // Instead of auto-importing every source line, open a picker so the
+      // user can choose exactly which items to return and the qty for each.
+      // This is rule #4 of the sales-return policy.
+      if (inv.lines?.length) {
+        setPicker({
+          open: true,
+          invoice: inv,
+          rows: inv.lines.map((l: any) => ({
+            srcLine: l,
+            selected: false,
+            returnQty: String(Math.round(Number(l.qty ?? 1))),
+            maxQty: Number(l.qty ?? 0),
+          })),
+        });
+      } else {
+        toast({ title: "الفاتورة المختارة لا تحتوي على أصناف", variant: "destructive" });
+      }
     } catch (_) { /* silent */ }
+  }
+
+  // Apply the picker selection: replace the form's lines with ONLY the
+  // ticked rows, using their (capped) return qty. Each line's full source
+  // metadata (unit, price, vat, discount, warehouse, …) is preserved.
+  function applyPickerSelection() {
+    if (!picker) return;
+    const chosen = picker.rows.filter(r => r.selected);
+    if (!chosen.length) {
+      toast({ title: "يجب تحديد صنف واحد على الأقل", variant: "destructive" });
+      return;
+    }
+    const bad = chosen.find(r => {
+      const q = Number(r.returnQty);
+      return !Number.isFinite(q) || q <= 0 || q > r.maxQty + 1e-6;
+    });
+    if (bad) {
+      toast({
+        title: "كمية مرتجع غير صالحة",
+        description: `الصنف "${bad.srcLine.itemName ?? bad.srcLine.itemCode ?? ""}" — الكمية يجب أن تكون أكبر من صفر و لا تتجاوز ${bad.maxQty}`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setLines(chosen.map(r => {
+      const l = r.srcLine;
+      const base: ReturnLine = {
+        _id: crypto.randomUUID(),
+        itemId:      l.itemId      ? String(l.itemId)      : "",
+        itemName:    l.itemName    ?? "",
+        itemCode:    l.itemCode    ?? "",
+        unitId:      l.unitId      ? String(l.unitId)      : "",
+        unit:        l.unit        ?? "",
+        conversionFactor: String(l.conversionFactor ?? "1"),
+        warehouseId: l.warehouseId ? String(l.warehouseId) : "",
+        qty:         r.returnQty,
+        freeQty:     String(l.freeQty ?? "0"),
+        unitPrice:   String(l.unitPrice ?? 0),
+        discount:    String(l.discount  ?? "0"),
+        vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
+        lineTotal:   "0",
+        notes:       l.notes ?? "",
+      };
+      return { ...base, lineTotal: calcLineTotal(base, !!form.priceIncludesVat).toFixed(2) };
+    }));
+    setPicker(null);
   }
 
   // Pre-fill from sales invoice via ?fromInvoice URL param
@@ -698,6 +759,7 @@ export default function SalesReturns() {
     const missing: string[] = [];
     if (!form.customerId) missing.push(t("salesReturns.customer", { defaultValue: "العميل" }));
     if (!form.branchId)   missing.push(t("salesReturns.branch",   { defaultValue: "الفرع" }));
+    if (!form.notes || !String(form.notes).trim()) missing.push("الشرح (الملاحظات)");
     if (missing.length) {
       toast({
         title: "⚠️ بيانات ناقصة — لا يمكن حفظ المرتجع",
@@ -705,6 +767,21 @@ export default function SalesReturns() {
         variant: "destructive",
       });
       return;
+    }
+    // Per-line validation: every line must have an item, qty>0, and a main unit.
+    // Mirrors the server-side gate so the user sees the error instantly.
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (!l.itemId) {
+        toast({ title: `السطر ${i + 1}: الصنف مطلوب`, variant: "destructive" }); return;
+      }
+      const q = Number(l.qty);
+      if (!Number.isFinite(q) || q <= 0) {
+        toast({ title: `السطر ${i + 1}: الكمية مطلوبة وأكبر من صفر`, variant: "destructive" }); return;
+      }
+      if (!l.unitId) {
+        toast({ title: `السطر ${i + 1}: يجب اختيار الوحدة الرئيسية`, variant: "destructive" }); return;
+      }
     }
     saveMut.mutate({
       ...form,
@@ -1946,6 +2023,95 @@ ${sections}
         />
       </div>
       <SalesPrintModal open={!!printData} onClose={() => setPrintData(null)} data={printData} />
+
+      {/* ─── Source-invoice item picker ────────────────────────────────────
+          Opens when the user picks a source sales invoice. Lets them tick
+          which items to return and edit the per-line qty (capped at sold
+          qty). On confirm, replaces the form's lines with only the
+          selected entries. Backstops rule #4 of the sales-returns policy.
+      */}
+      <Dialog open={!!picker?.open} onOpenChange={(v) => { if (!v) setPicker(null); }}>
+        <DialogContent className="max-w-3xl" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>
+              اختر أصناف المرتجع من الفاتورة {picker?.invoice?.docNumber ?? ""}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto">
+            <table className="w-full text-xs border-collapse">
+              <thead className="bg-muted/50 sticky top-0">
+                <tr>
+                  <th className="p-2 border w-10">
+                    <Checkbox
+                      checked={!!picker && picker.rows.length > 0 && picker.rows.every(r => r.selected)}
+                      onCheckedChange={(v) => {
+                        const sel = v === true;
+                        setPicker(p => p ? { ...p, rows: p.rows.map(r => ({ ...r, selected: sel })) } : p);
+                      }}
+                    />
+                  </th>
+                  <th className="p-2 border text-start">الكود</th>
+                  <th className="p-2 border text-start">الصنف</th>
+                  <th className="p-2 border text-center">الوحدة</th>
+                  <th className="p-2 border text-end">المباع</th>
+                  <th className="p-2 border text-end w-32">كمية المرتجع</th>
+                </tr>
+              </thead>
+              <tbody>
+                {picker?.rows.map((r, idx) => (
+                  <tr key={idx} className={cn(r.selected && "bg-primary/5")}>
+                    <td className="p-2 border text-center">
+                      <Checkbox
+                        checked={r.selected}
+                        onCheckedChange={(v) => {
+                          const sel = v === true;
+                          setPicker(p => p ? {
+                            ...p,
+                            rows: p.rows.map((x, i) => i === idx ? { ...x, selected: sel } : x),
+                          } : p);
+                        }}
+                      />
+                    </td>
+                    <td className="p-2 border font-mono">{r.srcLine.itemCode ?? ""}</td>
+                    <td className="p-2 border">{r.srcLine.itemName ?? ""}</td>
+                    <td className="p-2 border text-center">{r.srcLine.unit ?? ""}</td>
+                    <td className="p-2 border text-end font-mono">{r.maxQty}</td>
+                    <td className="p-2 border">
+                      <Input
+                        className="h-8 text-xs text-end font-mono"
+                        type="text"
+                        inputMode="decimal"
+                        dir="ltr"
+                        disabled={!r.selected}
+                        value={r.returnQty}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/[^0-9.]/g, "");
+                          setPicker(p => p ? {
+                            ...p,
+                            rows: p.rows.map((x, i) => i === idx ? { ...x, returnQty: v } : x),
+                          } : p);
+                        }}
+                      />
+                      {Number(r.returnQty) > r.maxQty && (
+                        <p className="text-[10px] text-destructive mt-0.5">يتجاوز المباع ({r.maxQty})</p>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {picker?.rows.length === 0 && (
+                  <tr><td colSpan={6} className="p-4 text-center text-muted-foreground">لا توجد أصناف في الفاتورة</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={() => setPicker(null)}>إلغاء</Button>
+            <Button type="button" onClick={applyPickerSelection}>
+              تأكيد ({picker?.rows.filter(r => r.selected).length ?? 0} صنف)
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

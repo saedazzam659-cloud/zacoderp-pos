@@ -1344,6 +1344,107 @@ router.get("/sales-returns/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
+// Shared validation for sales-return POST/PUT. Enforces 4 rules:
+//   1) notes (الشرح) is mandatory on every return.
+//   2) every line must have itemId, qty>0, and a main unitId.
+//   3) when invoiceId is set, the per-item cumulative return qty across
+//      *all* returns for that invoice (current + prior, excluding the
+//      one being edited) cannot exceed the source invoice's sold qty.
+//      Comparison is in base units (qty × conversionFactor) so the rule
+//      survives unit changes between source and return.
+// Returns true if the request may proceed; otherwise writes a 400 and
+// returns false (caller must `return` immediately).
+async function validateSalesReturnPayload(
+  res: any,
+  body: any,
+  ctx: { cid: number; excludeReturnId?: number | null },
+): Promise<boolean> {
+  const { notes, lines, invoiceId } = body ?? {};
+  if (!notes || !String(notes).trim()) {
+    res.status(400).json({ error: "الشرح (الملاحظات) مطلوب لكل مرتجع", field: "notes" }); return false;
+  }
+  if (!Array.isArray(lines) || lines.length === 0) {
+    res.status(400).json({ error: "يجب إضافة سطر واحد على الأقل في المرتجع" }); return false;
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i] ?? {};
+    if (!l.itemId) {
+      res.status(400).json({ error: `السطر ${i + 1}: الصنف مطلوب`, field: `lines.${i}.itemId` }); return false;
+    }
+    const q = Number(l.qty);
+    if (!Number.isFinite(q) || q <= 0) {
+      res.status(400).json({ error: `السطر ${i + 1}: الكمية مطلوبة وأكبر من صفر`, field: `lines.${i}.qty` }); return false;
+    }
+    if (!l.unitId) {
+      res.status(400).json({ error: `السطر ${i + 1}: الوحدة الرئيسية مطلوبة`, field: `lines.${i}.unitId` }); return false;
+    }
+  }
+  if (invoiceId) {
+    const invId = Number(invoiceId);
+    if (Number.isFinite(invId)) {
+      const srcLines = await db.select({
+        itemId: salesInvoiceLinesTable.itemId,
+        qty: salesInvoiceLinesTable.qty,
+        conversionFactor: salesInvoiceLinesTable.conversionFactor,
+      }).from(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.invoiceId, invId));
+      const soldBase = new Map<number, number>();
+      for (const sl of srcLines) {
+        if (sl.itemId == null) continue;
+        const base = Number(sl.qty || 0) * Number(sl.conversionFactor || 1);
+        soldBase.set(sl.itemId, (soldBase.get(sl.itemId) || 0) + base);
+      }
+      const priorWhere = [
+        eq(salesReturnsTable.companyId, ctx.cid),
+        eq(salesReturnsTable.invoiceId, invId),
+        ...(ctx.excludeReturnId ? [sql`${salesReturnsTable.id} <> ${ctx.excludeReturnId}`] : []),
+      ];
+      const priorRetIds = await db.select({ id: salesReturnsTable.id })
+        .from(salesReturnsTable).where(and(...priorWhere));
+      const priorIds = priorRetIds.map((r: any) => r.id);
+      const returnedBase = new Map<number, number>();
+      if (priorIds.length) {
+        const prior = await db.select({
+          itemId: salesReturnLinesTable.itemId,
+          qty: salesReturnLinesTable.qty,
+          conversionFactor: salesReturnLinesTable.conversionFactor,
+        }).from(salesReturnLinesTable).where(inArray(salesReturnLinesTable.returnId, priorIds));
+        for (const pl of prior) {
+          if (pl.itemId == null) continue;
+          const base = Number(pl.qty || 0) * Number(pl.conversionFactor || 1);
+          returnedBase.set(pl.itemId, (returnedBase.get(pl.itemId) || 0) + base);
+        }
+      }
+      const currBase = new Map<number, { base: number; rawQty: number }>();
+      for (const l of lines) {
+        const iid = Number(l.itemId);
+        if (!Number.isFinite(iid) || !iid) continue;
+        const base = Number(l.qty || 0) * Number(l.conversionFactor || 1);
+        const cur = currBase.get(iid) || { base: 0, rawQty: 0 };
+        cur.base += base; cur.rawQty += Number(l.qty || 0);
+        currBase.set(iid, cur);
+      }
+      for (const [iid, cur] of currBase.entries()) {
+        const sold = soldBase.get(iid) || 0;
+        if (sold <= 0) {
+          res.status(400).json({
+            error: `الصنف #${iid} غير موجود في الفاتورة المصدر — لا يمكن إرجاعه`,
+            field: "lines.itemId", itemId: iid,
+          }); return false;
+        }
+        const prev = returnedBase.get(iid) || 0;
+        const remaining = sold - prev;
+        if (cur.base > remaining + 1e-6) {
+          res.status(400).json({
+            error: `الصنف #${iid}: كمية المرتجع تتجاوز المسموح — المباع ${sold}، المرتجع سابقاً ${prev}، المتاح ${Math.max(0, remaining).toFixed(3)} (بالوحدة الأساس)`,
+            field: "lines.qty", itemId: iid,
+          }); return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
 router.post("/sales-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -1351,6 +1452,7 @@ router.post("/sales-returns", async (req, res) => {
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat, salesRepId,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
+    if (!(await validateSalesReturnPayload(res, req.body, { cid, excludeReturnId: null }))) return;
     // Required-fields gate: every sales return must carry an explicit
     // customer + branch — same policy as the parent sales-invoice flow,
     // so cost-center and customer-statement reports stay consistent.
@@ -1487,6 +1589,7 @@ router.put("/sales-returns/:id", async (req, res) => {
     // can't strip customer/branch off an existing sales return.
     if (!customerId) { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ المرتجع", field: "customerId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ المرتجع",  field: "branchId"   }); return; }
+    if (!(await validateSalesReturnPayload(res, req.body, { cid, excludeReturnId: id }))) return;
     // Patch-safe rep update: only touch salesRepId when the client explicitly
     // sent the key. Validate company scope when present (cross-tenant guard).
     const hasRepKey = Object.prototype.hasOwnProperty.call(req.body ?? {}, "salesRepId");
