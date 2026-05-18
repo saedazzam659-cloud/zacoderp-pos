@@ -1,6 +1,7 @@
 import { Link } from "wouter";
 import {
   BarChart2, BookOpen, IdCard, AlertTriangle, Wallet, Hourglass, ChevronLeft, Bell,
+  Gift, ReceiptText,
 } from "lucide-react";
 
 const REPORTS = [
@@ -52,6 +53,20 @@ const REPORTS = [
     desc: "أصناف تحت حد إعادة الطلب وأصناف لم تُبَع منذ مدة طويلة في عرض موحَّد",
     icon: Bell,
     color: "from-orange-50 to-orange-100/40 text-orange-700 border-orange-200",
+  },
+  {
+    href: "/inventory/reports/free-quantities",
+    title: "تقرير الكميات المجانية",
+    desc: "إجمالي الكميات المجانية المُسلَّمة والمرتجعة لكل صنف خلال الفترة مع الصافي",
+    icon: Gift,
+    color: "from-pink-50 to-pink-100/40 text-pink-700 border-pink-200",
+  },
+  {
+    href: "/inventory/reports/item-sales-valuation",
+    title: "تقرير مبيعات الأصناف (بالتكلفة / البيع)",
+    desc: "إجمالي مبيعات الصنف بسعر التكلفة أو بسعر البيع (شامل/بدون ضريبة) مع المرتجع والصافي",
+    icon: ReceiptText,
+    color: "from-teal-50 to-teal-100/40 text-teal-700 border-teal-200",
   },
 ];
 

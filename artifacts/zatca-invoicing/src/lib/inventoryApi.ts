@@ -170,6 +170,27 @@ export const inventoryApi = {
   getLedger:  (params: Record<string, string>) => get<any[]>(`/stock-ledger?${new URLSearchParams(params)}`),
   getBalance: (params: Record<string, string>) => get<any[]>(`/stock-balance?${new URLSearchParams(params)}`),
   getLastMovements: (cid?: number) => get<{ itemId: number; lastDate: string }[]>(`/last-movements${cid ? `?companyId=${cid}` : ""}`),
+  // Free-quantities report (تقرير الكميات المجانية) — aggregates `free_qty`
+  // from posted sales invoices (debit) and posted sales returns (credit).
+  getFreeQuantitiesReport: (params: Record<string, string>) =>
+    get<Array<{
+      itemId: number; itemCode: string | null;
+      itemNameAr: string | null; itemNameEn: string | null;
+      unitName: string | null;
+      soldFreeQty: number; returnedFreeQty: number; netFreeQty: number;
+    }>>(`/reports/free-quantities?${new URLSearchParams(params)}`),
+  // Item sales valuation report (تقرير مبيعات الأصناف) — toggle between
+  // cost / excl-vat / incl-vat basis. Mirrors the same filter shape as
+  // the free-quantities report.
+  getItemSalesValuationReport: (params: Record<string, string>) =>
+    get<Array<{
+      itemId: number; itemCode: string | null;
+      itemNameAr: string | null; itemNameEn: string | null;
+      unitName: string | null;
+      soldQty: number; soldValue: number;
+      returnedQty: number; returnedValue: number;
+      netQty: number; netValue: number;
+    }>>(`/reports/item-sales-valuation?${new URLSearchParams(params)}`),
   // Dashboard
   getDashboard: (cid?: number) => get<any>(`/dashboard${cid ? `?companyId=${cid}` : ""}`),
   // PRO Extension #5 — per-item analytics (last sold, qty, revenue, avg monthly)

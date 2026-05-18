@@ -10,6 +10,7 @@ import {
   journalEntriesTable, journalEntryLinesTable,
   accountsTable, auditLogTable,
   salesInvoicesTable, salesInvoiceLinesTable,
+  salesReturnsTable, salesReturnLinesTable,
   itemDocumentsTable,
   itemSuppliersTable,
   itemBundleComponentsTable,
@@ -49,6 +50,10 @@ router.use(pathRbac([
   ["/stock-balance",            "items"],
   ["/last-movements",           "items"],
   ["/dashboard",                "items"],
+  // Sales-driven inventory reports (read-only) — same module gate as the
+  // other inventory reports so the company-level menu permission applies.
+  ["/reports/free-quantities",      "items"],
+  ["/reports/item-sales-valuation", "items"],
   // PRO Extension #6 — Smart Alerts: gate on "items" module like other
   // read-only inventory views.
   ["/alerts",                   "items"],
@@ -3053,6 +3058,381 @@ router.post("/alerts/notify", async (req, res) => {
     skippedAlreadyNotified,
     skippedAboveThreshold: rows.length - created - skippedAlreadyNotified,
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// REPORT: FREE QUANTITIES (تقرير الكميات المجانية)
+// Aggregates `free_qty` from posted sales invoices (sold/debit) and
+// posted sales returns (returned/credit) per item, with net result.
+// Free items use the dedicated `free_qty` column on the line tables
+// (see lib/db/src/schema/sales.ts — line 92-96).
+//
+// Query params (all optional except date range):
+//   from, to        — date range over invoice_date / return_date
+//   warehouseId     — restrict to a single warehouse (line-level)
+//   customerId      — restrict to a single customer (header-level)
+//   itemId          — restrict to a single item
+//   branchId        — restrict to a single branch (header-level)
+//
+// Response: [{ itemId, itemCode, itemNameAr, itemNameEn, unitName,
+//              soldFreeQty, returnedFreeQty, netFreeQty }]
+// ═══════════════════════════════════════════════════════════════════
+router.get("/reports/free-quantities", async (req, res) => {
+  const cid = getCompanyId(req);
+  if (!cid) { res.json([]); return; }
+  const { from, to, warehouseId, customerId, itemId, branchId } =
+    req.query as Record<string, string>;
+
+  const whId  = warehouseId ? Number(warehouseId) : null;
+  const cusId = customerId  ? Number(customerId)  : null;
+  const itId  = itemId      ? Number(itemId)      : null;
+  const brId  = branchId    ? Number(branchId)    : null;
+
+  // SOLD (debit) — posted sales invoice lines with freeQty > 0
+  const soldConds: any[] = [
+    eq(salesInvoiceLinesTable.companyId, cid),
+    eq(salesInvoicesTable.companyId, cid),
+    eq(salesInvoicesTable.status, "posted"),
+    sql`${salesInvoiceLinesTable.freeQty} > 0`,
+  ];
+  if (from) soldConds.push(gte(salesInvoicesTable.invoiceDate, from));
+  if (to)   soldConds.push(lte(salesInvoicesTable.invoiceDate, to));
+  if (whId)  soldConds.push(eq(salesInvoiceLinesTable.warehouseId, whId));
+  if (cusId) soldConds.push(eq(salesInvoicesTable.customerId, cusId));
+  if (itId)  soldConds.push(eq(salesInvoiceLinesTable.itemId, itId));
+  if (brId)  soldConds.push(eq(salesInvoicesTable.branchId, brId));
+
+  const soldRows = await db
+    .select({
+      itemId: salesInvoiceLinesTable.itemId,
+      sumFree: sql<string>`coalesce(sum(${salesInvoiceLinesTable.freeQty}), 0)`,
+    })
+    .from(salesInvoiceLinesTable)
+    .innerJoin(salesInvoicesTable, eq(salesInvoiceLinesTable.invoiceId, salesInvoicesTable.id))
+    .where(and(...soldConds))
+    .groupBy(salesInvoiceLinesTable.itemId);
+
+  // RETURNED (credit) — posted sales return lines with freeQty > 0
+  const retConds: any[] = [
+    eq(salesReturnLinesTable.companyId, cid),
+    eq(salesReturnsTable.companyId, cid),
+    eq(salesReturnsTable.status, "posted"),
+    sql`${salesReturnLinesTable.freeQty} > 0`,
+  ];
+  if (from) retConds.push(gte(salesReturnsTable.returnDate, from));
+  if (to)   retConds.push(lte(salesReturnsTable.returnDate, to));
+  if (whId)  retConds.push(eq(salesReturnLinesTable.warehouseId, whId));
+  if (cusId) retConds.push(eq(salesReturnsTable.customerId, cusId));
+  if (itId)  retConds.push(eq(salesReturnLinesTable.itemId, itId));
+  if (brId)  retConds.push(eq(salesReturnsTable.branchId, brId));
+
+  const retRows = await db
+    .select({
+      itemId: salesReturnLinesTable.itemId,
+      sumFree: sql<string>`coalesce(sum(${salesReturnLinesTable.freeQty}), 0)`,
+    })
+    .from(salesReturnLinesTable)
+    .innerJoin(salesReturnsTable, eq(salesReturnLinesTable.returnId, salesReturnsTable.id))
+    .where(and(...retConds))
+    .groupBy(salesReturnLinesTable.itemId);
+
+  // Merge by itemId
+  const byItem = new Map<number, { sold: number; returned: number }>();
+  for (const r of soldRows) {
+    if (r.itemId == null) continue;
+    const cur = byItem.get(r.itemId) ?? { sold: 0, returned: 0 };
+    cur.sold += Number(r.sumFree);
+    byItem.set(r.itemId, cur);
+  }
+  for (const r of retRows) {
+    if (r.itemId == null) continue;
+    const cur = byItem.get(r.itemId) ?? { sold: 0, returned: 0 };
+    cur.returned += Number(r.sumFree);
+    byItem.set(r.itemId, cur);
+  }
+
+  const ids = [...byItem.keys()];
+  if (ids.length === 0) { res.json([]); return; }
+
+  // Enrich with item metadata
+  const items = await db
+    .select({
+      id: itemsTable.id,
+      code: itemsTable.code,
+      nameAr: itemsTable.nameAr,
+      nameEn: itemsTable.nameEn,
+      unitNameAr: unitsTable.nameAr,
+    })
+    .from(itemsTable)
+    .leftJoin(unitsTable, eq(itemsTable.unitId, unitsTable.id))
+    .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, ids)));
+
+  const out = items.map(it => {
+    const v = byItem.get(it.id)!;
+    return {
+      itemId: it.id,
+      itemCode: it.code,
+      itemNameAr: it.nameAr,
+      itemNameEn: it.nameEn,
+      unitName: it.unitNameAr,
+      soldFreeQty:     v.sold,
+      returnedFreeQty: v.returned,
+      netFreeQty:      v.sold - v.returned,
+    };
+  })
+  // Drop rows where both sides round to zero (rare, but keeps report tidy)
+  .filter(r => r.soldFreeQty !== 0 || r.returnedFreeQty !== 0)
+  .sort((a, b) => b.netFreeQty - a.netFreeQty);
+
+  res.json(out);
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// REPORT: ITEM SALES VALUATION (تقرير مبيعات الأصناف)
+// Per-item aggregation of sold qty/value and returned qty/value with
+// a `basis` toggle:
+//   - basis=cost         → use stock_ledger.total_cost (historical cost)
+//   - basis=excl_vat     → line_total adjusted for priceIncludesVat
+//   - basis=incl_vat     → line_total + computed VAT (or as-is if
+//                          header already includes VAT)
+//
+// Query params: from, to, branchId?, warehouseId?, customerId?,
+// itemId?, basis (default "cost").
+// Response: [{ itemId, itemCode, itemNameAr, itemNameEn, unitName,
+//              soldQty, soldValue, returnedQty, returnedValue,
+//              netQty, netValue }]
+// ═══════════════════════════════════════════════════════════════════
+router.get("/reports/item-sales-valuation", async (req, res) => {
+  const cid = getCompanyId(req);
+  if (!cid) { res.json([]); return; }
+  const { from, to, warehouseId, customerId, itemId, branchId } =
+    req.query as Record<string, string>;
+  const basis = String((req.query.basis as string) ?? "cost");
+  if (!["cost", "excl_vat", "incl_vat"].includes(basis)) {
+    res.status(400).json({ error: "basis يجب أن تكون cost أو excl_vat أو incl_vat" });
+    return;
+  }
+
+  const whId  = warehouseId ? Number(warehouseId) : null;
+  const cusId = customerId  ? Number(customerId)  : null;
+  const itId  = itemId      ? Number(itemId)      : null;
+  const brId  = branchId    ? Number(branchId)    : null;
+
+  // Value expression per line, based on basis. Note: `qty` here is the
+  // PRICED qty only (freeQty contributes 0 revenue/VAT by spec). For
+  // `cost`, we use stock_ledger.total_cost (covers BOTH priced & free
+  // qty because the issue posts ALL outgoing stock at cost).
+  const valueExclVat = sql<string>`
+    coalesce(sum(
+      case
+        when ${salesInvoicesTable.priceIncludesVat}
+          then ${salesInvoiceLinesTable.lineTotal}
+               / (1 + coalesce(${salesInvoiceLinesTable.vatRate}, 0)/100)
+        else ${salesInvoiceLinesTable.lineTotal}
+      end
+    ), 0)`;
+  const valueInclVat = sql<string>`
+    coalesce(sum(
+      case
+        when ${salesInvoicesTable.priceIncludesVat}
+          then ${salesInvoiceLinesTable.lineTotal}
+        else ${salesInvoiceLinesTable.lineTotal}
+             * (1 + coalesce(${salesInvoiceLinesTable.vatRate}, 0)/100)
+      end
+    ), 0)`;
+  const retValueExclVat = sql<string>`
+    coalesce(sum(
+      case
+        when ${salesReturnsTable.priceIncludesVat}
+          then ${salesReturnLinesTable.lineTotal}
+               / (1 + coalesce(${salesReturnLinesTable.vatRate}, 0)/100)
+        else ${salesReturnLinesTable.lineTotal}
+      end
+    ), 0)`;
+  const retValueInclVat = sql<string>`
+    coalesce(sum(
+      case
+        when ${salesReturnsTable.priceIncludesVat}
+          then ${salesReturnLinesTable.lineTotal}
+        else ${salesReturnLinesTable.lineTotal}
+             * (1 + coalesce(${salesReturnLinesTable.vatRate}, 0)/100)
+      end
+    ), 0)`;
+
+  // ─── Aggregation: sales (debit) ───────────────────────────────────
+  const soldConds: any[] = [
+    eq(salesInvoiceLinesTable.companyId, cid),
+    eq(salesInvoicesTable.companyId, cid),
+    eq(salesInvoicesTable.status, "posted"),
+  ];
+  if (from) soldConds.push(gte(salesInvoicesTable.invoiceDate, from));
+  if (to)   soldConds.push(lte(salesInvoicesTable.invoiceDate, to));
+  if (whId)  soldConds.push(eq(salesInvoiceLinesTable.warehouseId, whId));
+  if (cusId) soldConds.push(eq(salesInvoicesTable.customerId, cusId));
+  if (itId)  soldConds.push(eq(salesInvoiceLinesTable.itemId, itId));
+  if (brId)  soldConds.push(eq(salesInvoicesTable.branchId, brId));
+
+  const soldRows = await db
+    .select({
+      itemId: salesInvoiceLinesTable.itemId,
+      sumQty: sql<string>`coalesce(sum(${salesInvoiceLinesTable.qty} + ${salesInvoiceLinesTable.freeQty}), 0)`,
+      sumExcl: valueExclVat,
+      sumIncl: valueInclVat,
+    })
+    .from(salesInvoiceLinesTable)
+    .innerJoin(salesInvoicesTable, eq(salesInvoiceLinesTable.invoiceId, salesInvoicesTable.id))
+    .where(and(...soldConds))
+    .groupBy(salesInvoiceLinesTable.itemId);
+
+  // ─── Aggregation: returns (credit) ────────────────────────────────
+  const retConds: any[] = [
+    eq(salesReturnLinesTable.companyId, cid),
+    eq(salesReturnsTable.companyId, cid),
+    eq(salesReturnsTable.status, "posted"),
+  ];
+  if (from) retConds.push(gte(salesReturnsTable.returnDate, from));
+  if (to)   retConds.push(lte(salesReturnsTable.returnDate, to));
+  if (whId)  retConds.push(eq(salesReturnLinesTable.warehouseId, whId));
+  if (cusId) retConds.push(eq(salesReturnsTable.customerId, cusId));
+  if (itId)  retConds.push(eq(salesReturnLinesTable.itemId, itId));
+  if (brId)  retConds.push(eq(salesReturnsTable.branchId, brId));
+
+  const retRows = await db
+    .select({
+      itemId: salesReturnLinesTable.itemId,
+      sumQty: sql<string>`coalesce(sum(${salesReturnLinesTable.qty} + ${salesReturnLinesTable.freeQty}), 0)`,
+      sumExcl: retValueExclVat,
+      sumIncl: retValueInclVat,
+    })
+    .from(salesReturnLinesTable)
+    .innerJoin(salesReturnsTable, eq(salesReturnLinesTable.returnId, salesReturnsTable.id))
+    .where(and(...retConds))
+    .groupBy(salesReturnLinesTable.itemId);
+
+  // ─── Cost basis: pull cost from stock_ledger (historical, accurate) ──
+  // Stock ledger writes for sales:
+  //   refType='sales_invoice'  → outflow (totalCost reflects FIFO/avg cost
+  //                              of all moved stock incl. freeQty)
+  //   refType='sales_return'   → inflow
+  // We compute SUM(ABS(totalCost)) by item, optionally filtered by warehouse,
+  // date, and (via parent invoice/return joins) by branch + customer.
+  type CostMap = Map<number, { soldCost: number; returnedCost: number }>;
+  const costByItem: CostMap = new Map();
+  if (basis === "cost") {
+    // Pull all stock_ledger rows for sales operations in the period,
+    // then optionally narrow by parent doc filters (branch/customer)
+    // via in-memory join. This keeps the SQL simple while still
+    // honouring the filters. For large datasets we could replace with
+    // a single CTE; current scale (per-tenant, periodic report) is fine.
+    const slConds: any[] = [
+      eq(stockLedgerTable.companyId, cid),
+      inArray(stockLedgerTable.refType, ["sales_invoice", "sales_return"]),
+    ];
+    if (from) slConds.push(gte(stockLedgerTable.txDate, from));
+    if (to)   slConds.push(lte(stockLedgerTable.txDate, to));
+    if (whId) slConds.push(eq(stockLedgerTable.warehouseId, whId));
+    if (itId) slConds.push(eq(stockLedgerTable.itemId, itId));
+    const ledgerRows = await db
+      .select({
+        itemId: stockLedgerTable.itemId,
+        refType: stockLedgerTable.refType,
+        refId: stockLedgerTable.refId,
+        totalCost: stockLedgerTable.totalCost,
+      })
+      .from(stockLedgerTable)
+      .where(and(...slConds));
+
+    // Build branch/customer maps for parent docs if needed (only when
+    // a branch or customer filter is active — otherwise skip the join).
+    let allowedInvIds: Set<number> | null = null;
+    let allowedRetIds: Set<number> | null = null;
+    if (brId != null || cusId != null) {
+      const invConds: any[] = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted")];
+      if (brId  != null) invConds.push(eq(salesInvoicesTable.branchId, brId));
+      if (cusId != null) invConds.push(eq(salesInvoicesTable.customerId, cusId));
+      const invIds = await db.select({ id: salesInvoicesTable.id }).from(salesInvoicesTable).where(and(...invConds));
+      allowedInvIds = new Set(invIds.map(r => r.id));
+
+      const rConds: any[] = [eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted")];
+      if (brId  != null) rConds.push(eq(salesReturnsTable.branchId, brId));
+      if (cusId != null) rConds.push(eq(salesReturnsTable.customerId, cusId));
+      const rIds = await db.select({ id: salesReturnsTable.id }).from(salesReturnsTable).where(and(...rConds));
+      allowedRetIds = new Set(rIds.map(r => r.id));
+    }
+
+    for (const r of ledgerRows) {
+      if (r.itemId == null || r.refId == null) continue;
+      if (r.refType === "sales_invoice" && allowedInvIds && !allowedInvIds.has(r.refId)) continue;
+      if (r.refType === "sales_return"  && allowedRetIds && !allowedRetIds.has(r.refId)) continue;
+      const cur = costByItem.get(r.itemId) ?? { soldCost: 0, returnedCost: 0 };
+      const absCost = Math.abs(Number(r.totalCost));
+      if (r.refType === "sales_invoice") cur.soldCost += absCost;
+      else                                cur.returnedCost += absCost;
+      costByItem.set(r.itemId, cur);
+    }
+  }
+
+  // ─── Merge sold + returned ────────────────────────────────────────
+  type Agg = { soldQty: number; soldValue: number; returnedQty: number; returnedValue: number };
+  const byItem = new Map<number, Agg>();
+  for (const r of soldRows) {
+    if (r.itemId == null) continue;
+    const cur = byItem.get(r.itemId) ?? { soldQty: 0, soldValue: 0, returnedQty: 0, returnedValue: 0 };
+    cur.soldQty   += Number(r.sumQty);
+    cur.soldValue += basis === "cost"
+      ? (costByItem.get(r.itemId)?.soldCost ?? 0)
+      : basis === "excl_vat" ? Number(r.sumExcl) : Number(r.sumIncl);
+    byItem.set(r.itemId, cur);
+  }
+  for (const r of retRows) {
+    if (r.itemId == null) continue;
+    const cur = byItem.get(r.itemId) ?? { soldQty: 0, soldValue: 0, returnedQty: 0, returnedValue: 0 };
+    cur.returnedQty   += Number(r.sumQty);
+    cur.returnedValue += basis === "cost"
+      ? (costByItem.get(r.itemId)?.returnedCost ?? 0)
+      : basis === "excl_vat" ? Number(r.sumExcl) : Number(r.sumIncl);
+    byItem.set(r.itemId, cur);
+  }
+  // Cost-only items that appeared in ledger but had no priced line (rare)
+  for (const [itemIdKey, c] of costByItem) {
+    if (byItem.has(itemIdKey)) continue;
+    if (basis !== "cost") continue;
+    byItem.set(itemIdKey, { soldQty: 0, soldValue: c.soldCost, returnedQty: 0, returnedValue: c.returnedCost });
+  }
+
+  const ids = [...byItem.keys()];
+  if (ids.length === 0) { res.json([]); return; }
+
+  const items = await db
+    .select({
+      id: itemsTable.id,
+      code: itemsTable.code,
+      nameAr: itemsTable.nameAr,
+      nameEn: itemsTable.nameEn,
+      unitNameAr: unitsTable.nameAr,
+    })
+    .from(itemsTable)
+    .leftJoin(unitsTable, eq(itemsTable.unitId, unitsTable.id))
+    .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, ids)));
+
+  const out = items.map(it => {
+    const v = byItem.get(it.id)!;
+    return {
+      itemId: it.id,
+      itemCode: it.code,
+      itemNameAr: it.nameAr,
+      itemNameEn: it.nameEn,
+      unitName: it.unitNameAr,
+      soldQty: v.soldQty,
+      soldValue: v.soldValue,
+      returnedQty: v.returnedQty,
+      returnedValue: v.returnedValue,
+      netQty: v.soldQty - v.returnedQty,
+      netValue: v.soldValue - v.returnedValue,
+    };
+  }).sort((a, b) => b.netValue - a.netValue);
+
+  res.json(out);
 });
 
 export default router;
