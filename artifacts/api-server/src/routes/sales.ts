@@ -1547,6 +1547,7 @@ router.post("/sales-returns", async (req, res) => {
       salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      createdById: (req as any).authUser?.id ?? null,
     }).returning();
     if (lines?.length) {
       await db.insert(salesReturnLinesTable).values(

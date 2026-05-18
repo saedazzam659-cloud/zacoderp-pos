@@ -31,6 +31,8 @@ import SalesPrintModal from "./SalesPrintModal";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Users as UsersIcon } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
@@ -843,6 +845,28 @@ export default function SalesReturns() {
 
   const [tableSearch, setTableSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "posted">("all");
+  // User filter: empty Set = "all users". Otherwise filter by selected user IDs.
+  const [userFilter, setUserFilter] = useState<Set<number>>(new Set());
+
+  /* ── Users list (for the filter dropdown) ── */
+  const { data: usersList = [] } = useQuery<any[]>({
+    queryKey: ["users-for-filter", cid],
+    enabled: !!user,
+    queryFn: async () => {
+      const r = await fetch(cid ? `${API}/api/users?companyId=${cid}` : `${API}/api/users`, { headers: authH });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  const userMap = useMemo(() => {
+    const m = new Map<number, { label: string; isAdmin: boolean }>();
+    (usersList as any[]).forEach((u) => {
+      const label = u.nameAr || u.nameEn || u.username || u.email || `#${u.id}`;
+      const isAdmin = u.role === "admin" || u.role === "superadmin";
+      m.set(Number(u.id), { label, isAdmin });
+    });
+    return m;
+  }, [usersList]);
 
   const layout = useAuditGridLayout({
     screenSlug: "salesReturnsAuditGrid",
@@ -857,6 +881,10 @@ export default function SalesReturns() {
     const q = tableSearch.trim().toLowerCase();
     return (returns_ as any[]).filter((r) => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
+      if (userFilter.size > 0) {
+        const uid = r.createdById != null ? Number(r.createdById) : null;
+        if (uid == null || !userFilter.has(uid)) return false;
+      }
       if (q) {
         const hay = [
           r.docNumber, `SR-${r.id}`, r.returnDate, cusMap[r.customerId],
@@ -871,7 +899,7 @@ export default function SalesReturns() {
       }
       return true;
     });
-  }, [returns_, tableSearch, statusFilter, layout.colFilters, cusMap, invMap]);
+  }, [returns_, tableSearch, statusFilter, userFilter, layout.colFilters, cusMap, invMap]);
 
   /* ── Pagination ── */
   const { pageSize, page, setPage } = layout;
@@ -1677,6 +1705,99 @@ ${sections}
             className="h-7 text-xs w-56"
           />
           <MultiBranchFilter value={branchIds} onChange={setBranchIds} size="sm" />
+          {/* ── User filter (multi-select, includes company admin) ── */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                type="button" size="sm" variant="outline"
+                className={cn(
+                  "h-7 px-2 text-xs gap-1.5 border-slate-300",
+                  userFilter.size > 0 && "bg-primary text-primary-foreground border-primary hover:bg-primary/90 hover:text-primary-foreground",
+                )}
+                title="فلتر حسب المستخدم"
+              >
+                <UsersIcon className="h-3.5 w-3.5" />
+                {userFilter.size === 0
+                  ? "كل المستخدمين"
+                  : userFilter.size === 1
+                    ? (userMap.get([...userFilter][0])?.label ?? `#${[...userFilter][0]}`)
+                    : `${userFilter.size} مستخدمين`}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 p-0" align="start" dir={isRtl ? "rtl" : "ltr"}>
+              <div className="px-3 py-2 border-b bg-slate-50 flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-700">المستخدمون</span>
+                {userFilter.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setUserFilter(new Set())}
+                    className="text-[11px] text-rose-600 hover:underline"
+                  >
+                    مسح التحديد
+                  </button>
+                )}
+              </div>
+              <div className="max-h-72 overflow-auto p-1">
+                <button
+                  type="button"
+                  onClick={() => setUserFilter(new Set())}
+                  className={cn(
+                    "w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-slate-100 text-start",
+                    userFilter.size === 0 && "bg-primary/10 text-primary font-medium",
+                  )}
+                >
+                  <Checkbox checked={userFilter.size === 0} className="pointer-events-none" />
+                  <span>كل المستخدمين (بما فيهم مدير الشركة)</span>
+                </button>
+                <div className="h-px bg-slate-200 my-1" />
+                {(usersList as any[]).length === 0 ? (
+                  <div className="px-2 py-3 text-[11px] text-slate-500 text-center">
+                    لا يوجد مستخدمون
+                  </div>
+                ) : (
+                  (usersList as any[])
+                    .slice()
+                    .sort((a, b) => {
+                      const ai = (a.role === "admin" || a.role === "superadmin") ? 0 : 1;
+                      const bi = (b.role === "admin" || b.role === "superadmin") ? 0 : 1;
+                      if (ai !== bi) return ai - bi;
+                      return String(a.nameAr || a.username || "").localeCompare(String(b.nameAr || b.username || ""));
+                    })
+                    .map((u) => {
+                      const uid = Number(u.id);
+                      const checked = userFilter.has(uid);
+                      const label = u.nameAr || u.nameEn || u.username || u.email || `#${uid}`;
+                      const isAdmin = u.role === "admin" || u.role === "superadmin";
+                      return (
+                        <button
+                          key={uid}
+                          type="button"
+                          onClick={() => {
+                            setUserFilter((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(uid)) next.delete(uid); else next.add(uid);
+                              return next;
+                            });
+                          }}
+                          className={cn(
+                            "w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-slate-100 text-start",
+                            checked && "bg-primary/10",
+                          )}
+                        >
+                          <Checkbox checked={checked} className="pointer-events-none" />
+                          <span className="flex-1 truncate">{label}</span>
+                          {isAdmin && (
+                            <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-medium">
+                              مدير
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
           <div className="flex gap-1">
             {(["all", "draft", "posted"] as const).map((s) => (
               <button

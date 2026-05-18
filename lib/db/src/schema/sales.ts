@@ -139,6 +139,8 @@ export const salesReturnsTable = pgTable("sales_returns", {
   taxAccountId:       integer("tax_account_id").references(() => accountsTable.id),
   discountAccountId:  integer("discount_account_id").references(() => accountsTable.id),
   journalEntryId:     integer("journal_entry_id"),
+  // Audit: which user created this return (nullable for legacy rows / system-created).
+  createdById:  integer("created_by_id"),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().notNull(),
 });
