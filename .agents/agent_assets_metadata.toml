@@ -233,3 +233,9 @@ id = "hNzwdGEoeaN14JCNaEQVq"
 uri = "file://.local/security_roadmap.md"
 type = "text"
 title = "خطة رفع مستوى الحماية - 3 شهور"
+
+[[outputs]]
+id = "ViWWKqF_-JjmYeBZkW-lX"
+uri = "file://attached_assets/مطابقة_بنك_الراجحي_110202.xlsx"
+type = "table"
+title = "مطابقة بنك الراجحي 110202 - فجوة 9,848.95"
