@@ -65,7 +65,7 @@ export interface FieldRule {
 /** A complete policy for one scope: { fieldName: rule } */
 export type PolicyMap = Record<string, FieldRule>;
 
-export type PolicyScope = "sales" | "purchase" | "pos" | "customers";
+export type PolicyScope = "sales" | "purchase" | "pos" | "customers" | "journal_entry";
 
 /** A complete bundle covering all scopes — the shape stored in `bundle`. */
 export type PolicyBundle = Record<PolicyScope, PolicyMap>;
@@ -148,9 +148,27 @@ export const FIELD_CATALOGUE: Record<PolicyScope, FieldDef[]> = {
     { key: "includeInStatements",  labelAr: "إدراج في كشوفات الحسابات", labelEn: "Include in statements" },
     { key: "location",             labelAr: "الموقع الجغرافي",       labelEn: "Geo location" },
   ],
+  // ── شاشة قيد اليومية ──
+  // Governs the header fields on JournalEntryForm.tsx (/accounting/journals/new
+  // and /accounting/journals/:id). Line-level fields (account, debit, credit,
+  // line costCenter) intentionally stay outside this catalogue — they are the
+  // accounting substance of the entry, not metadata that should be hidden per
+  // role. Use the central RBAC permissions to gate the *whole* JE screen if a
+  // user must not access JEs at all.
+  journal_entry: [
+    { key: "docNumber",     labelAr: "رقم المستند",       labelEn: "Document number" },
+    { key: "date",          labelAr: "تاريخ القيد",       labelEn: "Entry date", isDate: true },
+    { key: "currency",      labelAr: "العملة",            labelEn: "Currency" },
+    { key: "exchangeRate",  labelAr: "سعر الصرف",         labelEn: "Exchange rate" },
+    { key: "entryType",     labelAr: "نوع القيد",         labelEn: "Entry type" },
+    { key: "branch",        labelAr: "الفرع",             labelEn: "Branch" },
+    { key: "description",   labelAr: "البيان العام",      labelEn: "General description" },
+    { key: "partyPicker",   labelAr: "عميل / مورد",       labelEn: "Customer / Supplier picker" },
+    { key: "attachments",   labelAr: "أرشفة مستند",       labelEn: "Document archive" },
+  ],
 };
 
-export const POLICY_SCOPES: PolicyScope[] = ["sales", "purchase", "pos", "customers"];
+export const POLICY_SCOPES: PolicyScope[] = ["sales", "purchase", "pos", "customers", "journal_entry"];
 
 export function defaultPolicy(scope: PolicyScope): PolicyMap {
   const out: PolicyMap = {};
@@ -162,9 +180,10 @@ export function defaultPolicy(scope: PolicyScope): PolicyMap {
 
 export function defaultBundle(): PolicyBundle {
   return {
-    sales:     defaultPolicy("sales"),
-    purchase:  defaultPolicy("purchase"),
-    pos:       defaultPolicy("pos"),
-    customers: defaultPolicy("customers"),
+    sales:         defaultPolicy("sales"),
+    purchase:      defaultPolicy("purchase"),
+    pos:           defaultPolicy("pos"),
+    customers:     defaultPolicy("customers"),
+    journal_entry: defaultPolicy("journal_entry"),
   };
 }

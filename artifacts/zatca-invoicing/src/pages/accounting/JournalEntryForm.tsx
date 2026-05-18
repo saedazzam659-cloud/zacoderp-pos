@@ -23,6 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "react-i18next";
 import { getSaveToastTitle } from "@/lib/saveToast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
+import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { Sparkles, AlertTriangle, CheckCircle2, Receipt, Copy, Check } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
@@ -268,6 +269,13 @@ export default function JournalEntryForm() {
   // number — and then on Save the server would correctly pick the 2025
   // sequence, leaving the user confused about why the badge didn't match.
   const seqPeek = useNextSequenceNumber("journal_entry", isNew, entryDate);
+
+  // ── Field-level governance (شاشة "حوكمة حقول الفواتير") ─────────────
+  // The SuperAdmin can hide / lock / require any header field on this form
+  // per assigned profile. Admins & SuperAdmins bypass; everyone else honours
+  // the bundle returned by /api/invoice-field-policies/me. See FIELD_CATALOGUE
+  // for the registered field keys.
+  const fp = useFieldPolicy("journal_entry");
   useEffect(() => {
     if (!isNew) return;
     if (seqPeek.hasSequence && seqPeek.number) setDocNumber(seqPeek.number);
@@ -1361,169 +1369,219 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
             <CardContent className="pt-5 pb-5">
               {/* Row 1 */}
               <div className="grid grid-cols-3 gap-4 mb-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">رقم المستند</Label>
-                  {(() => {
-                    const lockOnEdit = !isNew;
-                    const lockOnSeq  = isNew && seqPeek.hasSequence;
-                    const locked     = lockOnEdit || lockOnSeq;
-                    return (
-                      <Input
-                        value={docNumber}
-                        onChange={e => { if (!locked) setDocNumber(e.target.value); }}
-                        placeholder={isNew && seqPeek.loading ? "…" : "تلقائي"}
-                        className={cn("h-9 text-sm", locked && "bg-muted/40 cursor-not-allowed")}
-                        readOnly={locked}
-                        title={lockOnEdit ? "الرقم محفوظ — لا يمكن تعديله" : (lockOnSeq ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined)}
-                      />
-                    );
-                  })()}
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">
-                    التاريخ <span className="text-destructive">*</span>
-                  </Label>
-                  <Input
-                    type="date"
-                    value={entryDate}
-                    onChange={e => setEntryDate(e.target.value)}
-                    className="h-9 text-sm"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">العملة</Label>
-                  <Select value={currency} onValueChange={handleCurrencyChange}>
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {hasCurrencies
-                        ? dbCurrencies
-                            .filter((c: any) => c.isActive)
-                            .map((c: any) => (
-                              <SelectItem key={c.code} value={c.code}>
-                                {c.symbol ? `${c.symbol} ` : ""}{c.nameAr} ({c.code})
-                                {c.isDefault ? " ★" : ""}
-                              </SelectItem>
-                            ))
-                        : <SelectItem value="SAR">ريال سعودي (SAR)</SelectItem>
-                      }
-                    </SelectContent>
-                  </Select>
-                  {!hasCurrencies && (
-                    <p className="text-[10px] text-amber-600 mt-0.5">
-                      أضف عملات من شاشة العملات لتظهر هنا
-                    </p>
-                  )}
-                </div>
+                {fp.isVisible("docNumber") && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">
+                      رقم المستند
+                      {fp.isRequired("docNumber") && <span className="text-destructive"> *</span>}
+                    </Label>
+                    {(() => {
+                      const lockOnEdit = !isNew;
+                      const lockOnSeq  = isNew && seqPeek.hasSequence;
+                      const lockOnFp   = fp.isReadOnly("docNumber");
+                      const locked     = lockOnEdit || lockOnSeq || lockOnFp;
+                      return (
+                        <Input
+                          value={docNumber}
+                          onChange={e => { if (!locked) setDocNumber(e.target.value); }}
+                          placeholder={isNew && seqPeek.loading ? "…" : "تلقائي"}
+                          className={cn("h-9 text-sm", locked && "bg-muted/40 cursor-not-allowed")}
+                          readOnly={locked}
+                          required={fp.isRequired("docNumber")}
+                          title={lockOnEdit ? "الرقم محفوظ — لا يمكن تعديله"
+                            : (lockOnSeq ? `مسلسل: ${seqPeek.sequenceCode ?? ""}`
+                            : (lockOnFp ? "للقراءة فقط — حسب صلاحيات قالبك" : undefined))}
+                        />
+                      );
+                    })()}
+                  </div>
+                )}
+                {fp.isVisible("date") && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">
+                      التاريخ <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      type="date"
+                      value={entryDate}
+                      onChange={e => { if (!fp.isReadOnly("date")) setEntryDate(e.target.value); }}
+                      className={cn("h-9 text-sm", fp.isReadOnly("date") && "bg-muted/40 cursor-not-allowed")}
+                      readOnly={fp.isReadOnly("date")}
+                      required
+                      {...(fp.dateBounds("date") ?? {})}
+                      title={fp.isReadOnly("date") ? "للقراءة فقط — حسب صلاحيات قالبك" : undefined}
+                    />
+                  </div>
+                )}
+                {fp.isVisible("currency") && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">
+                      العملة
+                      {fp.isRequired("currency") && <span className="text-destructive"> *</span>}
+                    </Label>
+                    <Select value={currency} onValueChange={handleCurrencyChange} disabled={fp.isReadOnly("currency")}>
+                      <SelectTrigger className={cn("h-9 text-sm", fp.isReadOnly("currency") && "bg-muted/40")}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {hasCurrencies
+                          ? dbCurrencies
+                              .filter((c: any) => c.isActive)
+                              .map((c: any) => (
+                                <SelectItem key={c.code} value={c.code}>
+                                  {c.symbol ? `${c.symbol} ` : ""}{c.nameAr} ({c.code})
+                                  {c.isDefault ? " ★" : ""}
+                                </SelectItem>
+                              ))
+                          : <SelectItem value="SAR">ريال سعودي (SAR)</SelectItem>
+                        }
+                      </SelectContent>
+                    </Select>
+                    {!hasCurrencies && (
+                      <p className="text-[10px] text-amber-600 mt-0.5">
+                        أضف عملات من شاشة العملات لتظهر هنا
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Row 2 */}
               <div className="grid grid-cols-3 gap-4 mb-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">سعر الصرف</Label>
-                  <Input
-                    type="text"
-                    inputMode="decimal"
-                    value={exchangeRate}
-                    onChange={e => {
-                      const v = e.target.value.replace(/[^0-9.]/g, "").replace(/^(\d*\.?\d*).*/, "$1");
-                      setExchangeRate(v);
-                    }}
-                    className="h-9 text-sm"
-                    dir="ltr"
-                  />
-                  {hasCurrencies && currency && (
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      1 {currency} = {Number(exchangeRate) > 0 ? Number(exchangeRate).toFixed(4) : "—"} {defaultCurrency?.code ?? "SAR"}
-                    </p>
-                  )}
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">النوع</Label>
-                  <Select value={entryType} onValueChange={setEntryType}>
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ENTRY_TYPES.map(t => (
-                        <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">الفرع</Label>
-                  <Select
-                    value={branchId || "__none"}
-                    onValueChange={v => setBranchId(v === "__none" ? "" : v)}
-                  >
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue placeholder="— اختر الفرع —" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none">— بدون فرع —</SelectItem>
-                      {branches.map((b: any) => (
-                        <SelectItem key={b.id} value={String(b.id)}>{b.nameAr}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {fp.isVisible("exchangeRate") && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">
+                      سعر الصرف
+                      {fp.isRequired("exchangeRate") && <span className="text-destructive"> *</span>}
+                    </Label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      value={exchangeRate}
+                      onChange={e => {
+                        if (fp.isReadOnly("exchangeRate")) return;
+                        const v = e.target.value.replace(/[^0-9.]/g, "").replace(/^(\d*\.?\d*).*/, "$1");
+                        setExchangeRate(v);
+                      }}
+                      className={cn("h-9 text-sm", fp.isReadOnly("exchangeRate") && "bg-muted/40 cursor-not-allowed")}
+                      readOnly={fp.isReadOnly("exchangeRate")}
+                      dir="ltr"
+                    />
+                    {hasCurrencies && currency && (
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        1 {currency} = {Number(exchangeRate) > 0 ? Number(exchangeRate).toFixed(4) : "—"} {defaultCurrency?.code ?? "SAR"}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {fp.isVisible("entryType") && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">
+                      النوع
+                      {fp.isRequired("entryType") && <span className="text-destructive"> *</span>}
+                    </Label>
+                    <Select value={entryType} onValueChange={setEntryType} disabled={fp.isReadOnly("entryType")}>
+                      <SelectTrigger className={cn("h-9 text-sm", fp.isReadOnly("entryType") && "bg-muted/40")}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ENTRY_TYPES.map(t => (
+                          <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {fp.isVisible("branch") && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">
+                      الفرع
+                      {fp.isRequired("branch") && <span className="text-destructive"> *</span>}
+                    </Label>
+                    <Select
+                      value={branchId || "__none"}
+                      onValueChange={v => setBranchId(v === "__none" ? "" : v)}
+                      disabled={fp.isReadOnly("branch")}
+                    >
+                      <SelectTrigger className={cn("h-9 text-sm", fp.isReadOnly("branch") && "bg-muted/40")}>
+                        <SelectValue placeholder="— اختر الفرع —" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none">— بدون فرع —</SelectItem>
+                        {branches.map((b: any) => (
+                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
 
               {/* Row 3 – description */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <Label className="text-xs font-medium">البيان العام</Label>
-                  {/* Quick-pick: pull a customer or supplier and inject its
-                      key data (name, CR, VAT, national address) so the
-                      printed قيد carries a complete party reference for
-                      Zakat & Income Tax compliance. */}
-                  <div className="flex items-center gap-2">
-                    <JournalScanArchive
-                      jeKey={docNumber || (editId ? `JE-${editId}` : `new-draft`)}
-                      companyName={user?.company?.nameAr ?? null}
-                    />
-                    <JournalPartyPicker
-                      onInsert={(text) => {
-                        const prev = description;
-                        const next = prev.trim() ? `${prev.trimEnd()}\n${text}` : text;
-                        // Mirror into lines that still match the prev description
-                        // OR are empty — same behaviour as the manual textarea
-                        // above so the user gets a single source of truth.
-                        setLines(ls => ls.map(l => {
-                          if (!l.description || l.description === prev) {
-                            return { ...l, description: next };
-                          }
-                          return l;
-                        }));
-                        setDescription(next);
-                      }}
-                    />
+              {fp.isVisible("description") && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-xs font-medium">
+                      البيان العام
+                      {fp.isRequired("description") && <span className="text-destructive"> *</span>}
+                    </Label>
+                    {/* Quick-pick: pull a customer or supplier and inject its
+                        key data (name, CR, VAT, national address) so the
+                        printed قيد carries a complete party reference for
+                        Zakat & Income Tax compliance. */}
+                    <div className="flex items-center gap-2">
+                      {fp.isVisible("attachments") && (
+                        <JournalScanArchive
+                          jeKey={docNumber || (editId ? `JE-${editId}` : `new-draft`)}
+                          companyName={user?.company?.nameAr ?? null}
+                        />
+                      )}
+                      {fp.isVisible("partyPicker") && !fp.isReadOnly("partyPicker") && (
+                        <JournalPartyPicker
+                          onInsert={(text) => {
+                            const prev = description;
+                            const next = prev.trim() ? `${prev.trimEnd()}\n${text}` : text;
+                            // Mirror into lines that still match the prev description
+                            // OR are empty — same behaviour as the manual textarea
+                            // above so the user gets a single source of truth.
+                            setLines(ls => ls.map(l => {
+                              if (!l.description || l.description === prev) {
+                                return { ...l, description: next };
+                              }
+                              return l;
+                            }));
+                            setDescription(next);
+                          }}
+                        />
+                      )}
+                    </div>
                   </div>
+                  <Textarea
+                    value={description}
+                    onChange={e => {
+                      if (fp.isReadOnly("description")) return;
+                      const next = e.target.value;
+                      const prev = description;
+                      // Mirror into each line's description IF the line is empty
+                      // or still equals the previous general description (i.e. the
+                      // user hasn't customised that line yet). Lines with their
+                      // own custom text are left alone.
+                      setLines(ls => ls.map(l => {
+                        if (!l.description || l.description === prev) {
+                          return { ...l, description: next };
+                        }
+                        return l;
+                      }));
+                      setDescription(next);
+                    }}
+                    placeholder="وصف القيد..."
+                    className={cn("text-sm resize-none", fp.isReadOnly("description") && "bg-muted/40 cursor-not-allowed")}
+                    readOnly={fp.isReadOnly("description")}
+                    required={fp.isRequired("description")}
+                    rows={3}
+                  />
                 </div>
-                <Textarea
-                  value={description}
-                  onChange={e => {
-                    const next = e.target.value;
-                    const prev = description;
-                    // Mirror into each line's description IF the line is empty
-                    // or still equals the previous general description (i.e. the
-                    // user hasn't customised that line yet). Lines with their
-                    // own custom text are left alone.
-                    setLines(ls => ls.map(l => {
-                      if (!l.description || l.description === prev) {
-                        return { ...l, description: next };
-                      }
-                      return l;
-                    }));
-                    setDescription(next);
-                  }}
-                  placeholder="وصف القيد..."
-                  className="text-sm resize-none"
-                  rows={3}
-                />
-              </div>
+              )}
 
             </CardContent>
           </TabsContent>

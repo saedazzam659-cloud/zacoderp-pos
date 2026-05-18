@@ -35,7 +35,7 @@ import {
 import {
   Loader2, Save, Sparkles, Eye, EyeOff, Lock, Asterisk,
   ShieldCheck, ArrowRight, Receipt, ShoppingCart, Store, Calendar,
-  Plus, Trash2, Users, Star, StarOff, Pencil,
+  Plus, Trash2, Users, Star, StarOff, Pencil, BookOpen,
   Search, RefreshCw, Printer, FileText, FileSpreadsheet, Download,
   ArrowUpDown, Filter, X, Palette,
 } from "lucide-react";
@@ -46,7 +46,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 // ── Types ────────────────────────────────────────────────────────────────
 type FieldMode = "editable" | "readonly" | "hidden" | "required";
 type DateConstraint = "none" | "today_only";
-type PolicyScope = "sales" | "purchase" | "pos" | "customers";
+type PolicyScope = "sales" | "purchase" | "pos" | "customers" | "journal_entry";
 interface FieldRule { mode: FieldMode; dateConstraint?: DateConstraint }
 type PolicyMap = Record<string, FieldRule>;
 type PolicyBundle = Record<PolicyScope, PolicyMap>;
@@ -574,11 +574,15 @@ export default function InvoiceFieldPoliciesPage() {
                     </CardHeader>
                     <CardContent className="space-y-3">
                       <div className="flex flex-wrap gap-1.5 text-[11px]">
-                        {(["sales", "purchase", "pos", "customers"] as PolicyScope[]).map((sc) => {
+                        {(["sales", "purchase", "pos", "customers", "journal_entry"] as PolicyScope[]).map((sc) => {
                           const counts = countModes(p.bundle[sc] ?? {});
                           return (
                             <Badge key={sc} variant="outline" className="gap-1">
-                              {sc === "sales" ? "مبيعات" : sc === "purchase" ? "مشتريات" : sc === "pos" ? "POS" : "العملاء"}
+                              {sc === "sales" ? "مبيعات"
+                                : sc === "purchase" ? "مشتريات"
+                                : sc === "pos" ? "POS"
+                                : sc === "customers" ? "العملاء"
+                                : "قيد يومية"}
                               {counts.hidden ? <span className="text-slate-500">·{counts.hidden}🚫</span> : null}
                               {counts.readonly ? <span className="text-amber-600">·{counts.readonly}🔒</span> : null}
                               {counts.required ? <span className="text-rose-600">·{counts.required}⚠</span> : null}
@@ -857,10 +861,11 @@ function ProfileEditorDialog({
   });
 
   const SCOPE_META = {
-    sales:     { icon: Receipt,      label: "المبيعات" },
-    purchase:  { icon: ShoppingCart, label: "المشتريات" },
-    pos:       { icon: Store,        label: "نقاط البيع" },
-    customers: { icon: Users,        label: "العملاء" },
+    sales:         { icon: Receipt,      label: "المبيعات" },
+    purchase:      { icon: ShoppingCart, label: "المشتريات" },
+    pos:           { icon: Store,        label: "نقاط البيع" },
+    customers:     { icon: Users,        label: "العملاء" },
+    journal_entry: { icon: BookOpen,     label: "قيد يومية" },
   } as const;
 
   return (
@@ -902,8 +907,8 @@ function ProfileEditorDialog({
 
         {/* Scope tabs */}
         <Tabs value={tab} onValueChange={(v) => setTab(v as PolicyScope)} className="mt-2">
-          <TabsList className="grid w-full grid-cols-4">
-            {(["sales", "purchase", "pos", "customers"] as PolicyScope[]).map((sc) => {
+          <TabsList className="grid w-full grid-cols-5">
+            {(["sales", "purchase", "pos", "customers", "journal_entry"] as PolicyScope[]).map((sc) => {
               const M = SCOPE_META[sc]; const Ic = M.icon;
               return (
                 <TabsTrigger key={sc} value={sc} className="gap-2">
@@ -913,7 +918,7 @@ function ProfileEditorDialog({
             })}
           </TabsList>
 
-          {(["sales", "purchase", "pos", "customers"] as PolicyScope[]).map((sc) => (
+          {(["sales", "purchase", "pos", "customers", "journal_entry"] as PolicyScope[]).map((sc) => (
             <TabsContent key={sc} value={sc} className="mt-3 space-y-2">
               {catalogue[sc].map((f) => {
                 const r = bundle[sc]?.[f.key] ?? { mode: "editable" as FieldMode };
@@ -966,8 +971,8 @@ function ProfileEditorDialog({
 }
 
 function emptyBundle(cat: Catalogue): PolicyBundle {
-  const out: PolicyBundle = { sales: {}, purchase: {}, pos: {}, customers: {} };
-  for (const sc of ["sales", "purchase", "pos", "customers"] as PolicyScope[]) {
+  const out: PolicyBundle = { sales: {}, purchase: {}, pos: {}, customers: {}, journal_entry: {} };
+  for (const sc of ["sales", "purchase", "pos", "customers", "journal_entry"] as PolicyScope[]) {
     for (const f of cat[sc]) {
       out[sc][f.key] = { mode: "editable", ...(f.isDate ? { dateConstraint: "none" as const } : {}) };
     }
