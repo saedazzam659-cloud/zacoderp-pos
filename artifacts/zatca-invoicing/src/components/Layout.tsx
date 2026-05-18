@@ -13,6 +13,7 @@ import {
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator, LogIn,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck, Stethoscope, Video,
   ScrollText, Database, ListOrdered, HardDrive, Trash2, BadgePercent,
+  Gift, ReceiptText,
   Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat, Boxes, Megaphone,
   Server, Camera, Monitor,
   GitBranch,
@@ -463,6 +464,8 @@ const inventoryReportsSubNav: NavDef[] = [
   { nameKey: "navExtra.lowStock",     href: "/inventory/reports/low-stock",     icon: SlidersHorizontal, permKey: "items" },
   { nameKey: "navExtra.valuation",    href: "/inventory/reports/valuation",     icon: Wallet,            permKey: "items" },
   { nameKey: "navExtra.slowMoving",   href: "/inventory/reports/slow-moving",   icon: Layers,            permKey: "items" },
+  { nameKey: "navExtra.freeQuantities",     href: "/inventory/reports/free-quantities",      icon: Gift,        permKey: "items" },
+  { nameKey: "navExtra.itemSalesValuation", href: "/inventory/reports/item-sales-valuation", icon: ReceiptText, permKey: "items" },
 ];
 
 // ─── HubGroupButton ───────────────────────────────────────────────────────────

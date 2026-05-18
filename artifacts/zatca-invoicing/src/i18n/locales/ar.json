@@ -973,6 +973,8 @@
     "lowStock": "الأصناف منخفضة المخزون",
     "valuation": "تقييم المخزون حسب المخزن",
     "slowMoving": "الأصناف الراكدة",
+    "freeQuantities": "الكميات المجانية",
+    "itemSalesValuation": "مبيعات الأصناف (بالتكلفة/البيع)",
     "cashBalances": "أرصدة الخزائن",
     "bankBalances": "أرصدة البنوك",
     "cashBoxStatement": "كشف حساب خزينة",

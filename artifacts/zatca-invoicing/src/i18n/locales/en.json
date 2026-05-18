@@ -978,6 +978,8 @@
     "lowStock": "Low Stock Items",
     "valuation": "Stock Valuation by Warehouse",
     "slowMoving": "Slow Moving Items",
+    "freeQuantities": "Free Quantities",
+    "itemSalesValuation": "Item Sales (Cost/Selling)",
     "cashBalances": "Cash Balances",
     "bankBalances": "Bank Balances",
     "cashBoxStatement": "Cash Box Statement",
