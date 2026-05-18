@@ -12,11 +12,24 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Switch } from "@/components/ui/switch";
 import { MapPin, Users, Clock, AlertTriangle, Trash2, Plus, BarChart3 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line, Legend } from "recharts";
-import mapboxgl from "mapbox-gl";
-import "mapbox-gl/dist/mapbox-gl.css";
+import maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
 
-const MAPBOX_TOKEN = (import.meta.env.VITE_MAPBOX_ACCESS_TOKEN as string | undefined) ?? "";
-if (MAPBOX_TOKEN) (mapboxgl as any).accessToken = MAPBOX_TOKEN;
+// FREE OpenStreetMap raster tile style — no API key required. Uses the
+// standard OSM tile server which has full coverage of Saudi Arabia with
+// Arabic labels. Subject to OSM's usage policy.
+const OSM_STYLE: any = {
+  version: 8,
+  sources: {
+    osm: {
+      type: "raster",
+      tiles: ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png", "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png", "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tileSize: 256,
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    },
+  },
+  layers: [{ id: "osm-tiles", type: "raster", source: "osm" }],
+};
 
 function fmtMin(min: number | null | undefined): string {
   if (!min || min <= 0) return "—";
@@ -68,11 +81,6 @@ export default function UserTracking() {
     <div className="p-4 space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-xl font-bold flex items-center gap-2"><MapPin className="h-6 w-6 text-indigo-600" /> تتبع مواقع المستخدمين</h1>
-        {!MAPBOX_TOKEN && (
-          <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
-            ⚠ مفتاح Mapbox غير مُعرّف — لن تظهر الخريطة
-          </Badge>
-        )}
       </div>
 
       {/* Filter bar */}
@@ -274,25 +282,25 @@ function KpiTile({ icon: Icon, label, value, color }: { icon: any; label: string
 
 function VisitsMap({ visits, zones }: { visits: VisitRow[]; zones: TrackingZone[] }) {
   const ref = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<mapboxgl.Map | null>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
 
   useEffect(() => {
-    if (!ref.current || !MAPBOX_TOKEN) return;
+    if (!ref.current) return;
     if (mapRef.current) return;
-    mapRef.current = new mapboxgl.Map({
+    mapRef.current = new maplibregl.Map({
       container: ref.current,
-      style: "mapbox://styles/mapbox/streets-v12",
+      style: OSM_STYLE,
       center: [46.6753, 24.7136], // Riyadh
       zoom: 5,
     });
-    mapRef.current.addControl(new mapboxgl.NavigationControl(), "top-left");
+    mapRef.current.addControl(new maplibregl.NavigationControl(), "top-left");
     return () => { mapRef.current?.remove(); mapRef.current = null; };
   }, []);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const markers: mapboxgl.Marker[] = [];
+    const markers: maplibregl.Marker[] = [];
     const pts: [number, number][] = [];
     for (const v of visits) {
       if (v.checkinLat && v.checkinLng) {
@@ -300,8 +308,8 @@ function VisitsMap({ visits, zones }: { visits: VisitRow[]; zones: TrackingZone[
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
         const el = document.createElement("div");
         el.style.cssText = "background:#6366f1;width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.3);cursor:pointer;";
-        const marker = new mapboxgl.Marker(el).setLngLat([lng, lat])
-          .setPopup(new mapboxgl.Popup({ offset: 12 }).setHTML(
+        const marker = new maplibregl.Marker({ element: el }).setLngLat([lng, lat])
+          .setPopup(new maplibregl.Popup({ offset: 12 }).setHTML(
             `<div style="font-family:system-ui;font-size:12px;direction:rtl"><strong>${v.userName}</strong><br/>${v.checkinPlace || ""}<br/><small>${fmtDt(v.checkinAt)} · ${fmtMin(v.durationMinutes)}</small></div>`,
           ))
           .addTo(map);
@@ -309,33 +317,28 @@ function VisitsMap({ visits, zones }: { visits: VisitRow[]; zones: TrackingZone[
         pts.push([lng, lat]);
       }
     }
-    // zones
-    const zoneSourceId = "tracking-zones";
-    if (map.isStyleLoaded()) {
-      if (map.getSource(zoneSourceId)) {
-        (map.getSource(zoneSourceId) as mapboxgl.GeoJSONSource).setData({
-          type: "FeatureCollection",
-          features: zones.map(z => ({
-            type: "Feature",
-            properties: { name: z.name, isAllowed: z.isAllowed },
-            geometry: { type: "Point", coordinates: [Number(z.centerLng), Number(z.centerLat)] },
-          })),
-        });
-      }
+    // zones as circular markers (red = forbidden, green = allowed)
+    for (const z of zones) {
+      const lat = Number(z.centerLat), lng = Number(z.centerLng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+      const el = document.createElement("div");
+      const color = z.isAllowed ? "#10b981" : "#f43f5e";
+      el.style.cssText = `background:${color}33;border:2px solid ${color};width:24px;height:24px;border-radius:50%;cursor:pointer;`;
+      const m = new maplibregl.Marker({ element: el }).setLngLat([lng, lat])
+        .setPopup(new maplibregl.Popup({ offset: 12 }).setHTML(
+          `<div style="font-family:system-ui;font-size:12px;direction:rtl"><strong>${z.name}</strong><br/>${z.isAllowed ? "مسموحة" : "ممنوعة"} · نصف القطر ${z.radiusMeters} م</small></div>`,
+        ))
+        .addTo(map);
+      markers.push(m);
     }
     if (pts.length > 0) {
       const lngs = pts.map(p => p[0]), lats = pts.map(p => p[1]);
-      const bounds = new mapboxgl.LngLatBounds([Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]);
+      const bounds = new maplibregl.LngLatBounds([Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]);
       map.fitBounds(bounds, { padding: 60, maxZoom: 13 });
     }
     return () => { markers.forEach(m => m.remove()); };
   }, [visits, zones]);
 
-  if (!MAPBOX_TOKEN) {
-    return <div className="h-[500px] flex items-center justify-center bg-muted/30 rounded-md text-muted-foreground">
-      مفتاح Mapbox غير مُعرّف. أضف <code className="mx-1 px-1 bg-background rounded">VITE_MAPBOX_ACCESS_TOKEN</code> ثم أعد تشغيل النظام.
-    </div>;
-  }
   return <div ref={ref} className="w-full h-[500px] rounded-md overflow-hidden" />;
 }
 

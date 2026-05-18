@@ -32,28 +32,35 @@ function distMeters(a: { lat: number; lng: number }, b: { lat: number; lng: numb
   return 2 * R * Math.asin(Math.sqrt(s));
 }
 
-// Server-side reverse geocode via Mapbox. Returns { placeName, address } or
-// nulls when the token is missing / the call fails. Never throws — geocoding
-// is best-effort; the visit still records lat/lng even without place names.
+// Server-side reverse geocode via the FREE OpenStreetMap Nominatim service.
+// No API key required. Returns { placeName, address } in Arabic. Never throws
+// — geocoding is best-effort; the visit still records lat/lng even on failure.
+// Usage policy: max 1 req/sec, must send a descriptive User-Agent + Referer.
 async function reverseGeocode(lat: number, lng: number, log: any): Promise<{ placeName: string | null; address: string | null }> {
-  const token = process.env.MAPBOX_ACCESS_TOKEN;
-  if (!token) return { placeName: null, address: null };
   try {
-    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?language=ar&access_token=${encodeURIComponent(token)}`;
-    const r = await fetch(url);
+    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=ar&zoom=18`;
+    const r = await fetch(url, {
+      headers: {
+        "User-Agent": "zatca-invoicing/1.0 (user-tracking module)",
+        "Accept-Language": "ar,en;q=0.8",
+      },
+    });
     if (!r.ok) {
-      log?.warn?.({ status: r.status }, "mapbox reverse geocode failed");
+      log?.warn?.({ status: r.status }, "nominatim reverse geocode failed");
       return { placeName: null, address: null };
     }
     const j: any = await r.json();
-    const feat = j?.features?.[0];
-    const poi = j?.features?.find((f: any) => f?.place_type?.includes("poi"));
-    return {
-      placeName: (poi?.text || feat?.text || feat?.place_name || null) as string | null,
-      address: (feat?.place_name || null) as string | null,
-    };
+    const a = j?.address ?? {};
+    // Prefer a POI-style name (shop/amenity/building) then locality
+    const placeName: string | null =
+      a.shop || a.amenity || a.office || a.building || a.tourism ||
+      a.leisure || a.industrial || a.public_building ||
+      a.neighbourhood || a.suburb || a.village || a.town || a.city ||
+      j?.name || null;
+    const address: string | null = j?.display_name ?? null;
+    return { placeName, address };
   } catch (e: any) {
-    log?.warn?.({ err: e?.message }, "mapbox reverse geocode threw");
+    log?.warn?.({ err: e?.message }, "nominatim reverse geocode threw");
     return { placeName: null, address: null };
   }
 }
