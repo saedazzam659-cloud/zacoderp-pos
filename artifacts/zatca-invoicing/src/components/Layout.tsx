@@ -332,6 +332,8 @@ const dashboardSubNav: NavDef[] = [
   // Per-company governance of which fields show on invoice screens for non-admin users.
   // Admin-only — see /admin/invoice-field-policies.
   { nameKey: "nav.invoiceFieldPolicies", href: "/admin/invoice-field-policies", icon: ShieldCheck, requireSuperadmin: true },
+  // User location tracking — admin dashboard + zone CRUD.
+  { nameKey: "nav.userTracking",    href: "/user-tracking",       icon: MapPin,    permKey: "user_tracking" },
 ];
 
 // "أدوات الذكاء الاصطناعي" — top-level group for AI-related screens. Per the
@@ -358,7 +360,6 @@ const aiToolsSubNav: NavDef[] = [
   { nameKey: "nav.inbox",           href: "/inbox",               icon: Inbox },
   // Internal Chat — real-time messaging between company colleagues.
   { nameKey: "nav.chat",            href: "/chat",                icon: MessageSquare, permKey: "chat" },
-  { nameKey: "nav.userTracking",    href: "/user-tracking",       icon: MapPin,    permKey: "user_tracking" },
   // Import / export the company's data sets — gated by the data_io permission.
   { nameKey: "nav.dataIo",          href: "/settings/data-io",    icon: Database,  permKey: "data_io" },
 ];
