@@ -239,3 +239,9 @@ id = "ViWWKqF_-JjmYeBZkW-lX"
 uri = "file://attached_assets/مطابقة_بنك_الراجحي_110202.xlsx"
 type = "table"
 title = "مطابقة بنك الراجحي 110202 - فجوة 9,848.95"
+
+[[outputs]]
+id = "skLkJhOsM_JmlCrMu7P0F"
+uri = "file://attached_assets/قيود_متكررة_110202.txt"
+type = "text"
+title = "قيود حساب 110202 - المبالغ المتكررة"
