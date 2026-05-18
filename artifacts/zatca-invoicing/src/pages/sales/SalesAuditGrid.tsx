@@ -26,7 +26,7 @@ import {
   ListChecks, AlertTriangle, AlertCircle, Info, Loader2, Eye,
   CheckCircle2, FileText, Plus, Send, Undo2, RotateCcw, X, Filter,
   Trash2, Settings2, ArrowUp, ArrowDown, RotateCw, EyeOff, Palette, Check,
-  Copy, Pencil, FileDown, User,
+  Copy, Pencil, FileDown, User, Search, Hash,
 } from "lucide-react";
 import SalesPrintModal, { type PrintData } from "./SalesPrintModal";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
@@ -365,6 +365,16 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [colFilters, setColFilters] = useState<Record<string, string>>({});
+  // 3-state column sort: null → "asc" → "desc" → null. Only one column at
+  // a time. Numeric columns sort numerically, others lexicographically.
+  const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
+  const cycleSort = (key: string) => {
+    setSort(prev => {
+      if (!prev || prev.key !== key) return { key, dir: "asc" };
+      if (prev.dir === "asc") return { key, dir: "desc" };
+      return null; // third click clears the sort
+    });
+  };
 
   // ── Column layout (order + visibility) — persisted in localStorage ────
   // Only "data" columns can be reordered/hidden; _sel/_idx/_act stay fixed.
@@ -698,7 +708,15 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   );
 
   // ── Lookup maps ───────────────────────────────────────────────────────
-  const cusMap = useMemo(() => Object.fromEntries(customers.map((c: any) => [c.id, { name: c.nameAr ?? c.nameEn, vat: c.vatNumber, phone: c.phone }])), [customers]);
+  const cusMap = useMemo(() => Object.fromEntries(customers.map((c: any) => [c.id, {
+    id: c.id,
+    code: c.code ?? `CUS-${String(c.id).padStart(6, "0")}`,
+    name: c.nameAr ?? c.nameEn,
+    vat: c.vatNumber,
+    phone: c.phone,
+    city: c.city,
+    district: c.district,
+  }])), [customers]);
   const repMap = useMemo(() => Object.fromEntries(salesReps.map((r: any) => [r.id, r.nameAr ?? r.nameEn])), [salesReps]);
   const branchMap = useMemo(() => Object.fromEntries(branches.map((b: any) => [b.id, b.nameAr ?? b.nameEn ?? b.name])), [branches]);
 
@@ -714,17 +732,29 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     const STATUS_AR: Record<string, string> = { draft: "مسودة", posted: "مُرحَّل", cancelled: "ملغاة" };
 
     return invoices.filter((inv: any) => {
-      const cusName = cusMap[inv.customerId]?.name ?? "";
-      const cusPhone = cusMap[inv.customerId]?.phone ?? "";
+      const cus = cusMap[inv.customerId];
+      const cusName = cus?.name ?? "";
+      const cusPhone = cus?.phone ?? "";
+      const cusCode = cus?.code ?? "";
+      const cusCity = cus?.city ?? "";
+      const cusDistrict = cus?.district ?? "";
+      const branchName = branchMap[inv.branchId] ?? "";
       const phoneDigits = cusPhone.replace(/\D/g, "");
 
       // top-bar filters — quick search looks up phone in two ways:
       //   1. case-insensitive substring on the raw phone string
       //      (handy if user pastes "+966 555 …")
       //   2. digit-only substring (handy for "5555" → "+966 555 5555")
+      // Also matches customer code/id, branch name, and city/district
+      // so users can locate invoices by customer number, branch, or region.
       const matchText = !q
         || (inv.docNumber ?? "").toLowerCase().includes(q)
         || cusName.toLowerCase().includes(q)
+        || cusCode.toLowerCase().includes(q)
+        || String(inv.customerId ?? "").includes(q)
+        || branchName.toLowerCase().includes(q)
+        || cusCity.toLowerCase().includes(q)
+        || cusDistrict.toLowerCase().includes(q)
         || cusPhone.toLowerCase().includes(q)
         || (qDigits.length > 0 && phoneDigits.includes(qDigits))
         || (inv.notes ?? "").toLowerCase().includes(q);
@@ -765,6 +795,51 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     });
   }, [invoices, search, statusFilter, dateFrom, dateTo, cusMap, branchMap, repMap, colFilters]);
 
+  // ── Sorting ───────────────────────────────────────────────────────────
+  // Resolves the sortable value for a given invoice + column key. Mirrors
+  // the cell rendering so what the user sees on the screen is what gets
+  // sorted. Returns `{ v, isNum }` so the comparator can pick the right
+  // ordering (numeric vs string with Arabic-aware locale).
+  const sortValue = (inv: any, key: string): { v: any; isNum: boolean } => {
+    switch (key) {
+      case "doc":        return { v: inv.docNumber ?? `SI-${inv.id}`,                isNum: false };
+      case "date":       return { v: inv.invoiceDate ?? "",                          isNum: false };
+      case "customer":   return { v: cusMap[inv.customerId]?.name ?? "",             isNum: false };
+      case "vat":        return { v: cusMap[inv.customerId]?.vat ?? "",              isNum: false };
+      case "phone":      return { v: cusMap[inv.customerId]?.phone ?? "",            isNum: false };
+      case "branch":     return { v: branchMap[inv.branchId] ?? "",                  isNum: false };
+      case "rep":        return { v: repMap[inv.salesRepId] ?? "",                   isNum: false };
+      case "payment":    return { v: inv.paymentType ?? "",                          isNum: false };
+      case "currency":   return { v: inv.currencyCode ?? "",                         isNum: false };
+      case "subtotal":   return { v: Number(inv.subtotal ?? 0),                      isNum: true  };
+      case "discount":   return { v: Number(inv.discountAmount ?? 0),                isNum: true  };
+      case "vatAmt":     return { v: Number(inv.vatAmount ?? 0),                     isNum: true  };
+      case "total":      return { v: Number(inv.totalAmount ?? 0),                   isNum: true  };
+      case "commission": return { v: Number(inv.commissionAmount ?? 0),              isNum: true  };
+      case "settle":     return { v: inv.paymentSettlement?.code ?? "",              isNum: false };
+      case "je":         return { v: Number(inv.journalEntryId ?? 0),                isNum: true  };
+      case "zatca":      return { v: inv.zatcaStatus ?? "",                          isNum: false };
+      case "status":     return { v: inv.status ?? "",                               isNum: false };
+      case "createdBy":  return { v: inv.createdByName ?? "",                        isNum: false };
+      case "postedBy":   return { v: inv.postedByName ?? "",                         isNum: false };
+      case "notes":      return { v: inv.notes ?? "",                                isNum: false };
+      default:           return { v: "",                                             isNum: false };
+    }
+  };
+  const sorted = useMemo(() => {
+    if (!sort) return filtered;
+    const { key, dir } = sort;
+    const factor = dir === "asc" ? 1 : -1;
+    const arr = [...filtered];
+    arr.sort((a, b) => {
+      const av = sortValue(a, key);
+      const bv = sortValue(b, key);
+      if (av.isNum) return factor * ((Number(av.v) || 0) - (Number(bv.v) || 0));
+      return factor * String(av.v).localeCompare(String(bv.v), "ar", { numeric: true, sensitivity: "base" });
+    });
+    return arr;
+  }, [filtered, sort, cusMap, branchMap, repMap]);
+
   // ── Pagination ────────────────────────────────────────────────────────
   // pageSize === 0 means "show all" — we still keep `page` at 1 in that mode
   // so toggling back to a finite size lands on a sane page. Totals (footer)
@@ -787,10 +862,10 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   // toggled off again once the print dialog is dismissed.
   const [printAllOverride, setPrintAllOverride] = useState(false);
   const paged = useMemo(() => {
-    if (pageSize === 0 || printAllOverride) return filtered;
+    if (pageSize === 0 || printAllOverride) return sorted;
     const start = (page - 1) * pageSize;
-    return filtered.slice(start, start + pageSize);
-  }, [filtered, page, pageSize, printAllOverride]);
+    return sorted.slice(start, start + pageSize);
+  }, [sorted, page, pageSize, printAllOverride]);
   // When the override flips on, wait one frame for React to flush the full
   // table to the DOM, fire window.print() (which blocks until the user
   // dismisses the dialog), then drop the override.
@@ -1783,7 +1858,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
         <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs">
           {fp.isVisible("search") && (
           <Input
-            placeholder="بحث (رقم فاتورة، عميل، هاتف، ملاحظات)…"
+            placeholder="بحث (رقم فاتورة، رقم/اسم العميل، الفرع، المنطقة، هاتف، ملاحظات)…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="h-7 text-xs w-56"
@@ -2051,12 +2126,26 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               </colgroup>
               <thead className="sticky top-0 z-10">
                 <tr className="bg-gradient-to-b from-slate-100 to-slate-200 text-slate-700">
-                  {visibleColumns.map((col, colIdx) => (
+                  {visibleColumns.map((col, colIdx) => {
+                    const isSortable = col.type !== "none";
+                    const isSorted = sort?.key === col.key;
+                    return (
                     <th
                       key={col.key}
                       data-col-key={col.key}
                       style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
-                      className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]"
+                      className={cn(
+                        "group relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]",
+                        isSortable && "cursor-pointer select-none hover:bg-slate-200/70 transition-colors",
+                        isSorted && "bg-amber-100/80 text-slate-900",
+                      )}
+                      onClick={isSortable ? () => cycleSort(col.key) : undefined}
+                      title={isSortable ? "اضغط لترتيب العمود (تصاعدي / تنازلي)" : undefined}
+                      aria-sort={
+                        isSortable
+                          ? (isSorted ? (sort!.dir === "asc" ? "ascending" : "descending") : "none")
+                          : undefined
+                      }
                     >
                       {col.key === "_sel" ? (
                         <input
@@ -2067,7 +2156,23 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                           onChange={toggleAll}
                           className="cursor-pointer h-3.5 w-3.5 accent-rose-600"
                         />
-                      ) : col.label}
+                      ) : (
+                        <span className="inline-flex items-center justify-center gap-1">
+                          <span>{col.label}</span>
+                          {isSortable && (
+                            isSorted ? (
+                              sort!.dir === "asc"
+                                ? <ArrowUp className="h-3 w-3 text-amber-700" />
+                                : <ArrowDown className="h-3 w-3 text-amber-700" />
+                            ) : (
+                              <span className="inline-flex flex-col leading-none text-slate-400/70 group-hover:text-slate-600">
+                                <ArrowUp className="h-2 w-2 -mb-0.5" />
+                                <ArrowDown className="h-2 w-2" />
+                              </span>
+                            )
+                          )}
+                        </span>
+                      )}
                       {/* Resize grip — sits on the column's trailing edge.
                           Drag to resize, double-click to auto-fit. Hidden in
                           print so it doesn't show up on paper. We use Pointer
@@ -2083,28 +2188,75 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                         onDoubleClick={e => { e.preventDefault(); e.stopPropagation(); autoFitColumn(colIdx, col.key); }}
                         className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
                         style={{ insetInlineEnd: -4 }}
+                        onClick={e => e.stopPropagation()}
                       />
                     </th>
-                  ))}
+                  );
+                  })}
                 </tr>
-                {/* Per-column filter row — always visible, Excel-style */}
-                <tr className="bg-amber-50/80 border-b border-amber-200">
-                  {visibleColumns.map(col => (
+                {/* Per-column filter row — always visible, Excel-style.
+                    Pill inputs with a leading icon (search for text columns,
+                    hash for numeric), a coloured ring + glow when active, and
+                    a one-click clear (×) button when a value is present. */}
+                <tr className="bg-gradient-to-b from-amber-50 to-amber-100/70 border-b-2 border-amber-300/80">
+                  {visibleColumns.map(col => {
+                    const val = colFilters[col.key] ?? "";
+                    const hasVal = !!val;
+                    const isNum = col.type === "num";
+                    return (
                     <th
                       key={col.key}
-                      className="px-1 py-1 border border-slate-200 text-center"
+                      className="px-1 py-1.5 border border-amber-200/60 text-center"
                     >
                       {col.type === "none" ? null : (
-                        <Input
-                          value={colFilters[col.key] ?? ""}
-                          onChange={e => setColFilter(col.key, e.target.value)}
-                          placeholder={col.type === "num" ? ">=100" : "بحث…"}
-                          className="h-6 text-[10.5px] px-1.5 border-slate-300 bg-white"
-                          title={col.type === "num" ? "أمثلة: >=100, <500, =0" : "بحث جزئي"}
-                        />
+                        <div
+                          className={cn(
+                            "group relative flex items-center rounded-full border bg-white shadow-sm transition-all",
+                            hasVal
+                              ? (isNum
+                                  ? "border-emerald-400 ring-2 ring-emerald-200/60 shadow-emerald-100"
+                                  : "border-rose-400 ring-2 ring-rose-200/60 shadow-rose-100")
+                              : "border-slate-300 hover:border-amber-400 hover:shadow",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "flex items-center justify-center w-5 h-5 ms-1 rounded-full text-[10px] shrink-0 transition-colors",
+                              hasVal
+                                ? (isNum ? "text-emerald-600" : "text-rose-600")
+                                : "text-slate-400 group-hover:text-amber-600",
+                            )}
+                          >
+                            {isNum ? <Hash className="h-3 w-3" /> : <Search className="h-3 w-3" />}
+                          </span>
+                          <Input
+                            value={val}
+                            onChange={e => setColFilter(col.key, e.target.value)}
+                            placeholder={isNum ? ">=100" : "بحث…"}
+                            className="h-6 text-[10.5px] px-1 border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-slate-400"
+                            title={isNum ? "أمثلة: >=100, <500, =0, 100-500" : "بحث جزئي (يدعم النصوص)"}
+                          />
+                          {hasVal && (
+                            <button
+                              type="button"
+                              onClick={() => setColFilter(col.key, "")}
+                              aria-label={`مسح فلتر ${col.label || col.key}`}
+                              title="مسح هذا الفلتر"
+                              className={cn(
+                                "me-1 flex items-center justify-center w-4 h-4 rounded-full shrink-0 transition-colors",
+                                isNum
+                                  ? "text-emerald-600 hover:bg-emerald-100"
+                                  : "text-rose-600 hover:bg-rose-100",
+                              )}
+                            >
+                              <X className="h-2.5 w-2.5" />
+                            </button>
+                          )}
+                        </div>
                       )}
                     </th>
-                  ))}
+                  );
+                  })}
                 </tr>
               </thead>
               <tbody>
