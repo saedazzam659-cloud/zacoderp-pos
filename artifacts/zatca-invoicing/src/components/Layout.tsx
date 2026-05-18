@@ -153,13 +153,9 @@ const superAdminNav: NavDef[] = [
 // (POS Management) parent group rendered by PosNavGroup, so this list
 // stays empty (kept around for future business-level top-level NavItems).
 const companyBusinessNav: NavDef[] = [
-  // المتجر الإلكتروني — single-page module gated on the `online_store`
-  // menu permission. The page itself contains tabs for products, orders,
-  // domains, payments and AI insights.
-  { nameKey: "nav.gettingStarted", href: "/onboarding", icon: Sparkles },
-  { nameKey: "nav.onlineStore", href: "/online-store", icon: Store, permKey: "online_store" },
-  { nameKey: "nav.integrationsMarketplace", href: "/integrations/marketplace", icon: Plug },
-  { nameKey: "nav.integrationsGateway", href: "/integrations/gateway", icon: Plug },
+  // The four entries that used to live here (ابدأ هنا، المتجر الإلكتروني،
+  // سوق التكاملات، بوابة التكاملات) were moved under the "ربط متعدد"
+  // collapsible group per the user's request — see multiLinkSubNav below.
 ];
 
 // ── POS Management submenu ──────────────────────────────────────────────
@@ -278,7 +274,17 @@ const FIXED_ASSETS_GROUP_PERMS = ["fixed_assets"];
 const multiLinkSubNav: NavDef[] = [
   { nameKey: "nav.multiLinkClients", href: "/admin/gateway-clients", icon: KeyRound, permKey: "multi_link" },
   { nameKey: "nav.multiLinkReports", href: "/admin/gateway-clients", icon: BarChart3, permKey: "multi_link" },
+  // Moved from companyBusinessNav per user request — these four belong
+  // under the "ربط متعدد" umbrella in the sidebar.
+  { nameKey: "nav.gettingStarted",          href: "/onboarding",                icon: Sparkles },
+  { nameKey: "nav.onlineStore",             href: "/online-store",              icon: Store, permKey: "online_store" },
+  { nameKey: "nav.integrationsMarketplace", href: "/integrations/marketplace",  icon: Plug },
+  { nameKey: "nav.integrationsGateway",     href: "/integrations/gateway",      icon: Plug },
 ];
+// Three of the moved items have no permKey (always visible to everyone),
+// so the group must stay visible regardless of `multi_link` perm. We keep
+// `multi_link` here for compatibility, but MultiLinkNavGroup below skips
+// the perm-gate to honour the always-visible children.
 const MULTI_LINK_GROUP_PERMS = ["multi_link"];
 
 const crmSubNav: NavDef[] = [
@@ -1679,7 +1685,11 @@ function MultiLinkNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  if (!groupVisible(user, MULTI_LINK_GROUP_PERMS)) return null;
+  // Group stays visible whenever ANY child is visible. We can't use the
+  // standard `groupVisible(MULTI_LINK_GROUP_PERMS)` here because three of
+  // the children (gettingStarted, integrationsMarketplace, integrationsGateway)
+  // have no permKey and should be available to every signed-in user.
+  if (!user) return null;
   const isOnSub = multiLinkSubNav.some(i => location.startsWith(i.href));
   return (
     <div>
