@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
+import AccountStatementView from "@/components/AccountStatementView";
 import { useTranslation } from "react-i18next";
 import { FileText, Search, Filter } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
@@ -195,57 +196,37 @@ export default function SupplierStatement() {
       )}
 
       {applied.supplierId ? (
-        <div className="rounded-xl border bg-card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[700px]">
-              <thead className="bg-muted/50 border-b">
-                <tr>
-                  <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{t("purchasingPages.common.date")}</th>
-                  <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{t("purchasingPages.common.movementType")}</th>
-                  <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{t("purchasingPages.common.docNumber")}</th>
-                  <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{t("purchasingPages.common.description")}</th>
-                  <th className="px-4 py-3 text-center font-semibold text-blue-700">{t("purchasingPages.common.debit")}</th>
-                  <th className="px-4 py-3 text-center font-semibold text-emerald-700">{t("purchasingPages.common.credit")}</th>
-                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("purchasingPages.common.balance")}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                <tr className="bg-muted/20">
-                  <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{applied.from}</td>
-                  <td className="px-4 py-3 text-xs italic text-muted-foreground" colSpan={3}>{t("purchasingPages.common.openingBalance")}</td>
-                  <td className="px-4 py-3 text-center tabular-nums text-xs">{(data?.opening ?? 0) < 0 ? fmt(-(data!.opening)) : "—"}</td>
-                  <td className="px-4 py-3 text-center tabular-nums text-xs">{(data?.opening ?? 0) > 0 ? fmt(data!.opening) : "—"}</td>
-                  <td className="px-4 py-3 text-center tabular-nums text-sm font-bold">{fmt(data?.opening ?? 0)}</td>
-                </tr>
-                {isLoading
-                  ? [...Array(5)].map((_, i) => <tr key={i}><td colSpan={7} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
-                  : augmented.length === 0
-                  ? <tr><td colSpan={7} className="py-12 text-center text-muted-foreground">{t("purchasingReports.supplierStatement.noTx")}</td></tr>
-                  : augmented.map((l, idx) => (
-                      <tr key={idx} className="hover:bg-muted/20">
-                        <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{l.date}</td>
-                        <td className="px-4 py-3 text-xs">{TYPE_LABEL[l.type] ?? l.type}</td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground font-mono">{l.docNumber ?? "—"}</td>
-                        <td className="px-4 py-3 text-xs">{l.description}</td>
-                        <td className="px-4 py-3 text-center tabular-nums text-sm font-bold text-blue-600">{l.debit ? fmt(l.debit) : "—"}</td>
-                        <td className="px-4 py-3 text-center tabular-nums text-sm font-bold text-emerald-600">{l.credit ? fmt(l.credit) : "—"}</td>
-                        <td className="px-4 py-3 text-center tabular-nums text-sm font-bold">{fmt(l.balance)}</td>
-                      </tr>
-                    ))}
-              </tbody>
-              {!isLoading && augmented.length > 0 && (
-                <tfoot className="bg-muted/30 border-t">
-                  <tr>
-                    <td colSpan={4} className="px-4 py-3 text-xs font-semibold text-muted-foreground">{t("purchasingPages.common.total")}</td>
-                    <td className="px-4 py-3 text-center font-bold tabular-nums text-blue-700">{fmt(totals.debit)}</td>
-                    <td className="px-4 py-3 text-center font-bold tabular-nums text-emerald-700">{fmt(totals.credit)}</td>
-                    <td className="px-4 py-3 text-center font-bold tabular-nums">{fmt(closing)}</td>
-                  </tr>
-                </tfoot>
-              )}
-            </table>
+        isLoading ? (
+          <div className="rounded-xl border bg-card p-6 space-y-3">
+            {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
           </div>
-        </div>
+        ) : (
+          <AccountStatementView
+            mode="supplier"
+            company={user?.company ?? null}
+            account={{
+              code: supplier?.code || (supplier ? `SUP-${String(supplier.id).padStart(6, "0")}` : null),
+              nameAr: supplier?.nameAr,
+              nameEn: supplier?.nameEn,
+              legalName: supplier?.nameEn || supplier?.nameAr,
+              level: 5,
+            }}
+            from={applied.from}
+            to={applied.to}
+            opening={data?.opening ?? 0}
+            lines={augmented.map(l => ({
+              date: l.date,
+              type: TYPE_LABEL[l.type] ?? l.type,
+              docNumber: l.docNumber,
+              description: l.description,
+              debit: l.debit,
+              credit: l.credit,
+              balance: l.balance,
+            }))}
+            totals={totals}
+            closing={closing}
+          />
+        )
       ) : (
         <div className="rounded-xl border bg-card p-12 text-center text-muted-foreground">
           <FileText className="h-10 w-10 mx-auto mb-3 opacity-30" />
