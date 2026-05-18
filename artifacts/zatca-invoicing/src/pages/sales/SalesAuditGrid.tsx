@@ -1983,7 +1983,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           Counts are derived from the FILTERED set so users immediately see
           how many drafts / postings / returns survive their current filter.
           ──────────────────────────────────────────────────────────────── */}
-      {(() => {
+      {fp.isVisible("color_legend") && (() => {
         const counts = {
           draft:     filtered.filter((i: any) => i.status === "draft").length,
           posted:    filtered.filter((i: any) => i.status === "posted").length,
@@ -1996,15 +1996,23 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
         // stay in lockstep with every other audit grid in the app. The vertical
         // separator after the 4th chip groups status chips visually apart from
         // the ZATCA acknowledgement chips (which mark the row's trailing edge).
-        const items: LegendItem[] = [
-          { kind: "draft",     count: counts.draft },
-          { kind: "posted",    count: counts.posted },
-          { kind: "cancelled", count: counts.cancelled },
-          { kind: "returned",  count: counts.returned },
-          { kind: "zatca-ok",  count: counts.zatcaOk },
-          { kind: "zatca-bad", count: counts.zatcaBad },
+        // Each chip can be individually hidden via the governance scope; the
+        // visual separator is recomputed so it always sits after the last
+        // visible *status* chip (before any ZATCA chip), preserving grouping.
+        const allItems: Array<{ key: string; item: LegendItem; isZatca: boolean }> = [
+          { key: "legend_draft",     item: { kind: "draft",     count: counts.draft     }, isZatca: false },
+          { key: "legend_posted",    item: { kind: "posted",    count: counts.posted    }, isZatca: false },
+          { key: "legend_cancelled", item: { kind: "cancelled", count: counts.cancelled }, isZatca: false },
+          { key: "legend_returned",  item: { kind: "returned",  count: counts.returned  }, isZatca: false },
+          { key: "legend_zatca_ok",  item: { kind: "zatca-ok",  count: counts.zatcaOk   }, isZatca: true  },
+          { key: "legend_zatca_bad", item: { kind: "zatca-bad", count: counts.zatcaBad  }, isZatca: true  },
         ];
-        return <DocColorLegend items={items} separatorAfter={[3]} />;
+        const visible = allItems.filter(x => fp.isVisible(x.key));
+        if (visible.length === 0) return null;
+        const items: LegendItem[] = visible.map(x => x.item);
+        const lastStatusIdx = visible.reduce((acc, x, i) => (x.isZatca ? acc : i), -1);
+        const sepAfter = lastStatusIdx >= 0 && lastStatusIdx < visible.length - 1 ? [lastStatusIdx] : [];
+        return <DocColorLegend items={items} separatorAfter={sepAfter} />;
       })()}
 
       {/* ─── Wide spreadsheet grid ─────────────────────────────────────── */}

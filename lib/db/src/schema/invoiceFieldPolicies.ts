@@ -197,6 +197,13 @@ export const FIELD_CATALOGUE: Record<PolicyScope, FieldDef[]> = {
     { key: "bulk_return",       labelAr: "ارتجاع",                   labelEn: "Return invoice" },
     { key: "bulk_delete",       labelAr: "حذف (جماعي)",              labelEn: "Bulk delete" },
     { key: "clear_selection",   labelAr: "إلغاء التحديد",            labelEn: "Clear selection" },
+    { key: "color_legend",        labelAr: "شريط دلالة الألوان (كامل)", labelEn: "Color legend bar (entire)" },
+    { key: "legend_draft",        labelAr: "شارة: مسوّدة",              labelEn: "Legend chip: Draft" },
+    { key: "legend_posted",       labelAr: "شارة: مُرحَّلة",            labelEn: "Legend chip: Posted" },
+    { key: "legend_cancelled",    labelAr: "شارة: ملغاة",               labelEn: "Legend chip: Cancelled" },
+    { key: "legend_returned",     labelAr: "شارة: بها مرتجع",           labelEn: "Legend chip: Has return" },
+    { key: "legend_zatca_ok",     labelAr: "شارة: مؤكَّدة زاتكا",       labelEn: "Legend chip: ZATCA approved" },
+    { key: "legend_zatca_bad",    labelAr: "شارة: مرفوضة زاتكا",        labelEn: "Legend chip: ZATCA rejected" },
   ],
 };
 
