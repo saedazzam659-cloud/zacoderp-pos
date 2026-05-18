@@ -1,0 +1,418 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/contexts/AuthContext";
+import { userTrackingApi, type VisitRow, type TrackingZone } from "@/lib/userTrackingApi";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
+import { MapPin, Users, Clock, AlertTriangle, Trash2, Plus, BarChart3 } from "lucide-react";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line, Legend } from "recharts";
+import mapboxgl from "mapbox-gl";
+import "mapbox-gl/dist/mapbox-gl.css";
+
+const MAPBOX_TOKEN = (import.meta.env.VITE_MAPBOX_ACCESS_TOKEN as string | undefined) ?? "";
+if (MAPBOX_TOKEN) (mapboxgl as any).accessToken = MAPBOX_TOKEN;
+
+function fmtMin(min: number | null | undefined): string {
+  if (!min || min <= 0) return "—";
+  const h = Math.floor(min / 60), m = min % 60;
+  if (h === 0) return `${m} د`;
+  return `${h} س ${m} د`;
+}
+function fmtDt(s: string | null | undefined): string {
+  if (!s) return "—";
+  try { return new Date(s).toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" }); }
+  catch { return s; }
+}
+
+export default function UserTracking() {
+  const { user } = useAuth();
+  const cid = user?.companyId ?? undefined;
+  const qc = useQueryClient();
+
+  const today = new Date().toISOString().slice(0, 10);
+  const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const [from, setFrom] = useState(monthAgo);
+  const [to, setTo] = useState(today);
+  const [userId, setUserId] = useState<number | undefined>(undefined);
+  const [status, setStatus] = useState<string>("");
+
+  const dashboardQ = useQuery({
+    queryKey: ["user-tracking-dashboard", cid, from, to, userId],
+    queryFn: () => userTrackingApi.dashboard({ companyId: cid, from, to, userId }),
+    enabled: !!cid,
+  });
+
+  const visitsQ = useQuery({
+    queryKey: ["user-tracking-visits", cid, from, to, userId, status],
+    queryFn: () => userTrackingApi.visits({ companyId: cid, from, to, userId, status: status || undefined, limit: 500 }),
+    enabled: !!cid,
+  });
+
+  const zonesQ = useQuery({
+    queryKey: ["user-tracking-zones", cid],
+    queryFn: () => userTrackingApi.zones(cid),
+    enabled: !!cid,
+  });
+
+  const totals = dashboardQ.data?.totals;
+  const visits = visitsQ.data ?? [];
+  const zones = zonesQ.data ?? [];
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h1 className="text-xl font-bold flex items-center gap-2"><MapPin className="h-6 w-6 text-indigo-600" /> تتبع مواقع المستخدمين</h1>
+        {!MAPBOX_TOKEN && (
+          <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
+            ⚠ مفتاح Mapbox غير مُعرّف — لن تظهر الخريطة
+          </Badge>
+        )}
+      </div>
+
+      {/* Filter bar */}
+      <Card>
+        <CardContent className="pt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="space-y-1.5"><Label>من</Label><Input type="date" value={from} onChange={e => setFrom(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>إلى</Label><Input type="date" value={to} onChange={e => setTo(e.target.value)} /></div>
+          <div className="space-y-1.5">
+            <Label>المستخدم</Label>
+            <select className="w-full h-10 rounded-md border px-3 text-sm bg-background"
+              value={userId ?? ""} onChange={e => setUserId(e.target.value ? Number(e.target.value) : undefined)}>
+              <option value="">كل المستخدمين</option>
+              {(dashboardQ.data?.perUser ?? []).map(u => <option key={u.userId} value={u.userId}>{u.userName}</option>)}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>الحالة</Label>
+            <select className="w-full h-10 rounded-md border px-3 text-sm bg-background"
+              value={status} onChange={e => setStatus(e.target.value)}>
+              <option value="">الكل</option>
+              <option value="active">نشطة</option>
+              <option value="completed">منتهية</option>
+              <option value="cancelled">ملغاة</option>
+            </select>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* KPI tiles */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <KpiTile icon={MapPin}   label="عدد الزيارات"     value={totals?.visitCount ?? 0} color="indigo" />
+        <KpiTile icon={Users}    label="مستخدمين نشطين"   value={totals?.activeUsers ?? 0} color="blue" />
+        <KpiTile icon={Clock}    label="إجمالي وقت التواجد" value={fmtMin(totals?.totalMinutes ?? 0)} color="emerald" />
+        <KpiTile icon={AlertTriangle} label="تنبيهات" value={totals?.alertCount ?? 0} color="rose" />
+      </div>
+
+      <Tabs defaultValue="dashboard" className="w-full">
+        <TabsList className="grid grid-cols-4 w-full max-w-2xl">
+          <TabsTrigger value="dashboard"><BarChart3 className="h-4 w-4 me-1" /> الداش بورد</TabsTrigger>
+          <TabsTrigger value="visits"><MapPin className="h-4 w-4 me-1" /> الزيارات</TabsTrigger>
+          <TabsTrigger value="map">🗺 الخريطة</TabsTrigger>
+          <TabsTrigger value="zones">🚧 المناطق المحددة</TabsTrigger>
+        </TabsList>
+
+        {/* Dashboard tab */}
+        <TabsContent value="dashboard" className="space-y-4 pt-4">
+          <Card>
+            <CardHeader><CardTitle>مقارنة أداء المستخدمين</CardTitle></CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead><tr className="text-start text-muted-foreground">
+                    <th className="py-2 px-2 text-start">المستخدم</th>
+                    <th className="py-2 px-2">عدد الزيارات</th>
+                    <th className="py-2 px-2">منتهية</th>
+                    <th className="py-2 px-2">نشطة</th>
+                    <th className="py-2 px-2">إجمالي الوقت</th>
+                    <th className="py-2 px-2">متوسط الزيارة</th>
+                    <th className="py-2 px-2">أماكن مختلفة</th>
+                    <th className="py-2 px-2">تنبيهات</th>
+                  </tr></thead>
+                  <tbody>
+                    {(dashboardQ.data?.perUser ?? []).map(u => (
+                      <tr key={u.userId} className="border-t">
+                        <td className="py-2 px-2 font-medium">{u.userName}</td>
+                        <td className="py-2 px-2 text-center tabular-nums">{u.visitCount}</td>
+                        <td className="py-2 px-2 text-center tabular-nums text-emerald-700">{u.completedCount}</td>
+                        <td className="py-2 px-2 text-center tabular-nums text-blue-700">{u.activeCount}</td>
+                        <td className="py-2 px-2 text-center tabular-nums">{fmtMin(u.totalMinutes)}</td>
+                        <td className="py-2 px-2 text-center tabular-nums">{fmtMin(u.avgMinutes)}</td>
+                        <td className="py-2 px-2 text-center tabular-nums">{u.distinctPlaces}</td>
+                        <td className="py-2 px-2 text-center">
+                          {u.alertCount > 0 ? <Badge variant="destructive">{u.alertCount}</Badge> : <span className="text-muted-foreground">—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                    {(dashboardQ.data?.perUser ?? []).length === 0 && (
+                      <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">لا توجد بيانات</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader><CardTitle>الزيارات اليومية</CardTitle></CardHeader>
+              <CardContent style={{ height: 280 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={dashboardQ.data?.perDay ?? []}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="day" />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="visitCount" name="عدد الزيارات" stroke="#6366f1" strokeWidth={2} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle>الأماكن الأكثر زيارة</CardTitle></CardHeader>
+              <CardContent style={{ height: 280 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={dashboardQ.data?.topPlaces ?? []} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis type="number" />
+                    <YAxis dataKey="place" type="category" width={140} />
+                    <Tooltip />
+                    <Bar dataKey="visitCount" name="عدد الزيارات" fill="#10b981" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* Visits table tab */}
+        <TabsContent value="visits" className="pt-4">
+          <Card>
+            <CardContent className="pt-4 overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead><tr className="text-muted-foreground">
+                  <th className="py-2 px-2 text-start">المستخدم</th>
+                  <th className="py-2 px-2 text-start">المكان</th>
+                  <th className="py-2 px-2 text-start">العنوان الكامل</th>
+                  <th className="py-2 px-2">وقت الوصول</th>
+                  <th className="py-2 px-2">وقت المغادرة</th>
+                  <th className="py-2 px-2">المدة</th>
+                  <th className="py-2 px-2">الحالة</th>
+                  <th className="py-2 px-2">سبب الزيارة</th>
+                  <th className="py-2 px-2">تنبيهات</th>
+                </tr></thead>
+                <tbody>
+                  {visits.map(v => (
+                    <tr key={v.id} className="border-t hover:bg-muted/40">
+                      <td className="py-2 px-2 font-medium">{v.userName}</td>
+                      <td className="py-2 px-2">{v.checkinPlace || <span className="text-muted-foreground">—</span>}</td>
+                      <td className="py-2 px-2 text-xs text-muted-foreground max-w-[260px] truncate" title={v.checkinAddress || ""}>{v.checkinAddress || "—"}</td>
+                      <td className="py-2 px-2 text-center text-xs">{fmtDt(v.checkinAt)}</td>
+                      <td className="py-2 px-2 text-center text-xs">{fmtDt(v.checkoutAt)}</td>
+                      <td className="py-2 px-2 text-center tabular-nums">{fmtMin(v.durationMinutes)}</td>
+                      <td className="py-2 px-2 text-center">
+                        {v.status === "active"     && <Badge className="bg-blue-100 text-blue-800">نشطة</Badge>}
+                        {v.status === "completed"  && <Badge className="bg-emerald-100 text-emerald-800">منتهية</Badge>}
+                        {v.status === "cancelled"  && <Badge variant="outline">ملغاة</Badge>}
+                      </td>
+                      <td className="py-2 px-2">{v.purpose || "—"}</td>
+                      <td className="py-2 px-2">
+                        {v.alertFlags ? <Badge variant="destructive" title={v.alertFlags}>{v.alertFlags.split(",").length}</Badge> : <span className="text-muted-foreground">—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                  {visits.length === 0 && <tr><td colSpan={9} className="py-8 text-center text-muted-foreground">لا توجد زيارات</td></tr>}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Map tab */}
+        <TabsContent value="map" className="pt-4">
+          <Card>
+            <CardContent className="pt-4">
+              <VisitsMap visits={visits} zones={zones} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Zones tab */}
+        <TabsContent value="zones" className="pt-4">
+          <ZonesTab zones={zones} onChanged={() => qc.invalidateQueries({ queryKey: ["user-tracking-zones"] })} cid={cid} />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function KpiTile({ icon: Icon, label, value, color }: { icon: any; label: string; value: any; color: string }) {
+  const bg: Record<string, string> = {
+    indigo: "from-indigo-50 to-indigo-100/40 text-indigo-700 border-indigo-200",
+    blue:   "from-blue-50 to-blue-100/40 text-blue-700 border-blue-200",
+    emerald:"from-emerald-50 to-emerald-100/40 text-emerald-700 border-emerald-200",
+    rose:   "from-rose-50 to-rose-100/40 text-rose-700 border-rose-200",
+  };
+  return (
+    <Card className={`bg-gradient-to-br border ${bg[color]}`}>
+      <CardContent className="pt-4 flex items-center gap-3">
+        <Icon className="h-8 w-8 opacity-80" />
+        <div>
+          <p className="text-xs">{label}</p>
+          <p className="text-xl font-bold tabular-nums">{value}</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function VisitsMap({ visits, zones }: { visits: VisitRow[]; zones: TrackingZone[] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<mapboxgl.Map | null>(null);
+
+  useEffect(() => {
+    if (!ref.current || !MAPBOX_TOKEN) return;
+    if (mapRef.current) return;
+    mapRef.current = new mapboxgl.Map({
+      container: ref.current,
+      style: "mapbox://styles/mapbox/streets-v12",
+      center: [46.6753, 24.7136], // Riyadh
+      zoom: 5,
+    });
+    mapRef.current.addControl(new mapboxgl.NavigationControl(), "top-left");
+    return () => { mapRef.current?.remove(); mapRef.current = null; };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const markers: mapboxgl.Marker[] = [];
+    const pts: [number, number][] = [];
+    for (const v of visits) {
+      if (v.checkinLat && v.checkinLng) {
+        const lat = Number(v.checkinLat), lng = Number(v.checkinLng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+        const el = document.createElement("div");
+        el.style.cssText = "background:#6366f1;width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.3);cursor:pointer;";
+        const marker = new mapboxgl.Marker(el).setLngLat([lng, lat])
+          .setPopup(new mapboxgl.Popup({ offset: 12 }).setHTML(
+            `<div style="font-family:system-ui;font-size:12px;direction:rtl"><strong>${v.userName}</strong><br/>${v.checkinPlace || ""}<br/><small>${fmtDt(v.checkinAt)} · ${fmtMin(v.durationMinutes)}</small></div>`,
+          ))
+          .addTo(map);
+        markers.push(marker);
+        pts.push([lng, lat]);
+      }
+    }
+    // zones
+    const zoneSourceId = "tracking-zones";
+    if (map.isStyleLoaded()) {
+      if (map.getSource(zoneSourceId)) {
+        (map.getSource(zoneSourceId) as mapboxgl.GeoJSONSource).setData({
+          type: "FeatureCollection",
+          features: zones.map(z => ({
+            type: "Feature",
+            properties: { name: z.name, isAllowed: z.isAllowed },
+            geometry: { type: "Point", coordinates: [Number(z.centerLng), Number(z.centerLat)] },
+          })),
+        });
+      }
+    }
+    if (pts.length > 0) {
+      const lngs = pts.map(p => p[0]), lats = pts.map(p => p[1]);
+      const bounds = new mapboxgl.LngLatBounds([Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]);
+      map.fitBounds(bounds, { padding: 60, maxZoom: 13 });
+    }
+    return () => { markers.forEach(m => m.remove()); };
+  }, [visits, zones]);
+
+  if (!MAPBOX_TOKEN) {
+    return <div className="h-[500px] flex items-center justify-center bg-muted/30 rounded-md text-muted-foreground">
+      مفتاح Mapbox غير مُعرّف. أضف <code className="mx-1 px-1 bg-background rounded">VITE_MAPBOX_ACCESS_TOKEN</code> ثم أعد تشغيل النظام.
+    </div>;
+  }
+  return <div ref={ref} className="w-full h-[500px] rounded-md overflow-hidden" />;
+}
+
+function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged: () => void; cid?: number }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ name: "", centerLat: 24.7136, centerLng: 46.6753, radiusMeters: 500, isAllowed: true, notes: "" });
+  const [err, setErr] = useState<string | null>(null);
+  const create = useMutation({
+    mutationFn: () => userTrackingApi.createZone({ ...form }, cid),
+    onSuccess: () => { setOpen(false); onChanged(); setForm({ name: "", centerLat: 24.7136, centerLng: 46.6753, radiusMeters: 500, isAllowed: true, notes: "" }); },
+    onError: (e: any) => setErr(e?.message || "فشل الإنشاء"),
+  });
+  const del = useMutation({
+    mutationFn: (id: number) => userTrackingApi.deleteZone(id, cid),
+    onSuccess: () => onChanged(),
+  });
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle>المناطق المحددة (Geofences)</CardTitle>
+        <Button size="sm" onClick={() => { setErr(null); setOpen(true); }}><Plus className="h-4 w-4 me-1" /> منطقة جديدة</Button>
+      </CardHeader>
+      <CardContent>
+        <table className="min-w-full text-sm">
+          <thead><tr className="text-muted-foreground">
+            <th className="py-2 px-2 text-start">الاسم</th>
+            <th className="py-2 px-2">الإحداثيات</th>
+            <th className="py-2 px-2">نصف القطر (م)</th>
+            <th className="py-2 px-2">النوع</th>
+            <th className="py-2 px-2">حذف</th>
+          </tr></thead>
+          <tbody>
+            {zones.map(z => (
+              <tr key={z.id} className="border-t">
+                <td className="py-2 px-2 font-medium">{z.name}</td>
+                <td className="py-2 px-2 text-center tabular-nums text-xs">{z.centerLat}, {z.centerLng}</td>
+                <td className="py-2 px-2 text-center tabular-nums">{z.radiusMeters}</td>
+                <td className="py-2 px-2 text-center">
+                  {z.isAllowed
+                    ? <Badge className="bg-emerald-100 text-emerald-800">مسموحة</Badge>
+                    : <Badge variant="destructive">ممنوعة</Badge>}
+                </td>
+                <td className="py-2 px-2 text-center">
+                  <Button size="icon" variant="ghost" onClick={() => { if (confirm(`حذف "${z.name}"؟`)) del.mutate(z.id); }}>
+                    <Trash2 className="h-4 w-4 text-rose-600" />
+                  </Button>
+                </td>
+              </tr>
+            ))}
+            {zones.length === 0 && <tr><td colSpan={5} className="py-8 text-center text-muted-foreground">لا توجد مناطق</td></tr>}
+          </tbody>
+        </table>
+      </CardContent>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>منطقة جديدة</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div><Label>اسم المنطقة</Label><Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>خط العرض (Lat)</Label><Input type="number" step="0.0000001" value={form.centerLat} onChange={e => setForm({ ...form, centerLat: Number(e.target.value) })} /></div>
+              <div><Label>خط الطول (Lng)</Label><Input type="number" step="0.0000001" value={form.centerLng} onChange={e => setForm({ ...form, centerLng: Number(e.target.value) })} /></div>
+            </div>
+            <div><Label>نصف القطر (متر)</Label><Input type="number" value={form.radiusMeters} onChange={e => setForm({ ...form, radiusMeters: Number(e.target.value) })} /></div>
+            <div className="flex items-center justify-between rounded-md border p-2">
+              <Label>منطقة مسموح بها</Label>
+              <Switch checked={form.isAllowed} onCheckedChange={v => setForm({ ...form, isAllowed: v })} />
+            </div>
+            <div><Label>ملاحظات</Label><Input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
+            {err && <div className="rounded-md bg-rose-50 p-2 text-sm text-rose-700">{err}</div>}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setOpen(false)}>إلغاء</Button>
+            <Button onClick={() => create.mutate()} disabled={!form.name || create.isPending}>حفظ</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}

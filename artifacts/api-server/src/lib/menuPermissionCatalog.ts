@@ -84,6 +84,8 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   // entire /hr/field surface — locations, visits, plans, tickets,
   // tracking, reports — independently of `hr_module`.
   "field_service",
+  // ── تتبع مواقع المستخدمين (Check-in/Check-out + dashboard + alerts) ──
+  "user_tracking",
   // ── النظام ──
   "zatca",
   // ── ربط متعدد ──

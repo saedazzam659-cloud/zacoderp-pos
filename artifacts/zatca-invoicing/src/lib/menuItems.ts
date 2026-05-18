@@ -69,6 +69,8 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "installments",       label: "البيع بالتقسيط الذكي",       section: "البيع بالتقسيط" },
 
+  { key: "user_tracking",      label: "تتبع مواقع المستخدمين",       section: "تتبع المواقع" },
+
   { key: "zatca",              label: "ربط ZATCA",                   section: "النظام" },
 
   // ── ربط متعدد ──────────────────────────────────────────────────
@@ -129,6 +131,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   field_service:      "field_service", // standalone billable module — Field Service Management (FSM)
   ai_tools:           null,           // SuperAdmin tool, not billed per-company
   installments:       "installments",
+  user_tracking:      null,
   zatca:              "zatca",
   multi_link:         null,           // SuperAdmin / partner tool, not billed per-company
 };
@@ -172,5 +175,6 @@ export const SECTION_THEME: Record<string, { bg: string; text: string; border: s
   "الاتصال الداخلي":       { bg: "bg-green-50",    text: "text-green-700",    border: "border-green-200" },
   "البيع بالتقسيط":         { bg: "bg-lime-50",     text: "text-lime-700",     border: "border-lime-200" },
   "الخدمة الميدانية":       { bg: "bg-blue-50",     text: "text-blue-700",     border: "border-blue-200" },
+  "تتبع المواقع":          { bg: "bg-indigo-50",   text: "text-indigo-700",   border: "border-indigo-200" },
   "ربط متعدد":              { bg: "bg-cyan-50",     text: "text-cyan-700",     border: "border-cyan-200" },
 };

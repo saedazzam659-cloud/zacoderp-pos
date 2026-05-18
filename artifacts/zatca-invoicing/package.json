@@ -77,6 +77,7 @@
     "zod": "catalog:"
   },
   "dependencies": {
+    "@types/mapbox-gl": "^3.5.0",
     "@types/qrcode": "^1.5.6",
     "@vladmandic/face-api": "^1.7.15",
     "browser-image-compression": "^2.0.2",
@@ -87,6 +88,7 @@
     "jsbarcode": "^3.12.3",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
+    "mapbox-gl": "^3.23.1",
     "qrcode": "^1.5.4",
     "qrcode.react": "^4.2.0",
     "react-helmet-async": "^3.0.0",

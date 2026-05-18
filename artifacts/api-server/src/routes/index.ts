@@ -101,6 +101,7 @@ import cobrowseRouter from "./cobrowse";
 import posOperationsAiRouter from "./pos-operations-ai";
 import reportInvitationsRouter from "./report-invitations";
 import realtimeRouter from "./realtime";
+import userTrackingRouter from "./userTracking";
 
 const router: IRouter = Router();
 
@@ -166,6 +167,7 @@ router.use("/hr/settings",        hrSettingsRouter);
 router.use("/hr/reports",         hrReportsRouter);
 router.use("/hr/face",            faceAttendanceRouter);
 router.use("/hr/field",           fieldServiceRouter);
+router.use("/user-tracking",      userTrackingRouter);
 router.use("/security-events",    securityEventsRouter);
 router.use("/surveillance-devices", surveillanceDevicesRouter);
 router.use("/security-ai",        securityAiRouter);

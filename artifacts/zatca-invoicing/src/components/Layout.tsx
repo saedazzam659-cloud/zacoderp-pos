@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 import { companyAllowsModule } from "@/lib/companyModuleGate";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
+import CheckInWidget from "@/components/CheckInWidget";
 import SessionCountdown from "@/components/SessionCountdown";
 import ScreenAssistant from "@/components/ScreenAssistant";
 import VoiceAssistantWidget from "@/components/VoiceAssistantWidget";
@@ -357,6 +358,7 @@ const aiToolsSubNav: NavDef[] = [
   { nameKey: "nav.inbox",           href: "/inbox",               icon: Inbox },
   // Internal Chat — real-time messaging between company colleagues.
   { nameKey: "nav.chat",            href: "/chat",                icon: MessageSquare, permKey: "chat" },
+  { nameKey: "nav.userTracking",    href: "/user-tracking",       icon: MapPin,    permKey: "user_tracking" },
   // Import / export the company's data sets — gated by the data_io permission.
   { nameKey: "nav.dataIo",          href: "/settings/data-io",    icon: Database,  permKey: "data_io" },
 ];
@@ -2477,6 +2479,7 @@ function TopBar({
           >
             <HelpCircle className="h-[18px] w-[18px]" />
           </Button>
+          <div className="hidden sm:flex"><CheckInWidget /></div>
           <NotificationBell />
           <div className="hidden md:flex"><SessionCountdown /></div>
           {/* Manual-session indicator: shows the user's currently-selected

@@ -10,6 +10,7 @@ import InAppNotFound from "@/components/InAppNotFound";
 import Layout from "@/components/Layout";
 import PermRoute from "@/components/PermRoute";
 import Dashboard from "@/pages/Dashboard";
+import UserTracking from "@/pages/admin/UserTracking";
 import SuperAdminDashboard from "@/pages/SuperAdminDashboard";
 import OrphanStockCleanup from "@/pages/admin/OrphanStockCleanup";
 import InvoiceFieldPolicies from "@/pages/admin/InvoiceFieldPolicies";
@@ -569,6 +570,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/sessions" module="sessions" component={SessionsAdmin} />}
             <Route path="/notifications" component={Notifications} />
             {!isSuperAdmin && <Route path="/inbox" component={Inbox} />}
+            {!isSuperAdmin && <PermRoute path="/user-tracking" module="user_tracking" component={UserTracking} />}
             {!isSuperAdmin && user?.role === "admin" && <Route path="/ai-reports" component={AiReports} />}
 
             {/* Company user routes */}
