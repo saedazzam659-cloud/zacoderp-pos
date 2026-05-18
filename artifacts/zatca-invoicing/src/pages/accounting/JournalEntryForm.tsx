@@ -276,10 +276,27 @@ export default function JournalEntryForm() {
   // the bundle returned by /api/invoice-field-policies/me. See FIELD_CATALOGUE
   // for the registered field keys.
   const fp = useFieldPolicy("journal_entry");
+
+  // Track the value we auto-filled from the central sequence so we can
+  // clear it when the user picks a date that falls in a different fiscal
+  // period (or no period at all). Without this, the docNumber state from
+  // the previous date — e.g. "QU010001" auto-filled for a 2026 date —
+  // would linger after the user switches to 2025-05-18 where the QU
+  // sequence is out of scope, making it look like the system ignored the
+  // date change. We only ever clear our OWN auto-filled value, never
+  // anything the user typed manually.
+  const lastAutoFilledRef = useRef<string | null>(null);
   useEffect(() => {
     if (!isNew) return;
-    if (seqPeek.hasSequence && seqPeek.number) setDocNumber(seqPeek.number);
-  }, [isNew, seqPeek.hasSequence, seqPeek.number]);
+    if (seqPeek.loading) return;
+    if (seqPeek.hasSequence && seqPeek.number) {
+      setDocNumber(seqPeek.number);
+      lastAutoFilledRef.current = seqPeek.number;
+    } else {
+      setDocNumber(prev => (prev && prev === lastAutoFilledRef.current ? "" : prev));
+      lastAutoFilledRef.current = null;
+    }
+  }, [isNew, seqPeek.loading, seqPeek.hasSequence, seqPeek.number]);
 
   const { data: accountsList = [] } = useQuery<any[]>({
     queryKey: ["accounts-flat", cid],
