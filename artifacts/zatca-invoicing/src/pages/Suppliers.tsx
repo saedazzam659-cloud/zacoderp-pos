@@ -23,7 +23,11 @@ import { cn } from "@/lib/utils";
 import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
 } from "@/lib/docRowTone";
-import { downloadCsv, matchCol, useAuditGridLayout, useColumnResize } from "@/lib/auditGridLayout";
+import { downloadCsv, useAuditGridLayout, useColumnResize } from "@/lib/auditGridLayout";
+import {
+  type AdvFilter, isAdvActive, matchAdv, describeAdv,
+} from "@/lib/advFilter";
+import { AdvFilterPopover } from "@/components/auditGrid/AdvFilterPopover";
 import {
   AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
   FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
@@ -150,18 +154,25 @@ export default function Suppliers() {
   const allColKeys = useMemo(() => COLUMNS.map(c => c.key), [COLUMNS]);
   const layout = useAuditGridLayout({ screenSlug: "suppliers", cid, dataKeys, allColKeys });
   const { tableRef, gripProps } = useColumnResize(layout.setColWidths);
-  const { theme, colWidths, colFilters, setColFilter, clearColFilters,
+  const { theme, colWidths, colFilters, clearColFilters,
           isSelected, toggleRow, toggleAll, isAllSelected, isSomeSelected, clearSelection,
           pageSize, page, setPage } = layout;
 
+
+  // Per-column advanced filter (two conditions joined by AND/OR) — shared
+  // primitives in lib/advFilter.ts + components/auditGrid/AdvFilterPopover.
+  const [colAdv, setColAdv] = useState<Record<string, AdvFilter>>({});
+  const clearColAdv = (key: string) =>
+    setColAdv(prev => { const n = { ...prev }; delete n[key]; return n; });
+  const clearAllColFilters = () => { clearColFilters(); setColAdv({}); };
   const filtered = useMemo(() => filteredBySearch.filter((s: any) => {
     for (const col of COLUMNS) {
-      const f = colFilters[col.key];
-      if (!f) continue;
-      if (!matchCol(col.valueOf(s), f, col.type)) return false;
+      const adv = colAdv[col.key];
+      if (!isAdvActive(adv)) continue;
+      if (!matchAdv(col.valueOf(s), adv, col.type)) return false;
     }
     return true;
-  }), [filteredBySearch, colFilters, COLUMNS]);
+  }), [filteredBySearch, colAdv, COLUMNS]);
 
   const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -536,13 +547,13 @@ export default function Suppliers() {
                 className="pe-7 h-7 text-xs w-64"
               />
             </div>
-            {Object.values(colFilters).some(v => v) && (
+            {(Object.values(colFilters).some(v => v) || Object.values(colAdv).some(isAdvActive)) && (
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
                 className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50"
-                onClick={clearColFilters}
+                onClick={clearAllColFilters}
               >
                 <X className="h-3.5 w-3.5 me-1" />
                 مسح فلاتر الأعمدة
@@ -593,26 +604,12 @@ export default function Suppliers() {
                         disabled={allFilteredIds.length === 0}
                       />
                     ) : (
-                      <span className="inline-block truncate">{col.label}</span>
+                      <span className="inline-flex items-center gap-1"><span className="inline-block truncate">{col.label}</span>{col.type !== "none" && (<AdvFilterPopover colLabel={col.label || col.key} colType={col.type} value={colAdv[col.key]} active={isAdvActive(colAdv[col.key])} onApply={v => setColAdv(prev => ({ ...prev, [col.key]: v }))} onClear={() => clearColAdv(col.key)} />)}</span>
                     )}
                     {col.key !== "_sel" && (
                       <span
                         {...gripProps(col.key, idx)}
                         className="absolute inset-y-0 start-0 w-1 cursor-col-resize hover:bg-blue-400/40 active:bg-blue-500/60"
-                      />
-                    )}
-                  </th>
-                ))}
-              </tr>
-              <tr className="bg-amber-50/80 border-b border-amber-200">
-                {visibleColumns.map((col) => (
-                  <th key={col.key} className="px-1 py-1 border-e border-amber-200/60">
-                    {col.type === "none" ? null : (
-                      <Input
-                        value={colFilters[col.key] ?? ""}
-                        onChange={(e) => setColFilter(col.key, e.target.value)}
-                        placeholder={col.type === "num" ? ">=N" : "فلتر…"}
-                        className="h-6 text-[10px] px-1.5 bg-white"
                       />
                     )}
                   </th>

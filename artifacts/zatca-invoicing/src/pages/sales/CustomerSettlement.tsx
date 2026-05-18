@@ -19,8 +19,12 @@ import { cn } from "@/lib/utils";
 import { safeLogoSrc } from "@/lib/export";
 import { buildVoucherPrintHtml, openVoucherPrintWindow } from "@/lib/voucherPrint";
 import {
-  downloadCsv, matchCol, useAuditGridLayout, useColumnResize,
+  downloadCsv, useAuditGridLayout, useColumnResize,
 } from "@/lib/auditGridLayout";
+import {
+  type AdvFilter, isAdvActive, matchAdv, describeAdv,
+} from "@/lib/advFilter";
+import { AdvFilterPopover } from "@/components/auditGrid/AdvFilterPopover";
 import {
   AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
   FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
@@ -267,6 +271,15 @@ export default function CustomerSettlement() {
   );
   const ctx: Ctx = { cusMap, accMap };
 
+  // Per-column advanced filter (two conditions joined by AND/OR) — shared
+  // primitives in lib/advFilter.ts + components/auditGrid/AdvFilterPopover.
+  // Declared BEFORE the filter useMemo so the captured `colAdv` is initialised
+  // by the time React runs the memo callback on first render (avoids TDZ).
+  const [colAdv, setColAdv] = useState<Record<string, AdvFilter>>({});
+  const clearColAdv = (key: string) =>
+    setColAdv(prev => { const n = { ...prev }; delete n[key]; return n; });
+  const clearAllColFilters = () => { clearColFilters(); setColAdv({}); };
+
   /* ── Filtering ── */
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -281,16 +294,17 @@ export default function CustomerSettlement() {
       }
       // Per-column filters.
       for (const col of COLUMNS) {
-        const f = layout.colFilters[col.key];
-        if (!f) continue;
-        if (!matchCol(col.valueOf(s, ctx), f, col.type)) return false;
+        const adv = colAdv[col.key];
+        if (!isAdvActive(adv)) continue;
+        if (!matchAdv(col.valueOf(s, ctx), adv, col.type)) return false;
       }
       return true;
     });
-  }, [settlements, search, statusFilter, layout.colFilters, cusMap, accMap, ctx]);
+  }, [settlements, search, statusFilter, colAdv, cusMap, accMap, ctx]);
 
   /* ── Pagination ── */
   const { pageSize, page, setPage } = layout;
+
   const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
   if (safePage !== page) setPage(safePage);
@@ -547,7 +561,7 @@ ${sections}
     toast({ title: "تم تصدير ملف CSV بنجاح" });
   }
 
-  const { theme, footerTheme, colWidths, colFilters, setColFilter, clearColFilters } = layout;
+  const { theme, footerTheme, colWidths, colFilters, clearColFilters } = layout;
 
   return (
     <div className="space-y-6" dir="rtl">
@@ -704,10 +718,10 @@ ${sections}
               </button>
             ))}
           </div>
-          {Object.values(colFilters).some((v) => v) && (
+          {(Object.values(colFilters).some((v) => v) || Object.values(colAdv).some(isAdvActive)) && (
             <Button type="button" size="sm" variant="ghost"
               className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50"
-              onClick={clearColFilters} title="مسح فلاتر الأعمدة">
+              onClick={clearAllColFilters} title="مسح فلاتر الأعمدة">
               <X className="h-3.5 w-3.5 me-1" />
               مسح فلاتر الأعمدة
             </Button>
@@ -811,7 +825,7 @@ ${sections}
                         style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
                         className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]"
                       >
-                        {col.label}
+                        <span className="inline-flex items-center justify-center gap-1"><span>{col.label}</span>{col.type !== "none" && (<AdvFilterPopover colLabel={col.label || col.key} colType={col.type} value={colAdv[col.key]} active={isAdvActive(colAdv[col.key])} onApply={v => setColAdv(prev => ({ ...prev, [col.key]: v }))} onClear={() => clearColAdv(col.key)} />)}</span>
                         <span
                           {...gripProps(col.key, idx)}
                           className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
@@ -820,21 +834,6 @@ ${sections}
                       </th>
                     );
                   })}
-                </tr>
-                <tr className="bg-amber-50/80 border-b border-amber-200">
-                  {visibleColumns.map((col) => (
-                    <th key={col.key} className="px-1 py-1 border border-slate-200 text-center">
-                      {col.type === "none" ? null : (
-                        <Input
-                          value={colFilters[col.key] ?? ""}
-                          onChange={(e) => setColFilter(col.key, e.target.value)}
-                          placeholder={col.type === "num" ? ">=100" : "بحث…"}
-                          className="h-6 text-[10.5px] px-1.5 border-slate-300 bg-white"
-                          title={col.type === "num" ? "أمثلة: >=100, <500, =0" : "بحث جزئي"}
-                        />
-                      )}
-                    </th>
-                  ))}
                 </tr>
               </thead>
               <tbody>

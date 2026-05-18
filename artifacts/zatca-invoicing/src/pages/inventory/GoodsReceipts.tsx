@@ -28,7 +28,11 @@ import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { DiscountRow } from "@/components/DiscountRow";
 import { cn } from "@/lib/utils";
-import { downloadCsv, matchCol, useAuditGridLayout, useColumnResize } from "@/lib/auditGridLayout";
+import { downloadCsv, useAuditGridLayout, useColumnResize } from "@/lib/auditGridLayout";
+import {
+  type AdvFilter, isAdvActive, matchAdv, describeAdv,
+} from "@/lib/advFilter";
+import { AdvFilterPopover } from "@/components/auditGrid/AdvFilterPopover";
 import {
   AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
   FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
@@ -575,9 +579,16 @@ export default function GoodsReceipts() {
     allColKeys: ALL_KEYS,
   });
   const { tableRef, gripProps } = useColumnResize(layout.setColWidths);
-  const { theme, footerTheme, colWidths, colFilters, setColFilter, clearColFilters,
+  const { theme, footerTheme, colWidths, colFilters, clearColFilters,
           isSelected, toggleRow, toggleAll, isAllSelected, isSomeSelected, clearSelection } = layout;
 
+
+  // Per-column advanced filter (two conditions joined by AND/OR) — shared
+  // primitives in lib/advFilter.ts + components/auditGrid/AdvFilterPopover.
+  const [colAdv, setColAdv] = useState<Record<string, AdvFilter>>({});
+  const clearColAdv = (key: string) =>
+    setColAdv(prev => { const n = { ...prev }; delete n[key]; return n; });
+  const clearAllColFilters = () => { clearColFilters(); setColAdv({}); };
   const filteredReceipts = useMemo(() => {
     const q = tableSearch.trim().toLowerCase();
     return (receipts as any[]).filter((r) => {
@@ -590,13 +601,13 @@ export default function GoodsReceipts() {
         if (!hay.includes(q)) return false;
       }
       for (const col of COLUMNS) {
-        const f = colFilters[col.key];
-        if (!f) continue;
-        if (!matchCol(col.valueOf(r), f, col.type)) return false;
+        const adv = colAdv[col.key];
+        if (!isAdvActive(adv)) continue;
+        if (!matchAdv(col.valueOf(r), adv, col.type)) return false;
       }
       return true;
     });
-  }, [receipts, tableSearch, statusFilter, colFilters, supMap]);
+  }, [receipts, tableSearch, statusFilter, colAdv, supMap]);
 
   const { pageSize, page, setPage } = layout;
   const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filteredReceipts.length / pageSize));
@@ -1283,10 +1294,10 @@ ${sections}
               </button>
             ))}
           </div>
-          {Object.values(colFilters).some((v) => v) && (
+          {(Object.values(colFilters).some((v) => v) || Object.values(colAdv).some(isAdvActive)) && (
             <Button type="button" size="sm" variant="ghost"
               className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50"
-              onClick={clearColFilters} title="مسح فلاتر الأعمدة">
+              onClick={clearAllColFilters} title="مسح فلاتر الأعمدة">
               <X className="h-3.5 w-3.5 me-1" />
               مسح فلاتر الأعمدة
             </Button>
@@ -1396,25 +1407,18 @@ ${sections}
                           onToggle={() => toggleAll(allFilteredIds)}
                           disabled={allFilteredIds.length === 0 || bulkBusy}
                         />
-                      ) : col.label}
+                      ) : (
+                          <span className="inline-flex items-center justify-center gap-1">
+                            <span>{col.label}</span>
+                            {col.type !== "none" && (
+                              <AdvFilterPopover colLabel={col.label || col.key} colType={col.type} value={colAdv[col.key]} active={isAdvActive(colAdv[col.key])} onApply={v => setColAdv(prev => ({ ...prev, [col.key]: v }))} onClear={() => clearColAdv(col.key)} />
+                            )}
+                          </span>
+                        )}
                       {col.key !== "_sel" && (
                         <span {...gripProps(col.key, idx)}
                           className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
                           style={{ insetInlineEnd: -4 }}
-                        />
-                      )}
-                    </th>
-                  ))}
-                </tr>
-                <tr className="bg-amber-50/80 border-b border-amber-200">
-                  {visibleColumns.map((col) => (
-                    <th key={col.key} className="px-1 py-1 border border-slate-200 text-center">
-                      {col.type === "none" ? null : (
-                        <Input
-                          value={colFilters[col.key] ?? ""}
-                          onChange={(e) => setColFilter(col.key, e.target.value)}
-                          placeholder={col.type === "num" ? ">=100" : "بحث…"}
-                          className="h-6 text-[10.5px] px-1.5"
                         />
                       )}
                     </th>
