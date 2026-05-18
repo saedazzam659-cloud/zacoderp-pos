@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
+import RegionFilter from "@/components/RegionFilter";
 import { useTranslation } from "react-i18next";
 import { RotateCcw, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
@@ -25,6 +26,7 @@ export default function SalesReturnsReport() {
   const [from, setFrom] = useState(firstDay);
   const [to, setTo] = useState(today);
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
+  const [regionId, setRegionId] = useState<number | undefined>(undefined);
   const [search, setSearch] = useState("");
 
   const EXPORT_COLS = [
@@ -35,8 +37,8 @@ export default function SalesReturnsReport() {
   ];
 
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ["returns-by-customer", cid, from, to, branchId],
-    queryFn: () => salesAnalyticsApi.returnsByCustomer(cid, from, to, branchId),
+    queryKey: ["returns-by-customer", cid, from, to, branchId, regionId],
+    queryFn: () => salesAnalyticsApi.returnsByCustomer(cid, from, to, branchId, regionId),
   });
 
   const filtered = (rows as any[]).filter(r => !search || r.customerNameAr?.includes(search) || r.customerNameEn?.toLowerCase().includes(search.toLowerCase()));
@@ -84,7 +86,7 @@ export default function SalesReturnsReport() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
         <div className="space-y-1.5">
           <Label>{t("salesReports.common.from")}</Label>
           <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
@@ -93,10 +95,8 @@ export default function SalesReturnsReport() {
           <Label>{t("salesReports.common.to")}</Label>
           <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
         </div>
-        <div className="space-y-1.5">
-          <Label>{t("common.branch")}</Label>
-          <BranchFilter value={branchId} onChange={setBranchId} />
-        </div>
+        <BranchFilter value={branchId} onChange={setBranchId} />
+        <RegionFilter value={regionId} onChange={setRegionId} />
         <div className="space-y-1.5">
           <Label>{tr("search")}</Label>
           <div className="relative">

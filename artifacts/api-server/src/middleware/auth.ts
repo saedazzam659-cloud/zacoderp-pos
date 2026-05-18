@@ -1,5 +1,5 @@
 import { db } from "@workspace/db";
-import { usersTable, userBranchesTable, superAdminSessionsTable, companiesTable, kioskTokensTable } from "@workspace/db";
+import { usersTable, userBranchesTable, superAdminSessionsTable, companiesTable, kioskTokensTable, branchesTable } from "@workspace/db";
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Request, Response, NextFunction } from "express";
 import crypto from "node:crypto";
@@ -525,4 +525,45 @@ export function multiBranchScopeSpread(
   if (intersected.length === 0) return [sql`false`];
 
   return [or(inArray(branchColumn, intersected), isNull(branchColumn))];
+}
+
+/**
+ * Resolve an explicit `?regionId=N` query param into the set of branch IDs
+ * belonging to that region (for the given company), then push the resulting
+ * IN(...) condition onto the supplied conds[].
+ *
+ * Behavior:
+ *   - regionIdRaw empty / undefined / invalid → no-op (returns "ok").
+ *   - region exists but has 0 branches → pushes `sql\`false\`` so the query
+ *     yields zero rows (cleaner than silent un-filtered behavior).
+ *   - otherwise pushes `(branchColumn IN (...) OR branchColumn IS NULL)`
+ *     so company-wide / shared rows (NULL branch) remain visible, mirroring
+ *     the single- and multi-branch helpers above.
+ *
+ * Intended to be called AFTER `pushBranchScope(...)` so the user's
+ * `viewAllBranches` / explicit `?branchId=` filter is applied first; the
+ * region filter then narrows the result set further. A user restricted to
+ * branches outside the selected region correctly sees zero rows because
+ * the two conditions intersect via AND.
+ */
+export async function pushRegionScope(
+  conds: any[],
+  branchColumn: any,
+  companyId: number | undefined,
+  regionIdRaw: unknown,
+): Promise<"ok" | "deny"> {
+  if (regionIdRaw === undefined || regionIdRaw === null || regionIdRaw === "") return "ok";
+  const rid = Number(regionIdRaw);
+  if (!Number.isFinite(rid) || rid <= 0) return "ok";
+  if (!companyId) return "ok";
+  const rows = await db.select({ id: branchesTable.id })
+    .from(branchesTable)
+    .where(and(eq(branchesTable.companyId, companyId), eq(branchesTable.regionId, rid)));
+  const ids = rows.map(r => r.id);
+  if (ids.length === 0) {
+    conds.push(sql`false`);
+    return "deny";
+  }
+  conds.push(or(inArray(branchColumn, ids), isNull(branchColumn)));
+  return "ok";
 }

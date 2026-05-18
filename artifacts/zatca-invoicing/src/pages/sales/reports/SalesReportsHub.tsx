@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   ChevronLeft, ChevronRight, FileText, Wallet, AlertTriangle, Users, Package,
   CalendarRange, TrendingUp, RotateCcw, Receipt, Sun, CreditCard, ListChecks,
-  LineChart,
+  LineChart, Gift,
 } from "lucide-react";
 
 export default function SalesReportsHub() {
@@ -89,6 +89,15 @@ export default function SalesReportsHub() {
       desc: tr("returnsDesc"),
       icon: RotateCcw,
       color: "from-orange-50 to-orange-100/40 text-orange-700 border-orange-200",
+    },
+    {
+      href: "/sales/reports/free-returns",
+      title: isRtl ? "مرتجع الكميات المجانية" : "Free-quantity returns",
+      desc:  isRtl
+        ? "الأصناف ذات الكميات المجانية في المرتجعات مع التكلفة والبيع (شامل/بدون ضريبة)."
+        : "Items with free quantities in returns, with cost & sell price (excl/incl VAT).",
+      icon: Gift,
+      color: "from-pink-50 to-pink-100/40 text-pink-700 border-pink-200",
     },
     {
       href: "/sales/reports/profitability",

@@ -10,9 +10,10 @@ import {
   cashBoxesTable,
   bankAccountsTable,
   stockLedgerTable,
+  itemsTable,
 } from "@workspace/db";
 import { and, eq, sql, gte, lte, asc, desc, inArray } from "drizzle-orm";
-import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, pushRegionScope } from "../middleware/auth.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -29,6 +30,13 @@ function getCid(req: any): number | undefined {
 
 function getBid(req: any): number | undefined {
   const v = req.query.branchId;
+  if (v === undefined || v === null || v === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function getRid(req: any): number | undefined {
+  const v = req.query.regionId;
   if (v === undefined || v === null || v === "") return undefined;
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : undefined;
@@ -155,9 +163,11 @@ router.get("/by-item", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
+    const rid = getRid(req);
     const { from, to } = req.query as Record<string, string>;
     const conds = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted")];
     pushBranchScope(req, conds, salesInvoicesTable.branchId, bid);
+    await pushRegionScope(conds, salesInvoicesTable.branchId, cid, rid);
     if (from) conds.push(gte(salesInvoicesTable.invoiceDate, from));
     if (to)   conds.push(lte(salesInvoicesTable.invoiceDate, to));
 
@@ -751,9 +761,11 @@ router.get("/returns-by-customer", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
+    const rid = getRid(req);
     const { from, to } = req.query as Record<string, string>;
     const conds = [eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted")];
     pushBranchScope(req, conds, salesReturnsTable.branchId, bid);
+    await pushRegionScope(conds, salesReturnsTable.branchId, cid, rid);
     if (from) conds.push(gte(salesReturnsTable.returnDate, from));
     if (to)   conds.push(lte(salesReturnsTable.returnDate, to));
     const agg = await db
@@ -2043,6 +2055,104 @@ router.get("/profitability", async (req, res) => {
     res.json({ level, rows, totals });
   } catch (e: any) {
     req.log?.error?.({ err: e }, "profitability report failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Free-Returns Report — مرتجع الكميات المجانية بالصنف.
+ *
+ * Aggregates posted sales-return lines where free_qty > 0, grouped by item.
+ * For each item returns:
+ *   - itemCode / itemName / unit
+ *   - freeQty     → sum of free_qty across return lines
+ *   - returnCount → distinct return-document count
+ *   - costPrice   → from items.cost_price (current snapshot)
+ *   - sellPrice   → from items.sale_price excluding VAT
+ *   - vatRate     → from items.vat_rate (default 15)
+ *   - sellPriceIncVat → sellPrice × (1 + vatRate/100)
+ *   - costTotal   → freeQty × costPrice (cost-side impact)
+ *   - sellTotal   → freeQty × sellPrice (lost-revenue at sell price ex-VAT)
+ *   - sellTotalIncVat → freeQty × sellPriceIncVat
+ *
+ * Query: ?from=YYYY-MM-DD &to=YYYY-MM-DD &branchId=N &regionId=N
+ */
+router.get("/free-returns", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
+    const rid = getRid(req);
+    const { from, to } = req.query as Record<string, string>;
+
+    const conds = [
+      eq(salesReturnsTable.companyId, cid),
+      eq(salesReturnsTable.status, "posted"),
+      sql`${salesReturnLinesTable.freeQty} > 0`,
+    ];
+    pushBranchScope(req, conds, salesReturnsTable.branchId, bid);
+    await pushRegionScope(conds, salesReturnsTable.branchId, cid, rid);
+    if (from) conds.push(gte(salesReturnsTable.returnDate, from));
+    if (to)   conds.push(lte(salesReturnsTable.returnDate, to));
+
+    const agg = await db
+      .select({
+        itemId:      salesReturnLinesTable.itemId,
+        itemCode:    salesReturnLinesTable.itemCode,
+        itemName:    salesReturnLinesTable.itemName,
+        unit:        salesReturnLinesTable.unit,
+        freeQty:     sql<string>`coalesce(sum(${salesReturnLinesTable.freeQty}), 0)`,
+        returnCount: sql<number>`count(distinct ${salesReturnLinesTable.returnId})::int`,
+      })
+      .from(salesReturnLinesTable)
+      .innerJoin(salesReturnsTable, eq(salesReturnLinesTable.returnId, salesReturnsTable.id))
+      .where(and(...conds))
+      .groupBy(
+        salesReturnLinesTable.itemId,
+        salesReturnLinesTable.itemCode,
+        salesReturnLinesTable.itemName,
+        salesReturnLinesTable.unit,
+      );
+
+    // Look up cost / sale / vat from items for the affected itemIds.
+    const itemIds = Array.from(new Set(agg.map(r => r.itemId).filter((x): x is number => !!x)));
+    const items = itemIds.length
+      ? await db.select({
+          id: itemsTable.id,
+          costPrice: itemsTable.costPrice,
+          salePrice: itemsTable.salePrice,
+          vatRate:   itemsTable.vatRate,
+        }).from(itemsTable).where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, itemIds)))
+      : [];
+    const imap = new Map(items.map(i => [i.id, i]));
+
+    const rows = agg.map(r => {
+      const item    = r.itemId ? imap.get(r.itemId) : undefined;
+      const cost    = Number(item?.costPrice ?? 0);
+      const sell    = Number(item?.salePrice ?? 0);
+      const vatRate = Number(item?.vatRate   ?? 15);
+      const freeQty = Number(r.freeQty);
+      const sellInc = sell * (1 + vatRate / 100);
+      return {
+        itemId:           r.itemId,
+        itemCode:         r.itemCode,
+        itemName:         r.itemName,
+        unit:             r.unit,
+        freeQty,
+        returnCount:      r.returnCount,
+        costPrice:        cost,
+        sellPrice:        sell,
+        vatRate,
+        sellPriceIncVat:  sellInc,
+        costTotal:        freeQty * cost,
+        sellTotal:        freeQty * sell,
+        sellTotalIncVat:  freeQty * sellInc,
+      };
+    }).sort((a, b) => b.sellTotalIncVat - a.sellTotalIncVat);
+
+    res.json(rows);
+  } catch (e: any) {
+    req.log?.error({ err: e }, "free-returns failed");
     res.status(500).json({ error: e.message });
   }
 });

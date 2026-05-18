@@ -280,6 +280,7 @@ import PaymentMixReport     from "@/pages/sales/reports/PaymentMixReport";
 import DailyDetailedReport  from "@/pages/sales/reports/DailyDetailedReport";
 import TopCustomers         from "@/pages/sales/reports/TopCustomers";
 import SalesReturnsReport   from "@/pages/sales/reports/SalesReturnsReport";
+import FreeReturnsReport    from "@/pages/sales/reports/FreeReturnsReport";
 import PurchaseReportsHub      from "@/pages/purchasing/reports/PurchaseReportsHub";
 import SupplierStatement       from "@/pages/purchasing/reports/SupplierStatement";
 import SupplierStatementDetailed from "@/pages/purchasing/reports/SupplierStatementDetailed";
@@ -834,6 +835,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/sales/reports/daily-detailed"     module="sales_reports"  component={DailyDetailedReport} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/top-customers"      module="sales_reports"  component={TopCustomers} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/returns"            module="sales_reports"  component={SalesReturnsReport} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/free-returns"       module="sales_reports"  component={FreeReturnsReport} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/profitability"      module="sales_reports"  component={ProfitabilityReport} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports"                    module="sales_reports"  component={SalesReportsHub} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/supplier-statement"   module="suppliers"          component={SupplierStatement} />}

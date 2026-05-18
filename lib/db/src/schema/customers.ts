@@ -31,6 +31,14 @@ export const customersTable = pgTable("customers", {
    * customers list. Nullable → "no specific branch".
    */
   branchId: integer("branch_id"),
+  /**
+   * Optional geographic region. When set, the customer is included in
+   * region-scoped sales / AR reports (e.g. مرتجع الكميات المجانية،
+   * كشف حساب العملاء، أعمار الديون، ...). Independent of branchId — a
+   * customer may belong to a region without being assigned to a single
+   * branch. Region itself is defined in `regions` (per-company).
+   */
+  regionId: integer("region_id"),
   creditLimit: numeric("credit_limit", { precision: 15, scale: 2 }).default("0"),
   /**
    * When true → POST /api/invoices refuses to create a credit sales invoice
