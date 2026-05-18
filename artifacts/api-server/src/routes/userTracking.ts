@@ -8,8 +8,19 @@ import { requireModulePermission, moduleAudit } from "../middleware/permissions.
 
 const router = Router();
 router.use(extractAuth);
-router.use(requireModulePermission("user_tracking"));
-router.use(moduleAudit("user_tracking"));
+
+// ─── Permission policy ────────────────────────────────────────────────────
+// SELF endpoints (checkin, checkout-own, cancel-own, /active, /me-status,
+// /visits filtered to own rows, /config) are open to any authenticated
+// non-superadmin user. This is required so that a sales rep assigned to a
+// tracking zone can auto-checkin on login WITHOUT being granted the
+// admin-level `user_tracking` module permission (which would also grant
+// access to other employees' visit history).
+//
+// ADMIN endpoints (zones CRUD, zone-user assignment, /dashboard,
+// /company-users, /geocode admin tool) stay gated by the module
+// permission via the `adminGate` array below.
+const adminGate = [requireModulePermission("user_tracking"), moduleAudit("user_tracking")];
 
 function getCid(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
@@ -343,7 +354,7 @@ router.get("/visits", async (req: any, res) => {
 });
 
 // ───────────────── DASHBOARD STATS ──────────────────────────
-router.get("/dashboard", async (req: any, res) => {
+router.get("/dashboard", ...adminGate, async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;
   const from = req.query.from ? new Date(String(req.query.from)) : new Date(Date.now() - 30 * 86400000);
   const to   = req.query.to   ? new Date(String(req.query.to))   : new Date();
@@ -414,7 +425,7 @@ router.get("/dashboard", async (req: any, res) => {
 });
 
 // ───────────────── ZONES (admin) ────────────────────────────
-router.get("/zones", async (req: any, res) => {
+router.get("/zones", ...adminGate, async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;
   const rows = await db.select().from(trackingZonesTable)
     .where(eq(trackingZonesTable.companyId, cid))
@@ -432,7 +443,7 @@ const zoneSchema = z.object({
   notes: z.string().trim().max(500).optional().nullable(),
 });
 
-router.post("/zones", async (req: any, res) => {
+router.post("/zones", ...adminGate, async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;
   if (req.authUser?.role !== "admin" && req.authUser?.role !== "superadmin") {
     res.status(403).json({ error: "ممنوع" }); return;
@@ -452,7 +463,7 @@ router.post("/zones", async (req: any, res) => {
   res.status(201).json(row);
 });
 
-router.patch("/zones/:id", async (req: any, res) => {
+router.patch("/zones/:id", ...adminGate, async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;
   if (req.authUser?.role !== "admin" && req.authUser?.role !== "superadmin") {
     res.status(403).json({ error: "ممنوع" }); return;
@@ -471,7 +482,7 @@ router.patch("/zones/:id", async (req: any, res) => {
 });
 
 // List users assigned to a zone (empty array means "global — applies to everyone").
-router.get("/zones/:id/users", async (req: any, res) => {
+router.get("/zones/:id/users", ...adminGate, async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;
   const zoneId = Number(req.params.id);
   if (!Number.isFinite(zoneId)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
@@ -491,7 +502,7 @@ router.get("/zones/:id/users", async (req: any, res) => {
   res.json(rows);
 });
 
-router.post("/zones/:id/users", async (req: any, res) => {
+router.post("/zones/:id/users", ...adminGate, async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;
   if (req.authUser?.role !== "admin" && req.authUser?.role !== "superadmin") {
     res.status(403).json({ error: "ممنوع" }); return;
@@ -512,7 +523,7 @@ router.post("/zones/:id/users", async (req: any, res) => {
   res.status(201).json({ zoneId, userId: body.data.userId });
 });
 
-router.delete("/zones/:id/users/:userId", async (req: any, res) => {
+router.delete("/zones/:id/users/:userId", ...adminGate, async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;
   if (req.authUser?.role !== "admin" && req.authUser?.role !== "superadmin") {
     res.status(403).json({ error: "ممنوع" }); return;
@@ -534,7 +545,7 @@ router.delete("/zones/:id/users/:userId", async (req: any, res) => {
 // search API. Proxied through the server so we can set the User-Agent header
 // required by Nominatim's usage policy (browsers can't override User-Agent).
 // Returns up to 5 candidate places, biased to Saudi Arabia.
-router.get("/geocode", async (req: any, res) => {
+router.get("/geocode", ...adminGate, async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;
   const q = String(req.query.q ?? "").trim();
   if (q.length < 2) { res.json([]); return; }
@@ -563,7 +574,7 @@ router.get("/geocode", async (req: any, res) => {
 });
 
 // Simple users picker for the assignment UI (just id + display name).
-router.get("/company-users", async (req: any, res) => {
+router.get("/company-users", ...adminGate, async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;
   const rows = await db.select({
     id: usersTable.id,
@@ -575,7 +586,7 @@ router.get("/company-users", async (req: any, res) => {
   res.json(rows);
 });
 
-router.delete("/zones/:id", async (req: any, res) => {
+router.delete("/zones/:id", ...adminGate, async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;
   if (req.authUser?.role !== "admin" && req.authUser?.role !== "superadmin") {
     res.status(403).json({ error: "ممنوع" }); return;
