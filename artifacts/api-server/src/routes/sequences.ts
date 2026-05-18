@@ -47,10 +47,24 @@ function fmt(
   n: number,
   padLength: number | null | undefined,
   monthPattern?: string | null,
+  effectiveDate: Date = new Date(),
 ): string {
   const pad = padLength ?? 0;
   const padded = pad > 0 ? String(n).padStart(pad, "0") : String(n);
-  return `${prefix ?? ""}${renderMonthPattern(monthPattern)}${padded}`;
+  return `${prefix ?? ""}${renderMonthPattern(monthPattern, effectiveDate)}${padded}`;
+}
+
+// Mirror of `resolveEffectiveDate` in `lib/sequences.ts`. When the company
+// has opted into `sequence_date_source = "document"`, the `{MM}/{YY}/{YYYY}`
+// tokens in the preview must reflect the document's date (the `?date=` query)
+// — not today — so the badge the user sees on the form matches the number
+// the issuance helper will actually persist on submit.
+function resolveEffectiveDateForPreview(
+  source: string | null | undefined,
+  previewDate: Date,
+): Date {
+  if (source === "document") return previewDate;
+  return new Date();
 }
 
 // ─── Public (authenticated) peek endpoint ──────────────────────────────────
@@ -112,6 +126,17 @@ router.get("/peek/:txType", async (req: any, res) => {
     ? sql`OR fiscal_period_ids @> ${JSON.stringify([periodId])}::jsonb`
     : sql``;
 
+  // Read the company-wide date-source setting (same column the issuance
+  // helper consults). When the tenant has switched to "document", the
+  // `{MM}/{YY}/{YYYY}` tokens must render against the previewDate — so the
+  // badge the user sees on the form matches the number that will actually
+  // be persisted on submit. Default "system" preserves legacy behaviour.
+  const cfgRows = await db.execute<{ sequence_date_source: string | null }>(sql`
+    SELECT sequence_date_source FROM companies WHERE id = ${cid} LIMIT 1
+  `);
+  const dateSource = cfgRows.rows?.[0]?.sequence_date_source ?? "system";
+  const effectiveDate = resolveEffectiveDateForPreview(dateSource, previewDate);
+
   // ORDER BY puts scoped matches first so a "FY 2026 override" sequence
   // wins over a tenant's existing universal sequence for documents that
   // belong to 2026 — matching the resolution logic in nextSequenceNumber.
@@ -156,7 +181,7 @@ router.get("/peek/:txType", async (req: any, res) => {
 
   const exhausted = previewNumber > seq.end_number;
   res.json({
-    number: exhausted ? null : fmt(seq.prefix, previewNumber, seq.pad_length, seq.month_pattern),
+    number: exhausted ? null : fmt(seq.prefix, previewNumber, seq.pad_length, seq.month_pattern, effectiveDate),
     hasSequence: true,
     sequenceCode: seq.code,
     branchId: branchKey,
