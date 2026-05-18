@@ -349,25 +349,78 @@ router.get("/live", ...adminGate, async (req: any, res) => {
       eq(trackingZonesTable.isActive, true),
       inArray(trackingZoneUsersTable.userId, userIds),
     ));
-  const zonesByUser = new Map<number, Array<{ id: number; name: string; isAllowed: boolean }>>();
-  const zoneById = new Map<number, { id: number; name: string; isAllowed: boolean }>();
+  type ZoneLite = { id: number; name: string; isAllowed: boolean; centerLat: number; centerLng: number };
+  const zonesByUser = new Map<number, ZoneLite[]>();
+  const zoneById = new Map<number, ZoneLite>();
   for (const z of zoneRows) {
-    const lite = { id: z.id, name: z.name, isAllowed: z.isAllowed };
+    const lite: ZoneLite = {
+      id: z.id, name: z.name, isAllowed: z.isAllowed,
+      centerLat: Number(z.centerLat), centerLng: Number(z.centerLng),
+    };
     zoneById.set(z.id, lite);
     const arr = zonesByUser.get(z.userId) ?? [];
     if (!arr.find(x => x.id === z.id)) arr.push(lite);
     zonesByUser.set(z.userId, arr);
   }
 
+  // 4) Today's visits per user (for the movement trail). We collect checkin
+  //    and checkout points sorted chronologically so the UI can draw a
+  //    polyline showing where the user moved during the day.
+  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+  const todayVisits = await db.select({
+    userId: userVisitsTable.userId,
+    checkinAt: userVisitsTable.checkinAt,
+    checkinLat: userVisitsTable.checkinLat,
+    checkinLng: userVisitsTable.checkinLng,
+    checkinPlace: userVisitsTable.checkinPlace,
+    checkoutAt: userVisitsTable.checkoutAt,
+    checkoutLat: userVisitsTable.checkoutLat,
+    checkoutLng: userVisitsTable.checkoutLng,
+    checkoutPlace: userVisitsTable.checkoutPlace,
+  }).from(userVisitsTable).where(and(
+    eq(userVisitsTable.companyId, cid),
+    inArray(userVisitsTable.userId, userIds),
+    gte(userVisitsTable.checkinAt, startOfToday),
+  )).orderBy(userVisitsTable.checkinAt);
+
+  type TrailPt = { lat: number; lng: number; at: string; label: string; kind: "in" | "out" };
+  const trailByUser = new Map<number, TrailPt[]>();
+  for (const v of todayVisits) {
+    const arr = trailByUser.get(v.userId) ?? [];
+    if (v.checkinLat && v.checkinLng) {
+      arr.push({
+        lat: Number(v.checkinLat), lng: Number(v.checkinLng),
+        at: new Date(v.checkinAt).toISOString(),
+        label: v.checkinPlace ?? "دخول", kind: "in",
+      });
+    }
+    if (v.checkoutAt && v.checkoutLat && v.checkoutLng) {
+      arr.push({
+        lat: Number(v.checkoutLat), lng: Number(v.checkoutLng),
+        at: new Date(v.checkoutAt).toISOString(),
+        label: v.checkoutPlace ?? "خروج", kind: "out",
+      });
+    }
+    trailByUser.set(v.userId, arr);
+  }
+
   const now = Date.now();
   const rows = trackedUsers.map(u => {
     const v = visitByUser.get(u.id) ?? null;
     const elapsedMin = v ? Math.max(0, Math.round((now - new Date(v.checkinAt).getTime()) / 60000)) : null;
+    const assigned = zonesByUser.get(u.id) ?? [];
+    // Fallback position for offline users (so they still appear on the map at
+    // their primary zone's centre, in grey).
+    const fallbackZone = assigned[0] ?? null;
     return {
       userId: u.id,
       userName: u.nameAr || u.nameEn || u.username,
       isActive: !!v,
-      assignedZones: zonesByUser.get(u.id) ?? [],
+      assignedZones: assigned.map(z => ({ id: z.id, name: z.name, isAllowed: z.isAllowed })),
+      fallbackLat: fallbackZone ? fallbackZone.centerLat : null,
+      fallbackLng: fallbackZone ? fallbackZone.centerLng : null,
+      fallbackZoneName: fallbackZone?.name ?? null,
+      todayTrail: trailByUser.get(u.id) ?? [],
       visit: v ? {
         id: v.id,
         checkinAt: v.checkinAt,

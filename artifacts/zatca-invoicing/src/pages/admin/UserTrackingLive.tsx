@@ -117,7 +117,7 @@ export default function UserTrackingLive() {
           <Card className="lg:col-span-2">
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
-                <MapPin className="h-4 w-4" /> خريطة المواقع الحالية
+                <MapPin className="h-4 w-4" /> خريطة المواقع وتحركات اليوم
                 {liveQ.data?.serverTime && (
                   <span className="text-xs font-normal text-muted-foreground ms-auto">
                     آخر تحديث: {fmtTime(liveQ.data.serverTime)}
@@ -127,7 +127,7 @@ export default function UserTrackingLive() {
             </CardHeader>
             <CardContent className="p-0">
               <LiveMap
-                users={activeUsers}
+                users={users}
                 zones={zones}
                 selectedUserId={selectedUserId}
                 onSelectUser={setSelectedUserId}
@@ -302,10 +302,54 @@ function LiveMap({ users, zones, selectedUserId, onSelectUser }: {
     return () => { map.off("zoom", onZoom); };
   }, [zones]);
 
-  // Refresh user markers when the active user list changes.
+  // Refresh user markers + trails when the user list changes.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+
+    const applyTrails = () => {
+      const src = map.getSource("trails") as maplibregl.GeoJSONSource | undefined;
+      if (!src) return;
+      const features: any[] = [];
+      for (const u of users) {
+        const pts = u.todayTrail ?? [];
+        // Append the live position as the last point of the trail so it shows
+        // the user's most recent movement segment.
+        const coords: [number, number][] = pts.map(p => [p.lng, p.lat]);
+        const v = u.visit;
+        if (v?.lat && v?.lng) {
+          const lng = Number(v.lng), lat = Number(v.lat);
+          const last = coords[coords.length - 1];
+          if (!last || last[0] !== lng || last[1] !== lat) coords.push([lng, lat]);
+        }
+        if (coords.length < 2) continue;
+        features.push({
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: coords },
+          properties: { userId: u.userId, selected: u.userId === selectedUserId },
+        });
+      }
+      src.setData({ type: "FeatureCollection", features });
+    };
+    const ensureTrailLayer = () => {
+      if (!map.getSource("trails")) {
+        map.addSource("trails", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+        map.addLayer({
+          id: "trails-line", type: "line", source: "trails",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": ["case", ["get", "selected"], "#4f46e5", "#6366f1"],
+            "line-width": ["case", ["get", "selected"], 4, 2.5],
+            "line-opacity": ["case", ["get", "selected"], 0.95, 0.55],
+            "line-dasharray": [2, 1.5],
+          },
+        });
+      }
+      applyTrails();
+    };
+    if (map.isStyleLoaded()) ensureTrailLayer();
+    else map.once("load", ensureTrailLayer);
+
     // Clear old markers.
     markersRef.current.forEach(m => m.remove());
     markersRef.current = [];
@@ -313,36 +357,66 @@ function LiveMap({ users, zones, selectedUserId, onSelectUser }: {
     const pts: [number, number][] = [];
     for (const u of users) {
       const v = u.visit;
-      if (!v?.lat || !v?.lng) continue;
-      const lat = Number(v.lat), lng = Number(v.lng);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+      // Decide marker position: live visit point > fallback (assigned zone centre).
+      let lat: number | null = null, lng: number | null = null;
+      let mode: "live" | "offline" = "offline";
+      if (v?.lat && v?.lng) {
+        lat = Number(v.lat); lng = Number(v.lng); mode = "live";
+      } else if (u.fallbackLat !== null && u.fallbackLng !== null) {
+        lat = Number(u.fallbackLat); lng = Number(u.fallbackLng);
+      }
+      if (lat === null || lng === null || !Number.isFinite(lat) || !Number.isFinite(lng)) continue;
 
-      const isAlert = !!v.alertFlags;
+      const isAlert = !!v?.alertFlags;
       const isSelected = u.userId === selectedUserId;
+      const dotBg = mode === "offline" ? "#94a3b8" : (isAlert ? "#f43f5e" : "#10b981");
+      const ring = mode === "live" ? "animation:pulse 2s infinite;" : "";
+      // Composite element: dot + always-visible name chip beneath.
       const el = document.createElement("div");
-      const size = isSelected ? 22 : 16;
-      const bg = isAlert ? "#f43f5e" : "#10b981";
-      el.style.cssText = `
-        background:${bg};width:${size}px;height:${size}px;border-radius:50%;
-        border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,.35);
-        cursor:pointer;display:flex;align-items:center;justify-content:center;
-        color:white;font-size:10px;font-weight:bold;
+      el.style.cssText = `display:flex;flex-direction:column;align-items:center;cursor:pointer;`;
+      el.innerHTML = `
+        <div style="
+          background:${dotBg};width:${isSelected ? 22 : 16}px;height:${isSelected ? 22 : 16}px;
+          border-radius:50%;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,.35);
+          ${ring}
+        "></div>
+        <div style="
+          margin-top:3px;padding:2px 7px;border-radius:9999px;
+          background:white;border:1px solid ${isSelected ? "#4f46e5" : "#cbd5e1"};
+          box-shadow:0 1px 3px rgba(0,0,0,.15);
+          font-family:system-ui;font-size:11px;font-weight:600;color:#111827;
+          white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;
+          ${isSelected ? "background:#eef2ff;color:#3730a3" : ""}
+        ">${escapeHtml(u.userName)}${mode === "offline" ? ' <span style="color:#94a3b8;font-weight:400">(غير متصل)</span>' : ""}</div>
       `;
       el.title = u.userName;
       el.onclick = (e) => { e.stopPropagation(); onSelectUser(u.userId); };
 
-      const popup = new maplibregl.Popup({ offset: 14, closeButton: false }).setHTML(`
-        <div style="font-family:system-ui;font-size:12px;direction:rtl;min-width:160px">
+      const trailHtml = (u.todayTrail ?? []).length > 0
+        ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #eee;color:#444;font-size:11px">
+             <div style="font-weight:600;margin-bottom:2px">تحركات اليوم (${u.todayTrail.length})</div>
+             ${u.todayTrail.slice(-4).map(p => `
+               <div>${p.kind === "in" ? "↳" : "↰"} ${escapeHtml(p.label)}
+                 <span style="color:#999">— ${fmtTime(p.at)}</span></div>
+             `).join("")}
+           </div>`
+        : "";
+
+      const popup = new maplibregl.Popup({ offset: 28, closeButton: false }).setHTML(`
+        <div style="font-family:system-ui;font-size:12px;direction:rtl;min-width:200px">
           <div style="font-weight:bold;margin-bottom:4px">${escapeHtml(u.userName)}</div>
-          <div style="color:#555">${escapeHtml(v.place || v.address || "موقع غير محدد")}</div>
-          <div style="color:#888;margin-top:4px">
-            منذ ${fmtMin(v.elapsedMinutes)}${v.zoneName ? ` · ${escapeHtml(v.zoneName)}` : ""}
-          </div>
-          ${isAlert ? `<div style="color:#e11d48;margin-top:4px;font-weight:600">⚠ ${v.alertFlags === "out_of_allowed_zone" ? "خارج النطاق المسموح" : "تنبيه"}</div>` : ""}
+          ${v ? `
+            <div style="color:#555">${escapeHtml(v.place || v.address || "موقع غير محدد")}</div>
+            <div style="color:#888;margin-top:4px">منذ ${fmtMin(v.elapsedMinutes)}${v.zoneName ? ` · ${escapeHtml(v.zoneName)}` : ""}</div>
+            ${isAlert ? `<div style="color:#e11d48;margin-top:4px;font-weight:600">⚠ ${v.alertFlags === "out_of_allowed_zone" ? "خارج النطاق المسموح" : "تنبيه"}</div>` : ""}
+          ` : `
+            <div style="color:#94a3b8">غير متصل — يظهر عند مركز المنطقة المربوط بها${u.fallbackZoneName ? ` (${escapeHtml(u.fallbackZoneName)})` : ""}</div>
+          `}
+          ${trailHtml}
         </div>
       `);
 
-      const marker = new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).setPopup(popup).addTo(map);
+      const marker = new maplibregl.Marker({ element: el, anchor: "top" }).setLngLat([lng, lat]).setPopup(popup).addTo(map);
       if (isSelected) marker.togglePopup();
       markersRef.current.push(marker);
       pts.push([lng, lat]);
@@ -358,13 +432,17 @@ function LiveMap({ users, zones, selectedUserId, onSelectUser }: {
     }
   }, [users, selectedUserId, onSelectUser]);
 
-  // Pan to selected user.
+  // Pan to selected user (live position or fallback zone centre).
   useEffect(() => {
     const map = mapRef.current;
     if (!map || selectedUserId === null) return;
     const u = users.find(x => x.userId === selectedUserId);
-    if (!u?.visit?.lat || !u?.visit?.lng) return;
-    map.flyTo({ center: [Number(u.visit.lng), Number(u.visit.lat)], zoom: Math.max(map.getZoom(), 13), duration: 500 });
+    if (!u) return;
+    let lat: number | null = null, lng: number | null = null;
+    if (u.visit?.lat && u.visit?.lng) { lat = Number(u.visit.lat); lng = Number(u.visit.lng); }
+    else if (u.fallbackLat !== null && u.fallbackLng !== null) { lat = Number(u.fallbackLat); lng = Number(u.fallbackLng); }
+    if (lat === null || lng === null) return;
+    map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 13), duration: 500 });
   }, [selectedUserId, users]);
 
   const fittedRef = useRef(false);
