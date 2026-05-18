@@ -190,6 +190,13 @@ export const FIELD_CATALOGUE: Record<PolicyScope, FieldDef[]> = {
     { key: "status_filter",     labelAr: "فلتر الحالة",             labelEn: "Status filter pills" },
     { key: "date_range",        labelAr: "فلتر التاريخ (من/إلى)",   labelEn: "Date range filter" },
     { key: "clear_col_filters", labelAr: "مسح فلاتر الأعمدة",       labelEn: "Clear column filters" },
+    { key: "bulk_post",         labelAr: "ترحيل (جماعي)",            labelEn: "Bulk post" },
+    { key: "bulk_edit",         labelAr: "تعديل (من شريط التحديد)",  labelEn: "Edit (bulk bar)" },
+    { key: "bulk_duplicate",    labelAr: "نسخة مماثلة",              labelEn: "Duplicate" },
+    { key: "bulk_unpost",       labelAr: "فك الترحيل (جماعي)",       labelEn: "Bulk unpost" },
+    { key: "bulk_return",       labelAr: "ارتجاع",                   labelEn: "Return invoice" },
+    { key: "bulk_delete",       labelAr: "حذف (جماعي)",              labelEn: "Bulk delete" },
+    { key: "clear_selection",   labelAr: "إلغاء التحديد",            labelEn: "Clear selection" },
   ],
 };
 

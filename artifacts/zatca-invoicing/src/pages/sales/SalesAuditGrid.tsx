@@ -1859,6 +1859,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               {selected.size} محدَّد
             </span>
             <div className="h-5 w-px bg-emerald-300 mx-1" />
+            {fp.isVisible("bulk_post") && (
             <Button
               type="button"
               size="sm"
@@ -1870,6 +1871,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
               ترحيل ({selectedDrafts.length})
             </Button>
+            )}
+            {fp.isVisible("bulk_edit") && (
             <Button
               type="button"
               size="sm"
@@ -1888,6 +1891,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               <Pencil className="h-3.5 w-3.5" />
               تعديل
             </Button>
+            )}
+            {fp.isVisible("bulk_duplicate") && (
             <Button
               type="button"
               size="sm"
@@ -1906,6 +1911,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               <Copy className="h-3.5 w-3.5" />
               نسخة مماثلة
             </Button>
+            )}
+            {fp.isVisible("bulk_unpost") && (
             <Button
               type="button"
               size="sm"
@@ -1924,6 +1931,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               <Undo2 className="h-3.5 w-3.5" />
               فك الترحيل ({selectedPosted.length})
             </Button>
+            )}
+            {fp.isVisible("bulk_return") && (
             <Button
               type="button"
               size="sm"
@@ -1936,6 +1945,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               <RotateCcw className="h-3.5 w-3.5" />
               ارتجاع
             </Button>
+            )}
+            {fp.isVisible("bulk_delete") && (
             <Button
               type="button"
               size="sm"
@@ -1949,7 +1960,9 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               <Trash2 className="h-3.5 w-3.5" />
               حذف ({selectedDeletable.length})
             </Button>
+            )}
             <div className="flex-1" />
+            {fp.isVisible("clear_selection") && (
             <Button
               type="button"
               size="sm"
@@ -1961,6 +1974,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               <X className="h-3.5 w-3.5 me-1" />
               إلغاء التحديد
             </Button>
+            )}
           </div>
         )}
       </div>
