@@ -184,7 +184,46 @@ export type CustomerStatementDetailedRow = {
 };
 export type CustomerStatementDetailed = { opening: number; lines: CustomerStatementDetailedRow[] };
 
+export type ProfitabilityLevel = "invoice" | "customer" | "branch";
+
+export type ProfitabilityRow = {
+  key: string;
+  label: string;
+  sublabel?: string | null;
+  invoiceId?: number;
+  invoiceNo?: string | null;
+  invoiceDate?: string | null;
+  customerId?: number | null;
+  branchId?: number | null;
+  docCount: number;
+  revenue: number;
+  cogs: number;
+  profit: number;
+  margin: number;
+};
+
+export type ProfitabilityReport = {
+  level: ProfitabilityLevel;
+  rows: ProfitabilityRow[];
+  totals: { revenue: number; cogs: number; profit: number; margin: number };
+};
+
 export const salesAnalyticsApi = {
+  profitability: (cid: number | undefined, params: {
+    level: ProfitabilityLevel;
+    from?: string; to?: string;
+    branchId?: number | string;
+    customerId?: number | string;
+    itemId?: number | string;
+  }) => get<ProfitabilityReport>(`/profitability${qs({
+    companyId: cid,
+    level: params.level,
+    from: params.from,
+    to: params.to,
+    branchId: params.branchId,
+    customerId: params.customerId,
+    itemId: params.itemId,
+  })}`),
   byCustomer:        (cid?: number, from?: string, to?: string, branchId?: number) =>
     get<SalesByCustomerRow[]>(`/by-customer${qs({ companyId: cid, from, to, branchId })}`),
   byItem:            (cid?: number, from?: string, to?: string, branchId?: number) =>

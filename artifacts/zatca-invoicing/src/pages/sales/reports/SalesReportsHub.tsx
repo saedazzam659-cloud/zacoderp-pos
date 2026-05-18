@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   ChevronLeft, ChevronRight, FileText, Wallet, AlertTriangle, Users, Package,
   CalendarRange, TrendingUp, RotateCcw, Receipt, Sun, CreditCard, ListChecks,
+  LineChart,
 } from "lucide-react";
 
 export default function SalesReportsHub() {
@@ -88,6 +89,13 @@ export default function SalesReportsHub() {
       desc: tr("returnsDesc"),
       icon: RotateCcw,
       color: "from-orange-50 to-orange-100/40 text-orange-700 border-orange-200",
+    },
+    {
+      href: "/sales/reports/profitability",
+      title: tr("profitabilityTitle"),
+      desc: tr("profitabilityDesc"),
+      icon: LineChart,
+      color: "from-emerald-50 to-emerald-100/40 text-emerald-700 border-emerald-200",
     },
   ];
 

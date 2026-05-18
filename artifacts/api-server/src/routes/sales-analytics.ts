@@ -1774,4 +1774,277 @@ router.get("/daily-detailed-report", async (req: any, res) => {
   }
 });
 
+/**
+ * Profitability report — 3 levels (invoice | customer | branch).
+ *
+ * Profit definition (gross margin):
+ *   revenue_excl_vat = Σ line_total adjusted for header `priceIncludesVat`
+ *                      ( = line_total / (1 + vat_rate/100) when inclusive )
+ *   cogs             = Σ ABS(stock_ledger.total_cost) where ref_type
+ *                      ∈ ('sales_invoice','sales_return')
+ *   profit           = (revenue_invoices − revenue_returns) − (cogs_invoices − cogs_returns)
+ *   margin %         = profit / netRevenue × 100   (0 when netRevenue = 0)
+ *
+ * Cost is taken from `stock_ledger.total_cost` (FIFO / weighted-avg historical
+ * COGS that was actually posted to inventory) — NEVER from `items.cost_price`
+ * or supplier purchase price, as those don't reflect what was sold.
+ *
+ * Query params:
+ *   level=invoice|customer|branch (default "invoice")
+ *   from, to (YYYY-MM-DD, required-ish — defaults open if omitted)
+ *   branchId, customerId, itemId — optional filters
+ */
+router.get("/profitability", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json({ rows: [], totals: { revenue: 0, cogs: 0, profit: 0, margin: 0 } }); return; }
+    const bid = getBid(req);
+    const { from, to, customerId, itemId } = req.query as Record<string, string>;
+    const level = (req.query.level as string) || "invoice";
+    if (!["invoice", "customer", "branch"].includes(level)) {
+      res.status(400).json({ error: "level must be invoice|customer|branch" }); return;
+    }
+    const custId = customerId ? Number(customerId) : undefined;
+    const itmId  = itemId     ? Number(itemId)     : undefined;
+
+    // ─── 1) Invoice-line revenue (excl VAT) ──────────────────────────────────
+    const invConds = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted")];
+    pushBranchScope(req, invConds, salesInvoicesTable.branchId, bid);
+    if (from)   invConds.push(gte(salesInvoicesTable.invoiceDate, from));
+    if (to)     invConds.push(lte(salesInvoicesTable.invoiceDate, to));
+    if (custId) invConds.push(eq(salesInvoicesTable.customerId, custId));
+
+    const invLineConds = [...invConds];
+    if (itmId) invLineConds.push(eq(salesInvoiceLinesTable.itemId, itmId));
+
+    const invLineAgg = await db
+      .select({
+        invoiceId:  salesInvoicesTable.id,
+        invoiceNo:  salesInvoicesTable.docNumber,
+        invoiceDate: salesInvoicesTable.invoiceDate,
+        customerId: salesInvoicesTable.customerId,
+        branchId:   salesInvoicesTable.branchId,
+        // `lineTotal` is always VAT-inclusive (see SalesDocumentForm.calcLine):
+        //   priceIncludesVat=true  → lineTotal = gross (already includes VAT)
+        //   priceIncludesVat=false → lineTotal = gross + vat = gross*(1+rate)
+        // In both cases, net revenue (excl VAT) = lineTotal / (1 + vatRate/100).
+        revenue: sql<string>`coalesce(sum(
+          ${salesInvoiceLinesTable.lineTotal} / (1 + coalesce(${salesInvoiceLinesTable.vatRate}, 0) / 100.0)
+        ), 0)`,
+      })
+      .from(salesInvoiceLinesTable)
+      .innerJoin(salesInvoicesTable, eq(salesInvoiceLinesTable.invoiceId, salesInvoicesTable.id))
+      .where(and(...invLineConds))
+      .groupBy(
+        salesInvoicesTable.id, salesInvoicesTable.docNumber, salesInvoicesTable.invoiceDate,
+        salesInvoicesTable.customerId, salesInvoicesTable.branchId,
+      );
+
+    // ─── 2) Invoice COGS from stock_ledger (ref_type='sales_invoice') ────────
+    const invCogsConds = [
+      eq(stockLedgerTable.companyId, cid),
+      eq(stockLedgerTable.refType, "sales_invoice"),
+      eq(salesInvoicesTable.status, "posted"),
+    ];
+    pushBranchScope(req, invCogsConds, salesInvoicesTable.branchId, bid);
+    if (from)   invCogsConds.push(gte(salesInvoicesTable.invoiceDate, from));
+    if (to)     invCogsConds.push(lte(salesInvoicesTable.invoiceDate, to));
+    if (custId) invCogsConds.push(eq(salesInvoicesTable.customerId, custId));
+    if (itmId)  invCogsConds.push(eq(stockLedgerTable.itemId, itmId));
+
+    const invCogsAgg = await db
+      .select({
+        invoiceId:  salesInvoicesTable.id,
+        cogs: sql<string>`coalesce(sum(abs(${stockLedgerTable.totalCost})), 0)`,
+      })
+      .from(stockLedgerTable)
+      .innerJoin(salesInvoicesTable, and(
+        eq(stockLedgerTable.refId, salesInvoicesTable.id),
+        eq(salesInvoicesTable.companyId, cid),
+      ))
+      .where(and(...invCogsConds))
+      .groupBy(salesInvoicesTable.id);
+
+    const cogsByInv = new Map<number, number>();
+    for (const r of invCogsAgg) cogsByInv.set(r.invoiceId, Number(r.cogs));
+
+    // ─── 3) Sales-return revenue (credit, excl VAT) — netted in cust/branch only ─
+    const retConds = [eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted")];
+    pushBranchScope(req, retConds, salesReturnsTable.branchId, bid);
+    if (from)   retConds.push(gte(salesReturnsTable.returnDate, from));
+    if (to)     retConds.push(lte(salesReturnsTable.returnDate, to));
+    if (custId) retConds.push(eq(salesReturnsTable.customerId, custId));
+
+    const retLineConds = [...retConds];
+    if (itmId) retLineConds.push(eq(salesReturnLinesTable.itemId, itmId));
+
+    const retLineAgg = level === "invoice" ? [] : await db
+      .select({
+        returnId:   salesReturnsTable.id,
+        customerId: salesReturnsTable.customerId,
+        branchId:   salesReturnsTable.branchId,
+        // Same VAT-inclusive lineTotal convention as sales invoices.
+        revenue: sql<string>`coalesce(sum(
+          ${salesReturnLinesTable.lineTotal} / (1 + coalesce(${salesReturnLinesTable.vatRate}, 0) / 100.0)
+        ), 0)`,
+      })
+      .from(salesReturnLinesTable)
+      .innerJoin(salesReturnsTable, eq(salesReturnLinesTable.returnId, salesReturnsTable.id))
+      .where(and(...retLineConds))
+      .groupBy(salesReturnsTable.id, salesReturnsTable.customerId, salesReturnsTable.branchId);
+
+    // ─── 4) Return COGS from stock_ledger (ref_type='sales_return') ─────────
+    const retCogsConds = [
+      eq(stockLedgerTable.companyId, cid),
+      eq(stockLedgerTable.refType, "sales_return"),
+      eq(salesReturnsTable.status, "posted"),
+    ];
+    pushBranchScope(req, retCogsConds, salesReturnsTable.branchId, bid);
+    if (from)   retCogsConds.push(gte(salesReturnsTable.returnDate, from));
+    if (to)     retCogsConds.push(lte(salesReturnsTable.returnDate, to));
+    if (custId) retCogsConds.push(eq(salesReturnsTable.customerId, custId));
+    if (itmId)  retCogsConds.push(eq(stockLedgerTable.itemId, itmId));
+
+    const retCogsAgg = level === "invoice" ? [] : await db
+      .select({
+        returnId:   salesReturnsTable.id,
+        customerId: salesReturnsTable.customerId,
+        branchId:   salesReturnsTable.branchId,
+        cogs: sql<string>`coalesce(sum(abs(${stockLedgerTable.totalCost})), 0)`,
+      })
+      .from(stockLedgerTable)
+      .innerJoin(salesReturnsTable, and(
+        eq(stockLedgerTable.refId, salesReturnsTable.id),
+        eq(salesReturnsTable.companyId, cid),
+      ))
+      .where(and(...retCogsConds))
+      .groupBy(salesReturnsTable.id, salesReturnsTable.customerId, salesReturnsTable.branchId);
+
+    const retCogsByRet = new Map<number, number>();
+    for (const r of retCogsAgg) retCogsByRet.set(r.returnId, Number(r.cogs));
+
+    // ─── 5) Lookups ──────────────────────────────────────────────────────────
+    const [customers, branches] = await Promise.all([
+      db.select({ id: customersTable.id, nameAr: customersTable.nameAr, nameEn: customersTable.nameEn })
+        .from(customersTable).where(eq(customersTable.companyId, cid)),
+      db.select({ id: branchesTable.id, nameAr: branchesTable.nameAr, nameEn: branchesTable.nameEn })
+        .from(branchesTable).where(eq(branchesTable.companyId, cid)),
+    ]);
+    const cmap = new Map(customers.map(c => [c.id, c]));
+    const bmap = new Map(branches.map(b => [b.id, b]));
+
+    // ─── 6) Shape output by level ────────────────────────────────────────────
+    type Row = {
+      key: string;
+      label: string;
+      sublabel?: string | null;
+      invoiceId?: number;
+      invoiceNo?: string | null;
+      invoiceDate?: string | null;
+      customerId?: number | null;
+      branchId?: number | null;
+      docCount: number;
+      revenue: number;
+      cogs: number;
+      profit: number;
+      margin: number;
+    };
+    const out = new Map<string, Row>();
+
+    if (level === "invoice") {
+      for (const r of invLineAgg) {
+        const cust = r.customerId ? cmap.get(r.customerId) : null;
+        const br   = r.branchId   ? bmap.get(r.branchId)   : null;
+        const revenue = Number(r.revenue);
+        const cogs    = cogsByInv.get(r.invoiceId) ?? 0;
+        out.set(String(r.invoiceId), {
+          key: String(r.invoiceId),
+          label: r.invoiceNo ?? `#${r.invoiceId}`,
+          sublabel: cust?.nameAr ?? "بدون عميل",
+          invoiceId:   r.invoiceId,
+          invoiceNo:   r.invoiceNo,
+          invoiceDate: r.invoiceDate,
+          customerId:  r.customerId,
+          branchId:    r.branchId,
+          docCount: 1,
+          revenue, cogs,
+          profit: revenue - cogs,
+          margin: revenue > 0 ? ((revenue - cogs) / revenue) * 100 : 0,
+        });
+      }
+    } else {
+      // customer or branch — net sales against returns
+      const ensure = (id: number | null, label: string, sublabel?: string | null): Row => {
+        const k = id == null ? "__none__" : String(id);
+        let r = out.get(k);
+        if (!r) {
+          r = {
+            key: k, label, sublabel,
+            customerId: level === "customer" ? id : null,
+            branchId:   level === "branch"   ? id : null,
+            docCount: 0, revenue: 0, cogs: 0, profit: 0, margin: 0,
+          };
+          out.set(k, r);
+        }
+        return r;
+      };
+
+      const groupOf = (cId: number | null, bId: number | null) =>
+        level === "customer" ? cId : bId;
+      const labelOf = (cId: number | null, bId: number | null) => {
+        if (level === "customer") {
+          const c = cId ? cmap.get(cId) : null;
+          return c?.nameAr ?? "بدون عميل";
+        }
+        const b = bId ? bmap.get(bId) : null;
+        return b?.nameAr ?? "بدون فرع";
+      };
+
+      for (const r of invLineAgg) {
+        const gid = groupOf(r.customerId ?? null, r.branchId ?? null);
+        const row = ensure(gid ?? null, labelOf(r.customerId ?? null, r.branchId ?? null));
+        row.docCount += 1;
+        row.revenue  += Number(r.revenue);
+        row.cogs     += cogsByInv.get(r.invoiceId) ?? 0;
+      }
+      for (const r of retLineAgg) {
+        const gid = groupOf(r.customerId ?? null, r.branchId ?? null);
+        const row = ensure(gid ?? null, labelOf(r.customerId ?? null, r.branchId ?? null));
+        row.revenue -= Number(r.revenue);
+        row.cogs    -= retCogsByRet.get(r.returnId) ?? 0;
+      }
+      out.forEach(r => {
+        r.profit = r.revenue - r.cogs;
+        r.margin = r.revenue > 0 ? (r.profit / r.revenue) * 100 : 0;
+      });
+    }
+
+    const rows = Array.from(out.values()).sort((a, b) => {
+      if (level === "invoice") {
+        // newest first by date then id
+        const da = a.invoiceDate ?? "", db_ = b.invoiceDate ?? "";
+        if (da !== db_) return db_.localeCompare(da);
+        return (b.invoiceId ?? 0) - (a.invoiceId ?? 0);
+      }
+      return b.profit - a.profit;
+    });
+
+    const totals = rows.reduce(
+      (acc, r) => {
+        acc.revenue += r.revenue;
+        acc.cogs    += r.cogs;
+        acc.profit  += r.profit;
+        return acc;
+      },
+      { revenue: 0, cogs: 0, profit: 0, margin: 0 },
+    );
+    totals.margin = totals.revenue > 0 ? (totals.profit / totals.revenue) * 100 : 0;
+
+    res.json({ level, rows, totals });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "profitability report failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

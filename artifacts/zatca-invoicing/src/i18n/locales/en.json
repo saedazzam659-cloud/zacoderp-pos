@@ -1008,6 +1008,7 @@
     "topSuppliers": "Top Suppliers",
     "purchaseReturnsReport": "Purchase Returns",
     "lcStatement": "Letters of Credit Statement",
+    "profitabilityReport": "Profitability Report",
     "dailyDetailedReport": "Detailed Daily Sales Report"
   },
   "topbar": {
@@ -5337,7 +5338,9 @@
       "paymentMixTitle": "Sales by Payment Method (AI)",
       "paymentMixDesc": "AI-powered breakdown of sales and collections across all payment methods (cash, card, credit, transfer, cheque, other) with smart insights",
       "dailyDetailedTitle": "Detailed Daily Sales Report",
-      "dailyDetailedDesc": "Everything in the payment-mix report + a full list of the day's invoices, line-item drilldown per invoice, and aggregated item totals"
+      "dailyDetailedDesc": "Everything in the payment-mix report + a full list of the day's invoices, line-item drilldown per invoice, and aggregated item totals",
+      "profitabilityTitle": "Profitability Report",
+      "profitabilityDesc": "Gross margin by invoice, customer, or branch — cost taken from the stock ledger (FIFO / weighted-avg)"
     },
     "customerStatementDetailed": {
       "title": "Customer Statement (Detailed)",

@@ -267,6 +267,7 @@ import GoodsDeliveries      from "@/pages/inventory/GoodsDeliveries";
 import SupplierSettlement   from "@/pages/purchasing/SupplierSettlement";
 // Sales Reports
 import SalesReportsHub      from "@/pages/sales/reports/SalesReportsHub";
+import ProfitabilityReport  from "@/pages/sales/reports/ProfitabilityReport";
 import CustomerStatement    from "@/pages/sales/reports/CustomerStatement";
 import CustomerStatementDetailed from "@/pages/sales/reports/CustomerStatementDetailed";
 import CustomerBalances     from "@/pages/sales/reports/CustomerBalances";
@@ -833,6 +834,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/sales/reports/daily-detailed"     module="sales_reports"  component={DailyDetailedReport} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/top-customers"      module="sales_reports"  component={TopCustomers} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/returns"            module="sales_reports"  component={SalesReturnsReport} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/profitability"      module="sales_reports"  component={ProfitabilityReport} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports"                    module="sales_reports"  component={SalesReportsHub} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/supplier-statement"   module="suppliers"          component={SupplierStatement} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/supplier-statement-detailed"   module="suppliers"          component={SupplierStatementDetailed} />}
