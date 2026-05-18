@@ -9,6 +9,7 @@ import {
   branchesTable,
   cashBoxesTable,
   bankAccountsTable,
+  stockLedgerTable,
 } from "@workspace/db";
 import { and, eq, sql, gte, lte, asc, desc, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
