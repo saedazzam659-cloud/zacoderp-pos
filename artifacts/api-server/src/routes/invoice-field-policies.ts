@@ -90,6 +90,7 @@ function sanitizeBundle(raw: any): PolicyBundle {
     pos:           sanitizePolicy("pos",           raw?.pos),
     customers:     sanitizePolicy("customers",     raw?.customers),
     journal_entry: sanitizePolicy("journal_entry", raw?.journal_entry),
+    sales_audit:   sanitizePolicy("sales_audit",   raw?.sales_audit),
   };
 }
 

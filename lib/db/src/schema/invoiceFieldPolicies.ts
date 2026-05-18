@@ -65,7 +65,7 @@ export interface FieldRule {
 /** A complete policy for one scope: { fieldName: rule } */
 export type PolicyMap = Record<string, FieldRule>;
 
-export type PolicyScope = "sales" | "purchase" | "pos" | "customers" | "journal_entry";
+export type PolicyScope = "sales" | "purchase" | "pos" | "customers" | "journal_entry" | "sales_audit";
 
 /** A complete bundle covering all scopes — the shape stored in `bundle`. */
 export type PolicyBundle = Record<PolicyScope, PolicyMap>;
@@ -166,9 +166,34 @@ export const FIELD_CATALOGUE: Record<PolicyScope, FieldDef[]> = {
     { key: "partyPicker",   labelAr: "عميل / مورد",       labelEn: "Customer / Supplier picker" },
     { key: "attachments",   labelAr: "أرشفة مستند",       labelEn: "Document archive" },
   ],
+  // ── شاشة الجرد الخارجي للمبيعات (/sales/invoices → SalesAuditGrid) ──
+  // Governs visibility of every toolbar button + filter on the Sales Audit
+  // Grid. These are UI controls (not data fields), so only the `hidden` mode
+  // is operationally meaningful — `readonly`/`required` are accepted by the
+  // schema for uniformity but produce no effect on a button. SuperAdmin uses
+  // this scope to hand junior auditors a stripped-down screen (e.g. hide
+  // export buttons, AI audit, color pickers).
+  sales_audit: [
+    { key: "back_link",         labelAr: "زر رجوع",                 labelEn: "Back button" },
+    { key: "new_invoice",       labelAr: "زر فاتورة جديدة",         labelEn: "New invoice button" },
+    { key: "header_color",      labelAr: "لون الرأس",               labelEn: "Header color picker" },
+    { key: "footer_color",      labelAr: "لون القدم",               labelEn: "Footer color picker" },
+    { key: "column_sort",       labelAr: "ترتيب الأعمدة",           labelEn: "Column sort" },
+    { key: "refresh",           labelAr: "زر تحديث",                labelEn: "Refresh button" },
+    { key: "export_csv",        labelAr: "تصدير CSV",               labelEn: "Export CSV" },
+    { key: "export_excel",      labelAr: "تصدير Excel",             labelEn: "Export Excel" },
+    { key: "export_pdf",        labelAr: "تصدير PDF",               labelEn: "Export PDF" },
+    { key: "print",             labelAr: "زر الطباعة",              labelEn: "Print button" },
+    { key: "ai_audit",          labelAr: "تدقيق بالذكاء الاصطناعي", labelEn: "AI audit" },
+    { key: "search",            labelAr: "حقل البحث",               labelEn: "Search input" },
+    { key: "branch_filter",     labelAr: "فلتر الفرع",              labelEn: "Branch filter" },
+    { key: "status_filter",     labelAr: "فلتر الحالة",             labelEn: "Status filter pills" },
+    { key: "date_range",        labelAr: "فلتر التاريخ (من/إلى)",   labelEn: "Date range filter" },
+    { key: "clear_col_filters", labelAr: "مسح فلاتر الأعمدة",       labelEn: "Clear column filters" },
+  ],
 };
 
-export const POLICY_SCOPES: PolicyScope[] = ["sales", "purchase", "pos", "customers", "journal_entry"];
+export const POLICY_SCOPES: PolicyScope[] = ["sales", "purchase", "pos", "customers", "journal_entry", "sales_audit"];
 
 export function defaultPolicy(scope: PolicyScope): PolicyMap {
   const out: PolicyMap = {};
@@ -185,5 +210,6 @@ export function defaultBundle(): PolicyBundle {
     pos:           defaultPolicy("pos"),
     customers:     defaultPolicy("customers"),
     journal_entry: defaultPolicy("journal_entry"),
+    sales_audit:   defaultPolicy("sales_audit"),
   };
 }

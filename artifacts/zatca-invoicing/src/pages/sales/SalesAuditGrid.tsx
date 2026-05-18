@@ -31,6 +31,7 @@ import {
 import SalesPrintModal, { type PrintData } from "./SalesPrintModal";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import MultiBranchFilter from "@/components/MultiBranchFilter";
+import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 
 // ── Header color theme palette ────────────────────────────────────────────
 // Default is "white" (light header with dark text). Selecting any other color
@@ -349,6 +350,11 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   const isAdmin = user?.role === "admin" || user?.role === "superadmin";
   const authH = { Authorization: `Bearer ${token}` };
   const headers = { ...authH, "Content-Type": "application/json" };
+
+  // ── Field-policy governance (الجرد الخارجي scope) ──────────────────────
+  // SuperAdmin can hide individual toolbar buttons + filters per user-profile
+  // via /admin/invoice-field-policies. Admins/superadmins bypass automatically.
+  const fp = useFieldPolicy("sales_audit");
 
   // ── Filters ────────────────────────────────────────────────────────────
   const [search, setSearch] = useState("");
@@ -1394,6 +1400,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           theme.bar,
           theme.text,
         )}>
+          {fp.isVisible("back_link") && (
           <Button
             type="button"
             size="sm"
@@ -1404,6 +1411,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
             <ArrowRight className="h-3.5 w-3.5" />
             رجوع
           </Button>
+          )}
+          {fp.isVisible("new_invoice") && (
           <Button
             type="button"
             size="sm"
@@ -1414,12 +1423,14 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
             <Plus className="h-3.5 w-3.5" />
             فاتورة جديدة
           </Button>
+          )}
           <div className={cn("flex-1 text-center text-sm font-bold tracking-wide flex items-center justify-center gap-2", theme.text)}>
             <FileSpreadsheet className="h-4 w-4 opacity-90" />
             الجرد الخارجي لفواتير المبيعات — مراجعة وتدقيق شامل
           </div>
           <div className="flex items-center gap-1.5">
             {/* ─── Color palette picker ─────────────────────────────── */}
+            {fp.isVisible("header_color") && (
             <Popover>
               <PopoverTrigger asChild>
                 <Button
@@ -1499,10 +1510,12 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                 </div>
               </PopoverContent>
             </Popover>
+            )}
             {/* ─── Footer (totals row) color picker ───────────────────── */}
             {/* Sits next to "لون الرأس" so the user can independently style
                 the bottom totals strip ("الإجمالي"). Same Popover/swatch
                 pattern as the header picker for consistency. */}
+            {fp.isVisible("footer_color") && (
             <Popover>
               <PopoverTrigger asChild>
                 <Button
@@ -1583,7 +1596,9 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                 </div>
               </PopoverContent>
             </Popover>
+            )}
             {/* ─── Column reorder ─────────────────────────────────────── */}
+            {fp.isVisible("column_sort") && (
             <Popover>
               <PopoverTrigger asChild>
                 <Button
@@ -1677,6 +1692,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                 )}
               </PopoverContent>
             </Popover>
+            )}
+            {fp.isVisible("refresh") && (
             <Button
               type="button"
               size="sm"
@@ -1688,6 +1705,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               {isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
               تحديث
             </Button>
+            )}
+            {fp.isVisible("export_csv") && (
             <Button
               type="button"
               size="sm"
@@ -1698,6 +1717,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               <FileSpreadsheet className="h-3.5 w-3.5" />
               تصدير CSV
             </Button>
+            )}
+            {fp.isVisible("export_excel") && (
             <Button
               type="button"
               size="sm"
@@ -1711,6 +1732,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               <FileSpreadsheet className="h-3.5 w-3.5" />
               تصدير Excel
             </Button>
+            )}
+            {fp.isVisible("export_pdf") && (
             <Button
               type="button"
               size="sm"
@@ -1724,6 +1747,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               <FileDown className="h-3.5 w-3.5" />
               تصدير PDF
             </Button>
+            )}
+            {fp.isVisible("print") && (
             <Button
               type="button"
               size="sm"
@@ -1738,6 +1763,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               {printing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
               طباعة{selected.size > 0 ? ` (${selected.size})` : ""}
             </Button>
+            )}
+            {fp.isVisible("ai_audit") && (
             <Button
               type="button"
               size="sm"
@@ -1748,20 +1775,26 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               {auditing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
               تدقيق بالذكاء الاصطناعي
             </Button>
+            )}
           </div>
         </div>
 
         {/* ─── Filter strip ────────────────────────────────────────────── */}
         <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs">
+          {fp.isVisible("search") && (
           <Input
             placeholder="بحث (رقم فاتورة، عميل، هاتف، ملاحظات)…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="h-7 text-xs w-56"
           />
+          )}
           {/* Multi-branch filter — auto-hides when the user has access to a
               single branch only (legacy single-branch UX is preserved). */}
-          <MultiBranchFilter value={branchIds} onChange={setBranchIds} size="sm" />
+          {fp.isVisible("branch_filter") && (
+            <MultiBranchFilter value={branchIds} onChange={setBranchIds} size="sm" />
+          )}
+          {fp.isVisible("status_filter") && (
           <div className="flex gap-1">
             {(["all","draft","posted","cancelled"] as const).map(s => (
               <button
@@ -1778,6 +1811,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               </button>
             ))}
           </div>
+          )}
+          {fp.isVisible("date_range") && (
           <div className="flex items-center gap-1">
             <span className="text-slate-600">من:</span>
             <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-7 text-xs w-32" />
@@ -1795,7 +1830,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               </Button>
             )}
           </div>
-          {Object.values(colFilters).some(v => v) && (
+          )}
+          {fp.isVisible("clear_col_filters") && Object.values(colFilters).some(v => v) && (
             <Button
               type="button"
               size="sm"
