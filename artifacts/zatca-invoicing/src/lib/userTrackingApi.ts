@@ -73,6 +73,10 @@ export const userTrackingApi = {
     req<void>(`/zones/${zoneId}/users/${userId}${qs({ companyId })}`, { method: "DELETE" }),
   companyUsers: (companyId?: number) =>
     req<Array<{ id: number; username: string; name: string }>>(`/company-users${qs({ companyId })}`),
+
+  // Forward-geocode: place name → coordinates (uses free OSM Nominatim)
+  geocode: (q: string, companyId?: number) =>
+    req<Array<{ displayName: string; lat: number; lng: number; type: string; importance: number }>>(`/geocode${qs({ q, companyId })}`),
 };
 
 // Browser geolocation helper. Returns Promise<{lat,lng,accuracy}> or rejects.

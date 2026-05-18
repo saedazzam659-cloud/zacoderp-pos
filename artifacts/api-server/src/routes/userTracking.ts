@@ -489,6 +489,38 @@ router.delete("/zones/:id/users/:userId", async (req: any, res) => {
   res.status(204).end();
 });
 
+// Forward-geocode (place name → lat/lng) via the FREE OpenStreetMap Nominatim
+// search API. Proxied through the server so we can set the User-Agent header
+// required by Nominatim's usage policy (browsers can't override User-Agent).
+// Returns up to 5 candidate places, biased to Saudi Arabia.
+router.get("/geocode", async (req: any, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const q = String(req.query.q ?? "").trim();
+  if (q.length < 2) { res.json([]); return; }
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(q)}&accept-language=ar&limit=5&countrycodes=sa&addressdetails=1`;
+    const r = await fetch(url, {
+      headers: {
+        "User-Agent": "zatca-invoicing/1.0 (user-tracking module)",
+        "Accept-Language": "ar,en;q=0.8",
+      },
+    });
+    if (!r.ok) { res.json([]); return; }
+    const j = (await r.json()) as any[];
+    const out = (j ?? []).map((x: any) => ({
+      displayName: x.display_name as string,
+      lat: Number(x.lat),
+      lng: Number(x.lon),
+      type: x.type as string,
+      importance: Number(x.importance ?? 0),
+    })).filter(x => Number.isFinite(x.lat) && Number.isFinite(x.lng));
+    res.json(out);
+  } catch (e: any) {
+    req.log?.warn?.({ err: e?.message }, "nominatim search threw");
+    res.json([]);
+  }
+});
+
 // Simple users picker for the assignment UI (just id + display name).
 router.get("/company-users", async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;

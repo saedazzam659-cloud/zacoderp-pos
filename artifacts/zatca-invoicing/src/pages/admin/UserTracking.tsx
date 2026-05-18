@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { MapPin, Users, Clock, AlertTriangle, Trash2, Plus, BarChart3, UserPlus, X } from "lucide-react";
+import { MapPin, Users, Clock, AlertTriangle, Trash2, Plus, BarChart3, UserPlus, X, Search, Loader2 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line, Legend } from "recharts";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -409,6 +409,17 @@ function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged:
           <DialogHeader><DialogTitle>منطقة جديدة</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div><Label>اسم المنطقة</Label><Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
+
+            <PlaceSearch
+              cid={cid}
+              onPick={(p) => setForm(f => ({
+                ...f,
+                centerLat: p.lat,
+                centerLng: p.lng,
+                name: f.name || p.displayName.split(",")[0]?.trim() || f.name,
+              }))}
+            />
+
             <div className="grid grid-cols-2 gap-3">
               <div><Label>خط العرض (Lat)</Label><Input type="number" step="0.0000001" value={form.centerLat} onChange={e => setForm({ ...form, centerLat: Number(e.target.value) })} /></div>
               <div><Label>خط الطول (Lng)</Label><Input type="number" step="0.0000001" value={form.centerLng} onChange={e => setForm({ ...form, centerLng: Number(e.target.value) })} /></div>
@@ -428,6 +439,72 @@ function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged:
         </DialogContent>
       </Dialog>
     </Card>
+  );
+}
+
+function PlaceSearch({ cid, onPick }: { cid?: number; onPick: (p: { lat: number; lng: number; displayName: string }) => void }) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<Array<{ displayName: string; lat: number; lng: number }>>([]);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounced search: wait 500 ms after typing stops, then query.
+  useEffect(() => {
+    if (timer.current) clearTimeout(timer.current);
+    if (q.trim().length < 2) { setResults([]); setOpen(false); return; }
+    timer.current = setTimeout(async () => {
+      setLoading(true); setErr(null);
+      try {
+        const r = await userTrackingApi.geocode(q.trim(), cid);
+        setResults(r);
+        setOpen(true);
+      } catch (e: any) {
+        setErr(e?.message || "فشل البحث");
+      } finally {
+        setLoading(false);
+      }
+    }, 500);
+    return () => { if (timer.current) clearTimeout(timer.current); };
+  }, [q, cid]);
+
+  return (
+    <div className="rounded-md border border-indigo-200 bg-indigo-50/50 p-2 space-y-2 relative">
+      <Label className="flex items-center gap-1 text-indigo-700">
+        <Search className="h-4 w-4" /> ابحث عن المكان بالاسم (يعبّأ الإحداثيات تلقائياً)
+      </Label>
+      <div className="relative">
+        <Input
+          placeholder="مثال: حي الديرة الرياض، أو: مكة المكرمة"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onFocus={() => results.length > 0 && setOpen(true)}
+        />
+        {loading && <Loader2 className="h-4 w-4 absolute left-2 top-3 animate-spin text-indigo-600" />}
+      </div>
+      {open && results.length > 0 && (
+        <ul className="absolute z-50 left-2 right-2 max-h-60 overflow-y-auto bg-background border rounded-md shadow-lg mt-1">
+          {results.map((r, i) => (
+            <li key={i}>
+              <button
+                type="button"
+                onClick={() => { onPick(r); setOpen(false); setQ(r.displayName.split(",")[0] || ""); }}
+                className="block w-full text-start px-3 py-2 hover:bg-muted text-sm"
+              >
+                <div className="font-medium">{r.displayName.split(",")[0]}</div>
+                <div className="text-xs text-muted-foreground truncate">{r.displayName}</div>
+                <div className="text-[10px] tabular-nums text-muted-foreground">{r.lat.toFixed(5)}, {r.lng.toFixed(5)}</div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {open && !loading && q.trim().length >= 2 && results.length === 0 && (
+        <div className="text-xs text-muted-foreground px-1">لا توجد نتائج لـ "{q}"</div>
+      )}
+      {err && <div className="text-xs text-rose-600 px-1">{err}</div>}
+    </div>
   );
 }
 
