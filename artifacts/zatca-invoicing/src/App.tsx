@@ -8,6 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import InAppNotFound from "@/components/InAppNotFound";
 import Layout from "@/components/Layout";
+import { useAutoCheckinOnLogin } from "@/hooks/useAutoCheckinOnLogin";
 import PermRoute from "@/components/PermRoute";
 import Dashboard from "@/pages/Dashboard";
 import UserTracking from "@/pages/admin/UserTracking";
@@ -415,6 +416,9 @@ function safeRedirectTarget(raw: string | null | undefined): string | null {
 function AppRoutes() {
   const { isAuthenticated, loading, user, actingCompanyId } = useAuth() as any;
   const [location] = useLocation();
+  // Auto check-in for users explicitly assigned to a tracking zone — runs
+  // once per page lifetime, silently skips users with no zone assignment.
+  useAutoCheckinOnLogin();
 
   if (loading) return <LoadingScreen />;
 

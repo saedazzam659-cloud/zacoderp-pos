@@ -246,6 +246,47 @@ router.get("/active", async (req: any, res) => {
   res.json(row ?? null);
 });
 
+// ───────────────── ME-STATUS (auto-checkin gate) ──────────────
+// Lightweight endpoint used by the auth layer on login / page-load to decide
+// whether to ask the browser for geolocation and auto-create a check-in visit.
+// Returns:
+//   - isAssignedToZone: true iff the user is explicitly linked to at least
+//     one active zone via tracking_zone_users. Users who are NOT linked to
+//     any zone are deliberately excluded from auto-tracking — the global-
+//     fallback rule (zone with no assignments applies to all employees) is
+//     INTENTIONALLY ignored here so the company doesn't accidentally start
+//     tracking every accountant the moment they create one global zone.
+//   - activeVisitId: id of an open visit if one exists (skip auto-checkin).
+//   - zones: list of zone names the user is bound to (for UI / toast).
+router.get("/me-status", async (req: any, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const uid = req.authUser?.id;
+  if (!uid) { res.status(401).json({ error: "غير مصرح" }); return; }
+
+  const zoneRows = await db.select({
+    id: trackingZonesTable.id,
+    name: trackingZonesTable.name,
+  }).from(trackingZoneUsersTable)
+    .innerJoin(trackingZonesTable, eq(trackingZonesTable.id, trackingZoneUsersTable.zoneId))
+    .where(and(
+      eq(trackingZoneUsersTable.userId, uid),
+      eq(trackingZonesTable.companyId, cid),
+      eq(trackingZonesTable.isActive, true),
+    ));
+
+  const [active] = await db.select({ id: userVisitsTable.id }).from(userVisitsTable).where(and(
+    eq(userVisitsTable.companyId, cid),
+    eq(userVisitsTable.userId, uid),
+    eq(userVisitsTable.status, "active"),
+  )).limit(1);
+
+  res.json({
+    isAssignedToZone: zoneRows.length > 0,
+    activeVisitId: active?.id ?? null,
+    zones: zoneRows.map(z => ({ id: z.id, name: z.name })),
+  });
+});
+
 // ───────────────── LIST VISITS (admin / dashboard) ──────────
 router.get("/visits", async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;
