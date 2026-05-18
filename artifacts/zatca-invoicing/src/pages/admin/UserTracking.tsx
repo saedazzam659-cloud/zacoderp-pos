@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { MapPin, Users, Clock, AlertTriangle, Trash2, Plus, BarChart3 } from "lucide-react";
+import { MapPin, Users, Clock, AlertTriangle, Trash2, Plus, BarChart3, UserPlus, X } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line, Legend } from "recharts";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -344,6 +344,7 @@ function VisitsMap({ visits, zones }: { visits: VisitRow[]; zones: TrackingZone[
 
 function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged: () => void; cid?: number }) {
   const [open, setOpen] = useState(false);
+  const [assigning, setAssigning] = useState<TrackingZone | null>(null);
   const [form, setForm] = useState({ name: "", centerLat: 24.7136, centerLng: 46.6753, radiusMeters: 500, isAllowed: true, notes: "" });
   const [err, setErr] = useState<string | null>(null);
   const create = useMutation({
@@ -368,6 +369,7 @@ function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged:
             <th className="py-2 px-2">الإحداثيات</th>
             <th className="py-2 px-2">نصف القطر (م)</th>
             <th className="py-2 px-2">النوع</th>
+            <th className="py-2 px-2">المستخدمون</th>
             <th className="py-2 px-2">حذف</th>
           </tr></thead>
           <tbody>
@@ -382,16 +384,25 @@ function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged:
                     : <Badge variant="destructive">ممنوعة</Badge>}
                 </td>
                 <td className="py-2 px-2 text-center">
+                  <Button size="sm" variant="outline" onClick={() => setAssigning(z)}>
+                    <UserPlus className="h-4 w-4 me-1" /> إدارة
+                  </Button>
+                </td>
+                <td className="py-2 px-2 text-center">
                   <Button size="icon" variant="ghost" onClick={() => { if (confirm(`حذف "${z.name}"؟`)) del.mutate(z.id); }}>
                     <Trash2 className="h-4 w-4 text-rose-600" />
                   </Button>
                 </td>
               </tr>
             ))}
-            {zones.length === 0 && <tr><td colSpan={5} className="py-8 text-center text-muted-foreground">لا توجد مناطق</td></tr>}
+            {zones.length === 0 && <tr><td colSpan={6} className="py-8 text-center text-muted-foreground">لا توجد مناطق</td></tr>}
           </tbody>
         </table>
+        <div className="mt-3 text-xs text-muted-foreground rounded-md bg-muted/40 p-2">
+          💡 المنطقة بدون مستخدمين معيّنين تُطبَّق على <strong>كل</strong> موظفي الشركة. عند تعيين مستخدم أو أكثر، تُطبَّق المنطقة فقط على هؤلاء.
+        </div>
       </CardContent>
+      {assigning && <ZoneAssignDialog zone={assigning} cid={cid} onClose={() => setAssigning(null)} />}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
@@ -417,5 +428,84 @@ function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged:
         </DialogContent>
       </Dialog>
     </Card>
+  );
+}
+
+function ZoneAssignDialog({ zone, cid, onClose }: { zone: TrackingZone; cid?: number; onClose: () => void }) {
+  const qc = useQueryClient();
+  const assignedQ = useQuery({
+    queryKey: ["zone-users", zone.id, cid],
+    queryFn: () => userTrackingApi.zoneUsers(zone.id, cid),
+  });
+  const usersQ = useQuery({
+    queryKey: ["company-users-picker", cid],
+    queryFn: () => userTrackingApi.companyUsers(cid),
+  });
+  const [pickUserId, setPickUserId] = useState<number | "">("");
+
+  const assigned = assignedQ.data ?? [];
+  const assignedIds = new Set(assigned.map(a => a.userId));
+  const candidates = (usersQ.data ?? []).filter(u => !assignedIds.has(u.id));
+
+  const add = useMutation({
+    mutationFn: (userId: number) => userTrackingApi.assignUserToZone(zone.id, userId, cid),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["zone-users", zone.id, cid] }); setPickUserId(""); },
+  });
+  const remove = useMutation({
+    mutationFn: (userId: number) => userTrackingApi.unassignUserFromZone(zone.id, userId, cid),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["zone-users", zone.id, cid] }),
+  });
+
+  return (
+    <Dialog open={true} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>المستخدمون المعيَّنون للمنطقة: {zone.name}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          {assigned.length === 0 ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              لا يوجد مستخدمون معيَّنون. حالياً هذه المنطقة تُطبَّق على <strong>كل</strong> موظفي الشركة (عام).
+            </div>
+          ) : (
+            <ul className="border rounded-md divide-y">
+              {assigned.map(u => (
+                <li key={u.userId} className="flex items-center justify-between px-3 py-2">
+                  <div>
+                    <div className="font-medium">{u.userName}</div>
+                    <div className="text-xs text-muted-foreground">@{u.username}</div>
+                  </div>
+                  <Button size="icon" variant="ghost" onClick={() => remove.mutate(u.userId)} disabled={remove.isPending}>
+                    <X className="h-4 w-4 text-rose-600" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="flex gap-2 items-end pt-2 border-t">
+            <div className="flex-1">
+              <Label>إضافة مستخدم</Label>
+              <select
+                className="w-full mt-1 h-10 rounded-md border px-2 bg-background"
+                value={pickUserId}
+                onChange={(e) => setPickUserId(e.target.value ? Number(e.target.value) : "")}
+              >
+                <option value="">— اختر مستخدماً —</option>
+                {candidates.map(u => (
+                  <option key={u.id} value={u.id}>{u.name} (@{u.username})</option>
+                ))}
+              </select>
+            </div>
+            <Button onClick={() => pickUserId && add.mutate(Number(pickUserId))} disabled={!pickUserId || add.isPending}>
+              <UserPlus className="h-4 w-4 me-1" /> إضافة
+            </Button>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>إغلاق</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

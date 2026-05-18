@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, text, timestamp, numeric, boolean, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, text, timestamp, numeric, boolean, index, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { companiesTable } from "./companies";
@@ -47,6 +47,20 @@ export const trackingZonesTable = pgTable("tracking_zones", {
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// Explicit user ↔ zone assignment. When at least one user is assigned to a
+// zone, that zone applies ONLY to those users (others ignore it entirely).
+// Zones with no assignments remain global (apply to everyone in the company).
+export const trackingZoneUsersTable = pgTable("tracking_zone_users", {
+  zoneId: integer("zone_id").notNull().references(() => trackingZonesTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  assignedAt: timestamp("assigned_at").defaultNow().notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.zoneId, t.userId] }),
+  byUser: index("idx_tracking_zone_users_user").on(t.userId),
+}));
+
+export type TrackingZoneUser = typeof trackingZoneUsersTable.$inferSelect;
 
 export const insertUserVisitSchema = createInsertSchema(userVisitsTable).omit({
   id: true, createdAt: true, updatedAt: true, durationMinutes: true,

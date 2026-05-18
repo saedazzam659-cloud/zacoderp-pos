@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { userVisitsTable, trackingZonesTable, usersTable, branchesTable } from "@workspace/db";
+import { userVisitsTable, trackingZonesTable, trackingZoneUsersTable, usersTable, branchesTable } from "@workspace/db";
 import { eq, and, desc, sql, gte, lte, isNull, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { extractAuth, resolveCompanyId, branchScopeFilter } from "../middleware/auth.js";
@@ -69,10 +69,28 @@ async function reverseGeocode(lat: number, lng: number, log: any): Promise<{ pla
 // the zone id + a flag string when relevant (out_of_allowed_zone if the point
 // is inside an `is_allowed=false` zone, or outside all `is_allowed=true` zones
 // when at least one allowed zone is defined).
-async function matchZone(cid: number, lat: number, lng: number): Promise<{ zoneId: number | null; flag: string | null }> {
-  const zones = await db.select().from(trackingZonesTable).where(
-    and(eq(trackingZonesTable.companyId, cid), eq(trackingZonesTable.isActive, true)),
-  );
+async function matchZone(cid: number, lat: number, lng: number, userId: number): Promise<{ zoneId: number | null; flag: string | null }> {
+  // Pull active zones + the set of users assigned to each. The rule:
+  //   - A zone with NO assigned users is global (applies to everyone).
+  //   - A zone WITH assigned users applies ONLY to those users.
+  // So we filter out any zone that has assignments which do not include this user.
+  const rawZones = await db.select({
+    z: trackingZonesTable,
+    assignedUserId: trackingZoneUsersTable.userId,
+  }).from(trackingZonesTable)
+    .leftJoin(trackingZoneUsersTable, eq(trackingZoneUsersTable.zoneId, trackingZonesTable.id))
+    .where(and(eq(trackingZonesTable.companyId, cid), eq(trackingZonesTable.isActive, true)));
+
+  // Group assignments per zone.
+  const map = new Map<number, { zone: typeof trackingZonesTable.$inferSelect; users: Set<number> }>();
+  for (const r of rawZones) {
+    const e = map.get(r.z.id) ?? { zone: r.z, users: new Set<number>() };
+    if (r.assignedUserId != null) e.users.add(r.assignedUserId);
+    map.set(r.z.id, e);
+  }
+  const zones = Array.from(map.values())
+    .filter(e => e.users.size === 0 || e.users.has(userId))
+    .map(e => e.zone);
   if (zones.length === 0) return { zoneId: null, flag: null };
   let inside: typeof zones[number] | null = null;
   let nearestAllowed: typeof zones[number] | null = null;
@@ -124,7 +142,7 @@ router.post("/checkin", async (req: any, res) => {
   }
 
   const geo = await reverseGeocode(lat, lng, req.log);
-  const zoneMatch = await matchZone(cid, lat, lng);
+  const zoneMatch = await matchZone(cid, lat, lng, uid);
 
   const [created] = await db.insert(userVisitsTable).values({
     companyId: cid,
@@ -409,6 +427,79 @@ router.patch("/zones/:id", async (req: any, res) => {
   )).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);
+});
+
+// List users assigned to a zone (empty array means "global — applies to everyone").
+router.get("/zones/:id/users", async (req: any, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const zoneId = Number(req.params.id);
+  if (!Number.isFinite(zoneId)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  // ensure zone belongs to company
+  const [z] = await db.select({ id: trackingZonesTable.id }).from(trackingZonesTable)
+    .where(and(eq(trackingZonesTable.id, zoneId), eq(trackingZonesTable.companyId, cid))).limit(1);
+  if (!z) { res.status(404).json({ error: "غير موجود" }); return; }
+  const rows = await db.select({
+    userId: trackingZoneUsersTable.userId,
+    assignedAt: trackingZoneUsersTable.assignedAt,
+    userName: sql<string>`COALESCE(${usersTable.nameAr}, ${usersTable.nameEn}, ${usersTable.username})`,
+    username: usersTable.username,
+  }).from(trackingZoneUsersTable)
+    .leftJoin(usersTable, eq(usersTable.id, trackingZoneUsersTable.userId))
+    .where(eq(trackingZoneUsersTable.zoneId, zoneId))
+    .orderBy(desc(trackingZoneUsersTable.assignedAt));
+  res.json(rows);
+});
+
+router.post("/zones/:id/users", async (req: any, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  if (req.authUser?.role !== "admin" && req.authUser?.role !== "superadmin") {
+    res.status(403).json({ error: "ممنوع" }); return;
+  }
+  const zoneId = Number(req.params.id);
+  const body = z.object({ userId: z.coerce.number().int().positive() }).safeParse(req.body);
+  if (!body.success || !Number.isFinite(zoneId)) { res.status(400).json({ error: "بيانات غير صالحة" }); return; }
+  // verify zone belongs to company AND user belongs to company
+  const [z1] = await db.select({ id: trackingZonesTable.id }).from(trackingZonesTable)
+    .where(and(eq(trackingZonesTable.id, zoneId), eq(trackingZonesTable.companyId, cid))).limit(1);
+  if (!z1) { res.status(404).json({ error: "المنطقة غير موجودة" }); return; }
+  const [u1] = await db.select({ id: usersTable.id }).from(usersTable)
+    .where(and(eq(usersTable.id, body.data.userId), eq(usersTable.companyId, cid))).limit(1);
+  if (!u1) { res.status(404).json({ error: "المستخدم غير موجود" }); return; }
+  await db.insert(trackingZoneUsersTable).values({
+    zoneId, userId: body.data.userId,
+  }).onConflictDoNothing();
+  res.status(201).json({ zoneId, userId: body.data.userId });
+});
+
+router.delete("/zones/:id/users/:userId", async (req: any, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  if (req.authUser?.role !== "admin" && req.authUser?.role !== "superadmin") {
+    res.status(403).json({ error: "ممنوع" }); return;
+  }
+  const zoneId = Number(req.params.id), userId = Number(req.params.userId);
+  if (!Number.isFinite(zoneId) || !Number.isFinite(userId)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  // verify zone belongs to company (prevents cross-tenant deletes)
+  const [z1] = await db.select({ id: trackingZonesTable.id }).from(trackingZonesTable)
+    .where(and(eq(trackingZonesTable.id, zoneId), eq(trackingZonesTable.companyId, cid))).limit(1);
+  if (!z1) { res.status(404).json({ error: "غير موجود" }); return; }
+  await db.delete(trackingZoneUsersTable).where(and(
+    eq(trackingZoneUsersTable.zoneId, zoneId),
+    eq(trackingZoneUsersTable.userId, userId),
+  ));
+  res.status(204).end();
+});
+
+// Simple users picker for the assignment UI (just id + display name).
+router.get("/company-users", async (req: any, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const rows = await db.select({
+    id: usersTable.id,
+    username: usersTable.username,
+    name: sql<string>`COALESCE(${usersTable.nameAr}, ${usersTable.nameEn}, ${usersTable.username})`,
+  }).from(usersTable)
+    .where(and(eq(usersTable.companyId, cid), eq(usersTable.isActive, true)))
+    .orderBy(usersTable.username);
+  res.json(rows);
 });
 
 router.delete("/zones/:id", async (req: any, res) => {

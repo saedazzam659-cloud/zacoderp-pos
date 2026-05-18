@@ -63,6 +63,16 @@ export const userTrackingApi = {
     req<TrackingZone>(`/zones/${id}${qs({ companyId })}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteZone: (id: number, companyId?: number) =>
     req<void>(`/zones/${id}${qs({ companyId })}`, { method: "DELETE" }),
+
+  // User ↔ zone assignment
+  zoneUsers: (zoneId: number, companyId?: number) =>
+    req<Array<{ userId: number; userName: string; username: string; assignedAt: string }>>(`/zones/${zoneId}/users${qs({ companyId })}`),
+  assignUserToZone: (zoneId: number, userId: number, companyId?: number) =>
+    req<{ zoneId: number; userId: number }>(`/zones/${zoneId}/users${qs({ companyId })}`, { method: "POST", body: JSON.stringify({ userId }) }),
+  unassignUserFromZone: (zoneId: number, userId: number, companyId?: number) =>
+    req<void>(`/zones/${zoneId}/users/${userId}${qs({ companyId })}`, { method: "DELETE" }),
+  companyUsers: (companyId?: number) =>
+    req<Array<{ id: number; username: string; name: string }>>(`/company-users${qs({ companyId })}`),
 };
 
 // Browser geolocation helper. Returns Promise<{lat,lng,accuracy}> or rejects.
