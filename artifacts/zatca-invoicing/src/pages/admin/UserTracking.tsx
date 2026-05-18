@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { MapPin, Users, Clock, AlertTriangle, Trash2, Plus, BarChart3, UserPlus, X, Search, Loader2 } from "lucide-react";
+import { MapPin, Users, Clock, AlertTriangle, Trash2, Plus, BarChart3, UserPlus, X, Search, Loader2, Globe2 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line, Legend } from "recharts";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -383,10 +383,8 @@ function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged:
                     ? <Badge className="bg-emerald-100 text-emerald-800">مسموحة</Badge>
                     : <Badge variant="destructive">ممنوعة</Badge>}
                 </td>
-                <td className="py-2 px-2 text-center">
-                  <Button size="sm" variant="outline" onClick={() => setAssigning(z)}>
-                    <UserPlus className="h-4 w-4 me-1" /> إدارة
-                  </Button>
+                <td className="py-2 px-2">
+                  <ZoneUserChips zoneId={z.id} cid={cid} onManage={() => setAssigning(z)} />
                 </td>
                 <td className="py-2 px-2 text-center">
                   <Button size="icon" variant="ghost" onClick={() => { if (confirm(`حذف "${z.name}"؟`)) del.mutate(z.id); }}>
@@ -504,6 +502,92 @@ function PlaceSearch({ cid, onPick }: { cid?: number; onPick: (p: { lat: number;
         <div className="text-xs text-muted-foreground px-1">لا توجد نتائج لـ "{q}"</div>
       )}
       {err && <div className="text-xs text-rose-600 px-1">{err}</div>}
+    </div>
+  );
+}
+
+// Color palette for user-initial chips — picked deterministically by userId
+const CHIP_COLORS = [
+  "bg-rose-100 text-rose-700 ring-rose-200",
+  "bg-amber-100 text-amber-700 ring-amber-200",
+  "bg-emerald-100 text-emerald-700 ring-emerald-200",
+  "bg-sky-100 text-sky-700 ring-sky-200",
+  "bg-violet-100 text-violet-700 ring-violet-200",
+  "bg-fuchsia-100 text-fuchsia-700 ring-fuchsia-200",
+  "bg-teal-100 text-teal-700 ring-teal-200",
+  "bg-indigo-100 text-indigo-700 ring-indigo-200",
+];
+function initials(name: string): string {
+  const parts = (name || "؟").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "؟";
+  if (parts.length === 1) return parts[0].slice(0, 2);
+  return (parts[0][0] ?? "") + (parts[1][0] ?? "");
+}
+
+function ZoneUserChips({ zoneId, cid, onManage }: { zoneId: number; cid?: number; onManage: () => void }) {
+  const q = useQuery({
+    queryKey: ["zone-users", zoneId, cid],
+    queryFn: () => userTrackingApi.zoneUsers(zoneId, cid),
+    staleTime: 30_000,
+  });
+  const users = q.data ?? [];
+  const MAX = 3;
+  const shown = users.slice(0, MAX);
+  const extra = Math.max(0, users.length - MAX);
+
+  if (q.isLoading) {
+    return <div className="flex justify-center"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>;
+  }
+
+  return (
+    <div className="flex items-center justify-center gap-2 flex-wrap">
+      {users.length === 0 ? (
+        <button
+          type="button"
+          onClick={onManage}
+          className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-l from-emerald-50 to-teal-50 border border-emerald-200 text-emerald-700 px-2.5 py-1 text-[11px] font-medium hover:shadow-sm hover:border-emerald-300 transition"
+          title="عام — مطبَّقة على كل الموظفين. اضغط لتقييدها بمستخدمين."
+        >
+          <Globe2 className="h-3.5 w-3.5" />
+          كل الموظفين
+        </button>
+      ) : (
+        <div className="flex -space-x-2 space-x-reverse">
+          {shown.map((u, i) => (
+            <span
+              key={u.userId}
+              title={`${u.userName} (@${u.username})`}
+              className={`inline-flex items-center justify-center h-7 w-7 rounded-full ring-2 ring-white text-[11px] font-bold ${CHIP_COLORS[u.userId % CHIP_COLORS.length]}`}
+              style={{ zIndex: MAX - i }}
+            >
+              {initials(u.userName)}
+            </span>
+          ))}
+          {extra > 0 && (
+            <span
+              className="inline-flex items-center justify-center h-7 w-7 rounded-full ring-2 ring-white bg-slate-200 text-slate-700 text-[11px] font-bold"
+              title={users.slice(MAX).map(u => u.userName).join("، ")}
+            >
+              +{extra}
+            </span>
+          )}
+        </div>
+      )}
+
+      {users.length > 0 && (
+        <span className="text-[11px] text-muted-foreground">
+          {users.length} مستخدم
+        </span>
+      )}
+
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 px-2 text-[11px] text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50"
+        onClick={onManage}
+      >
+        <UserPlus className="h-3.5 w-3.5 me-1" /> إدارة
+      </Button>
     </div>
   );
 }
