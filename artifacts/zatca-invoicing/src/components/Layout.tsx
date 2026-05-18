@@ -469,6 +469,7 @@ const inventoryReportsSubNav: NavDef[] = [
   { nameKey: "navExtra.slowMoving",   href: "/inventory/reports/slow-moving",   icon: Layers,            permKey: "items" },
   { nameKey: "navExtra.freeQuantities",     href: "/inventory/reports/free-quantities",      icon: Gift,        permKey: "items" },
   { nameKey: "navExtra.itemSalesValuation", href: "/inventory/reports/item-sales-valuation", icon: ReceiptText, permKey: "items" },
+  { nameKey: "navExtra.stocktake",          href: "/inventory/reports/stocktake",            icon: ClipboardList, permKey: "items" },
 ];
 
 // ─── HubGroupButton ───────────────────────────────────────────────────────────

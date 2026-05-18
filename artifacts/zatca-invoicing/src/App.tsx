@@ -227,6 +227,7 @@ import ValuationByWarehouse  from "@/pages/inventory/reports/ValuationByWarehous
 import SlowMovingItems       from "@/pages/inventory/reports/SlowMovingItems";
 import FreeQuantitiesReport      from "@/pages/inventory/reports/FreeQuantitiesReport";
 import ItemSalesValuationReport  from "@/pages/inventory/reports/ItemSalesValuationReport";
+import Stocktake                 from "@/pages/inventory/reports/Stocktake";
 import SmartAlerts           from "@/pages/inventory/SmartAlerts";
 // Accounting
 import ChartOfAccounts from "@/pages/accounting/ChartOfAccounts";
@@ -760,6 +761,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/reports/slow-moving"      module="items" component={SlowMovingItems} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/free-quantities"      module="items" component={FreeQuantitiesReport} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/item-sales-valuation" module="items" component={ItemSalesValuationReport} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/stocktake"            module="items" component={Stocktake} />}
             {!isSuperAdmin && <PermRoute path="/inventory/alerts"                   module="items" component={SmartAlerts} />}
 
             {/* Accounting routes */}

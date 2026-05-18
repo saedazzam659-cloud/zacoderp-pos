@@ -1,7 +1,7 @@
 import { Link } from "wouter";
 import {
   BarChart2, BookOpen, IdCard, AlertTriangle, Wallet, Hourglass, ChevronLeft, Bell,
-  Gift, ReceiptText,
+  Gift, ReceiptText, ClipboardCheck,
 } from "lucide-react";
 
 const REPORTS = [
@@ -67,6 +67,13 @@ const REPORTS = [
     desc: "إجمالي مبيعات الصنف بسعر التكلفة أو بسعر البيع (شامل/بدون ضريبة) مع المرتجع والصافي",
     icon: ReceiptText,
     color: "from-teal-50 to-teal-100/40 text-teal-700 border-teal-200",
+  },
+  {
+    href: "/inventory/reports/stocktake",
+    title: "جرد المخازن",
+    desc: "كشف جرد فعلي للأصناف مقابل أرصدة النظام مع حساب الفروقات بالكميات والقيم، قابل للطباعة والتوقيع",
+    icon: ClipboardCheck,
+    color: "from-violet-50 to-violet-100/40 text-violet-700 border-violet-200",
   },
 ];
 
