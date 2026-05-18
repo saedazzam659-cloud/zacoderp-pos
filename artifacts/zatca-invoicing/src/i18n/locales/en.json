@@ -511,6 +511,7 @@
     "chat": "Internal Chat",
     "userTracking": "Location Tracking",
     "userTrackingLive": "Live Tracking",
+    "userAttendance": "Attendance Report",
     "aiReports": "AI Reports",
     "posSettings": "POS Settings",
     "posTerminals": "POS Terminals",

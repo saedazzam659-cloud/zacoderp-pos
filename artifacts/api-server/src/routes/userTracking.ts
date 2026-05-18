@@ -387,6 +387,169 @@ router.get("/live", ...adminGate, async (req: any, res) => {
   res.json({ users: rows, serverTime: new Date().toISOString() });
 });
 
+// ───────────────── ATTENDANCE REPORT (admin) ───────────────
+// Per-user per-day attendance derived from the visit log. Every user who is
+// explicitly bound to at least one active tracking zone is considered
+// "expected to attend"; days with no visit are reported as Absent.
+//
+// Query params:
+//   - from, to: ISO date (YYYY-MM-DD). Inclusive. Defaults to current month.
+//   - userId: optional filter to a single user.
+//   - includeWeekends: "1" to include Fridays in the absent days (default off).
+//
+// Returns:
+//   { days: ISO date list,
+//     users: [{ userId, userName, days: [{ day, status, firstIn, lastOut,
+//                                          totalMinutes, visitCount, hasAlert }],
+//              summary: { presentDays, absentDays, totalMinutes, avgDailyMinutes,
+//                         alertDays } }],
+//     overall: { totalUserDays, presentUserDays, absentUserDays,
+//                totalMinutes, alertUserDays } }
+router.get("/attendance", ...adminGate, async (req: any, res) => {
+  const cid = guard(req, res); if (!cid) return;
+
+  const today = new Date();
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const from = req.query.from ? new Date(String(req.query.from)) : monthStart;
+  const to   = req.query.to   ? new Date(String(req.query.to))   : today;
+  const userIdFilter = req.query.userId ? Number(req.query.userId) : null;
+  const includeWeekends = String(req.query.includeWeekends ?? "") === "1";
+
+  // Build list of calendar days in range (inclusive).
+  const days: string[] = [];
+  {
+    const d = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+    const end = new Date(to.getFullYear(), to.getMonth(), to.getDate());
+    while (d <= end) {
+      // Friday = 5 (0=Sun, 5=Fri). In Saudi Arabia the standard weekend is
+      // Friday + Saturday but most ZATCA companies operate 6 days/week, so we
+      // only skip Friday unless `includeWeekends=1` is passed.
+      if (includeWeekends || d.getDay() !== 5) {
+        days.push(d.toISOString().slice(0, 10));
+      }
+      d.setDate(d.getDate() + 1);
+    }
+  }
+
+  // Tracked users (explicitly bound to any active zone in this company).
+  const trackedUsers = await db.selectDistinct({
+    id: usersTable.id,
+    nameAr: usersTable.nameAr,
+    nameEn: usersTable.nameEn,
+    username: usersTable.username,
+  }).from(trackingZoneUsersTable)
+    .innerJoin(trackingZonesTable, and(
+      eq(trackingZonesTable.id, trackingZoneUsersTable.zoneId),
+      eq(trackingZonesTable.companyId, cid),
+      eq(trackingZonesTable.isActive, true),
+    ))
+    .innerJoin(usersTable, eq(usersTable.id, trackingZoneUsersTable.userId))
+    .orderBy(usersTable.username);
+
+  const filteredUsers = userIdFilter
+    ? trackedUsers.filter(u => u.id === userIdFilter)
+    : trackedUsers;
+
+  if (filteredUsers.length === 0 || days.length === 0) {
+    res.json({ days, users: [], overall: { totalUserDays: 0, presentUserDays: 0, absentUserDays: 0, totalMinutes: 0, alertUserDays: 0 } });
+    return;
+  }
+
+  // Fetch all visits in range for these users in one go.
+  const userIds = filteredUsers.map(u => u.id);
+  const periodStart = new Date(days[0] + "T00:00:00.000Z");
+  const periodEndExclusive = new Date(days[days.length - 1] + "T23:59:59.999Z");
+
+  const visits = await db.select({
+    userId: userVisitsTable.userId,
+    checkinAt: userVisitsTable.checkinAt,
+    checkoutAt: userVisitsTable.checkoutAt,
+    durationMinutes: userVisitsTable.durationMinutes,
+    status: userVisitsTable.status,
+    alertFlags: userVisitsTable.alertFlags,
+  }).from(userVisitsTable).where(and(
+    eq(userVisitsTable.companyId, cid),
+    inArray(userVisitsTable.userId, userIds),
+    gte(userVisitsTable.checkinAt, periodStart),
+    lte(userVisitsTable.checkinAt, periodEndExclusive),
+  ));
+
+  // Group: userId → day → list of visits.
+  type V = { checkinAt: Date; checkoutAt: Date | null; durationMinutes: number | null; status: string; alertFlags: string | null };
+  const byUserDay = new Map<number, Map<string, V[]>>();
+  for (const v of visits) {
+    const day = new Date(v.checkinAt).toISOString().slice(0, 10);
+    if (!days.includes(day)) continue; // weekend skipped
+    let umap = byUserDay.get(v.userId);
+    if (!umap) { umap = new Map(); byUserDay.set(v.userId, umap); }
+    const arr = umap.get(day) ?? [];
+    arr.push({
+      checkinAt: new Date(v.checkinAt),
+      checkoutAt: v.checkoutAt ? new Date(v.checkoutAt) : null,
+      durationMinutes: v.durationMinutes,
+      status: v.status,
+      alertFlags: v.alertFlags,
+    });
+    umap.set(day, arr);
+  }
+
+  const usersOut = filteredUsers.map(u => {
+    const umap = byUserDay.get(u.id) ?? new Map<string, V[]>();
+    let presentDays = 0, totalMinutes = 0, alertDays = 0;
+    const dayRows = days.map(day => {
+      const vs = umap.get(day) ?? [];
+      if (vs.length === 0) {
+        return { day, status: "absent" as const, firstIn: null, lastOut: null, totalMinutes: 0, visitCount: 0, hasAlert: false };
+      }
+      vs.sort((a, b) => a.checkinAt.getTime() - b.checkinAt.getTime());
+      const firstIn = vs[0].checkinAt.toISOString();
+      // For "lastOut" prefer the latest checkout; if there is an open (active)
+      // visit, fall back to its check-in time + null to signal "still active".
+      const completedVisits = vs.filter(v => v.checkoutAt);
+      const lastOut = completedVisits.length > 0
+        ? completedVisits[completedVisits.length - 1].checkoutAt!.toISOString()
+        : null;
+      const mins = vs.reduce((s, v) => s + (v.durationMinutes ?? 0), 0);
+      const hasAlert = vs.some(v => !!v.alertFlags);
+      presentDays++;
+      totalMinutes += mins;
+      if (hasAlert) alertDays++;
+      const stillActive = vs.some(v => v.status === "active");
+      return {
+        day,
+        status: (stillActive ? "active" : "present") as "present" | "active",
+        firstIn,
+        lastOut,
+        totalMinutes: mins,
+        visitCount: vs.length,
+        hasAlert,
+      };
+    });
+    return {
+      userId: u.id,
+      userName: u.nameAr || u.nameEn || u.username,
+      days: dayRows,
+      summary: {
+        presentDays,
+        absentDays: days.length - presentDays,
+        totalMinutes,
+        avgDailyMinutes: presentDays > 0 ? Math.round(totalMinutes / presentDays) : 0,
+        alertDays,
+      },
+    };
+  });
+
+  const overall = {
+    totalUserDays: usersOut.length * days.length,
+    presentUserDays: usersOut.reduce((s, u) => s + u.summary.presentDays, 0),
+    absentUserDays: usersOut.reduce((s, u) => s + u.summary.absentDays, 0),
+    totalMinutes: usersOut.reduce((s, u) => s + u.summary.totalMinutes, 0),
+    alertUserDays: usersOut.reduce((s, u) => s + u.summary.alertDays, 0),
+  };
+
+  res.json({ days, users: usersOut, overall });
+});
+
 // ───────────────── LIST VISITS (admin / dashboard) ──────────
 router.get("/visits", async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;

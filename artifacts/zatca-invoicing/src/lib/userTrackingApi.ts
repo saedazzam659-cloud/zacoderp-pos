@@ -59,6 +59,27 @@ export type LiveUser = {
 };
 export type LiveData = { users: LiveUser[]; serverTime?: string };
 
+export type AttendanceDay = {
+  day: string;
+  status: "present" | "absent" | "active";
+  firstIn: string | null;
+  lastOut: string | null;
+  totalMinutes: number;
+  visitCount: number;
+  hasAlert: boolean;
+};
+export type AttendanceUser = {
+  userId: number;
+  userName: string;
+  days: AttendanceDay[];
+  summary: { presentDays: number; absentDays: number; totalMinutes: number; avgDailyMinutes: number; alertDays: number };
+};
+export type AttendanceData = {
+  days: string[];
+  users: AttendanceUser[];
+  overall: { totalUserDays: number; presentUserDays: number; absentUserDays: number; totalMinutes: number; alertUserDays: number };
+};
+
 export type TrackingZone = {
   id: number; name: string; centerLat: string; centerLng: string;
   radiusMeters: number; isAllowed: boolean; isActive: boolean; notes: string | null;
@@ -79,6 +100,11 @@ export const userTrackingApi = {
   dashboard:(params: { companyId?: number; from?: string; to?: string; userId?: number }) =>
     req<DashboardData>(`/dashboard${qs(params)}`),
   live: (companyId?: number) => req<LiveData>(`/live${qs({ companyId })}`),
+  attendance: (params: { companyId?: number; from?: string; to?: string; userId?: number; includeWeekends?: boolean }) =>
+    req<AttendanceData>(`/attendance${qs({
+      companyId: params.companyId, from: params.from, to: params.to, userId: params.userId,
+      includeWeekends: params.includeWeekends ? "1" : undefined,
+    })}`),
   zones:    (companyId?: number) => req<TrackingZone[]>(`/zones${qs({ companyId })}`),
   createZone: (body: { name: string; centerLat: number; centerLng: number; radiusMeters?: number; isAllowed?: boolean; isActive?: boolean; notes?: string }, companyId?: number) =>
     req<TrackingZone>(`/zones${qs({ companyId })}`, { method: "POST", body: JSON.stringify(body) }),
