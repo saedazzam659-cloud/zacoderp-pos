@@ -889,11 +889,18 @@ router.post("/ai-articles/generate", requireSuperAdmin, async (req: any, res) =>
       `لا تكتب أي شيء خارج كتلة JSON.`,
     ].filter(Boolean).join("\n");
 
+    // Article synthesis (~1000 words, 8192 max tokens) routinely exceeds
+    // the aiClient default 30s budget per provider — both OpenAI and
+    // Anthropic were aborting and the request fell through to a 503. Raise
+    // the per-provider timeout for THIS call only so long-form generation
+    // has room to complete, while keeping the default conservative for
+    // short, latency-sensitive endpoints elsewhere.
     const aiRes = await aiChat(
       [{ role: "user", content: prompt }],
-      { maxTokens: 8192 },
+      { maxTokens: 8192, timeoutMs: 90_000 },
     );
     if (!aiRes.ok) {
+      req.log?.warn?.({ reason: aiRes.reason, topic: topicRaw.slice(0, 80) }, "ai-articles/generate aiChat failed");
       return res.status(503).json({ error: "تعذّر الاتصال بخدمة الذكاء الاصطناعي. حاول لاحقاً." });
     }
     const rawText = (aiRes.text ?? "").trim();
