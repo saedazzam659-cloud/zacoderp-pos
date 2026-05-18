@@ -298,6 +298,95 @@ router.get("/me-status", async (req: any, res) => {
   });
 });
 
+// ───────────────── LIVE TRACKING (admin) ───────────────────
+// Returns one row per user that is explicitly assigned to any active zone in
+// the company. Each row carries the user's open visit (if any) with its last
+// known position and matched zone. Drives the live tracking map. Polled by
+// the UI every ~10s. Admin-gated below via `adminGate`.
+router.get("/live", ...adminGate, async (req: any, res) => {
+  const cid = guard(req, res); if (!cid) return;
+
+  // 1) Every user explicitly bound to an active zone in this company (distinct).
+  const trackedUsers = await db.selectDistinct({
+    id: usersTable.id,
+    nameAr: usersTable.nameAr,
+    nameEn: usersTable.nameEn,
+    username: usersTable.username,
+  }).from(trackingZoneUsersTable)
+    .innerJoin(trackingZonesTable, and(
+      eq(trackingZonesTable.id, trackingZoneUsersTable.zoneId),
+      eq(trackingZonesTable.companyId, cid),
+      eq(trackingZonesTable.isActive, true),
+    ))
+    .innerJoin(usersTable, eq(usersTable.id, trackingZoneUsersTable.userId))
+    .orderBy(usersTable.username);
+
+  if (trackedUsers.length === 0) { res.json({ users: [] }); return; }
+
+  // 2) Active visits for these users.
+  const userIds = trackedUsers.map(u => u.id);
+  const activeVisits = await db.select().from(userVisitsTable).where(and(
+    eq(userVisitsTable.companyId, cid),
+    eq(userVisitsTable.status, "active"),
+    inArray(userVisitsTable.userId, userIds),
+  ));
+  const visitByUser = new Map<number, typeof userVisitsTable.$inferSelect>();
+  for (const v of activeVisits) visitByUser.set(v.userId, v);
+
+  // 3) Zone names (for matched visits + assigned zones lookup).
+  const zoneRows = await db.select({
+    id: trackingZonesTable.id,
+    name: trackingZonesTable.name,
+    isAllowed: trackingZonesTable.isAllowed,
+    centerLat: trackingZonesTable.centerLat,
+    centerLng: trackingZonesTable.centerLng,
+    radiusMeters: trackingZonesTable.radiusMeters,
+    userId: trackingZoneUsersTable.userId,
+  }).from(trackingZonesTable)
+    .innerJoin(trackingZoneUsersTable, eq(trackingZoneUsersTable.zoneId, trackingZonesTable.id))
+    .where(and(
+      eq(trackingZonesTable.companyId, cid),
+      eq(trackingZonesTable.isActive, true),
+      inArray(trackingZoneUsersTable.userId, userIds),
+    ));
+  const zonesByUser = new Map<number, Array<{ id: number; name: string; isAllowed: boolean }>>();
+  const zoneById = new Map<number, { id: number; name: string; isAllowed: boolean }>();
+  for (const z of zoneRows) {
+    const lite = { id: z.id, name: z.name, isAllowed: z.isAllowed };
+    zoneById.set(z.id, lite);
+    const arr = zonesByUser.get(z.userId) ?? [];
+    if (!arr.find(x => x.id === z.id)) arr.push(lite);
+    zonesByUser.set(z.userId, arr);
+  }
+
+  const now = Date.now();
+  const rows = trackedUsers.map(u => {
+    const v = visitByUser.get(u.id) ?? null;
+    const elapsedMin = v ? Math.max(0, Math.round((now - new Date(v.checkinAt).getTime()) / 60000)) : null;
+    return {
+      userId: u.id,
+      userName: u.nameAr || u.nameEn || u.username,
+      isActive: !!v,
+      assignedZones: zonesByUser.get(u.id) ?? [],
+      visit: v ? {
+        id: v.id,
+        checkinAt: v.checkinAt,
+        lat: v.checkinLat,
+        lng: v.checkinLng,
+        place: v.checkinPlace,
+        address: v.checkinAddress,
+        purpose: v.purpose,
+        elapsedMinutes: elapsedMin,
+        zoneId: v.zoneId,
+        zoneName: v.zoneId ? (zoneById.get(v.zoneId)?.name ?? null) : null,
+        alertFlags: v.alertFlags,
+      } : null,
+    };
+  });
+
+  res.json({ users: rows, serverTime: new Date().toISOString() });
+});
+
 // ───────────────── LIST VISITS (admin / dashboard) ──────────
 router.get("/visits", async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;

@@ -510,6 +510,7 @@
     "inbox": "Inbox",
     "chat": "Internal Chat",
     "userTracking": "Location Tracking",
+    "userTrackingLive": "Live Tracking",
     "aiReports": "AI Reports",
     "posSettings": "POS Settings",
     "posTerminals": "POS Terminals",

@@ -38,6 +38,27 @@ export type DashboardData = {
   perDay: Array<{ day: string; visitCount: number; totalMinutes: number }>;
   topPlaces: Array<{ place: string; visitCount: number; totalMinutes: number }>;
 };
+export type LiveUser = {
+  userId: number;
+  userName: string;
+  isActive: boolean;
+  assignedZones: Array<{ id: number; name: string; isAllowed: boolean }>;
+  visit: null | {
+    id: number;
+    checkinAt: string;
+    lat: string | null;
+    lng: string | null;
+    place: string | null;
+    address: string | null;
+    purpose: string | null;
+    elapsedMinutes: number | null;
+    zoneId: number | null;
+    zoneName: string | null;
+    alertFlags: string | null;
+  };
+};
+export type LiveData = { users: LiveUser[]; serverTime?: string };
+
 export type TrackingZone = {
   id: number; name: string; centerLat: string; centerLng: string;
   radiusMeters: number; isAllowed: boolean; isActive: boolean; notes: string | null;
@@ -57,6 +78,7 @@ export const userTrackingApi = {
     req<VisitRow[]>(`/visits${qs(params)}`),
   dashboard:(params: { companyId?: number; from?: string; to?: string; userId?: number }) =>
     req<DashboardData>(`/dashboard${qs(params)}`),
+  live: (companyId?: number) => req<LiveData>(`/live${qs({ companyId })}`),
   zones:    (companyId?: number) => req<TrackingZone[]>(`/zones${qs({ companyId })}`),
   createZone: (body: { name: string; centerLat: number; centerLng: number; radiusMeters?: number; isAllowed?: boolean; isActive?: boolean; notes?: string }, companyId?: number) =>
     req<TrackingZone>(`/zones${qs({ companyId })}`, { method: "POST", body: JSON.stringify(body) }),

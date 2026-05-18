@@ -334,6 +334,7 @@ const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.invoiceFieldPolicies", href: "/admin/invoice-field-policies", icon: ShieldCheck, requireSuperadmin: true },
   // User location tracking — admin dashboard + zone CRUD.
   { nameKey: "nav.userTracking",    href: "/user-tracking",       icon: MapPin,    permKey: "user_tracking" },
+  { nameKey: "nav.userTrackingLive", href: "/user-tracking/live",  icon: MapPin,    permKey: "user_tracking" },
 ];
 
 // "أدوات الذكاء الاصطناعي" — top-level group for AI-related screens. Per the

@@ -12,6 +12,7 @@ import { useAutoCheckinOnLogin } from "@/hooks/useAutoCheckinOnLogin";
 import PermRoute from "@/components/PermRoute";
 import Dashboard from "@/pages/Dashboard";
 import UserTracking from "@/pages/admin/UserTracking";
+import UserTrackingLive from "@/pages/admin/UserTrackingLive";
 import SuperAdminDashboard from "@/pages/SuperAdminDashboard";
 import OrphanStockCleanup from "@/pages/admin/OrphanStockCleanup";
 import InvoiceFieldPolicies from "@/pages/admin/InvoiceFieldPolicies";
@@ -576,6 +577,7 @@ function AppRoutes() {
             <Route path="/notifications" component={Notifications} />
             {!isSuperAdmin && <Route path="/inbox" component={Inbox} />}
             {!isSuperAdmin && <PermRoute path="/user-tracking" module="user_tracking" component={UserTracking} />}
+            {!isSuperAdmin && <PermRoute path="/user-tracking/live" module="user_tracking" component={UserTrackingLive} />}
             {!isSuperAdmin && user?.role === "admin" && <Route path="/ai-reports" component={AiReports} />}
 
             {/* Company user routes */}
