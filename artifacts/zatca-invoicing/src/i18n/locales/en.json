@@ -2789,6 +2789,7 @@
     "accountCode": "Account Code",
     "accountName": "Account Name",
     "legalName": "Legal Name",
+    "latinName": "Latin Name",
     "accountLevel": "Account Level",
     "fromDate": "From Date",
     "toDate": "To Date",

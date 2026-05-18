@@ -59,7 +59,7 @@ export type StatementAccount = {
   code?: string | null;       // e.g. "1105030047" — AR/AP sub-account code
   nameAr?: string | null;
   nameEn?: string | null;
-  legalName?: string | null;  // الاسم القانوني (registered/legal name)
+  legalName?: string | null;  // الاسم اللاتيني — customer/supplier Latin (English) name; field name kept for back-compat
   level?: string | number | null; // مستوى الحساب
 };
 
@@ -165,7 +165,7 @@ export default function AccountStatementView({
           <div className="space-y-2">
             <Row label={tr("accountCode", "رمز الحساب")}    value={account.code || "—"} />
             <Row label={tr("accountName", "اسم الحساب")}    value={account.nameAr || account.nameEn || "—"} />
-            <Row label={tr("legalName", "الاسم القانوني")}  value={account.legalName || account.nameEn || account.nameAr || "—"} />
+            <Row label={tr("latinName", "الاسم اللاتيني")}  value={account.legalName || account.nameEn || "—"} />
             <Row label={tr("accountLevel", "مستوى الحساب")} value={account.level != null ? String(account.level) : "—"} />
           </div>
           {/* Left column: date range */}

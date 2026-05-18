@@ -1115,7 +1115,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       <div>
         <div class="item"><div class="lbl">رمز الحساب</div><div>:</div><div class="val mono">${escape(account.code || "—")}</div></div>
         <div class="item"><div class="lbl">اسم الحساب</div><div>:</div><div class="val">${escape(account.nameAr || account.nameEn || "—")}</div></div>
-        <div class="item"><div class="lbl">الاسم القانوني</div><div>:</div><div class="val">${escape(account.legalName || account.nameEn || account.nameAr || "—")}</div></div>
+        <div class="item"><div class="lbl">الاسم اللاتيني</div><div>:</div><div class="val">${escape(account.legalName || account.nameEn || "—")}</div></div>
         <div class="item"><div class="lbl">مستوى الحساب</div><div>:</div><div class="val">${escape(account.level != null ? String(account.level) : "—")}</div></div>
       </div>
       <div>

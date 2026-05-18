@@ -51,6 +51,26 @@ export default function CustomerStatement() {
 
   const customer = (customers as any[]).find(c => String(c.id) === applied.customerId);
 
+  // Fetch the linked chart-of-accounts row so the printout's "رمز الحساب" /
+  // "اسم الحساب" / "مستوى الحساب" come from the GL account (per user spec),
+  // not from the customer record. The customer's own nameEn still drives the
+  // new "الاسم اللاتيني" row.
+  const { data: linkedAccount } = useQuery<any>({
+    queryKey: ["account", customer?.accountId],
+    enabled: !!customer?.accountId,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/accounts/${customer!.accountId}`, { headers: authHeaders() });
+      return r.json();
+    },
+  });
+  const acctView = {
+    code:      linkedAccount?.code ?? null,
+    nameAr:    linkedAccount?.nameAr ?? null,
+    nameEn:    linkedAccount?.nameEn ?? null,
+    legalName: customer?.nameEn ?? null,
+    level:     linkedAccount?.level ?? null,
+  };
+
   const TYPE_LABEL: Record<string, string> = {
     invoice: tr("typeInvoice"),
     return:  tr("typeReturn"),
@@ -81,13 +101,7 @@ export default function CustomerStatement() {
         <StatementExportButtons
           mode="customer"
           company={(user?.company as any) ?? null}
-          account={{
-            code: customer ? `CUS-${String(customer.id).padStart(6, "0")}` : null,
-            nameAr: customer?.nameAr,
-            nameEn: customer?.nameEn,
-            legalName: customer?.nameEn || customer?.nameAr,
-            level: 5,
-          }}
+          account={acctView}
           from={applied.from}
           to={applied.to}
           opening={data?.opening ?? 0}
@@ -175,13 +189,7 @@ export default function CustomerStatement() {
           <AccountStatementView
             mode="customer"
             company={user?.company ?? null}
-            account={{
-              code: customer ? `CUS-${String(customer.id).padStart(6, "0")}` : null,
-              nameAr: customer?.nameAr,
-              nameEn: customer?.nameEn,
-              legalName: customer?.nameEn || customer?.nameAr,
-              level: 5,
-            }}
+            account={acctView}
             from={applied.from}
             to={applied.to}
             opening={data?.opening ?? 0}

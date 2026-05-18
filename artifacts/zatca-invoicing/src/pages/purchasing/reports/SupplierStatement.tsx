@@ -56,6 +56,26 @@ export default function SupplierStatement() {
   const supplier = (suppliers as any[]).find(s => String(s.id) === applied.supplierId);
   const supplierLabel = supplier ? (isRtl ? (supplier.nameAr ?? supplier.nameEn) : (supplier.nameEn ?? supplier.nameAr)) : "";
 
+  // Fetch the linked chart-of-accounts row so the printout's "رمز الحساب" /
+  // "اسم الحساب" / "مستوى الحساب" come from the GL account (per user spec),
+  // not from the supplier record. The supplier's own nameEn drives the new
+  // "الاسم اللاتيني" row.
+  const { data: linkedAccount } = useQuery<any>({
+    queryKey: ["account", supplier?.accountId],
+    enabled: !!supplier?.accountId,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/accounts/${supplier!.accountId}`, { headers: authHeaders() });
+      return r.json();
+    },
+  });
+  const acctView = {
+    code:      linkedAccount?.code ?? null,
+    nameAr:    linkedAccount?.nameAr ?? null,
+    nameEn:    linkedAccount?.nameEn ?? null,
+    legalName: supplier?.nameEn ?? null,
+    level:     linkedAccount?.level ?? null,
+  };
+
   const augmented = useMemo(() => {
     const opening = data?.opening ?? 0;
     let bal = opening;
@@ -78,13 +98,7 @@ export default function SupplierStatement() {
         <StatementExportButtons
           mode="supplier"
           company={(user?.company as any) ?? null}
-          account={{
-            code: supplier?.code || (supplier ? `SUP-${String(supplier.id).padStart(6, "0")}` : null),
-            nameAr: supplier?.nameAr,
-            nameEn: supplier?.nameEn,
-            legalName: supplier?.nameEn || supplier?.nameAr,
-            level: 5,
-          }}
+          account={acctView}
           from={applied.from}
           to={applied.to}
           opening={data?.opening ?? 0}
@@ -169,13 +183,7 @@ export default function SupplierStatement() {
           <AccountStatementView
             mode="supplier"
             company={user?.company ?? null}
-            account={{
-              code: supplier?.code || (supplier ? `SUP-${String(supplier.id).padStart(6, "0")}` : null),
-              nameAr: supplier?.nameAr,
-              nameEn: supplier?.nameEn,
-              legalName: supplier?.nameEn || supplier?.nameAr,
-              level: 5,
-            }}
+            account={acctView}
             from={applied.from}
             to={applied.to}
             opening={data?.opening ?? 0}

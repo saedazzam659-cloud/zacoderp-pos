@@ -2792,6 +2792,7 @@
     "accountCode": "رمز الحساب",
     "accountName": "اسم الحساب",
     "legalName": "الاسم القانوني",
+    "latinName": "الاسم اللاتيني",
     "accountLevel": "مستوى الحساب",
     "fromDate": "من تاريخ",
     "toDate": "إلى تاريخ",
