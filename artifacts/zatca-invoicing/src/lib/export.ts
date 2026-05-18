@@ -805,3 +805,366 @@ export function printSectionsAsPDF(
     win.addEventListener("afterprint", () => URL.revokeObjectURL(url));
   }
 }
+
+// ─── Account Statement PDF (Customer / Supplier) ──────────────────────────────
+// Dedicated printable view used by كشف حساب عميل / كشف حساب مورد. It mirrors
+// the on-screen <AccountStatementView /> component exactly so what the user
+// sees is what gets printed: bilingual company header card with logo, a
+// centered "كشف حساب" pill, two-column account info row, then the 7-column
+// table (التاريخ | الرقم | البيان | مدين | دائن | الرصيد | الشرح) with a bold
+// "الإجمالي" footer.
+
+export interface StatementPdfLine {
+  date: string;
+  type: string;
+  docNumber?: string | null;
+  description: string;
+  debit: number;
+  credit: number;
+  balance: number;
+}
+
+export interface StatementPdfCompany {
+  nameAr?: string | null;
+  nameEn?: string | null;
+  crNumber?: string | null;
+  vatNumber?: string | null;
+  phone?: string | null;
+  city?: string | null;
+  district?: string | null;
+  street?: string | null;
+  buildingNumber?: string | null;
+  postalCode?: string | null;
+  logo?: string | null;
+}
+
+export interface StatementPdfAccount {
+  code?: string | null;
+  nameAr?: string | null;
+  nameEn?: string | null;
+  legalName?: string | null;
+  level?: string | number | null;
+}
+
+export interface ExportStatementPdfOpts {
+  mode: "customer" | "supplier";
+  company?: StatementPdfCompany | null;
+  account: StatementPdfAccount;
+  from: string;
+  to: string;
+  opening: number;
+  lines: StatementPdfLine[];
+  totals: { debit: number; credit: number };
+  closing: number;
+  filename: string;
+  autoPrint?: boolean;
+  /** Locale-aware number formatter; defaults to en-US with 2 fraction digits. */
+  fmt?: (n: number) => string;
+}
+
+export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
+  const {
+    mode, company, account, from, to,
+    opening, lines, totals, closing,
+    filename, autoPrint = true,
+  } = opts;
+  const fmt = opts.fmt ?? ((n: number) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+
+  const escape = (s: unknown) =>
+    String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  // Attribute-context escaper — also encodes quotes so user-supplied
+  // values cannot break out of `attr="..."` and inject new attributes
+  // or JS handlers (stored-XSS hardening for the print/PDF surface).
+  const escAttr = (s: unknown) =>
+    escape(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+  const safeLogo = safeLogoSrc(company?.logo);
+  const addressLine = [
+    company?.buildingNumber, company?.street,
+    company?.district, company?.city, company?.postalCode,
+  ].filter(Boolean).join(" - ");
+
+  const title = mode === "supplier" ? "كشف حساب مورد" : "كشف حساب";
+
+  // Opening sign semantics — same logic the on-screen component uses:
+  // customer  → opening>0 = debit (customer owes us)
+  // supplier  → opening>0 = credit (we owe supplier)
+  const openingDebit  = mode === "supplier" ? (opening < 0 ? -opening : 0) : (opening > 0 ? opening  : 0);
+  const openingCredit = mode === "supplier" ? (opening > 0 ? opening  : 0) : (opening < 0 ? -opening : 0);
+
+  const today = new Date().toLocaleDateString("ar-SA-u-nu-latn", {
+    year: "numeric", month: "long", day: "numeric",
+  });
+
+  const logoHtml = safeLogo
+    ? `<img src="${safeLogo}" alt="${escAttr(company?.nameAr || company?.nameEn || "")}" />`
+    : `<div class="logo-fallback">${escape((company?.nameAr || company?.nameEn || "?").trim().slice(0, 2))}</div>`;
+
+  const lineRows = lines.length === 0
+    ? `<tr><td colspan="7" class="empty">لا توجد حركات في الفترة المحددة</td></tr>`
+    : lines.map((l, i) => `
+        <tr class="${i % 2 === 0 ? "even" : "odd"}">
+          <td class="mono">${escape(l.date)}</td>
+          <td class="mono">${escape(l.docNumber || "—")}</td>
+          <td>${escape(l.type)}</td>
+          <td class="mono num ${l.debit  ? "debit"  : "muted"}">${l.debit  ? escape(fmt(l.debit))  : "0.00"}</td>
+          <td class="mono num ${l.credit ? "credit" : "muted"}">${l.credit ? escape(fmt(l.credit)) : "0.00"}</td>
+          <td class="mono num strong">${escape(fmt(l.balance))}</td>
+          <td>${escape(l.description)}</td>
+        </tr>`).join("");
+
+  const totalsRow = lines.length > 0 ? `
+    <tr class="totals">
+      <td colspan="3">الإجمالي</td>
+      <td class="mono num debit">${escape(fmt(totals.debit))}</td>
+      <td class="mono num credit">${escape(fmt(totals.credit))}</td>
+      <td class="mono num strong">${escape(fmt(closing))}</td>
+      <td>—</td>
+    </tr>` : "";
+
+  const html = `<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="UTF-8"/>
+  <title>${escape(filename)}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;600;700&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
+      direction: rtl;
+      font-size: 11pt;
+      color: #0f172a;
+      background: #fff;
+      padding: 0;
+    }
+    .doc { padding: 12mm 10mm; }
+
+    /* ── Company header card ───────────────────────────── */
+    .co-header {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 16px;
+      align-items: center;
+      padding: 14px 18px;
+      border-bottom: 1.5px dashed #cbd5e1;
+      background: linear-gradient(to bottom, #f8fafc 0%, #fff 100%);
+      border: 1px solid #e2e8f0;
+      border-radius: 12px 12px 0 0;
+    }
+    .co-side { font-size: 9.5pt; line-height: 1.7; color: #475569; }
+    .co-side .name { font-size: 12pt; font-weight: 700; color: #0f172a; margin-bottom: 4px; }
+    .co-side .row { white-space: nowrap; }
+    .co-side .lbl { color: #94a3b8; }
+    .co-side.left { direction: ltr; text-align: left; }
+    .co-side.right { text-align: right; }
+    .co-logo {
+      width: 78px; height: 78px;
+      border: 2px solid #e2e8f0; border-radius: 50%;
+      background: #fff;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .co-logo img { max-width: 90%; max-height: 90%; object-fit: contain; }
+    .logo-fallback { font-weight: 700; color: #94a3b8; font-size: 14pt; }
+
+    /* ── Title pill ────────────────────────────────────── */
+    .title-pill-wrap {
+      display: flex; justify-content: center;
+      margin: 18px 0 14px;
+    }
+    .title-pill {
+      padding: 8px 36px;
+      background: #e0f2fe;
+      color: #075985;
+      border: 1px solid #bae6fd;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 13pt;
+      letter-spacing: .5px;
+    }
+
+    /* ── Account meta row ──────────────────────────────── */
+    .meta-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 40px;
+      padding: 0 18px 14px;
+      font-size: 10pt;
+    }
+    .meta-grid .item {
+      display: grid;
+      grid-template-columns: 110px 8px 1fr;
+      border-bottom: 1px dotted #cbd5e1;
+      padding: 4px 0;
+    }
+    .meta-grid .item .lbl { color: #64748b; }
+    .meta-grid .item .val { font-weight: 500; color: #0f172a; }
+    .meta-grid .item .val.mono { font-family: 'Courier New', monospace; }
+
+    /* ── Table ─────────────────────────────────────────── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9.5pt;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    thead tr { background: #f1f5f9; color: #334155; }
+    thead th {
+      padding: 9px 6px;
+      font-weight: 700;
+      border-bottom: 2px solid #cbd5e1;
+      text-align: center;
+      white-space: nowrap;
+    }
+    tbody td {
+      padding: 7px 6px;
+      border-top: 1px solid #e2e8f0;
+      vertical-align: middle;
+      text-align: start;
+    }
+    tbody td.num { text-align: center; }
+    tbody td.mono { font-family: 'Courier New', monospace; font-variant-numeric: tabular-nums; }
+    tbody td.debit { color: #0369a1; font-weight: 600; }
+    tbody td.credit { color: #047857; font-weight: 600; }
+    tbody td.muted { color: #cbd5e1; }
+    tbody td.strong { font-weight: 700; color: #0f172a; }
+    tr.even { background: #f8fafc; }
+    tr.odd  { background: #ffffff; }
+
+    /* Opening row */
+    tbody tr.opening { background: #fffbeb; }
+    tbody tr.opening td.lbl { font-style: italic; color: #64748b; }
+
+    /* Totals footer row */
+    tbody tr.totals {
+      background: #f1f5f9;
+      font-weight: 700;
+      color: #0f172a;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    tbody tr.totals td {
+      border-top: 2px solid #94a3b8;
+      padding: 10px 6px;
+      font-size: 10pt;
+    }
+
+    .empty { text-align: center; padding: 30px; color: #94a3b8; }
+
+    .print-meta {
+      margin-top: 10px;
+      text-align: center;
+      font-size: 8.5pt;
+      color: #94a3b8;
+    }
+
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .co-header, thead tr, .title-pill, tbody tr.opening, tbody tr.totals, tr.even {
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+      }
+      thead { display: table-header-group; }
+    }
+    @page {
+      margin: 12mm 10mm 18mm 10mm;
+      size: A4 portrait;
+      @bottom-center {
+        content: "صفحة " counter(page) " من " counter(pages);
+        font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
+        font-size: 9pt;
+        color: #64748b;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="doc">
+    <!-- Company header -->
+    <div class="co-header">
+      <div class="co-side right">
+        <div class="name">${escape(company?.nameAr || "—")}</div>
+        ${company?.crNumber ? `<div class="row"><span class="lbl">س.ت</span> : ${escape(company.crNumber)}</div>` : ""}
+        ${company?.vatNumber ? `<div class="row"><span class="lbl">الرقم الضريبي</span> : ${escape(company.vatNumber)}</div>` : ""}
+        ${company?.phone ? `<div class="row"><span class="lbl">الجوال</span> : ${escape(company.phone)}</div>` : ""}
+        ${addressLine ? `<div class="row"><span class="lbl">العنوان</span> : ${escape(addressLine)}</div>` : ""}
+      </div>
+      <div class="co-logo">${logoHtml}</div>
+      <div class="co-side left">
+        <div class="name">${escape(company?.nameEn || company?.nameAr || "—")}</div>
+        ${company?.crNumber ? `<div class="row"><span class="lbl">C.R. No</span> : ${escape(company.crNumber)}</div>` : ""}
+        ${company?.vatNumber ? `<div class="row"><span class="lbl">VAT Number</span> : ${escape(company.vatNumber)}</div>` : ""}
+        ${company?.phone ? `<div class="row"><span class="lbl">Phone</span> : ${escape(company.phone)}</div>` : ""}
+        ${addressLine ? `<div class="row"><span class="lbl">Address</span> : ${escape(addressLine)}</div>` : ""}
+      </div>
+    </div>
+
+    <!-- Title pill -->
+    <div class="title-pill-wrap">
+      <div class="title-pill">${escape(title)}</div>
+    </div>
+
+    <!-- Account meta -->
+    <div class="meta-grid">
+      <div>
+        <div class="item"><div class="lbl">رمز الحساب</div><div>:</div><div class="val mono">${escape(account.code || "—")}</div></div>
+        <div class="item"><div class="lbl">اسم الحساب</div><div>:</div><div class="val">${escape(account.nameAr || account.nameEn || "—")}</div></div>
+        <div class="item"><div class="lbl">الاسم القانوني</div><div>:</div><div class="val">${escape(account.legalName || account.nameEn || account.nameAr || "—")}</div></div>
+        <div class="item"><div class="lbl">مستوى الحساب</div><div>:</div><div class="val">${escape(account.level != null ? String(account.level) : "—")}</div></div>
+      </div>
+      <div>
+        <div class="item"><div class="lbl">من تاريخ</div><div>:</div><div class="val mono">${escape(from)}</div></div>
+        <div class="item"><div class="lbl">إلى تاريخ</div><div>:</div><div class="val mono">${escape(to)}</div></div>
+        <div class="item"><div class="lbl">معامل التصفية</div><div>:</div><div class="val">—</div></div>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <table>
+      <thead>
+        <tr>
+          <th>التاريخ</th>
+          <th>الرقم</th>
+          <th>البيان</th>
+          <th>مدين</th>
+          <th>دائن</th>
+          <th>الرصيد</th>
+          <th>الشرح</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="opening">
+          <td class="mono">${escape(from)}</td>
+          <td>—</td>
+          <td class="lbl">رصيد افتتاحي</td>
+          <td class="mono num">${openingDebit  ? escape(fmt(openingDebit))  : "0.00"}</td>
+          <td class="mono num">${openingCredit ? escape(fmt(openingCredit)) : "0.00"}</td>
+          <td class="mono num strong">${escape(fmt(opening))}</td>
+          <td>—</td>
+        </tr>
+        ${lineRows}
+        ${totalsRow}
+      </tbody>
+    </table>
+
+    <div class="print-meta">تاريخ الطباعة: ${today}</div>
+  </div>
+  <script>
+    ${autoPrint ? `window.onload = function(){ setTimeout(function(){ window.print(); }, 600); };` : ""}
+  </script>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url  = URL.createObjectURL(blob);
+  const win  = window.open(url, "_blank");
+  if (win) {
+    win.addEventListener("afterprint", () => URL.revokeObjectURL(url));
+  }
+}

@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import ExportButtons from "@/components/ExportButtons";
+import StatementExportButtons from "@/components/StatementExportButtons";
 import BranchFilter from "@/components/BranchFilter";
 import AccountStatementView from "@/components/AccountStatementView";
 import { useTranslation } from "react-i18next";
@@ -39,16 +39,6 @@ export default function SupplierStatement() {
     payment: t("purchasingReports.supplierStatement.type.payment"),
   };
 
-  const EXPORT_COLS = [
-    { key: "date",        header: t("purchasingPages.common.date"),         width: 14 },
-    { key: "type",        header: t("purchasingPages.common.movementType"), width: 14 },
-    { key: "docNumber",   header: t("purchasingPages.common.docNumber"),    width: 16 },
-    { key: "description", header: t("purchasingPages.common.description"),  width: 24 },
-    { key: "debit",       header: t("purchasingPages.common.debit"),        width: 14 },
-    { key: "credit",      header: t("purchasingPages.common.credit"),       width: 14 },
-    { key: "balance",     header: t("purchasingPages.common.balance"),      width: 16 },
-  ];
-
   const { data: suppliers = [] } = useQuery({
     queryKey: ["suppliers", cid],
     queryFn: async () => {
@@ -78,49 +68,6 @@ export default function SupplierStatement() {
   const totals = augmented.reduce((s, l) => ({ debit: s.debit + l.debit, credit: s.credit + l.credit }), { debit: 0, credit: 0 });
   const closing = (data?.opening ?? 0) + totals.credit - totals.debit;
 
-  const exportRows = [
-    ...(applied.supplierId ? [{
-      date: applied.from, type: "—", docNumber: "—", description: t("purchasingPages.common.openingBalance"),
-      debit: data?.opening && data.opening < 0 ? fmt(-data.opening) : "",
-      credit: data?.opening && data.opening > 0 ? fmt(data.opening) : "",
-      balance: fmt(data?.opening ?? 0),
-    }] : []),
-    ...augmented.map(l => ({
-      date:        l.date,
-      type:        TYPE_LABEL[l.type] ?? l.type,
-      docNumber:   l.docNumber ?? "—",
-      description: l.description,
-      debit:       l.debit ? fmt(l.debit) : "",
-      credit:      l.credit ? fmt(l.credit) : "",
-      balance:     fmt(l.balance),
-    })),
-  ];
-
-  // Grand-totals row mirrored into the printed/exported tfoot so the
-  // standard "الإجمالي" line appears at the bottom of the table.
-  const exportTotalsRow = (applied.supplierId && !isLoading && augmented.length > 0)
-    ? {
-        date:        "",
-        type:        "",
-        docNumber:   "",
-        description: t("purchasingPages.common.total"),
-        debit:       fmt(totals.debit),
-        credit:      fmt(totals.credit),
-        balance:     fmt(closing),
-      }
-    : null;
-
-  // Summary footer cards (opening / debit / credit / closing) for the printed view —
-  // labels mirror the on-screen KPI cards above the table.
-  const exportSummaryFooter = (applied.supplierId && !isLoading)
-    ? [
-        { label: t("purchasingReports.supplierStatement.openingBalance"),  value: fmt(data?.opening ?? 0), tone: "default" as const },
-        { label: t("purchasingReports.supplierStatement.totalDebitDesc"),  value: fmt(totals.debit),       tone: "debit"   as const },
-        { label: t("purchasingReports.supplierStatement.totalCreditDesc"), value: fmt(totals.credit),      tone: "credit"  as const },
-        { label: t("purchasingReports.supplierStatement.finalBalanceDesc"), value: fmt(closing),           tone: "primary" as const },
-      ]
-    : null;
-
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -128,14 +75,32 @@ export default function SupplierStatement() {
           <h1 className="text-2xl font-bold flex items-center gap-2"><FileText className="h-6 w-6 text-primary" />{t("purchasingReports.supplierStatement.title")}</h1>
           <p className="text-muted-foreground text-sm mt-1">{t("purchasingReports.supplierStatement.subtitle")}</p>
         </div>
-        <ExportButtons
-          rows={exportRows}
-          columns={EXPORT_COLS}
+        <StatementExportButtons
+          mode="supplier"
+          company={(user?.company as any) ?? null}
+          account={{
+            code: supplier?.code || (supplier ? `SUP-${String(supplier.id).padStart(6, "0")}` : null),
+            nameAr: supplier?.nameAr,
+            nameEn: supplier?.nameEn,
+            legalName: supplier?.nameEn || supplier?.nameAr,
+            level: 5,
+          }}
+          from={applied.from}
+          to={applied.to}
+          opening={data?.opening ?? 0}
+          lines={augmented.map(l => ({
+            date: l.date,
+            type: TYPE_LABEL[l.type] ?? l.type,
+            docNumber: l.docNumber,
+            description: l.description,
+            debit: l.debit,
+            credit: l.credit,
+            balance: l.balance,
+          }))}
+          totals={totals}
+          closing={closing}
           filename={`${t("purchasingReports.supplierStatement.filename")}-${supplierLabel}-${applied.from}-${applied.to}`}
-          title={t("purchasingReports.supplierStatement.exportTitle")}
-          subtitle={supplier ? `${supplierLabel}  |  ${applied.from} → ${applied.to}` : t("purchasingReports.supplierStatement.selectSupplier")}
-          totalsRow={exportTotalsRow}
-          summaryFooter={exportSummaryFooter}
+          disabled={!applied.supplierId || isLoading}
         />
       </div>
 
