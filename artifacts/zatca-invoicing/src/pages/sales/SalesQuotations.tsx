@@ -15,8 +15,12 @@ import { BulkPrintMenu } from "@/lib/bulkPrint";
 import * as XLSX from "xlsx";
 import { cn } from "@/lib/utils";
 import {
-  downloadCsv, matchCol, useAuditGridLayout, useColumnResize,
+  downloadCsv, useAuditGridLayout, useColumnResize,
 } from "@/lib/auditGridLayout";
+import {
+  type AdvFilter, isAdvActive, matchAdv, describeAdv,
+} from "@/lib/advFilter";
+import { AdvFilterPopover } from "@/components/auditGrid/AdvFilterPopover";
 import {
   AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
   FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
@@ -178,8 +182,16 @@ export default function SalesQuotations() {
     allColKeys: ALL_KEYS,
   });
   const { tableRef, gripProps } = useColumnResize(layout.setColWidths);
-  const { theme, footerTheme, colWidths, colFilters, setColFilter, clearColFilters,
+  const { theme, footerTheme, colWidths, colFilters, clearColFilters,
           isSelected, toggleRow, toggleAll, isAllSelected, isSomeSelected, clearSelection } = layout;
+
+  // Per-column advanced filter (two conditions + AND/OR). Lives outside
+  // useAuditGridLayout so this screen owns reset/UX without forcing a
+  // change on every other audit-grid consumer. Same shape across screens.
+  const [colAdv, setColAdv] = useState<Record<string, AdvFilter>>({});
+  const clearColAdv = (key: string) =>
+    setColAdv(prev => { const n = { ...prev }; delete n[key]; return n; });
+  const clearAllColFilters = () => { clearColFilters(); setColAdv({}); };
 
   /* ── Filtering ── */
   const filteredQuotations = useMemo(() => {
@@ -194,13 +206,13 @@ export default function SalesQuotations() {
         if (!hay.includes(q)) return false;
       }
       for (const col of COLUMNS) {
-        const f = colFilters[col.key];
-        if (!f) continue;
-        if (!matchCol(col.valueOf(qt), f, col.type)) return false;
+        const adv = colAdv[col.key];
+        if (!isAdvActive(adv)) continue;
+        if (!matchAdv(col.valueOf(qt), adv, col.type)) return false;
       }
       return true;
     });
-  }, [quotations, tableSearch, statusFilter, colFilters, cusMap]);
+  }, [quotations, tableSearch, statusFilter, colAdv, cusMap]);
 
   /* ── Pagination ── */
   const { pageSize, page, setPage } = layout;
@@ -583,10 +595,10 @@ ${sections}
               </button>
             ))}
           </div>
-          {Object.values(colFilters).some((v) => v) && (
+          {(Object.values(colFilters).some((v) => v) || Object.values(colAdv).some(isAdvActive)) && (
             <Button type="button" size="sm" variant="ghost"
               className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50"
-              onClick={clearColFilters} title="مسح فلاتر الأعمدة">
+              onClick={clearAllColFilters} title="مسح فلاتر الأعمدة">
               <X className="h-3.5 w-3.5 me-1" />
               مسح فلاتر الأعمدة
             </Button>
@@ -701,10 +713,18 @@ ${sections}
               </colgroup>
               <thead className="sticky top-0 z-10">
                 <tr className="bg-gradient-to-b from-slate-100 to-slate-200 text-slate-700">
-                  {visibleColumns.map((col, idx) => (
+                  {visibleColumns.map((col, idx) => {
+                    const isFilterable = col.type !== "none";
+                    const advValue = colAdv[col.key];
+                    const isFiltered = isAdvActive(advValue);
+                    return (
                     <th key={col.key} data-col-key={col.key}
                       style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
-                      className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]">
+                      className={cn(
+                        "relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]",
+                        isFiltered && "bg-rose-50 ring-1 ring-rose-300/70",
+                      )}
+                      title={isFiltered ? `فلتر: ${describeAdv(advValue, col.type)}` : undefined}>
                       {col.key === "_sel" ? (
                         <HeaderSelectCheckbox
                           allSelected={isAllSelected(allFilteredIds)}
@@ -712,7 +732,21 @@ ${sections}
                           onToggle={() => toggleAll(allFilteredIds)}
                           disabled={allFilteredIds.length === 0 || bulkBusy}
                         />
-                      ) : col.label}
+                      ) : (
+                        <span className="inline-flex items-center justify-center gap-1">
+                          <span>{col.label}</span>
+                          {isFilterable && (
+                            <AdvFilterPopover
+                              colLabel={col.label || col.key}
+                              colType={col.type}
+                              value={advValue}
+                              active={isFiltered}
+                              onApply={v => setColAdv(prev => ({ ...prev, [col.key]: v }))}
+                              onClear={() => clearColAdv(col.key)}
+                            />
+                          )}
+                        </span>
+                      )}
                       {col.key !== "_sel" && (
                         <span {...gripProps(col.key, idx)}
                           className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
@@ -720,23 +754,11 @@ ${sections}
                         />
                       )}
                     </th>
-                  ))}
+                  );
+                  })}
                 </tr>
-                <tr className="bg-amber-50/80 border-b border-amber-200">
-                  {visibleColumns.map((col) => (
-                    <th key={col.key} className="px-1 py-1 border border-slate-200 text-center">
-                      {col.type === "none" ? null : (
-                        <Input
-                          value={colFilters[col.key] ?? ""}
-                          onChange={(e) => setColFilter(col.key, e.target.value)}
-                          placeholder={col.type === "num" ? ">=100" : "بحث…"}
-                          className="h-6 text-[10.5px] px-1.5 border-slate-300 bg-white"
-                          title={col.type === "num" ? "أمثلة: >=100, <500, =0" : "بحث جزئي"}
-                        />
-                      )}
-                    </th>
-                  ))}
-                </tr>
+                {/* (Legacy per-column filter input row removed — filtering is
+                    now fully driven by AdvFilterPopover triggers in each header.) */}
               </thead>
               <tbody>
                 {pagedQuotations.map((q: any, idx: number) => {
