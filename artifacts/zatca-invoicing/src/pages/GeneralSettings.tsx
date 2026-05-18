@@ -11,8 +11,11 @@ import {
   Hash, Building2, Loader2, Package, Boxes, Download, FileSpreadsheet,
   DatabaseBackup, DatabaseZap, Sparkles, FileJson, AlertTriangle,
   Clock, Repeat, Trash, History, Play, Zap, Hand, Printer, Save,
-  LogOut, Timer, ShieldCheck, CalendarDays, CalendarClock
+  LogOut, Timer, ShieldCheck, CalendarDays, CalendarClock,
+  Users as UsersIcon
 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
 import { getIdleLogoutMinutes, setIdleLogoutMinutes } from "@/hooks/useIdleLogout";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -1183,6 +1186,7 @@ export default function GeneralSettings() {
 
         {/* ═══ TAB: Sales-Returns rules (informational, always-on) ═══════ */}
         <TabsContent value="salesReturnsRules" className="mt-5 space-y-6">
+          <SalesReturnsUserFilterCard user={user} token={token} />
           <div className="rounded-xl border bg-card p-5 space-y-4">
             <h2 className="font-semibold text-base flex items-center gap-2">
               <Repeat className="h-4 w-4 text-muted-foreground" />
@@ -1226,6 +1230,175 @@ export default function GeneralSettings() {
         </TabsContent>
       </Tabs>
 
+    </div>
+  );
+}
+
+// ─── Sub-component: Sales-Returns user-filter card ────────────────────────
+// Lets the admin pick which users' returns appear on /sales/returns.
+// Empty selection = "all users" (default — legacy behavior preserved).
+// Selection persists in localStorage (`zatca_sr_user_filter_<cid>`) and the
+// SalesReturns page listens for a `zatca-sr-user-filter-changed` event.
+function SalesReturnsUserFilterCard({ user, token }: { user: any; token: string }) {
+  // For superadmin, fall back to the acting company id so the filter key
+  // stays tenant-scoped and doesn't collapse across companies. Matches the
+  // logic in SalesReturns.tsx.
+  const rawCid = user?.role === "superadmin" ? undefined : (user?.company?.id ?? user?.companyId);
+  const actingCid = (() => {
+    try { const v = localStorage.getItem("zatca_acting_company_id"); return v ? Number(v) : null; }
+    catch { return null; }
+  })();
+  const effectiveCid: number | null = rawCid ?? actingCid ?? null;
+  const storageKey = effectiveCid != null ? `zatca_sr_user_filter_${effectiveCid}` : null;
+  const authH: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+  const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+  const readInitial = (): Set<number> => {
+    if (!storageKey) return new Set();
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return new Set();
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return new Set();
+      return new Set(arr.map((n: any) => Number(n)).filter((n) => Number.isFinite(n)));
+    } catch { return new Set(); }
+  };
+  const [selected, setSelected] = useState<Set<number>>(readInitial);
+
+  useEffect(() => { setSelected(readInitial()); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [storageKey]);
+
+  const persist = (next: Set<number>) => {
+    if (!storageKey) return;
+    setSelected(next);
+    try {
+      if (next.size === 0) localStorage.removeItem(storageKey);
+      else localStorage.setItem(storageKey, JSON.stringify([...next]));
+      window.dispatchEvent(new Event("zatca-sr-user-filter-changed"));
+    } catch { /* noop */ }
+  };
+
+  // Same scope as the storage key — when there is no effective tenant
+  // (superadmin not impersonating), fetch nothing rather than a global list
+  // that could mix tenants.
+  const { data: usersList = [] } = useQuery<any[]>({
+    queryKey: ["users-for-sr-filter", effectiveCid],
+    enabled: !!user && effectiveCid != null,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/users?companyId=${effectiveCid}`, { headers: authH });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+
+  const sortedUsers = (usersList as any[]).slice().sort((a, b) => {
+    const ai = (a.role === "admin" || a.role === "superadmin") ? 0 : 1;
+    const bi = (b.role === "admin" || b.role === "superadmin") ? 0 : 1;
+    if (ai !== bi) return ai - bi;
+    return String(a.nameAr || a.username || "").localeCompare(String(b.nameAr || b.username || ""));
+  });
+
+  const labelFor = (u: any) => u.nameAr || u.nameEn || u.username || u.email || `#${u.id}`;
+  const selectedLabel =
+    selected.size === 0
+      ? "كل المستخدمين (الافتراضي)"
+      : selected.size === 1
+        ? (labelFor(sortedUsers.find((u: any) => Number(u.id) === [...selected][0]) ?? { id: [...selected][0] }))
+        : `${selected.size} مستخدمين محدّدين`;
+
+  return (
+    <div className="rounded-xl border bg-card p-5 space-y-4">
+      <h2 className="font-semibold text-base flex items-center gap-2">
+        <UsersIcon className="h-4 w-4 text-muted-foreground" />
+        فلتر مرتجعات المبيعات حسب المستخدم
+      </h2>
+      <p className="text-xs text-muted-foreground leading-relaxed">
+        اختياري — حدِّد المستخدمين الذين تريد عرض مرتجعاتهم في شاشة <strong>مرتجعات المبيعات</strong>.
+        إذا لم تختر أحداً، تعمل الشاشة بالسلوك الافتراضي وتعرض جميع المرتجعات (بما فيها القديمة قبل التعديل).
+        المرتجعات القديمة التي لا تحمل مستخدم منشئ تظهر فقط في الوضع الافتراضي.
+      </p>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              type="button" variant="outline"
+              className={cn(
+                "h-9 px-3 text-sm gap-2 border-slate-300",
+                selected.size > 0 && "bg-primary text-primary-foreground border-primary hover:bg-primary/90 hover:text-primary-foreground",
+              )}
+            >
+              <UsersIcon className="h-4 w-4" />
+              {selectedLabel}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-80 p-0" align="start" dir="rtl">
+            <div className="px-3 py-2 border-b bg-slate-50 flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-700">اختيار المستخدمين</span>
+              {selected.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => persist(new Set())}
+                  className="text-[11px] text-rose-600 hover:underline"
+                >
+                  مسح التحديد
+                </button>
+              )}
+            </div>
+            <div className="max-h-80 overflow-auto p-1">
+              <button
+                type="button"
+                onClick={() => persist(new Set())}
+                className={cn(
+                  "w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-slate-100 text-start",
+                  selected.size === 0 && "bg-primary/10 text-primary font-medium",
+                )}
+              >
+                <Checkbox checked={selected.size === 0} className="pointer-events-none" />
+                <span>كل المستخدمين (بما فيهم مدير الشركة) — افتراضي</span>
+              </button>
+              <div className="h-px bg-slate-200 my-1" />
+              {sortedUsers.length === 0 ? (
+                <div className="px-2 py-3 text-[11px] text-slate-500 text-center">لا يوجد مستخدمون</div>
+              ) : (
+                sortedUsers.map((u: any) => {
+                  const uid = Number(u.id);
+                  const checked = selected.has(uid);
+                  const isAdmin = u.role === "admin" || u.role === "superadmin";
+                  return (
+                    <button
+                      key={uid}
+                      type="button"
+                      onClick={() => {
+                        const next = new Set(selected);
+                        if (next.has(uid)) next.delete(uid); else next.add(uid);
+                        persist(next);
+                      }}
+                      className={cn(
+                        "w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-slate-100 text-start",
+                        checked && "bg-primary/10",
+                      )}
+                    >
+                      <Checkbox checked={checked} className="pointer-events-none" />
+                      <span className="flex-1 truncate">{labelFor(u)}</span>
+                      {isAdmin && (
+                        <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-medium">
+                          مدير
+                        </span>
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </PopoverContent>
+        </Popover>
+
+        {selected.size > 0 && (
+          <span className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded">
+            الفلتر مُفعَّل — شاشة المرتجعات تعرض المستخدمين المحدَّدين فقط
+          </span>
+        )}
+      </div>
     </div>
   );
 }
