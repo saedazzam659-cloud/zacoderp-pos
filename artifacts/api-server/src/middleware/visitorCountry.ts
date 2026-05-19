@@ -151,6 +151,100 @@ async function lookupCountryByIp(ip: string): Promise<string | null> {
   }
 }
 
+// ─── Rich IP → location resolver (city/region/country) ────────────────
+// Separate cache from the country-only one because the upstream and the
+// payload shape differ. Used by SuperAdmin reporting surfaces (security
+// sessions + login history) so they can show "Cairo, Egypt" instead of
+// just "EG" — critical for spotting suspicious foreign logins at a glance.
+// Uses ipwho.is (free, HTTPS, no key, ~5k req/day per IP cap). Falls back
+// to null on any error/timeout; results are cached for 24h so a repeat
+// IP is free. Private/loopback IPs return null immediately.
+export type IpLocation = {
+  country: string | null;   // ISO alpha-2
+  countryName: string | null;
+  region: string | null;
+  city: string | null;
+  lat: number | null;
+  lng: number | null;
+};
+const IP_LOC_CACHE_MAX = 1000;
+// Split TTLs: positive results are stable for 24h, but negative results
+// (timeout / upstream failure / private IP) get a much shorter TTL so a
+// transient outage doesn't suppress location enrichment for the rest of
+// the day. Without this split, a single flaky upstream response would
+// poison the cache and reporting surfaces would show empty cells until
+// the next process restart.
+const IP_LOC_POS_TTL_MS = 24 * 60 * 60 * 1000;  // 24h for real hits
+const IP_LOC_NEG_TTL_MS = 10 * 60 * 1000;       // 10min for misses
+type IpLocCacheEntry = { value: IpLocation | null; expiresAt: number };
+const ipLocCache = new Map<string, IpLocCacheEntry>();
+function ipLocCacheGet(ip: string): IpLocation | null | undefined {
+  const hit = ipLocCache.get(ip);
+  if (!hit) return undefined;
+  if (hit.expiresAt < Date.now()) { ipLocCache.delete(ip); return undefined; }
+  return hit.value;
+}
+function ipLocCacheSet(ip: string, value: IpLocation | null) {
+  if (ipLocCache.size >= IP_LOC_CACHE_MAX) {
+    const firstKey = ipLocCache.keys().next().value;
+    if (firstKey !== undefined) ipLocCache.delete(firstKey);
+  }
+  const ttl = value === null ? IP_LOC_NEG_TTL_MS : IP_LOC_POS_TTL_MS;
+  ipLocCache.set(ip, { value, expiresAt: Date.now() + ttl });
+}
+
+// In-flight dedupe: when N concurrent callers ask for the same uncached
+// IP (e.g. sessions + login-history loading together, or two admins on
+// the page at once), only one upstream request is made and all callers
+// await the same promise. Entries are removed on settle so a later miss
+// re-fetches. Without this, concurrent cold-cache requests would
+// duplicate outbound calls and burn the rate-limit on ipwho.is.
+const ipLocInFlight = new Map<string, Promise<IpLocation | null>>();
+
+async function ipLocFetch(v4: string): Promise<IpLocation | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), GEO_LOOKUP_TIMEOUT_MS);
+  try {
+    const r = await fetch(`https://ipwho.is/${encodeURIComponent(v4)}`, { signal: ctrl.signal });
+    if (!r.ok) { ipLocCacheSet(v4, null); return null; }
+    const j: any = await r.json();
+    if (!j || j.success === false) { ipLocCacheSet(v4, null); return null; }
+    const country = typeof j.country_code === "string" && /^[A-Z]{2}$/.test(j.country_code.toUpperCase())
+      ? j.country_code.toUpperCase() : null;
+    const out: IpLocation = {
+      country,
+      countryName: typeof j.country === "string" ? j.country : null,
+      region:      typeof j.region  === "string" ? j.region  : null,
+      city:        typeof j.city    === "string" ? j.city    : null,
+      lat: typeof j.latitude  === "number" ? j.latitude  : null,
+      lng: typeof j.longitude === "number" ? j.longitude : null,
+    };
+    ipLocCacheSet(v4, out);
+    // Warm the country-only cache as a side effect so the visitor
+    // middleware and resolveCountryForIp don't make a duplicate call.
+    if (country) geoCacheSet(v4, country);
+    return out;
+  } catch {
+    ipLocCacheSet(v4, null);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function resolveLocationForIp(ip: string): Promise<IpLocation | null> {
+  if (!ip) return null;
+  const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip;
+  if (isPrivateOrLoopback(v4)) return null;
+  const cached = ipLocCacheGet(v4);
+  if (cached !== undefined) return cached;
+  const pending = ipLocInFlight.get(v4);
+  if (pending) return pending;
+  const p = ipLocFetch(v4).finally(() => { ipLocInFlight.delete(v4); });
+  ipLocInFlight.set(v4, p);
+  return p;
+}
+
 // Public helper: resolve the raw ISO-3166-1 alpha-2 country code for an
 // arbitrary IP address (e.g. from audit_log or session-tracking rows).
 // Unlike the visitor middleware below, this function does NOT coerce

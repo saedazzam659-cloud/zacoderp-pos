@@ -38,6 +38,16 @@ interface SessionRow {
   loginAccuracy?: number | null;
   loginZoneName?: string | null;
   loginAt?: string | null;
+  // SuperAdmin-only IP-derived geolocation. Populated server-side from
+  // a free geo-IP service (ipwho.is), independent of the per-company
+  // user-tracking zone feature. Lets the SuperAdmin always see where
+  // each login came from (city/region/country) even when the user
+  // denied GPS or has no tracking zone configured.
+  ipCity?: string | null;
+  ipRegion?: string | null;
+  ipCountryName?: string | null;
+  ipLat?: number | null;
+  ipLng?: number | null;
 }
 
 // Compact, attractive "login location" cell shared by the sessions table.
@@ -55,23 +65,46 @@ function LoginLocationCell(props: {
   lng: number | null | undefined;
   accuracy: number | null | undefined;
   zoneName: string | null | undefined;
+  // SuperAdmin IP-derived fallback (city/region/country + approximate
+  // lat/lng from the geo-IP service). Shown as a 4th amber tier when no
+  // GPS-based location is available, so the cell is NEVER empty when we
+  // know the visitor's IP. Independent of tracking zones.
+  ipCity?: string | null;
+  ipRegion?: string | null;
+  ipCountryName?: string | null;
+  ipLat?: number | null;
+  ipLng?: number | null;
   testId?: string;
 }) {
-  const { place, address, lat, lng, accuracy, zoneName, testId } = props;
+  const { place, address, lat, lng, accuracy, zoneName,
+          ipCity, ipRegion, ipCountryName, ipLat, ipLng, testId } = props;
   const hasCoords = typeof lat === "number" && typeof lng === "number";
-  const hasAny = !!(zoneName || place || address || hasCoords);
-  if (!hasAny) {
+  const hasGps = !!(zoneName || place || address || hasCoords);
+  const ipParts = [ipCity, ipRegion, ipCountryName].filter(Boolean) as string[];
+  const hasIp = ipParts.length > 0 || (typeof ipLat === "number" && typeof ipLng === "number");
+  if (!hasGps && !hasIp) {
     return <span className="text-xs text-muted-foreground" data-testid={testId}>—</span>;
   }
-  const primary = zoneName ?? place ?? address ?? (hasCoords ? `${lat!.toFixed(5)}, ${lng!.toFixed(5)}` : "—");
-  const tier = zoneName ? "zone" : (place || address) ? "place" : "coords";
+  // Tier selection. IP-derived location is only used as a fallback when
+  // no GPS-based signal is present, so the strongest available label
+  // always wins ("zone" > "place" > "coords" > "ip").
+  const tier: "zone" | "place" | "coords" | "ip" =
+    hasGps
+      ? (zoneName ? "zone" : (place || address) ? "place" : "coords")
+      : "ip";
+  const primary =
+    tier === "ip"
+      ? (ipParts.join("، ") || `${ipLat!.toFixed(4)}, ${ipLng!.toFixed(4)}`)
+      : (zoneName ?? place ?? address ?? `${lat!.toFixed(5)}, ${lng!.toFixed(5)}`);
   const cls =
     tier === "zone"  ? "from-emerald-50 to-teal-50 border-emerald-200 text-emerald-800" :
     tier === "place" ? "from-indigo-50 to-sky-50 border-indigo-200 text-indigo-800"   :
+    tier === "ip"    ? "from-amber-50 to-orange-50 border-amber-200 text-amber-800"   :
                        "from-slate-50 to-gray-50 border-slate-200 text-slate-700";
   const dotCls =
     tier === "zone"  ? "bg-emerald-500" :
     tier === "place" ? "bg-indigo-500"  :
+    tier === "ip"    ? "bg-amber-500"   :
                        "bg-slate-400";
   const tooltipParts: string[] = [];
   if (zoneName) tooltipParts.push(`النطاق: ${zoneName}`);
@@ -79,7 +112,21 @@ function LoginLocationCell(props: {
   if (address)  tooltipParts.push(`العنوان: ${address}`);
   if (hasCoords) tooltipParts.push(`الإحداثيات: ${lat!.toFixed(6)}, ${lng!.toFixed(6)}`);
   if (typeof accuracy === "number") tooltipParts.push(`دقة GPS: ±${Math.round(accuracy)} م`);
-  const mapsUrl = hasCoords ? `https://www.google.com/maps?q=${lat},${lng}` : null;
+  if (tier === "ip") {
+    tooltipParts.push("الموقع مستنتج من عنوان IP (تقريبي)");
+    if (ipCity)        tooltipParts.push(`المدينة: ${ipCity}`);
+    if (ipRegion)      tooltipParts.push(`الإقليم: ${ipRegion}`);
+    if (ipCountryName) tooltipParts.push(`الدولة: ${ipCountryName}`);
+    if (typeof ipLat === "number" && typeof ipLng === "number") {
+      tooltipParts.push(`الإحداثيات (IP): ${ipLat.toFixed(4)}, ${ipLng.toFixed(4)}`);
+    }
+  }
+  // Prefer GPS coords for the map link; fall back to IP coords when only
+  // those are available so the reviewer can still see an approximate pin.
+  const mapLat = hasCoords ? lat! : (typeof ipLat === "number" ? ipLat : null);
+  const mapLng = hasCoords ? lng! : (typeof ipLng === "number" ? ipLng : null);
+  const mapsUrl = (mapLat != null && mapLng != null)
+    ? `https://www.google.com/maps?q=${mapLat},${mapLng}` : null;
   return (
     <div className="inline-flex flex-col gap-0.5 max-w-[220px]" data-testid={testId}>
       <div
@@ -101,7 +148,7 @@ function LoginLocationCell(props: {
           className="inline-flex items-center gap-1 text-[10px] font-mono text-sky-600 hover:text-sky-800 hover:underline px-2"
           title="افتح في خرائط Google"
         >
-          🗺 خريطة <span className="text-slate-400">({lat!.toFixed(4)}, {lng!.toFixed(4)})</span>
+          🗺 خريطة <span className="text-slate-400">({mapLat!.toFixed(4)}, {mapLng!.toFixed(4)})</span>
         </a>
       )}
     </div>
@@ -164,6 +211,12 @@ interface LoginHistoryRow {
   // the total auth-attempt count for this username within the filter window
   // (or the past 30d when no window was specified).
   country?: string | null;
+  // SuperAdmin-only IP-derived location enrichment (see admin.ts).
+  ipCity?: string | null;
+  ipRegion?: string | null;
+  ipCountryName?: string | null;
+  ipLat?: number | null;
+  ipLng?: number | null;
   attemptCount?: number | null;
   // Login-location enrichment (only populated for action='login' rows where
   // an auto-checkin captured GPS within ±10 minutes of the login). Joined
@@ -464,6 +517,11 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                           lng={r.loginLng}
                           accuracy={r.loginAccuracy}
                           zoneName={r.loginZoneName}
+                          ipCity={r.ipCity}
+                          ipRegion={r.ipRegion}
+                          ipCountryName={r.ipCountryName}
+                          ipLat={r.ipLat}
+                          ipLng={r.ipLng}
                           testId={`session-location-${r.userId}`}
                         />
                       </td>
@@ -792,6 +850,11 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                             lng={r.loginLng}
                             accuracy={r.loginAccuracy}
                             zoneName={r.loginZoneName}
+                            ipCity={r.ipCity}
+                            ipRegion={r.ipRegion}
+                            ipCountryName={r.ipCountryName}
+                            ipLat={r.ipLat}
+                            ipLng={r.ipLng}
                             testId={`history-location-${r.id}`}
                           />
                         </td>

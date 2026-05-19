@@ -40,7 +40,7 @@ import { randomUUID } from "crypto";
 import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegistry.js";
 import { writeAudit } from "../middleware/permissions.js";
 import { resolveBearerToken } from "../middleware/auth.js";
-import { resolveCountryForIp } from "../middleware/visitorCountry.js";
+import { resolveCountryForIp, resolveLocationForIp, type IpLocation } from "../middleware/visitorCountry.js";
 import { persistSnapshot, restoreFromSnapshotPayload } from "./backup.js";
 import { randomBytes } from "crypto";
 
@@ -2480,22 +2480,27 @@ router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
     const distinctIps = Array.from(new Set(
       Array.from(loginByUser.values()).map(r => r.ip).filter((x): x is string => !!x),
     ));
-    const ipCountry = new Map<string, string | null>();
+    const ipLocMap = new Map<string, IpLocation | null>();
     // Bounded concurrency: process IPs in chunks of 10 so a tenant with
     // dozens of active sessions doesn't fan out into a burst of outbound
-    // calls to the geo-IP service. resolveCountryForIp already enforces
-    // a 1.5s per-call timeout AND caches results, so the second page
-    // load sees ~0ms regardless of chunk size — this only caps the cold
-    // path. Per-IP failures are swallowed so one bad IP can't kill the
-    // whole sessions list.
+    // calls to the geo-IP service. resolveLocationForIp already enforces
+    // a 1.5s per-call timeout AND caches results for 24h, so the second
+    // page load sees ~0ms regardless of chunk size — this only caps the
+    // cold path. Per-IP failures are swallowed so one bad IP can't kill
+    // the whole sessions list. The richer resolver returns city + region
+    // + country (vs country-only) so SuperAdmin can spot suspicious
+    // foreign logins at a glance.
     const GEO_BATCH = 10;
     for (let i = 0; i < distinctIps.length; i += GEO_BATCH) {
       const batch = distinctIps.slice(i, i + GEO_BATCH);
       await Promise.all(batch.map(async (ip) => {
-        try { ipCountry.set(ip, await resolveCountryForIp(ip)); }
-        catch { ipCountry.set(ip, null); }
+        try { ipLocMap.set(ip, await resolveLocationForIp(ip)); }
+        catch { ipLocMap.set(ip, null); }
       }));
     }
+    // Back-compat shorthand used by the row-builder below.
+    const ipCountry = new Map<string, string | null>();
+    for (const [ip, loc] of ipLocMap) ipCountry.set(ip, loc?.country ?? null);
 
     // Aggregate successful logins per company across the whole audit_log so
     // the UI can show how many times each tenant has signed in (lifetime).
@@ -2602,7 +2607,8 @@ router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
 
     const rows = sessions.map(s => {
       const lg = loginByUser.get(s.id);
-      const country = lg?.ip ? (ipCountry.get(lg.ip) ?? null) : null;
+      const ipLoc = lg?.ip ? (ipLocMap.get(lg.ip) ?? null) : null;
+      const country = ipLoc?.country ?? (lg?.ip ? (ipCountry.get(lg.ip) ?? null) : null);
       const v = visitByUser.get(s.id);
       return {
         userId:      s.id,
@@ -2617,6 +2623,15 @@ router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
         lastLoginAt: s.lastLoginAt,
         ip:          lg?.ip ?? null,
         country,
+        // IP-derived geographic location (independent of the per-company
+        // user-tracking zone feature). Always populated when the geo-IP
+        // upstream resolves the IP. SuperAdmin Security Center shows this
+        // even when the user denied GPS / has no tracking zone.
+        ipCity:        ipLoc?.city        ?? null,
+        ipRegion:      ipLoc?.region      ?? null,
+        ipCountryName: ipLoc?.countryName ?? null,
+        ipLat:         ipLoc?.lat         ?? null,
+        ipLng:         ipLoc?.lng         ?? null,
         userAgent:   lg?.user_agent ?? null,
         loginPlace:    v?.checkinPlace   ?? null,
         loginAddress:  v?.checkinAddress ?? null,
@@ -2761,15 +2776,17 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
     // 24h-cached resolver as the active sessions endpoint, so repeat IPs are
     // free. Per-IP failures degrade to null and never break the response.
     const distinctIps = Array.from(new Set(rows.map(r => r.ip).filter((x): x is string => !!x)));
-    const ipCountry = new Map<string, string | null>();
+    const ipLocMap = new Map<string, IpLocation | null>();
     const GEO_BATCH = 10;
     for (let i = 0; i < distinctIps.length; i += GEO_BATCH) {
       const batch = distinctIps.slice(i, i + GEO_BATCH);
       await Promise.all(batch.map(async (ip) => {
-        try { ipCountry.set(ip, await resolveCountryForIp(ip)); }
-        catch { ipCountry.set(ip, null); }
+        try { ipLocMap.set(ip, await resolveLocationForIp(ip)); }
+        catch { ipLocMap.set(ip, null); }
       }));
     }
+    const ipCountry = new Map<string, string | null>();
+    for (const [ip, loc] of ipLocMap) ipCountry.set(ip, loc?.country ?? null);
 
     // ── Attempt-count per username ─────────────────────────────────────────
     // For each (username) appearing in the result set, count ALL their auth
@@ -2938,9 +2955,19 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
     // Stitch enrichment back onto each row.
     const enriched = rows.map(r => {
       const loc = locByRowId.get(r.id);
+      const ipLoc = r.ip ? (ipLocMap.get(r.ip) ?? null) : null;
       return {
         ...r,
-        country:      r.ip ? (ipCountry.get(r.ip) ?? null) : null,
+        country:      ipLoc?.country ?? (r.ip ? (ipCountry.get(r.ip) ?? null) : null),
+        // SuperAdmin-only IP-derived geolocation (city/region/country),
+        // independent of the per-tenant user-tracking zone feature. Always
+        // present when the geo-IP upstream resolves the IP, even if the
+        // user denied GPS or has no tracking zone.
+        ipCity:        ipLoc?.city        ?? null,
+        ipRegion:      ipLoc?.region      ?? null,
+        ipCountryName: ipLoc?.countryName ?? null,
+        ipLat:         ipLoc?.lat         ?? null,
+        ipLng:         ipLoc?.lng         ?? null,
         attemptCount: r.username ? (attemptCount.get(r.username) ?? null) : null,
         companyName:  r.companyId != null ? (companyNameMap.get(r.companyId) ?? null) : null,
         sessionDurationSec: sessionDurations.get(r.id) ?? null,
