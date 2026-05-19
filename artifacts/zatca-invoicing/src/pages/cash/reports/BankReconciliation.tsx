@@ -167,47 +167,27 @@ export default function BankReconciliation() {
     XLSX.writeFile(wb, `${safe}.cleaned.xlsx`);
   }
 
-  /** "استخراج كملف نظيف" button handler: parse a single uploaded file via the
-   *  same server endpoint as the main upload, then immediately download a clean
-   *  Excel file. Does NOT populate the reconciliation grid — it's purely a
-   *  conversion tool (image/PDF/Word/messy CSV → tidy Excel). */
-  async function handleExtractFiles(files: File[]) {
-    if (files.length === 0) return;
+  /** "استخراج كملف نظيف" button handler: exports the bank statements that the
+   *  user has ALREADY uploaded via the main "رفع كشوف البنك" button. Re-uses the
+   *  parsed `bankTxns` + `warnings` state directly — no re-upload, no extra OCR
+   *  call. If the user hasn't uploaded anything yet, prompts them to do so. */
+  function handleExtractFromUploaded() {
+    if (bankTxns.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "لا توجد كشوف مرفوعة",
+        description: "ارفع كشوف البنك أولاً من زر «رفع كشوف البنك» ثم اضغط استخراج.",
+      });
+      return;
+    }
     setExtracting(true);
     try {
-      const allTxns: Omit<BankTx, "id">[] = [];
-      const allWarnings: string[] = [];
-      const failures: string[] = [];
-      for (const file of files) {
-        try {
-          const contentBase64 = await toBase64(file);
-          const r = await fetch(`${API}/api/bank-reconciliation/parse`, {
-            method: "POST",
-            headers: authHeaders(),
-            body: JSON.stringify({ filename: file.name, contentBase64 }),
-          });
-          const j = await r.json();
-          if (!r.ok) throw new Error(j?.error ?? "فشل التحليل");
-          for (const t of (j.transactions ?? []) as Omit<BankTx, "id">[]) allTxns.push(t);
-          for (const w of (j.warnings ?? []) as string[]) allWarnings.push(`[${file.name}] ${w}`);
-        } catch (e: any) {
-          failures.push(`${file.name}: ${e?.message ?? String(e)}`);
-        }
-      }
-      allTxns.sort((a, b) => a.date.localeCompare(b.date));
-      if (allTxns.length === 0) {
-        toast({
-          variant: "destructive",
-          title: "لم تُستخرج أي حركة",
-          description: failures.length > 0 ? failures.join(" | ") : "تأكد من جودة الملف ومن أنه يحوي جدول حركات.",
-        });
-        return;
-      }
-      const baseName = files.length === 1 ? files[0].name : `${files.length}-files-merged`;
-      downloadAsXlsx(allTxns, allWarnings, baseName);
+      // bankTxns is BankTx[] (with id); downloadAsXlsx only reads date/desc/debit/
+      // credit/balance/ref — the `id` field is ignored, so passing as-is is safe.
+      downloadAsXlsx(bankTxns, warnings, statementLabel || "bank_statements");
       toast({
         title: "تم الاستخراج",
-        description: `حُفظ ${allTxns.length} حركة في ملف Excel نظيف.${failures.length ? " فشل: " + failures.join(" | ") : ""}`,
+        description: `حُفظ ${bankTxns.length} حركة في ملف Excel نظيف.`,
       });
     } finally {
       setExtracting(false);
@@ -607,27 +587,24 @@ export default function BankReconciliation() {
               }}
             />
             {/* "استخراج كملف نظيف" — sits to the LEFT (next) of the upload button.
-                Converts any source format (Word / PDF / Excel / CSV / images) into
-                a clean, standardized Excel file the user can download — without
-                touching the reconciliation grid. Useful for cleanup, archiving,
-                or sharing the statement in a tidy format. */}
-            <Label
-              htmlFor="recon-extract-file"
-              className={`cursor-pointer inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 ${extracting ? "opacity-60 cursor-wait" : ""}`}
-              title="حوّل الكشف (PDF/Word/صورة/CSV) إلى ملف Excel نظيف بدون إدراجه في المطابقة"
+                Exports the ALREADY-uploaded bank statements (parsed in `bankTxns`)
+                as a clean RTL Excel file. No re-upload, no extra OCR call —
+                purely a download of what was just parsed via the main upload. */}
+            <Button
+              type="button"
+              onClick={handleExtractFromUploaded}
+              disabled={extracting || bankTxns.length === 0}
+              variant="outline"
+              className="gap-2 border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+              title={
+                bankTxns.length === 0
+                  ? "ارفع كشوف البنك أولاً ثم اضغط هنا لتنزيلها كملف Excel نظيف"
+                  : `تنزيل ${bankTxns.length} حركة مرفوعة كملف Excel نظيف`
+              }
             >
               <FileSpreadsheet className="h-4 w-4" />
               {extracting ? "جارٍ الاستخراج..." : "استخراج كملف نظيف (Excel)"}
-            </Label>
-            <input
-              id="recon-extract-file" type="file" className="hidden" disabled={extracting} multiple
-              accept=".xlsx,.xls,.csv,.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp"
-              onChange={e => {
-                const fs = Array.from(e.target.files ?? []);
-                if (fs.length > 0) void handleExtractFiles(fs);
-                e.currentTarget.value = "";
-              }}
-            />
+            </Button>
             <p className="text-xs text-muted-foreground">يمكن رفع أكثر من ملف معاً • Excel / CSV / PDF / Word / صور (PNG, JPG) — الصور تُقرأ بالـ OCR</p>
             {statementLabel && (
               <span className="text-xs px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
