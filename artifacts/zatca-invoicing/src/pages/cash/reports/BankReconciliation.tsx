@@ -868,6 +868,26 @@ function SidePane({
                   );
                 })}
           </tbody>
+          {/* Totals footer — sum of debit (وارد) and credit (صادر) for
+              every row in this pane. Useful especially on the bank-statement
+              side so the user can immediately see إجمالي المدين / الدائن
+              without exporting. Hidden while loading or when empty. */}
+          {!loading && rows.length > 0 && (() => {
+            const totalDebit  = rows.reduce((s, t) => s + Number(t.debit  || 0), 0);
+            const totalCredit = rows.reduce((s, t) => s + Number(t.credit || 0), 0);
+            return (
+              <tfoot className="bg-muted/50 border-t-2 sticky bottom-0">
+                <tr className="font-bold">
+                  <td colSpan={3} className="px-2 py-2 text-right">الإجمالي</td>
+                  <td className="px-2 py-2 text-center tabular-nums text-emerald-700">{fmt(totalDebit)}</td>
+                  <td className="px-2 py-2 text-center tabular-nums text-rose-700">{fmt(totalCredit)}</td>
+                  <td className="px-2 py-2 text-center text-[10px] text-muted-foreground">
+                    صافي<br/><span className="tabular-nums">{fmt(totalDebit - totalCredit)}</span>
+                  </td>
+                </tr>
+              </tfoot>
+            );
+          })()}
         </table>
       </div>
     </div>
