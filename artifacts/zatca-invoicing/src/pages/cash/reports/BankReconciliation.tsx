@@ -170,7 +170,33 @@ export default function BankReconciliation() {
 
       // Sort merged transactions chronologically before assigning stable IDs.
       merged.sort((a, b) => a.date.localeCompare(b.date));
-      const txns: BankTx[] = merged.map((t, i) => ({ ...t, id: `bank-${i}-${t.date}` }));
+
+      // Restrict to the date range selected at the top of the report
+      // (من تاريخ / إلى تاريخ). Rows whose `date` falls outside [from, to]
+      // are dropped — this lets the user upload multi-month statements
+      // and surface only the slice they're reconciling for the current
+      // period. Dates are ISO `YYYY-MM-DD`, so plain string compare is
+      // both correct and stable. Rows with a missing/invalid date are
+      // kept (no false drops) and a warning is shown if any rows were
+      // excluded by the date filter.
+      const rangeFrom = applied.from || "";
+      const rangeTo   = applied.to   || "";
+      const beforeFilter = merged.length;
+      const filtered = merged.filter(t => {
+        const d = (t.date ?? "").slice(0, 10);
+        if (!d) return true;
+        if (rangeFrom && d < rangeFrom) return false;
+        if (rangeTo   && d > rangeTo)   return false;
+        return true;
+      });
+      const excludedByDate = beforeFilter - filtered.length;
+      if (excludedByDate > 0) {
+        allWarnings.unshift(
+          `تم استبعاد ${excludedByDate} حركة خارج النطاق الزمني المحدد (${rangeFrom} → ${rangeTo}).`
+        );
+      }
+
+      const txns: BankTx[] = filtered.map((t, i) => ({ ...t, id: `bank-${i}-${t.date}` }));
 
       setBankTxns(txns);
       setStatementLabel(
