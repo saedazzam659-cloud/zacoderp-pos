@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import esbuildPluginPino from "esbuild-plugin-pino";
-import { rm } from "node:fs/promises";
+import { rm, copyFile } from "node:fs/promises";
 
 // Plugins (e.g. 'esbuild-plugin-pino') may use `require` to resolve dependencies
 globalThis.require = createRequire(import.meta.url);
@@ -195,6 +195,16 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
     `,
     },
   });
+
+  // pdf-parse v2 → pdfjs-dist v5 spawns a worker thread from a sibling
+  // file `pdf.worker.mjs` resolved relative to the running script's
+  // directory. In production the only thing shipped is the esbuild
+  // bundle (no node_modules), so the worker file is missing and we get
+  // `Setting up fake worker failed: Cannot find module .../dist/pdf.worker.mjs`.
+  // Copy the worker next to the bundle so pdfjs's default lookup works.
+  const pdfParseEntry = createRequire(import.meta.url).resolve("pdf-parse");
+  const pdfWorkerSrc = path.resolve(path.dirname(pdfParseEntry), "pdf.worker.mjs");
+  await copyFile(pdfWorkerSrc, path.resolve(distDir, "pdf.worker.mjs"));
 }
 
 buildAll().catch((err) => {
