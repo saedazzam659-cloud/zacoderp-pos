@@ -5177,6 +5177,303 @@ test("GET /maintenance/history: ?format=csv pins content-type, exact Arabic head
   assert.equal(fB.entityType, "retention_settings");
 });
 
+// Task #127 — `?unbounded=1` drops the on-screen safety cap entirely
+// and streams *every* matching row to the response so the "تنزيل الكل"
+// follow-up toast hands operators a complete export instead of a
+// second clipped slice. We also pin the side-effects: the response
+// must echo X-Csv-Unbounded so the client can change the toast wording,
+// X-Csv-Row-Cap must flip to the literal "unlimited" (no numeric cap
+// applies on the unbounded path), and the audit row must record
+// `unbounded:true` + `rowCap:null` so a SuperAdmin reviewing the trail
+// can tell at a glance whether the file they're looking at was the
+// capped or the full version. Verified against /maintenance/history
+// because that endpoint exercises the filter-aware code path; the
+// other four endpoints get focused header + audit parity coverage in
+// the sibling test below.
+test("GET /maintenance/history: ?unbounded=1 drops the safety cap, echoes X-Csv-Unbounded:1, and records unbounded:true + rowCap:null in the export audit row", async () => {
+  await seedHistoryOnce();
+
+  // Snapshot audit_log so we only look at the export rows the next two
+  // calls write — same shared-DB safety pattern the test above uses.
+  const before = await db.execute<{ max_id: number | null }>(sql`
+    SELECT COALESCE(MAX(id), 0)::bigint AS max_id FROM audit_log
+  `);
+  const beforeMax = Number(((before as { rows?: Array<{ max_id: number | null }> }).rows ?? [{ max_id: 0 }])[0]?.max_id ?? 0);
+
+  // Use a filter set that excludes export_csv audit rows (the very rows
+  // these two calls will write back to the history feed). Without it the
+  // unbounded call sees one extra row vs the capped call — its own
+  // sibling's export_csv audit entry — and the parity assertion below
+  // trips spuriously. The day-1 fix/journal_pending row is the same
+  // single seeded row the prior CSV test pins, so the count is stable
+  // regardless of how many other tests in the suite have run.
+  const filterScope = "from=2010-04-01&to=2010-04-08&action=fix&entityType=journal_pending";
+
+  // ── Capped export (no ?unbounded=1) ─────────────────────────────────────
+  const capped = await api(HIST_PATH(`${filterScope}&format=csv`), "GET", { token: saToken });
+  assert.equal(capped.status, 200, `expected 200, got ${capped.status}: ${capped.text.slice(0, 200)}`);
+  assert.equal(
+    capped.headers.get("x-csv-unbounded"),
+    "0",
+    "capped export must echo X-Csv-Unbounded:0 so the client offers the 'تنزيل الكل' follow-up only when the operator hasn't already taken it",
+  );
+  assert.equal(
+    capped.headers.get("x-csv-row-cap"),
+    "1000",
+    "capped export must report the on-screen safety cap (1,000) in X-Csv-Row-Cap, not the global ceiling",
+  );
+  // Pin the CORS expose list — without X-Csv-Unbounded here the page-side
+  // mutation can't read the header through the proxy and would fall back
+  // to the wrong toast wording on the deployed app.
+  assert.match(
+    capped.headers.get("access-control-expose-headers") ?? "",
+    /\bX-Csv-Unbounded\b/i,
+    "X-Csv-Unbounded must be in Access-Control-Expose-Headers so the proxied frontend can read it",
+  );
+
+  // ── Unbounded export (?unbounded=1) ─────────────────────────────────────
+  const full = await api(HIST_PATH(`${filterScope}&format=csv&unbounded=1`), "GET", { token: saToken });
+  assert.equal(full.status, 200, `expected 200, got ${full.status}: ${full.text.slice(0, 200)}`);
+  assert.equal(
+    full.headers.get("x-csv-unbounded"),
+    "1",
+    "unbounded export must echo X-Csv-Unbounded:1 so the client knows the safety-cap escape hatch was taken",
+  );
+  assert.equal(
+    full.headers.get("x-csv-row-cap"),
+    "unlimited",
+    "unbounded export must flip X-Csv-Row-Cap to the literal 'unlimited' so the client never confuses it with the bounded numeric cap",
+  );
+  assert.equal(
+    full.headers.get("x-csv-truncated"),
+    "0",
+    "unbounded export must always echo X-Csv-Truncated:0 — it returned every matching row, so the toast must not offer a follow-up download",
+  );
+
+  // Both calls must return the same data — the seed is well below 1k rows
+  // so the on-screen cap doesn't actually clip anything. This pins that
+  // ?unbounded=1 doesn't change *what* gets exported on the under-cap
+  // path, only the cap that *would* clip on a long history.
+  const cappedLines = capped.text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.length > 0);
+  const fullLines   = full.text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.length > 0);
+  assert.equal(
+    fullLines.length,
+    cappedLines.length,
+    `under the safety cap, ?unbounded=1 must return the same row count as the capped export; got ${fullLines.length} (full) vs ${cappedLines.length} (capped)`,
+  );
+
+  // ── Audit side-effect: each call writes one export_csv row, and the
+  // metadata.unbounded boolean must distinguish them. Without this, a
+  // SuperAdmin reviewing the trail can't tell a 1,000-row capped export
+  // from a 1,000-row unbounded export that hit a thinly-populated tenant.
+  const newAuditRows = await db.select({
+    id:         auditLogTable.id,
+    metadata:   auditLogTable.metadata,
+  })
+    .from(auditLogTable)
+    .where(and(
+      sql`${auditLogTable.id} > ${beforeMax}`,
+      eq(auditLogTable.action, "export_csv"),
+      eq(auditLogTable.module, "maintenance"),
+      eq(auditLogTable.entityType, "maintenance_history"),
+    ))
+    .orderBy(auditLogTable.id);
+  assert.equal(newAuditRows.length, 2,
+    `each CSV export must write exactly one audit row (expected 2, got ${newAuditRows.length})`);
+
+  // Audit row #1 (capped) → unbounded:false, rowCap:1000.
+  const capMeta = newAuditRows[0].metadata as Record<string, unknown>;
+  assert.equal(capMeta.unbounded, false,
+    "audit row #1 (capped export) must record metadata.unbounded:false");
+  assert.equal(capMeta.rowCap, 1000,
+    "audit row #1 (capped export) must record the on-screen safety cap as metadata.rowCap");
+  insertedAuditLogIds.push(newAuditRows[0].id);
+
+  // Audit row #2 (unbounded) → unbounded:true, rowCap:null. The null is
+  // load-bearing: future tooling (e.g. the audit-log inspector dialog)
+  // uses it to render a "تنزيل كامل" badge instead of a numeric cap
+  // counter, so a SuperAdmin reviewing the trail can tell at a glance
+  // that no clipping was possible on this export.
+  const fullMeta = newAuditRows[1].metadata as Record<string, unknown>;
+  assert.equal(fullMeta.unbounded, true,
+    "audit row #2 (unbounded export) must record metadata.unbounded:true");
+  assert.equal(fullMeta.rowCap, null,
+    "audit row #2 (unbounded export) must record metadata.rowCap:null — no numeric cap applies on the unbounded path");
+  assert.equal(fullMeta.truncated, false,
+    "audit row #2 (unbounded export) must record metadata.truncated:false — every matching row was returned");
+  insertedAuditLogIds.push(newAuditRows[1].id);
+});
+
+// Task #127 — header + audit parity across the other four maintenance
+// CSV exports (broken tools, recovered tools, email history, tool
+// history). The history endpoint above pins the full data-parity path
+// against a richly seeded feed; these four share the same
+// wantsUnbounded()/streamCsv() plumbing, so we only need a focused
+// check that each one flips X-Csv-Unbounded:0→1, X-Csv-Row-Cap
+// "<number>"→"unlimited", and metadata.unbounded false→true with
+// rowCap number→null. Tool-history needs a (companyId, toolKey)
+// target; the other three are global. A regression on any of these
+// would silently leave one of the five "تنزيل الكل" buttons either
+// broken (no header → no follow-up) or mis-audited (wrong rowCap).
+const CSV_UNBOUNDED_PARITY_FIXTURES: Array<{
+  label: string;
+  pathQs: () => Promise<string> | string;
+  entityType: string;
+  expectedCap: string;
+}> = [
+  {
+    label: "/maintenance/error-summary",
+    pathQs: () => "/api/admin/maintenance/error-summary?format=csv",
+    entityType: "maintenance_error_summary",
+    expectedCap: "1000",
+  },
+  {
+    label: "/maintenance/recent-recoveries",
+    pathQs: () => "/api/admin/maintenance/recent-recoveries?format=csv",
+    entityType: "maintenance_recent_recoveries",
+    expectedCap: "1000",
+  },
+  {
+    label: "/maintenance/email-history",
+    pathQs: () => "/api/admin/maintenance/email-history?format=csv",
+    entityType: "maintenance_email_history",
+    expectedCap: "1000",
+  },
+];
+
+for (const fx of CSV_UNBOUNDED_PARITY_FIXTURES) {
+  test(`GET ${fx.label}: ?unbounded=1 flips X-Csv-Unbounded + X-Csv-Row-Cap and records unbounded:true + rowCap:null in the export audit row`, async () => {
+    // Snapshot audit_log so we only look at the export rows this call
+    // pair writes — shared-DB safety pattern. Same module/action filter
+    // as the history test below to avoid races with other suites.
+    const before = await db.execute<{ max_id: number | null }>(sql`
+      SELECT COALESCE(MAX(id), 0)::bigint AS max_id FROM audit_log
+    `);
+    const beforeMax = Number(((before as { rows?: Array<{ max_id: number | null }> }).rows ?? [{ max_id: 0 }])[0]?.max_id ?? 0);
+
+    const basePath = await fx.pathQs();
+
+    // ── Capped export ────────────────────────────────────────────────
+    const capped = await api(basePath, "GET", { token: saToken });
+    assert.equal(capped.status, 200, `${fx.label} capped: expected 200, got ${capped.status}: ${capped.text.slice(0, 200)}`);
+    assert.equal(capped.headers.get("x-csv-unbounded"), "0",
+      `${fx.label} capped: must echo X-Csv-Unbounded:0 so the client offers the 'تنزيل الكل' follow-up`);
+    assert.equal(capped.headers.get("x-csv-row-cap"), fx.expectedCap,
+      `${fx.label} capped: must report the on-screen safety cap (${fx.expectedCap}) in X-Csv-Row-Cap`);
+    assert.match(
+      capped.headers.get("access-control-expose-headers") ?? "",
+      /\bX-Csv-Unbounded\b/i,
+      `${fx.label}: X-Csv-Unbounded must be in Access-Control-Expose-Headers so the proxied frontend can read it`,
+    );
+
+    // ── Unbounded export ─────────────────────────────────────────────
+    const full = await api(`${basePath}&unbounded=1`, "GET", { token: saToken });
+    assert.equal(full.status, 200, `${fx.label} unbounded: expected 200, got ${full.status}: ${full.text.slice(0, 200)}`);
+    assert.equal(full.headers.get("x-csv-unbounded"), "1",
+      `${fx.label} unbounded: must echo X-Csv-Unbounded:1 so the client knows the escape hatch was taken`);
+    assert.equal(full.headers.get("x-csv-row-cap"), "unlimited",
+      `${fx.label} unbounded: must flip X-Csv-Row-Cap to the literal 'unlimited'`);
+    assert.equal(full.headers.get("x-csv-truncated"), "0",
+      `${fx.label} unbounded: must echo X-Csv-Truncated:0 — every matching row was returned`);
+
+    // ── Audit parity ─────────────────────────────────────────────────
+    // Each call writes exactly one export_csv row against this
+    // endpoint's entityType. The two rows must differ ONLY in
+    // unbounded/rowCap so a regression that mis-stamps either flag
+    // surfaces here instead of silently corrupting the audit trail.
+    const newAuditRows = await db.select({
+      id:       auditLogTable.id,
+      metadata: auditLogTable.metadata,
+    })
+      .from(auditLogTable)
+      .where(and(
+        sql`${auditLogTable.id} > ${beforeMax}`,
+        eq(auditLogTable.action, "export_csv"),
+        eq(auditLogTable.module, "maintenance"),
+        eq(auditLogTable.entityType, fx.entityType),
+      ))
+      .orderBy(auditLogTable.id);
+    assert.equal(newAuditRows.length, 2,
+      `${fx.label}: each CSV export must write exactly one audit row (expected 2, got ${newAuditRows.length})`);
+
+    const capMeta = newAuditRows[0].metadata as Record<string, unknown>;
+    assert.equal(capMeta.unbounded, false,
+      `${fx.label}: audit row #1 (capped) must record metadata.unbounded:false`);
+    assert.equal(capMeta.rowCap, Number(fx.expectedCap),
+      `${fx.label}: audit row #1 (capped) must record the numeric safety cap as metadata.rowCap`);
+    insertedAuditLogIds.push(newAuditRows[0].id);
+
+    const fullMeta = newAuditRows[1].metadata as Record<string, unknown>;
+    assert.equal(fullMeta.unbounded, true,
+      `${fx.label}: audit row #2 (unbounded) must record metadata.unbounded:true`);
+    assert.equal(fullMeta.rowCap, null,
+      `${fx.label}: audit row #2 (unbounded) must record metadata.rowCap:null — no numeric cap applies`);
+    insertedAuditLogIds.push(newAuditRows[1].id);
+  });
+}
+
+// Tool-history is the fifth maintenance CSV export but its query is
+// keyed on a (companyId, toolKey) pair, so it doesn't fit the global
+// fixture loop above. The seed below provisions a throwaway company +
+// tool key, runs both the capped and unbounded exports against it,
+// then pins the same parity invariants. Without a company-scoped seed
+// the call would 404 (or worse, leak audit rows into another tenant's
+// trail in the shared dev DB).
+test("GET /maintenance/tool-history: ?unbounded=1 flips X-Csv-Unbounded + X-Csv-Row-Cap and records unbounded:true + rowCap:null in the export audit row", async () => {
+  // Reuse the existing maintenance fixture company — its companyId is
+  // already isolated from the other suites by TEST_TAG. We don't need
+  // any maintenance_runs rows to exercise the export path; the
+  // empty-result case still emits the export_csv audit row + headers.
+  await seedHistoryOnce();
+  assert.ok(historyCompanyId, "expected seedHistoryOnce() to populate historyCompanyId");
+
+  const toolKey = "journal_pending";
+  const basePath = `/api/admin/maintenance/tool-history?companyId=${historyCompanyId}&toolKey=${toolKey}&format=csv`;
+
+  const before = await db.execute<{ max_id: number | null }>(sql`
+    SELECT COALESCE(MAX(id), 0)::bigint AS max_id FROM audit_log
+  `);
+  const beforeMax = Number(((before as { rows?: Array<{ max_id: number | null }> }).rows ?? [{ max_id: 0 }])[0]?.max_id ?? 0);
+
+  const capped = await api(basePath, "GET", { token: saToken });
+  assert.equal(capped.status, 200, `tool-history capped: expected 200, got ${capped.status}: ${capped.text.slice(0, 200)}`);
+  assert.equal(capped.headers.get("x-csv-unbounded"), "0",
+    "tool-history capped: must echo X-Csv-Unbounded:0");
+  assert.equal(capped.headers.get("x-csv-row-cap"), "1000",
+    "tool-history capped: must report the per-tool safety cap (1,000) in X-Csv-Row-Cap");
+
+  const full = await api(`${basePath}&unbounded=1`, "GET", { token: saToken });
+  assert.equal(full.status, 200, `tool-history unbounded: expected 200, got ${full.status}: ${full.text.slice(0, 200)}`);
+  assert.equal(full.headers.get("x-csv-unbounded"), "1",
+    "tool-history unbounded: must echo X-Csv-Unbounded:1");
+  assert.equal(full.headers.get("x-csv-row-cap"), "unlimited",
+    "tool-history unbounded: must flip X-Csv-Row-Cap to the literal 'unlimited'");
+  assert.equal(full.headers.get("x-csv-truncated"), "0",
+    "tool-history unbounded: must echo X-Csv-Truncated:0");
+
+  const newAuditRows = await db.select({
+    id:       auditLogTable.id,
+    metadata: auditLogTable.metadata,
+  })
+    .from(auditLogTable)
+    .where(and(
+      sql`${auditLogTable.id} > ${beforeMax}`,
+      eq(auditLogTable.action, "export_csv"),
+      eq(auditLogTable.module, "maintenance"),
+      eq(auditLogTable.entityType, "maintenance_tool_history"),
+    ))
+    .orderBy(auditLogTable.id);
+  assert.equal(newAuditRows.length, 2,
+    `tool-history: each CSV export must write exactly one audit row (expected 2, got ${newAuditRows.length})`);
+  const capMeta  = newAuditRows[0].metadata as Record<string, unknown>;
+  const fullMeta = newAuditRows[1].metadata as Record<string, unknown>;
+  assert.equal(capMeta.unbounded,  false, "tool-history capped audit: metadata.unbounded must be false");
+  assert.equal(capMeta.rowCap,     1000,  "tool-history capped audit: metadata.rowCap must be the numeric cap");
+  assert.equal(fullMeta.unbounded, true,  "tool-history unbounded audit: metadata.unbounded must be true");
+  assert.equal(fullMeta.rowCap,    null,  "tool-history unbounded audit: metadata.rowCap must be null");
+  insertedAuditLogIds.push(newAuditRows[0].id, newAuditRows[1].id);
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 //  runEmailHistoryAutoPrune — daily cleanup of email-history tables
 // ════════════════════════════════════════════════════════════════════════════

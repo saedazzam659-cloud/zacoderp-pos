@@ -33,6 +33,7 @@ import { Input } from "@/components/ui/input";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
+import { ToastAction, type ToastActionElement } from "@/components/ui/toast";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -41,6 +42,85 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 // named constant prevents the panels from drifting out of sync if we ever
 // adjust the cadence — change this once and all three panels move together.
 const MAINTENANCE_PANEL_REFETCH_MS = 30_000;
+
+// ─── Truncated-export toast helper (task #127) ────────────────────────────
+// Builds the title/description/action shown after every CSV export on this
+// page. Three cases:
+//   1) Not truncated → simple confirmation with no action.
+//   2) Truncated by the on-screen safety cap → describe what got clipped
+//      and offer a one-click "تنزيل الكل" follow-up that re-runs the same
+//      export with ?unbounded=1, swapping the safety cap for the global
+//      hard ceiling on the server.
+//   3) Truncated AND the request was already the unbounded one → the
+//      absolute hard ceiling kicked in; honestly say so and don't offer a
+//      further escape hatch (there isn't one without a SuperAdmin DB
+//      query). The wording differs so operators can tell at a glance
+//      which cap they're up against.
+//
+// Centralised here so all five exports (broken tools, recovered tools,
+// maintenance history, email history, tool history) speak the same
+// vocabulary — adding/changing a cap message is a one-line edit.
+type CsvExportResult = {
+  truncated: boolean;
+  rowCap: number;
+  totalAvailable: number;
+  unbounded: boolean;
+};
+function buildCsvExportToast(
+  result: CsvExportResult,
+  onDownloadAll?: () => void,
+): { title: string; description?: React.ReactNode; action?: ToastActionElement } {
+  const { truncated, rowCap, totalAvailable, unbounded } = result;
+  // Unbounded exports return every row, so they never set X-Csv-Truncated:1.
+  // The plain-success branch below handles both the bounded-under-cap case
+  // and any unbounded export (truncated=false on the wire). The follow-up
+  // "تنزيل الكل" action is only attached when we *did* clip — and only
+  // for the bounded path, since unbounded has nowhere further to escape.
+  if (!truncated || rowCap <= 0) return { title: "تم تنزيل ملف CSV" };
+  return {
+    title: "تم تنزيل ملف CSV",
+    description: totalAvailable > rowCap
+      ? `تم الاقتطاع عند ${rowCap.toLocaleString("en-US")} من ${totalAvailable.toLocaleString("en-US")} صف`
+      : `تم الاقتطاع عند ${rowCap.toLocaleString("en-US")} صف`,
+    action: onDownloadAll && !unbounded ? (
+      <ToastAction
+        altText="تنزيل الكل"
+        onClick={onDownloadAll}
+        data-testid="csv-export-download-all"
+      >
+        تنزيل الكل
+      </ToastAction>
+    ) : undefined,
+  };
+}
+
+// Reads the full set of X-Csv-* response headers the server echoes on every
+// CSV export branch and returns them as a typed CsvExportResult. Centralised
+// so adding a new header (e.g. X-Csv-Unbounded for task #127) is a one-spot
+// change instead of being duplicated across the five mutations below.
+function readCsvExportHeaders(r: Response): CsvExportResult {
+  return {
+    truncated: r.headers.get("X-Csv-Truncated") === "1",
+    rowCap: Number(r.headers.get("X-Csv-Row-Cap") ?? 0) || 0,
+    totalAvailable: Number(r.headers.get("X-Csv-Total-Available") ?? 0) || 0,
+    unbounded: r.headers.get("X-Csv-Unbounded") === "1",
+  };
+}
+
+// Triggers a synthetic anchor click against a `blob:` URL so the file the
+// user just fetched lands in their Downloads folder. Mirrors the inline
+// pattern every CSV mutation on this page used before — extracted so the
+// new unbounded ("تنزيل الكل") siblings don't duplicate it.
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 type CheckResult = {
   key: string; label: string; severity: "high" | "medium" | "low";
@@ -731,6 +811,39 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
   // same on-screen filters are forwarded so the file always matches what the
   // admin saw. The server writes a maintenance audit-log row for the export
   // itself.
+  //
+  // Task #127: when the safety cap clips the export, the success toast
+  // surfaces a "تنزيل الكل" follow-up button (see buildCsvExportToast)
+  // that triggers `historyUnboundedMut` below. The unbounded sibling
+  // hits the same endpoint with `?unbounded=1` so the server swaps the
+  // 1,000-row safety cap for the global UNBOUNDED_CSV_HARD_CEILING. The
+  // sibling is declared first so the regular mutation's onSuccess can
+  // reference it without a forward-declaration dance.
+  const historyUnboundedMut = useMutation({
+    mutationFn: async () => {
+      if (!companyId) throw new Error("اختر الشركة أولاً");
+      const r = await fetch(
+        `${API}/api/admin/maintenance/history?companyId=${companyId}&format=csv&unbounded=1&includeSystem=1${historyFilterParams()}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) {
+        const msg = await r.json().catch(() => ({} as any));
+        throw new Error(msg?.error || "فشل تصدير الملف الكامل");
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      const filename = m?.[1] ? decodeURIComponent(m[1]) : `maintenance-history-${companyId}-full.csv`;
+      const result = readCsvExportHeaders(r);
+      downloadBlob(blob, filename);
+      return result;
+    },
+    onSuccess: (result) => {
+      toast(buildCsvExportToast(result));
+      setHistoryTick((t) => t + 1);
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
   const historyCsvMut = useMutation({
     mutationFn: async () => {
       if (!companyId) throw new Error("اختر الشركة أولاً");
@@ -753,28 +866,12 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       // can name the underlying total ("من N صف") — operators triggering
       // the export deserve to see the same total the audit-log row carries
       // without having to open the audit log to discover what was clipped.
-      const truncated = r.headers.get("X-Csv-Truncated") === "1";
-      const rowCap = Number(r.headers.get("X-Csv-Row-Cap") ?? 0) || 0;
-      const totalAvailable = Number(r.headers.get("X-Csv-Total-Available") ?? 0) || 0;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      return { truncated, rowCap, totalAvailable };
+      const result = readCsvExportHeaders(r);
+      downloadBlob(blob, filename);
+      return result;
     },
-    onSuccess: ({ truncated, rowCap, totalAvailable }) => {
-      toast({
-        title: "تم تنزيل ملف CSV",
-        description: truncated && rowCap > 0
-          ? (totalAvailable > rowCap
-              ? `تم الاقتطاع عند ${rowCap.toLocaleString("en-US")} من ${totalAvailable.toLocaleString("en-US")} صف`
-              : `تم الاقتطاع عند ${rowCap.toLocaleString("en-US")} صف`)
-          : undefined,
-      });
+    onSuccess: (result) => {
+      toast(buildCsvExportToast(result, () => historyUnboundedMut.mutate()));
       // Refresh the history panel so the export entry shows up.
       setHistoryTick((t) => t + 1);
     },
@@ -1052,6 +1149,33 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
   // and forwards the on-screen filters so the downloaded file matches what
   // the admin sees. The server writes a maintenance audit-log row for the
   // export itself.
+  //
+  // Task #127: when the safety cap clips the export, the success toast
+  // surfaces a "تنزيل الكل" follow-up button (see buildCsvExportToast)
+  // that triggers `emailHistoryUnboundedMut` below. The unbounded sibling
+  // hits the same endpoint with `?unbounded=1` so the server swaps the
+  // 1,000-row safety cap for the global UNBOUNDED_CSV_HARD_CEILING.
+  const emailHistoryUnboundedMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(
+        `${API}/api/admin/maintenance/email-history?format=csv&unbounded=1${emailHistoryFilterParams()}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) {
+        const msg = await r.json().catch(() => ({} as any));
+        throw new Error(msg?.error || "فشل تصدير الملف الكامل");
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      const filename = m?.[1] ? decodeURIComponent(m[1]) : `maintenance-email-history-full-${Date.now()}.csv`;
+      const result = readCsvExportHeaders(r);
+      downloadBlob(blob, filename);
+      return result;
+    },
+    onSuccess: (result) => toast(buildCsvExportToast(result)),
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
   const emailHistoryCsvMut = useMutation({
     mutationFn: async () => {
       const r = await fetch(
@@ -1073,27 +1197,11 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       // can name the underlying total ("من N صف") — operators triggering
       // the export deserve to see the same total the audit-log row carries
       // without having to open the audit log to discover what was clipped.
-      const truncated = r.headers.get("X-Csv-Truncated") === "1";
-      const rowCap = Number(r.headers.get("X-Csv-Row-Cap") ?? 0) || 0;
-      const totalAvailable = Number(r.headers.get("X-Csv-Total-Available") ?? 0) || 0;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      return { truncated, rowCap, totalAvailable };
+      const result = readCsvExportHeaders(r);
+      downloadBlob(blob, filename);
+      return result;
     },
-    onSuccess: ({ truncated, rowCap, totalAvailable }) => toast({
-      title: "تم تنزيل ملف CSV",
-      description: truncated && rowCap > 0
-        ? (totalAvailable > rowCap
-            ? `تم الاقتطاع عند ${rowCap.toLocaleString("en-US")} من ${totalAvailable.toLocaleString("en-US")} صف`
-            : `تم الاقتطاع عند ${rowCap.toLocaleString("en-US")} صف`)
-        : undefined,
-    }),
+    onSuccess: (result) => toast(buildCsvExportToast(result, () => emailHistoryUnboundedMut.mutate())),
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
   // Wipe the cooldown anchor so the next sweep fires immediately regardless of
@@ -1207,6 +1315,33 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
   // straight into a triage spreadsheet without copy-pasting rows. The server
   // bypasses the on-screen 50-row cap and writes a maintenance audit row for
   // the export itself, mirroring the recovered-tools CSV pattern.
+  //
+  // Task #127: when the safety cap clips the export, the success toast
+  // surfaces a "تنزيل الكل" follow-up button (see buildCsvExportToast)
+  // that triggers `errorSummaryUnboundedMut` below. The unbounded sibling
+  // hits the same endpoint with `?unbounded=1` so the server swaps the
+  // 1,000-row safety cap for the global UNBOUNDED_CSV_HARD_CEILING.
+  const errorSummaryUnboundedMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(
+        `${API}/api/admin/maintenance/error-summary?format=csv&unbounded=1`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) {
+        const msg = await r.json().catch(() => ({} as any));
+        throw new Error(msg?.error || "فشل تصدير الملف الكامل");
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      const filename = m?.[1] ? decodeURIComponent(m[1]) : `maintenance-broken-tools-full-${Date.now()}.csv`;
+      const result = readCsvExportHeaders(r);
+      downloadBlob(blob, filename);
+      return result;
+    },
+    onSuccess: (result) => toast(buildCsvExportToast(result)),
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
   const errorSummaryCsvMut = useMutation({
     mutationFn: async () => {
       const r = await fetch(
@@ -1228,27 +1363,11 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       // X-Csv-Total-Available so the toast can name the underlying total
       // ("من N صف") instead of just the cap — without it, an operator
       // can't tell whether 1 or 50,000 rows got dropped from the export.
-      const truncated = r.headers.get("X-Csv-Truncated") === "1";
-      const rowCap = Number(r.headers.get("X-Csv-Row-Cap") ?? 0) || 0;
-      const totalAvailable = Number(r.headers.get("X-Csv-Total-Available") ?? 0) || 0;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      return { truncated, rowCap, totalAvailable };
+      const result = readCsvExportHeaders(r);
+      downloadBlob(blob, filename);
+      return result;
     },
-    onSuccess: ({ truncated, rowCap, totalAvailable }) => toast({
-      title: "تم تنزيل ملف CSV",
-      description: truncated && rowCap > 0
-        ? (totalAvailable > rowCap
-            ? `تم الاقتطاع عند ${rowCap.toLocaleString("en-US")} من ${totalAvailable.toLocaleString("en-US")} صف`
-            : `تم الاقتطاع عند ${rowCap.toLocaleString("en-US")} صف`)
-        : undefined,
-    }),
+    onSuccess: (result) => toast(buildCsvExportToast(result, () => errorSummaryUnboundedMut.mutate())),
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -1292,6 +1411,33 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
   // straight into a status report without copy-pasting rows. The server
   // bypasses the on-screen 50-row cap and writes a maintenance audit row for
   // the export itself, mirroring the email-history CSV pattern.
+  //
+  // Task #127: when the safety cap clips the export, the success toast
+  // surfaces a "تنزيل الكل" follow-up button (see buildCsvExportToast)
+  // that triggers `recoverySummaryUnboundedMut` below. The unbounded
+  // sibling hits the same endpoint with `?unbounded=1` so the server
+  // swaps the 1,000-row safety cap for the global UNBOUNDED_CSV_HARD_CEILING.
+  const recoverySummaryUnboundedMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(
+        `${API}/api/admin/maintenance/recent-recoveries?format=csv&unbounded=1`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) {
+        const msg = await r.json().catch(() => ({} as any));
+        throw new Error(msg?.error || "فشل تصدير الملف الكامل");
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      const filename = m?.[1] ? decodeURIComponent(m[1]) : `maintenance-recent-recoveries-full-${Date.now()}.csv`;
+      const result = readCsvExportHeaders(r);
+      downloadBlob(blob, filename);
+      return result;
+    },
+    onSuccess: (result) => toast(buildCsvExportToast(result)),
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
   const recoverySummaryCsvMut = useMutation({
     mutationFn: async () => {
       const r = await fetch(
@@ -1311,27 +1457,11 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       // the broken-tools mutation above. We also read X-Csv-Total-Available
       // so the toast can name the underlying total ("من N صف") instead of
       // just the cap.
-      const truncated = r.headers.get("X-Csv-Truncated") === "1";
-      const rowCap = Number(r.headers.get("X-Csv-Row-Cap") ?? 0) || 0;
-      const totalAvailable = Number(r.headers.get("X-Csv-Total-Available") ?? 0) || 0;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      return { truncated, rowCap, totalAvailable };
+      const result = readCsvExportHeaders(r);
+      downloadBlob(blob, filename);
+      return result;
     },
-    onSuccess: ({ truncated, rowCap, totalAvailable }) => toast({
-      title: "تم تنزيل ملف CSV",
-      description: truncated && rowCap > 0
-        ? (totalAvailable > rowCap
-            ? `تم الاقتطاع عند ${rowCap.toLocaleString("en-US")} من ${totalAvailable.toLocaleString("en-US")} صف`
-            : `تم الاقتطاع عند ${rowCap.toLocaleString("en-US")} صف`)
-        : undefined,
-    }),
+    onSuccess: (result) => toast(buildCsvExportToast(result, () => recoverySummaryUnboundedMut.mutate())),
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -1461,6 +1591,43 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
   // history for the (company, tool) pair (subject only to the global
   // retention prune), not just the on-screen 20 rows, and writes a single
   // export_csv audit row that surfaces in the maintenance history accordion.
+  //
+  // Task #127: when the safety cap clips the export, the success toast
+  // surfaces a "تنزيل الكل" follow-up button (see buildCsvExportToast)
+  // that triggers `toolHistoryUnboundedMut` below. The unbounded sibling
+  // hits the same endpoint with `?unbounded=1` so the server swaps the
+  // 1,000-row safety cap for the global UNBOUNDED_CSV_HARD_CEILING. We
+  // snapshot the (companyId, toolKey) pair off the live target so a late
+  // click on the "تنزيل الكل" toast still hits the right tool even if
+  // the operator already closed/reopened the modal on a different tool.
+  const toolHistoryUnboundedMut = useMutation({
+    mutationFn: async (target: { companyId: number; toolKey: string }) => {
+      const r = await fetch(
+        `${API}/api/admin/maintenance/tool-history?companyId=${target.companyId}&toolKey=${encodeURIComponent(target.toolKey)}&format=csv&unbounded=1`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) {
+        const msg = await r.json().catch(() => ({} as any));
+        throw new Error(msg?.error || "فشل تصدير الملف الكامل");
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      const filename = m?.[1]
+        ? decodeURIComponent(m[1])
+        : `tool-history-${target.companyId}-${target.toolKey}-full.csv`;
+      const result = readCsvExportHeaders(r);
+      downloadBlob(blob, filename);
+      return result;
+    },
+    onSuccess: (result) => {
+      toast(buildCsvExportToast(result));
+      // Refresh the maintenance-history accordion so the unbounded
+      // export_csv audit row shows up without a manual reload.
+      setHistoryTick((t) => t + 1);
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
   const toolHistoryCsvMut = useMutation({
     mutationFn: async () => {
       const t = toolHistoryTarget;
@@ -1486,28 +1653,14 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       // can name the underlying total ("من N صف") — operators triggering
       // the export deserve to see the same total the audit-log row carries
       // without having to open the audit log to discover what was clipped.
-      const truncated = r.headers.get("X-Csv-Truncated") === "1";
-      const rowCap = Number(r.headers.get("X-Csv-Row-Cap") ?? 0) || 0;
-      const totalAvailable = Number(r.headers.get("X-Csv-Total-Available") ?? 0) || 0;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      return { truncated, rowCap, totalAvailable };
+      const result = readCsvExportHeaders(r);
+      downloadBlob(blob, filename);
+      // Snapshot the live target so a delayed "تنزيل الكل" click hits the
+      // tool the operator just exported, not whatever they're inspecting now.
+      return { ...result, target: { companyId: t.companyId, toolKey: t.toolKey } };
     },
-    onSuccess: ({ truncated, rowCap, totalAvailable }) => {
-      toast({
-        title: "تم تنزيل ملف CSV",
-        description: truncated && rowCap > 0
-          ? (totalAvailable > rowCap
-              ? `تم الاقتطاع عند ${rowCap.toLocaleString("en-US")} من ${totalAvailable.toLocaleString("en-US")} صف`
-              : `تم الاقتطاع عند ${rowCap.toLocaleString("en-US")} صف`)
-          : undefined,
-      });
+    onSuccess: ({ target, ...result }) => {
+      toast(buildCsvExportToast(result, () => toolHistoryUnboundedMut.mutate(target)));
       // Refresh the maintenance-history accordion so the export_csv audit
       // row this download just produced shows up without a manual reload.
       setHistoryTick((t) => t + 1);

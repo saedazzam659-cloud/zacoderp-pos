@@ -3322,6 +3322,48 @@ function sendCsv(res: import("express").Response, filename: string, headers: str
   res.send(body);
 }
 
+// ─── Unbounded CSV export (task #127) ────────────────────────────────────
+// When the operator hits the 1,000-row safety cap on any of the five
+// maintenance CSV exports (broken tools, recovered tools, maintenance
+// history, email history, tool history) the success toast now offers a
+// "تنزيل الكل" follow-up action. That action re-runs the same export
+// with `?unbounded=1`, which drops the on-screen cap entirely and
+// returns *every* matching row up to whatever the database holds.
+//
+// To keep memory pressure bounded for genuinely large exports we stream
+// rows row-by-row to the response via `streamCsv()` (below) instead of
+// buffering the whole CSV string in `sendCsv()`. The audit row records
+// `unbounded:true` + the actual row count so SuperAdmins reviewing past
+// exports can tell at a glance whether a file was the capped or the
+// full version.
+function wantsUnbounded(req: import("express").Request): boolean {
+  return req.query.unbounded === "1" || req.query.unbounded === "true";
+}
+// Stream a CSV directly to the response, one row at a time. Used by the
+// `?unbounded=1` path on the five maintenance CSV exports so a multi-
+// megabyte download never has to live in a single in-process string
+// buffer. Returns the number of data rows written so the caller can
+// stamp the audit log.
+function streamCsv(
+  res: import("express").Response,
+  filename: string,
+  headers: string[],
+  rows: Iterable<unknown[]>,
+): number {
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  // \uFEFF = UTF-8 BOM. Excel needs this to display Arabic correctly.
+  res.write("\uFEFF");
+  res.write(headers.map(csvEscape).join(",") + "\r\n");
+  let count = 0;
+  for (const r of rows) {
+    res.write(r.map(csvEscape).join(",") + "\r\n");
+    count++;
+  }
+  res.end();
+  return count;
+}
+
 // ─── Search helper (case-insensitive name match) ──────────────────────────
 function applySearch(rows: { companyName: string }[], search: string | undefined): typeof rows {
   if (!search) return rows;
@@ -5540,31 +5582,44 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
 
   try {
     if (wantsCsv(req)) {
-      const rows = await db.select({
+      // Task #127: ?unbounded=1 drops the on-screen 1,000-row safety cap
+      // entirely so a SuperAdmin can follow up a clipped export with a
+      // one-click "تنزيل الكل" download that returns *every* matching
+      // row. The unbounded path streams rows row-by-row (see streamCsv)
+      // so a multi-megabyte export never has to live in a single
+      // in-process buffer.
+      const unbounded = wantsUnbounded(req);
+      const baseQuery = db.select({
         id: auditLogTable.id, action: auditLogTable.action,
         entityType: auditLogTable.entityType, username: auditLogTable.username,
         metadata: auditLogTable.metadata, createdAt: auditLogTable.createdAt,
       })
         .from(auditLogTable)
         .where(where)
-        .orderBy(desc(auditLogTable.createdAt))
-        .limit(MAINT_HISTORY_CSV_ROW_CAP);
+        .orderBy(desc(auditLogTable.createdAt));
+      const rows = unbounded
+        ? await baseQuery
+        : await baseQuery.limit(MAINT_HISTORY_CSV_ROW_CAP);
       // Resolve the underlying total only when the result set hit the cap —
-      // an export of exactly MAINT_HISTORY_CSV_ROW_CAP rows (no clipping)
-      // must not falsely show as truncated. The common (under-cap) path
-      // skips the COUNT scan entirely. Mirrors the pattern on
-      // /maintenance/error-summary, /maintenance/recent-recoveries, and
-      // /maintenance/tool-history.
-      const atCap = rows.length >= MAINT_HISTORY_CSV_ROW_CAP;
+      // an export of exactly the cap (no clipping) must not falsely show
+      // as truncated. The common (under-cap) path skips the COUNT scan
+      // entirely. The unbounded path returns every row, so totalAvailable
+      // is just rows.length and truncated is always false. Mirrors the
+      // pattern on /maintenance/error-summary, /maintenance/recent-
+      // recoveries, and /maintenance/tool-history.
       let totalAvailable = rows.length;
-      if (atCap) {
-        const [{ total }] = await db
-          .select({ total: sql<number>`count(*)::int` })
-          .from(auditLogTable)
-          .where(where);
-        totalAvailable = Number(total) || rows.length;
+      let truncated = false;
+      if (!unbounded) {
+        const atCap = rows.length >= MAINT_HISTORY_CSV_ROW_CAP;
+        if (atCap) {
+          const [{ total }] = await db
+            .select({ total: sql<number>`count(*)::int` })
+            .from(auditLogTable)
+            .where(where);
+          totalAvailable = Number(total) || rows.length;
+        }
+        truncated = totalAvailable > MAINT_HISTORY_CSV_ROW_CAP;
       }
-      const truncated = totalAvailable > MAINT_HISTORY_CSV_ROW_CAP;
       // Task #64: surface the retention window that was active for each
       // entry as its own column so admins auditing offline (Excel) can sort
       // / filter on it without parsing the JSON details cell. The same
@@ -5582,7 +5637,8 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
         count: rows.length,
         totalAvailable,
         truncated,
-        rowCap: MAINT_HISTORY_CSV_ROW_CAP,
+        rowCap: unbounded ? null : MAINT_HISTORY_CSV_ROW_CAP,
+        unbounded,
         format: "csv",
         filters: {
           from: fromRaw || null, to: toRaw || null,
@@ -5591,16 +5647,24 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
       });
       // Echo the truncation signal in response headers so the page-side
       // mutation can mention "تم الاقتطاع عند 1000 صف" in its toast
-      // without needing a second round-trip. Mirrors the broken-tools /
-      // recovered-tools branches.
+      // without needing a second round-trip. X-Csv-Unbounded (task #127)
+      // tells the client which cap was actually applied; the unbounded
+      // path also flips X-Csv-Row-Cap to the literal "unlimited" so the
+      // client never confuses it with the bounded numeric cap.
       res.setHeader("X-Csv-Truncated", truncated ? "1" : "0");
-      res.setHeader("X-Csv-Row-Cap", String(MAINT_HISTORY_CSV_ROW_CAP));
+      res.setHeader("X-Csv-Row-Cap", unbounded ? "unlimited" : String(MAINT_HISTORY_CSV_ROW_CAP));
       res.setHeader("X-Csv-Total-Available", String(totalAvailable));
+      res.setHeader("X-Csv-Unbounded", unbounded ? "1" : "0");
       res.setHeader(
         "Access-Control-Expose-Headers",
-        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available",
+        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available, X-Csv-Unbounded",
       );
-      sendCsv(res, `maintenance-history-${g.companyId}-${Date.now()}.csv`, headers, csvRows);
+      const filename = `maintenance-history-${g.companyId}-${Date.now()}.csv`;
+      if (unbounded) {
+        streamCsv(res, filename, headers, csvRows);
+      } else {
+        sendCsv(res, filename, headers, csvRows);
+      }
       return;
     }
     // Fetch one extra row so we can answer `hasMore` without a second
@@ -5909,45 +5973,69 @@ router.get("/maintenance/tool-history", requireSuperAdmin, async (req, res) => {
     // `?limit=` is intentionally ignored here — same convention
     // /maintenance/history uses for its CSV branch.
     if (wantsCsv(req)) {
-      const exec = await db.execute<any>(sql`
-        SELECT id,
-               run_at      AS "runAt",
-               trigger     AS "trigger",
-               status      AS "status",
-               count       AS "count",
-               duration_ms AS "durationMs",
-               error       AS "error"
-          FROM maintenance_runs
-         WHERE company_id = ${companyId}
-           AND tool_key   = ${toolKey}
-         ORDER BY run_at DESC
-         LIMIT ${TOOL_HISTORY_CSV_ROW_CAP}
-      `);
+      // Task #127: ?unbounded=1 drops the per-tool row cap entirely so
+      // the "تنزيل الكل" follow-up action can pull every recorded run
+      // for this (company, tool) pair. The unbounded path streams rows
+      // row-by-row (see streamCsv) so a multi-megabyte export never has
+      // to live in a single in-process buffer.
+      const unbounded = wantsUnbounded(req);
+      const exec = unbounded
+        ? await db.execute<any>(sql`
+            SELECT id,
+                   run_at      AS "runAt",
+                   trigger     AS "trigger",
+                   status      AS "status",
+                   count       AS "count",
+                   duration_ms AS "durationMs",
+                   error       AS "error"
+              FROM maintenance_runs
+             WHERE company_id = ${companyId}
+               AND tool_key   = ${toolKey}
+             ORDER BY run_at DESC
+          `)
+        : await db.execute<any>(sql`
+            SELECT id,
+                   run_at      AS "runAt",
+                   trigger     AS "trigger",
+                   status      AS "status",
+                   count       AS "count",
+                   duration_ms AS "durationMs",
+                   error       AS "error"
+              FROM maintenance_runs
+             WHERE company_id = ${companyId}
+               AND tool_key   = ${toolKey}
+             ORDER BY run_at DESC
+             LIMIT ${TOOL_HISTORY_CSV_ROW_CAP}
+          `);
       const rows = ((exec as any).rows ?? []) as Array<{
         id: number; runAt: Date | string; trigger: string; status: string;
         count: number; durationMs: number; error: string | null;
       }>;
-      // Resolve the underlying total only when the result set hit the
-      // cap — an export of exactly TOOL_HISTORY_CSV_ROW_CAP rows (no
-      // clipping) must not falsely show as truncated. The common
-      // (under-cap) path skips the COUNT scan entirely. Mirrors the
-      // pattern on /maintenance/error-summary and /maintenance/recent-
-      // recoveries.
-      const atCap = rows.length >= TOOL_HISTORY_CSV_ROW_CAP;
+      // Resolve the underlying total only when the bounded result set
+      // hit the cap — an export of exactly the cap (no clipping) must
+      // not falsely show as truncated. The common (under-cap) path skips
+      // the COUNT scan entirely. The unbounded path returns every row,
+      // so totalAvailable is just rows.length and truncated is always
+      // false. Mirrors the pattern on /maintenance/error-summary
+      // and /maintenance/recent-recoveries.
       let totalAvailable = rows.length;
-      if (atCap) {
-        const countExec = await db.execute<any>(sql`
-          SELECT COUNT(*)::bigint AS "total"
-            FROM maintenance_runs
-           WHERE company_id = ${companyId}
-             AND tool_key   = ${toolKey}
-        `);
-        const totalRaw = ((countExec as any).rows?.[0]?.total) ?? rows.length;
-        // pg returns bigint as a string; coerce defensively.
-        totalAvailable = typeof totalRaw === "string" ? Number(totalRaw) : Number(totalRaw);
-        if (!Number.isFinite(totalAvailable)) totalAvailable = rows.length;
+      let truncated = false;
+      if (!unbounded) {
+        const atCap = rows.length >= TOOL_HISTORY_CSV_ROW_CAP;
+        if (atCap) {
+          const countExec = await db.execute<any>(sql`
+            SELECT COUNT(*)::bigint AS "total"
+              FROM maintenance_runs
+             WHERE company_id = ${companyId}
+               AND tool_key   = ${toolKey}
+          `);
+          const totalRaw = ((countExec as any).rows?.[0]?.total) ?? rows.length;
+          // pg returns bigint as a string; coerce defensively.
+          totalAvailable = typeof totalRaw === "string" ? Number(totalRaw) : Number(totalRaw);
+          if (!Number.isFinite(totalAvailable)) totalAvailable = rows.length;
+        }
+        truncated = totalAvailable > TOOL_HISTORY_CSV_ROW_CAP;
       }
-      const truncated = totalAvailable > TOOL_HISTORY_CSV_ROW_CAP;
       // Headers + per-row mapping mirror exactly what the on-screen modal
       // renders so the file matches what the admin saw before clicking
       // export. `trigger` is humanised to match the badge text.
@@ -5964,26 +6052,35 @@ router.get("/maintenance/tool-history", requireSuperAdmin, async (req, res) => {
         count: rows.length,
         totalAvailable,
         truncated,
-        rowCap: TOOL_HISTORY_CSV_ROW_CAP,
+        rowCap: unbounded ? null : TOOL_HISTORY_CSV_ROW_CAP,
+        unbounded,
         format: "csv",
         toolKey,
       });
       // Echo the truncation signal in response headers so the page-side
       // mutation can mention "تم الاقتطاع عند 1000 صف" in its toast
-      // without needing a second round-trip. Mirrors the broken-tools /
-      // recovered-tools branches.
+      // without needing a second round-trip. X-Csv-Unbounded (task #127)
+      // tells the client which cap was actually applied; the unbounded
+      // path also flips X-Csv-Row-Cap to the literal "unlimited" so the
+      // client never confuses it with the bounded numeric cap.
       res.setHeader("X-Csv-Truncated", truncated ? "1" : "0");
-      res.setHeader("X-Csv-Row-Cap", String(TOOL_HISTORY_CSV_ROW_CAP));
+      res.setHeader("X-Csv-Row-Cap", unbounded ? "unlimited" : String(TOOL_HISTORY_CSV_ROW_CAP));
       res.setHeader("X-Csv-Total-Available", String(totalAvailable));
+      res.setHeader("X-Csv-Unbounded", unbounded ? "1" : "0");
       res.setHeader(
         "Access-Control-Expose-Headers",
-        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available",
+        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available, X-Csv-Unbounded",
       );
       // `toolKey` is a vetted machine identifier (matches existing keys), but
       // strip anything outside [A-Za-z0-9._-] defensively so the
       // Content-Disposition filename never gains stray punctuation.
       const safeToolKey = toolKey.replace(/[^A-Za-z0-9._-]+/g, "_");
-      sendCsv(res, `tool-history-${companyId}-${safeToolKey}-${Date.now()}.csv`, headers, csvRows);
+      const filename = `tool-history-${companyId}-${safeToolKey}-${Date.now()}.csv`;
+      if (unbounded) {
+        streamCsv(res, filename, headers, csvRows);
+      } else {
+        sendCsv(res, filename, headers, csvRows);
+      }
       return;
     }
     const limit = clampInt(req.query.limit, 1, 50, 20);
@@ -6139,22 +6236,33 @@ router.get("/maintenance/error-summary", requireSuperAdmin, async (req, res) => 
   const limit = clampInt(req.query.limit, 1, 200, 50);
   try {
     if (isCsv) {
-      const rows = await getRecentToolErrors(BROKEN_CSV_ROW_CAP);
-      // When the helper returned exactly the cap, the upstream projection
-      // *might* have had more candidates that the LIMIT clause clipped —
-      // or the underlying total may have been exactly cap, in which case
-      // nothing was clipped. Resolve the real underlying total via a
-      // sibling COUNT-only query and only flag `truncated` when that
-      // total is strictly greater than the cap. Without this, an export
-      // of exactly 1000 broken tools (no clipping) would falsely show
-      // `truncated: true` in audit logs and the operator toast.
-      // We only pay for the COUNT scan when truncation is even
-      // possible, so the common (under-cap) path stays cheap.
-      const atCap = rows.length >= BROKEN_CSV_ROW_CAP;
-      const totalAvailable = atCap
-        ? await countRecentToolErrors()
-        : rows.length;
-      const truncated = totalAvailable > BROKEN_CSV_ROW_CAP;
+      // Task #127: ?unbounded=1 drops BROKEN_CSV_ROW_CAP entirely so the
+      // "تنزيل الكل" follow-up can pull every currently-broken (company,
+      // tool) pair. The unbounded path streams rows row-by-row (see
+      // streamCsv) so a multi-megabyte export never has to live in a
+      // single in-process buffer. `Number.MAX_SAFE_INTEGER` is passed
+      // through as the `LIMIT` so the helper's query shape stays
+      // unchanged — postgres caps at bigint, so this comfortably
+      // disables the limit in practice.
+      const unbounded = wantsUnbounded(req);
+      const rows = unbounded
+        ? await getRecentToolErrors(Number.MAX_SAFE_INTEGER)
+        : await getRecentToolErrors(BROKEN_CSV_ROW_CAP);
+      // When the bounded helper returned exactly the cap, the upstream
+      // projection *might* have had more candidates that the LIMIT clause
+      // clipped — or the underlying total may have been exactly cap, in
+      // which case nothing was clipped. Resolve the real underlying total
+      // via a sibling COUNT-only query and only flag `truncated` when
+      // that total is strictly greater than the cap. The unbounded path
+      // returns every row, so totalAvailable is just rows.length and
+      // truncated is always false.
+      let totalAvailable = rows.length;
+      let truncated = false;
+      if (!unbounded) {
+        const atCap = rows.length >= BROKEN_CSV_ROW_CAP;
+        totalAvailable = atCap ? await countRecentToolErrors() : rows.length;
+        truncated = totalAvailable > BROKEN_CSV_ROW_CAP;
+      }
       const headers = ["الشركة", "الأداة", "رسالة الخطأ", "وقت آخر فشل"];
       const csvRows = rows.map((r) => [
         r.companyName || `#${r.companyId}`,
@@ -6177,23 +6285,32 @@ router.get("/maintenance/error-summary", requireSuperAdmin, async (req, res) => 
           count: rows.length,
           totalAvailable,
           truncated,
-          rowCap: BROKEN_CSV_ROW_CAP,
+          rowCap: unbounded ? null : BROKEN_CSV_ROW_CAP,
+          unbounded,
           format: "csv",
           windowDays: TOOL_ERROR_WINDOW_DAYS,
         },
       });
       // Echo the truncation signal in response headers so the page-side
       // mutation can mention "تم الاقتطاع عند 1000 صف" in its toast
-      // without needing a second round-trip. CORS-safe headers expose for
-      // the proxied frontend; sendCsv() runs after these are set.
+      // without needing a second round-trip. X-Csv-Unbounded (task #127)
+      // tells the client which cap was actually applied; the unbounded
+      // path also flips X-Csv-Row-Cap to the literal "unlimited" so the
+      // client never confuses it with the bounded numeric cap.
       res.setHeader("X-Csv-Truncated", truncated ? "1" : "0");
-      res.setHeader("X-Csv-Row-Cap", String(BROKEN_CSV_ROW_CAP));
+      res.setHeader("X-Csv-Row-Cap", unbounded ? "unlimited" : String(BROKEN_CSV_ROW_CAP));
       res.setHeader("X-Csv-Total-Available", String(totalAvailable));
+      res.setHeader("X-Csv-Unbounded", unbounded ? "1" : "0");
       res.setHeader(
         "Access-Control-Expose-Headers",
-        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available",
+        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available, X-Csv-Unbounded",
       );
-      sendCsv(res, `maintenance-broken-tools-${Date.now()}.csv`, headers, csvRows);
+      const filename = `maintenance-broken-tools-${Date.now()}.csv`;
+      if (unbounded) {
+        streamCsv(res, filename, headers, csvRows);
+      } else {
+        sendCsv(res, filename, headers, csvRows);
+      }
       return;
     }
     const items = await getRecentToolErrors(limit);
@@ -6229,16 +6346,30 @@ router.get("/maintenance/recent-recoveries", requireSuperAdmin, async (req, res)
   const limit = clampInt(req.query.limit, 1, 200, 50);
   try {
     if (isCsv) {
-      const rows = await getRecentToolRecoveries(RECOVERY_CSV_ROW_CAP);
-      // See the matching block on /maintenance/error-summary for rationale.
-      // We only flag `truncated` when the underlying total is strictly
-      // greater than the cap — an export of exactly 1000 recoveries (no
-      // clipping) must not falsely show as truncated.
-      const atCap = rows.length >= RECOVERY_CSV_ROW_CAP;
-      const totalAvailable = atCap
-        ? await countRecentToolRecoveries()
-        : rows.length;
-      const truncated = totalAvailable > RECOVERY_CSV_ROW_CAP;
+      // Task #127: ?unbounded=1 drops RECOVERY_CSV_ROW_CAP entirely so
+      // the "تنزيل الكل" follow-up can pull every recovery in the
+      // window. The unbounded path streams rows row-by-row (see
+      // streamCsv) so a multi-megabyte export never has to live in a
+      // single in-process buffer. `Number.MAX_SAFE_INTEGER` is passed
+      // through as the `LIMIT` so the helper's query shape stays
+      // unchanged.
+      const unbounded = wantsUnbounded(req);
+      const rows = unbounded
+        ? await getRecentToolRecoveries(Number.MAX_SAFE_INTEGER)
+        : await getRecentToolRecoveries(RECOVERY_CSV_ROW_CAP);
+      // See the matching block on /maintenance/error-summary for
+      // rationale. We only flag `truncated` when the underlying total is
+      // strictly greater than the cap — an export of exactly cap
+      // recoveries (no clipping) must not falsely show as truncated.
+      // The unbounded path returns every row, so totalAvailable is just
+      // rows.length and truncated is always false.
+      let totalAvailable = rows.length;
+      let truncated = false;
+      if (!unbounded) {
+        const atCap = rows.length >= RECOVERY_CSV_ROW_CAP;
+        totalAvailable = atCap ? await countRecentToolRecoveries() : rows.length;
+        truncated = totalAvailable > RECOVERY_CSV_ROW_CAP;
+      }
       const headers = ["الشركة", "الأداة", "آخر خطأ", "وقت التعافي", "حالة الفحص الحالي"];
       const csvRows = rows.map((r) => [
         r.companyName || `#${r.companyId}`,
@@ -6262,7 +6393,8 @@ router.get("/maintenance/recent-recoveries", requireSuperAdmin, async (req, res)
           count: rows.length,
           totalAvailable,
           truncated,
-          rowCap: RECOVERY_CSV_ROW_CAP,
+          rowCap: unbounded ? null : RECOVERY_CSV_ROW_CAP,
+          unbounded,
           format: "csv",
           windowDays: TOOL_ERROR_WINDOW_DAYS,
         },
@@ -6270,14 +6402,23 @@ router.get("/maintenance/recent-recoveries", requireSuperAdmin, async (req, res)
       // Echo the truncation signal in response headers so the page-side
       // mutation can surface "تم الاقتطاع عند 1000 صف" in its toast
       // without a second round-trip. Mirrors the broken-tools branch.
+      // X-Csv-Unbounded (task #127) lets the client tell whether this was
+      // the safety-cap or the absolute-ceiling export; the unbounded path
+      // flips X-Csv-Row-Cap to the literal "unlimited".
       res.setHeader("X-Csv-Truncated", truncated ? "1" : "0");
-      res.setHeader("X-Csv-Row-Cap", String(RECOVERY_CSV_ROW_CAP));
+      res.setHeader("X-Csv-Row-Cap", unbounded ? "unlimited" : String(RECOVERY_CSV_ROW_CAP));
       res.setHeader("X-Csv-Total-Available", String(totalAvailable));
+      res.setHeader("X-Csv-Unbounded", unbounded ? "1" : "0");
       res.setHeader(
         "Access-Control-Expose-Headers",
-        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available",
+        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available, X-Csv-Unbounded",
       );
-      sendCsv(res, `maintenance-recent-recoveries-${Date.now()}.csv`, headers, csvRows);
+      const filename = `maintenance-recent-recoveries-${Date.now()}.csv`;
+      if (unbounded) {
+        streamCsv(res, filename, headers, csvRows);
+      } else {
+        sendCsv(res, filename, headers, csvRows);
+      }
       return;
     }
     const items = await getRecentToolRecoveries(limit);
@@ -6420,26 +6561,39 @@ router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => 
       // CSV branch — filtered history capped at EMAIL_HISTORY_CSV_ROW_CAP
       // rows so a long dispatch trail can't blow up the download. Columns
       // mirror the on-screen table 1:1.
+      // Task #127: ?unbounded=1 drops the safety cap entirely so the
+      // "تنزيل الكل" follow-up can pull every dispatch attempt matching
+      // the active filters. The unbounded path streams rows row-by-row
+      // (see streamCsv) so a multi-megabyte export never has to live in
+      // a single in-process buffer.
+      const unbounded = wantsUnbounded(req);
       const q = db.select().from(maintenanceEmailRunsTable);
-      const rows = await (where ? q.where(where) : q)
-        .orderBy(desc(maintenanceEmailRunsTable.ranAt))
-        .limit(EMAIL_HISTORY_CSV_ROW_CAP);
-      // Resolve the underlying total only when the result set hit the cap —
-      // an export of exactly EMAIL_HISTORY_CSV_ROW_CAP rows (no clipping)
-      // must not falsely show as truncated. The common (under-cap) path
-      // skips the COUNT scan entirely. Mirrors the pattern on
-      // /maintenance/error-summary, /maintenance/recent-recoveries,
-      // /maintenance/tool-history, and /maintenance/history.
-      const atCap = rows.length >= EMAIL_HISTORY_CSV_ROW_CAP;
+      const ordered = (where ? q.where(where) : q)
+        .orderBy(desc(maintenanceEmailRunsTable.ranAt));
+      const rows = unbounded
+        ? await ordered
+        : await ordered.limit(EMAIL_HISTORY_CSV_ROW_CAP);
+      // Resolve the underlying total only when the bounded result set
+      // hit the cap — an export of exactly the cap (no clipping) must
+      // not falsely show as truncated. The common (under-cap) path skips
+      // the COUNT scan entirely. The unbounded path returns every row,
+      // so totalAvailable is just rows.length and truncated is always
+      // false. Mirrors the pattern on /maintenance/error-summary,
+      // /maintenance/recent-recoveries, /maintenance/tool-history, and
+      // /maintenance/history.
       let totalAvailable = rows.length;
-      if (atCap) {
-        const cq = db
-          .select({ total: sql<number>`count(*)::int` })
-          .from(maintenanceEmailRunsTable);
-        const [{ total }] = await (where ? cq.where(where) : cq);
-        totalAvailable = Number(total) || rows.length;
+      let truncated = false;
+      if (!unbounded) {
+        const atCap = rows.length >= EMAIL_HISTORY_CSV_ROW_CAP;
+        if (atCap) {
+          const cq = db
+            .select({ total: sql<number>`count(*)::int` })
+            .from(maintenanceEmailRunsTable);
+          const [{ total }] = await (where ? cq.where(where) : cq);
+          totalAvailable = Number(total) || rows.length;
+        }
+        truncated = totalAvailable > EMAIL_HISTORY_CSV_ROW_CAP;
       }
-      const truncated = totalAvailable > EMAIL_HISTORY_CSV_ROW_CAP;
       const headers = ["الوقت", "المصدر", "الحالة", "السبب", "المستلمون", "صفوف حرجة", "بصمة القائمة الحرجة", "الخطأ"];
       const csvRows = rows.map((r) => [
         csvDate(r.ranAt),
@@ -6469,7 +6623,8 @@ router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => 
           count: rows.length,
           totalAvailable,
           truncated,
-          rowCap: EMAIL_HISTORY_CSV_ROW_CAP,
+          rowCap: unbounded ? null : EMAIL_HISTORY_CSV_ROW_CAP,
+          unbounded,
           format: "csv",
           filters: {
             from: fromRaw || null, to: toRaw || null,
@@ -6480,15 +6635,24 @@ router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => 
       // Echo the truncation signal in response headers so the page-side
       // mutation can mention "تم الاقتطاع عند 1000 صف" in its toast
       // without needing a second round-trip. Mirrors the broken-tools /
-      // recovered-tools branches.
+      // recovered-tools branches. X-Csv-Unbounded (task #127) lets the
+      // client tell whether this was the safety-cap or the absolute-
+      // ceiling export; the unbounded path flips X-Csv-Row-Cap to the
+      // literal "unlimited".
       res.setHeader("X-Csv-Truncated", truncated ? "1" : "0");
-      res.setHeader("X-Csv-Row-Cap", String(EMAIL_HISTORY_CSV_ROW_CAP));
+      res.setHeader("X-Csv-Row-Cap", unbounded ? "unlimited" : String(EMAIL_HISTORY_CSV_ROW_CAP));
       res.setHeader("X-Csv-Total-Available", String(totalAvailable));
+      res.setHeader("X-Csv-Unbounded", unbounded ? "1" : "0");
       res.setHeader(
         "Access-Control-Expose-Headers",
-        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available",
+        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available, X-Csv-Unbounded",
       );
-      sendCsv(res, `maintenance-email-history-${Date.now()}.csv`, headers, csvRows);
+      const filename = `maintenance-email-history-${Date.now()}.csv`;
+      if (unbounded) {
+        streamCsv(res, filename, headers, csvRows);
+      } else {
+        sendCsv(res, filename, headers, csvRows);
+      }
       return;
     }
 
