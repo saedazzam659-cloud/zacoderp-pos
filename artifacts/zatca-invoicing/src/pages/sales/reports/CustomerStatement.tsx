@@ -94,6 +94,14 @@ export default function CustomerStatement() {
     receipt: tr("typeReceipt"),
   };
 
+  /** Customer-side "نوع الوثيقة" — full categorical label for the new column.
+   *  Distinct from TYPE_LABEL (which is just the generic word). */
+  const DOC_TYPE_LABEL: Record<string, string> = {
+    invoice: "فاتورة مبيعات",
+    return:  "مرتجع مبيعات",
+    receipt: "سند قبض",
+  };
+
   // When the user toggles "بدون رصيد افتتاحي" we treat opening as 0 in every
   // downstream calculation (running balance, summary cards, exports, printable
   // view). Applied via the same Show button as other filters.
@@ -130,6 +138,7 @@ export default function CustomerStatement() {
             opening={effectiveOpening}
             lines={augmented.map(l => ({
               date: l.date,
+              docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
               type: TYPE_LABEL[l.type] ?? l.type,
               docNumber: l.docNumber,
               description: l.description,
@@ -252,6 +261,7 @@ export default function CustomerStatement() {
             visibleCols={visibleCols}
             lines={augmented.map(l => ({
               date: l.date,
+              docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
               type: TYPE_LABEL[l.type] ?? l.type,
               docNumber: l.docNumber,
               description: l.description,

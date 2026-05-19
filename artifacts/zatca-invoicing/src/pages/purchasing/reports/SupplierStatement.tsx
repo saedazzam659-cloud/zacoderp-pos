@@ -45,6 +45,14 @@ export default function SupplierStatement() {
     payment: t("purchasingReports.supplierStatement.type.payment"),
   };
 
+  /** Supplier-side "نوع الوثيقة" — full categorical label for the new column.
+   *  Distinct from TYPE_LABEL (which is just the generic word). */
+  const DOC_TYPE_LABEL: Record<string, string> = {
+    invoice: "فاتورة مشتريات",
+    return:  "مرتجع مشتريات",
+    payment: "سند صرف",
+  };
+
   const { data: suppliers = [] } = useQuery({
     queryKey: ["suppliers", cid],
     queryFn: async () => {
@@ -129,6 +137,7 @@ export default function SupplierStatement() {
             opening={effectiveOpening}
             lines={augmented.map(l => ({
               date: l.date,
+              docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
               type: TYPE_LABEL[l.type] ?? l.type,
               docNumber: l.docNumber,
               description: l.description,
@@ -248,6 +257,7 @@ export default function SupplierStatement() {
             visibleCols={visibleCols}
             lines={augmented.map(l => ({
               date: l.date,
+              docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
               type: TYPE_LABEL[l.type] ?? l.type,
               docNumber: l.docNumber,
               description: l.description,

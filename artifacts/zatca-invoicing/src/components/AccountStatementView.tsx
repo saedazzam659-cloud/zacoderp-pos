@@ -41,6 +41,12 @@ import AdvancedReportGrid, {
 
 export type StatementLine = {
   date: string;
+  /** Document-source category (نوع الوثيقة) — full categorical label such as
+   *  "فاتورة مبيعات", "مرتجع مبيعات", "سند قبض" (customer) or
+   *  "فاتورة مشتريات", "مرتجع مشتريات", "سند صرف" (supplier). Distinct from
+   *  `type`, which is the short generic word ("فاتورة", "مرتجع"). Optional
+   *  for back-compat with any caller that doesn't yet populate it. */
+  docType?: string;
   type: string;          // localized label (فاتورة، مرتجع، سند قبض ...)
   docNumber?: string | null;
   description: string;
@@ -222,7 +228,7 @@ export default function AccountStatementView({
         // are hidden we drop the label cell entirely so the row stays
         // valid HTML.
         const leadingSpan =
-          (v.date ? 1 : 0) + (v.docNumber ? 1 : 0) + (v.type ? 1 : 0);
+          (v.docType ? 1 : 0) + (v.date ? 1 : 0) + (v.docNumber ? 1 : 0) + (v.type ? 1 : 0);
         const visibleCount =
           leadingSpan +
           (v.debit ? 1 : 0) + (v.credit ? 1 : 0) +
@@ -233,6 +239,11 @@ export default function AccountStatementView({
         /* ── Grid columns (screen only). Order here is the DEFAULT; the
            user can reorder via the toolbar (persisted per company). ── */
         const allGridColumns: GridColumn<StatementLine>[] = [
+          { key: "docType",     label: tr("colDocType", "نوع الوثيقة"), type: "text",
+            className: "text-slate-700 font-medium",
+            value: r => r.docType ?? "",
+            render: r => r.docType || "—",
+          },
           { key: "date",        label: tr("colDate", "التاريخ"),  type: "text",
             className: "font-mono tabular-nums text-slate-600",
             value: r => r.date,
@@ -281,6 +292,7 @@ export default function AccountStatementView({
         /* Opening row mapped by column key — the grid renders the cells in
            whatever order the user has chosen. */
         const openingCells: Record<string, React.ReactNode> = {
+          docType: <span className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</span>,
           date: from,
           docNumber: "—",
           type: <span className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</span>,
@@ -321,6 +333,7 @@ export default function AccountStatementView({
               <table className="w-full text-[12.5px] border-collapse min-w-[480px]">
                 <thead>
                   <tr className="bg-slate-100 text-slate-700">
+                    {v.docType     && <Th>{tr("colDocType", "نوع الوثيقة")}</Th>}
                     {v.date        && <Th>{tr("colDate", "التاريخ")}</Th>}
                     {v.docNumber   && <Th>{tr("colDoc", "الرقم")}</Th>}
                     {v.type        && <Th>{tr("colType", "البيان")}</Th>}
@@ -335,6 +348,7 @@ export default function AccountStatementView({
                       - customer: opening > 0 means the customer owes us (debit side)
                       - supplier: opening > 0 means we owe the supplier (credit side) */}
                   <tr className="bg-amber-50/40 border-t border-slate-200">
+                    {v.docType     && <Td className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</Td>}
                     {v.date        && <Td mono>{from}</Td>}
                     {v.docNumber   && <Td>—</Td>}
                     {v.type        && <Td className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</Td>}
@@ -352,6 +366,7 @@ export default function AccountStatementView({
                     </tr>
                   ) : lines.map((l, i) => (
                     <tr key={i} className="border-t border-slate-200 even:bg-slate-50/40 hover:bg-sky-50/40 transition-colors">
+                      {v.docType   && <Td className="text-slate-700 font-medium">{l.docType || "—"}</Td>}
                       {v.date      && <Td mono className="text-slate-600">{l.date}</Td>}
                       {v.docNumber && <Td mono className="text-slate-600">{l.docNumber || "—"}</Td>}
                       {v.type      && <Td>{l.type}</Td>}

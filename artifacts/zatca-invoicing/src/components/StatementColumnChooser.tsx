@@ -18,19 +18,21 @@ import { Columns3, RotateCcw } from "lucide-react";
  * it on the supplier page too).
  */
 export type StatementColKey =
-  | "date" | "docNumber" | "type"
+  | "docType" | "date" | "docNumber" | "type"
   | "debit" | "credit" | "balance"
   | "description";
 
 export type StatementVisibleCols = Record<StatementColKey, boolean>;
 
 export const STATEMENT_COL_DEFAULTS: StatementVisibleCols = {
+  docType: true,
   date: true, docNumber: true, type: true,
   debit: true, credit: true, balance: true,
   description: true,
 };
 
 export const STATEMENT_COL_LABELS: Record<StatementColKey, string> = {
+  docType:     "نوع الوثيقة",
   date:        "التاريخ",
   docNumber:   "الرقم",
   type:        "البيان",

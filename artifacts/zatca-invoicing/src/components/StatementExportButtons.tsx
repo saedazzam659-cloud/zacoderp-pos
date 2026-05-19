@@ -56,6 +56,7 @@ export default function StatementExportButtons({
   const { fmt } = useFmt();
 
   const ALL_EXCEL_COLUMNS: (ExportColumn & { key: StatementColKey })[] = [
+    { key: "docType", header: "نوع الوثيقة", width: 18 },
     { key: "date", header: "التاريخ", width: 14 },
     { key: "docNumber", header: "الرقم", width: 16 },
     { key: "type", header: "البيان", width: 16 },
@@ -71,6 +72,7 @@ export default function StatementExportButtons({
 
   const excelRows: Record<string, unknown>[] = [
     {
+      docType: "رصيد افتتاحي",
       date: from, docNumber: "—", type: "رصيد افتتاحي",
       debit:  openingDebit  ? fmt(openingDebit)  : "",
       credit: openingCredit ? fmt(openingCredit) : "",
@@ -78,6 +80,7 @@ export default function StatementExportButtons({
       description: "—",
     },
     ...lines.map(l => ({
+      docType: (l as any).docType ?? "",
       date: l.date,
       docNumber: l.docNumber ?? "—",
       type: l.type,
@@ -90,14 +93,15 @@ export default function StatementExportButtons({
 
   // Place the "الإجمالي" label in the first visible leading column so the
   // user always sees it on the totals row regardless of which columns
-  // (date / docNumber / type) are hidden via the chooser.
+  // (docType / date / docNumber / type) are hidden via the chooser.
   const firstLeading: StatementColKey | null =
-    visibleCols.date ? "date"
+    visibleCols.docType ? "docType"
+    : visibleCols.date ? "date"
     : visibleCols.docNumber ? "docNumber"
     : visibleCols.type ? "type"
     : null;
   const totalsRow: Record<string, unknown> | null = lines.length > 0 ? {
-    date: "", docNumber: "", type: "",
+    docType: "", date: "", docNumber: "", type: "",
     debit: fmt(totals.debit), credit: fmt(totals.credit),
     balance: fmt(closing), description: "",
     ...(firstLeading ? { [firstLeading]: "الإجمالي" } : {}),

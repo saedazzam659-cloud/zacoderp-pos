@@ -816,6 +816,8 @@ export function printSectionsAsPDF(
 
 export interface StatementPdfLine {
   date: string;
+  /** Document-source category (نوع الوثيقة). Optional for back-compat. */
+  docType?: string;
   type: string;
   docNumber?: string | null;
   description: string;
@@ -850,6 +852,7 @@ export interface StatementPdfAccount {
  *  optional — missing keys default to `true` so legacy callers that don't
  *  pass this object continue to print the full 7-column layout. */
 export interface StatementPdfVisibleCols {
+  docType?: boolean;
   date?: boolean;
   docNumber?: boolean;
   type?: boolean;
@@ -889,6 +892,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
   } = opts;
   const vc = opts.visibleCols ?? {};
   const v = {
+    docType:     vc.docType     !== false,
     date:        vc.date        !== false,
     docNumber:   vc.docNumber   !== false,
     type:        vc.type        !== false,
@@ -897,7 +901,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     balance:     vc.balance     !== false,
     description: vc.description !== false,
   };
-  const leadingSpan = (v.date ? 1 : 0) + (v.docNumber ? 1 : 0) + (v.type ? 1 : 0);
+  const leadingSpan = (v.docType ? 1 : 0) + (v.date ? 1 : 0) + (v.docNumber ? 1 : 0) + (v.type ? 1 : 0);
   const colCount = leadingSpan + (v.debit ? 1 : 0) + (v.credit ? 1 : 0) + (v.balance ? 1 : 0) + (v.description ? 1 : 0);
   const fmt = opts.fmt ?? ((n: number) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
@@ -938,6 +942,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     ? `<tr><td colspan="${Math.max(1, colCount)}" class="empty">لا توجد حركات في الفترة المحددة</td></tr>`
     : lines.map((l, i) => `
         <tr class="${i % 2 === 0 ? "even" : "odd"}">
+          ${v.docType     ? `<td>${escape(l.docType || "—")}</td>` : ""}
           ${v.date        ? `<td class="mono">${escape(l.date)}</td>` : ""}
           ${v.docNumber   ? `<td class="mono">${escape(l.docNumber || "—")}</td>` : ""}
           ${v.type        ? `<td>${escape(l.type)}</td>` : ""}
@@ -1161,6 +1166,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     <table>
       <thead>
         <tr>
+          ${v.docType     ? `<th>نوع الوثيقة</th>` : ""}
           ${v.date        ? `<th>التاريخ</th>` : ""}
           ${v.docNumber   ? `<th>الرقم</th>` : ""}
           ${v.type        ? `<th>البيان</th>` : ""}
@@ -1172,6 +1178,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       </thead>
       <tbody>
         <tr class="opening">
+          ${v.docType     ? `<td class="lbl">رصيد افتتاحي</td>` : ""}
           ${v.date        ? `<td class="mono">${escape(from)}</td>` : ""}
           ${v.docNumber   ? `<td>—</td>` : ""}
           ${v.type        ? `<td class="lbl">رصيد افتتاحي</td>` : ""}
