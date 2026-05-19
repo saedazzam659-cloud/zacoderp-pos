@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useSearch } from "wouter";
@@ -12,6 +12,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
 import CostCenterFilter from "@/components/CostCenterFilter";
+import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 import { FileText, Search, Printer, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -177,6 +178,10 @@ export default function AccountStatement() {
   const [costCenterIds, setCostCenterIds] = useState<number[]>([]);
   const ccCsv = costCenterIds.length ? [...costCenterIds].sort((a, b) => a - b).join(",") : "";
   const [searched, setSearched]   = useState(false);
+  // Mirrors the customer/supplier-statement toggle: when off, the brought-
+  // forward row is hidden and running balances start from zero so the user
+  // sees pure period-only movement. Applied to screen, exports, and print.
+  const [withOpening, setWithOpening] = useState(true);
 
   // Deep-link support: when navigated from another report (e.g. trial
   // balance drill-down or Income Statement row click) with
@@ -254,14 +259,32 @@ export default function AccountStatement() {
     enabled: searched && !!accountId,
   });
 
-  const rows = data?.rows ?? [];
-  const previousBalance = data?.previousBalance ?? 0;
-  const previousDebit   = data?.previousDebit   ?? 0;
-  const previousCredit  = data?.previousCredit  ?? 0;
+  const rawRows = data?.rows ?? [];
+  const apiPreviousBalance = data?.previousBalance ?? 0;
+  const apiPreviousDebit   = data?.previousDebit   ?? 0;
+  const apiPreviousCredit  = data?.previousCredit  ?? 0;
+  // Effective opening values respect the "تضمين الرصيد الافتتاحي" toggle.
+  // When OFF, the brought-forward row is hidden AND the running balance per
+  // row is recomputed starting from zero (= r.balance − apiPreviousBalance)
+  // so the screen, exports, and print all show period-only movement.
+  const effectivePreviousBalance = withOpening ? apiPreviousBalance : 0;
+  const effectivePreviousDebit   = withOpening ? apiPreviousDebit   : 0;
+  const effectivePreviousCredit  = withOpening ? apiPreviousCredit  : 0;
+  const rows = useMemo(
+    () => withOpening
+      ? rawRows
+      : rawRows.map((r: any) => ({ ...r, balance: (r.balance ?? 0) - apiPreviousBalance })),
+    [rawRows, withOpening, apiPreviousBalance],
+  );
+  // Backwards-compat aliases (kept so the brought-forward JSX/exports below
+  // keep reading the same names without per-site edits).
+  const previousBalance = effectivePreviousBalance;
+  const previousDebit   = effectivePreviousDebit;
+  const previousCredit  = effectivePreviousCredit;
   const selectedAccount = accounts.find((a: any) => String(a.id) === accountId);
   const accountDisplayName = selectedAccount ? (isRtl ? selectedAccount.nameAr : (selectedAccount.nameEn || selectedAccount.nameAr)) : "";
-  const totalDebit  = rows.reduce((s, r) => s + (r.debit  || 0), 0);
-  const totalCredit = rows.reduce((s, r) => s + (r.credit || 0), 0);
+  const totalDebit  = rows.reduce((s: number, r: any) => s + (r.debit  || 0), 0);
+  const totalCredit = rows.reduce((s: number, r: any) => s + (r.credit || 0), 0);
   // Closing balance = previous balance + period movements. When there
   // are no in-period rows, fall back to the previous balance itself
   // so the SAP-style brought-forward figure is still reflected.
@@ -279,7 +302,7 @@ export default function AccountStatement() {
     balance:     `${fmt(Math.abs(previousBalance))} ${previousBalance >= 0 ? t("accountingReports.debit") : t("accountingReports.credit")}`,
   };
   const exportRows = [
-    previousBalanceRow,
+    ...(withOpening ? [previousBalanceRow] : []),
     ...rows.map((r: any) => ({
       docType:     docTypeFor(r),
       entryDate:   r.entryDate,
@@ -388,6 +411,22 @@ export default function AccountStatement() {
             <CostCenterFilter value={costCenterIds} onChange={setCostCenterIds} />
           </div>
         </div>
+        {/* Opening-balance toggle — identical UX to the customer/supplier
+            statement screens. Default on (carries forward the previous
+            balance); off shows period-only movement. */}
+        <div className="flex items-center gap-2 mt-4">
+          <input
+            id="as-with-opening"
+            type="checkbox"
+            className="h-4 w-4"
+            checked={withOpening}
+            onChange={e => setWithOpening(e.target.checked)}
+            data-testid="checkbox-with-opening"
+          />
+          <Label htmlFor="as-with-opening" className="cursor-pointer text-sm font-normal">
+            {isRtl ? "تضمين الرصيد الافتتاحي" : "Include opening balance"}
+          </Label>
+        </div>
         <div className="mt-4 flex justify-end">
           <Button className="gap-2" onClick={handleSearch} disabled={isLoading}>
             <Search className="h-4 w-4" />
@@ -423,8 +462,156 @@ export default function AccountStatement() {
             </div>
           </div>
 
-          {/* Table */}
-          <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
+          {/* ── Interactive grid (screen only) ─────────────────────────
+              Same AdvancedReportGrid used on customer/supplier statements,
+              so all the advanced features come for free: column chooser
+              with drag-reorder + visibility, per-column AND/OR filter
+              popovers, 3-state header sort, optional grouping with
+              subtotals, conditional formatting rules, header/footer
+              color themes, sticky header, page-size, and per-tenant
+              persistence (slug "accountStatementGrid"). */}
+          <div className="print:hidden">
+            <AdvancedReportGrid
+              slug="accountStatementGrid"
+              cid={cid}
+              rowKey={(r: any, i) => r.lineId ?? i}
+              rows={rows}
+              unitLabel="حركة"
+              emptyMessage={t("accountStatement.noMovements") as string}
+              leadingRows={withOpening ? [{
+                __className: "bg-amber-50/40 font-semibold",
+                docType: (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-gradient-to-l from-slate-50 to-zinc-50 px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm">
+                    رصيد افتتاحي
+                  </span>
+                ),
+                entryDate:   fromDate || "—",
+                docNumber:   <span className="text-muted-foreground">—</span>,
+                description: <span className="italic text-muted-foreground">{t("accountStatement.previousBalance")}</span>,
+                costCenter:  <span className="text-xs text-muted-foreground">—</span>,
+                debit:       <span className="font-mono text-blue-700">{previousDebit  > 0 ? fmt(previousDebit)  : ""}</span>,
+                credit:      <span className="font-mono text-rose-700">{previousCredit > 0 ? fmt(previousCredit) : ""}</span>,
+                balance: (
+                  <span className={cn("font-mono", previousBalance >= 0 ? "text-primary" : "text-destructive")}>
+                    {fmt(Math.abs(previousBalance))}
+                    <span className={cn("text-xs font-normal", isRtl ? "mr-1" : "ml-1")}>
+                      {previousBalance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}
+                    </span>
+                  </span>
+                ),
+              }] : []}
+              totalsRow={rows.length > 0 ? {
+                __label: <span>{t("accountingReports.total")}</span>,
+                debit:   <span className="font-mono text-blue-700">{fmt(totalDebit)}</span>,
+                credit:  <span className="font-mono text-rose-700">{fmt(totalCredit)}</span>,
+                balance: (
+                  <span className={cn("font-mono font-semibold", finalBalance >= 0 ? "text-primary" : "text-destructive")}>
+                    {fmt(Math.abs(finalBalance))}
+                    <span className={cn("text-xs font-normal", isRtl ? "mr-1" : "ml-1")}>
+                      {finalBalance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}
+                    </span>
+                  </span>
+                ),
+              } : null}
+              columns={[
+                { key: "docType",   label: "نوع الوثيقة", type: "text",
+                  value: (r: any) => docTypeFor(r),
+                  render: (r: any) => {
+                    const tone = docTypeTone(r);
+                    return (
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1.5 rounded-full border bg-gradient-to-l px-2.5 py-1 text-xs font-medium shadow-sm whitespace-nowrap",
+                          tone.ring, tone.bg, tone.text,
+                        )}
+                        data-testid={`cell-doctype-${r.lineId}`}
+                        title={r.entryType ?? "general"}
+                      >
+                        {docTypeFor(r)}
+                      </span>
+                    );
+                  },
+                },
+                { key: "entryDate", label: t("accountingReports.fromDate"), type: "text",
+                  className: "font-mono tabular-nums text-slate-600",
+                  value: (r: any) => r.entryDate,
+                },
+                { key: "docNumber", label: t("accountStatement.docNumber"), type: "text",
+                  className: "font-mono tabular-nums",
+                  value: (r: any) => r.docNumber ?? `JE-${r.entryId}`,
+                  render: (r: any) => {
+                    const href = sourceLinkFor(r);
+                    const label = r.docNumber || `JE-${r.entryId}`;
+                    return href ? (
+                      <Link
+                        href={href}
+                        className="inline-flex items-center gap-1 text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary/40 rounded font-semibold"
+                        data-testid={`link-source-${r.entryId}`}
+                        title={t("accountStatement.openSource") as string}
+                      >
+                        {label}
+                        <ExternalLink className="h-3 w-3 opacity-60" />
+                      </Link>
+                    ) : <span className="text-primary font-semibold">{label}</span>;
+                  },
+                },
+                { key: "description", label: t("accountStatement.description"), type: "text",
+                  className: "text-muted-foreground",
+                  value: (r: any) => r.description ?? "",
+                  render: (r: any) => <span className="max-w-xs truncate inline-block align-middle">{r.description || "—"}</span>,
+                },
+                ...(showCostCenterCol ? [{
+                  key: "costCenter", label: t("accountingReports.costCenter", { defaultValue: "مركز التكلفة" }) as string, type: "text" as const,
+                  value: (r: any) => r.costCenterCode
+                    ? `${r.costCenterCode} ${isRtl ? (r.costCenterNameAr ?? "") : (r.costCenterNameEn ?? r.costCenterNameAr ?? "")}`.trim()
+                    : "",
+                  render: (r: any) => r.costCenterCode ? (
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-gradient-to-l from-violet-50 to-fuchsia-50 px-2.5 py-1 text-xs font-medium text-violet-800 shadow-sm"
+                      title={isRtl ? (r.costCenterNameAr ?? "") : (r.costCenterNameEn ?? r.costCenterNameAr ?? "")}
+                      data-testid={`cell-costcenter-${r.lineId}`}
+                    >
+                      <span className="font-mono text-[10px] rounded bg-violet-100 px-1 py-0.5 text-violet-700">{r.costCenterCode}</span>
+                      <span className="truncate max-w-[140px]">
+                        {isRtl ? (r.costCenterNameAr ?? "") : (r.costCenterNameEn ?? r.costCenterNameAr ?? "")}
+                      </span>
+                    </span>
+                  ) : <span className="text-xs text-muted-foreground">—</span>,
+                }] : []),
+                { key: "debit", label: t("accountingReports.debit"), type: "num",
+                  align: "end", totalable: true,
+                  className: "font-mono tabular-nums",
+                  value: (r: any) => r.debit ?? 0,
+                  render: (r: any) => <span className="text-blue-700">{r.debit > 0 ? fmt(r.debit) : ""}</span>,
+                },
+                { key: "credit", label: t("accountingReports.credit"), type: "num",
+                  align: "end", totalable: true,
+                  className: "font-mono tabular-nums",
+                  value: (r: any) => r.credit ?? 0,
+                  render: (r: any) => <span className="text-rose-700">{r.credit > 0 ? fmt(r.credit) : ""}</span>,
+                },
+                { key: "balance", label: t("accountingReports.balance"), type: "num",
+                  align: "end",
+                  className: "font-mono tabular-nums font-semibold",
+                  value: (r: any) => r.balance ?? 0,
+                  render: (r: any) => (
+                    <span className={cn(r.balance >= 0 ? "text-primary" : "text-destructive")}>
+                      {fmt(Math.abs(r.balance))}
+                      <span className={cn("text-xs font-normal", isRtl ? "mr-1" : "ml-1")}>
+                        {r.balance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}
+                      </span>
+                    </span>
+                  ),
+                },
+              ]}
+            />
+          </div>
+
+          {/* ── Classic printable table (print/PDF only) ───────────────
+              Kept as a deterministic, paper-friendly fallback so
+              window.print() output matches the previous layout users
+              are familiar with. Hidden on screen via `hidden print:block`. */}
+          <div className="hidden print:block rounded-xl border bg-card overflow-hidden shadow-sm">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -445,9 +632,9 @@ export default function AccountStatement() {
                   </tr>
                 </thead>
                 <tbody>
-                  {/* SAP-style brought-forward row: shows the cumulative
-                      balance up to the day before fromDate so the ledger
-                      reads as a continuation of history, not from zero. */}
+                  {/* SAP-style brought-forward row — hidden when the user
+                      unchecks "تضمين الرصيد الافتتاحي". */}
+                  {withOpening && (
                   <tr className="bg-muted/20 border-b font-semibold">
                     <td className="px-4 py-2.5 text-muted-foreground text-xs">—</td>
                     <td className="px-4 py-2.5">
@@ -472,7 +659,8 @@ export default function AccountStatement() {
                       <span className={cn("text-xs font-normal", isRtl ? "mr-1" : "ml-1")}>{previousBalance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}</span>
                     </td>
                   </tr>
-                  {rows.map((r, i) => {
+                  )}
+                  {rows.map((r: any, i: number) => {
                     const href = sourceLinkFor(r);
                     const label = r.docNumber || `JE-${r.entryId}`;
                     const tone = docTypeTone(r);
