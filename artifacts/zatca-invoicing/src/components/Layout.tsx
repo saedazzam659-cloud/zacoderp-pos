@@ -753,15 +753,44 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
 };
 
 // Returns true when the user may see the given top-level sidebar group.
-// SuperAdmin bypasses all gates so platform staff can always navigate.
+//
+// Two independent permission layers must BOTH allow the group:
+//   1. Company-level (`companies.menuPermissions`) — set by SuperAdmin on
+//      /admin/menu-permissions. Acts as the upper bound for the whole tenant.
+//   2. Per-user RBAC (`users.permissions`) — set on /users by the company
+//      admin. Mirrors `usePermission(key, "view")` exactly so a user never
+//      sees a sidebar entry they can't actually open (a regression reported
+//      where blocking `multi_link` for a regular user from /users left the
+//      sidebar group visible because only the company gate was being checked).
+//
+// Bypass rules (match `usePermission` precisely):
+//   - SuperAdmin → always allowed.
+//   - Admin role → bypasses the per-user RBAC check, but still bounded by
+//     the company-level gate.
+//   - Regular user → both layers must allow; if their `permissions` object
+//     has none of the group's keys defined at all, we fall back to the
+//     company gate so legacy tenants who never configured per-user perms
+//     don't suddenly lose their entire sidebar.
 function isGroupAllowed(
   menuPerms: Record<string, boolean>,
   group: keyof typeof GROUP_PERMISSION_KEYS,
   isSuperAdmin: boolean,
+  user?: { role?: string; permissions?: Record<string, any> } | null,
 ): boolean {
   if (isSuperAdmin) return true;
   const keys = GROUP_PERMISSION_KEYS[group];
-  return keys.some(k => menuPerms[k] === true);
+  // Company-level gate (existing behavior).
+  if (!keys.some(k => menuPerms[k] === true)) return false;
+  // Admin bypasses per-user perm check (matches `usePermission` policy).
+  if (user?.role === "admin") return true;
+  const userPerms = (user?.permissions ?? {}) as Record<string, { view?: boolean } | undefined>;
+  // Legacy fallback: if no key in this group has any per-user entry at all,
+  // trust the company gate alone — avoids hiding everything for tenants who
+  // never configured per-user RBAC.
+  const definedKeys = keys.filter(k => userPerms[k] !== undefined);
+  if (definedKeys.length === 0) return true;
+  // Otherwise at least ONE key in the group must explicitly grant view.
+  return definedKeys.some(k => userPerms[k]?.view === true);
 }
 const PLAN_KEYS: Record<string, string> = {
   starter: "plans.starter", professional: "plans.professional", enterprise: "plans.enterprise",
@@ -2025,7 +2054,7 @@ function SidebarInner({
                 JSON) also see everything via the proxy backstop in
                 parseMenuPerms. New companies registered after this change
                 only see groups whose permission keys are explicitly true. */}
-            {isGroupAllowed(menuPerms, "dashboard", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "dashboard", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <NavItem
                   item={{ nameKey: "nav.infoBoard", href: "/", icon: LayoutDashboard, exact: true }}
@@ -2041,7 +2070,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "zatca", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "zatca", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <ZatcaNavGroup
                   location={location}
@@ -2052,7 +2081,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "inventory", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "inventory", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <InventoryNavGroup
                   location={location}
@@ -2065,7 +2094,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "sales", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "sales", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <SalesNavGroup
                   location={location}
@@ -2078,7 +2107,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "purchasing", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "purchasing", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <PurchasingNavGroup
                   location={location}
@@ -2091,7 +2120,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "cash", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "cash", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <CashNavGroup
                   location={location}
@@ -2104,7 +2133,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "accounting", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "accounting", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <AccountingNavGroup
                   location={location}
@@ -2117,7 +2146,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "hr", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "hr", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <HrNavGroup
                   location={location}
@@ -2128,7 +2157,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "production", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "production", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <ProductionNavGroup
                   location={location}
@@ -2139,7 +2168,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "contracting", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "contracting", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <ContractingNavGroup
                   location={location}
@@ -2150,7 +2179,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "maintenance", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "maintenance", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <MaintenanceNavGroup
                   location={location}
@@ -2161,7 +2190,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "installments", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "installments", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <InstallmentsNavGroup
                   location={location}
@@ -2172,7 +2201,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "hotel", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "hotel", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <HotelNavGroup
                   location={location}
@@ -2183,7 +2212,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "hospital", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "hospital", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <HospitalNavGroup
                   location={location}
@@ -2194,7 +2223,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "crm", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "crm", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <CrmNavGroup
                   location={location}
@@ -2205,7 +2234,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "fixedAssets", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "fixedAssets", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <FixedAssetsNavGroup
                   location={location}
@@ -2216,7 +2245,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "multiLink", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "multiLink", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <MultiLinkNavGroup
                   location={location}
@@ -2227,7 +2256,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "pos", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "pos", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <PosNavGroup
                   location={location}
@@ -2238,7 +2267,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "security", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "security", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <SecurityNavGroup
                   location={location}
@@ -2249,7 +2278,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "aiTools", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "aiTools", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <AIToolsNavGroup
                   location={location}
@@ -2260,7 +2289,7 @@ function SidebarInner({
               </div>
             )}
 
-            {isGroupAllowed(menuPerms, "liveMonitoring", isSuperAdmin) && (
+            {isGroupAllowed(menuPerms, "liveMonitoring", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <LiveMonitoringNavGroup
                   location={location}

@@ -33,7 +33,11 @@ export default function CheckInWidget() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canUse = hasPerm(user, "user_tracking");
+  // The "تسجيل زيارة" button is now gated by the field-service visits
+  // permission (الخدمة الميدانية ← الزيارات) per the user's request — this
+  // matches the menu label the admin sees in the permission grid and removes
+  // the confusion with the separate `user_tracking` (live GPS) module.
+  const canUse = hasPerm(user, "field_service_visits");
 
   const { data: active } = useQuery({
     queryKey: ["user-tracking-active", cid],
