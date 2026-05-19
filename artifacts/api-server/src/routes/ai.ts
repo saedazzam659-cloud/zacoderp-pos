@@ -3355,7 +3355,15 @@ ${SEVERITIES.map(s => `- ${s}`).join("\n")}
 // a suggested description and an isSecurityConcern flag.
 // Body: { imageUrl: string ("/objects/..."), hint?: string, cameraLabel?: string }
 // ═══════════════════════════════════════════════════════════════════
-router.post("/security/analyze-image", requirePermission("security_events", "view"), requireAiFeature("chat_assistant"), async (req, res) => {
+router.post("/security/analyze-image", requirePermission("security_events", "view"), async (req, res) => {
+  // SuperAdmin-only: vision/multimodal calls cannot currently be served by
+  // Gemini through aiClient (the adapter has no multimodal translation), so
+  // they would fall back to a paid provider. To preserve the 100%-free
+  // guarantee for tenant companies, this endpoint is restricted to SAs.
+  if ((req as any).authUser?.role !== "superadmin") {
+    res.status(403).json({ error: "تحليل صور الكاميرات متاح لمسؤول النظام فقط" });
+    return;
+  }
   try {
     const { imageUrl, hint, cameraLabel } = (req.body ?? {}) as {
       imageUrl?: string;
