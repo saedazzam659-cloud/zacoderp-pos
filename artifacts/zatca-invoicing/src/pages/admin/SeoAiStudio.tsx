@@ -23,9 +23,86 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Sparkles, Save, Loader2, RefreshCcw, Eye, Trash2, FileText, Wand2, Settings2,
   CheckCircle2, Clock, Send, Copy as CopyIcon, Plus, X,
+  Calculator, Brain, Trophy,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+// Themed quick-pick suggestion buckets shown under the dynamic AI
+// suggestions. Three boxes the user explicitly requested:
+//   1. Accounting standards (IFRS, ZATCA, local Saudi requirements)
+//   2. Artificial Intelligence (AI in accounting + business)
+//   3. Football (global + Saudi + Egyptian leagues — broad traffic magnet)
+// Clicking any chip just pre-fills the topic input; the user can edit
+// it before hitting "توليد المقال".
+const THEMED_SUGGESTIONS: Array<{
+  title:     string;
+  icon:      typeof Calculator;
+  cardClass: string;
+  iconClass: string;
+  chipClass: string;
+  items:     string[];
+}> = [
+  {
+    title:     "اقتراحات معايير محاسبية",
+    icon:      Calculator,
+    cardClass: "border-emerald-200 bg-emerald-50/40",
+    iconClass: "text-emerald-700",
+    chipClass: "border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-100",
+    items: [
+      "دليل عملي لتطبيق معيار IFRS 15 للإيرادات في الشركات السعودية",
+      "الفرق بين معايير IFRS و SOCPA وأيها يلزم منشأتك؟",
+      "كيف تطبق معيار IFRS 16 لعقود الإيجار خطوة بخطوة",
+      "إعداد القوائم المالية وفق IFRS مع أمثلة عملية",
+      "معيار IAS 2 للمخزون: طرق التقييم المسموح بها في السعودية",
+      "ضريبة القيمة المضافة 15% — متى تُحتسب ومتى تُعفى؟",
+      "إغلاق السنة المالية وفق IFRS في 5 خطوات",
+      "الفرق بين المصروف الرأسمالي والمصروف التشغيلي محاسبياً",
+      "كيف تعد التدفقات النقدية بالطريقة المباشرة وغير المباشرة",
+      "معيار IFRS 9 للأدوات المالية: تأثيره على البنوك والشركات",
+    ],
+  },
+  {
+    title:     "اقتراحات عن الذكاء الاصطناعي",
+    icon:      Brain,
+    cardClass: "border-fuchsia-200 bg-fuchsia-50/40",
+    iconClass: "text-fuchsia-700",
+    chipClass: "border-fuchsia-300 bg-white text-fuchsia-800 hover:bg-fuchsia-100",
+    items: [
+      "كيف يغير الذكاء الاصطناعي مهنة المحاسبة في 2026؟",
+      "أفضل 10 أدوات ذكاء اصطناعي للمحاسبين العرب",
+      "ChatGPT للمحاسبين: استخدامات عملية وأمثلة جاهزة",
+      "OCR الفواتير بالذكاء الاصطناعي: كيف يعمل وما حدوده؟",
+      "الذكاء الاصطناعي وتدقيق الحسابات: تهديد أم فرصة؟",
+      "كيف تستخدم AI لتحليل تقاريرك المالية بالعربية",
+      "أتمتة القيود اليومية بالذكاء الاصطناعي — دليل عملي",
+      "كشف الاحتيال المحاسبي بنماذج التعلم الآلي",
+      "مستقبل وظائف المحاسبة مع تطور الذكاء الاصطناعي",
+      "هل يستطيع الذكاء الاصطناعي إعداد ميزانية شركتك تلقائياً؟",
+    ],
+  },
+  {
+    title:     "اقتراحات عن كرة القدم",
+    icon:      Trophy,
+    cardClass: "border-amber-200 bg-amber-50/40",
+    iconClass: "text-amber-700",
+    chipClass: "border-amber-300 bg-white text-amber-800 hover:bg-amber-100",
+    items: [
+      "كأس العالم 2026: مواعيد المباريات والمنتخبات المتأهلة",
+      "دوري روشن السعودي: أبرز الصفقات والتوقعات لهذا الموسم",
+      "تاريخ الكلاسيكو السعودي: الهلال ضد النصر",
+      "نجوم الدوري السعودي الأجانب وتأثيرهم على الكرة المحلية",
+      "الدوري المصري الممتاز: ترتيب الفرق وأبرز اللاعبين",
+      "كلاسيكو القاهرة: الأهلي والزمالك — قصة منافسة لا تنتهي",
+      "المنتخب السعودي الأول: استعدادات كأس آسيا 2027",
+      "المنتخب المصري وحلم العودة لكأس العالم",
+      "أغلى صفقات الدوري الإنجليزي الممتاز هذا الموسم",
+      "دوري أبطال أوروبا: المرشحون الأقوى للقب",
+      "الكرة الذهبية 2026: أبرز المرشحين للجائزة",
+      "أكاديميات كرة القدم في السعودية: مستقبل واعد للناشئين",
+    ],
+  },
+];
 
 type AiSettings = {
   model: string;
@@ -435,6 +512,38 @@ export default function SeoAiStudio() {
                     <p className="text-xs text-muted-foreground italic">لا توجد اقتراحات حالياً.</p>
                   )}
                 </div>
+              </div>
+
+              {/* Themed quick-pick boxes — three curated buckets the user
+                  asked for: accounting standards, AI, and football. Each
+                  chip just pre-fills the topic input so the writer can
+                  edit before generating. Themes are intentionally generic
+                  (no SEO targeting) so the AI does the heavy lifting. */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {THEMED_SUGGESTIONS.map(box => (
+                  <div
+                    key={box.title}
+                    className={`rounded-xl border-2 p-3 ${box.cardClass}`}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <box.icon className={`h-4 w-4 ${box.iconClass}`} />
+                      <p className={`text-xs font-bold ${box.iconClass}`}>{box.title}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {box.items.map(t => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setTopic(t)}
+                          className={`text-[11px] rounded-full border px-2.5 py-1 transition-colors ${box.chipClass}`}
+                          title={`استخدم: ${t}`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
 
               {/* Country targeting chips. The selected codes are stored on
