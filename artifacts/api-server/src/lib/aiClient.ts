@@ -29,7 +29,10 @@
 
 import { logger } from "./logger";
 
-const GEMINI_KEY      = process.env.GEMINI_API_KEY;
+// Accept either GEMINI_API_KEY or GOOGLE_API_KEY (Google's own SDKs read
+// GOOGLE_API_KEY by default, so users coming from AI Studio often set
+// that name instead). Whichever is present wins.
+const GEMINI_KEY      = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 const GEMINI_MODEL    = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 const GEMINI_BASE     = "https://generativelanguage.googleapis.com/v1beta";
 const OPENAI_BASE     = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
