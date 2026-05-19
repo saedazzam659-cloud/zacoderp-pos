@@ -568,6 +568,18 @@ router.post("/parse", async (req, res) => {
       warnings = r.warnings;
     } else if (ext === "pdf") {
       // pdf-parse v2 exports a class — old `pdfParse(buf)` call no longer works.
+      // pdfjs-dist v5 (transitively used by pdf-parse) references browser
+      // Web APIs at module-load time: DOMMatrix, Path2D, ImageData. Node
+      // does not provide them, so the dynamic import throws
+      // `ReferenceError: DOMMatrix is not defined` once, which leaves
+      // pdf-parse's __esm module partially initialized — every subsequent
+      // `new PDFParse(...)` then fails with "PDFParse2 is not a constructor".
+      // Text extraction (which is all we use) never actually touches canvas,
+      // so installing minimal no-op stubs before the import is enough.
+      const g = globalThis as any;
+      if (typeof g.DOMMatrix === "undefined") g.DOMMatrix = class { constructor() {} };
+      if (typeof g.Path2D    === "undefined") g.Path2D    = class { constructor() {} };
+      if (typeof g.ImageData === "undefined") g.ImageData = class { constructor() {} };
       const { PDFParse } = await import("pdf-parse");
       const parser = new (PDFParse as any)({ data: new Uint8Array(buf) });
       const out = await parser.getText();
