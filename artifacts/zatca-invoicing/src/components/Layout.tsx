@@ -20,6 +20,7 @@ import {
   Plug,
   X,
   Library,
+  Brain,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -145,6 +146,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.supportCall",          href: "/admin/support-call",       icon: Video },
   { nameKey: "nav.seoDashboard",         href: "/admin/seo",                icon: TrendingUp, exact: true },
   { nameKey: "nav.seoAiStudio",          href: "/admin/seo/ai",             icon: Sparkles },
+  { nameKey: "nav.aiControls",           href: "/admin/ai-controls",        icon: Brain },
   { nameKey: "nav.auditLog",             href: "/admin/audit-log",          icon: ScrollText },
   { nameKey: "nav.companies",            href: "/companies",                icon: Building2 },
   { nameKey: "nav.deletedCompanies",     href: "/companies/deleted",        icon: Trash2 },

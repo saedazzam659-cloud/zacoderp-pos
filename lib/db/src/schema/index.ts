@@ -67,5 +67,6 @@ export * from "./gatewayClients";
 export * from "./integrationConnections";
 export * from "./supportKnowledgeBase";
 export * from "./accountingStandardsKb";
+export * from "./aiControls";
 export * from "./customPrintTemplates";
 export * from "./userTracking";

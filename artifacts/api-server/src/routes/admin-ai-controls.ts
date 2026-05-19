@@ -1,0 +1,287 @@
+// SuperAdmin AI controls — manage per-company feature toggles, quotas
+// and view usage stats. Mounted at /api/admin/ai-controls.
+//
+// All endpoints require role === "superadmin". The frontend lives at
+// /admin/ai-controls. Companion data sources:
+//   - ai_feature_settings (overrides, system defaults when company_id IS NULL)
+//   - ai_usage_log         (every gated AI call lands here)
+//   - AI_FEATURE_CATALOG   (compile-time list of feature keys + Arabic labels)
+import { Router, type Request, type Response, type NextFunction } from "express";
+import { z } from "zod";
+import { db } from "@workspace/db";
+import { sql } from "drizzle-orm";
+import { AI_FEATURE_CATALOG, type AiFeatureKey } from "@workspace/db";
+import { extractAuth } from "../middleware/auth.js";
+
+const router = Router();
+router.use(extractAuth);
+
+async function requireSuperAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const u = (req as any).authUser;
+  if (!u || !u.isActive || u.role !== "superadmin") {
+    res.status(403).json({ error: "superadmin required" });
+    return;
+  }
+  next();
+}
+
+// ─── GET /catalog ─────────────────────────────────────────────────────────
+// Static catalog of features. Lets the UI render the toggle table even
+// when ai_feature_settings is empty.
+router.get("/catalog", requireSuperAdmin, (_req, res) => {
+  res.json({ features: AI_FEATURE_CATALOG });
+});
+
+// ─── GET /settings?companyId= ─────────────────────────────────────────────
+// Returns every feature key with the effective setting for the requested
+// company (company override > system default > catalog default). The UI
+// merges this with the catalog for display.
+router.get("/settings", requireSuperAdmin, async (req, res) => {
+  const companyIdRaw = req.query.companyId;
+  const companyId = companyIdRaw == null || companyIdRaw === ""
+    ? null
+    : Number(companyIdRaw);
+  if (companyId != null && !Number.isFinite(companyId)) {
+    res.status(400).json({ error: "companyId must be numeric or omitted (system defaults)" });
+    return;
+  }
+
+  try {
+    const overrides: any = companyId == null
+      ? await db.execute(sql`
+          SELECT feature_key, is_enabled, daily_limit, monthly_limit, note, updated_at
+            FROM ai_feature_settings
+           WHERE company_id IS NULL
+        `)
+      : await db.execute(sql`
+          SELECT feature_key, is_enabled, daily_limit, monthly_limit, note, updated_at
+            FROM ai_feature_settings
+           WHERE company_id = ${companyId}
+        `);
+
+    const systemDefaults: any = await db.execute(sql`
+      SELECT feature_key, is_enabled, daily_limit, monthly_limit
+        FROM ai_feature_settings
+       WHERE company_id IS NULL
+    `);
+    const sysMap = new Map<string, any>(
+      (systemDefaults.rows ?? []).map((r: any) => [r.feature_key, r]),
+    );
+
+    const overrideMap = new Map<string, any>(
+      (overrides.rows ?? []).map((r: any) => [r.feature_key, r]),
+    );
+
+    const settings = AI_FEATURE_CATALOG.map(f => {
+      const ov  = overrideMap.get(f.key);
+      const sys = sysMap.get(f.key);
+      const eff = ov ?? sys;
+      return {
+        featureKey:    f.key,
+        labelAr:       f.labelAr,
+        catalogDaily:  f.defaultDaily,
+        isEnabled:     eff?.is_enabled ?? true,
+        dailyLimit:    eff?.daily_limit ?? f.defaultDaily,
+        monthlyLimit:  eff?.monthly_limit ?? null,
+        note:          ov?.note ?? null,
+        source:        ov ? "company" : sys ? "system" : "catalog",
+        updatedAt:     ov?.updated_at ?? sys?.updated_at ?? null,
+      };
+    });
+
+    res.json({ companyId, settings });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "failed" });
+  }
+});
+
+// ─── PUT /settings ────────────────────────────────────────────────────────
+// Bulk upsert. The UI sends the full list of edited rows in one request.
+// Setting company_id = null = edit the system defaults.
+const upsertSchema = z.object({
+  companyId: z.number().int().positive().nullable(),
+  settings: z.array(z.object({
+    featureKey:   z.string().min(1).max(64),
+    isEnabled:    z.boolean(),
+    dailyLimit:   z.number().int().min(0).max(100000).nullable(),
+    monthlyLimit: z.number().int().min(0).max(10000000).nullable(),
+    note:         z.string().max(500).nullable().optional(),
+  })).min(1),
+});
+router.put("/settings", requireSuperAdmin, async (req, res) => {
+  const parsed = upsertSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid body", details: parsed.error.flatten() });
+    return;
+  }
+  const { companyId, settings } = parsed.data;
+  const updatedBy = (req as any).authUser?.id ?? null;
+  const validKeys = new Set<string>(AI_FEATURE_CATALOG.map(f => f.key as string));
+
+  try {
+    for (const s of settings) {
+      if (!validKeys.has(s.featureKey)) continue;
+      // Upsert via DELETE+INSERT — keeps logic simple across NULL company_id.
+      if (companyId == null) {
+        await db.execute(sql`DELETE FROM ai_feature_settings WHERE company_id IS NULL AND feature_key = ${s.featureKey}`);
+      } else {
+        await db.execute(sql`DELETE FROM ai_feature_settings WHERE company_id = ${companyId} AND feature_key = ${s.featureKey}`);
+      }
+      await db.execute(sql`
+        INSERT INTO ai_feature_settings
+          (company_id, feature_key, is_enabled, daily_limit, monthly_limit, note, updated_by, updated_at)
+        VALUES (
+          ${companyId},
+          ${s.featureKey},
+          ${s.isEnabled},
+          ${s.dailyLimit},
+          ${s.monthlyLimit},
+          ${s.note ?? null},
+          ${updatedBy},
+          NOW()
+        )
+      `);
+    }
+    res.json({ ok: true, count: settings.length });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "failed" });
+  }
+});
+
+// ─── POST /disable-all ────────────────────────────────────────────────────
+// Kill switch — disables every catalog feature for the company in one
+// click. Useful when a tenant abuses the system.
+const killSchema = z.object({
+  companyId: z.number().int().positive(),
+  note:      z.string().max(500).optional(),
+});
+router.post("/disable-all", requireSuperAdmin, async (req, res) => {
+  const parsed = killSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "companyId required" }); return; }
+  const { companyId, note } = parsed.data;
+  const updatedBy = (req as any).authUser?.id ?? null;
+  try {
+    for (const f of AI_FEATURE_CATALOG) {
+      await db.execute(sql`DELETE FROM ai_feature_settings WHERE company_id = ${companyId} AND feature_key = ${f.key}`);
+      await db.execute(sql`
+        INSERT INTO ai_feature_settings (company_id, feature_key, is_enabled, daily_limit, note, updated_by)
+        VALUES (${companyId}, ${f.key}, FALSE, 0, ${note ?? "تم الإيقاف الجماعي من شاشة المشرف العام"}, ${updatedBy})
+      `);
+    }
+    res.json({ ok: true, count: AI_FEATURE_CATALOG.length });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "failed" });
+  }
+});
+
+// ─── POST /enable-all ─────────────────────────────────────────────────────
+// Reverse of disable-all: removes all company-specific overrides, so the
+// company falls back to system defaults.
+router.post("/enable-all", requireSuperAdmin, async (req, res) => {
+  const parsed = killSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "companyId required" }); return; }
+  const { companyId } = parsed.data;
+  try {
+    await db.execute(sql`DELETE FROM ai_feature_settings WHERE company_id = ${companyId}`);
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "failed" });
+  }
+});
+
+// ─── GET /usage?companyId=&days= ──────────────────────────────────────────
+// Aggregated usage stats per feature for the given window. Powers the
+// "today / month" counters in the admin dashboard.
+router.get("/usage", requireSuperAdmin, async (req, res) => {
+  const companyIdRaw = req.query.companyId;
+  const companyId = companyIdRaw == null || companyIdRaw === ""
+    ? null
+    : Number(companyIdRaw);
+  if (companyId != null && !Number.isFinite(companyId)) {
+    res.status(400).json({ error: "companyId must be numeric" });
+    return;
+  }
+  const days = Math.max(1, Math.min(90, Number(req.query.days || 30)));
+  const since = new Date(Date.now() - days * 86400 * 1000);
+  const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
+  const monthStart = new Date(); monthStart.setUTCDate(1); monthStart.setUTCHours(0, 0, 0, 0);
+
+  const companyCond = companyId == null ? sql`TRUE` : sql`company_id = ${companyId}`;
+
+  try {
+    const rolling: any = await db.execute(sql`
+      SELECT feature_key, status, COUNT(*) AS n,
+             COALESCE(SUM(tokens_in),0)  AS tokens_in,
+             COALESCE(SUM(tokens_out),0) AS tokens_out
+        FROM ai_usage_log
+       WHERE ${companyCond} AND created_at >= ${since.toISOString()}
+    GROUP BY feature_key, status
+    `);
+
+    const today: any = await db.execute(sql`
+      SELECT feature_key, COUNT(*) FILTER (WHERE status='allowed') AS allowed,
+                          COUNT(*) FILTER (WHERE status LIKE 'blocked_%') AS blocked
+        FROM ai_usage_log
+       WHERE ${companyCond} AND created_at >= ${dayStart.toISOString()}
+    GROUP BY feature_key
+    `);
+
+    const month: any = await db.execute(sql`
+      SELECT feature_key, COUNT(*) FILTER (WHERE status='allowed') AS allowed
+        FROM ai_usage_log
+       WHERE ${companyCond} AND created_at >= ${monthStart.toISOString()}
+    GROUP BY feature_key
+    `);
+
+    res.json({
+      companyId, days,
+      rolling: rolling.rows ?? [],
+      today:   today.rows   ?? [],
+      month:   month.rows   ?? [],
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "failed" });
+  }
+});
+
+// ─── GET /companies ───────────────────────────────────────────────────────
+// Small helper so the dropdown in the UI doesn't have to call another
+// route. Only returns id+name; full company management lives elsewhere.
+router.get("/companies", requireSuperAdmin, async (_req, res) => {
+  try {
+    const r: any = await db.execute(sql`
+      SELECT id, name_ar, name_en
+        FROM companies
+       WHERE COALESCE(is_deleted, FALSE) = FALSE
+    ORDER BY id
+    `);
+    res.json({ companies: (r.rows ?? []).map((c: any) => ({
+      id: c.id, nameAr: c.name_ar, nameEn: c.name_en,
+    })) });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "failed" });
+  }
+});
+
+// ─── GET /recent-blocked ──────────────────────────────────────────────────
+// Tail of the usage log filtered to blocked entries — quick way to spot
+// tenants hitting their quota repeatedly.
+router.get("/recent-blocked", requireSuperAdmin, async (req, res) => {
+  const limit = Math.max(1, Math.min(200, Number(req.query.limit || 50)));
+  try {
+    const r: any = await db.execute(sql`
+      SELECT l.id, l.company_id, l.user_id, l.feature_key, l.status, l.created_at,
+             c.name_ar AS company_name_ar
+        FROM ai_usage_log l
+        LEFT JOIN companies c ON c.id = l.company_id
+       WHERE l.status LIKE 'blocked_%'
+    ORDER BY l.created_at DESC
+       LIMIT ${limit}
+    `);
+    res.json({ entries: r.rows ?? [] });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "failed" });
+  }
+});
+
+export default router;

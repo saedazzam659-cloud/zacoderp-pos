@@ -469,6 +469,7 @@
     "modules": "وحدات النظام",
     "industries": "أنواع الأنشطة",
     "menuPermissions": "صلاحيات القوائم",
+    "aiControls": "التحكم بالذكاء الاصطناعي",
     "gatewayClients": "بوابة الفواتير الخارجية",
     "orphanStock": "تنظيف حركات المخزون اليتيمة",
     "databaseStats": "إحصاءات قاعدة البيانات",

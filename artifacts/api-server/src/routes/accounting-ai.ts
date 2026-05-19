@@ -17,6 +17,7 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { extractAuth } from "../middleware/auth.js";
 import { chat as aiChat } from "../lib/aiClient.js";
+import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -121,10 +122,11 @@ async function retrieveStandards(question: string, scope?: string): Promise<StdH
   }));
 }
 
-router.post("/ask", async (req, res) => {
+router.post("/ask", requireAiFeature("accounting_ai_ask"), async (req, res) => {
   const parsed = askSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "input invalid", details: parsed.error.flatten() }); return; }
   const { question, standard, locale } = parsed.data;
+  const startedAt = Date.now();
 
   try {
     const hits = await retrieveStandards(question, standard);
@@ -147,6 +149,7 @@ router.post("/ask", async (req, res) => {
     const citations = hits.map(h => ({ id: h.id, code: h.code, standard: h.standard, title: h.titleAr }));
 
     if (ai.ok) {
+      await logAiUsage(req, { status: "allowed", provider: ai.provider, durationMs: Date.now() - startedAt });
       res.json({ answer: ai.text.trim(), source: "ai", provider: ai.provider, citations });
       return;
     }
@@ -154,6 +157,7 @@ router.post("/ask", async (req, res) => {
     // Fallback: stitch the top-1 hit's summary into a deterministic answer.
     if (hits.length > 0) {
       const top = hits[0];
+      await logAiUsage(req, { status: "allowed", provider: "kb", durationMs: Date.now() - startedAt });
       res.json({
         answer:  `بناءً على [${top.code}] — ${top.titleAr}:\n\n${top.summaryAr}\n\n(الإجابة من قاعدة المعرفة المحاسبية لأن الذكاء الاصطناعي غير متاح حالياً. هذه إجابة استرشادية وليست استشارة قانونية أو ضريبية.)`,
         source: "kb",
@@ -162,12 +166,14 @@ router.post("/ask", async (req, res) => {
       return;
     }
 
+    await logAiUsage(req, { status: "allowed", provider: "none", durationMs: Date.now() - startedAt });
     res.json({
       answer: "لم أعثر على معيار مطابق في قاعدة المعرفة، وخادم الذكاء الاصطناعي غير متاح حالياً. حاول إعادة صياغة السؤال أو حدّد المعيار (IFRS / GAAP / ZATCA).",
       source: "none",
       citations: [],
     });
   } catch (e: any) {
+    await logAiUsage(req, { status: "error", durationMs: Date.now() - startedAt, meta: { error: String(e?.message || e) } });
     res.status(500).json({ error: e?.message || "accounting-ai failed" });
   }
 });

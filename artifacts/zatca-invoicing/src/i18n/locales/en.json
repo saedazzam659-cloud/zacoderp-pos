@@ -469,6 +469,7 @@
     "modules": "System Modules",
     "industries": "Activity Types",
     "menuPermissions": "Menu Permissions",
+    "aiControls": "AI Controls",
     "gatewayClients": "External Invoice Gateway",
     "orphanStock": "Orphan Stock Cleanup",
     "databaseStats": "Database Statistics",
