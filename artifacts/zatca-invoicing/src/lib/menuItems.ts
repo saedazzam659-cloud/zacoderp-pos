@@ -69,7 +69,7 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "installments",       label: "البيع بالتقسيط الذكي",       section: "البيع بالتقسيط" },
 
-  { key: "user_tracking",      label: "تتبع مواقع المستخدمين",       section: "تتبع المواقع" },
+  { key: "user_tracking",      label: "تتبع مواقع المستخدمين",       section: "المراقبة المباشرة" },
 
   { key: "zatca",              label: "ربط ZATCA",                   section: "النظام" },
 

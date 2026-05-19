@@ -332,11 +332,18 @@ const dashboardSubNav: NavDef[] = [
   // Per-company governance of which fields show on invoice screens for non-admin users.
   // Admin-only — see /admin/invoice-field-policies.
   { nameKey: "nav.invoiceFieldPolicies", href: "/admin/invoice-field-policies", icon: ShieldCheck, requireSuperadmin: true },
-  // User location tracking — admin dashboard + zone CRUD.
+];
+
+// ─── Live Monitoring (المراقبة المباشرة) ──────────────────────────────────────
+// Top-level group containing user location tracking, live tracking, and
+// attendance reporting. Previously these lived under the Dashboard subnav;
+// extracted to their own collapsible group per user request.
+const liveMonitoringSubNav: NavDef[] = [
   { nameKey: "nav.userTracking",    href: "/user-tracking",       icon: MapPin,    permKey: "user_tracking" },
   { nameKey: "nav.userTrackingLive", href: "/user-tracking/live",  icon: MapPin,    permKey: "user_tracking" },
   { nameKey: "nav.userAttendance",   href: "/user-tracking/attendance", icon: MapPin, permKey: "user_tracking" },
 ];
+const LIVE_MONITORING_GROUP_PERMS = ["user_tracking"];
 
 // "أدوات الذكاء الاصطناعي" — top-level group for AI-related screens. Per the
 // user's request, the following items were lifted out of the dashboard /
@@ -742,6 +749,7 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   security:    ["security", "security_events"],
   aiTools:     ["ai_tools"],
   multiLink:   ["multi_link"],
+  liveMonitoring: LIVE_MONITORING_GROUP_PERMS,
 };
 
 // Returns true when the user may see the given top-level sidebar group.
@@ -1197,6 +1205,46 @@ function DashboardNavGroup({
         hubHref="/control-panel"
         icon={Settings}
         label={t("nav.dashboard")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {visibleChildren.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── LiveMonitoringNavGroup ───────────────────────────────────────────────────
+// "المراقبة المباشرة" — collapsible group housing user tracking, live
+// tracking, and attendance reporting. Hidden when none of the children are
+// visible (mirrors DashboardNavGroup).
+function LiveMonitoringNavGroup({
+  location, onNavigate, open, onToggle,
+}: {
+  location: string;
+  onNavigate: () => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const visibleChildren = filterNav(liveMonitoringSubNav, user);
+  if (visibleChildren.length === 0) return null;
+  const isOnSub = visibleChildren.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref={visibleChildren[0].href}
+        icon={Activity}
+        label={t("nav.liveMonitoring")}
         isOn={isOnSub}
         open={open}
         onToggle={onToggle}
@@ -1814,6 +1862,8 @@ function SidebarInner({
   onSecurityToggle,
   aiToolsOpen,
   onAiToolsToggle,
+  liveMonitoringOpen,
+  onLiveMonitoringToggle,
   onNavigate,
   onLogout,
   onClose,
@@ -1872,6 +1922,8 @@ function SidebarInner({
   onSecurityToggle: () => void;
   aiToolsOpen: boolean;
   onAiToolsToggle: () => void;
+  liveMonitoringOpen: boolean;
+  onLiveMonitoringToggle: () => void;
   onNavigate: () => void;
   onLogout: () => void;
   /** Optional close handler. When provided we render a close button in
@@ -2204,6 +2256,17 @@ function SidebarInner({
                   onNavigate={onNavigate}
                   open={aiToolsOpen}
                   onToggle={onAiToolsToggle}
+                />
+              </div>
+            )}
+
+            {isGroupAllowed(menuPerms, "liveMonitoring", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <LiveMonitoringNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={liveMonitoringOpen}
+                  onToggle={onLiveMonitoringToggle}
                 />
               </div>
             )}
@@ -2635,6 +2698,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     location.startsWith("/inbox") ||
     location.startsWith("/settings/data-io")
   );
+  const [liveMonitoringOpen, setLiveMonitoringOpen] = useState(() =>
+    location.startsWith("/user-tracking")
+  );
 
   // Mirror the App.tsx logic: while impersonating a tenant the SA should
   // see the tenant sidebar (Dashboard / Sales / Inventory / …), not the
@@ -2650,7 +2716,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "accounting"
     | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting" | "maintenance" | "installments" | "hotel" | "hospital" | "crm" | "fixedAssets"
-    | "multiLink" | "pos" | "security" | "aiTools";
+    | "multiLink" | "pos" | "security" | "aiTools" | "liveMonitoring";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
     if (keep !== "zatcaGroup") setZatcaGroupOpen(false);
@@ -2672,6 +2738,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (keep !== "pos")         setPosOpen(false);
     if (keep !== "security")    setSecurityOpen(false);
     if (keep !== "aiTools")     setAiToolsOpen(false);
+    if (keep !== "liveMonitoring") setLiveMonitoringOpen(false);
   };
   // Each top-level toggle: flip its own state. When the row is currently
   // CLOSED (i.e. the click is about to OPEN it), also collapse every other
@@ -2709,6 +2776,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handlePosToggle         = makeAccordionToggle("pos",         posOpen,         setPosOpen);
   const handleSecurityToggle   = makeAccordionToggle("security",   securityOpen,   setSecurityOpen);
   const handleAiToolsToggle    = makeAccordionToggle("aiTools",    aiToolsOpen,    setAiToolsOpen);
+  const handleLiveMonitoringToggle = makeAccordionToggle("liveMonitoring", liveMonitoringOpen, setLiveMonitoringOpen);
   // Sub-group toggles (nested reports) — independent of the accordion.
   const handleInvReportsToggle        = () => setInvReportsOpen(v => !v);
   const handleReportsToggle           = () => setReportsOpen(v => !v);
@@ -2767,6 +2835,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     else if (location.startsWith("/admin/gateway-clients")) target = "multiLink";
     else if (location.startsWith("/hr/") || location === "/hr") target = "hr";
     else if (location.startsWith("/security")) target = "security";
+    else if (location.startsWith("/user-tracking")) target = "liveMonitoring";
     else if (
       location.startsWith("/voice-assistant") ||
       location.startsWith("/ai-reports") ||
@@ -2810,6 +2879,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         pos:         setPosOpen,
         security:    setSecurityOpen,
         aiTools:     setAiToolsOpen,
+        liveMonitoring: setLiveMonitoringOpen,
       };
       setterByGroup[target](true);
       closeOtherTopLevelGroups(target);
@@ -2871,6 +2941,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onSecurityToggle: handleSecurityToggle,
     aiToolsOpen,
     onAiToolsToggle: handleAiToolsToggle,
+    liveMonitoringOpen,
+    onLiveMonitoringToggle: handleLiveMonitoringToggle,
     onNavigate: closeMobile,
     onClose: closeMobile,
     onLogout: logout,
