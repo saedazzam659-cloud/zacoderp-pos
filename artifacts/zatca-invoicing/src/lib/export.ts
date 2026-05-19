@@ -860,13 +860,16 @@ export interface ExportStatementPdfOpts {
   autoPrint?: boolean;
   /** Locale-aware number formatter; defaults to en-US with 2 fraction digits. */
   fmt?: (n: number) => string;
+  /** Localized branch name when the user filtered by a specific branch.
+   *  Undefined / null / empty => "all branches" => the row is hidden. */
+  branchName?: string | null;
 }
 
 export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
   const {
     mode, company, account, from, to,
     opening, lines, totals, closing,
-    filename, autoPrint = true,
+    filename, autoPrint = true, branchName,
   } = opts;
   const fmt = opts.fmt ?? ((n: number) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
@@ -1119,6 +1122,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
         <div class="item"><div class="lbl">مستوى الحساب</div><div>:</div><div class="val">${escape(account.level != null ? String(account.level) : "—")}</div></div>
       </div>
       <div>
+        ${branchName ? `<div class="item"><div class="lbl">الفرع</div><div>:</div><div class="val">${escape(branchName)}</div></div>` : ""}
         <div class="item"><div class="lbl">من تاريخ</div><div>:</div><div class="val mono">${escape(from)}</div></div>
         <div class="item"><div class="lbl">إلى تاريخ</div><div>:</div><div class="val mono">${escape(to)}</div></div>
         <div class="item"><div class="lbl">معامل التصفية</div><div>:</div><div class="val">—</div></div>

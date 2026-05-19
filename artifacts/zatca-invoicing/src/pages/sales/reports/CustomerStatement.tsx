@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import StatementExportButtons from "@/components/StatementExportButtons";
 import BranchFilter from "@/components/BranchFilter";
+import { useBranches } from "@/hooks/useBranches";
 import AccountStatementView from "@/components/AccountStatementView";
 import { useTranslation } from "react-i18next";
 import { FileText, Search, Filter } from "lucide-react";
@@ -50,6 +51,18 @@ export default function CustomerStatement() {
   });
 
   const customer = (customers as any[]).find(c => String(c.id) === applied.customerId);
+
+  // Resolve the selected branch's display name (Arabic preferred in RTL).
+  // `undefined` => "all branches" filter => no branch row is rendered/printed.
+  const { data: branches = [] } = useBranches();
+  const selectedBranch = applied.branchId != null
+    ? branches.find(b => b.id === applied.branchId)
+    : undefined;
+  const branchName = selectedBranch
+    ? (isRtl
+        ? (selectedBranch.nameAr || selectedBranch.nameEn || selectedBranch.code)
+        : (selectedBranch.nameEn || selectedBranch.nameAr || selectedBranch.code))
+    : null;
 
   // Fetch the linked chart-of-accounts row so the printout's "رمز الحساب" /
   // "اسم الحساب" / "مستوى الحساب" come from the GL account (per user spec),
@@ -118,6 +131,7 @@ export default function CustomerStatement() {
           closing={closing}
           filename={`${tr("exportFilename")}-${customerLabel || "customer"}-${applied.from}-${applied.to}`}
           disabled={!applied.customerId || isLoading}
+          branchName={branchName}
         />
       </div>
 
@@ -192,6 +206,7 @@ export default function CustomerStatement() {
             account={acctView}
             from={applied.from}
             to={applied.to}
+            branchName={branchName}
             opening={data?.opening ?? 0}
             lines={augmented.map(l => ({
               date: l.date,

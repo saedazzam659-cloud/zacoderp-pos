@@ -74,10 +74,13 @@ export interface AccountStatementViewProps {
   closing: number;
   /** Customer = "كشف حساب عميل", supplier shows "كشف حساب مورد" header. */
   mode: "customer" | "supplier";
+  /** Localized branch name when the user filtered by a specific branch.
+   *  Undefined / null / empty => "all branches" => the row is hidden. */
+  branchName?: string | null;
 }
 
 export default function AccountStatementView({
-  company, account, from, to, opening, lines, totals, closing, mode,
+  company, account, from, to, opening, lines, totals, closing, mode, branchName,
 }: AccountStatementViewProps) {
   const { fmt } = useFmt();
   const { t, i18n } = useTranslation();
@@ -168,8 +171,11 @@ export default function AccountStatementView({
             <Row label={tr("latinName", "الاسم اللاتيني")}  value={account.legalName || account.nameEn || "—"} />
             <Row label={tr("accountLevel", "مستوى الحساب")} value={account.level != null ? String(account.level) : "—"} />
           </div>
-          {/* Left column: date range */}
+          {/* Left column: date range (+ branch when filtered) */}
           <div className="space-y-2">
+            {branchName ? (
+              <Row label={tr("branchLabel", "الفرع")} value={branchName} />
+            ) : null}
             <Row label={tr("fromDate", "من تاريخ")} value={from} mono />
             <Row label={tr("toDate",   "إلى تاريخ")} value={to}   mono />
             <Row label={tr("settlementFactor", "معامل التصفية")} value="—" />

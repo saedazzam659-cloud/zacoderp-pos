@@ -34,10 +34,13 @@ interface Props {
   closing: number;
   filename: string;
   disabled?: boolean;
+  /** Localized branch name when a specific branch is filtered; shown in
+   *  the printable PDF view's account-meta block. */
+  branchName?: string | null;
 }
 
 export default function StatementExportButtons({
-  mode, company, account, from, to, opening, lines, totals, closing, filename, disabled,
+  mode, company, account, from, to, opening, lines, totals, closing, filename, disabled, branchName,
 }: Props) {
   const [busy, setBusy] = useState(false);
   const { fmt } = useFmt();
@@ -88,7 +91,7 @@ export default function StatementExportButtons({
       } else {
         exportStatementToPDF({
           mode, company, account, from, to, opening, lines, totals, closing,
-          filename, autoPrint: type === "print", fmt,
+          filename, autoPrint: type === "print", fmt, branchName,
         });
       }
     } finally {

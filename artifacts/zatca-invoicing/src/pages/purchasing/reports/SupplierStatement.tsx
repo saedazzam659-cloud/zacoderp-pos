@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import StatementExportButtons from "@/components/StatementExportButtons";
 import BranchFilter from "@/components/BranchFilter";
+import { useBranches } from "@/hooks/useBranches";
 import AccountStatementView from "@/components/AccountStatementView";
 import { useTranslation } from "react-i18next";
 import { FileText, Search, Filter } from "lucide-react";
@@ -55,6 +56,18 @@ export default function SupplierStatement() {
 
   const supplier = (suppliers as any[]).find(s => String(s.id) === applied.supplierId);
   const supplierLabel = supplier ? (isRtl ? (supplier.nameAr ?? supplier.nameEn) : (supplier.nameEn ?? supplier.nameAr)) : "";
+
+  // Resolve the selected branch's display name (Arabic preferred in RTL).
+  // `undefined` => "all branches" filter => no branch row is rendered/printed.
+  const { data: branches = [] } = useBranches();
+  const selectedBranch = applied.branchId != null
+    ? branches.find(b => b.id === applied.branchId)
+    : undefined;
+  const branchName = selectedBranch
+    ? (isRtl
+        ? (selectedBranch.nameAr || selectedBranch.nameEn || selectedBranch.code)
+        : (selectedBranch.nameEn || selectedBranch.nameAr || selectedBranch.code))
+    : null;
 
   // Fetch the linked chart-of-accounts row so the printout's "رمز الحساب" /
   // "اسم الحساب" / "مستوى الحساب" come from the GL account (per user spec),
@@ -115,6 +128,7 @@ export default function SupplierStatement() {
           closing={closing}
           filename={`${t("purchasingReports.supplierStatement.filename")}-${supplierLabel}-${applied.from}-${applied.to}`}
           disabled={!applied.supplierId || isLoading}
+          branchName={branchName}
         />
       </div>
 
@@ -186,6 +200,7 @@ export default function SupplierStatement() {
             account={acctView}
             from={applied.from}
             to={applied.to}
+            branchName={branchName}
             opening={data?.opening ?? 0}
             lines={augmented.map(l => ({
               date: l.date,
