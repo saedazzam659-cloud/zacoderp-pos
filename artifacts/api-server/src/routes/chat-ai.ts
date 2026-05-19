@@ -21,6 +21,7 @@ import {
 import { and, eq, sql, desc, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requireModulePermission } from "../middleware/permissions.js";
+import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -78,7 +79,7 @@ async function loadTranscript(convId: number, limit = 60): Promise<{ author: str
 }
 
 // ─── POST /chat-ai/summarize ─────────────────────────────────────────────
-router.post("/summarize", async (req, res) => {
+router.post("/summarize", requireAiFeature("chat_assistant"), async (req, res) => {
   try {
     const cid = getCid(req, res); if (!cid) return;
     const userId = req.authUser!.id;
@@ -94,15 +95,20 @@ router.post("/summarize", async (req, res) => {
       { role: "system", content: "أنت مساعد تلخيص محادثات داخل نظام ERP. قدّم ملخصاً موجزاً جداً (5–8 جمل بالعربية) للمحادثة، مع التركيز على المواضيع الأساسية والقرارات المتفق عليها وأي مهام مفتوحة. تجنّب التحية والمجاملات." },
       { role: "user", content: transcriptText.slice(0, 12000) },
     ]);
-    if (ai.ok && ai.text) { res.json({ summary: ai.text.trim(), source: "ai" }); return; }
+    if (ai.ok && ai.text) {
+      await logAiUsage(req, { status: "allowed", provider: "ai" });
+      res.json({ summary: ai.text.trim(), source: "ai" });
+      return;
+    }
     // Fallback: take the first/last few lines as a heuristic summary.
     const sample = [...transcript.slice(0, 3), ...transcript.slice(-3)].map(m => `• ${m.author}: ${m.text.slice(0, 120)}`).join("\n");
+    await logAiUsage(req, { status: "allowed", provider: "rule" });
     res.json({ summary: `ملخص أولي (الذكاء الاصطناعي غير متاح):\n${sample}`, source: "rule" });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── POST /chat-ai/suggest-replies ───────────────────────────────────────
-router.post("/suggest-replies", async (req, res) => {
+router.post("/suggest-replies", requireAiFeature("chat_assistant"), async (req, res) => {
   try {
     const cid = getCid(req, res); if (!cid) return;
     const userId = req.authUser!.id;
@@ -131,6 +137,7 @@ router.post("/suggest-replies", async (req, res) => {
       else if (/شكر|thank/.test(lower)) suggestions = ["العفو 🙂", "أي خدمة.", "تحت أمرك."];
       else                          suggestions = ["تمام، شكراً.", "سأطلع على الموضوع.", "نتابع لاحقاً."];
     }
+    await logAiUsage(req, { status: "allowed", provider: usedAi ? "ai" : "rule" });
     res.json({ suggestions, source: usedAi ? "ai" : "rule" });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -140,7 +147,7 @@ const TranslateBody = z.object({
   text: z.string().min(1).max(8000),
   to:   z.enum(["ar", "en"]),
 });
-router.post("/translate", async (req, res) => {
+router.post("/translate", requireAiFeature("chat_assistant"), async (req, res) => {
   try {
     const cid = getCid(req, res); if (!cid) return;
     const parsed = TranslateBody.safeParse(req.body);
@@ -150,10 +157,15 @@ router.post("/translate", async (req, res) => {
       { role: "system", content: `Translate the user message to ${target}. Output ONLY the translated text, no explanation, no quotes.` },
       { role: "user", content: parsed.data.text },
     ]);
-    if (ai.ok && ai.text) { res.json({ translation: ai.text.trim(), source: "ai" }); return; }
+    if (ai.ok && ai.text) {
+      await logAiUsage(req, { status: "allowed", provider: "ai" });
+      res.json({ translation: ai.text.trim(), source: "ai" });
+      return;
+    }
     // Deterministic fallback so the contract stays { translation, source }
     // even when the AI proxy is unreachable. The client can show a hint
     // when source !== "ai".
+    await logAiUsage(req, { status: "allowed", provider: "rule" });
     res.json({
       translation: parsed.data.text,
       source: "rule",
@@ -162,7 +174,7 @@ router.post("/translate", async (req, res) => {
 });
 
 // ─── POST /chat-ai/extract-tasks ─────────────────────────────────────────
-router.post("/extract-tasks", async (req, res) => {
+router.post("/extract-tasks", requireAiFeature("chat_assistant"), async (req, res) => {
   try {
     const cid = getCid(req, res); if (!cid) return;
     const userId = req.authUser!.id;
@@ -186,6 +198,7 @@ router.post("/extract-tasks", async (req, res) => {
       })).filter((t: any) => t.text);
       if (Array.isArray(ai.data.decisions)) decisions = ai.data.decisions.slice(0, 20).map((s: any) => String(s).trim()).filter(Boolean);
     }
+    await logAiUsage(req, { status: "allowed", provider: ai.ok ? "ai" : "rule" });
     res.json({ tasks, decisions, source: ai.ok ? "ai" : "rule" });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

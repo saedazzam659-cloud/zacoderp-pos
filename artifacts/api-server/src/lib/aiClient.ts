@@ -11,17 +11,27 @@
 //      text/JSON back or a clear `{ ok: false }` so they can run their
 //      existing rule-based fallback.
 //
-// Provider chain (in order):
-//   1. OpenAI   — gpt-5.4   (chat completions API)
-//   2. Anthropic — claude-sonnet-4-6 (messages API)
+// Provider chain (in order, free → paid):
+//   1. Gemini   — gemini-2.0-flash (Google AI Studio FREE TIER)
+//                 1500 req/day per key, no card needed. Tried FIRST so
+//                 the system stays at zero cost as long as it works.
+//   2. OpenAI   — gpt-5.4   (chat completions API — paid via Replit proxy)
+//   3. Anthropic — claude-sonnet-4-6 (messages API — paid via Replit proxy)
 //
-// Both providers expose OpenAI/Anthropic-compatible endpoints via the
-// proxy, so we issue raw fetch calls and keep zero SDK dependencies.
-// This avoids dragging in @anthropic-ai/sdk on every code path.
+// All three expose JSON/chat-style endpoints; we issue raw fetch calls and
+// keep zero SDK dependencies. This avoids dragging in @anthropic-ai/sdk
+// or @google/generative-ai on every code path.
+//
+// Gemini's GenerativeLanguage REST API uses a slightly different message
+// shape (role "model" instead of "assistant", contents/parts envelope)
+// — translated inside tryGemini below.
 // ─────────────────────────────────────────────────────────────────────────
 
 import { logger } from "./logger";
 
+const GEMINI_KEY      = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL    = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const GEMINI_BASE     = "https://generativelanguage.googleapis.com/v1beta";
 const OPENAI_BASE     = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
 const OPENAI_KEY      = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
 const ANTHROPIC_BASE  = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
@@ -30,22 +40,27 @@ const ANTHROPIC_KEY   = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
 export type AIRole = "system" | "user" | "assistant";
 export interface AIMessage { role: AIRole; content: string }
 
+export type AIProvider = "gemini" | "openai" | "anthropic";
+
 export interface AIChatOptions {
   /** Request JSON-mode response (provider-specific implementation). */
   json?: boolean;
   /** Max output tokens (default 2048; raise for long synthesis). */
   maxTokens?: number;
-  /** Per-call provider override; default is "openai" then "anthropic". */
-  providers?: ("openai" | "anthropic")[];
+  /** Per-call provider override; default is "gemini" then "openai" then "anthropic". */
+  providers?: AIProvider[];
   /** Soft total deadline in ms — passed to each provider attempt. */
   timeoutMs?: number;
 }
 
 export type AIChatResult =
-  | { ok: true; text: string; data?: any; provider: "openai" | "anthropic" }
+  | { ok: true; text: string; data?: any; provider: AIProvider }
   | { ok: false; reason: string };
 
-const DEFAULT_PROVIDERS: ("openai" | "anthropic")[] = ["openai", "anthropic"];
+// Free Gemini first — keeps the system at zero cost. If Gemini is not
+// configured or fails (quota / 429 / network), we fall through to the
+// paid Replit-proxied providers for resilience.
+const DEFAULT_PROVIDERS: AIProvider[] = ["gemini", "openai", "anthropic"];
 const DEFAULT_MAX_TOKENS = 2048;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -53,7 +68,8 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 // no point retrying the same provider, jump straight to the next one.
 const HARD_FAIL_STATUSES = new Set([400, 401, 403, 404, 422]);
 
-function isProviderConfigured(p: "openai" | "anthropic"): boolean {
+function isProviderConfigured(p: AIProvider): boolean {
+  if (p === "gemini")    return Boolean(GEMINI_KEY);
   if (p === "openai")    return Boolean(OPENAI_BASE && OPENAI_KEY);
   if (p === "anthropic") return Boolean(ANTHROPIC_BASE && ANTHROPIC_KEY);
   return false;
@@ -70,6 +86,85 @@ async function fetchWithTimeout(
     return await fetch(url, { ...init, signal: ctrl.signal });
   } finally {
     clearTimeout(t);
+  }
+}
+
+// ─── Gemini attempt (FREE) ────────────────────────────────────────────────
+// Google's GenerativeLanguage REST API:
+//   POST /v1beta/models/{model}:generateContent?key={apiKey}
+// The request shape is:
+//   { contents: [{ role: "user"|"model", parts: [{ text }] }],
+//     systemInstruction?: { parts: [{ text }] },
+//     generationConfig?: { maxOutputTokens, responseMimeType } }
+// JSON-mode is enabled by setting responseMimeType to "application/json"
+// which forces the model to emit a parseable JSON object.
+async function tryGemini(
+  messages: AIMessage[],
+  opts: Required<Omit<AIChatOptions, "providers">>,
+): Promise<AIChatResult> {
+  if (!isProviderConfigured("gemini")) return { ok: false, reason: "gemini-not-configured" };
+  try {
+    const systemParts = messages.filter(m => m.role === "system").map(m => m.content);
+    const convo = messages
+      .filter(m => m.role !== "system")
+      .map(m => ({
+        // Gemini calls assistant turns "model".
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      }));
+    if (convo.length === 0) {
+      convo.push({ role: "user", parts: [{ text: systemParts.join("\n\n") || "..." }] });
+    }
+
+    const body: any = {
+      contents: convo,
+      generationConfig: {
+        maxOutputTokens: opts.maxTokens,
+        ...(opts.json ? { responseMimeType: "application/json" } : {}),
+      },
+    };
+    if (systemParts.length > 0) {
+      body.systemInstruction = { parts: [{ text: systemParts.join("\n\n") }] };
+    }
+
+    const url = `${GEMINI_BASE}/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_KEY!)}`;
+    const r = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }, opts.timeoutMs);
+
+    if (!r.ok) {
+      const status = r.status;
+      const errText = await r.text().catch(() => "");
+      logger.warn({ status, errText: errText.slice(0, 300) }, "aiClient.gemini non-ok");
+      return { ok: false, reason: `gemini-http-${status}` };
+    }
+
+    const j: any = await r.json();
+    const cand = Array.isArray(j?.candidates) ? j.candidates[0] : null;
+    const parts: any[] = cand?.content?.parts ?? [];
+    const txt = parts.map(p => (typeof p?.text === "string" ? p.text : "")).join("").trim();
+    if (!txt) {
+      // Gemini returns finishReason: "SAFETY"/"OTHER" with no text in
+      // borderline cases — bubble that up so the next provider tries.
+      return { ok: false, reason: `gemini-empty-${cand?.finishReason ?? "unknown"}` };
+    }
+
+    if (opts.json) {
+      // responseMimeType already gives us JSON, but be defensive against
+      // accidental ```json fences just in case the model misbehaves.
+      const cleaned = txt
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/```$/i, "")
+        .trim();
+      try { return { ok: true, text: cleaned, data: JSON.parse(cleaned), provider: "gemini" }; }
+      catch { return { ok: false, reason: "gemini-bad-json" }; }
+    }
+    return { ok: true, text: txt, provider: "gemini" };
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, "aiClient.gemini threw");
+    return { ok: false, reason: `gemini-err-${e?.name ?? "unknown"}` };
   }
 }
 
@@ -214,7 +309,9 @@ export async function chat(
 
   const reasons: string[] = [];
   for (const p of providers) {
-    const result = p === "openai"
+    const result = p === "gemini"
+      ? await tryGemini(messages, required)
+      : p === "openai"
       ? await tryOpenAI(messages, required)
       : await tryAnthropic(messages, required);
     if (result.ok) return result;
@@ -246,5 +343,7 @@ export async function chatJSON<T = any>(
  * this to render the assistant button conditionally.
  */
 export function isAIAvailable(): boolean {
-  return isProviderConfigured("openai") || isProviderConfigured("anthropic");
+  return isProviderConfigured("gemini")
+      || isProviderConfigured("openai")
+      || isProviderConfigured("anthropic");
 }

@@ -11,6 +11,7 @@ import {
 } from "@workspace/db";
 import { and, eq, desc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -19,7 +20,7 @@ router.use((req, res, next) => {
   next();
 });
 
-import { chat as aiChat } from "../lib/aiClient.js";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 
 function getCid(req: any, res: any): number | null {
   const raw = req.body?.companyId ?? req.query.companyId;
@@ -38,7 +39,8 @@ async function callAI(messages: any[], jsonMode = true): Promise<any | null> {
 }
 
 // ─── Sales analysis: top products, revenue trend, payment-method split ───
-router.get("/stores/:id/sales-analysis", async (req, res) => {
+router.get("/stores/:id/sales-analysis", requireAiFeature("online_store_ai"), async (req, res) => {
+  const startedAt = Date.now();
   try {
     const cid = getCid(req, res); if (!cid) return;
     const sid = Number(req.params.id);
@@ -89,12 +91,17 @@ router.get("/stores/:id/sales-analysis", async (req, res) => {
            `إجمالي الطلبات في آخر 30 يوم: ${trendRows.reduce((a: number, r: any) => a + Number(r.orders || 0), 0)}`]
         : ["لا يوجد بيانات مبيعات كافية بعد. ابدأ بإضافة منتجات وتفعيل بوابات الدفع."];
     }
-    res.json({ topProducts: top, trend: trendRows, payments: pay, insights: aiInsights, source: OPENAI_BASE ? "ai" : "rule" });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+    await logAiUsage(req, { status: "allowed", provider: isAIAvailable() ? "ai" : "rule", durationMs: Date.now() - startedAt });
+    res.json({ topProducts: top, trend: trendRows, payments: pay, insights: aiInsights, source: isAIAvailable() ? "ai" : "rule" });
+  } catch (e: any) {
+    await logAiUsage(req, { status: "error", durationMs: Date.now() - startedAt, meta: { error: String(e?.message || e) } });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── Recommended products to publish: items with stock not yet in store ──
-router.get("/stores/:id/recommend-products", async (req, res) => {
+router.get("/stores/:id/recommend-products", requireAiFeature("online_store_ai"), async (req, res) => {
+  const startedAt = Date.now();
   try {
     const cid = getCid(req, res); if (!cid) return;
     const sid = Number(req.params.id);
@@ -105,7 +112,7 @@ router.get("/stores/:id/recommend-products", async (req, res) => {
     const candidates = all.filter(i => !linkedSet.has(i.id) && i.status === "active").slice(0, 50);
 
     let ranked: Array<{ id: number; nameAr: string; nameEn?: string | null; salePrice: string; reason: string; score: number }> = [];
-    if (candidates.length && OPENAI_BASE) {
+    if (candidates.length && isAIAvailable()) {
       const ai = await callAI([
         { role: "system", content: "أنت مستشار تجارة إلكترونية. اختر أفضل 8 منتجات لإضافتها لمتجر إلكتروني مع سبب موجز لكل واحد. أعد JSON: { picks: [{ id, reason, score (0-100) }] }" },
         { role: "user", content: `المنتجات المرشحة:\n${JSON.stringify(candidates.slice(0, 30).map(i => ({ id: i.id, nameAr: i.nameAr, salePrice: i.salePrice, costPrice: i.costPrice })))}` },
@@ -124,8 +131,12 @@ router.get("/stores/:id/recommend-products", async (req, res) => {
         score: 80 - i * 5,
       }));
     }
-    res.json({ recommendations: ranked, source: OPENAI_BASE ? "ai" : "rule" });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+    await logAiUsage(req, { status: "allowed", provider: isAIAvailable() ? "ai" : "rule", durationMs: Date.now() - startedAt });
+    res.json({ recommendations: ranked, source: isAIAvailable() ? "ai" : "rule" });
+  } catch (e: any) {
+    await logAiUsage(req, { status: "error", durationMs: Date.now() - startedAt, meta: { error: String(e?.message || e) } });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── Low stock alerts based on order velocity ────────────────────────────
@@ -170,7 +181,8 @@ router.get("/stores/:id/low-stock", async (req, res) => {
 });
 
 // ─── AI product description generator ────────────────────────────────────
-router.post("/generate-description", async (req, res) => {
+router.post("/generate-description", requireAiFeature("product_descriptions"), async (req, res) => {
+  const startedAt = Date.now();
   try {
     const cid = getCid(req, res); if (!cid) return;
     const { productId, tone } = req.body || {};
@@ -182,6 +194,7 @@ router.post("/generate-description", async (req, res) => {
       { role: "user", content: `اسم المنتج: ${item.nameAr} ${item.nameEn ? `(${item.nameEn})` : ""}\nالكود: ${item.code}\nالسعر: ${item.salePrice} ر.س\nالنبرة المطلوبة: ${tone || "احترافية وموجزة"}` },
     ]);
     if (!ai) {
+      await logAiUsage(req, { status: "allowed", provider: "rule", durationMs: Date.now() - startedAt });
       res.json({
         ar: `${item.nameAr} — منتج مميز بسعر ${item.salePrice} ر.س. اطلبه الآن واستمتع بتجربة شراء مريحة.`,
         en: `${item.nameEn ?? item.nameAr} — premium product. Order now and enjoy a smooth shopping experience.`,
@@ -189,8 +202,12 @@ router.post("/generate-description", async (req, res) => {
       });
       return;
     }
+    await logAiUsage(req, { status: "allowed", provider: "ai", durationMs: Date.now() - startedAt });
     res.json({ ar: String(ai.ar || ""), en: String(ai.en || ""), source: "ai" });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    await logAiUsage(req, { status: "error", durationMs: Date.now() - startedAt, meta: { error: String(e?.message || e) } });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 export default router;

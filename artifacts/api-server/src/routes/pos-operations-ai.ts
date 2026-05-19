@@ -8,6 +8,7 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, getAllowedBranchIds } from "../middleware/auth.js";
 import { requireModulePermission } from "../middleware/permissions.js";
+import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -35,7 +36,8 @@ async function callAI(messages: any[]): Promise<any | null> {
 // Pulls aggregate POS sales for the last 30 days and asks the AI for
 // 4–7 short, actionable insights + anomaly flags. Always returns something
 // usable even when the AI isn't available.
-router.get("/insights", async (req, res) => {
+router.get("/insights", requireAiFeature("pos_ai"), async (req, res) => {
+  const startedAt = Date.now();
   try {
     const cid = getCid(req, res); if (!cid) return;
 
@@ -202,11 +204,15 @@ router.get("/insights", async (req, res) => {
       });
     }
 
+    await logAiUsage(req, { status: "allowed", provider: aiSucceeded ? "ai" : "rule", durationMs: Date.now() - startedAt });
     res.json({
       trend, topCashiers, bigTickets, returnRatio, staleDrafts,
       insights, anomalies, source: aiSucceeded ? "ai" : "rule",
     });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    await logAiUsage(req, { status: "error", durationMs: Date.now() - startedAt, meta: { error: String(e?.message || e) } });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 export default router;

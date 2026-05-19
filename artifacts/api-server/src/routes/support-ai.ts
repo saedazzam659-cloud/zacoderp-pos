@@ -21,6 +21,7 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { extractAuth } from "../middleware/auth.js";
 import { chat as aiChat } from "../lib/aiClient.js";
+import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -108,10 +109,11 @@ async function retrieveCandidates(question: string, pagePath?: string): Promise<
   return rows.slice(0, 3);
 }
 
-router.post("/ask", async (req, res) => {
+router.post("/ask", requireAiFeature("support_ai"), async (req, res) => {
   const parsed = askSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "input invalid", details: parsed.error.flatten() }); return; }
   const { question, pagePath, locale } = parsed.data;
+  const startedAt = Date.now();
 
   try {
     const candidates = await retrieveCandidates(question, pagePath);
@@ -137,6 +139,7 @@ router.post("/ask", async (req, res) => {
     ], { maxTokens: 600 });
 
     if (ai.ok) {
+      await logAiUsage(req, { status: "allowed", provider: ai.provider, durationMs: Date.now() - startedAt });
       res.json({
         answer:   ai.text.trim(),
         source:   "ai",
@@ -150,6 +153,7 @@ router.post("/ask", async (req, res) => {
     // all, fall back to a generic "contact support" message.
     if (candidates.length > 0) {
       const top = candidates[0];
+      await logAiUsage(req, { status: "allowed", provider: "kb", durationMs: Date.now() - startedAt });
       res.json({
         answer:  `${top.answerAr}\n\n(الإجابة من قاعدة المعرفة لأن خادم الذكاء الاصطناعي غير متاح حالياً.)`,
         source:  "kb",
@@ -158,12 +162,14 @@ router.post("/ask", async (req, res) => {
       return;
     }
 
+    await logAiUsage(req, { status: "allowed", provider: "none", durationMs: Date.now() - startedAt });
     res.json({
       answer:  "لم أجد إجابة مطابقة في قاعدة المعرفة، وخادم الذكاء الاصطناعي غير متاح حالياً. جرّب صياغة أخرى أو تواصل مع الدعم الفني.",
       source:  "none",
       citations: [],
     });
   } catch (e: any) {
+    await logAiUsage(req, { status: "error", durationMs: Date.now() - startedAt, meta: { error: String(e?.message || e) } });
     res.status(500).json({ error: e?.message || "support-ai failed" });
   }
 });
