@@ -24,6 +24,81 @@ import { cn } from "@/lib/utils";
 // don't recognise — manual / opening / closing / depreciation re-runs / …
 // — falls back to the journal-entry detail page, which renders cleanly for
 // every entry type and is therefore the safe universal target.
+/** Map a journal-entry `entryType` to a human-readable Arabic category for
+ *  the "نوع الوثيقة" column. Mirrors the customer/supplier-statement
+ *  document-source mapping, but extended to cover every entry type that
+ *  can appear in the general account ledger (FA, payroll, contracting,
+ *  inventory, POS, closing entries, …). Unknown / null types fall back
+ *  to "قيد عام" — a safe label for manual JEs created from the journal-
+ *  entry form (whose `entryType` is "general"). */
+const ENTRY_TYPE_LABEL: Record<string, string> = {
+  sales_invoice:             "فاتورة مبيعات",
+  sales_return:              "مرتجع مبيعات",
+  purchase_invoice:          "فاتورة مشتريات",
+  purchase_return:           "مرتجع مشتريات",
+  receipt:                   "سند قبض",
+  payment:                   "سند صرف",
+  opening:                   "رصيد افتتاحي",
+  pos_sale:                  "بيع نقاط بيع",
+  pos_return:                "مرتجع نقاط بيع",
+  payroll_run:               "مسير رواتب",
+  employee_loan:             "سلفة موظف",
+  eos_payment:               "تسوية نهاية خدمة",
+  fa_acquisition:            "اقتناء أصل ثابت",
+  fa_depreciation:           "إهلاك أصول ثابتة",
+  fa_disposal:               "استبعاد أصل ثابت",
+  contracting_outgoing_bill: "مستخلص صادر",
+  contracting_incoming_bill: "مستخلص وارد",
+  stock_adjustment:          "تسوية مخزون",
+  stock_transfer:            "تحويل مخزون",
+  goods_receipt:             "إذن استلام بضاعة",
+  goods_delivery:            "إذن تسليم بضاعة",
+  trial_balance_adjustment:  "تسوية ميزان المراجعة",
+  adjustment_prepaid:        "تسوية مصروف مدفوع مقدماً",
+  adjustment_accrued:        "تسوية مصروف مستحق",
+  lc_funding:                "تمويل اعتماد مستندي",
+  lc_expense_payment:        "دفع مصروف اعتماد",
+  production_issue:          "صرف إنتاج",
+  production_issue_reversal: "عكس صرف إنتاج",
+  production_receipt:        "استلام إنتاج",
+  closing_revenue:           "إقفال إيرادات",
+  closing_expense:           "إقفال مصروفات",
+  closing_transfer_profit:   "ترحيل أرباح",
+  closing_transfer_loss:     "ترحيل خسائر",
+  general:                   "قيد عام",
+  manual:                    "قيد يدوي",
+};
+function docTypeFor(row: any): string {
+  const k = row?.entryType;
+  if (!k) return "قيد عام";
+  return ENTRY_TYPE_LABEL[k] ?? "قيد عام";
+}
+
+/** Soft color theme per category so the on-screen pill is visually
+ *  distinguishable at a glance (sales = sky, purchasing = amber,
+ *  cash = emerald, FA = violet, payroll = rose, opening/closing = slate). */
+function docTypeTone(row: any): { ring: string; bg: string; text: string; code: string } {
+  const k = row?.entryType ?? "";
+  // Revenue-side documents (sales / POS / outgoing contracting bill) → sky
+  if (k.startsWith("sales") || k === "pos_sale" || k === "pos_return" || k === "contracting_outgoing_bill")
+    return { ring: "border-sky-200",     bg: "from-sky-50 to-cyan-50",        text: "text-sky-800",     code: "bg-sky-100 text-sky-700" };
+  // Cost-side documents (purchases / incoming contracting bill / LC) → amber
+  if (k.startsWith("purchase") || k === "contracting_incoming_bill" || k === "lc_funding" || k === "lc_expense_payment")
+    return { ring: "border-amber-200",   bg: "from-amber-50 to-orange-50",    text: "text-amber-800",   code: "bg-amber-100 text-amber-700" };
+  if (k === "receipt" || k === "payment")
+    return { ring: "border-emerald-200", bg: "from-emerald-50 to-teal-50",    text: "text-emerald-800", code: "bg-emerald-100 text-emerald-700" };
+  if (k.startsWith("fa_"))
+    return { ring: "border-violet-200",  bg: "from-violet-50 to-fuchsia-50",  text: "text-violet-800",  code: "bg-violet-100 text-violet-700" };
+  if (k === "payroll_run" || k === "employee_loan" || k === "eos_payment")
+    return { ring: "border-rose-200",    bg: "from-rose-50 to-pink-50",       text: "text-rose-800",    code: "bg-rose-100 text-rose-700" };
+  // Inventory & production movements → teal
+  if (k.startsWith("stock_") || k.startsWith("production_") || k === "goods_receipt" || k === "goods_delivery")
+    return { ring: "border-teal-200",    bg: "from-teal-50 to-cyan-50",       text: "text-teal-800",    code: "bg-teal-100 text-teal-700" };
+  if (k === "opening" || k.startsWith("closing_") || k.startsWith("adjustment_") || k === "trial_balance_adjustment")
+    return { ring: "border-slate-300",   bg: "from-slate-50 to-zinc-50",      text: "text-slate-700",   code: "bg-slate-200 text-slate-700" };
+  return { ring: "border-slate-200",     bg: "from-slate-50 to-slate-100",    text: "text-slate-700",   code: "bg-slate-100 text-slate-700" };
+}
+
 function sourceLinkFor(row: any): string | null {
   switch (row.entryType) {
     // ── detail-page targets ──────────────────────────────────────────────
@@ -134,6 +209,7 @@ export default function AccountStatement() {
   // "all" view stays uncluttered (matches the original layout).
   const showCostCenterCol = costCenterIds.length > 0;
   const EXPORT_COLS = [
+    { key: "docType",     header: "نوع الوثيقة", width: 20 },
     { key: "entryDate",   header: t("accountingReports.fromDate"), width: 14 },
     { key: "docNumber",   header: t("accountStatement.docNumber"), width: 14 },
     { key: "description", header: t("accountStatement.description"), width: 36 },
@@ -194,6 +270,7 @@ export default function AccountStatement() {
   // SAP-style brought-forward row prepended to the export so the
   // ledger starts with "رصيد ما قبل" mirroring the on-screen table.
   const previousBalanceRow = {
+    docType:     "رصيد افتتاحي",
     entryDate:   fromDate || "",
     docNumber:   "",
     description: t("accountStatement.previousBalance"),
@@ -204,6 +281,7 @@ export default function AccountStatement() {
   const exportRows = [
     previousBalanceRow,
     ...rows.map((r: any) => ({
+      docType:     docTypeFor(r),
       entryDate:   r.entryDate,
       docNumber:   r.docNumber,
       description: r.description,
@@ -222,6 +300,7 @@ export default function AccountStatement() {
   // standard "الإجمالي" line appears at the bottom of the table.
   const exportTotalsRow = (!isLoading && rows.length > 0)
     ? {
+        docType:     "",
         entryDate:   "",
         docNumber:   "",
         description: t("accountingReports.total"),
@@ -351,6 +430,7 @@ export default function AccountStatement() {
                 <thead>
                   <tr className="bg-muted/50 border-b">
                     <th className="text-start px-4 py-3 font-semibold text-muted-foreground">#</th>
+                    <th className="text-start px-4 py-3 font-semibold text-muted-foreground">نوع الوثيقة</th>
                     <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.fromDate")}</th>
                     <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountStatement.docNumber")}</th>
                     <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountStatement.description")}</th>
@@ -370,6 +450,11 @@ export default function AccountStatement() {
                       reads as a continuation of history, not from zero. */}
                   <tr className="bg-muted/20 border-b font-semibold">
                     <td className="px-4 py-2.5 text-muted-foreground text-xs">—</td>
+                    <td className="px-4 py-2.5">
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-gradient-to-l from-slate-50 to-zinc-50 px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm">
+                        رصيد افتتاحي
+                      </span>
+                    </td>
                     <td className="px-4 py-2.5">{fromDate || "—"}</td>
                     <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">—</td>
                     <td className="px-4 py-2.5 text-muted-foreground italic">{t("accountStatement.previousBalance")}</td>
@@ -390,9 +475,22 @@ export default function AccountStatement() {
                   {rows.map((r, i) => {
                     const href = sourceLinkFor(r);
                     const label = r.docNumber || `JE-${r.entryId}`;
+                    const tone = docTypeTone(r);
                     return (
                     <tr key={r.lineId} className="border-b hover:bg-muted/30 transition-colors">
                       <td className="px-4 py-2.5 text-muted-foreground text-xs">{i + 1}</td>
+                      <td className="px-4 py-2.5">
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-full border bg-gradient-to-l px-2.5 py-1 text-xs font-medium shadow-sm whitespace-nowrap",
+                            tone.ring, tone.bg, tone.text,
+                          )}
+                          data-testid={`cell-doctype-${r.lineId}`}
+                          title={r.entryType ?? "general"}
+                        >
+                          {docTypeFor(r)}
+                        </span>
+                      </td>
                       <td className="px-4 py-2.5">{r.entryDate}</td>
                       <td className="px-4 py-2.5 font-mono text-xs font-semibold">
                         {href ? (
@@ -448,7 +546,7 @@ export default function AccountStatement() {
                 </tbody>
                 <tfoot>
                   <tr className="bg-muted/50 font-semibold border-t-2">
-                    <td colSpan={showCostCenterCol ? 5 : 4} className="px-4 py-3 text-center">{t("accountingReports.total")}</td>
+                    <td colSpan={showCostCenterCol ? 6 : 5} className="px-4 py-3 text-center">{t("accountingReports.total")}</td>
                     <td className="px-4 py-3 text-end font-mono text-blue-700">{fmt(totalDebit)}</td>
                     <td className="px-4 py-3 text-end font-mono text-rose-700">{fmt(totalCredit)}</td>
                     <td className={cn("px-4 py-3 text-end font-mono",
