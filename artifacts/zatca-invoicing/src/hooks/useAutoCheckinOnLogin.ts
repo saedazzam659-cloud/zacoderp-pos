@@ -27,11 +27,22 @@ import { useToast } from "@/hooks/use-toast";
 export function useAutoCheckinOnLogin() {
   const { user, isAuthenticated, actingCompanyId } = useAuth();
   const { toast } = useToast();
-  const ranRef = useRef(false);
+  // Track which (userId, actingCompanyId) combo we last ran for, instead of a
+  // bare boolean. A bare ref would survive a logout→login cycle inside the
+  // same tab and silently skip the second auto-checkin — leaving the user
+  // marked "غير متصل" on /user-tracking/live until they hard-refresh.
+  // Resetting on userId/actingCompanyId change makes the hook re-fire for
+  // every fresh authenticated session, including re-login as the same user.
+  const ranForRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!isAuthenticated || !user) return;
-    if (ranRef.current) return;
+    if (!isAuthenticated || !user) {
+      // Logged out — clear the marker so the next login re-arms the hook.
+      ranForRef.current = null;
+      return;
+    }
+    const key = `${user.id}:${actingCompanyId ?? ""}`;
+    if (ranForRef.current === key) return;
     // SuperAdmins viewing the platform without an acting company have no
     // companyId scope — skip auto-checkin entirely. Once they "enter" a
     // tenant, this effect re-runs because actingCompanyId changes.
@@ -40,7 +51,7 @@ export function useAutoCheckinOnLogin() {
     // they should never appear in a tenant's attendance report.
     if (user.role === "superadmin") return;
 
-    ranRef.current = true;
+    ranForRef.current = key;
     void (async () => {
       try {
         const st = await userTrackingApi.meStatus();
