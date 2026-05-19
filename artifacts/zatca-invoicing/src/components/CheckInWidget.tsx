@@ -46,10 +46,30 @@ export default function CheckInWidget() {
     refetchInterval: 60000,
   });
 
+  // Detect if this user is bound to a tracking zone. When true, the widget
+  // switches to a one-click "بدء الدوام" mode that skips the dialog and
+  // submits with a fixed purpose — this is the user-friendly retry path for
+  // when the auto-checkin-on-login hook silently failed (geolocation denied,
+  // page loaded before the user accepted the prompt, etc.) so they don't
+  // have to navigate to /user-tracking and fill the manual form.
+  const { data: meStatus } = useQuery({
+    queryKey: ["user-tracking-me-status", cid],
+    queryFn: () => userTrackingApi.meStatus(cid),
+    enabled: canUse && !!cid && !active,
+    refetchInterval: 60000,
+  });
+  const isZoneBound = !!meStatus?.isAssignedToZone;
+
   const checkinMut = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (override?: { purpose?: string }) => {
       const pos = await getCurrentPosition();
-      return userTrackingApi.checkin({ lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, purpose: purpose || undefined, notes: notes || undefined }, cid);
+      return userTrackingApi.checkin({
+        lat: pos.lat,
+        lng: pos.lng,
+        accuracy: pos.accuracy,
+        purpose: override?.purpose ?? (purpose || undefined),
+        notes: notes || undefined,
+      }, cid);
     },
     onSuccess: () => {
       setOpen(false); setPurpose(""); setNotes(""); setError(null);
@@ -92,12 +112,40 @@ export default function CheckInWidget() {
     );
   }
 
+  // Zone-bound users get a one-click "بدء الدوام" button: the purpose is
+  // pre-filled, the dialog is skipped, and the browser is asked for the
+  // location immediately. This is the easy retry path for when the
+  // auto-checkin on login didn't fire (e.g. geolocation prompt was denied
+  // the first time). Errors surface as a tooltip-style title on the button.
+  const oneClickStart = () => {
+    setError(null);
+    setBusy(true);
+    checkinMut.mutate(
+      { purpose: "تسجيل دخول للنظام" },
+      { onSettled: () => setBusy(false) },
+    );
+  };
+
   return (
     <>
-      <Button size="sm" variant="outline" className="gap-2 border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100" onClick={() => { setError(null); setOpen(true); }}>
-        <MapPin className="h-4 w-4" />
-        <span className="hidden sm:inline">تسجيل زيارة</span>
-      </Button>
+      {isZoneBound ? (
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-2 border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+          onClick={oneClickStart}
+          disabled={busy || checkinMut.isPending}
+          title={error || "اضغط لبدء الدوام (سيُطلب إذن تحديد الموقع)"}
+        >
+          {checkinMut.isPending || busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+          <span className="hidden sm:inline">بدء الدوام</span>
+        </Button>
+      ) : (
+        <Button size="sm" variant="outline" className="gap-2 border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100" onClick={() => { setError(null); setOpen(true); }}>
+          <MapPin className="h-4 w-4" />
+          <span className="hidden sm:inline">تسجيل زيارة</span>
+        </Button>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
