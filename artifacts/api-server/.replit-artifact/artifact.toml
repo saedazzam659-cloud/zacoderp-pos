@@ -14,7 +14,7 @@ name = "API Server"
 #                   Search Console only fetches /sitemap.xml at root, never
 #                   /api/sitemap.xml.
 #   /robots.txt   → same reason — crawlers only honour /robots.txt at root.
-paths = ["/api", "/sitemap.xml", "/robots.txt"]
+paths = ["/api", "/sitemap.xml", "/robots.txt", "/ai-overview.json"]
 
 [services.development]
 run = "pnpm --filter @workspace/api-server run dev"

@@ -63,6 +63,8 @@ import SupplierNew from "@/pages/SupplierNew";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
 import Pricing from "@/pages/Pricing";
+import CompareSystems from "@/pages/CompareSystems";
+import WhyZacod from "@/pages/WhyZacod";
 import BlogArticle from "@/pages/BlogArticle";
 import Home from "@/pages/Home";
 import PosLanding from "@/pages/PosLanding";
@@ -380,7 +382,7 @@ function LoadingScreen() {
 // + FAQ), added per the SEO AI medium-impact recommendation. Note we use
 // "/pos-system" rather than "/pos" because "/pos" is owned by the
 // standalone POS artifact at the path-router level.
-const PUBLIC_PATHS = ["/login", "/register", "/pending-approval", "/pricing", "/blog", "/pos-system", "/"];
+const PUBLIC_PATHS = ["/login", "/register", "/pending-approval", "/pricing", "/compare", "/why-zacod", "/blog", "/pos-system", "/"];
 
 // Top-level URL prefixes that belong to the authenticated app. When an
 // unauthenticated visitor lands on one of these (e.g. they middle-click
@@ -459,6 +461,8 @@ function AppRoutes() {
       location === "/login" ||
       location === "/register" ||
       location === "/pricing" ||
+      location === "/compare" ||
+      location === "/why-zacod" ||
       location === "/pending-approval" ||
       location === "/recover-superadmin" ||
       location.startsWith("/recover-superadmin/") ||
@@ -513,6 +517,8 @@ function AppRoutes() {
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
       <Route path="/pricing" component={Pricing} />
+      <Route path="/compare" component={CompareSystems} />
+      <Route path="/why-zacod" component={WhyZacod} />
       <Route path="/pos-system" component={PosLanding} />
       <Route path="/blog/:slug" component={BlogArticle} />
       <Route path="/pending-approval" component={PendingApproval} />

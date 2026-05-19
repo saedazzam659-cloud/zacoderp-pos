@@ -59,6 +59,86 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- ============================================================
+         Schema.org structured data — Organization + SoftwareApplication.
+         The single biggest SEO / AI-discoverability win: Google,
+         ChatGPT Search, Perplexity and Claude parse these JSON-LD
+         blocks as authoritative facts about the product instead of
+         guessing from marketing copy. Kept in index.html (not React)
+         so server-side and headless crawlers see them on the first byte.
+         ============================================================ -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "زاكود المحاسبي",
+      "alternateName": ["Zacod ERP", "Zacoderp", "Zacode"],
+      "url": "https://zacoderp.com",
+      "logo": "https://zacoderp.com/icon-512.png",
+      "description": "نظام محاسبي وERP متكامل معتمد من ZATCA للسوق السعودي. يدعم الفوترة الإلكترونية، المحاسبة المالية، المخزون، التصنيع، نقاط البيع، الموارد البشرية، والاعتمادات المستندية في منصة عربية واحدة.",
+      "foundingDate": "2024",
+      "areaServed": { "@type": "Country", "name": "Saudi Arabia" },
+      "address": { "@type": "PostalAddress", "addressCountry": "SA" },
+      "sameAs": ["https://zacoderp.com"]
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "زاكود المحاسبي",
+      "alternateName": ["Zacod ERP", "Zacoderp"],
+      "applicationCategory": "BusinessApplication",
+      "applicationSubCategory": "Enterprise Resource Planning (ERP)",
+      "operatingSystem": "Web, iOS, Android (PWA)",
+      "inLanguage": ["ar-SA", "en"],
+      "url": "https://zacoderp.com",
+      "image": "https://zacoderp.com/opengraph.jpg",
+      "description": "نظام ERP سعودي متكامل: محاسبة مالية، فاتورة إلكترونية ZATCA معتمدة، مخزون متعدد المستودعات، دورة تصنيع WIP بنمط SAP، اعتمادات مستندية، نقاط بيع، موارد بشرية، متجر إلكتروني، ومساعد ذكاء اصطناعي صوتي.",
+      "offers": {
+        "@type": "Offer",
+        "priceCurrency": "SAR",
+        "availability": "https://schema.org/InStock",
+        "url": "https://zacoderp.com/pricing",
+        "description": "اشتراك شهري أو سنوي بعدة باقات بالريال السعودي، مع فترة تجربة مجانية بدون بطاقة دفع."
+      },
+      "featureList": [
+        "فاتورة إلكترونية معتمدة ZATCA (مرحلة 1 و 2)",
+        "إدارة CSR و CSID و UBL 2.1 + TLV QR Code",
+        "محاسبة مالية كاملة مع دورة إقفال IFRS من 5 خطوات",
+        "Cost Centers على مستوى كل سطر قيد",
+        "متعدد الشركات (Multi-tenancy) مع SuperAdmin Impersonation آمن",
+        "عزل بيانات على مستوى الفرع (Branch-level isolation)",
+        "مخزون متعدد المستودعات + وحدات متعددة + تكلفة Moving Average",
+        "BOM Templates ودورة إنتاج WIP بنمط SAP (DR WIP/CR Raw → DR FG/CR WIP)",
+        "تخصيص العمالة والتحميل الصناعي على رأس أمر الإنتاج",
+        "نقاط بيع POS مدمجة تعمل offline",
+        "متجر إلكتروني مدمج (Online Store)",
+        "إدارة الاعتمادات المستندية LC مع مصاريفها متعددة العملات",
+        "أصول ثابتة مع جدولة استهلاك تلقائية",
+        "موارد بشرية ورواتب مدمجة + حضور وانصراف + GPS Tracking",
+        "صلاحيات RBAC دقيقة + Audit Log شامل",
+        "مساعد ذكاء اصطناعي مع أوامر صوتية قابلة للتنفيذ",
+        "Realtime SSE للتحديثات اللحظية",
+        "واجهة عربية RTL أصلية + ثنائية اللغة (عربي/إنجليزي)",
+        "PWA — يعمل على الجوال كتطبيق native"
+      ],
+      "brand": { "@type": "Brand", "name": "زاكود المحاسبي" }
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "زاكود المحاسبي",
+      "url": "https://zacoderp.com",
+      "inLanguage": "ar-SA"
+    }
+    </script>
+    <!-- AI assistant overview — non-standard but increasingly read by
+         LLM crawlers (Perplexity, ChatGPT Search). Mirrors /ai-overview.json. -->
+    <link rel="alternate" type="application/json" title="AI Overview" href="/ai-overview.json" />
   </head>
   <body>
     <script>
