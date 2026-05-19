@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { userVisitsTable, trackingZonesTable, trackingZoneUsersTable, usersTable, branchesTable } from "@workspace/db";
-import { eq, and, desc, sql, gte, lte, isNull, inArray } from "drizzle-orm";
+import { eq, and, or, desc, sql, gte, lte, isNull, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { extractAuth, resolveCompanyId, branchScopeFilter } from "../middleware/auth.js";
 import { requireModulePermission, moduleAudit } from "../middleware/permissions.js";
@@ -611,6 +611,269 @@ router.get("/attendance", ...adminGate, async (req: any, res) => {
   };
 
   res.json({ days, users: usersOut, overall });
+});
+
+// ───────────────── MOVEMENT REPORT (admin) ────────────────
+// Detailed per-user movement report for the users explicitly bound to a
+// tracking zone. For a chosen day (default: today) it returns every
+// check-in / check-out event in chronological order with timestamps,
+// the place name + lat/lng, the matched zone, duration, and whether the
+// visit fell OUTSIDE the user's allowed zone (alertFlags contains
+// `out_of_allowed_zone` or `in_forbidden_zone`).
+//
+// Query params:
+//   - day:  YYYY-MM-DD (single day, default today, server time)
+//   - from / to: optional date range OVERRIDE (inclusive). When passed
+//                they win over `day` and the report aggregates the full
+//                range — each user's events are flattened in order.
+//   - userId: optional single-user filter
+//
+// Returns:
+//   { range: { from, to },
+//     users: [{
+//       userId, userName,
+//       assignedZones: [{ id, name, isAllowed }],
+//       events: [{                              // chronological
+//         visitId, kind: "in"|"out", at, lat, lng, place, address,
+//         zoneId, zoneName, alertFlags
+//       }],
+//       segments: [{                            // visit segments (in→out)
+//         visitId, fromAt, toAt|null,           // null = still active
+//         durationMinutes, isActive,
+//         fromPlace, toPlace,
+//         zoneId, zoneName, outOfZone
+//       }],
+//       summary: { checkinCount, checkoutCount, outOfZoneCount,
+//                  totalMinutes, firstAt, lastAt } }],
+//     overall: { trackedUsers, totalCheckins, totalCheckouts,
+//                totalOutOfZone, totalMinutes } }
+// Zod schema for the movement-report query string. Centralised here so
+// malformed `day/from/to/userId` values return a clean 400 instead of
+// silently flattening to an empty report.
+const movementReportQuerySchema = z.object({
+  day:  z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  userId: z.coerce.number().int().positive().optional(),
+}).refine(v => !v.from || !v.to || v.from <= v.to, {
+  message: "from must be <= to",
+  path: ["from"],
+});
+
+router.get("/movement-report", ...adminGate, async (req: any, res) => {
+  const cid = guard(req, res); if (!cid) return;
+
+  const parsed = movementReportQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: "بيانات غير صالحة", details: parsed.error.issues });
+    return;
+  }
+  const { day, from, to, userId: userIdFilterRaw } = parsed.data;
+
+  // Resolve the period in the SERVER's local timezone so the day
+  // boundaries match what the user sees in the UI (toLocaleString).
+  // We deliberately use a local-time `Date` constructor for the
+  // default-today calculation too, instead of `toISOString().slice(0,10)`
+  // (which can shift the date by ±1 day across UTC midnight).
+  const nowLocal = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const todayLocalIso = `${nowLocal.getFullYear()}-${pad(nowLocal.getMonth() + 1)}-${pad(nowLocal.getDate())}`;
+  const dayStr  = day  ?? todayLocalIso;
+  const fromStr = from ?? dayStr;
+  const toStr   = to   ?? dayStr;
+  const [fy, fm, fd] = fromStr.split("-").map(Number);
+  const [ty, tm, td] = toStr.split("-").map(Number);
+  const periodStart = new Date(fy, (fm ?? 1) - 1, fd ?? 1, 0, 0, 0, 0);
+  const periodEnd   = new Date(ty, (tm ?? 1) - 1, td ?? 1, 23, 59, 59, 999);
+  const userIdFilter = userIdFilterRaw ?? null;
+
+  // Users explicitly bound to at least one active zone in this company.
+  const trackedUsers = await db.selectDistinct({
+    id: usersTable.id,
+    nameAr: usersTable.nameAr,
+    nameEn: usersTable.nameEn,
+    username: usersTable.username,
+  }).from(trackingZoneUsersTable)
+    .innerJoin(trackingZonesTable, and(
+      eq(trackingZonesTable.id, trackingZoneUsersTable.zoneId),
+      eq(trackingZonesTable.companyId, cid),
+      eq(trackingZonesTable.isActive, true),
+    ))
+    .innerJoin(usersTable, eq(usersTable.id, trackingZoneUsersTable.userId))
+    .orderBy(usersTable.username);
+
+  const filteredUsers = userIdFilter
+    ? trackedUsers.filter(u => u.id === userIdFilter)
+    : trackedUsers;
+
+  if (filteredUsers.length === 0) {
+    res.json({
+      range: { from: fromStr, to: toStr },
+      users: [],
+      overall: { trackedUsers: 0, totalCheckins: 0, totalCheckouts: 0, totalOutOfZone: 0, totalMinutes: 0 },
+    });
+    return;
+  }
+
+  const userIds = filteredUsers.map(u => u.id);
+
+  // Zone names + assignment map per user (for labels and the "assignedZones"
+  // header that the UI shows above each user's timeline).
+  const zoneRows = await db.select({
+    id: trackingZonesTable.id,
+    name: trackingZonesTable.name,
+    isAllowed: trackingZonesTable.isAllowed,
+    userId: trackingZoneUsersTable.userId,
+  }).from(trackingZonesTable)
+    .innerJoin(trackingZoneUsersTable, eq(trackingZoneUsersTable.zoneId, trackingZonesTable.id))
+    .where(and(
+      eq(trackingZonesTable.companyId, cid),
+      eq(trackingZonesTable.isActive, true),
+      inArray(trackingZoneUsersTable.userId, userIds),
+    ));
+  const zoneById = new Map<number, { id: number; name: string; isAllowed: boolean }>();
+  const zonesByUser = new Map<number, Array<{ id: number; name: string; isAllowed: boolean }>>();
+  for (const z of zoneRows) {
+    const lite = { id: z.id, name: z.name, isAllowed: z.isAllowed };
+    zoneById.set(z.id, lite);
+    const arr = zonesByUser.get(z.userId) ?? [];
+    if (!arr.find(x => x.id === z.id)) arr.push(lite);
+    zonesByUser.set(z.userId, arr);
+  }
+
+  // Pull every visit overlapping the period for the tracked users in one go.
+  const visits = await db.select({
+    id: userVisitsTable.id,
+    userId: userVisitsTable.userId,
+    checkinAt: userVisitsTable.checkinAt,
+    checkinLat: userVisitsTable.checkinLat,
+    checkinLng: userVisitsTable.checkinLng,
+    checkinPlace: userVisitsTable.checkinPlace,
+    checkinAddress: userVisitsTable.checkinAddress,
+    checkoutAt: userVisitsTable.checkoutAt,
+    checkoutLat: userVisitsTable.checkoutLat,
+    checkoutLng: userVisitsTable.checkoutLng,
+    checkoutPlace: userVisitsTable.checkoutPlace,
+    checkoutAddress: userVisitsTable.checkoutAddress,
+    durationMinutes: userVisitsTable.durationMinutes,
+    status: userVisitsTable.status,
+    zoneId: userVisitsTable.zoneId,
+    alertFlags: userVisitsTable.alertFlags,
+  }).from(userVisitsTable).where(and(
+    eq(userVisitsTable.companyId, cid),
+    inArray(userVisitsTable.userId, userIds),
+    // OVERLAP semantics: include any visit that touches the requested
+    // window — even if it started before periodStart (overnight visit)
+    // or is still active (no checkoutAt). Without this, days near
+    // midnight would silently lose check-outs whose corresponding
+    // check-in was on the previous calendar day.
+    lte(userVisitsTable.checkinAt, periodEnd),
+    or(
+      isNull(userVisitsTable.checkoutAt),
+      gte(userVisitsTable.checkoutAt, periodStart),
+    ),
+  )).orderBy(userVisitsTable.checkinAt);
+
+  type Ev = {
+    visitId: number; kind: "in" | "out"; at: string;
+    lat: number | null; lng: number | null; place: string | null; address: string | null;
+    zoneId: number | null; zoneName: string | null; alertFlags: string | null;
+  };
+  type Seg = {
+    visitId: number; fromAt: string; toAt: string | null;
+    durationMinutes: number | null; isActive: boolean;
+    fromPlace: string | null; toPlace: string | null;
+    zoneId: number | null; zoneName: string | null; outOfZone: boolean;
+  };
+  const evByUser  = new Map<number, Ev[]>();
+  const segByUser = new Map<number, Seg[]>();
+  const visitsByUser = new Map<number, typeof visits>();
+  for (const v of visits) {
+    const arr = visitsByUser.get(v.userId) ?? [];
+    arr.push(v); visitsByUser.set(v.userId, arr);
+  }
+
+  const isOutFlag = (f: string | null) =>
+    !!f && /(out_of_allowed_zone|in_forbidden_zone)/.test(f);
+
+  for (const [uid, vs] of visitsByUser.entries()) {
+    const evs: Ev[] = [];
+    const segs: Seg[] = [];
+    for (const v of vs) {
+      const zName = v.zoneId ? (zoneById.get(v.zoneId)?.name ?? null) : null;
+      evs.push({
+        visitId: v.id, kind: "in",
+        at: new Date(v.checkinAt).toISOString(),
+        lat: v.checkinLat ? Number(v.checkinLat) : null,
+        lng: v.checkinLng ? Number(v.checkinLng) : null,
+        place: v.checkinPlace, address: v.checkinAddress,
+        zoneId: v.zoneId, zoneName: zName, alertFlags: v.alertFlags,
+      });
+      if (v.checkoutAt) {
+        evs.push({
+          visitId: v.id, kind: "out",
+          at: new Date(v.checkoutAt).toISOString(),
+          lat: v.checkoutLat ? Number(v.checkoutLat) : null,
+          lng: v.checkoutLng ? Number(v.checkoutLng) : null,
+          place: v.checkoutPlace, address: v.checkoutAddress,
+          zoneId: v.zoneId, zoneName: zName, alertFlags: v.alertFlags,
+        });
+      }
+      segs.push({
+        visitId: v.id,
+        fromAt: new Date(v.checkinAt).toISOString(),
+        toAt: v.checkoutAt ? new Date(v.checkoutAt).toISOString() : null,
+        // For still-active visits the running duration is computed on the
+        // client to stay live; we send null here.
+        durationMinutes: v.durationMinutes,
+        isActive: v.status === "active",
+        fromPlace: v.checkinPlace, toPlace: v.checkoutPlace,
+        zoneId: v.zoneId, zoneName: zName,
+        outOfZone: isOutFlag(v.alertFlags),
+      });
+    }
+    evs.sort((a, b) => a.at.localeCompare(b.at));
+    segs.sort((a, b) => a.fromAt.localeCompare(b.fromAt));
+    evByUser.set(uid, evs);
+    segByUser.set(uid, segs);
+  }
+
+  let oCheckins = 0, oCheckouts = 0, oOut = 0, oMin = 0;
+  const usersOut = filteredUsers.map(u => {
+    const evs  = evByUser.get(u.id)  ?? [];
+    const segs = segByUser.get(u.id) ?? [];
+    const checkinCount  = evs.filter(e => e.kind === "in").length;
+    const checkoutCount = evs.filter(e => e.kind === "out").length;
+    const outOfZoneCount = segs.filter(s => s.outOfZone).length;
+    const totalMinutes = segs.reduce((s, x) => s + (x.durationMinutes ?? 0), 0);
+    oCheckins += checkinCount; oCheckouts += checkoutCount;
+    oOut += outOfZoneCount;    oMin += totalMinutes;
+    return {
+      userId: u.id,
+      userName: u.nameAr || u.nameEn || u.username,
+      assignedZones: zonesByUser.get(u.id) ?? [],
+      events: evs,
+      segments: segs,
+      summary: {
+        checkinCount, checkoutCount, outOfZoneCount,
+        totalMinutes,
+        firstAt: evs.length ? evs[0].at : null,
+        lastAt:  evs.length ? evs[evs.length - 1].at : null,
+      },
+    };
+  });
+
+  res.json({
+    range: { from: fromStr, to: toStr },
+    users: usersOut,
+    overall: {
+      trackedUsers: usersOut.length,
+      totalCheckins: oCheckins,
+      totalCheckouts: oCheckouts,
+      totalOutOfZone: oOut,
+      totalMinutes: oMin,
+    },
+  });
 });
 
 // ───────────────── LIST VISITS (admin / dashboard) ──────────

@@ -85,6 +85,47 @@ export type AttendanceData = {
   overall: { totalUserDays: number; presentUserDays: number; absentUserDays: number; totalMinutes: number; alertUserDays: number };
 };
 
+export type MovementEvent = {
+  visitId: number;
+  kind: "in" | "out";
+  at: string;
+  lat: number | null; lng: number | null;
+  place: string | null; address: string | null;
+  zoneId: number | null; zoneName: string | null;
+  alertFlags: string | null;
+};
+export type MovementSegment = {
+  visitId: number;
+  fromAt: string;
+  toAt: string | null;
+  durationMinutes: number | null;
+  isActive: boolean;
+  fromPlace: string | null; toPlace: string | null;
+  zoneId: number | null; zoneName: string | null;
+  outOfZone: boolean;
+};
+export type MovementUser = {
+  userId: number;
+  userName: string;
+  assignedZones: Array<{ id: number; name: string; isAllowed: boolean }>;
+  events: MovementEvent[];
+  segments: MovementSegment[];
+  summary: {
+    checkinCount: number; checkoutCount: number; outOfZoneCount: number;
+    totalMinutes: number;
+    firstAt: string | null; lastAt: string | null;
+  };
+};
+export type MovementReportData = {
+  range: { from: string; to: string };
+  users: MovementUser[];
+  overall: {
+    trackedUsers: number;
+    totalCheckins: number; totalCheckouts: number;
+    totalOutOfZone: number; totalMinutes: number;
+  };
+};
+
 export type TrackingZone = {
   id: number; name: string; centerLat: string; centerLng: string;
   radiusMeters: number; isAllowed: boolean; isActive: boolean; notes: string | null;
@@ -110,6 +151,8 @@ export const userTrackingApi = {
       companyId: params.companyId, from: params.from, to: params.to, userId: params.userId,
       includeWeekends: params.includeWeekends ? "1" : undefined,
     })}`),
+  movementReport: (params: { companyId?: number; day?: string; from?: string; to?: string; userId?: number }) =>
+    req<MovementReportData>(`/movement-report${qs(params)}`),
   zones:    (companyId?: number) => req<TrackingZone[]>(`/zones${qs({ companyId })}`),
   createZone: (body: { name: string; centerLat: number; centerLng: number; radiusMeters?: number; isAllowed?: boolean; isActive?: boolean; notes?: string }, companyId?: number) =>
     req<TrackingZone>(`/zones${qs({ companyId })}`, { method: "POST", body: JSON.stringify(body) }),

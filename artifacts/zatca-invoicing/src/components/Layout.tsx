@@ -342,6 +342,7 @@ const liveMonitoringSubNav: NavDef[] = [
   { nameKey: "nav.userTracking",    href: "/user-tracking",       icon: MapPin,    permKey: "user_tracking" },
   { nameKey: "nav.userTrackingLive", href: "/user-tracking/live",  icon: MapPin,    permKey: "user_tracking" },
   { nameKey: "nav.userAttendance",   href: "/user-tracking/attendance", icon: MapPin, permKey: "user_tracking" },
+  { nameKey: "nav.userMovementReport", href: "/user-tracking/movement-report", icon: MapPin, permKey: "user_tracking" },
 ];
 const LIVE_MONITORING_GROUP_PERMS = ["user_tracking"];
 
