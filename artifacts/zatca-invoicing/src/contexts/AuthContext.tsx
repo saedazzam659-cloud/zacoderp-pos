@@ -380,6 +380,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
+    // Auto-checkout the active tracking visit (if any) so the user's
+    // attendance/visit row closes when they sign out — mirror of the
+    // useAutoCheckinOnLogin hook. Best-effort: capped by a hard 3-second
+    // budget so a slow network or denied-but-pending geolocation prompt
+    // can never stall the sign-out. All errors swallowed silently.
+    // SuperAdmins are excluded (no tenant attendance footprint).
+    try {
+      if (user && user.role !== "superadmin") {
+        const sleep = (ms: number) => new Promise<null>(r => setTimeout(() => r(null), ms));
+        const withTimeout = <T,>(p: Promise<T>, ms: number): Promise<T | null> =>
+          Promise.race<T | null>([p.catch(() => null), sleep(ms)]);
+
+        const { userTrackingApi, getCurrentPosition } = await import("@/lib/userTrackingApi");
+        // Total budget: ~3s. Split between meStatus + geolocation + checkout.
+        const st = await withTimeout(userTrackingApi.meStatus(), 1500);
+        if (st?.activeVisitId) {
+          const pos = await withTimeout(getCurrentPosition(), 1500);
+          // Backend checkout requires lat/lng. If geolocation was denied
+          // or timed out, fall back to (0,0) so the visit still closes —
+          // the checkin location is preserved on the row and duration is
+          // computed from timestamps, not coords.
+          void withTimeout(userTrackingApi.checkout(st.activeVisitId, {
+            lat: pos?.lat ?? 0,
+            lng: pos?.lng ?? 0,
+            accuracy: pos?.accuracy,
+            notes: "تسجيل خروج من النظام",
+          }), 1500);
+        }
+      }
+    } catch { /* silent — auto-checkout is a convenience */ }
+
     await apiFetch("/auth/logout", { method: "POST" });
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(SESSION_KEY);
