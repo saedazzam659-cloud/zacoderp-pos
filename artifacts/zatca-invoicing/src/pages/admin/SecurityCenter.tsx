@@ -165,6 +165,15 @@ interface LoginHistoryRow {
   // (or the past 30d when no window was specified).
   country?: string | null;
   attemptCount?: number | null;
+  // Login-location enrichment (only populated for action='login' rows where
+  // an auto-checkin captured GPS within ±10 minutes of the login). Joined
+  // server-side from `user_visits` with strict tenant scoping.
+  loginPlace?: string | null;
+  loginAddress?: string | null;
+  loginLat?: number | null;
+  loginLng?: number | null;
+  loginAccuracy?: number | null;
+  loginZoneName?: string | null;
 }
 
 // Small helper: extract a human-readable message from an unknown error
@@ -673,6 +682,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                     <th className="px-3 py-2 font-medium">الوحدة</th>
                     <th className="px-3 py-2 font-medium">السبب</th>
                     <th className="px-3 py-2 font-medium">الدولة</th>
+                    <th className="px-3 py-2 font-medium" title="موقع الدخول المُلتقط تلقائياً عند تسجيل الدخول (يظهر فقط لمحاولات الدخول الناجحة)">موقع الدخول</th>
                     <th className="px-3 py-2 font-medium" title="إجمالي محاولات الدخول لهذا المستخدم في الفترة المحددة (أو 30 يوماً افتراضياً)">عدد المحاولات</th>
                     <th className="px-3 py-2 font-medium">IP</th>
                     <th className="px-3 py-2 font-medium">المتصفح</th>
@@ -773,6 +783,17 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                           ) : (
                             <span className="text-xs text-muted-foreground">—</span>
                           )}
+                        </td>
+                        <td className="px-3 py-2">
+                          <LoginLocationCell
+                            place={r.loginPlace}
+                            address={r.loginAddress}
+                            lat={r.loginLat}
+                            lng={r.loginLng}
+                            accuracy={r.loginAccuracy}
+                            zoneName={r.loginZoneName}
+                            testId={`history-location-${r.id}`}
+                          />
                         </td>
                         <td className="px-3 py-2" data-testid={`history-attempts-${r.id}`}>
                           {r.attemptCount != null && r.attemptCount > 0 ? (

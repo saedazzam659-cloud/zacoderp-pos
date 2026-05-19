@@ -2858,14 +2858,100 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
       }
     }
 
+    // ── Login-location enrichment ──────────────────────────────────────────
+    // For each successful `login` row, find the user_visits checkin closest
+    // to createdAt within ±10 minutes (the auto-checkin captures GPS on
+    // login). Tenant-scoped: companyId is part of both the SQL predicate
+    // AND the in-memory match so a stray userId collision never crosses
+    // tenants. Zone names are resolved with the same companyId predicate
+    // and keyed by `${companyId}:${zoneId}`.
+    type LocEnrich = {
+      loginPlace: string | null; loginAddress: string | null;
+      loginLat: number | null;   loginLng: number | null;
+      loginAccuracy: number | null; loginZoneName: string | null;
+    };
+    const locByRowId = new Map<number, LocEnrich>();
+    const loginRowsForLoc = rows.filter(r =>
+      r.action === "login" && r.userId != null && r.companyId != null,
+    );
+    if (loginRowsForLoc.length > 0) {
+      const locUserIds    = Array.from(new Set(loginRowsForLoc.map(r => r.userId!).filter(Boolean)));
+      const locCompanyIds = Array.from(new Set(loginRowsForLoc.map(r => r.companyId!).filter((x): x is number => x != null)));
+      const tms = loginRowsForLoc.map(r => r.createdAt.getTime());
+      const minT = new Date(Math.min(...tms) - 10 * 60 * 1000);
+      const maxT = new Date(Math.max(...tms) + 10 * 60 * 1000);
+      const visits = await db.select({
+        companyId: userVisitsTable.companyId,
+        userId: userVisitsTable.userId,
+        checkinAt: userVisitsTable.checkinAt,
+        checkinPlace: userVisitsTable.checkinPlace,
+        checkinAddress: userVisitsTable.checkinAddress,
+        checkinLat: userVisitsTable.checkinLat,
+        checkinLng: userVisitsTable.checkinLng,
+        checkinAccuracy: userVisitsTable.checkinAccuracy,
+        zoneId: userVisitsTable.zoneId,
+      })
+        .from(userVisitsTable)
+        .where(and(
+          inArray(userVisitsTable.companyId, locCompanyIds),
+          inArray(userVisitsTable.userId, locUserIds),
+          gte(userVisitsTable.checkinAt, minT),
+          lte(userVisitsTable.checkinAt, maxT),
+        ));
+      const zoneIds = Array.from(new Set(visits.map(v => v.zoneId).filter((x): x is number => x != null)));
+      const zoneNameMap = new Map<string, string>();
+      if (zoneIds.length > 0) {
+        const zs = await db.select({
+          id: trackingZonesTable.id, companyId: trackingZonesTable.companyId, name: trackingZonesTable.name,
+        })
+          .from(trackingZonesTable)
+          .where(and(
+            inArray(trackingZonesTable.companyId, locCompanyIds),
+            inArray(trackingZonesTable.id, zoneIds),
+          ));
+        for (const z of zs) zoneNameMap.set(`${z.companyId}:${z.id}`, z.name);
+      }
+      const TEN_MIN_MS = 10 * 60 * 1000;
+      for (const lr of loginRowsForLoc) {
+        const target = lr.createdAt.getTime();
+        let best: typeof visits[number] | null = null;
+        let bestDelta = Infinity;
+        for (const v of visits) {
+          if (v.userId !== lr.userId) continue;
+          if (v.companyId !== lr.companyId) continue;
+          const d = Math.abs(new Date(v.checkinAt).getTime() - target);
+          if (d <= TEN_MIN_MS && d < bestDelta) { best = v; bestDelta = d; }
+        }
+        if (best) {
+          locByRowId.set(lr.id, {
+            loginPlace:   best.checkinPlace,
+            loginAddress: best.checkinAddress,
+            loginLat:     best.checkinLat != null ? Number(best.checkinLat) : null,
+            loginLng:     best.checkinLng != null ? Number(best.checkinLng) : null,
+            loginAccuracy: best.checkinAccuracy != null ? Number(best.checkinAccuracy) : null,
+            loginZoneName: best.zoneId != null ? (zoneNameMap.get(`${best.companyId}:${best.zoneId}`) ?? null) : null,
+          });
+        }
+      }
+    }
+
     // Stitch enrichment back onto each row.
-    const enriched = rows.map(r => ({
-      ...r,
-      country:      r.ip ? (ipCountry.get(r.ip) ?? null) : null,
-      attemptCount: r.username ? (attemptCount.get(r.username) ?? null) : null,
-      companyName:  r.companyId != null ? (companyNameMap.get(r.companyId) ?? null) : null,
-      sessionDurationSec: sessionDurations.get(r.id) ?? null,
-    }));
+    const enriched = rows.map(r => {
+      const loc = locByRowId.get(r.id);
+      return {
+        ...r,
+        country:      r.ip ? (ipCountry.get(r.ip) ?? null) : null,
+        attemptCount: r.username ? (attemptCount.get(r.username) ?? null) : null,
+        companyName:  r.companyId != null ? (companyNameMap.get(r.companyId) ?? null) : null,
+        sessionDurationSec: sessionDurations.get(r.id) ?? null,
+        loginPlace:    loc?.loginPlace    ?? null,
+        loginAddress:  loc?.loginAddress  ?? null,
+        loginLat:      loc?.loginLat      ?? null,
+        loginLng:      loc?.loginLng      ?? null,
+        loginAccuracy: loc?.loginAccuracy ?? null,
+        loginZoneName: loc?.loginZoneName ?? null,
+      };
+    });
 
     // Lightweight 30-day denied-per-day series for the UI mini-chart.
     const seriesResult = await db.execute<{ day: string; n: number }>(sql`
