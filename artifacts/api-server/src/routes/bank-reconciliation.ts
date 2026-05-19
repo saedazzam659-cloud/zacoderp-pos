@@ -56,65 +56,128 @@ function excelSerialToISO(n: number): string | null {
   return d.toISOString().slice(0, 10);
 }
 
-/** Loose date parser supporting many common bank formats. Returns yyyy-mm-dd or "". */
+/** Convert any Arabic-Indic digits in the string to Western digits.
+ *  Bank statements (especially OCR'd ones) frequently mix ١٢٣ and 123. */
+function normalizeDigits(s: string): string {
+  return s
+    .replace(/[\u0660-\u0669]/g, d => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u06f0-\u06f9]/g, d => String(d.charCodeAt(0) - 0x06f0));
+}
+
+/** Map English/Arabic month names to 1-12. */
+const MONTH_NAMES: Record<string, number> = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+  may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8,
+  sep: 9, sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11,
+  dec: 12, december: 12,
+  // Arabic Gregorian month names (most common variants).
+  "يناير": 1, "كانون الثاني": 1, "فبراير": 2, "شباط": 2,
+  "مارس": 3, "آذار": 3, "اذار": 3,
+  "ابريل": 4, "أبريل": 4, "نيسان": 4,
+  "مايو": 5, "أيار": 5, "ايار": 5,
+  "يونيو": 6, "حزيران": 6, "يونية": 6,
+  "يوليو": 7, "تموز": 7, "يولية": 7,
+  "اغسطس": 8, "أغسطس": 8, "آب": 8, "اب": 8,
+  "سبتمبر": 9, "ايلول": 9, "أيلول": 9,
+  "اكتوبر": 10, "أكتوبر": 10, "تشرين الاول": 10, "تشرين الأول": 10,
+  "نوفمبر": 11, "تشرين الثاني": 11,
+  "ديسمبر": 12, "كانون الاول": 12, "كانون الأول": 12,
+};
+
+/** Loose date parser supporting many common bank formats. Returns yyyy-mm-dd or "".
+ *  CRITICAL: This function NEVER uses `new Date(str)` for parsing because Node's
+ *  built-in parser is timezone-sensitive — e.g. `new Date("2025-05-22").toISOString()`
+ *  in a TZ-offset container can return "2025-05-21" or "2025-05-23", which is the
+ *  classic off-by-one bug in bank reconciliation. All branches below construct the
+ *  ISO string from the source digits directly, with no Date math at all. */
 function parseDate(raw: any): string {
   if (raw == null) return "";
   if (typeof raw === "number") return excelSerialToISO(raw) ?? "";
-  const s = String(raw).trim();
+  let s = String(raw).trim();
   if (!s) return "";
-  // Already ISO?
-  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  // Arabic-Indic → Western digits first so all subsequent regexes work.
+  s = normalizeDigits(s);
+  // Strip RTL/LTR marks and any leading Hijri-prefix junk like "هـ" that
+  // some statements interleave with the Gregorian date.
+  s = s.replace(/[\u200e\u200f\u202a-\u202e]/g, "").trim();
+
+  // ── 1. ISO: yyyy-mm-dd (or yyyy/mm/dd, yyyy.mm.dd) ───────────────────
+  const iso = s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
   if (iso) {
-    const y = iso[1], m = iso[2].padStart(2, "0"), d = iso[3].padStart(2, "0");
-    return `${y}-${m}-${d}`;
+    const y = iso[1];
+    const m = iso[2].padStart(2, "0");
+    const d = iso[3].padStart(2, "0");
+    if (Number(m) >= 1 && Number(m) <= 12 && Number(d) >= 1 && Number(d) <= 31) {
+      return `${y}-${m}-${d}`;
+    }
   }
-  // dd/mm/yyyy or dd-mm-yyyy or dd.mm.yyyy (also yyyy/mm/dd, mm/dd/yyyy).
+
+  // ── 2. dd/mm/yyyy or mm/dd/yyyy or dd-mm-yyyy or dd.mm.yyyy ──────────
   // Disambiguation: if either of the first two parts is > 12 we know which
-  // is the day; otherwise we default to **dd/mm** (Saudi/EU convention used
-  // by all local bank statements). PDF/CSV exports of US-formatted files
-  // are rare here, so dd/mm is the safer assumption.
-  const m1 = s.match(/^(\d{1,4})[\/\-.](\d{1,2})[\/\-.](\d{1,4})/);
+  // is the day; otherwise default to **dd/mm** (Saudi/EU convention used by
+  // all local bank statements). US-formatted statements (mm/dd) are very rare
+  // here and tagged-amount columns make this safe.
+  const m1 = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
   if (m1) {
     const a = m1[1], b = m1[2], c = m1[3];
-    let y: string, mo: string, d: string;
-    if (a.length === 4) {
-      // yyyy/mm/dd
-      y = a; mo = b; d = c;
-    } else if (c.length === 4 || c.length === 2) {
-      const A = Number(a), B = Number(b);
-      if (A > 12 && B <= 12) { d = a; mo = b; }       // unambiguous dd/mm
-      else if (B > 12 && A <= 12) { d = b; mo = a; }  // unambiguous mm/dd
-      else { d = a; mo = b; }                          // default dd/mm (SA)
-      y = c.length === 4 ? c : `20${c.padStart(2, "0")}`;
-    } else {
-      d = a; mo = b; y = c;
-    }
-    const yy = y.padStart(4, "20");
-    const mm = mo.padStart(2, "0");
+    let d: string, mo: string;
+    const A = Number(a), B = Number(b);
+    if (A > 12 && B <= 12) { d = a; mo = b; }       // unambiguous dd/mm
+    else if (B > 12 && A <= 12) { d = b; mo = a; }  // unambiguous mm/dd
+    else { d = a; mo = b; }                          // default dd/mm (SA)
     const dd = d.padStart(2, "0");
+    const mm = mo.padStart(2, "0");
+    // 2-digit year → assume 20xx (no bank gives 19xx statements in practice)
+    const yy = c.length === 4 ? c : `20${c.padStart(2, "0")}`;
     if (Number(mm) >= 1 && Number(mm) <= 12 && Number(dd) >= 1 && Number(dd) <= 31) {
       return `${yy}-${mm}-${dd}`;
     }
   }
-  // Last resort: native Date parse
-  const d2 = new Date(s);
-  if (!isNaN(d2.getTime()) && d2.getFullYear() > 1990 && d2.getFullYear() < 2100) {
-    return d2.toISOString().slice(0, 10);
+
+  // ── 3. "22 May 2025" / "22-May-2025" / "22 مايو 2025" ────────────────
+  const m2 = s.match(/^(\d{1,2})[\s\-\/]+([A-Za-z\u0600-\u06ff]+)[\s\-\/]+(\d{2,4})/);
+  if (m2) {
+    const d = m2[1].padStart(2, "0");
+    const monthKey = m2[2].toLowerCase().normalize("NFC");
+    const mNum = MONTH_NAMES[monthKey] ?? MONTH_NAMES[monthKey.slice(0, 3)];
+    if (mNum) {
+      const mm = String(mNum).padStart(2, "0");
+      const yy = m2[3].length === 4 ? m2[3] : `20${m2[3].padStart(2, "0")}`;
+      if (Number(d) >= 1 && Number(d) <= 31) return `${yy}-${mm}-${d}`;
+    }
   }
+
+  // ── 4. "May 22, 2025" (US long-form) ─────────────────────────────────
+  const m3 = s.match(/^([A-Za-z\u0600-\u06ff]+)[\s\-\/]+(\d{1,2})[,\s\-\/]+(\d{2,4})/);
+  if (m3) {
+    const monthKey = m3[1].toLowerCase().normalize("NFC");
+    const mNum = MONTH_NAMES[monthKey] ?? MONTH_NAMES[monthKey.slice(0, 3)];
+    if (mNum) {
+      const mm = String(mNum).padStart(2, "0");
+      const d = m3[2].padStart(2, "0");
+      const yy = m3[3].length === 4 ? m3[3] : `20${m3[3].padStart(2, "0")}`;
+      if (Number(d) >= 1 && Number(d) <= 31) return `${yy}-${mm}-${d}`;
+    }
+  }
+
+  // Deliberately NO `new Date(s)` fallback — see header comment. Returning ""
+  // is safer: the row is skipped with a warning rather than silently shifted.
   return "";
 }
 
 /** Parse an arbitrary string/number into a finite number, or null. Handles
- *  thousands separators ("1,234.56"), Arabic-Indic digits, parentheses for
- *  negatives ("(123.45)") and trailing CR/DR markers. */
+ *  thousands separators ("1,234.56"), Arabic-Indic digits and decimal mark
+ *  (٬ thousands U+066C, ٫ decimal U+066B), European format ("1.234,56"),
+ *  parentheses for negatives ("(123.45)") and trailing CR/DR markers. */
 function parseAmount(raw: any): number | null {
   if (raw == null || raw === "") return null;
   if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
   let s = String(raw).trim();
   if (!s) return null;
-  // Arabic-Indic → Western digits
-  s = s.replace(/[\u0660-\u0669]/g, d => String(d.charCodeAt(0) - 0x0660));
-  s = s.replace(/[\u06f0-\u06f9]/g, d => String(d.charCodeAt(0) - 0x06f0));
+  // Arabic-Indic → Western digits (both Eastern Arabic ٠-٩ and Persian ۰-۹)
+  s = normalizeDigits(s);
+  // Arabic decimal/thousands separators → Western equivalents.
+  s = s.replace(/\u066B/g, ".").replace(/\u066C/g, ",");
   // Strip currency symbols, spaces, NBSP, RTL marks
   s = s.replace(/[\u200e\u200f\u202a-\u202e\s]+/g, "");
   s = s.replace(/(?:SAR|SR|ر\.?س\.?|﷼|USD|\$|EUR|€)/gi, "");
@@ -123,7 +186,35 @@ function parseAmount(raw: any): number | null {
   if (/(?:^|[^A-Z])(DR|DEBIT)\b/i.test(s)) sign = -1;
   if (/(?:^|[^A-Z])(CR|CREDIT)\b/i.test(s)) sign = 1;
   s = s.replace(/[A-Za-z]+/g, "");
-  s = s.replace(/,/g, "");
+
+  // Decimal-separator disambiguation. Three cases:
+  //   "1,234.56"   → comma=thousands, dot=decimal  (Anglo / Saudi default)
+  //   "1.234,56"   → dot=thousands, comma=decimal  (European)
+  //   "1234,56"    → comma=decimal (no dot in string)
+  //   "1234.56"    → dot=decimal
+  //   "1,234"      → comma=thousands (no fractional part, integer)
+  //   "1,23"       → comma=decimal (1.23 — common European typing)
+  const hasDot = s.includes(".");
+  const hasComma = s.includes(",");
+  if (hasDot && hasComma) {
+    const lastDot = s.lastIndexOf(".");
+    const lastComma = s.lastIndexOf(",");
+    if (lastComma > lastDot) {
+      // European: 1.234,56 → 1234.56
+      s = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      // Anglo: 1,234.56 → 1234.56
+      s = s.replace(/,/g, "");
+    }
+  } else if (hasComma && !hasDot) {
+    // Single comma. If exactly one comma followed by 1-2 digits at the end,
+    // treat it as a decimal mark (European "1234,56" or "12,5"). Otherwise
+    // it's a thousands separator (e.g. "1,234" → 1234).
+    const m = s.match(/^(-?\d+),(\d{1,2})$/);
+    if (m) s = `${m[1]}.${m[2]}`;
+    else s = s.replace(/,/g, "");
+  }
+
   if (!s || s === "-" || s === ".") return null;
   const n = Number(s);
   return Number.isFinite(n) ? sign * n : null;
@@ -436,17 +527,34 @@ async function ocrTransactionsFromImage(
     throw new Error("القراءة الذكية غير مفعّلة على الخادم (AI_INTEGRATIONS_OPENAI_* مفقود).");
   }
   const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
-  const systemPrompt = `أنت محلل كشوف بنكية خبير. مهمتك قراءة صورة كشف حساب بنكي بدقة عالية واستخراج كل سطر حركة.
+  const systemPrompt = `أنت محلل كشوف بنكية خبير ودقيق جداً في قراءة الأرقام والتواريخ.
+مهمتك قراءة صورة كشف حساب بنكي واستخراج كل سطر حركة بدقة 100%.
+
 أعد JSON فقط بهذا الشكل بدون أي شرح:
 { "transactions": [ { "date": "YYYY-MM-DD", "description": "نص الحركة", "debit": 0, "credit": 0, "balance": null, "ref": null } ] }
 
-قواعد صارمة:
-- "debit" = مبلغ دخل للبنك (إيداع / دائن من منظور كشف البنك). "credit" = مبلغ خرج من البنك (سحب / مدين).
+قواعد صارمة للتواريخ:
+- صيغة ISO إلزامية: YYYY-MM-DD (مثال: 2025-05-22).
+- السنة 4 أرقام كاملة دائماً. لو الكشف يعرضها 2 أرقام فقط استنتج 20XX من سياق الكشف.
+- اقرأ اليوم والشهر بدقة — لا تخمّن. لو التاريخ في الصورة "22/5" فهو يوم 22 شهر 5 وليس العكس (التنسيق السعودي DD/MM).
+- لا تضِف أو تطرح أيّ يوم على التاريخ. أعد التاريخ كما هو ظاهر في الصورة بالضبط.
+- لو السطر بدون تاريخ صريح (مجرد امتداد لسطر سابق) ضع تاريخ الحركة السابقة نفسه.
+
+قواعد صارمة للأرقام (أهم جزء — أخطاء OCR هنا تُفسد المطابقة كلها):
+- "debit" = مبلغ دخل للبنك (إيداع / وارد). "credit" = مبلغ خرج من البنك (سحب / صادر).
 - استخدم 0 للقيمة غير الموجودة، لا تستخدم null للمبالغ.
-- التواريخ بصيغة ISO YYYY-MM-DD. لو السنة مش واضحة استنتجها من السياق أو من تاريخ الكشف.
-- اقرأ الأرقام كما هي بدون فواصل آلاف، الفاصلة العشرية نقطة.
+- اقرأ الأرقام رقماً رقماً بدون تقدير. الفاصلة العشرية نقطة (.) والآلاف بدون فواصل في الإخراج.
+- انتبه جداً للأرقام المتشابهة: (5 ≠ 6)، (0 ≠ 8)، (3 ≠ 8)، (1 ≠ 7)، (4 ≠ 9). أعد قراءة كل رقم لو في أدنى شك.
+- لا تقرّب الأرقام إطلاقاً. لو الصورة تعرض 500.00 أعد 500 (وليس 600). لو تعرض 1,234.56 أعد 1234.56 بالضبط.
+- لو رقمين متجاورين في نفس الصف (مثل عمود مدين + عمود دائن) لا تجمعهما. كل عمود في حقله المخصص.
+- ميّز بين عمود "الرصيد" (balance) وأعمدة الحركة (debit/credit) — لا تخلطهم.
+
+قواعد عامة:
 - تجاهل الرصيد الافتتاحي والختامي والإجماليات — استخرج فقط الحركات الفعلية.
-- لو الصورة غير واضحة أو لا تحوي حركات، أرجع { "transactions": [] }.`;
+- لو الصورة غير واضحة في صف معيّن، اترك ذلك الصف بدلاً من تخمين أرقامه.
+- لو الصورة لا تحوي حركات، أرجع { "transactions": [] }.
+
+قبل إرجاع JSON: راجع كل تاريخ وكل مبلغ مرة ثانية وتأكد أنك قرأت كل رقم بدقة من الصورة وليس من السياق.`;
 
   const r = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",

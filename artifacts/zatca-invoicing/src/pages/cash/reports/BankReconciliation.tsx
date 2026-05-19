@@ -9,8 +9,9 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useToast } from "@/hooks/use-toast";
 import { useFmt } from "@/hooks/use-fmt";
 import ExportButtons from "@/components/ExportButtons";
+import * as XLSX from "xlsx";
 import {
-  GitCompareArrows, Upload, Search, Filter, CheckCircle2, Link2, Link2Off, Trash2, AlertTriangle, Sparkles, Brain,
+  GitCompareArrows, Upload, Search, Filter, CheckCircle2, Link2, Link2Off, Trash2, AlertTriangle, Sparkles, Brain, FileSpreadsheet,
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL ?? "";
@@ -62,6 +63,7 @@ export default function BankReconciliation() {
   const [selBank, setSelBank] = useState<Set<string>>(new Set());
   const [tolerance, setTolerance] = useState(2); // days
   const [parsing, setParsing] = useState(false);
+  const [extracting, setExtracting] = useState(false);
   const [aiMatching, setAiMatching] = useState(false);
   const [aiResult, setAiResult] = useState<{
     pairs: Array<{ bookIds: string[]; bankIds: string[]; confidence: number; reason: string; bookSum: number; bankSum: number }>;
@@ -120,6 +122,97 @@ export default function BankReconciliation() {
 
   // Reset matches whenever the underlying datasets change
   const resetMatches = () => { setMatchedPairs([]); setSelBook(new Set()); setSelBank(new Set()); };
+
+  /** Download the parsed bank statement as a clean, standardized Excel file.
+   *  Used by the "استخراج كملف نظيف" button: lets the user take a messy source
+   *  (scanned PDF / Word / image) and get back a perfectly-typed .xlsx they can
+   *  open in Excel, re-import, or send to anyone. Two sheets:
+   *    1. "الحركات"  — the transactions (Date / Description / Debit / Credit / Balance / Ref)
+   *    2. "تنبيهات"  — parser warnings (so the user knows what to spot-check)
+   */
+  function downloadAsXlsx(
+    txns: Omit<BankTx, "id">[],
+    warns: string[],
+    baseName: string,
+  ) {
+    const header = ["التاريخ", "البيان", "وارد (إيداع)", "صادر (سحب)", "الرصيد", "المرجع"];
+    const rows = txns.map(t => [
+      t.date,
+      t.description ?? "",
+      t.debit || 0,
+      t.credit || 0,
+      t.balance ?? "",
+      t.ref ?? "",
+    ]);
+    const totalDebit  = txns.reduce((s, t) => s + (t.debit  || 0), 0);
+    const totalCredit = txns.reduce((s, t) => s + (t.credit || 0), 0);
+    rows.push(["", "الإجمالي", totalDebit, totalCredit, "", ""]);
+
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    // Right-to-left worksheet for Arabic readers + sensible column widths.
+    (ws as any)["!cols"] = [{ wch: 12 }, { wch: 60 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 }];
+    (ws as any)["!sheetView"] = [{ RTL: true }];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "الحركات");
+
+    if (warns.length > 0) {
+      const wsW = XLSX.utils.aoa_to_sheet([["تنبيهات القراءة"], ...warns.map(w => [w])]);
+      (wsW as any)["!cols"] = [{ wch: 120 }];
+      (wsW as any)["!sheetView"] = [{ RTL: true }];
+      XLSX.utils.book_append_sheet(wb, wsW, "تنبيهات");
+    }
+
+    const safe = baseName.replace(/\.[^.]+$/, "").replace(/[^\w\u0600-\u06FF\-]+/g, "_").slice(0, 60) || "bank_statement";
+    XLSX.writeFile(wb, `${safe}.cleaned.xlsx`);
+  }
+
+  /** "استخراج كملف نظيف" button handler: parse a single uploaded file via the
+   *  same server endpoint as the main upload, then immediately download a clean
+   *  Excel file. Does NOT populate the reconciliation grid — it's purely a
+   *  conversion tool (image/PDF/Word/messy CSV → tidy Excel). */
+  async function handleExtractFiles(files: File[]) {
+    if (files.length === 0) return;
+    setExtracting(true);
+    try {
+      const allTxns: Omit<BankTx, "id">[] = [];
+      const allWarnings: string[] = [];
+      const failures: string[] = [];
+      for (const file of files) {
+        try {
+          const contentBase64 = await toBase64(file);
+          const r = await fetch(`${API}/api/bank-reconciliation/parse`, {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify({ filename: file.name, contentBase64 }),
+          });
+          const j = await r.json();
+          if (!r.ok) throw new Error(j?.error ?? "فشل التحليل");
+          for (const t of (j.transactions ?? []) as Omit<BankTx, "id">[]) allTxns.push(t);
+          for (const w of (j.warnings ?? []) as string[]) allWarnings.push(`[${file.name}] ${w}`);
+        } catch (e: any) {
+          failures.push(`${file.name}: ${e?.message ?? String(e)}`);
+        }
+      }
+      allTxns.sort((a, b) => a.date.localeCompare(b.date));
+      if (allTxns.length === 0) {
+        toast({
+          variant: "destructive",
+          title: "لم تُستخرج أي حركة",
+          description: failures.length > 0 ? failures.join(" | ") : "تأكد من جودة الملف ومن أنه يحوي جدول حركات.",
+        });
+        return;
+      }
+      const baseName = files.length === 1 ? files[0].name : `${files.length}-files-merged`;
+      downloadAsXlsx(allTxns, allWarnings, baseName);
+      toast({
+        title: "تم الاستخراج",
+        description: `حُفظ ${allTxns.length} حركة في ملف Excel نظيف.${failures.length ? " فشل: " + failures.join(" | ") : ""}`,
+      });
+    } finally {
+      setExtracting(false);
+    }
+  }
 
   async function handleFiles(files: File[]) {
     if (files.length === 0) return;
@@ -510,6 +603,28 @@ export default function BankReconciliation() {
               onChange={e => {
                 const fs = Array.from(e.target.files ?? []);
                 if (fs.length > 0) void handleFiles(fs);
+                e.currentTarget.value = "";
+              }}
+            />
+            {/* "استخراج كملف نظيف" — sits to the LEFT (next) of the upload button.
+                Converts any source format (Word / PDF / Excel / CSV / images) into
+                a clean, standardized Excel file the user can download — without
+                touching the reconciliation grid. Useful for cleanup, archiving,
+                or sharing the statement in a tidy format. */}
+            <Label
+              htmlFor="recon-extract-file"
+              className={`cursor-pointer inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 ${extracting ? "opacity-60 cursor-wait" : ""}`}
+              title="حوّل الكشف (PDF/Word/صورة/CSV) إلى ملف Excel نظيف بدون إدراجه في المطابقة"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              {extracting ? "جارٍ الاستخراج..." : "استخراج كملف نظيف (Excel)"}
+            </Label>
+            <input
+              id="recon-extract-file" type="file" className="hidden" disabled={extracting} multiple
+              accept=".xlsx,.xls,.csv,.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp"
+              onChange={e => {
+                const fs = Array.from(e.target.files ?? []);
+                if (fs.length > 0) void handleExtractFiles(fs);
                 e.currentTarget.value = "";
               }}
             />
