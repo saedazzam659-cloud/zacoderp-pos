@@ -23,6 +23,8 @@ import {
 import { and, desc, eq } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -30,10 +32,7 @@ router.use((req, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
   next();
 });
-router.use(requirePermission("contracting"));
-
-const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+router.use(requirePermission("contracting", "view"));
 
 type AssistResult = {
   explanation: string;
@@ -63,7 +62,7 @@ async function loadProjectSnapshot(companyId: number, projectId: number) {
 }
 
 // ─────────────────── per-screen ASSIST ───────────────────
-router.post("/assist", async (req, res) => {
+router.post("/assist", requireAiFeature("contracting_ai"), async (req, res) => {
   try {
     const cid = await resolveCompanyId(req);
     if (!cid) { res.status(400).json({ error: "لا يوجد شركة" }); return; }
@@ -116,7 +115,10 @@ router.post("/assist", async (req, res) => {
       return { explanation: h.exp, suggestion: h.sug, next_step: h.nxt, warning_if_any: warning, source: "fallback" };
     };
 
-    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    if (!isAIAvailable()) {
+      await logAiUsage(req, { status: "allowed", provider: "rule" });
+      res.json(fallback()); return;
+    }
 
     const projectBlock = snap ? `\nبيانات المشروع الحالي:
 - اسم: ${snap.project.nameAr} (كود ${snap.project.code})
@@ -141,26 +143,18 @@ ${projectBlock}
   "warning_if_any": "تحذير إن وُجد خلل (تأخير، تجاوز ميزانية، مخاطرة عالية…) وإلا اتركه فارغاً"
 }`;
 
-    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
-      body: JSON.stringify({
-        model: "gpt-5.4",
-        max_completion_tokens: 800,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: "أنت مساعد ذكي داخل نظام مقاولات سعودي. ترد دائماً بـ JSON صحيح، باللغة العربية الفصحى، مختصر وعملي." },
-          { role: "user", content: prompt },
-        ],
-      }),
-    });
-    if (!r.ok) { res.json(fallback()); return; }
-    const data = await r.json();
-    const content = data?.choices?.[0]?.message?.content ?? "{}";
-    let parsed: any;
-    try { parsed = JSON.parse(content); }
-    catch { res.json(fallback()); return; }
-
+    const result = await aiChat([
+        { role: "system", content: "أنت مساعد ذكي داخل نظام مقاولات سعودي. ترد دائماً بـ JSON صحيح، باللغة العربية الفصحى، مختصر وعملي." },
+        { role: "user", content: prompt },
+      ], { json: true,
+      maxTokens: 800,
+      providers: ["gemini"] });
+    if (!result.ok) {
+      await logAiUsage(req, { status: "allowed", provider: "rule", meta: { reason: result.reason } });
+      res.json(fallback()); return;
+    }
+    const parsed: any = result.data ?? {};
+    await logAiUsage(req, { status: "allowed", provider: result.provider });
     res.json({
       explanation:    String(parsed.explanation    ?? ""),
       suggestion:     String(parsed.suggestion     ?? ""),
@@ -169,12 +163,13 @@ ${projectBlock}
       source: "ai" as const,
     });
   } catch (e: any) {
+    await logAiUsage(req, { status: "error", meta: { error: String(e?.message || e) } });
     res.status(500).json({ error: e?.message ?? "خطأ" });
   }
 });
 
 // ─────────────────── project deep ANALYSIS ───────────────────
-router.post("/analyze/:projectId", async (req, res) => {
+router.post("/analyze/:projectId", requireAiFeature("contracting_ai"), async (req, res) => {
   try {
     const cid = await resolveCompanyId(req);
     if (!cid) { res.status(400).json({ error: "لا يوجد شركة" }); return; }
@@ -244,7 +239,8 @@ router.post("/analyze/:projectId", async (req, res) => {
       };
     };
 
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    if (!isAIAvailable()) {
+      await logAiUsage(req, { status: "allowed", provider: "rule" });
       res.json({ indicators, ...fallback() });
       return;
     }
@@ -271,25 +267,19 @@ router.post("/analyze/:projectId", async (req, res) => {
   "recommendations": ["إجراء 1","إجراء 2",...]
 }`;
 
-    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
-      body: JSON.stringify({
-        model: "gpt-5.4",
-        max_completion_tokens: 1200,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: "أنت محلل مشاريع إنشائية محترف. ترد بـ JSON دقيق وموضوعي بدون مبالغة." },
-          { role: "user", content: prompt },
-        ],
-      }),
-    });
-    if (!r.ok) { res.json({ indicators, ...fallback() }); return; }
-    const data = await r.json();
-    const content = data?.choices?.[0]?.message?.content ?? "{}";
-    let parsed: any;
-    try { parsed = JSON.parse(content); }
-    catch { res.json({ indicators, ...fallback() }); return; }
+    const result = await aiChat([
+        { role: "system", content: "أنت محلل مشاريع إنشائية محترف. ترد بـ JSON دقيق وموضوعي بدون مبالغة." },
+        { role: "user", content: prompt },
+      ], { json: true,
+      maxTokens: 1200,
+      providers: ["gemini"] });
+    if (!result.ok) {
+      await logAiUsage(req, { status: "allowed", provider: "rule", meta: { reason: result.reason } });
+      res.json({ indicators, ...fallback() });
+      return;
+    }
+    const parsed: any = result.data ?? {};
+    await logAiUsage(req, { status: "allowed", provider: result.provider });
 
     // Persist a system event so the analysis is auditable in the project
     // timeline (and so the ML training-data export captures it later).
@@ -314,6 +304,7 @@ router.post("/analyze/:projectId", async (req, res) => {
       source: "ai" as const,
     });
   } catch (e: any) {
+    await logAiUsage(req, { status: "error", meta: { error: String(e?.message || e) } });
     res.status(500).json({ error: e?.message ?? "خطأ" });
   }
 });

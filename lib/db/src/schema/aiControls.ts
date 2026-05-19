@@ -84,6 +84,8 @@ export const AI_FEATURE_CATALOG = [
   { key: "hotel_ai",              labelAr: "تحليلات الفنادق",                               defaultDaily: 50  },
   { key: "hospital_ai",           labelAr: "تحليلات المستشفيات",                            defaultDaily: 50  },
   { key: "tax_entry_ai",          labelAr: "إدخال القيد الضريبي بالذكاء الاصطناعي",         defaultDaily: 100 },
+  { key: "account_suggestions",   labelAr: "اقتراح الحسابات (تحويلات/تسويات/مقبوضات/مدفوعات)", defaultDaily: 200 },
+  { key: "data_import_ai",        labelAr: "تحليل وتعيين أعمدة الاستيراد",                  defaultDaily: 100 },
 ] as const;
 
 export type AiFeatureKey = typeof AI_FEATURE_CATALOG[number]["key"];

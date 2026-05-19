@@ -19,6 +19,8 @@ import {
 import { and, desc, eq, sql, gte, lte } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -28,9 +30,6 @@ router.use((req, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
   next();
 });
-
-const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
 
 function guardCid(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.body?.companyId ?? req.query.companyId);
@@ -55,7 +54,7 @@ function seasonMultiplier(d: Date): { factor: number; label: string } {
 }
 
 // ═══════════════════ FUNCTION 1: DYNAMIC PRICING ═══════════════════
-router.post("/dynamic-price", async (req, res) => {
+router.post("/dynamic-price", requireAiFeature("hotel_ai"), async (req, res) => {
   try {
     const cid = guardCid(req, res); if (!cid) return;
     const b = req.body ?? {};
@@ -114,8 +113,9 @@ router.post("/dynamic-price", async (req, res) => {
       nights,
     };
 
-    // If AI proxy unreachable, return deterministic answer.
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    // If AI not configured, return deterministic answer.
+    if (!isAIAvailable()) {
+      await logAiUsage(req, { status: "allowed", provider: "rule" });
       res.json({
         suggestedPrice: ruleBased,
         totalForStay:   ruleBased * nights,
@@ -144,20 +144,14 @@ router.post("/dynamic-price", async (req, res) => {
   "confidence": "high" | "medium" | "low"
 }`;
 
-    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
-      body: JSON.stringify({
-        model: "gpt-5.4",
-        max_completion_tokens: 400,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: "أنت محرّك تسعير ديناميكي لفنادق سعودية. ترد دائماً بـ JSON صحيح، بالأرقام بالريال السعودي." },
-          { role: "user", content: prompt },
-        ],
-      }),
-    });
-    if (!r.ok) {
+    const result = await aiChat([
+        { role: "system", content: "أنت محرّك تسعير ديناميكي لفنادق سعودية. ترد دائماً بـ JSON صحيح، بالأرقام بالريال السعودي." },
+        { role: "user", content: prompt },
+      ], { json: true,
+      maxTokens: 400,
+      providers: ["gemini"] });
+    if (!result.ok) {
+      await logAiUsage(req, { status: "allowed", provider: "rule", meta: { reason: result.reason } });
       res.json({
         suggestedPrice: ruleBased,
         totalForStay:   ruleBased * nights,
@@ -167,21 +161,9 @@ router.post("/dynamic-price", async (req, res) => {
       });
       return;
     }
-    const data = await r.json();
-    const content = data?.choices?.[0]?.message?.content ?? "{}";
-    let parsed: any;
-    try { parsed = JSON.parse(content); }
-    catch {
-      res.json({
-        suggestedPrice: ruleBased,
-        totalForStay:   ruleBased * nights,
-        factors:        factorBreakdown,
-        explanation:    `سعر مقترح بناءً على: ${season.label}، نسبة إشغال ${(occupancyRate*100).toFixed(0)}%.`,
-        source: "rule_based",
-      });
-      return;
-    }
+    const parsed: any = result.data ?? {};
     const aiPrice = Math.max(1, Math.round(Number(parsed.suggestedPrice ?? ruleBased)));
+    await logAiUsage(req, { status: "allowed", provider: result.provider });
     res.json({
       suggestedPrice: aiPrice,
       totalForStay:   aiPrice * nights,
@@ -190,7 +172,10 @@ router.post("/dynamic-price", async (req, res) => {
       confidence:     parsed.confidence ?? "medium",
       source: "ai" as const,
     });
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) {
+    await logAiUsage(req, { status: "error", meta: { error: String(e?.message || e) } });
+    res.status(500).json({ error: e?.message ?? "خطأ" });
+  }
 });
 
 // ═══════════════════ FUNCTION 2: ROOM RECOMMENDATION ═══════════════════

@@ -8,6 +8,8 @@ import { eq, and, asc, gte, lte, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeFilter } from "../middleware/auth.js";
 import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -256,7 +258,7 @@ router.get("/:id/transactions", async (req, res) => {
 // Sends a compact summary of a cost-center's transactions to the OpenAI
 // proxy and returns a structured insights JSON. Mirrors the
 // /sales-analytics/payment-mix-report/ai-insights pattern.
-router.post("/:id/ai-insights", async (req, res) => {
+router.post("/:id/ai-insights", requireAiFeature("report_analyzer"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
@@ -264,9 +266,8 @@ router.post("/:id/ai-insights", async (req, res) => {
       .where(and(eq(costCentersTable.id, id), eq(costCentersTable.companyId, cid)));
     if (!center) { res.status(404).json({ error: "مركز التكلفة غير موجود" }); return; }
 
-    const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-    const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    if (!isAIAvailable()) {
+      await logAiUsage(req, { status: "error", meta: { reason: "ai-not-configured" } });
       res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير متاحة" });
       return;
     }
@@ -310,28 +311,19 @@ Respond ONLY in JSON:
   "recommendation": "<one actionable recommendation>"
 }`;
 
-    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
-      body: JSON.stringify({
-        model: "gpt-5.4",
-        max_completion_tokens: 1024,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user",   content: summary },
-        ],
-      }),
-    });
-    if (!r.ok) {
-      const txt = await r.text().catch(() => "");
-      res.status(502).json({ error: `فشل الذكاء الاصطناعي: ${r.status} ${txt.slice(0, 200)}` });
+    const result = await aiChat([
+        { role: "system", content: systemPrompt },
+        { role: "user",   content: summary },
+      ], { json: true,
+      maxTokens: 1024,
+      providers: ["gemini"] });
+    if (!result.ok) {
+      await logAiUsage(req, { status: "error", meta: { reason: result.reason } });
+      res.status(502).json({ error: `فشل الذكاء الاصطناعي: ${result.reason}` });
       return;
     }
-    const data: any = await r.json();
-    const content: string = data?.choices?.[0]?.message?.content ?? "{}";
-    let parsed: any = {};
-    try { parsed = JSON.parse(content); } catch { /* ignore */ }
+    const parsed: any = result.data ?? {};
+    await logAiUsage(req, { status: "allowed", provider: result.provider });
     res.json({
       headline:       String(parsed.headline ?? ""),
       highlights:     Array.isArray(parsed.highlights) ? parsed.highlights.map(String) : [],
@@ -340,6 +332,7 @@ Respond ONLY in JSON:
       source:         "ai",
     });
   } catch (e: any) {
+    await logAiUsage(req, { status: "error", meta: { error: String(e?.message || e) } });
     req.log?.error?.({ err: e }, "cost-center ai-insights failed");
     res.status(500).json({ error: e.message });
   }

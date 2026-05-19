@@ -7,6 +7,8 @@ import { extractAuth } from "../middleware/auth.js";
 import { requirePermission, audit } from "../middleware/permissions.js";
 import { seedDefaultChartOfAccounts } from "../lib/seedDefaultChartOfAccounts.js";
 import { logger } from "../lib/logger.js";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const router = Router();
 
@@ -494,14 +496,13 @@ router.patch("/:id/pos-settings", extractAuth, async (req, res) => {
 });
 
 // POST /:id/pos-settings/ai-suggest — AI suggests cashbox + bank accounts for each POS payment method.
-router.post("/:id/pos-settings/ai-suggest", extractAuth, async (req, res) => {
+router.post("/:id/pos-settings/ai-suggest", extractAuth, requireAiFeature("pos_ai"), async (req, res) => {
   const id = parseInt(req.params.id);
   if (!Number.isFinite(id) || id <= 0) { res.status(400).json({ error: "معرّف الشركة غير صالح" }); return; }
   if (!authorizePosSettings(req, res, id)) return;
 
-  const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-  const OPENAI_KEY = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-  if (!OPENAI_BASE || !OPENAI_KEY) {
+  if (!isAIAvailable()) {
+    await logAiUsage(req, { status: "error", meta: { reason: "ai-not-configured" } });
     res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير متاحة" });
     return;
   }
@@ -559,28 +560,19 @@ router.post("/:id/pos-settings/ai-suggest", extractAuth, async (req, res) => {
       "الصناديق النقدية (id|code|name|account):\n" + cbList +
       "\n\nالحسابات البنكية (id|code|name|account):\n" + baList;
 
-    const r = await fetch(OPENAI_BASE + "/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + OPENAI_KEY },
-      body: JSON.stringify({
-        model: "gpt-5.4",
-        max_completion_tokens: 800,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMsg },
-        ],
-      }),
-    });
-    if (!r.ok) {
-      const txt = await r.text().catch(() => "");
-      res.status(502).json({ error: "فشل الذكاء الاصطناعي: " + r.status + " " + txt.slice(0, 200) });
+    const result = await aiChat([
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMsg },
+      ], { json: true,
+      maxTokens: 800,
+      providers: ["gemini"] });
+    if (!result.ok) {
+      await logAiUsage(req, { status: "error", meta: { reason: result.reason } });
+      res.status(502).json({ error: "فشل الذكاء الاصطناعي: " + result.reason });
       return;
     }
-    const data: any = await r.json();
-    const content: string = data?.choices?.[0]?.message?.content ?? "{}";
-    let parsed: any = {};
-    try { parsed = JSON.parse(content); } catch { /* ignore */ }
+    const parsed: any = result.data ?? {};
+    await logAiUsage(req, { status: "allowed", provider: result.provider });
 
     const validCb = new Set(cbs.map((c) => c.id));
     const validBa = new Set(bas.map((b) => b.id));
@@ -604,6 +596,7 @@ router.post("/:id/pos-settings/ai-suggest", extractAuth, async (req, res) => {
 
     res.json({ suggestions: out, source: "ai" });
   } catch (e: any) {
+    await logAiUsage(req, { status: "error", meta: { error: String(e?.message || e) } });
     res.status(500).json({ error: e?.message ?? "AI suggestion failed" });
   }
 });

@@ -11,8 +11,52 @@ import {
 import { and, eq } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 const router = Router();
+  // ─────────────────────────────────────────────────────────────────────────
+  // Gemini-first transparent redirect (see notes in routes/ai.ts).
+  // Re-binds OPENAI_BASE/KEY (declared elsewhere in this file) to a sentinel
+  // "AI_PROXY" string and shadows the global fetch with a local one that
+  // intercepts the sentinel URL, dispatches via aiChat, and returns a
+  // Response-shaped object so existing r.ok/r.json()/r.text() callsites
+  // continue to work unchanged. AsyncLocalStorage threads `req` through
+  // so the feature-gate's logAiUsage counter still advances.
+  // ─────────────────────────────────────────────────────────────────────────
+  const __aiReqStore = new AsyncLocalStorage<any>();
+  router.use((req, _res, next) => { __aiReqStore.run(req, () => next()); });
+
+  const __nativeFetch = globalThis.fetch;
+  async function fetch(input: any, init?: any): Promise<{ ok: boolean; status: number; json: () => Promise<any>; text: () => Promise<string> }> {
+    if (typeof input === "string" && input.startsWith("AI_PROXY")) {
+      const body = (() => { try { return JSON.parse(init?.body ?? "{}"); } catch { return {}; } })();
+      const result = await aiChat(body.messages ?? [], {
+        json:      body.response_format?.type === "json_object",
+        maxTokens: body.max_completion_tokens ?? body.max_tokens ?? 2048,
+        providers: ["gemini"],
+    });
+      const req = __aiReqStore.getStore();
+      if (req) {
+        try {
+          await logAiUsage(req, result.ok
+            ? { status: "allowed", provider: result.provider }
+            : { status: "error",   meta: { reason: result.reason } });
+        } catch { /* logging must never break the call */ }
+      }
+      if (!result.ok) {
+        return { ok: false, status: 502, json: async () => ({ error: result.reason }), text: async () => result.reason };
+      }
+      return {
+        ok: true, status: 200,
+        json: async () => ({ choices: [{ message: { content: result.text } }] }),
+        text: async () => result.text,
+      };
+    }
+    return (__nativeFetch as any)(input, init);
+  }
+  
 router.use(extractAuth);
 router.use(requireModulePermission("crm"));
 router.use(moduleAudit("crm"));
@@ -21,8 +65,8 @@ router.use((req, res, next) => {
   next();
 });
 
-const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+const OPENAI_BASE = "AI_PROXY";
+const OPENAI_KEY  = "AI_PROXY";
 
 function requireCid(req: any, res: any): number | null {
   const raw = req.body?.companyId ?? req.query.companyId;
@@ -47,7 +91,7 @@ function ruleScoreLead(lead: any, activitiesCount: number): number {
   return Math.max(0, Math.min(100, s));
 }
 
-router.get("/score-leads", async (req, res) => {
+router.get("/score-leads", requireAiFeature("crm_ai"), async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
     const leads = await db.select().from(crmLeadsTable).where(eq(crmLeadsTable.companyId, cid));
@@ -68,7 +112,7 @@ router.get("/score-leads", async (req, res) => {
 });
 
 // Sales Forecast: weighted pipeline by stage probability + average win-rate
-router.get("/forecast", async (req, res) => {
+router.get("/forecast", requireAiFeature("crm_ai"), async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
     const opps = await db.select().from(crmOpportunitiesTable).where(eq(crmOpportunitiesTable.companyId, cid));
@@ -100,7 +144,7 @@ router.get("/forecast", async (req, res) => {
 });
 
 // Rep performance: counts by assignedToUserId
-router.get("/rep-performance", async (req, res) => {
+router.get("/rep-performance", requireAiFeature("crm_ai"), async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
     const opps = await db.select().from(crmOpportunitiesTable).where(eq(crmOpportunitiesTable.companyId, cid));
@@ -125,7 +169,7 @@ router.get("/rep-performance", async (req, res) => {
 });
 
 // Suggested next-contact times for a lead
-router.get("/suggest-contact/:leadId", async (req, res) => {
+router.get("/suggest-contact/:leadId", requireAiFeature("crm_ai"), async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
     const id = Number(req.params.leadId);
@@ -152,7 +196,7 @@ router.get("/suggest-contact/:leadId", async (req, res) => {
 });
 
 // Auto alerts: stale leads (>7d no activity), overdue opportunities
-router.get("/alerts", async (req, res) => {
+router.get("/alerts", requireAiFeature("crm_ai"), async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
     const [leads, opps, acts] = await Promise.all([
@@ -185,7 +229,7 @@ router.get("/alerts", async (req, res) => {
 
 router.get("/status", (_req, res) => {
   res.json({
-    openaiConfigured: !!(OPENAI_BASE && OPENAI_KEY),
+    openaiConfigured: !!(isAIAvailable()),
     features: ["score-leads","forecast","rep-performance","suggest-contact","alerts"],
     note: "AI features fall back to deterministic rules when OpenAI proxy is not configured.",
   });

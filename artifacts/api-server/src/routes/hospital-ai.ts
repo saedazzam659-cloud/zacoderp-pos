@@ -32,6 +32,8 @@ import {
 import { and, desc, eq, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -41,9 +43,6 @@ router.use((req, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
   next();
 });
-
-const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
 
 function guardCid(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.body?.companyId ?? req.query.companyId);
@@ -219,7 +218,7 @@ router.post("/nphies/build-claim", async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════
 // 3. CLAIM RISK — predicts approval likelihood for a draft claim
 // ════════════════════════════════════════════════════════════════════════
-router.post("/claim-risk", async (req, res) => {
+router.post("/claim-risk", requireAiFeature("hospital_ai"), async (req, res) => {
   try {
     const cid = guardCid(req, res); if (!cid) return;
     const invoiceId = Number(req.body?.invoiceId);
@@ -267,31 +266,28 @@ router.post("/claim-risk", async (req, res) => {
                              "احتمال موافقة ضعيف جداً — لا تُرسل المطالبة";
 
     let aiNarrative: string | null = null;
-    if (OPENAI_BASE && OPENAI_KEY && reasons.length > 0) {
-      try {
-        const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            messages: [
-              { role: "system", content: "You are a Saudi medical claims auditor. Reply in Arabic, concise, max 80 words. Highlight the single most likely rejection cause and one corrective action." },
-              { role: "user", content: `Score: ${score}/100. Issues: ${reasons.join(" | ")}. Total: ${totalNum} SAR.` },
-            ],
-            temperature: 0.3,
-            max_tokens: 200,
-          }),
-        });
-        if (r.ok) {
-          const j = await r.json();
-          aiNarrative = j.choices?.[0]?.message?.content?.trim() || null;
-        }
-      } catch { /* swallow — fall back to rule-based */ }
+    let usedProvider: string | null = null;
+    if (isAIAvailable() && reasons.length > 0) {
+      const result = await aiChat([
+          { role: "system", content: "You are a Saudi medical claims auditor. Reply in Arabic, concise, max 80 words. Highlight the single most likely rejection cause and one corrective action." },
+          { role: "user", content: `Score: ${score}/100. Issues: ${reasons.join(" | ")}. Total: ${totalNum} SAR.` },
+        ], {
+        maxTokens: 400,
+        providers: ["gemini"],
+      });
+      if (result.ok) {
+        aiNarrative = result.text.trim() || null;
+        usedProvider = result.provider;
+      }
     }
 
+    await logAiUsage(req, { status: "allowed", provider: usedProvider ?? "rule" });
     res.json({ score, verdict, verdictLabel, reasons, aiNarrative,
       mode: aiNarrative ? "ai+rules" : "rules" });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    await logAiUsage(req, { status: "error", meta: { error: String(e?.message || e) } });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════
@@ -311,7 +307,7 @@ const DIAGNOSIS_RULES: Array<{ keywords: string[]; code: string; ar: string; en:
   { keywords: ["حلق","التهاب حلق","sore throat"],           code: "J02.9", ar: "التهاب البلعوم الحاد",        en: "Acute pharyngitis, unspecified" },
 ];
 
-router.post("/diagnosis-suggest", async (req, res) => {
+router.post("/diagnosis-suggest", requireAiFeature("hospital_ai"), async (req, res) => {
   try {
     const complaint = String(req.body?.complaint ?? "").trim();
     if (!complaint) { res.status(400).json({ error: "الشكوى الرئيسية مطلوبة" }); return; }
@@ -325,35 +321,32 @@ router.post("/diagnosis-suggest", async (req, res) => {
       .map(r => ({ code: r.code, ar: r.ar, en: r.en, confidence: Math.min(0.9, 0.4 + r.hits * 0.2) }));
 
     let aiNarrative: string | null = null;
-    if (OPENAI_BASE && OPENAI_KEY) {
-      try {
-        const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            messages: [
-              { role: "system", content: "You are a Saudi licensed family physician helping with provisional ICD-10 mapping. Reply in Arabic with 1-2 sentences. Always remind the doctor that final diagnosis must be confirmed by clinical exam." },
-              { role: "user", content: `Chief complaint: ${complaint}` },
-            ],
-            temperature: 0.4,
-            max_tokens: 150,
-          }),
-        });
-        if (r.ok) {
-          const j = await r.json();
-          aiNarrative = j.choices?.[0]?.message?.content?.trim() || null;
-        }
-      } catch { /* fall back */ }
+    let usedProvider: string | null = null;
+    if (isAIAvailable()) {
+      const result = await aiChat([
+        { role: "system", content: "You are a Saudi licensed family physician helping with provisional ICD-10 mapping. Reply in Arabic with 1-2 sentences. Always remind the doctor that final diagnosis must be confirmed by clinical exam." },
+        { role: "user", content: `Chief complaint: ${complaint}` },
+      ], {
+        maxTokens: 300,
+        providers: ["gemini"],
+      });
+      if (result.ok) {
+        aiNarrative = result.text.trim() || null;
+        usedProvider = result.provider;
+      }
     }
 
+    await logAiUsage(req, { status: "allowed", provider: usedProvider ?? "rule" });
     res.json({
       suggestions: matches,
       aiNarrative,
       mode: aiNarrative ? "ai+rules" : "rules",
       disclaimer: "هذه اقتراحات مساعدة للتشخيص الأولي فقط — التشخيص النهائي يتطلب فحصاً سريرياً.",
     });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    await logAiUsage(req, { status: "error", meta: { error: String(e?.message || e) } });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════

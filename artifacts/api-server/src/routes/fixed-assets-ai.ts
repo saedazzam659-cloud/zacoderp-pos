@@ -12,6 +12,8 @@ import {
 import { and, eq, asc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -21,9 +23,6 @@ router.use((req, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
   next();
 });
-
-const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
 
 function requireCid(req: any, res: any): number | null {
   const raw = req.body?.companyId ?? req.query.companyId;
@@ -89,7 +88,7 @@ router.get("/analyze/:id", async (req, res) => {
       ...risk,
       bookValue: Number(asset.bookValue || 0),
       purchaseValue: Number(asset.purchaseValue || 0),
-      ai: !!OPENAI_BASE && !!OPENAI_KEY,
+      ai: isAIAvailable(),
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -187,7 +186,7 @@ router.get("/alerts", async (req, res) => {
 
 // AI advisor — natural language summary using OpenAI proxy if available;
 // otherwise fall back to a deterministic Arabic narrative.
-router.post("/advice", async (req, res) => {
+router.post("/advice", requireAiFeature("fixed_assets_ai"), async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
     const assets = await db.select().from(fixedAssetsTable).where(eq(fixedAssetsTable.companyId, cid));
@@ -201,33 +200,30 @@ router.post("/advice", async (req, res) => {
       `يوجد ${highRisk} أصل بمستوى خطورة عالي يحتاج مراجعة.` +
       (highRisk > 0 ? " يُنصح بدراسة استبدال الأصول عالية الخطورة لخفض تكلفة الصيانة." : "");
 
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    if (!isAIAvailable()) {
+      await logAiUsage(req, { status: "allowed", provider: "rule" });
       res.json({ ai: false, advice: fallback });
       return;
     }
-    try {
-      const prompt = `لديك بيانات أصول ثابتة لشركة سعودية:
+    const prompt = `لديك بيانات أصول ثابتة لشركة سعودية:
 - عدد الأصول: ${totalAssets}
 - القيمة الدفترية الإجمالية: ${totalBook.toFixed(2)} ر.س
 - إجمالي تكاليف الصيانة: ${totalMaint.toFixed(2)} ر.س
 - أصول عالية الخطورة: ${highRisk}
 اكتب نصيحة إدارية مختصرة (3-4 أسطر) باللغة العربية حول إدارة هذه الأصول.`;
-      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${OPENAI_KEY}` },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.4, max_tokens: 250,
-        }),
-      });
-      const j: any = await r.json();
-      const advice = j?.choices?.[0]?.message?.content?.trim() || fallback;
-      res.json({ ai: true, advice });
-    } catch {
+    const result = await aiChat([{ role: "user", content: prompt }], { maxTokens: 400,
+      providers: ["gemini"] });
+    if (!result.ok) {
+      await logAiUsage(req, { status: "allowed", provider: "rule", meta: { reason: result.reason } });
       res.json({ ai: false, advice: fallback });
+      return;
     }
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+    await logAiUsage(req, { status: "allowed", provider: result.provider });
+    res.json({ ai: true, advice: result.text.trim() || fallback });
+  } catch (e: any) {
+    await logAiUsage(req, { status: "error", meta: { error: String(e?.message || e) } });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────

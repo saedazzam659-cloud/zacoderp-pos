@@ -12,6 +12,9 @@ import {
 import { eq, and, sql, desc, asc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { writeAudit } from "../middleware/permissions.js";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 /**
  * Helper: when a superadmin operates against a tenant from cross-tenant tools
@@ -24,6 +27,47 @@ function isCrossTenantSuperadmin(req: any): boolean {
 }
 
 const router = Router();
+  // ─────────────────────────────────────────────────────────────────────────
+  // Gemini-first transparent redirect (see notes in routes/ai.ts).
+  // Re-binds OPENAI_BASE/KEY (declared elsewhere in this file) to a sentinel
+  // "AI_PROXY" string and shadows the global fetch with a local one that
+  // intercepts the sentinel URL, dispatches via aiChat, and returns a
+  // Response-shaped object so existing r.ok/r.json()/r.text() callsites
+  // continue to work unchanged. AsyncLocalStorage threads `req` through
+  // so the feature-gate's logAiUsage counter still advances.
+  // ─────────────────────────────────────────────────────────────────────────
+  const __aiReqStore = new AsyncLocalStorage<any>();
+  router.use((req, _res, next) => { __aiReqStore.run(req, () => next()); });
+
+  const __nativeFetch = globalThis.fetch;
+  async function fetch(input: any, init?: any): Promise<{ ok: boolean; status: number; json: () => Promise<any>; text: () => Promise<string> }> {
+    if (typeof input === "string" && input.startsWith("AI_PROXY")) {
+      const body = (() => { try { return JSON.parse(init?.body ?? "{}"); } catch { return {}; } })();
+      const result = await aiChat(body.messages ?? [], {
+        json:      body.response_format?.type === "json_object",
+        maxTokens: body.max_completion_tokens ?? body.max_tokens ?? 2048,
+        providers: ["gemini"],
+      });
+      const req = __aiReqStore.getStore();
+      if (req) {
+        try {
+          await logAiUsage(req, result.ok
+            ? { status: "allowed", provider: result.provider }
+            : { status: "error",   meta: { reason: result.reason } });
+        } catch { /* logging must never break the call */ }
+      }
+      if (!result.ok) {
+        return { ok: false, status: 502, json: async () => ({ error: result.reason }), text: async () => result.reason };
+      }
+      return {
+        ok: true, status: 200,
+        json: async () => ({ choices: [{ message: { content: result.text } }] }),
+        text: async () => result.text,
+      };
+    }
+    return (__nativeFetch as any)(input, init);
+  }
+  
 router.use(extractAuth);
 router.use((req, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
@@ -106,7 +150,7 @@ router.get("/export", async (req, res) => {
 });
 
 /* ─── POST /ai-analyze ─── AI natural-language summary of an uploaded backup  */
-router.post("/ai-analyze", async (req, res) => {
+router.post("/ai-analyze", requireAiFeature("report_analyzer"), async (req, res) => {
   try {
     const payload = req.body?.backup;
     if (!payload || typeof payload !== "object" || !payload.data) {
@@ -129,15 +173,15 @@ router.post("/ai-analyze", async (req, res) => {
       }
     }
 
-    const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-    const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+    const OPENAI_BASE = "AI_PROXY";
+    const OPENAI_KEY  = "AI_PROXY";
 
     const fallbackSummary = () => {
       const parts = TABLES.filter(t => counts[t.key] > 0).map(t => `• ${t.label}: ${counts[t.key]}`);
       return `نسخة احتياطية تحتوي على ${totalRows} سجلاً.\n${parts.join("\n")}`;
     };
 
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    if (!isAIAvailable()) {
       res.json({ summary: fallbackSummary(), warnings: [], counts });
       return;
     }
@@ -161,7 +205,7 @@ ${JSON.stringify(samples, null, 2).slice(0, 3500)}
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 20_000);
-    let aiRes: Response;
+    let aiRes: any;
     try {
       aiRes = await fetch(`${OPENAI_BASE.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",

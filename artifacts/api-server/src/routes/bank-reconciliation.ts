@@ -21,8 +21,56 @@ import { and, eq, gte, lte, sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { extractAuth, resolveCompanyId, getAllowedBranchIds, branchScopeSpread } from "../middleware/auth.js";
 import { requireModulePermission } from "../middleware/permissions.js";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+
 
 const router: Router = Router();
+
+// ─────────────────────────────────────────────────────────────────────────
+// Gemini-first transparent redirect (see notes in routes/ai.ts).
+// Re-binds OPENAI_BASE/KEY (declared elsewhere in this file) to a sentinel
+// "AI_PROXY" string and shadows the global fetch with a local one that
+// intercepts the sentinel URL, dispatches via aiChat, and returns a
+// Response-shaped object so existing r.ok/r.json()/r.text() callsites
+// continue to work unchanged. AsyncLocalStorage threads `req` through
+// so the feature-gate's logAiUsage counter still advances.
+// ─────────────────────────────────────────────────────────────────────────
+const __aiReqStore = new AsyncLocalStorage<any>();
+router.use((req, _res, next) => { __aiReqStore.run(req, () => next()); });
+
+const __nativeFetch = globalThis.fetch;
+async function fetch(input: any, init?: any): Promise<{ ok: boolean; status: number; json: () => Promise<any>; text: () => Promise<string> }> {
+  if (typeof input === "string" && input.startsWith("AI_PROXY")) {
+    const body = (() => { try { return JSON.parse(init?.body ?? "{}"); } catch { return {}; } })();
+    const result = await aiChat(body.messages ?? [], {
+      json:      body.response_format?.type === "json_object",
+      maxTokens: body.max_completion_tokens ?? body.max_tokens ?? 2048,
+      providers: ["gemini"],
+  });
+    const req = __aiReqStore.getStore();
+    if (req) {
+      try {
+        await logAiUsage(req, result.ok
+          ? { status: "allowed", provider: result.provider }
+          : { status: "error",   meta: { reason: result.reason } });
+      } catch { /* logging must never break the call */ }
+    }
+    if (!result.ok) {
+      return { ok: false, status: 502, json: async () => ({ error: result.reason }), text: async () => result.reason };
+    }
+    return {
+      ok: true, status: 200,
+      json: async () => ({ choices: [{ message: { content: result.text } }] }),
+      text: async () => result.text,
+    };
+  }
+  return (__nativeFetch as any)(input, init);
+}
+
+
 router.use(extractAuth);
 router.use((req: any, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
@@ -521,9 +569,9 @@ async function ocrTransactionsFromImage(
   mime: string,
   filename?: string,
 ): Promise<{ txns: ParsedTx[]; warnings: string[] }> {
-  const baseUrl = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-  const apiKey  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-  if (!baseUrl || !apiKey) {
+  const baseUrl = "AI_PROXY";
+  const apiKey  = "AI_PROXY";
+  if (!isAIAvailable()) {
     throw new Error("القراءة الذكية غير مفعّلة على الخادم (AI_INTEGRATIONS_OPENAI_* مفقود).");
   }
   const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
@@ -897,12 +945,12 @@ router.get("/book-ledger", async (req, res) => {
 //     unmatchedAnalysis: [{ side:"book"|"bank", id, likelyExplanation }],
 //     summary: string
 //   }
-const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-const OPENAI_KEY = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+const OPENAI_BASE = "AI_PROXY";
+const OPENAI_KEY = "AI_PROXY";
 
-router.post("/ai-match", async (req, res) => {
+router.post("/ai-match", requireAiFeature("account_suggestions"), async (req, res) => {
   try {
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    if (!isAIAvailable()) {
       res.status(500).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" });
       return;
     }

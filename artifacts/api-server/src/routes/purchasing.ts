@@ -22,6 +22,9 @@ import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { goodsReceiptsTable } from "@workspace/db";
 import { getReceivingClearingAccountId } from "./goodsReceipts.js";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 // ─── Journal entry helper ────────────────────────────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null; costCenter?: string | null };
@@ -131,6 +134,47 @@ async function loadWarehouseInfo(cid: number, ids: number[]): Promise<Record<num
 }
 
 const router = Router();
+  // ─────────────────────────────────────────────────────────────────────────
+  // Gemini-first transparent redirect (see notes in routes/ai.ts).
+  // Re-binds OPENAI_BASE/KEY (declared elsewhere in this file) to a sentinel
+  // "AI_PROXY" string and shadows the global fetch with a local one that
+  // intercepts the sentinel URL, dispatches via aiChat, and returns a
+  // Response-shaped object so existing r.ok/r.json()/r.text() callsites
+  // continue to work unchanged. AsyncLocalStorage threads `req` through
+  // so the feature-gate's logAiUsage counter still advances.
+  // ─────────────────────────────────────────────────────────────────────────
+  const __aiReqStore = new AsyncLocalStorage<any>();
+  router.use((req, _res, next) => { __aiReqStore.run(req, () => next()); });
+
+  const __nativeFetch = globalThis.fetch;
+  async function fetch(input: any, init?: any): Promise<{ ok: boolean; status: number; json: () => Promise<any>; text: () => Promise<string> }> {
+    if (typeof input === "string" && input.startsWith("AI_PROXY")) {
+      const body = (() => { try { return JSON.parse(init?.body ?? "{}"); } catch { return {}; } })();
+      const result = await aiChat(body.messages ?? [], {
+        json:      body.response_format?.type === "json_object",
+        maxTokens: body.max_completion_tokens ?? body.max_tokens ?? 2048,
+        providers: ["gemini"],
+    });
+      const req = __aiReqStore.getStore();
+      if (req) {
+        try {
+          await logAiUsage(req, result.ok
+            ? { status: "allowed", provider: result.provider }
+            : { status: "error",   meta: { reason: result.reason } });
+        } catch { /* logging must never break the call */ }
+      }
+      if (!result.ok) {
+        return { ok: false, status: 502, json: async () => ({ error: result.reason }), text: async () => result.reason };
+      }
+      return {
+        ok: true, status: 200,
+        json: async () => ({ choices: [{ message: { content: result.text } }] }),
+        text: async () => result.text,
+      };
+    }
+    return (__nativeFetch as any)(input, init);
+  }
+  
 router.use(extractAuth);
 router.use(pathRbac([
   ["/purchase-invoices",      "purchase_invoices"],
@@ -2428,7 +2472,7 @@ router.delete("/supplier-settlements/:id", async (req, res) => {
 });
 
 // ── AI-generated journal entry for a Letter of Credit ───────────────────
-router.post("/letters-of-credit/:id/ai-journal", async (req, res) => {
+router.post("/letters-of-credit/:id/ai-journal", requireAiFeature("account_suggestions"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -2453,9 +2497,9 @@ router.post("/letters-of-credit/:id/ai-journal", async (req, res) => {
     const postable = dbAccounts.filter(a => a.isPosting !== false);
     if (postable.length < 2) { res.status(400).json({ error: "شجرة الحسابات غير مهيأة" }); return; }
 
-    const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-    const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-    if (!OPENAI_BASE || !OPENAI_KEY) { res.status(500).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" }); return; }
+    const OPENAI_BASE = "AI_PROXY";
+    const OPENAI_KEY  = "AI_PROXY";
+    if (!isAIAvailable()) { res.status(500).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" }); return; }
 
     // Convert all amounts to the company's base/functional currency (IAS 21).
     // The journal entry MUST be posted in the base currency only; the original
@@ -2518,7 +2562,7 @@ ${accountList}
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 25_000);
-    let aiRes: Response;
+    let aiRes: any;
     try {
       aiRes = await fetch(`${OPENAI_BASE.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
@@ -2600,16 +2644,16 @@ ${accountList}
 });
 
 // ── AI explanation for Letters of Credit ───────────────────────────────
-router.post("/letters-of-credit/ai-explain", async (req, res) => {
+router.post("/letters-of-credit/ai-explain", requireAiFeature("account_suggestions"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const lc = req.body?.lc ?? {};
     const expenses: any[] = Array.isArray(req.body?.expenses) ? req.body.expenses : [];
     const supplierName = String(req.body?.supplierName ?? "—");
 
-    const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-    const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    const OPENAI_BASE = "AI_PROXY";
+    const OPENAI_KEY  = "AI_PROXY";
+    if (!isAIAvailable()) {
       res.status(500).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" });
       return;
     }
@@ -2648,7 +2692,7 @@ ${expList}
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 20_000);
-    let aiRes: Response;
+    let aiRes: any;
     try {
       aiRes = await fetch(`${OPENAI_BASE.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",

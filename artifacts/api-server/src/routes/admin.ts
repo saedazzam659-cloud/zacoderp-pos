@@ -43,8 +43,51 @@ import { resolveBearerToken } from "../middleware/auth.js";
 import { resolveCountryForIp, resolveLocationForIp, type IpLocation } from "../middleware/visitorCountry.js";
 import { persistSnapshot, restoreFromSnapshotPayload } from "./backup.js";
 import { randomBytes } from "crypto";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { logAiUsage } from "../middleware/requireAiFeature.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 const router = Router();
+  // ─────────────────────────────────────────────────────────────────────────
+  // Gemini-first transparent redirect (see notes in routes/ai.ts).
+  // Re-binds OPENAI_BASE/KEY (declared elsewhere in this file) to a sentinel
+  // "AI_PROXY" string and shadows the global fetch with a local one that
+  // intercepts the sentinel URL, dispatches via aiChat, and returns a
+  // Response-shaped object so existing r.ok/r.json()/r.text() callsites
+  // continue to work unchanged. AsyncLocalStorage threads `req` through
+  // so the feature-gate's logAiUsage counter still advances.
+  // ─────────────────────────────────────────────────────────────────────────
+  const __aiReqStore = new AsyncLocalStorage<any>();
+  router.use((req, _res, next) => { __aiReqStore.run(req, () => next()); });
+
+  const __nativeFetch = globalThis.fetch;
+  async function fetch(input: any, init?: any): Promise<{ ok: boolean; status: number; json: () => Promise<any>; text: () => Promise<string> }> {
+    if (typeof input === "string" && input.startsWith("AI_PROXY")) {
+      const body = (() => { try { return JSON.parse(init?.body ?? "{}"); } catch { return {}; } })();
+      const result = await aiChat(body.messages ?? [], {
+        json:      body.response_format?.type === "json_object",
+        maxTokens: body.max_completion_tokens ?? body.max_tokens ?? 2048,
+      });
+      const req = __aiReqStore.getStore();
+      if (req) {
+        try {
+          await logAiUsage(req, result.ok
+            ? { status: "allowed", provider: result.provider }
+            : { status: "error",   meta: { reason: result.reason } });
+        } catch { /* logging must never break the call */ }
+      }
+      if (!result.ok) {
+        return { ok: false, status: 502, json: async () => ({ error: result.reason }), text: async () => result.reason };
+      }
+      return {
+        ok: true, status: 200,
+        json: async () => ({ choices: [{ message: { content: result.text } }] }),
+        text: async () => result.text,
+      };
+    }
+    return (__nativeFetch as any)(input, init);
+  }
+  
 
 // Middleware: superadmin only.
 // We attach the resolved superadmin user to `req.adminUser` for downstream
@@ -1487,8 +1530,8 @@ router.post("/orphan-stock/cleanup", requireSuperAdmin, async (req, res) => {
 // IMPORTANT: This endpoint never writes data. Fixes (if any) are performed
 // elsewhere by the superadmin (e.g. orphan-stock cleanup).
 
-const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+const OPENAI_BASE = "AI_PROXY";
+const OPENAI_KEY  = "AI_PROXY";
 
 type Severity = "high" | "medium" | "low";
 type CheckResult = {
@@ -1645,7 +1688,7 @@ router.get("/ai-fix/diagnose", requireSuperAdmin, async (req, res) => {
 router.post("/ai-fix/summarize", requireSuperAdmin, async (req, res) => {
   const { companyId, checks } = (req.body ?? {}) as { companyId: number; checks: CheckResult[] };
   if (!companyId || !Array.isArray(checks)) { res.status(400).json({ error: "companyId و checks مطلوبان" }); return; }
-  if (!OPENAI_BASE || !OPENAI_KEY) {
+  if (!isAIAvailable()) {
     res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" }); return;
   }
 
@@ -1724,7 +1767,7 @@ router.get("/ai-fix/system-tree", requireSuperAdmin, async (req, res) => {
 router.post("/ai-fix/system-summarize", requireSuperAdmin, async (req, res) => {
   const tree = (req.body?.tree ?? null) as SystemTree | null;
   if (!tree || typeof tree !== "object") { res.status(400).json({ error: "tree مطلوب" }); return; }
-  if (!OPENAI_BASE || !OPENAI_KEY) {
+  if (!isAIAvailable()) {
     res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" }); return;
   }
 
@@ -1879,7 +1922,7 @@ router.post("/ai-fix/notify", requireSuperAdmin, async (req, res) => {
   if (typeof checkKey !== "string" || !SINGLE_CHECK_RUNNERS[checkKey]) {
     res.status(400).json({ error: "checkKey غير صالح" }); return;
   }
-  if (!OPENAI_BASE || !OPENAI_KEY) { res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" }); return; }
+  if (!isAIAvailable()) { res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" }); return; }
 
   try {
     const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId));

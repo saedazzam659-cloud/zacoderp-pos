@@ -6,6 +6,8 @@ import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
 import { seedDefaultAccountingMappings } from "../lib/accountingMappings.js";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const DOCUMENT_TYPE_ROLES: Record<string, string[]> = {
   purchase_invoice:      ["inventory", "vat_input", "payable", "discount"],
@@ -208,7 +210,7 @@ router.post("/seed-defaults", requireAdmin, async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-router.post("/ai-suggest", requireAdmin, async (req, res) => {
+router.post("/ai-suggest", requireAdmin, requireAiFeature("account_suggestions"), async (req, res) => {
   try {
     const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
     if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
@@ -229,9 +231,8 @@ router.post("/ai-suggest", requireAdmin, async (req, res) => {
       return;
     }
 
-    const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-    const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    if (!isAIAvailable()) {
+      await logAiUsage(req, { status: "error", meta: { reason: "ai-not-configured" } });
       res.status(500).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" });
       return;
     }
@@ -262,40 +263,20 @@ ${accountList}
 }
 لا تعد create إن كنت تعد accountId بقيمة صالحة.`;
 
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 20_000);
-    let aiRes: Response;
-    try {
-      aiRes = await fetch(`${OPENAI_BASE.replace(/\/$/, "")}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${OPENAI_KEY}` },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
-            { role: "system", content: "أنت مساعد محاسبي. أعد JSON صالحاً فقط بدون أي نص إضافي." },
-            { role: "user", content: prompt },
-          ],
-          temperature: 0.1,
-          response_format: { type: "json_object" },
-        }),
-        signal: ctrl.signal,
-      });
-    } catch (e: any) {
-      clearTimeout(timer);
-      const msg = e?.name === "AbortError" ? "انتهت مهلة الذكاء الاصطناعي" : "تعذّر الاتصال بالذكاء الاصطناعي";
-      res.status(502).json({ error: msg });
+    const result = await aiChat([
+        { role: "system", content: "أنت مساعد محاسبي. أعد JSON صالحاً فقط بدون أي نص إضافي." },
+        { role: "user", content: prompt },
+      ], { json: true,
+      maxTokens: 1024,
+      timeoutMs: 20_000,
+      providers: ["gemini"] });
+    if (!result.ok) {
+      await logAiUsage(req, { status: "error", meta: { reason: result.reason } });
+      res.status(502).json({ error: "فشل الاتصال بالذكاء الاصطناعي: " + result.reason });
       return;
     }
-    clearTimeout(timer);
-
-    if (!aiRes.ok) {
-      res.status(502).json({ error: "فشل الاتصال بالذكاء الاصطناعي" });
-      return;
-    }
-    const data = await aiRes.json() as any;
-    const content = data?.choices?.[0]?.message?.content ?? "{}";
-    let parsed: any = {};
-    try { parsed = JSON.parse(content); } catch {}
+    const parsed: any = result.data ?? {};
+    await logAiUsage(req, { status: "allowed", provider: result.provider });
 
     const suggestedId = parsed.accountId ? Number(parsed.accountId) : null;
     const existingAcc = suggestedId ? dbAccounts.find(a => a.id === suggestedId) : null;

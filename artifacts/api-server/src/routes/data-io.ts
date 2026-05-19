@@ -25,6 +25,9 @@ import { eq, and, sql, inArray } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 // Auto-generated journal-entry types that must NEVER be created or modified
 // directly via the import center — they are owned by their source documents
@@ -39,6 +42,47 @@ const LOCKED_JE_TYPES = new Set([
 ]);
 
 const router = Router();
+  // ─────────────────────────────────────────────────────────────────────────
+  // Gemini-first transparent redirect (see notes in routes/ai.ts).
+  // Re-binds OPENAI_BASE/KEY (declared elsewhere in this file) to a sentinel
+  // "AI_PROXY" string and shadows the global fetch with a local one that
+  // intercepts the sentinel URL, dispatches via aiChat, and returns a
+  // Response-shaped object so existing r.ok/r.json()/r.text() callsites
+  // continue to work unchanged. AsyncLocalStorage threads `req` through
+  // so the feature-gate's logAiUsage counter still advances.
+  // ─────────────────────────────────────────────────────────────────────────
+  const __aiReqStore = new AsyncLocalStorage<any>();
+  router.use((req, _res, next) => { __aiReqStore.run(req, () => next()); });
+
+  const __nativeFetch = globalThis.fetch;
+  async function fetch(input: any, init?: any): Promise<{ ok: boolean; status: number; json: () => Promise<any>; text: () => Promise<string> }> {
+    if (typeof input === "string" && input.startsWith("AI_PROXY")) {
+      const body = (() => { try { return JSON.parse(init?.body ?? "{}"); } catch { return {}; } })();
+      const result = await aiChat(body.messages ?? [], {
+        json:      body.response_format?.type === "json_object",
+        maxTokens: body.max_completion_tokens ?? body.max_tokens ?? 2048,
+        providers: ["gemini"],
+    });
+      const req = __aiReqStore.getStore();
+      if (req) {
+        try {
+          await logAiUsage(req, result.ok
+            ? { status: "allowed", provider: result.provider }
+            : { status: "error",   meta: { reason: result.reason } });
+        } catch { /* logging must never break the call */ }
+      }
+      if (!result.ok) {
+        return { ok: false, status: 502, json: async () => ({ error: result.reason }), text: async () => result.reason };
+      }
+      return {
+        ok: true, status: 200,
+        json: async () => ({ choices: [{ message: { content: result.text } }] }),
+        text: async () => result.text,
+      };
+    }
+    return (__nativeFetch as any)(input, init);
+  }
+  
 router.use(extractAuth);
 router.use((req, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
@@ -50,8 +94,8 @@ router.use((req, res, next) => {
   next();
 });
 
-const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+const OPENAI_BASE = "AI_PROXY";
+const OPENAI_KEY  = "AI_PROXY";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entity catalog
@@ -512,7 +556,7 @@ async function aiMapping(
   sample: any[],
   entity: EntityDef,
 ): Promise<Record<string, { field: string | null; confidence: number }> | null> {
-  if (!OPENAI_BASE || !OPENAI_KEY) return null;
+  if (!isAIAvailable()) return null;
   const fieldList = entity.fields.map((f) => ({
     name: f.name,
     labelAr: f.labelAr,
@@ -808,7 +852,7 @@ router.post("/export", async (req, res) => {
 // body: { entity, headers: string[], sampleRows: any[][] | object[] }
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.post("/import/analyze", async (req, res) => {
+router.post("/import/analyze", requireAiFeature("data_import_ai"), async (req, res) => {
   try {
     const entityKey = String(req.body?.entity ?? "");
     const ent = ENTITIES[entityKey];

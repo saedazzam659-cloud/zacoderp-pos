@@ -9,6 +9,9 @@ import {
 import { and, eq, desc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission, requireModulePermission } from "../middleware/permissions.js";
+  import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+  import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
+  import { AsyncLocalStorage } from "node:async_hooks";
 
 const router = Router();
 
@@ -19,12 +22,62 @@ router.use((req, res, next) => {
   next();
 });
 
-const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+// Gemini-first transparent redirect: re-bind OPENAI_BASE/KEY to a sentinel so
+  // the existing template-literal URL becomes "AI_PROXY/chat/completions", then
+  // shadow the global fetch with a local one that intercepts that URL and
+  // dispatches via aiChat with providers:["gemini"] (100% free guarantee).
+  // AsyncLocalStorage threads `req` through to the shim so the feature-gate's
+  // logAiUsage counter still advances on every call.
+  const OPENAI_BASE = "AI_PROXY";
+  const OPENAI_KEY  = "AI_PROXY";
+  const reqStore = new AsyncLocalStorage<any>();
+  router.use((req, _res, next) => { reqStore.run(req, () => next()); });
 
-router.post("/parse-stock-count", async (req, res) => {
+  const _nativeFetch = globalThis.fetch;
+  async function fetch(input: any, init?: any): Promise<{ ok: boolean; status: number; json: () => Promise<any>; text: () => Promise<string> }> {
+    if (typeof input === "string" && input === "AI_PROXY/chat/completions") {
+      const body = (() => { try { return JSON.parse(init?.body ?? "{}"); } catch { return {}; } })();
+      // Multimodal (vision) messages use OpenAI's array-content shape which the
+      // gemini adapter in aiClient does not currently translate. Detect such
+      // messages and fall back to the default provider chain so vision works.
+      const hasMultimodal = Array.isArray(body.messages) && body.messages.some(
+        (m: any) => Array.isArray(m?.content)
+      );
+      const textMessages = hasMultimodal
+        ? body.messages.map((m: any) => ({
+            role: m.role,
+            content: Array.isArray(m.content)
+              ? m.content.map((p: any) => p?.type === "text" ? (p.text ?? "") : "").filter(Boolean).join("\n")
+              : String(m.content ?? ""),
+          }))
+        : (body.messages ?? []);
+      const result = await aiChat(textMessages, {
+        json:      body.response_format?.type === "json_object",
+        maxTokens: body.max_completion_tokens ?? body.max_tokens ?? 2048,
+        providers: hasMultimodal ? undefined : ["gemini"],
+      });
+      const r = reqStore.getStore();
+      if (r) {
+        try {
+          await logAiUsage(r, result.ok
+            ? { status: "allowed", provider: result.provider }
+            : { status: "error",   meta: { reason: result.reason } });
+        } catch { /* logging must never break the call */ }
+      }
+      if (!result.ok) {
+        return new Response(JSON.stringify({ error: result.reason }), { status: 502, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: result.text } }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return (_nativeFetch as any)(input, init) as any;
+  }
+
+router.post("/parse-stock-count", requireAiFeature("data_import_ai"), async (req, res) => {
   try {
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    if (!isAIAvailable()) {
       res.status(500).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" });
       return;
     }
@@ -95,9 +148,9 @@ ${JSON.stringify(sample)}`;
 //   suggestedGroup, suggestedUnit, suggestedItemType, reasoning
 // }
 // ═══════════════════════════════════════════════════════════════════
-router.post("/suggest-item-fields", requireModulePermission("items"), async (req, res) => {
+router.post("/suggest-item-fields", requireModulePermission("items"), requireAiFeature("product_descriptions"), async (req, res) => {
   try {
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    if (!isAIAvailable()) {
       res.status(500).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" });
       return;
     }
@@ -239,7 +292,7 @@ ${availableUnits.length ? availableUnits.map(u => `- ${u}`).join("\n") : "(لا 
 // Returns: { explanation, fixes: string[], summary }
 // Falls back to a deterministic rule-based response if AI is not configured.
 // ═══════════════════════════════════════════════════════════════════
-router.post("/explain-zatca-rejection", async (req, res) => {
+router.post("/explain-zatca-rejection", requireAiFeature("tax_entry_ai"), async (req, res) => {
   try {
     const { invoice, errors } = req.body as {
       invoice: any;
@@ -267,7 +320,7 @@ router.post("/explain-zatca-rejection", async (req, res) => {
       return { explanation, fixes, summary, source: "rules" as const };
     };
 
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    if (!isAIAvailable()) {
       res.json(fallback());
       return;
     }
@@ -348,7 +401,7 @@ ${errors.map((e, i) => `${i + 1}. [${e.code}] ${e.message}`).join("\n")}
 // Always picks from the company's existing chart of accounts (asset/posting only).
 // Falls back to warehouse.accountId or first inventory-keyword asset account if AI unavailable.
 // ═══════════════════════════════════════════════════════════════════
-router.post("/suggest-transfer-accounts", async (req, res) => {
+router.post("/suggest-transfer-accounts", requireAiFeature("account_suggestions"), async (req, res) => {
   try {
     const cid = resolveCompanyId(req as any);
     if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
@@ -401,7 +454,7 @@ router.post("/suggest-transfer-accounts", async (req, res) => {
       };
     };
 
-    if (!OPENAI_BASE || !OPENAI_KEY || assetPosting.length === 0) {
+    if (!isAIAvailable() || assetPosting.length === 0) {
       res.json(buildFallback());
       return;
     }
@@ -481,7 +534,7 @@ ${itemsSummary}
 // Suggest accounts for a Stock Adjustment.
 // Picks (a) inventory account = warehouse-side asset, (b) adjustment account = expense (loss) or income (gain).
 // Falls back to deterministic rule-based picks when AI unavailable or any runtime error.
-router.post("/suggest-adjustment-accounts", async (req, res) => {
+router.post("/suggest-adjustment-accounts", requireAiFeature("account_suggestions"), async (req, res) => {
   try {
     const cid = resolveCompanyId(req as any);
     if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
@@ -559,7 +612,7 @@ router.post("/suggest-adjustment-accounts", async (req, res) => {
       };
     };
 
-    if (!OPENAI_BASE || !OPENAI_KEY || assetPosting.length === 0 || (expensePosting.length === 0 && incomePosting.length === 0)) {
+    if (!isAIAvailable() || assetPosting.length === 0 || (expensePosting.length === 0 && incomePosting.length === 0)) {
       res.json(buildFallback());
       return;
     }
@@ -640,7 +693,7 @@ ${itemsSummary}
 // The DR side is auto-resolved from cashbox/bank. AI picks the CR
 // (counterparty) account based on entity, description, refType.
 // Falls back to: linked customer/supplier account → keyword match → revenue.
-router.post("/suggest-receipt-account", async (req, res) => {
+router.post("/suggest-receipt-account", requireAiFeature("account_suggestions"), async (req, res) => {
   try {
     const cid = resolveCompanyId(req as any);
     if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
@@ -729,7 +782,7 @@ router.post("/suggest-receipt-account", async (req, res) => {
       };
     };
 
-    if (!OPENAI_BASE || !OPENAI_KEY || posting.length === 0) {
+    if (!isAIAvailable() || posting.length === 0) {
       res.json(buildFallback()); return;
     }
 
@@ -806,7 +859,7 @@ router.post("/suggest-receipt-account", async (req, res) => {
 // The CR side is auto-resolved from cashbox/bank. AI picks the DR
 // (counterparty) account based on entity, description, refType.
 // Falls back to: linked supplier/customer account → keyword match → expense.
-router.post("/suggest-payment-account", async (req, res) => {
+router.post("/suggest-payment-account", requireAiFeature("account_suggestions"), async (req, res) => {
   try {
     const cid = resolveCompanyId(req as any);
     if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
@@ -899,7 +952,7 @@ router.post("/suggest-payment-account", async (req, res) => {
       };
     };
 
-    if (!OPENAI_BASE || !OPENAI_KEY || posting.length === 0) {
+    if (!isAIAvailable() || posting.length === 0) {
       res.json(buildFallback()); return;
     }
 
@@ -978,7 +1031,7 @@ router.post("/suggest-payment-account", async (req, res) => {
 // HR — AI helpers: parse Iqama/ID text, suggest contract terms, suggest leave policy
 // ═══════════════════════════════════════════════════════════════════
 
-router.post("/parse-employee-id", async (req, res) => {
+router.post("/parse-employee-id", requireAiFeature("hr_ai"), async (req, res) => {
   try {
     const { text } = req.body as { text?: string };
     if (!text || !String(text).trim()) {
@@ -1003,7 +1056,7 @@ router.post("/parse-employee-id", async (req, res) => {
       return out;
     }
 
-    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    if (!isAIAvailable()) { res.json(fallback()); return; }
 
     try {
       const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
@@ -1050,7 +1103,7 @@ ${text}` },
   }
 });
 
-router.post("/suggest-contract-terms", async (req, res) => {
+router.post("/suggest-contract-terms", requireAiFeature("hr_ai"), async (req, res) => {
   try {
     const { jobTitle, nationality, basicSalary, contractType } = req.body as any;
     const title = String(jobTitle || "").trim();
@@ -1094,7 +1147,7 @@ router.post("/suggest-contract-terms", async (req, res) => {
       };
     }
 
-    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    if (!isAIAvailable()) { res.json(fallback()); return; }
 
     try {
       const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
@@ -1152,7 +1205,7 @@ router.post("/suggest-contract-terms", async (req, res) => {
   }
 });
 
-router.post("/suggest-leave-policy", async (req, res) => {
+router.post("/suggest-leave-policy", requireAiFeature("hr_ai"), async (req, res) => {
   try {
     const { reason, leaveType, days } = req.body as any;
     const r0 = String(reason || "").toLowerCase();
@@ -1189,7 +1242,7 @@ router.post("/suggest-leave-policy", async (req, res) => {
       return { source: "fallback", leaveType: type, paid, advice };
     }
 
-    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    if (!isAIAvailable()) { res.json(fallback()); return; }
     try {
       const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
         method: "POST",
@@ -1232,7 +1285,7 @@ router.post("/suggest-leave-policy", async (req, res) => {
 });
 
 // HR — parse natural-language attendance into structured records
-router.post("/parse-attendance", async (req, res) => {
+router.post("/parse-attendance", requireAiFeature("hr_ai"), async (req, res) => {
   try {
     const { text, employees, date, defaultCheckIn, defaultCheckOut } = req.body as any;
     if (!text || !Array.isArray(employees)) {
@@ -1331,7 +1384,7 @@ router.post("/parse-attendance", async (req, res) => {
       return { source: "fallback", records, summary: `تم تحليل ${records.length} سجل من النص.` };
     }
 
-    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    if (!isAIAvailable()) { res.json(fallback()); return; }
 
     try {
       const empList = employees.map((e: any) => ({ id: e.id, code: e.code, name: e.nameAr })).slice(0, 200);
@@ -1384,7 +1437,7 @@ ${text}
 });
 
 // HR — explain payroll line in plain Arabic
-router.post("/explain-payroll-line", async (req, res) => {
+router.post("/explain-payroll-line", requireAiFeature("hr_ai"), async (req, res) => {
   try {
     const { line, periodMonth } = req.body as any;
     if (!line) { res.status(400).json({ error: "بيانات السطر مطلوبة" }); return; }
@@ -1411,7 +1464,7 @@ router.post("/explain-payroll-line", async (req, res) => {
       return { source: "fallback", explanation: parts.join("\n") };
     }
 
-    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    if (!isAIAvailable()) { res.json(fallback()); return; }
     try {
       const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
         method: "POST",
@@ -1444,7 +1497,7 @@ ${JSON.stringify(line, null, 2)}
 });
 
 // HR — generic explainer for any HR calculation
-router.post("/explain-hr-calc", async (req, res) => {
+router.post("/explain-hr-calc", requireAiFeature("hr_ai"), async (req, res) => {
   try {
     const { calcType, inputs, result } = req.body as any;
     if (!calcType || !result) { res.status(400).json({ error: "نوع الحساب والنتيجة مطلوبان" }); return; }
@@ -1511,7 +1564,7 @@ router.post("/explain-hr-calc", async (req, res) => {
       return { source: "fallback", explanation: lines.join("\n") };
     }
 
-    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    if (!isAIAvailable()) { res.json(fallback()); return; }
     try {
       const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
         method: "POST",
@@ -1553,7 +1606,7 @@ ${JSON.stringify(result, null, 2)}
 });
 
 // HR — explain end of service calculation
-router.post("/explain-eos", async (req, res) => {
+router.post("/explain-eos", requireAiFeature("hr_ai"), async (req, res) => {
   try {
     const { calc, employee } = req.body as any;
     if (!calc) { res.status(400).json({ error: "بيانات الحساب مطلوبة" }); return; }
@@ -1575,7 +1628,7 @@ router.post("/explain-eos", async (req, res) => {
       return { source: "fallback", explanation: parts.join("\n") };
     }
 
-    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    if (!isAIAvailable()) { res.json(fallback()); return; }
     try {
       const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
         method: "POST",
@@ -1608,7 +1661,7 @@ ${JSON.stringify(calc, null, 2)}
 });
 
 // HR — explain HR-related journal entry (payroll / loan / EOS)
-router.post("/explain-hr-journal", async (req, res) => {
+router.post("/explain-hr-journal", requireAiFeature("hr_ai"), async (req, res) => {
   try {
     const { entryType, entry, lines, context } = req.body as any;
     if (!entryType || !entry || !Array.isArray(lines)) {
@@ -1645,7 +1698,7 @@ router.post("/explain-hr-journal", async (req, res) => {
       return { source: "fallback", explanation: out.join("\n") };
     }
 
-    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    if (!isAIAvailable()) { res.json(fallback()); return; }
     try {
       const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
         method: "POST",
@@ -1697,7 +1750,7 @@ ${JSON.stringify(context || {}, null, 2)}
 // Body: { reportType, title, summary, rows, period? }
 // Returns: { source, insights[], recommendations[], risks[], headline }
 // ═══════════════════════════════════════════════════════════════════
-router.post("/analyze-hr-report", async (req, res) => {
+router.post("/analyze-hr-report", requireAiFeature("hr_ai"), async (req, res) => {
   try {
     const { reportType, title, summary, rows, period } = req.body as any;
     if (!reportType || !summary) {
@@ -1780,7 +1833,7 @@ router.post("/analyze-hr-report", async (req, res) => {
       };
     }
 
-    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    if (!isAIAvailable()) { res.json(fallback()); return; }
 
     try {
       // Limit rows in prompt to keep token usage reasonable
@@ -1873,7 +1926,7 @@ ${JSON.stringify(rowsForPrompt, null, 2)}
 //      / liability candidates and ask it to pick one ID.
 //   3. Always fall back to a deterministic keyword match so the UI
 //      never returns nothing when AI is offline.
-router.post("/suggest-vat-account", async (req, res) => {
+router.post("/suggest-vat-account", requireAiFeature("account_suggestions"), async (req, res) => {
   try {
     // SuperAdmin needs the companyId threaded through the body since the
     // request isn't tied to a tenant; tenant users always resolve to their
@@ -1940,7 +1993,7 @@ router.post("/suggest-vat-account", async (req, res) => {
       };
     };
 
-    if (!OPENAI_BASE || !OPENAI_KEY || posting.length === 0) {
+    if (!isAIAvailable() || posting.length === 0) {
       res.json(buildFallback()); return;
     }
 
@@ -2004,7 +2057,7 @@ router.post("/suggest-vat-account", async (req, res) => {
   }
 });
 
-router.post("/validate-journal-entry", async (req, res) => {
+router.post("/validate-journal-entry", requireAiFeature("tax_entry_ai"), async (req, res) => {
   try {
     const { entry, lines } = req.body as {
       entry: { entryDate?: string; description?: string; entryType?: string; currency?: string };
@@ -2071,7 +2124,7 @@ router.post("/validate-journal-entry", async (req, res) => {
       };
     }
 
-    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    if (!isAIAvailable()) { res.json(fallback()); return; }
 
     try {
       const userPrompt = `راجع القيد المحاسبي التالي وفق المبادئ المحاسبية المتعارف عليها في السعودية (IFRS-SME).
@@ -2143,7 +2196,7 @@ ${JSON.stringify(lines.map((l, i) => ({ row: i + 1, ...l })), null, 2)}
 // 4 sections deterministically. Falls back to a deterministic explanation
 // when the AI service is unavailable, so the UI is never empty.
 // ─────────────────────────────────────────────────────────────────────────
-router.post("/assist", async (req, res) => {
+router.post("/assist", requireAiFeature("chat_assistant"), async (req, res) => {
   try {
     const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);
     const userMessage = String(req.body?.user_message ?? "").slice(0, 1000);
@@ -2429,7 +2482,7 @@ router.post("/assist", async (req, res) => {
       };
     };
 
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    if (!isAIAvailable()) {
       res.json(fallback());
       return;
     }
@@ -2511,7 +2564,7 @@ router.post("/assist", async (req, res) => {
 // an empty command list with a graceful message — the user can still get a
 // passive explanation through /api/ai/assist.
 // ─────────────────────────────────────────────────────────────────────────
-router.post("/command", async (req, res) => {
+router.post("/command", requireAiFeature("voice_actions"), async (req, res) => {
   try {
     const userMessage = String(req.body?.user_message ?? "").slice(0, 2000);
     const screenContext = String(req.body?.screen_context ?? "").slice(0, 200);
@@ -2558,7 +2611,7 @@ router.post("/command", async (req, res) => {
       source: "fallback" as const,
     });
 
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    if (!isAIAvailable()) {
       res.json(fallbackMessage());
       return;
     }
@@ -2927,7 +2980,7 @@ function normalizeLabel(s: string): string {
 // LLM for a short, executive-style Arabic summary with concrete recommendations.
 // Falls back gracefully when the proxy is not configured so the hub still
 // renders its locally-computed insight.
-router.post("/summarize-face-attendance", async (req, res) => {
+router.post("/summarize-face-attendance", requireAiFeature("hr_ai"), async (req, res) => {
   try {
     const a = (req.body ?? {}) as {
       totalEmployees?: number;
@@ -2942,7 +2995,7 @@ router.post("/summarize-face-attendance", async (req, res) => {
       topLate?: Array<{ employeeName?: string | null; employeeCode?: string | null; lateDays?: number; totalLateMin?: number }>;
       heatmap?: Array<{ hour: number; cnt: number }>;
     };
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    if (!isAIAvailable()) {
       res.status(503).json({ error: "AI proxy not configured" });
       return;
     }
@@ -3038,7 +3091,7 @@ ${JSON.stringify(safe)}
  * actionable suggestions in Arabic. Falls back to rule-based output if the
  * AI proxy is misconfigured so the UI remains usable.
  */
-router.post("/period-insights", requireModulePermission("accounts"), async (req, res) => {
+router.post("/period-insights", requireModulePermission("accounts"), requireAiFeature("report_analyzer"), async (req, res) => {
   try {
     const cid = resolveCompanyId(req as any, (req as any).authUser?.companyId ?? undefined);
     if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
@@ -3148,7 +3201,7 @@ router.post("/period-insights", requireModulePermission("accounts"), async (req,
     let aiUsed = false;
     let aiReadyToClose: boolean | null = null;
     let aiRiskLevel: string | null = null;
-    if (OPENAI_BASE && OPENAI_KEY) {
+    if (isAIAvailable()) {
       try {
         const userPrompt = `أنت محلل مالي خبير. حلل بيانات الفترة المالية أدناه واعطني ملاحظات وتوصيات للمحاسب قبل الإقفال.
 
@@ -3218,7 +3271,7 @@ export default router;
 // Body: { description: string, cameraLabel?: string }
 // Returns: { eventType, severity, suggestedTitle, reasoning }
 // ═══════════════════════════════════════════════════════════════════
-router.post("/security/classify-event", requirePermission("security_events", "view"), async (req, res) => {
+router.post("/security/classify-event", requirePermission("security_events", "view"), requireAiFeature("chat_assistant"), async (req, res) => {
   try {
     const { description, cameraLabel } = (req.body ?? {}) as {
       description?: string;
@@ -3229,7 +3282,7 @@ router.post("/security/classify-event", requirePermission("security_events", "vi
       res.status(400).json({ error: "الوصف قصير جداً للتحليل" });
       return;
     }
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    if (!isAIAvailable()) {
       res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" });
       return;
     }
@@ -3302,7 +3355,7 @@ ${SEVERITIES.map(s => `- ${s}`).join("\n")}
 // a suggested description and an isSecurityConcern flag.
 // Body: { imageUrl: string ("/objects/..."), hint?: string, cameraLabel?: string }
 // ═══════════════════════════════════════════════════════════════════
-router.post("/security/analyze-image", requirePermission("security_events", "view"), async (req, res) => {
+router.post("/security/analyze-image", requirePermission("security_events", "view"), requireAiFeature("chat_assistant"), async (req, res) => {
   try {
     const { imageUrl, hint, cameraLabel } = (req.body ?? {}) as {
       imageUrl?: string;
@@ -3314,7 +3367,7 @@ router.post("/security/analyze-image", requirePermission("security_events", "vie
       res.status(400).json({ error: "مسار الصورة غير صالح" });
       return;
     }
-    if (!OPENAI_BASE || !OPENAI_KEY) {
+    if (!isAIAvailable()) {
       res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" });
       return;
     }
@@ -3471,7 +3524,7 @@ ${SEVERITIES.map(s => `- ${s}`).join("\n")}
 // ═══════════════════════════════════════════════════════════════════
 // Trial Balance — analyze imbalance, abnormal accounts, suggest adjustments
 // ═══════════════════════════════════════════════════════════════════
-router.post("/analyze-trial-balance", requireModulePermission("accounting_maintenance"), async (req, res) => {
+router.post("/analyze-trial-balance", requireModulePermission("accounting_maintenance"), requireAiFeature("report_analyzer"), async (req, res) => {
   try {
     const { lines, totalDebit, totalCredit } = req.body as {
       lines: Array<{ accountCode: string; accountName: string; accountType?: string; debit: number|string; credit: number|string }>;
@@ -3534,7 +3587,7 @@ router.post("/analyze-trial-balance", requireModulePermission("accounting_mainte
       };
     }
 
-    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    if (!isAIAvailable()) { res.json(fallback()); return; }
     try {
       const top = lines.slice(0, 80).map(l => `${l.accountCode}|${l.accountName}|${l.accountType||""}|${Number(l.debit||0).toFixed(2)}|${Number(l.credit||0).toFixed(2)}`).join("\n");
       const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
@@ -3594,7 +3647,7 @@ ${top}
 // Body: { invoices: Array<{...}>, currencyCode?: string }
 // Returns: { findings: Array<{level, code, invoiceId?, docNumber?, message, fix?}>, metrics, recommendations: string[] }
 // ═══════════════════════════════════════════════════════════════════
-router.post("/audit-sales-invoices", requirePermission("sales_invoices", "view"), async (req, res) => {
+router.post("/audit-sales-invoices", requirePermission("sales_invoices", "view"), requireAiFeature("report_analyzer"), async (req, res) => {
   try {
     const { invoices = [], currencyCode = "SAR" } = (req.body ?? {}) as {
       invoices?: any[];
@@ -3784,7 +3837,7 @@ router.post("/audit-sales-invoices", requirePermission("sales_invoices", "view")
 
     // ── Optionally enrich with AI commentary on top of rule findings ──
     let aiUsed = false;
-    if (OPENAI_BASE && OPENAI_KEY) {
+    if (isAIAvailable()) {
       try {
         const sample = invoices.slice(0, 50).map((i: any) => ({
           id: i.id,

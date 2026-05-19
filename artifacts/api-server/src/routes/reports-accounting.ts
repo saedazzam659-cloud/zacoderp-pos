@@ -17,8 +17,52 @@ import {
 } from "@workspace/db";
 import { eq, and, sql, gte, lte, asc, desc, ne, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
+import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 const router = Router();
+  // ─────────────────────────────────────────────────────────────────────────
+  // Gemini-first transparent redirect (see notes in routes/ai.ts).
+  // Re-binds OPENAI_BASE/KEY (declared elsewhere in this file) to a sentinel
+  // "AI_PROXY" string and shadows the global fetch with a local one that
+  // intercepts the sentinel URL, dispatches via aiChat, and returns a
+  // Response-shaped object so existing r.ok/r.json()/r.text() callsites
+  // continue to work unchanged. AsyncLocalStorage threads `req` through
+  // so the feature-gate's logAiUsage counter still advances.
+  // ─────────────────────────────────────────────────────────────────────────
+  const __aiReqStore = new AsyncLocalStorage<any>();
+  router.use((req, _res, next) => { __aiReqStore.run(req, () => next()); });
+
+  const __nativeFetch = globalThis.fetch;
+  async function fetch(input: any, init?: any): Promise<{ ok: boolean; status: number; json: () => Promise<any>; text: () => Promise<string> }> {
+    if (typeof input === "string" && input.startsWith("AI_PROXY")) {
+      const body = (() => { try { return JSON.parse(init?.body ?? "{}"); } catch { return {}; } })();
+      const result = await aiChat(body.messages ?? [], {
+        json:      body.response_format?.type === "json_object",
+        maxTokens: body.max_completion_tokens ?? body.max_tokens ?? 2048,
+        providers: ["gemini"],
+    });
+      const req = __aiReqStore.getStore();
+      if (req) {
+        try {
+          await logAiUsage(req, result.ok
+            ? { status: "allowed", provider: result.provider }
+            : { status: "error",   meta: { reason: result.reason } });
+        } catch { /* logging must never break the call */ }
+      }
+      if (!result.ok) {
+        return { ok: false, status: 502, json: async () => ({ error: result.reason }), text: async () => result.reason };
+      }
+      return {
+        ok: true, status: 200,
+        json: async () => ({ choices: [{ message: { content: result.text } }] }),
+        text: async () => result.text,
+      };
+    }
+    return (__nativeFetch as any)(input, init);
+  }
+  
 router.use(extractAuth);
 // Hard auth gate — extractAuth alone is non-blocking, so anonymous callers
 // could previously read tenant accounting reports by passing ?companyId=. Now
@@ -621,7 +665,7 @@ router.get("/account-statement", async (req, res) => {
 //
 // Heuristic fallback is used whenever the AI service is not configured or
 // the AI call fails — the report is always returned, never a 5xx.
-router.post("/forecast-income-statement", async (req, res) => {
+router.post("/forecast-income-statement", requireAiFeature("report_analyzer"), async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
@@ -732,11 +776,11 @@ router.post("/forecast-income-statement", async (req, res) => {
     };
 
     // ── 5. AI call (gracefully degrades to heuristic) ──
-    const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-    const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+    const OPENAI_BASE = "AI_PROXY";
+    const OPENAI_KEY  = "AI_PROXY";
 
     let aiResult: any = null;
-    if (OPENAI_BASE && OPENAI_KEY) {
+    if (isAIAvailable()) {
       const sys = "أنت محلل مالي خبير. مهمتك بناء قائمة دخل تقديرية متعددة السنوات بناءً على بيانات فعلية وارتباطات قائمة. ترد بـ JSON صالح فقط.";
       const user = `بناءً على البيانات المالية التالية لشركة، ولّد توقعات لـ ${horizon} سنوات قادمة بثلاث سيناريوهات (متفائل / واقعي / متحفظ).
 
