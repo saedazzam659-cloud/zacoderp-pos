@@ -1,10 +1,14 @@
 import { useTranslation } from "react-i18next";
 import { useFmt } from "@/hooks/use-fmt";
 import { Building2 } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   STATEMENT_COL_DEFAULTS,
   type StatementVisibleCols,
 } from "@/components/StatementColumnChooser";
+import AdvancedReportGrid, {
+  type GridColumn,
+} from "@/components/auditGrid/AdvancedReportGrid";
 
 /**
  * AccountStatementView — a printable, presentation-grade card that renders a
@@ -94,6 +98,16 @@ export default function AccountStatementView({
   const { fmt } = useFmt();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
+  const { user, actingCompanyId } = useAuth() as {
+    user?: { role?: string; company?: { id?: number } } | null;
+    actingCompanyId?: number | null;
+  };
+  // Per-tenant grid layout — superadmins get a shared "anon" bucket unless
+  // they're acting on a specific company.
+  const cid: number | undefined =
+    user?.role === "superadmin"
+      ? (actingCompanyId ?? undefined)
+      : user?.company?.id;
   const tr = (k: string, dflt: string) => {
     const v = t(`accountStatement.${k}`) as string;
     return v && v !== `accountStatement.${k}` ? v : dflt;
@@ -195,7 +209,12 @@ export default function AccountStatementView({
       {/* ─── Table ──────────────────────────────────────────────── */}
       {/* Each column is conditionally rendered based on `visibleCols` so
           the chooser controls the on-screen layout. Same map is forwarded
-          to Excel / PDF / print so all four surfaces stay identical. */}
+          to Excel / PDF / print so all four surfaces stay identical.
+
+          We render TWO tables: the interactive AdvancedReportGrid (screen
+          only) and the classic compact table (print/PDF only). This keeps
+          paper output deterministic while giving the user an Excel-style
+          grid on screen (sort/filter/group/conditional format/etc). */}
       {(() => {
         const v = visibleCols;
         // colSpan of the leading "الإجمالي" cell = number of visible
@@ -210,9 +229,95 @@ export default function AccountStatementView({
           (v.balance ? 1 : 0) + (v.description ? 1 : 0);
         const openingDebit  = mode === "supplier" ? (opening < 0 ? -opening : 0) : (opening > 0 ? opening  : 0);
         const openingCredit = mode === "supplier" ? (opening > 0 ? opening  : 0) : (opening < 0 ? -opening : 0);
+
+        /* ── Grid columns (screen only). Order here is the DEFAULT; the
+           user can reorder via the toolbar (persisted per company). ── */
+        const allGridColumns: GridColumn<StatementLine>[] = [
+          { key: "date",        label: tr("colDate", "التاريخ"),  type: "text",
+            className: "font-mono tabular-nums text-slate-600",
+            value: r => r.date,
+          },
+          { key: "docNumber",   label: tr("colDoc", "الرقم"),     type: "text",
+            className: "font-mono tabular-nums text-slate-600",
+            value: r => r.docNumber ?? "",
+            render: r => r.docNumber || "—",
+          },
+          { key: "type",        label: tr("colType", "البيان"),   type: "text",
+            value: r => r.type,
+          },
+          { key: "debit",       label: tr("colDebit", "مدين"),    type: "num",
+            align: "center", totalable: true,
+            className: "font-mono tabular-nums",
+            value: r => r.debit,
+            render: r => (
+              <span className={r.debit ? "font-semibold text-sky-700" : "text-slate-400"}>
+                {r.debit ? fmt(r.debit) : "0.00"}
+              </span>
+            ),
+          },
+          { key: "credit",      label: tr("colCredit", "دائن"),   type: "num",
+            align: "center", totalable: true,
+            className: "font-mono tabular-nums",
+            value: r => r.credit,
+            render: r => (
+              <span className={r.credit ? "font-semibold text-emerald-700" : "text-slate-400"}>
+                {r.credit ? fmt(r.credit) : "0.00"}
+              </span>
+            ),
+          },
+          { key: "balance",     label: tr("colBalance", "الرصيد"), type: "num",
+            align: "center",
+            className: "font-mono tabular-nums font-bold text-slate-800",
+            value: r => r.balance,
+            render: r => fmt(r.balance),
+          },
+          { key: "description", label: tr("colDescription", "الشرح"), type: "text",
+            className: "text-slate-700",
+            value: r => r.description,
+          },
+        ];
+        const gridColumns = allGridColumns.filter(c => v[c.key as keyof typeof v]);
+
+        /* Opening row mapped by column key — the grid renders the cells in
+           whatever order the user has chosen. */
+        const openingCells: Record<string, React.ReactNode> = {
+          date: from,
+          docNumber: "—",
+          type: <span className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</span>,
+          debit: <span className="font-mono tabular-nums">{openingDebit ? fmt(openingDebit) : "0.00"}</span>,
+          credit: <span className="font-mono tabular-nums">{openingCredit ? fmt(openingCredit) : "0.00"}</span>,
+          balance: <span className="font-mono tabular-nums font-semibold">{fmt(opening)}</span>,
+          description: <span className="text-slate-500">—</span>,
+        };
+
+        /* Totals row mapped by column key. __label goes in the first visible
+           column when that column has no explicit value. */
+        const totalsCells: Record<string, React.ReactNode> & { __label?: React.ReactNode } = {
+          __label: <span>{tr("totalLabel", "الإجمالي")}</span>,
+          debit: <span className="text-sky-700 font-mono tabular-nums">{fmt(totals.debit)}</span>,
+          credit: <span className="text-emerald-700 font-mono tabular-nums">{fmt(totals.credit)}</span>,
+          balance: <span className="text-slate-900 font-mono tabular-nums">{fmt(closing)}</span>,
+        };
+
         return (
           <div className="px-6 pb-6">
-            <div className="border rounded-lg overflow-x-auto">
+            {/* ── Interactive grid (screen only) ─────────────────── */}
+            <div className="print:hidden">
+              <AdvancedReportGrid
+                slug={`${mode}Statement`}
+                cid={cid}
+                columns={gridColumns}
+                rowKey={(_r, i) => i}
+                rows={lines}
+                leadingRows={[openingCells]}
+                totalsRow={lines.length > 0 ? totalsCells : null}
+                unitLabel="حركة"
+                emptyMessage={tr("noRows", "لا توجد حركات في الفترة المحددة")}
+              />
+            </div>
+
+            {/* ── Classic printable table (print/PDF only) ───────── */}
+            <div className="hidden print:block border rounded-lg overflow-x-auto">
               <table className="w-full text-[12.5px] border-collapse min-w-[480px]">
                 <thead>
                   <tr className="bg-slate-100 text-slate-700">
