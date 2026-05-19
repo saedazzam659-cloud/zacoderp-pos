@@ -72,6 +72,79 @@ interface AuditRow {
   userAgent: string | null;
   metadata: any;
   createdAt: string;
+  // Login-location enrichment (audit-log.ts /api/audit-log). Populated
+  // only for module=auth + action=login rows from the matching
+  // auto-checkin visit within ±10min of createdAt; null for everything else.
+  loginPlace?: string | null;
+  loginAddress?: string | null;
+  loginLat?: number | null;
+  loginLng?: number | null;
+  loginAccuracy?: number | null;
+  loginZoneName?: string | null;
+}
+
+// Compact location pill used in the audit-log table (login rows only).
+// Mirrors LoginLocationCell in SecurityCenter.tsx; kept local to avoid
+// pulling that file in just for this small renderer. Visual tiers:
+//   • zone → emerald, • place/address → indigo, • coords-only → slate.
+// A "🗺" link opens Google Maps in a new tab so the reviewer can verify
+// the GPS pin matches what the user reported.
+function AuditLoginLocation(props: {
+  place: string | null | undefined;
+  address: string | null | undefined;
+  lat: number | null | undefined;
+  lng: number | null | undefined;
+  accuracy: number | null | undefined;
+  zoneName: string | null | undefined;
+}) {
+  const { place, address, lat, lng, accuracy, zoneName } = props;
+  const hasCoords = typeof lat === "number" && typeof lng === "number";
+  if (!zoneName && !place && !address && !hasCoords) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  const primary = zoneName ?? place ?? address ?? `${lat!.toFixed(5)}, ${lng!.toFixed(5)}`;
+  const tier = zoneName ? "zone" : (place || address) ? "place" : "coords";
+  const cls =
+    tier === "zone"  ? "from-emerald-50 to-teal-50 border-emerald-200 text-emerald-800" :
+    tier === "place" ? "from-indigo-50 to-sky-50 border-indigo-200 text-indigo-800"   :
+                       "from-slate-50 to-gray-50 border-slate-200 text-slate-700";
+  const dotCls =
+    tier === "zone"  ? "bg-emerald-500" :
+    tier === "place" ? "bg-indigo-500"  :
+                       "bg-slate-400";
+  const tt: string[] = [];
+  if (zoneName) tt.push(`النطاق: ${zoneName}`);
+  if (place)    tt.push(`المكان: ${place}`);
+  if (address)  tt.push(`العنوان: ${address}`);
+  if (hasCoords) tt.push(`الإحداثيات: ${lat!.toFixed(6)}, ${lng!.toFixed(6)}`);
+  if (typeof accuracy === "number") tt.push(`دقة GPS: ±${Math.round(accuracy)} م`);
+  return (
+    <div className="inline-flex flex-col gap-0.5 max-w-[220px]">
+      <span
+        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-gradient-to-l border text-xs ${cls}`}
+        title={tt.join("\n")}
+      >
+        <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotCls}`} aria-hidden />
+        <svg viewBox="0 0 24 24" className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 21s-7-7.5-7-12a7 7 0 1114 0c0 4.5-7 12-7 12z" />
+          <circle cx="12" cy="9" r="2.5" />
+        </svg>
+        <span className="font-medium truncate" dir="auto">{primary}</span>
+      </span>
+      {hasCoords && (
+        <a
+          href={`https://www.google.com/maps?q=${lat},${lng}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-1 text-[10px] font-mono text-sky-600 hover:text-sky-800 hover:underline px-2"
+          title="افتح في خرائط Google"
+        >
+          🗺 خريطة <span className="text-slate-400">({lat!.toFixed(4)}, {lng!.toFixed(4)})</span>
+        </a>
+      )}
+    </div>
+  );
 }
 
 const PAGE_SIZE = 50;
@@ -898,6 +971,9 @@ export default function AuditLog() {
                     <th className="px-3 py-2 font-medium">{tr("colPath")}</th>
                     <th className="px-3 py-2 font-medium">{tr("colStatus")}</th>
                     <th className="px-3 py-2 font-medium">{tr("colIp")}</th>
+                    <th className="px-3 py-2 font-medium" title="المكان الفعلي الذي سجّل المستخدم الدخول منه (يُحدَّد تلقائيًا من GPS وقت تسجيل الدخول)">
+                      موقع الدخول
+                    </th>
                     {/* Row-level share-link column (task #131) — header text
                         is screen-reader only since the icon column is
                         intentionally compact. */}
@@ -1053,6 +1129,20 @@ export default function AuditLog() {
                           )}
                         </td>
                         <td className="px-3 py-2 text-xs font-mono text-muted-foreground">{r.ip ?? "—"}</td>
+                        <td
+                          className="px-3 py-2"
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >
+                          <AuditLoginLocation
+                            place={r.loginPlace}
+                            address={r.loginAddress}
+                            lat={r.loginLat}
+                            lng={r.loginLng}
+                            accuracy={r.loginAccuracy}
+                            zoneName={r.loginZoneName}
+                          />
+                        </td>
                         {/* Inline share-link copy (task #131). The wrapping
                             cell stops click/key events from bubbling so the
                             row's own onClick / onKeyDown — which open the

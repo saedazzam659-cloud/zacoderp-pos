@@ -30,6 +30,82 @@ interface SessionRow {
   zatcaStatus: "production" | "sandbox" | "not_linked" | null;
   sessionId: string | null; lastLoginAt: string | null;
   ip: string | null; country: string | null; userAgent: string | null;
+  // Login-location enrichment (auto-checkin user_visits, see admin.ts).
+  // Any of these can be null when the user has location permissions
+  // disabled OR when no visit was matched in the ±10min window.
+  loginPlace?: string | null; loginAddress?: string | null;
+  loginLat?: number | null;   loginLng?: number | null;
+  loginAccuracy?: number | null;
+  loginZoneName?: string | null;
+  loginAt?: string | null;
+}
+
+// Compact, attractive "login location" cell shared by the sessions table.
+// Three visual tiers, picked greedily by data quality:
+//   1. zone name → emerald gradient pill (نطاق مُعرَّف)
+//   2. place/address → indigo gradient pill (مكان مُعرَّف من GPS)
+//   3. raw coords only → slate pill
+// Always wraps a "🗺 خريطة" link to Google Maps when lat/lng exist so the
+// reviewer can verify exactly where the login happened. Tooltip shows
+// the full address + GPS accuracy radius for transparency.
+function LoginLocationCell(props: {
+  place: string | null | undefined;
+  address: string | null | undefined;
+  lat: number | null | undefined;
+  lng: number | null | undefined;
+  accuracy: number | null | undefined;
+  zoneName: string | null | undefined;
+  testId?: string;
+}) {
+  const { place, address, lat, lng, accuracy, zoneName, testId } = props;
+  const hasCoords = typeof lat === "number" && typeof lng === "number";
+  const hasAny = !!(zoneName || place || address || hasCoords);
+  if (!hasAny) {
+    return <span className="text-xs text-muted-foreground" data-testid={testId}>—</span>;
+  }
+  const primary = zoneName ?? place ?? address ?? (hasCoords ? `${lat!.toFixed(5)}, ${lng!.toFixed(5)}` : "—");
+  const tier = zoneName ? "zone" : (place || address) ? "place" : "coords";
+  const cls =
+    tier === "zone"  ? "from-emerald-50 to-teal-50 border-emerald-200 text-emerald-800" :
+    tier === "place" ? "from-indigo-50 to-sky-50 border-indigo-200 text-indigo-800"   :
+                       "from-slate-50 to-gray-50 border-slate-200 text-slate-700";
+  const dotCls =
+    tier === "zone"  ? "bg-emerald-500" :
+    tier === "place" ? "bg-indigo-500"  :
+                       "bg-slate-400";
+  const tooltipParts: string[] = [];
+  if (zoneName) tooltipParts.push(`النطاق: ${zoneName}`);
+  if (place)    tooltipParts.push(`المكان: ${place}`);
+  if (address)  tooltipParts.push(`العنوان: ${address}`);
+  if (hasCoords) tooltipParts.push(`الإحداثيات: ${lat!.toFixed(6)}, ${lng!.toFixed(6)}`);
+  if (typeof accuracy === "number") tooltipParts.push(`دقة GPS: ±${Math.round(accuracy)} م`);
+  const mapsUrl = hasCoords ? `https://www.google.com/maps?q=${lat},${lng}` : null;
+  return (
+    <div className="inline-flex flex-col gap-0.5 max-w-[220px]" data-testid={testId}>
+      <div
+        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-gradient-to-l border text-xs ${cls}`}
+        title={tooltipParts.join("\n")}
+      >
+        <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotCls}`} aria-hidden />
+        <svg viewBox="0 0 24 24" className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 21s-7-7.5-7-12a7 7 0 1114 0c0 4.5-7 12-7 12z" />
+          <circle cx="12" cy="9" r="2.5" />
+        </svg>
+        <span className="font-medium truncate" dir="auto">{primary}</span>
+      </div>
+      {mapsUrl && (
+        <a
+          href={mapsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-[10px] font-mono text-sky-600 hover:text-sky-800 hover:underline px-2"
+          title="افتح في خرائط Google"
+        >
+          🗺 خريطة <span className="text-slate-400">({lat!.toFixed(4)}, {lng!.toFixed(4)})</span>
+        </a>
+      )}
+    </div>
+  );
 }
 
 // Map ZATCA linkage status → presentation. Three states:
@@ -311,6 +387,9 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                     <th className="px-3 py-2 font-medium">الدور</th>
                     <th className="px-3 py-2 font-medium">الشركة</th>
                     <th className="px-3 py-2 font-medium">آخر تسجيل دخول</th>
+                    <th className="px-3 py-2 font-medium" title="المكان الفعلي الذي سجّل المستخدم الدخول منه (يُحدَّد تلقائيًا من GPS وقت تسجيل الدخول)">
+                      موقع الدخول
+                    </th>
                     <th className="px-3 py-2 font-medium">الدولة</th>
                     <th className="px-3 py-2 font-medium">IP</th>
                     <th className="px-3 py-2 font-medium">المتصفح</th>
@@ -368,6 +447,17 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                         </div>
                       </td>
                       <td className="px-3 py-2 text-xs font-mono">{fmtDateTime(r.lastLoginAt)}</td>
+                      <td className="px-3 py-2">
+                        <LoginLocationCell
+                          place={r.loginPlace}
+                          address={r.loginAddress}
+                          lat={r.loginLat}
+                          lng={r.loginLng}
+                          accuracy={r.loginAccuracy}
+                          zoneName={r.loginZoneName}
+                          testId={`session-location-${r.userId}`}
+                        />
+                      </td>
                       <td className="px-3 py-2" data-testid={`session-country-${r.userId}`}>
                         {r.country ? (
                           <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-gradient-to-l from-sky-50 to-indigo-50 border border-sky-200 text-xs">

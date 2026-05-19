@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, reportEmailInvitationsTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable, maintenanceRetentionSettingsTable } from "@workspace/db";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, reportEmailInvitationsTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable, maintenanceRetentionSettingsTable, userVisitsTable, trackingZonesTable } from "@workspace/db";
 import { AVAILABLE_REPORTS, REPORT_KEYS } from "../lib/reportDigest.js";
 import { emitSessionRefresh, emitSessionRefreshMany } from "../lib/sessionEvents.js";
 import { ensureScheduleRow, runReportDigest, REPORT_SCHEDULE_ID } from "../lib/reportScheduler.js";
@@ -2521,9 +2521,89 @@ router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
       if (r.companyId != null) companyLoginCount.set(Number(r.companyId), Number(r.c));
     }
 
+    // ─── Login location enrichment (from auto-checkin user_visits) ───
+    // The login hook in /api/auth creates a `user_visits` row at login
+    // time with GPS coords + reverse-geocoded place/address. Match by
+    // userId picking the visit whose checkinAt is closest to lastLoginAt
+    // (within ±10 minutes). Zone name (when checkin fell inside a defined
+    // tracking zone) is resolved from `tracking_zones` for a friendlier
+    // label than raw coordinates.
+    type VisitLoc = {
+      companyId: number;            userId: number;
+      checkinPlace: string | null;  checkinAddress: string | null;
+      checkinLat: string | null;    checkinLng: string | null;
+      checkinAccuracy: string | null;
+      zoneId: number | null;        checkinAt: Date;
+    };
+    const visitByUser = new Map<number, VisitLoc>();
+    if (userIds.length > 0 && companyIds.length > 0) {
+      // ─── Tenant-scoped visit lookup ──────────────────────────────
+      // Filter by BOTH companyId AND userId so we always hit the
+      // composite (company_id, user_id, checkin_at) index and never
+      // cross tenant boundaries. A poisoned visit row that somehow
+      // ended up with another user's id but a different companyId
+      // is silently ignored by the post-fetch companyId check below.
+      const visits = await db.select({
+        companyId: userVisitsTable.companyId,
+        userId: userVisitsTable.userId,
+        checkinAt: userVisitsTable.checkinAt,
+        checkinPlace: userVisitsTable.checkinPlace,
+        checkinAddress: userVisitsTable.checkinAddress,
+        checkinLat: userVisitsTable.checkinLat,
+        checkinLng: userVisitsTable.checkinLng,
+        checkinAccuracy: userVisitsTable.checkinAccuracy,
+        zoneId: userVisitsTable.zoneId,
+      })
+        .from(userVisitsTable)
+        .where(and(
+          inArray(userVisitsTable.companyId, companyIds),
+          inArray(userVisitsTable.userId, userIds),
+        ))
+        .orderBy(desc(userVisitsTable.checkinAt))
+        .limit(userIds.length * 20);
+      // Pick the visit closest to each user's lastLoginAt (within ±10min).
+      // Falls back to the most recent visit if no login timestamp.
+      // Skip rows whose companyId does not match the session's companyId
+      // (defence-in-depth against cross-tenant id collisions).
+      const TEN_MIN_MS = 10 * 60 * 1000;
+      for (const s of sessions) {
+        if (s.companyId == null) continue;
+        const target = s.lastLoginAt ? new Date(s.lastLoginAt).getTime() : null;
+        let best: VisitLoc | null = null;
+        let bestDelta = Infinity;
+        for (const v of visits) {
+          if (v.userId !== s.id) continue;
+          if (v.companyId !== s.companyId) continue;
+          const vt = new Date(v.checkinAt).getTime();
+          if (target == null) { best ??= v as VisitLoc; continue; }
+          const d = Math.abs(vt - target);
+          if (d <= TEN_MIN_MS && d < bestDelta) { best = v as VisitLoc; bestDelta = d; }
+        }
+        if (best) visitByUser.set(s.id, best);
+      }
+    }
+    // Resolve zone names with BOTH companyId AND zoneId predicates so
+    // a stray zoneId from another tenant cannot leak its name back.
+    const zoneIds = Array.from(new Set(
+      Array.from(visitByUser.values()).map(v => v.zoneId).filter((x): x is number => x != null),
+    ));
+    const zoneNameMap = new Map<string, string>(); // key = `${companyId}:${zoneId}`
+    if (zoneIds.length > 0 && companyIds.length > 0) {
+      const zs = await db.select({
+        id: trackingZonesTable.id, companyId: trackingZonesTable.companyId, name: trackingZonesTable.name,
+      })
+        .from(trackingZonesTable)
+        .where(and(
+          inArray(trackingZonesTable.companyId, companyIds),
+          inArray(trackingZonesTable.id, zoneIds),
+        ));
+      for (const z of zs) zoneNameMap.set(`${z.companyId}:${z.id}`, z.name);
+    }
+
     const rows = sessions.map(s => {
       const lg = loginByUser.get(s.id);
       const country = lg?.ip ? (ipCountry.get(lg.ip) ?? null) : null;
+      const v = visitByUser.get(s.id);
       return {
         userId:      s.id,
         username:    s.username,
@@ -2538,6 +2618,13 @@ router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
         ip:          lg?.ip ?? null,
         country,
         userAgent:   lg?.user_agent ?? null,
+        loginPlace:    v?.checkinPlace   ?? null,
+        loginAddress:  v?.checkinAddress ?? null,
+        loginLat:      v?.checkinLat != null ? Number(v.checkinLat) : null,
+        loginLng:      v?.checkinLng != null ? Number(v.checkinLng) : null,
+        loginAccuracy: v?.checkinAccuracy != null ? Number(v.checkinAccuracy) : null,
+        loginZoneName: v?.zoneId != null ? (zoneNameMap.get(`${v.companyId}:${v.zoneId}`) ?? null) : null,
+        loginAt:       v?.checkinAt ? new Date(v.checkinAt).toISOString() : null,
       };
     });
     res.json({ rows, total: rows.length });

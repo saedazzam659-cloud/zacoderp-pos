@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { auditLogTable } from "@workspace/db";
+import { auditLogTable, userVisitsTable, trackingZonesTable } from "@workspace/db";
 import { and, eq, gte, lte, desc, sql, like, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requireAdminRole, writeAudit } from "../middleware/permissions.js";
@@ -71,7 +71,100 @@ router.get("/", async (req, res) => {
       .limit(limit)
       .offset(offset);
 
-    res.json({ rows, total: Number(count ?? 0), limit, offset });
+    // ─── Login-location enrichment (auto-checkin user_visits) ─────────
+    // For each row that represents an actual login (module=auth, action=login)
+    // look up the auto-checkin visit created at login time (±10 minutes
+    // of createdAt) and attach place/address/lat/lng/zone so the UI can
+    // show WHERE the user signed in from. Non-login rows pass through
+    // with null location fields. Scoped to userIds appearing on the page
+    // so the lookup cost is bounded by `limit`.
+    const loginRows = rows.filter(r => r.module === "auth" && r.action === "login" && r.userId != null);
+    type EnrichedRow = typeof rows[number] & {
+      loginPlace: string | null; loginAddress: string | null;
+      loginLat: number | null;   loginLng: number | null;
+      loginAccuracy: number | null;
+      loginZoneName: string | null;
+    };
+    const enriched: EnrichedRow[] = rows.map(r => ({
+      ...r,
+      loginPlace: null, loginAddress: null,
+      loginLat: null,   loginLng: null,
+      loginAccuracy: null,
+      loginZoneName: null,
+    }));
+    // Only enrich login rows that have a known companyId so the
+    // tenant-scoped predicates below remain effective. Login rows
+    // without a companyId (extremely rare) skip enrichment.
+    const loginRowsScoped = loginRows.filter(r => r.companyId != null);
+    if (loginRowsScoped.length > 0) {
+      const loginUserIds = Array.from(new Set(loginRowsScoped.map(r => r.userId!).filter(Boolean)));
+      const loginCompanyIds = Array.from(new Set(loginRowsScoped.map(r => r.companyId!).filter((x): x is number => x != null)));
+      // Pull a bounded window of recent visits for these users — only the
+      // ones whose checkinAt overlaps the page's time range. Using the
+      // page's min/max createdAt as the window keeps the scan tight, and
+      // adding companyId to the predicate hits the composite
+      // (company_id, user_id, checkin_at) index AND prevents any
+      // cross-tenant leakage if userIds ever collide.
+      const times = loginRowsScoped.map(r => new Date(r.createdAt).getTime());
+      const minT = new Date(Math.min(...times) - 10 * 60 * 1000);
+      const maxT = new Date(Math.max(...times) + 10 * 60 * 1000);
+      const visits = await db.select({
+        companyId: userVisitsTable.companyId,
+        userId: userVisitsTable.userId,
+        checkinAt: userVisitsTable.checkinAt,
+        checkinPlace: userVisitsTable.checkinPlace,
+        checkinAddress: userVisitsTable.checkinAddress,
+        checkinLat: userVisitsTable.checkinLat,
+        checkinLng: userVisitsTable.checkinLng,
+        checkinAccuracy: userVisitsTable.checkinAccuracy,
+        zoneId: userVisitsTable.zoneId,
+      })
+        .from(userVisitsTable)
+        .where(and(
+          inArray(userVisitsTable.companyId, loginCompanyIds),
+          inArray(userVisitsTable.userId, loginUserIds),
+          gte(userVisitsTable.checkinAt, minT),
+          lte(userVisitsTable.checkinAt, maxT),
+        ));
+      const zoneIds = Array.from(new Set(visits.map(v => v.zoneId).filter((x): x is number => x != null)));
+      // Zone name lookup is keyed by `${companyId}:${zoneId}` so a stray
+      // zoneId from another tenant can never leak its name back.
+      const zoneNameMap = new Map<string, string>();
+      if (zoneIds.length > 0) {
+        const zs = await db.select({
+          id: trackingZonesTable.id, companyId: trackingZonesTable.companyId, name: trackingZonesTable.name,
+        })
+          .from(trackingZonesTable)
+          .where(and(
+            inArray(trackingZonesTable.companyId, loginCompanyIds),
+            inArray(trackingZonesTable.id, zoneIds),
+          ));
+        for (const z of zs) zoneNameMap.set(`${z.companyId}:${z.id}`, z.name);
+      }
+      const TEN_MIN_MS = 10 * 60 * 1000;
+      for (const er of enriched) {
+        if (!(er.module === "auth" && er.action === "login" && er.userId != null && er.companyId != null)) continue;
+        const target = new Date(er.createdAt).getTime();
+        let best: typeof visits[number] | null = null;
+        let bestDelta = Infinity;
+        for (const v of visits) {
+          if (v.userId !== er.userId) continue;
+          if (v.companyId !== er.companyId) continue;
+          const d = Math.abs(new Date(v.checkinAt).getTime() - target);
+          if (d <= TEN_MIN_MS && d < bestDelta) { best = v; bestDelta = d; }
+        }
+        if (best) {
+          er.loginPlace = best.checkinPlace;
+          er.loginAddress = best.checkinAddress;
+          er.loginLat = best.checkinLat != null ? Number(best.checkinLat) : null;
+          er.loginLng = best.checkinLng != null ? Number(best.checkinLng) : null;
+          er.loginAccuracy = best.checkinAccuracy != null ? Number(best.checkinAccuracy) : null;
+          er.loginZoneName = best.zoneId != null ? (zoneNameMap.get(`${best.companyId}:${best.zoneId}`) ?? null) : null;
+        }
+      }
+    }
+
+    res.json({ rows: enriched, total: Number(count ?? 0), limit, offset });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? "تعذر جلب سجل النشاط" });
   }
