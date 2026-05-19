@@ -219,6 +219,18 @@ export default function SupplierStatement() {
         </div>
       )}
 
+      {/* Column-visibility chooser — sits right above the table so it stays
+          visible even after the user scrolls past the page header. Hidden in
+          print output. */}
+      {applied.supplierId && !isLoading && (
+        <div className="flex items-center justify-between gap-2 rounded-lg border bg-muted/30 px-3 py-2 print:hidden">
+          <p className="text-xs text-muted-foreground">
+            تحكم في الأعمدة الظاهرة في الجدول والطباعة و Excel و PDF
+          </p>
+          <StatementColumnChooser value={visibleCols} onChange={setVisibleCols} />
+        </div>
+      )}
+
       {applied.supplierId ? (
         isLoading ? (
           <div className="rounded-xl border bg-card p-6 space-y-3">
