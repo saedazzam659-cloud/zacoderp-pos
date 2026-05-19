@@ -201,35 +201,99 @@ function ipLocCacheSet(ip: string, value: IpLocation | null) {
 // duplicate outbound calls and burn the rate-limit on ipwho.is.
 const ipLocInFlight = new Map<string, Promise<IpLocation | null>>();
 
-async function ipLocFetch(v4: string): Promise<IpLocation | null> {
+// ─── Geo-IP provider chain ────────────────────────────────────────────
+// We try multiple free providers in order. Different services have
+// different reachability profiles from production hosts (some are
+// blocked by certain egress firewalls, some have stricter rate limits
+// per IP-of-caller). The chain returns on the first provider that
+// gives us a usable result; if ALL fail we cache null with the short
+// negative TTL so the next miss retries soon.
+type GeoProvider = {
+  name: string;
+  url: (ip: string) => string;
+  parse: (j: any) => IpLocation | null;
+};
+const GEO_PROVIDERS: GeoProvider[] = [
+  {
+    name: "ipwho.is",
+    url: (ip) => `https://ipwho.is/${encodeURIComponent(ip)}`,
+    parse: (j) => {
+      if (!j || j.success === false) return null;
+      const cc = typeof j.country_code === "string" ? j.country_code.toUpperCase() : "";
+      return {
+        country: /^[A-Z]{2}$/.test(cc) ? cc : null,
+        countryName: typeof j.country === "string" ? j.country : null,
+        region:      typeof j.region  === "string" ? j.region  : null,
+        city:        typeof j.city    === "string" ? j.city    : null,
+        lat: typeof j.latitude  === "number" ? j.latitude  : null,
+        lng: typeof j.longitude === "number" ? j.longitude : null,
+      };
+    },
+  },
+  {
+    // ip-api.com is free over HTTP (HTTPS requires a paid key). Outbound
+    // HTTP is allowed from Replit deployments. ~45 req/min per caller IP.
+    name: "ip-api.com",
+    url: (ip) => `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,country,countryCode,regionName,city,lat,lon`,
+    parse: (j) => {
+      if (!j || j.status !== "success") return null;
+      const cc = typeof j.countryCode === "string" ? j.countryCode.toUpperCase() : "";
+      return {
+        country: /^[A-Z]{2}$/.test(cc) ? cc : null,
+        countryName: typeof j.country === "string" ? j.country : null,
+        region:      typeof j.regionName === "string" ? j.regionName : null,
+        city:        typeof j.city === "string" ? j.city : null,
+        lat: typeof j.lat === "number" ? j.lat : null,
+        lng: typeof j.lon === "number" ? j.lon : null,
+      };
+    },
+  },
+  {
+    name: "ipapi.co",
+    url: (ip) => `https://ipapi.co/${encodeURIComponent(ip)}/json/`,
+    parse: (j) => {
+      if (!j || j.error) return null;
+      const cc = typeof j.country_code === "string" ? j.country_code.toUpperCase() : "";
+      return {
+        country: /^[A-Z]{2}$/.test(cc) ? cc : null,
+        countryName: typeof j.country_name === "string" ? j.country_name : null,
+        region:      typeof j.region === "string" ? j.region : null,
+        city:        typeof j.city === "string" ? j.city : null,
+        lat: typeof j.latitude  === "number" ? j.latitude  : null,
+        lng: typeof j.longitude === "number" ? j.longitude : null,
+      };
+    },
+  },
+];
+
+async function tryProvider(p: GeoProvider, ip: string): Promise<IpLocation | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), GEO_LOOKUP_TIMEOUT_MS);
   try {
-    const r = await fetch(`https://ipwho.is/${encodeURIComponent(v4)}`, { signal: ctrl.signal });
-    if (!r.ok) { ipLocCacheSet(v4, null); return null; }
-    const j: any = await r.json();
-    if (!j || j.success === false) { ipLocCacheSet(v4, null); return null; }
-    const country = typeof j.country_code === "string" && /^[A-Z]{2}$/.test(j.country_code.toUpperCase())
-      ? j.country_code.toUpperCase() : null;
-    const out: IpLocation = {
-      country,
-      countryName: typeof j.country === "string" ? j.country : null,
-      region:      typeof j.region  === "string" ? j.region  : null,
-      city:        typeof j.city    === "string" ? j.city    : null,
-      lat: typeof j.latitude  === "number" ? j.latitude  : null,
-      lng: typeof j.longitude === "number" ? j.longitude : null,
-    };
-    ipLocCacheSet(v4, out);
-    // Warm the country-only cache as a side effect so the visitor
-    // middleware and resolveCountryForIp don't make a duplicate call.
-    if (country) geoCacheSet(v4, country);
-    return out;
+    const r = await fetch(p.url(ip), { signal: ctrl.signal });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return p.parse(j);
   } catch {
-    ipLocCacheSet(v4, null);
     return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function ipLocFetch(v4: string): Promise<IpLocation | null> {
+  for (const p of GEO_PROVIDERS) {
+    const out = await tryProvider(p, v4);
+    // Require at least a country code to consider it a real hit;
+    // otherwise fall through to the next provider.
+    if (out && (out.country || out.city)) {
+      ipLocCacheSet(v4, out);
+      if (out.country) geoCacheSet(v4, out.country);
+      return out;
+    }
+  }
+  ipLocCacheSet(v4, null);
+  return null;
 }
 
 export async function resolveLocationForIp(ip: string): Promise<IpLocation | null> {
