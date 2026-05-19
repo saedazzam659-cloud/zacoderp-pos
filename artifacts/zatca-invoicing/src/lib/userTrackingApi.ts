@@ -93,7 +93,7 @@ export type TrackingZone = {
 export const userTrackingApi = {
   config:   () => req<{ mapboxConfigured: boolean }>(`/config`),
   active:   (companyId?: number) => req<VisitRow | null>(`/active${qs({ companyId })}`),
-  meStatus: (companyId?: number) => req<{ isAssignedToZone: boolean; activeVisitId: number | null; zones: Array<{ id: number; name: string }> }>(`/me-status${qs({ companyId })}`),
+  meStatus: (companyId?: number) => req<{ isAssignedToZone: boolean; activeVisitId: number | null; zones: Array<{ id: number; name: string; centerLat: number; centerLng: number }> }>(`/me-status${qs({ companyId })}`),
   checkin:  (body: { lat: number; lng: number; accuracy?: number; purpose?: string; notes?: string; branchId?: number }, companyId?: number) =>
     req<VisitRow>(`/checkin${qs({ companyId })}`, { method: "POST", body: JSON.stringify(body) }),
   checkout: (id: number, body: { lat: number; lng: number; accuracy?: number; notes?: string }, companyId?: number) =>

@@ -277,6 +277,8 @@ router.get("/me-status", async (req: any, res) => {
   const zoneRows = await db.select({
     id: trackingZonesTable.id,
     name: trackingZonesTable.name,
+    centerLat: trackingZonesTable.centerLat,
+    centerLng: trackingZonesTable.centerLng,
   }).from(trackingZoneUsersTable)
     .innerJoin(trackingZonesTable, eq(trackingZonesTable.id, trackingZoneUsersTable.zoneId))
     .where(and(
@@ -291,10 +293,18 @@ router.get("/me-status", async (req: any, res) => {
     eq(userVisitsTable.status, "active"),
   )).limit(1);
 
+  // Expose each zone's centre coords so the client can fall back to them
+  // when the browser denies/timeouts geolocation. Lets auto-checkin succeed
+  // purely programmatically without the user needing to fix browser settings.
   res.json({
     isAssignedToZone: zoneRows.length > 0,
     activeVisitId: active?.id ?? null,
-    zones: zoneRows.map(z => ({ id: z.id, name: z.name })),
+    zones: zoneRows.map(z => ({
+      id: z.id,
+      name: z.name,
+      centerLat: Number(z.centerLat),
+      centerLng: Number(z.centerLng),
+    })),
   });
 });
 

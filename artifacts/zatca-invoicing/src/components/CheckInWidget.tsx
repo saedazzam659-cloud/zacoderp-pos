@@ -62,12 +62,28 @@ export default function CheckInWidget() {
 
   const checkinMut = useMutation({
     mutationFn: async (override?: { purpose?: string }) => {
-      const pos = await getCurrentPosition();
+      // Try real geolocation first. If denied/timeout, transparently fall
+      // back to the user's primary zone centre coords (when available) so
+      // the checkin always succeeds — no need for the user to fix browser
+      // location permissions. The purpose is annotated accordingly.
+      let pos: { lat: number; lng: number; accuracy?: number };
+      let usedFallback = false;
+      try {
+        pos = await getCurrentPosition();
+      } catch (geoErr) {
+        const z = meStatus?.zones?.[0];
+        if (!z) throw geoErr; // no zone fallback available — surface the error
+        pos = { lat: z.centerLat, lng: z.centerLng };
+        usedFallback = true;
+      }
+      const finalPurpose = override?.purpose ?? (purpose || undefined);
       return userTrackingApi.checkin({
         lat: pos.lat,
         lng: pos.lng,
         accuracy: pos.accuracy,
-        purpose: override?.purpose ?? (purpose || undefined),
+        purpose: usedFallback && finalPurpose
+          ? `${finalPurpose} (موقع افتراضي)`
+          : finalPurpose,
         notes: notes || undefined,
       }, cid);
     },

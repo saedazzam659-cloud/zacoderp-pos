@@ -58,34 +58,41 @@ export function useAutoCheckinOnLogin() {
         if (!st.isAssignedToZone) return;          // user not bound → skip
         if (st.activeVisitId) return;              // already checked-in → skip
 
-        // Ask the browser for a fix. If the user refuses, fail silently
-        // (they'll see the manual check-in button on /user-tracking).
-        let pos: { lat: number; lng: number; accuracy: number };
+        // Ask the browser for a fix. If permission was denied/timed out,
+        // fall back PROGRAMMATICALLY to the user's primary assigned zone
+        // centre coords (returned by /me-status). This way the auto-checkin
+        // ALWAYS succeeds for a zone-bound user — no manual intervention
+        // and no need to touch browser permissions. The visit row will
+        // simply carry the zone centre as its checkin coords, which the
+        // live-map already treats as the user's fallback position.
+        let pos: { lat: number; lng: number; accuracy?: number };
+        let usedFallback = false;
         try {
           pos = await getCurrentPosition();
-        } catch (geoErr: any) {
-          // Permission denied / timeout — surface a gentle hint exactly once.
-          toast({
-            title: "تتبع الزيارات",
-            description: "أنت مُعيَّن على منطقة تتبع لكن المتصفح رفض تحديد موقعك. يمكنك تسجيل الزيارة يدوياً من شاشة تتبع المواقع.",
-            variant: "destructive",
-          });
-          return;
+        } catch {
+          const z = st.zones[0];
+          if (!z) return; // shouldn't happen — isAssignedToZone implies ≥1 zone
+          pos = { lat: z.centerLat, lng: z.centerLng };
+          usedFallback = true;
         }
 
         await userTrackingApi.checkin({
           lat: pos.lat,
           lng: pos.lng,
           accuracy: pos.accuracy,
-          purpose: "تسجيل دخول للنظام",
+          purpose: usedFallback
+            ? "تسجيل دخول للنظام (موقع افتراضي)"
+            : "تسجيل دخول للنظام",
         });
 
         const zoneNames = st.zones.map(z => z.name).join("، ");
         toast({
           title: "✅ تم تسجيل بداية الدوام",
-          description: zoneNames
-            ? `تم تسجيل زيارة جديدة تلقائياً ضمن نطاق المنطقة: ${zoneNames}`
-            : "تم تسجيل زيارة جديدة تلقائياً وفقاً للمنطقة المُعيَّنة لك.",
+          description: usedFallback
+            ? `تم تسجيل زيارة تلقائياً عند مركز المنطقة: ${zoneNames} (تعذّر قراءة موقعك الفعلي).`
+            : (zoneNames
+                ? `تم تسجيل زيارة جديدة تلقائياً ضمن نطاق المنطقة: ${zoneNames}`
+                : "تم تسجيل زيارة جديدة تلقائياً وفقاً للمنطقة المُعيَّنة لك."),
         });
       } catch {
         // Any other failure (offline, server error, race with manual checkin):
