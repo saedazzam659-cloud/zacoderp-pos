@@ -33,8 +33,8 @@ export default function CustomerStatement() {
   const today = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
 
-  const [filters, setFilters] = useState<{ from: string; to: string; customerId: string; branchId?: number }>({ from: firstDay, to: today, customerId: "", branchId: undefined });
-  const [applied, setApplied] = useState<{ from: string; to: string; customerId: string; branchId?: number }>({ from: firstDay, to: today, customerId: "", branchId: undefined });
+  const [filters, setFilters] = useState<{ from: string; to: string; customerId: string; branchId?: number; withOpening: boolean }>({ from: firstDay, to: today, customerId: "", branchId: undefined, withOpening: true });
+  const [applied, setApplied] = useState<{ from: string; to: string; customerId: string; branchId?: number; withOpening: boolean }>({ from: firstDay, to: today, customerId: "", branchId: undefined, withOpening: true });
 
   const { data: customers = [] } = useQuery({
     queryKey: ["customers", cid],
@@ -90,17 +90,21 @@ export default function CustomerStatement() {
     receipt: tr("typeReceipt"),
   };
 
+  // When the user toggles "بدون رصيد افتتاحي" we treat opening as 0 in every
+  // downstream calculation (running balance, summary cards, exports, printable
+  // view). Applied via the same Show button as other filters.
+  const effectiveOpening = applied.withOpening ? (data?.opening ?? 0) : 0;
+
   const augmented = useMemo(() => {
-    const opening = data?.opening ?? 0;
-    let bal = opening;
+    let bal = effectiveOpening;
     return (data?.lines ?? []).map(l => {
       bal += l.debit - l.credit;
       return { ...l, balance: bal };
     });
-  }, [data]);
+  }, [data, effectiveOpening]);
 
   const totals = augmented.reduce((s, l) => ({ debit: s.debit + l.debit, credit: s.credit + l.credit }), { debit: 0, credit: 0 });
-  const closing = (data?.opening ?? 0) + totals.debit - totals.credit;
+  const closing = effectiveOpening + totals.debit - totals.credit;
 
   const customerLabel = customer ? pickName(customer.nameAr, customer.nameEn) : "";
 
@@ -117,7 +121,7 @@ export default function CustomerStatement() {
           account={acctView}
           from={applied.from}
           to={applied.to}
-          opening={data?.opening ?? 0}
+          opening={effectiveOpening}
           lines={augmented.map(l => ({
             date: l.date,
             type: TYPE_LABEL[l.type] ?? l.type,
@@ -164,6 +168,21 @@ export default function CustomerStatement() {
             <BranchFilter value={filters.branchId} onChange={(v) => setFilters(p => ({ ...p, branchId: v }))} />
           </div>
         </div>
+        {/* Opening-balance toggle: lets the user view the account either
+            with the carried-forward opening balance (default) or as a
+            period-only movement view starting from zero. */}
+        <div className="flex items-center gap-2 mt-4">
+          <input
+            id="cs-with-opening"
+            type="checkbox"
+            className="h-4 w-4"
+            checked={filters.withOpening}
+            onChange={e => setFilters(p => ({ ...p, withOpening: e.target.checked }))}
+          />
+          <Label htmlFor="cs-with-opening" className="cursor-pointer text-sm font-normal">
+            {isRtl ? "تضمين الرصيد الافتتاحي" : "Include opening balance"}
+          </Label>
+        </div>
         <div className="flex justify-end mt-4">
           <Button size="sm" onClick={() => setApplied({ ...filters })} disabled={!filters.customerId} className="gap-2">
             <Search className="h-3.5 w-3.5" />{tr("show")}
@@ -173,11 +192,13 @@ export default function CustomerStatement() {
 
       {/* Summary */}
       {applied.customerId && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="rounded-xl border bg-card p-4">
-            <p className="text-xs text-muted-foreground">{tr("opening")}</p>
-            <p className={`text-xl font-bold tabular-nums mt-1 ${(data?.opening ?? 0) >= 0 ? "" : "text-emerald-600"}`}>{fmt(data?.opening ?? 0)}</p>
-          </div>
+        <div className={`grid grid-cols-2 ${applied.withOpening ? "md:grid-cols-4" : "md:grid-cols-3"} gap-4`}>
+          {applied.withOpening && (
+            <div className="rounded-xl border bg-card p-4">
+              <p className="text-xs text-muted-foreground">{tr("opening")}</p>
+              <p className={`text-xl font-bold tabular-nums mt-1 ${(data?.opening ?? 0) >= 0 ? "" : "text-emerald-600"}`}>{fmt(data?.opening ?? 0)}</p>
+            </div>
+          )}
           <div className="rounded-xl border bg-blue-50 border-blue-200 p-4">
             <p className="text-xs text-blue-700">{tr("totalDebit")}</p>
             <p className="text-xl font-bold text-blue-700 tabular-nums mt-1">{fmt(totals.debit)}</p>
@@ -207,7 +228,7 @@ export default function CustomerStatement() {
             from={applied.from}
             to={applied.to}
             branchName={branchName}
-            opening={data?.opening ?? 0}
+            opening={effectiveOpening}
             lines={augmented.map(l => ({
               date: l.date,
               type: TYPE_LABEL[l.type] ?? l.type,

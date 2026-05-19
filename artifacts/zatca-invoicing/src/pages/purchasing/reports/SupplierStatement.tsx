@@ -31,8 +31,8 @@ export default function SupplierStatement() {
   const today = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
 
-  const [filters, setFilters] = useState<{ from: string; to: string; supplierId: string; branchId?: number }>({ from: firstDay, to: today, supplierId: "", branchId: undefined });
-  const [applied, setApplied] = useState<{ from: string; to: string; supplierId: string; branchId?: number }>({ from: firstDay, to: today, supplierId: "", branchId: undefined });
+  const [filters, setFilters] = useState<{ from: string; to: string; supplierId: string; branchId?: number; withOpening: boolean }>({ from: firstDay, to: today, supplierId: "", branchId: undefined, withOpening: true });
+  const [applied, setApplied] = useState<{ from: string; to: string; supplierId: string; branchId?: number; withOpening: boolean }>({ from: firstDay, to: today, supplierId: "", branchId: undefined, withOpening: true });
 
   const TYPE_LABEL: Record<string, string> = {
     invoice: t("purchasingReports.supplierStatement.type.invoice"),
@@ -89,17 +89,22 @@ export default function SupplierStatement() {
     level:     linkedAccount?.level ?? null,
   };
 
+  // Toggle: include carried-forward opening balance, or show period-only
+  // movement starting from zero. Affects running balance, summary cards,
+  // printable view and all exports. Applied via the same Show button as
+  // other filters.
+  const effectiveOpening = applied.withOpening ? (data?.opening ?? 0) : 0;
+
   const augmented = useMemo(() => {
-    const opening = data?.opening ?? 0;
-    let bal = opening;
+    let bal = effectiveOpening;
     return (data?.lines ?? []).map(l => {
       bal += l.credit - l.debit;
       return { ...l, balance: bal };
     });
-  }, [data]);
+  }, [data, effectiveOpening]);
 
   const totals = augmented.reduce((s, l) => ({ debit: s.debit + l.debit, credit: s.credit + l.credit }), { debit: 0, credit: 0 });
-  const closing = (data?.opening ?? 0) + totals.credit - totals.debit;
+  const closing = effectiveOpening + totals.credit - totals.debit;
 
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
@@ -114,7 +119,7 @@ export default function SupplierStatement() {
           account={acctView}
           from={applied.from}
           to={applied.to}
-          opening={data?.opening ?? 0}
+          opening={effectiveOpening}
           lines={augmented.map(l => ({
             date: l.date,
             type: TYPE_LABEL[l.type] ?? l.type,
@@ -160,6 +165,21 @@ export default function SupplierStatement() {
             <BranchFilter value={filters.branchId} onChange={(v) => setFilters(p => ({ ...p, branchId: v }))} />
           </div>
         </div>
+        {/* Opening-balance toggle: lets the user view the supplier account
+            with the carried-forward opening balance (default) or as a
+            period-only movement view starting from zero. */}
+        <div className="flex items-center gap-2 mt-4">
+          <input
+            id="ss-with-opening"
+            type="checkbox"
+            className="h-4 w-4"
+            checked={filters.withOpening}
+            onChange={e => setFilters(p => ({ ...p, withOpening: e.target.checked }))}
+          />
+          <Label htmlFor="ss-with-opening" className="cursor-pointer text-sm font-normal">
+            {isRtl ? "تضمين الرصيد الافتتاحي" : "Include opening balance"}
+          </Label>
+        </div>
         <div className="flex justify-end mt-4">
           <Button size="sm" onClick={() => setApplied({ ...filters })} disabled={!filters.supplierId} className="gap-2">
             <Search className="h-3.5 w-3.5" />{t("purchasingPages.common.showStatement")}
@@ -168,11 +188,13 @@ export default function SupplierStatement() {
       </div>
 
       {applied.supplierId && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="rounded-xl border bg-card p-4">
-            <p className="text-xs text-muted-foreground">{t("purchasingReports.supplierStatement.openingBalance")}</p>
-            <p className="text-xl font-bold tabular-nums mt-1">{fmt(data?.opening ?? 0)}</p>
-          </div>
+        <div className={`grid grid-cols-2 ${applied.withOpening ? "md:grid-cols-4" : "md:grid-cols-3"} gap-4`}>
+          {applied.withOpening && (
+            <div className="rounded-xl border bg-card p-4">
+              <p className="text-xs text-muted-foreground">{t("purchasingReports.supplierStatement.openingBalance")}</p>
+              <p className="text-xl font-bold tabular-nums mt-1">{fmt(data?.opening ?? 0)}</p>
+            </div>
+          )}
           <div className="rounded-xl border bg-blue-50 border-blue-200 p-4">
             <p className="text-xs text-blue-700">{t("purchasingReports.supplierStatement.totalDebitDesc")}</p>
             <p className="text-xl font-bold text-blue-700 tabular-nums mt-1">{fmt(totals.debit)}</p>
@@ -201,7 +223,7 @@ export default function SupplierStatement() {
             from={applied.from}
             to={applied.to}
             branchName={branchName}
-            opening={data?.opening ?? 0}
+            opening={effectiveOpening}
             lines={augmented.map(l => ({
               date: l.date,
               type: TYPE_LABEL[l.type] ?? l.type,
