@@ -846,6 +846,19 @@ export interface StatementPdfAccount {
   level?: string | number | null;
 }
 
+/** Column-visibility map mirroring the on-screen chooser. All 7 keys are
+ *  optional — missing keys default to `true` so legacy callers that don't
+ *  pass this object continue to print the full 7-column layout. */
+export interface StatementPdfVisibleCols {
+  date?: boolean;
+  docNumber?: boolean;
+  type?: boolean;
+  debit?: boolean;
+  credit?: boolean;
+  balance?: boolean;
+  description?: boolean;
+}
+
 export interface ExportStatementPdfOpts {
   mode: "customer" | "supplier";
   company?: StatementPdfCompany | null;
@@ -863,6 +876,9 @@ export interface ExportStatementPdfOpts {
   /** Localized branch name when the user filtered by a specific branch.
    *  Undefined / null / empty => "all branches" => the row is hidden. */
   branchName?: string | null;
+  /** Optional column-visibility map. When omitted every column renders, so
+   *  callers that don't yet wire up the chooser keep the old 7-col layout. */
+  visibleCols?: StatementPdfVisibleCols;
 }
 
 export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
@@ -871,6 +887,18 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     opening, lines, totals, closing,
     filename, autoPrint = true, branchName,
   } = opts;
+  const vc = opts.visibleCols ?? {};
+  const v = {
+    date:        vc.date        !== false,
+    docNumber:   vc.docNumber   !== false,
+    type:        vc.type        !== false,
+    debit:       vc.debit       !== false,
+    credit:      vc.credit      !== false,
+    balance:     vc.balance     !== false,
+    description: vc.description !== false,
+  };
+  const leadingSpan = (v.date ? 1 : 0) + (v.docNumber ? 1 : 0) + (v.type ? 1 : 0);
+  const colCount = leadingSpan + (v.debit ? 1 : 0) + (v.credit ? 1 : 0) + (v.balance ? 1 : 0) + (v.description ? 1 : 0);
   const fmt = opts.fmt ?? ((n: number) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
   const escape = (s: unknown) =>
@@ -907,25 +935,25 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     : `<div class="logo-fallback">${escape((company?.nameAr || company?.nameEn || "?").trim().slice(0, 2))}</div>`;
 
   const lineRows = lines.length === 0
-    ? `<tr><td colspan="7" class="empty">لا توجد حركات في الفترة المحددة</td></tr>`
+    ? `<tr><td colspan="${Math.max(1, colCount)}" class="empty">لا توجد حركات في الفترة المحددة</td></tr>`
     : lines.map((l, i) => `
         <tr class="${i % 2 === 0 ? "even" : "odd"}">
-          <td class="mono">${escape(l.date)}</td>
-          <td class="mono">${escape(l.docNumber || "—")}</td>
-          <td>${escape(l.type)}</td>
-          <td class="mono num ${l.debit  ? "debit"  : "muted"}">${l.debit  ? escape(fmt(l.debit))  : "0.00"}</td>
-          <td class="mono num ${l.credit ? "credit" : "muted"}">${l.credit ? escape(fmt(l.credit)) : "0.00"}</td>
-          <td class="mono num strong">${escape(fmt(l.balance))}</td>
-          <td>${escape(l.description)}</td>
+          ${v.date        ? `<td class="mono">${escape(l.date)}</td>` : ""}
+          ${v.docNumber   ? `<td class="mono">${escape(l.docNumber || "—")}</td>` : ""}
+          ${v.type        ? `<td>${escape(l.type)}</td>` : ""}
+          ${v.debit       ? `<td class="mono num ${l.debit  ? "debit"  : "muted"}">${l.debit  ? escape(fmt(l.debit))  : "0.00"}</td>` : ""}
+          ${v.credit      ? `<td class="mono num ${l.credit ? "credit" : "muted"}">${l.credit ? escape(fmt(l.credit)) : "0.00"}</td>` : ""}
+          ${v.balance     ? `<td class="mono num strong">${escape(fmt(l.balance))}</td>` : ""}
+          ${v.description ? `<td>${escape(l.description)}</td>` : ""}
         </tr>`).join("");
 
   const totalsRow = lines.length > 0 ? `
     <tr class="totals">
-      <td colspan="3">الإجمالي</td>
-      <td class="mono num debit">${escape(fmt(totals.debit))}</td>
-      <td class="mono num credit">${escape(fmt(totals.credit))}</td>
-      <td class="mono num strong">${escape(fmt(closing))}</td>
-      <td>—</td>
+      ${leadingSpan > 0 ? `<td colspan="${leadingSpan}">الإجمالي</td>` : ""}
+      ${v.debit       ? `<td class="mono num debit">${escape(fmt(totals.debit))}</td>` : ""}
+      ${v.credit      ? `<td class="mono num credit">${escape(fmt(totals.credit))}</td>` : ""}
+      ${v.balance     ? `<td class="mono num strong">${escape(fmt(closing))}</td>` : ""}
+      ${v.description ? `<td>—</td>` : ""}
     </tr>` : "";
 
   const html = `<!DOCTYPE html>
@@ -1133,24 +1161,24 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     <table>
       <thead>
         <tr>
-          <th>التاريخ</th>
-          <th>الرقم</th>
-          <th>البيان</th>
-          <th>مدين</th>
-          <th>دائن</th>
-          <th>الرصيد</th>
-          <th>الشرح</th>
+          ${v.date        ? `<th>التاريخ</th>` : ""}
+          ${v.docNumber   ? `<th>الرقم</th>` : ""}
+          ${v.type        ? `<th>البيان</th>` : ""}
+          ${v.debit       ? `<th>مدين</th>` : ""}
+          ${v.credit      ? `<th>دائن</th>` : ""}
+          ${v.balance     ? `<th>الرصيد</th>` : ""}
+          ${v.description ? `<th>الشرح</th>` : ""}
         </tr>
       </thead>
       <tbody>
         <tr class="opening">
-          <td class="mono">${escape(from)}</td>
-          <td>—</td>
-          <td class="lbl">رصيد افتتاحي</td>
-          <td class="mono num">${openingDebit  ? escape(fmt(openingDebit))  : "0.00"}</td>
-          <td class="mono num">${openingCredit ? escape(fmt(openingCredit)) : "0.00"}</td>
-          <td class="mono num strong">${escape(fmt(opening))}</td>
-          <td>—</td>
+          ${v.date        ? `<td class="mono">${escape(from)}</td>` : ""}
+          ${v.docNumber   ? `<td>—</td>` : ""}
+          ${v.type        ? `<td class="lbl">رصيد افتتاحي</td>` : ""}
+          ${v.debit       ? `<td class="mono num">${openingDebit  ? escape(fmt(openingDebit))  : "0.00"}</td>` : ""}
+          ${v.credit      ? `<td class="mono num">${openingCredit ? escape(fmt(openingCredit)) : "0.00"}</td>` : ""}
+          ${v.balance     ? `<td class="mono num strong">${escape(fmt(opening))}</td>` : ""}
+          ${v.description ? `<td>—</td>` : ""}
         </tr>
         ${lineRows}
         ${totalsRow}

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import StatementExportButtons from "@/components/StatementExportButtons";
+import StatementColumnChooser, { useStatementVisibleCols } from "@/components/StatementColumnChooser";
 import BranchFilter from "@/components/BranchFilter";
 import { useBranches } from "@/hooks/useBranches";
 import AccountStatementView from "@/components/AccountStatementView";
@@ -35,6 +36,9 @@ export default function CustomerStatement() {
 
   const [filters, setFilters] = useState<{ from: string; to: string; customerId: string; branchId?: number; withOpening: boolean }>({ from: firstDay, to: today, customerId: "", branchId: undefined, withOpening: true });
   const [applied, setApplied] = useState<{ from: string; to: string; customerId: string; branchId?: number; withOpening: boolean }>({ from: firstDay, to: today, customerId: "", branchId: undefined, withOpening: true });
+
+  // Column visibility for table + exports (persisted per page).
+  const [visibleCols, setVisibleCols] = useStatementVisibleCols("customer");
 
   const { data: customers = [] } = useQuery({
     queryKey: ["customers", cid],
@@ -115,28 +119,32 @@ export default function CustomerStatement() {
           <h1 className="text-2xl font-bold flex items-center gap-2"><FileText className="h-6 w-6 text-primary" />{tr("title")}</h1>
           <p className="text-muted-foreground text-sm mt-1">{tr("subtitle")}</p>
         </div>
-        <StatementExportButtons
-          mode="customer"
-          company={(user?.company as any) ?? null}
-          account={acctView}
-          from={applied.from}
-          to={applied.to}
-          opening={effectiveOpening}
-          lines={augmented.map(l => ({
-            date: l.date,
-            type: TYPE_LABEL[l.type] ?? l.type,
-            docNumber: l.docNumber,
-            description: l.description,
-            debit: l.debit,
-            credit: l.credit,
-            balance: l.balance,
-          }))}
-          totals={totals}
-          closing={closing}
-          filename={`${tr("exportFilename")}-${customerLabel || "customer"}-${applied.from}-${applied.to}`}
-          disabled={!applied.customerId || isLoading}
-          branchName={branchName}
-        />
+        <div className="flex items-center gap-2">
+          <StatementColumnChooser value={visibleCols} onChange={setVisibleCols} />
+          <StatementExportButtons
+            mode="customer"
+            company={(user?.company as any) ?? null}
+            account={acctView}
+            from={applied.from}
+            to={applied.to}
+            opening={effectiveOpening}
+            lines={augmented.map(l => ({
+              date: l.date,
+              type: TYPE_LABEL[l.type] ?? l.type,
+              docNumber: l.docNumber,
+              description: l.description,
+              debit: l.debit,
+              credit: l.credit,
+              balance: l.balance,
+            }))}
+            totals={totals}
+            closing={closing}
+            filename={`${tr("exportFilename")}-${customerLabel || "customer"}-${applied.from}-${applied.to}`}
+            disabled={!applied.customerId || isLoading}
+            branchName={branchName}
+            visibleCols={visibleCols}
+          />
+        </div>
       </div>
 
       {/* Filters */}
@@ -229,6 +237,7 @@ export default function CustomerStatement() {
             to={applied.to}
             branchName={branchName}
             opening={effectiveOpening}
+            visibleCols={visibleCols}
             lines={augmented.map(l => ({
               date: l.date,
               type: TYPE_LABEL[l.type] ?? l.type,

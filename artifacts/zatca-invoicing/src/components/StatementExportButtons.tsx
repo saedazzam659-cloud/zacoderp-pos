@@ -11,6 +11,11 @@ import {
   type ExportColumn, type StatementPdfCompany, type StatementPdfAccount, type StatementPdfLine,
 } from "@/lib/export";
 import { useFmt } from "@/hooks/use-fmt";
+import {
+  STATEMENT_COL_DEFAULTS,
+  type StatementColKey,
+  type StatementVisibleCols,
+} from "@/components/StatementColumnChooser";
 
 /**
  * Export menu specialized for account statements (customer / supplier).
@@ -37,15 +42,20 @@ interface Props {
   /** Localized branch name when a specific branch is filtered; shown in
    *  the printable PDF view's account-meta block. */
   branchName?: string | null;
+  /** Column visibility map shared with the on-screen table and the PDF
+   *  exporter so the user sees an identical layout everywhere. Defaults
+   *  to all visible when omitted. */
+  visibleCols?: StatementVisibleCols;
 }
 
 export default function StatementExportButtons({
   mode, company, account, from, to, opening, lines, totals, closing, filename, disabled, branchName,
+  visibleCols = STATEMENT_COL_DEFAULTS,
 }: Props) {
   const [busy, setBusy] = useState(false);
   const { fmt } = useFmt();
 
-  const excelColumns: ExportColumn[] = [
+  const ALL_EXCEL_COLUMNS: (ExportColumn & { key: StatementColKey })[] = [
     { key: "date", header: "التاريخ", width: 14 },
     { key: "docNumber", header: "الرقم", width: 16 },
     { key: "type", header: "البيان", width: 16 },
@@ -54,6 +64,7 @@ export default function StatementExportButtons({
     { key: "balance", header: "الرصيد", width: 16 },
     { key: "description", header: "الشرح", width: 30 },
   ];
+  const excelColumns: ExportColumn[] = ALL_EXCEL_COLUMNS.filter(c => visibleCols[c.key]);
 
   const openingDebit  = mode === "supplier" ? (opening < 0 ? -opening : 0) : (opening > 0 ? opening  : 0);
   const openingCredit = mode === "supplier" ? (opening > 0 ? opening  : 0) : (opening < 0 ? -opening : 0);
@@ -77,10 +88,19 @@ export default function StatementExportButtons({
     })),
   ];
 
-  const totalsRow = lines.length > 0 ? {
-    date: "", docNumber: "", type: "الإجمالي",
+  // Place the "الإجمالي" label in the first visible leading column so the
+  // user always sees it on the totals row regardless of which columns
+  // (date / docNumber / type) are hidden via the chooser.
+  const firstLeading: StatementColKey | null =
+    visibleCols.date ? "date"
+    : visibleCols.docNumber ? "docNumber"
+    : visibleCols.type ? "type"
+    : null;
+  const totalsRow: Record<string, unknown> | null = lines.length > 0 ? {
+    date: "", docNumber: "", type: "",
     debit: fmt(totals.debit), credit: fmt(totals.credit),
     balance: fmt(closing), description: "",
+    ...(firstLeading ? { [firstLeading]: "الإجمالي" } : {}),
   } : null;
 
   async function handleExport(type: "excel" | "pdf" | "print") {
@@ -91,7 +111,7 @@ export default function StatementExportButtons({
       } else {
         exportStatementToPDF({
           mode, company, account, from, to, opening, lines, totals, closing,
-          filename, autoPrint: type === "print", fmt, branchName,
+          filename, autoPrint: type === "print", fmt, branchName, visibleCols,
         });
       }
     } finally {

@@ -1,6 +1,10 @@
 import { useTranslation } from "react-i18next";
 import { useFmt } from "@/hooks/use-fmt";
 import { Building2 } from "lucide-react";
+import {
+  STATEMENT_COL_DEFAULTS,
+  type StatementVisibleCols,
+} from "@/components/StatementColumnChooser";
 
 /**
  * AccountStatementView — a printable, presentation-grade card that renders a
@@ -77,10 +81,15 @@ export interface AccountStatementViewProps {
   /** Localized branch name when the user filtered by a specific branch.
    *  Undefined / null / empty => "all branches" => the row is hidden. */
   branchName?: string | null;
+  /** Optional column-visibility map. When omitted, all 7 columns render —
+   *  preserves backwards-compat for any caller that doesn't yet wire up
+   *  the column chooser. */
+  visibleCols?: StatementVisibleCols;
 }
 
 export default function AccountStatementView({
   company, account, from, to, opening, lines, totals, closing, mode, branchName,
+  visibleCols = STATEMENT_COL_DEFAULTS,
 }: AccountStatementViewProps) {
   const { fmt } = useFmt();
   const { t, i18n } = useTranslation();
@@ -184,78 +193,98 @@ export default function AccountStatementView({
       </div>
 
       {/* ─── Table ──────────────────────────────────────────────── */}
-      <div className="px-6 pb-6">
-        <div className="border rounded-lg overflow-x-auto">
-          <table className="w-full text-[12.5px] border-collapse min-w-[760px]">
-            <thead>
-              <tr className="bg-slate-100 text-slate-700">
-                <Th>{tr("colDate", "التاريخ")}</Th>
-                <Th>{tr("colDoc", "الرقم")}</Th>
-                <Th>{tr("colType", "البيان")}</Th>
-                <Th center>{tr("colDebit", "مدين")}</Th>
-                <Th center>{tr("colCredit", "دائن")}</Th>
-                <Th center>{tr("colBalance", "الرصيد")}</Th>
-                <Th>{tr("colDescription", "الشرح")}</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {/* Opening row — sign semantics differ per mode:
-                  - customer: opening > 0 means the customer owes us (debit side)
-                  - supplier: opening > 0 means we owe the supplier (credit side) */}
-              {(() => {
-                const openingDebit  = mode === "supplier" ? (opening < 0 ? -opening : 0) : (opening > 0 ? opening : 0);
-                const openingCredit = mode === "supplier" ? (opening > 0 ? opening  : 0) : (opening < 0 ? -opening : 0);
-                return (
-                  <tr className="bg-amber-50/40 border-t border-slate-200">
-                    <Td mono>{from}</Td>
-                    <Td>—</Td>
-                    <Td className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</Td>
-                    <Td center mono>{openingDebit  ? fmt(openingDebit)  : "0.00"}</Td>
-                    <Td center mono>{openingCredit ? fmt(openingCredit) : "0.00"}</Td>
-                    <Td center mono className="font-semibold">{fmt(opening)}</Td>
-                    <Td className="text-slate-500">—</Td>
+      {/* Each column is conditionally rendered based on `visibleCols` so
+          the chooser controls the on-screen layout. Same map is forwarded
+          to Excel / PDF / print so all four surfaces stay identical. */}
+      {(() => {
+        const v = visibleCols;
+        // colSpan of the leading "الإجمالي" cell = number of visible
+        // pre-numeric columns (date / docNumber / type). When all three
+        // are hidden we drop the label cell entirely so the row stays
+        // valid HTML.
+        const leadingSpan =
+          (v.date ? 1 : 0) + (v.docNumber ? 1 : 0) + (v.type ? 1 : 0);
+        const visibleCount =
+          leadingSpan +
+          (v.debit ? 1 : 0) + (v.credit ? 1 : 0) +
+          (v.balance ? 1 : 0) + (v.description ? 1 : 0);
+        const openingDebit  = mode === "supplier" ? (opening < 0 ? -opening : 0) : (opening > 0 ? opening  : 0);
+        const openingCredit = mode === "supplier" ? (opening > 0 ? opening  : 0) : (opening < 0 ? -opening : 0);
+        return (
+          <div className="px-6 pb-6">
+            <div className="border rounded-lg overflow-x-auto">
+              <table className="w-full text-[12.5px] border-collapse min-w-[480px]">
+                <thead>
+                  <tr className="bg-slate-100 text-slate-700">
+                    {v.date        && <Th>{tr("colDate", "التاريخ")}</Th>}
+                    {v.docNumber   && <Th>{tr("colDoc", "الرقم")}</Th>}
+                    {v.type        && <Th>{tr("colType", "البيان")}</Th>}
+                    {v.debit       && <Th center>{tr("colDebit", "مدين")}</Th>}
+                    {v.credit      && <Th center>{tr("colCredit", "دائن")}</Th>}
+                    {v.balance     && <Th center>{tr("colBalance", "الرصيد")}</Th>}
+                    {v.description && <Th>{tr("colDescription", "الشرح")}</Th>}
                   </tr>
-                );
-              })()}
+                </thead>
+                <tbody>
+                  {/* Opening row — sign semantics differ per mode:
+                      - customer: opening > 0 means the customer owes us (debit side)
+                      - supplier: opening > 0 means we owe the supplier (credit side) */}
+                  <tr className="bg-amber-50/40 border-t border-slate-200">
+                    {v.date        && <Td mono>{from}</Td>}
+                    {v.docNumber   && <Td>—</Td>}
+                    {v.type        && <Td className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</Td>}
+                    {v.debit       && <Td center mono>{openingDebit  ? fmt(openingDebit)  : "0.00"}</Td>}
+                    {v.credit      && <Td center mono>{openingCredit ? fmt(openingCredit) : "0.00"}</Td>}
+                    {v.balance     && <Td center mono className="font-semibold">{fmt(opening)}</Td>}
+                    {v.description && <Td className="text-slate-500">—</Td>}
+                  </tr>
 
-              {lines.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="py-10 text-center text-slate-400">
-                    {tr("noRows", "لا توجد حركات في الفترة المحددة")}
-                  </td>
-                </tr>
-              ) : lines.map((l, i) => (
-                <tr key={i} className="border-t border-slate-200 even:bg-slate-50/40 hover:bg-sky-50/40 transition-colors">
-                  <Td mono className="text-slate-600">{l.date}</Td>
-                  <Td mono className="text-slate-600">{l.docNumber || "—"}</Td>
-                  <Td>{l.type}</Td>
-                  <Td center mono className={l.debit ? "font-semibold text-sky-700" : "text-slate-400"}>
-                    {l.debit ? fmt(l.debit) : "0.00"}
-                  </Td>
-                  <Td center mono className={l.credit ? "font-semibold text-emerald-700" : "text-slate-400"}>
-                    {l.credit ? fmt(l.credit) : "0.00"}
-                  </Td>
-                  <Td center mono className="font-bold text-slate-800">{fmt(l.balance)}</Td>
-                  <Td className="text-slate-700">{l.description}</Td>
-                </tr>
-              ))}
-            </tbody>
-            {lines.length > 0 && (
-              <tfoot>
-                <tr className="bg-slate-100 border-t-2 border-slate-300 font-bold">
-                  <Td colSpan={3} className="text-slate-700">
-                    {tr("totalLabel", "الإجمالي")}
-                  </Td>
-                  <Td center mono className="text-sky-700">{fmt(totals.debit)}</Td>
-                  <Td center mono className="text-emerald-700">{fmt(totals.credit)}</Td>
-                  <Td center mono className="text-slate-900">{fmt(closing)}</Td>
-                  <Td>—</Td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
-        </div>
-      </div>
+                  {lines.length === 0 ? (
+                    <tr>
+                      <td colSpan={Math.max(1, visibleCount)} className="py-10 text-center text-slate-400">
+                        {tr("noRows", "لا توجد حركات في الفترة المحددة")}
+                      </td>
+                    </tr>
+                  ) : lines.map((l, i) => (
+                    <tr key={i} className="border-t border-slate-200 even:bg-slate-50/40 hover:bg-sky-50/40 transition-colors">
+                      {v.date      && <Td mono className="text-slate-600">{l.date}</Td>}
+                      {v.docNumber && <Td mono className="text-slate-600">{l.docNumber || "—"}</Td>}
+                      {v.type      && <Td>{l.type}</Td>}
+                      {v.debit && (
+                        <Td center mono className={l.debit ? "font-semibold text-sky-700" : "text-slate-400"}>
+                          {l.debit ? fmt(l.debit) : "0.00"}
+                        </Td>
+                      )}
+                      {v.credit && (
+                        <Td center mono className={l.credit ? "font-semibold text-emerald-700" : "text-slate-400"}>
+                          {l.credit ? fmt(l.credit) : "0.00"}
+                        </Td>
+                      )}
+                      {v.balance     && <Td center mono className="font-bold text-slate-800">{fmt(l.balance)}</Td>}
+                      {v.description && <Td className="text-slate-700">{l.description}</Td>}
+                    </tr>
+                  ))}
+                </tbody>
+                {lines.length > 0 && (
+                  <tfoot>
+                    <tr className="bg-slate-100 border-t-2 border-slate-300 font-bold">
+                      {leadingSpan > 0 && (
+                        <Td colSpan={leadingSpan} className="text-slate-700">
+                          {tr("totalLabel", "الإجمالي")}
+                        </Td>
+                      )}
+                      {v.debit       && <Td center mono className="text-sky-700">{fmt(totals.debit)}</Td>}
+                      {v.credit      && <Td center mono className="text-emerald-700">{fmt(totals.credit)}</Td>}
+                      {v.balance     && <Td center mono className="text-slate-900">{fmt(closing)}</Td>}
+                      {v.description && <Td>—</Td>}
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
