@@ -49,11 +49,12 @@ async function buildAll() {
       "pg-native",
       "oracledb",
       "mongodb-client-encryption",
-      // "nodemailer" — pure-JS, bundles cleanly. Keeping it external caused
-      // ERR_MODULE_NOT_FOUND in production because the runtime image only
-      // ships the esbuild bundle, not node_modules.
-      "pdf-parse",
-      "mammoth",
+      // "nodemailer" / "pdf-parse" / "mammoth" — pure-JS, bundle cleanly.
+      // Keeping them external caused ERR_MODULE_NOT_FOUND in production
+      // because the runtime image only ships the esbuild bundle, not
+      // node_modules. They are dynamically `import()`-ed from
+      // routes/bank-reconciliation.ts (PDF / DOCX statement parsing) and
+      // must be inlined for the deployed bundle to find them.
       "handlebars",
       "knex",
       "typeorm",
