@@ -135,7 +135,7 @@ export default function BankReconciliation() {
       for (const file of files) {
         try {
           const contentBase64 = await toBase64(file);
-          const r = await fetch(`${API}/api/bank-reconciliation/parse`, {
+          const r = await fetch(`${API}/api/bank-reconciliation/parse?debug=1`, {
             method: "POST",
             headers: authHeaders(),
             body: JSON.stringify({ filename: file.name, contentBase64 }),

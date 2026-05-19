@@ -587,6 +587,25 @@ router.post("/parse", async (req, res) => {
       const r = textToTx(text);
       txns = r.txns;
       warnings = r.warnings;
+
+      // Temporary debug: when called with ?debug=1, dump the raw extracted
+      // PDF text + the parsed transactions into the request log so we can
+      // inspect exactly what the parser sees vs what it produces. This
+      // helps diagnose off-by-one dates and balance/credit/debit column
+      // mis-ordering for specific bank statement layouts (e.g. الراجحي).
+      // Remove this block once parser is tuned for the target layouts.
+      if (req.query.debug === "1") {
+        const preview = text.length > 12000 ? text.slice(0, 12000) + "\n…[truncated]" : text;
+        req.log.warn({
+          msg: "[bank-reconciliation DEBUG] pdf text dump",
+          filename,
+          textLength: text.length,
+          textPreview: preview,
+          parsedCount: txns.length,
+          firstFiveParsed: txns.slice(0, 5),
+          lastFiveParsed: txns.slice(-5),
+        }, "PDF parse debug dump");
+      }
       // Scanned PDFs have no extractable text. The OCR helper accepts only
       // image MIME types (OpenAI vision rejects application/pdf), so we
       // surface a clear Arabic instruction to the user instead of attempting
