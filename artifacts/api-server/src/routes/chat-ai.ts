@@ -104,7 +104,10 @@ router.post("/summarize", requireAiFeature("chat_assistant"), async (req, res) =
     const sample = [...transcript.slice(0, 3), ...transcript.slice(-3)].map(m => `• ${m.author}: ${m.text.slice(0, 120)}`).join("\n");
     await logAiUsage(req, { status: "allowed", provider: "rule" });
     res.json({ summary: `ملخص أولي (الذكاء الاصطناعي غير متاح):\n${sample}`, source: "rule" });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    await logAiUsage(req, { status: "error", meta: { error: String(e?.message || e) } });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── POST /chat-ai/suggest-replies ───────────────────────────────────────
@@ -139,7 +142,10 @@ router.post("/suggest-replies", requireAiFeature("chat_assistant"), async (req, 
     }
     await logAiUsage(req, { status: "allowed", provider: usedAi ? "ai" : "rule" });
     res.json({ suggestions, source: usedAi ? "ai" : "rule" });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    await logAiUsage(req, { status: "error", meta: { error: String(e?.message || e) } });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── POST /chat-ai/translate ─────────────────────────────────────────────
@@ -170,7 +176,10 @@ router.post("/translate", requireAiFeature("chat_assistant"), async (req, res) =
       translation: parsed.data.text,
       source: "rule",
     });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    await logAiUsage(req, { status: "error", meta: { error: String(e?.message || e) } });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── POST /chat-ai/extract-tasks ─────────────────────────────────────────
@@ -200,7 +209,10 @@ router.post("/extract-tasks", requireAiFeature("chat_assistant"), async (req, re
     }
     await logAiUsage(req, { status: "allowed", provider: ai.ok ? "ai" : "rule" });
     res.json({ tasks, decisions, source: ai.ok ? "ai" : "rule" });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    await logAiUsage(req, { status: "error", meta: { error: String(e?.message || e) } });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── POST /chat-ai/transcribe ────────────────────────────────────────────

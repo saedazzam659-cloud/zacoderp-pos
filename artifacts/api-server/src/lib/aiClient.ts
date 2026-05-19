@@ -33,7 +33,13 @@ import { logger } from "./logger";
 // GOOGLE_API_KEY by default, so users coming from AI Studio often set
 // that name instead). Whichever is present wins.
 const GEMINI_KEY      = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-const GEMINI_MODEL    = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+// `gemini-flash-latest` always points to the current free-tier-friendly
+// flash model. We pin to this alias instead of a versioned name so that
+// (a) accounts limited to the legacy free-tier quota still get served
+// (some accounts return 429 limit:0 for `gemini-2.0-flash` while the
+// `*-latest` alias resolves to a model they CAN use), and (b) we
+// automatically benefit from Google's silent upgrades to the flash line.
+const GEMINI_MODEL    = process.env.GEMINI_MODEL || "gemini-flash-latest";
 const GEMINI_BASE     = "https://generativelanguage.googleapis.com/v1beta";
 const OPENAI_BASE     = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
 const OPENAI_KEY      = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
@@ -115,8 +121,14 @@ async function tryGemini(
         role: m.role === "assistant" ? "model" : "user",
         parts: [{ text: m.content }],
       }));
+
+    // Gemini requires at least one entry in `contents`. If the caller only
+    // sent system prompts, promote them to a single user turn AND drop the
+    // systemInstruction below — otherwise the prompt is sent twice.
+    let usedSystemAsUser = false;
     if (convo.length === 0) {
       convo.push({ role: "user", parts: [{ text: systemParts.join("\n\n") || "..." }] });
+      usedSystemAsUser = true;
     }
 
     const body: any = {
@@ -126,7 +138,7 @@ async function tryGemini(
         ...(opts.json ? { responseMimeType: "application/json" } : {}),
       },
     };
-    if (systemParts.length > 0) {
+    if (systemParts.length > 0 && !usedSystemAsUser) {
       body.systemInstruction = { parts: [{ text: systemParts.join("\n\n") }] };
     }
 
