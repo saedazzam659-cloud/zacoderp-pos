@@ -54,6 +54,11 @@ export type StatementLine = {
   docType?: string;
   type: string;          // localized label (فاتورة، مرتجع، سند قبض ...) — kept for back-compat
   docNumber?: string | null;
+  /** Optional deep-link URL for the "الرقم" cell — when provided, the cell
+   *  becomes a clickable link that opens the source document (invoice / return
+   *  / voucher). Caller decides the route since only it knows whether this is
+   *  a customer-side or supplier-side line. */
+  docHref?: string | null;
   /** Posted journal-entry number (رقم القيد) — rendered in its own column,
    *  replacing the former "البيان" column per user request. */
   journalEntryNumber?: string | null;
@@ -281,7 +286,20 @@ export default function AccountStatementView({
           { key: "docNumber",   label: tr("colDoc", "الرقم"),     type: "text",
             className: "font-mono tabular-nums text-slate-600",
             value: r => r.docNumber ?? (r.id != null ? `#${r.id}` : ""),
-            render: r => r.docNumber || (r.id != null ? `#${r.id}` : "—"),
+            render: r => {
+              const label = r.docNumber || (r.id != null ? `#${r.id}` : "");
+              if (!label) return "—";
+              if (!r.docHref) return label;
+              return (
+                <a
+                  href={r.docHref}
+                  className="text-sky-700 hover:text-sky-900 hover:underline"
+                  title="فتح المستند المصدر"
+                >
+                  {label}
+                </a>
+              );
+            },
           },
           { key: "type",        label: tr("colJournalEntryNumber", "رقم القيد"), type: "text",
             className: "font-mono tabular-nums text-slate-600",
@@ -413,8 +431,34 @@ export default function AccountStatementView({
                     <tr key={i} className="border-t border-slate-200 even:bg-slate-50/40 hover:bg-sky-50/40 transition-colors">
                       {v.date      && <Td mono className="text-slate-600">{l.date}</Td>}
                       {v.docType   && <Td className="text-slate-700 font-medium">{l.docType || "—"}</Td>}
-                      {v.docNumber && <Td mono className="text-slate-600">{l.docNumber || (l.id != null ? `#${l.id}` : "—")}</Td>}
-                      {v.type      && <Td mono className="text-slate-600">{l.journalEntryNumber || (l.journalEntryId != null ? `#${l.journalEntryId}` : "—")}</Td>}
+                      {v.docNumber && <Td mono className="text-slate-600">{(() => {
+                        const label = l.docNumber || (l.id != null ? `#${l.id}` : "");
+                        if (!label) return "—";
+                        if (!l.docHref) return label;
+                        return (
+                          <a
+                            href={l.docHref}
+                            className="text-sky-700 hover:text-sky-900 hover:underline"
+                            title="فتح المستند المصدر"
+                          >
+                            {label}
+                          </a>
+                        );
+                      })()}</Td>}
+                      {v.type      && <Td mono className="text-slate-600">{(() => {
+                        const label = l.journalEntryNumber || (l.journalEntryId != null ? `#${l.journalEntryId}` : "");
+                        if (!label) return "—";
+                        if (l.journalEntryId == null) return label;
+                        return (
+                          <a
+                            href={`/accounting/journals/${l.journalEntryId}`}
+                            className="text-sky-700 hover:text-sky-900 hover:underline"
+                            title="فتح القيد المحاسبي"
+                          >
+                            {label}
+                          </a>
+                        );
+                      })()}</Td>}
                       {v.debit && (
                         <Td center mono className={l.debit ? "font-semibold text-sky-700" : "text-slate-400"}>
                           {l.debit ? fmt(l.debit) : "0.00"}

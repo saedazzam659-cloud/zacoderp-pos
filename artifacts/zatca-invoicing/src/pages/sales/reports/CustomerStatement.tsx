@@ -108,6 +108,17 @@ export default function CustomerStatement() {
   // view). Applied via the same Show button as other filters.
   const effectiveOpening = applied.withOpening ? (data?.opening ?? 0) : 0;
 
+  // Deep-link map for the "الرقم" cell — customer-side documents only.
+  // Returns null when the doc kind has no dedicated detail screen (e.g.
+  // sales returns are managed inside their list page, no /:id route),
+  // in which case the cell renders plain text.
+  const docHrefFor = (kind: string, id: number | null | undefined): string | null => {
+    if (id == null) return null;
+    if (kind === "invoice") return `/sales/invoices/${id}`;
+    if (kind === "receipt") return `/cash/receipt-vouchers/${id}`;
+    return null;
+  };
+
   const augmented = useMemo(() => {
     let bal = effectiveOpening;
     return (data?.lines ?? []).map(l => {
@@ -148,6 +159,7 @@ export default function CustomerStatement() {
             docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
             type: TYPE_LABEL[l.type] ?? l.type,
             docNumber: l.docNumber,
+            docHref: docHrefFor(l.type, l.id),
             journalEntryNumber: l.journalEntryNumber,
             description: l.description,
             debit: l.debit,
@@ -314,11 +326,14 @@ export default function CustomerStatement() {
             opening={effectiveOpening}
             visibleCols={visibleCols}
             lines={augmented.map(l => ({
+              id: l.id,
+              journalEntryId: l.journalEntryId,
               date: l.date,
               docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
               type: TYPE_LABEL[l.type] ?? l.type,
               docNumber: l.docNumber,
-            journalEntryNumber: l.journalEntryNumber,
+              docHref: docHrefFor(l.type, l.id),
+              journalEntryNumber: l.journalEntryNumber,
               description: l.description,
               debit: l.debit,
               credit: l.credit,

@@ -109,6 +109,17 @@ export default function SupplierStatement() {
   // other filters.
   const effectiveOpening = applied.withOpening ? (data?.opening ?? 0) : 0;
 
+  // Deep-link map for the "الرقم" cell — supplier-side documents only.
+  // Returns null when the doc kind has no dedicated detail screen (e.g.
+  // purchase returns are managed inside their list page, no /:id route),
+  // in which case the cell renders plain text.
+  const docHrefFor = (kind: string, id: number | null | undefined): string | null => {
+    if (id == null) return null;
+    if (kind === "invoice") return `/purchasing/invoices/${id}`;
+    if (kind === "payment") return `/cash/payment-vouchers/${id}`;
+    return null;
+  };
+
   const augmented = useMemo(() => {
     let bal = effectiveOpening;
     return (data?.lines ?? []).map(l => {
@@ -315,7 +326,8 @@ export default function SupplierStatement() {
               docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
               type: TYPE_LABEL[l.type] ?? l.type,
               docNumber: l.docNumber,
-            journalEntryNumber: l.journalEntryNumber,
+              docHref: docHrefFor(l.type, l.id),
+              journalEntryNumber: l.journalEntryNumber,
               description: l.description,
               debit: l.debit,
               credit: l.credit,
