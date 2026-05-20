@@ -830,12 +830,14 @@ export default function JournalEntryForm() {
     if (!entryDate) {
       toast({ title: "التاريخ مطلوب", variant: "destructive" }); return;
     }
-    // For new entries we ALWAYS allow save — even empty/unbalanced — so
-    // the reserved sequence number is preserved as a draft holding row.
-    // For edits of existing entries we still block unbalanced posts via
-    // the /post endpoint server-side. Here we only require balance when
-    // editing an entry that is already posted (handled by the legacy
-    // paths below). Drafts can always be saved unbalanced.
+    // Explicit-save model: for NEW entries we always allow Save — even an
+    // unbalanced or partially-filled entry — and the server decides on the
+    // status (balanced + ≥2 valid lines → "posted", anything else → "draft").
+    // The sequence number is consumed exactly once, on this Save click; if
+    // the user closes the form without clicking Save, NO row is inserted
+    // and NO gap is left in the JE numbering. For EDITS we keep the
+    // pre-existing safety rails (must be balanced, ≥2 lines) because an
+    // edit that breaks an already-posted entry would corrupt the books.
     if (!isNew && !isBalanced) {
       toast({ title: "القيد غير متوازن", description: `الفرق: ${diff.toFixed(2)}`, variant: "destructive" }); return;
     }
