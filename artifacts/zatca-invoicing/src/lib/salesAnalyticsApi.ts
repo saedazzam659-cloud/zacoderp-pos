@@ -241,12 +241,12 @@ export const salesAnalyticsApi = {
     customerId: params.customerId,
     itemId: params.itemId,
   })}`),
-  byCustomer:        (cid?: number, from?: string, to?: string, branchId?: number) =>
-    get<SalesByCustomerRow[]>(`/by-customer${qs({ companyId: cid, from, to, branchId })}`),
+  byCustomer:        (cid?: number, from?: string, to?: string, branchId?: number, customerId?: number) =>
+    get<SalesByCustomerRow[]>(`/by-customer${qs({ companyId: cid, from, to, branchId, customerId })}`),
   byItem:            (cid?: number, from?: string, to?: string, branchId?: number, regionId?: number) =>
     get<SalesByItemRow[]>(`/by-item${qs({ companyId: cid, from, to, branchId, regionId })}`),
-  freeReturns:       (cid?: number, from?: string, to?: string, branchId?: number, regionId?: number) =>
-    get<FreeReturnRow[]>(`/free-returns${qs({ companyId: cid, from, to, branchId, regionId })}`),
+  freeReturns:       (cid?: number, from?: string, to?: string, branchId?: number, regionId?: number, customerId?: number) =>
+    get<FreeReturnRow[]>(`/free-returns${qs({ companyId: cid, from, to, branchId, regionId, customerId })}`),
   byPeriod:          (cid?: number, from?: string, to?: string, groupBy: "day" | "month" = "day", branchId?: number) =>
     get<SalesByPeriodRow[]>(`/by-period${qs({ companyId: cid, from, to, groupBy, branchId })}`),
   customerStatement: (cid: number | undefined, customerId: number, from?: string, to?: string, branchId?: number) =>
@@ -255,8 +255,8 @@ export const salesAnalyticsApi = {
     get<CustomerStatementDetailed>(`/customer-statement-detailed${qs({ companyId: cid, customerId, from, to, branchId })}`),
   aging:             (cid?: number, asOf?: string, branchId?: number) =>
     get<AgingRow[]>(`/aging${qs({ companyId: cid, asOf, branchId })}`),
-  returnsByCustomer: (cid?: number, from?: string, to?: string, branchId?: number, regionId?: number) =>
-    get<ReturnsByCustomerRow[]>(`/returns-by-customer${qs({ companyId: cid, from, to, branchId, regionId })}`),
+  returnsByCustomer: (cid?: number, from?: string, to?: string, branchId?: number, regionId?: number, customerId?: number) =>
+    get<ReturnsByCustomerRow[]>(`/returns-by-customer${qs({ companyId: cid, from, to, branchId, regionId, customerId })}`),
   dailyReport:       (cid?: number, date?: string, branchId?: number, source?: "all" | "manual" | "pos") =>
     get<DailyReport>(`/daily-report${qs({ companyId: cid, date, branchId, source })}`),
   paymentMixReport:  (cid?: number, date?: string, branchId?: number) =>

@@ -1,15 +1,22 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { salesAnalyticsApi } from "@/lib/salesAnalyticsApi";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
 import { Users, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
+
+const API = import.meta.env.VITE_API_URL ?? "";
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem("zatca_token");
+  return token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+}
 
 export default function SalesByCustomer() {
   const { fmt } = useFmt();
@@ -25,7 +32,36 @@ export default function SalesByCustomer() {
   const [from, setFrom] = useState(firstDay);
   const [to, setTo] = useState(today);
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
+  // فلتر العميل — اختياري. "" يعني "كل العملاء"؛ قيمة رقمية = ID العميل المحدد.
+  // يُمرَّر إلى الـ API ويُطبَّق أيضاً على عنوان/فوتر التصدير حتى يظهر اسم
+  // العميل في الطباعة عند الفلترة لعميل واحد.
+  const [customerId, setCustomerId] = useState<string>("");
   const [search, setSearch] = useState("");
+
+  const { data: customers = [] } = useQuery({
+    queryKey: ["customers", cid],
+    queryFn: async () => {
+      const r = await fetch(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, { headers: authHeaders() });
+      return r.json();
+    },
+  });
+
+  const customerOptions = useMemo(
+    () => [
+      { value: "", label: "كل العملاء" },
+      ...(customers as any[]).map(c => ({
+        value: String(c.id),
+        label: isRtl
+          ? (c.nameAr ?? c.nameEn ?? `#${c.id}`)
+          : (c.nameEn ?? c.nameAr ?? `#${c.id}`),
+      })),
+    ],
+    [customers, isRtl],
+  );
+  const selectedCustomer = (customers as any[]).find(c => String(c.id) === customerId);
+  const selectedCustomerName = selectedCustomer
+    ? (isRtl ? (selectedCustomer.nameAr ?? selectedCustomer.nameEn) : (selectedCustomer.nameEn ?? selectedCustomer.nameAr))
+    : null;
 
   const EXPORT_COLS = [
     { key: "customerName", header: tr("exportColCustomer"),    width: 30 },
@@ -39,8 +75,8 @@ export default function SalesByCustomer() {
   ];
 
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ["sales-by-customer", cid, from, to, branchId],
-    queryFn: () => salesAnalyticsApi.byCustomer(cid, from, to, branchId),
+    queryKey: ["sales-by-customer", cid, from, to, branchId, customerId],
+    queryFn: () => salesAnalyticsApi.byCustomer(cid, from, to, branchId, customerId ? Number(customerId) : undefined),
   });
 
   const filtered = (rows as any[]).filter(r => !search || r.customerNameAr?.includes(search) || r.customerNameEn?.toLowerCase().includes(search.toLowerCase()));
@@ -76,9 +112,9 @@ export default function SalesByCustomer() {
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`${tr("exportFilename")}-${from}-${to}`}
+          filename={`${tr("exportFilename")}-${from}-${to}${selectedCustomerName ? `-${selectedCustomerName}` : ""}`}
           title={tr("exportTitle")}
-          subtitle={tr("exportSubtitle", { from, to })}
+          subtitle={`${tr("exportSubtitle", { from, to })}${selectedCustomerName ? ` — العميل: ${selectedCustomerName}` : ""}`}
         />
       </div>
 
@@ -101,7 +137,7 @@ export default function SalesByCustomer() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
         <div className="space-y-1.5">
           <Label>{t("salesReports.common.from")}</Label>
           <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
@@ -113,6 +149,17 @@ export default function SalesByCustomer() {
         <div className="space-y-1.5">
           <Label>{t("common.branch")}</Label>
           <BranchFilter value={branchId} onChange={setBranchId} />
+        </div>
+        <div className="space-y-1.5">
+          <Label>العميل</Label>
+          <SearchCombobox
+            value={customerId}
+            onValueChange={setCustomerId}
+            items={customerOptions}
+            placeholder="كل العملاء"
+            searchPlaceholder="ابحث باسم العميل…"
+            emptyText="لا يوجد عميل بهذا الاسم"
+          />
         </div>
         <div className="space-y-1.5">
           <Label>{tr("search")}</Label>

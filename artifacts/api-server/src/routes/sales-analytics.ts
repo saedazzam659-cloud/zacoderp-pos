@@ -97,11 +97,18 @@ router.get("/by-customer", async (req, res) => {
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
     const { from, to } = req.query as Record<string, string>;
+    // Optional single-customer filter. When provided & numeric, restrict
+    // every aggregate (invoices / returns / receipts) to that customer
+    // so the report — and its printout/export — show only their rows.
+    const customerIdRaw = (req.query.customerId as string | undefined) ?? "";
+    const customerIdNum = customerIdRaw ? Number(customerIdRaw) : NaN;
+    const filterCustomerId = Number.isFinite(customerIdNum) ? customerIdNum : undefined;
 
     const invConds = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted")];
     pushBranchScope(req, invConds, salesInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(salesInvoicesTable.invoiceDate, from));
     if (to)   invConds.push(lte(salesInvoicesTable.invoiceDate, to));
+    if (filterCustomerId !== undefined) invConds.push(eq(salesInvoicesTable.customerId, filterCustomerId));
 
     const invAgg = await db
       .select({
@@ -119,6 +126,7 @@ router.get("/by-customer", async (req, res) => {
     pushBranchScope(req, retConds, salesReturnsTable.branchId, bid);
     if (from) retConds.push(gte(salesReturnsTable.returnDate, from));
     if (to)   retConds.push(lte(salesReturnsTable.returnDate, to));
+    if (filterCustomerId !== undefined) retConds.push(eq(salesReturnsTable.customerId, filterCustomerId));
 
     const retAgg = await db
       .select({
@@ -137,6 +145,7 @@ router.get("/by-customer", async (req, res) => {
     pushBranchScope(req, recConds, receiptVouchersTable.branchId, bid);
     if (from) recConds.push(gte(receiptVouchersTable.date, from));
     if (to)   recConds.push(lte(receiptVouchersTable.date, to));
+    if (filterCustomerId !== undefined) recConds.push(eq(receiptVouchersTable.entityId, filterCustomerId));
     const recAgg = await db
       .select({
         customerId: receiptVouchersTable.entityId,
@@ -833,11 +842,16 @@ router.get("/returns-by-customer", async (req, res) => {
     const bid = getBid(req);
     const rid = getRid(req);
     const { from, to } = req.query as Record<string, string>;
+    // Optional single-customer filter for the returns-by-customer report.
+    const customerIdRaw = (req.query.customerId as string | undefined) ?? "";
+    const customerIdNum = customerIdRaw ? Number(customerIdRaw) : NaN;
+    const filterCustomerId = Number.isFinite(customerIdNum) ? customerIdNum : undefined;
     const conds = [eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted")];
     pushBranchScope(req, conds, salesReturnsTable.branchId, bid);
     await pushRegionScope(conds, salesReturnsTable.branchId, cid, rid);
     if (from) conds.push(gte(salesReturnsTable.returnDate, from));
     if (to)   conds.push(lte(salesReturnsTable.returnDate, to));
+    if (filterCustomerId !== undefined) conds.push(eq(salesReturnsTable.customerId, filterCustomerId));
     const agg = await db
       .select({
         customerId:  salesReturnsTable.customerId,
@@ -2154,6 +2168,11 @@ router.get("/free-returns", async (req, res) => {
     const bid = getBid(req);
     const rid = getRid(req);
     const { from, to } = req.query as Record<string, string>;
+    // Optional single-customer filter for the free-returns report. Filters
+    // the underlying return header before aggregating item-level free qty.
+    const customerIdRaw = (req.query.customerId as string | undefined) ?? "";
+    const customerIdNum = customerIdRaw ? Number(customerIdRaw) : NaN;
+    const filterCustomerId = Number.isFinite(customerIdNum) ? customerIdNum : undefined;
 
     const conds = [
       eq(salesReturnsTable.companyId, cid),
@@ -2164,6 +2183,7 @@ router.get("/free-returns", async (req, res) => {
     await pushRegionScope(conds, salesReturnsTable.branchId, cid, rid);
     if (from) conds.push(gte(salesReturnsTable.returnDate, from));
     if (to)   conds.push(lte(salesReturnsTable.returnDate, to));
+    if (filterCustomerId !== undefined) conds.push(eq(salesReturnsTable.customerId, filterCustomerId));
 
     const agg = await db
       .select({

@@ -1,16 +1,23 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { salesAnalyticsApi } from "@/lib/salesAnalyticsApi";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
 import RegionFilter from "@/components/RegionFilter";
 import { useTranslation } from "react-i18next";
 import { Gift, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
+
+const API = import.meta.env.VITE_API_URL ?? "";
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem("zatca_token");
+  return token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+}
 
 /**
  * تقرير مرتجع الكميات المجانية
@@ -32,7 +39,35 @@ export default function FreeReturnsReport() {
   const [to, setTo] = useState(today);
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
   const [regionId, setRegionId] = useState<number | undefined>(undefined);
+  // فلتر العميل — "" = كل العملاء. يُمرَّر للـ API ويُطبَّق على رأس المرتجع
+  // قبل تجميع الكميات المجانية على مستوى الصنف، ويُضاف اسم العميل لعنوان
+  // التصدير حتى تظهر الفلترة في الطباعة.
+  const [customerId, setCustomerId] = useState<string>("");
   const [search, setSearch] = useState("");
+
+  const { data: customers = [] } = useQuery({
+    queryKey: ["customers", cid],
+    queryFn: async () => {
+      const r = await fetch(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, { headers: authHeaders() });
+      return r.json();
+    },
+  });
+  const customerOptions = useMemo(
+    () => [
+      { value: "", label: "كل العملاء" },
+      ...(customers as any[]).map(c => ({
+        value: String(c.id),
+        label: isRtl
+          ? (c.nameAr ?? c.nameEn ?? `#${c.id}`)
+          : (c.nameEn ?? c.nameAr ?? `#${c.id}`),
+      })),
+    ],
+    [customers, isRtl],
+  );
+  const selectedCustomer = (customers as any[]).find(c => String(c.id) === customerId);
+  const selectedCustomerName = selectedCustomer
+    ? (isRtl ? (selectedCustomer.nameAr ?? selectedCustomer.nameEn) : (selectedCustomer.nameEn ?? selectedCustomer.nameAr))
+    : null;
 
   const EXPORT_COLS = [
     { key: "itemCode",        header: "كود الصنف",                width: 14 },
@@ -49,8 +84,8 @@ export default function FreeReturnsReport() {
   ];
 
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ["free-returns", cid, from, to, branchId, regionId],
-    queryFn: () => salesAnalyticsApi.freeReturns(cid, from, to, branchId, regionId),
+    queryKey: ["free-returns", cid, from, to, branchId, regionId, customerId],
+    queryFn: () => salesAnalyticsApi.freeReturns(cid, from, to, branchId, regionId, customerId ? Number(customerId) : undefined),
   });
 
   const filtered = (rows as any[]).filter(r =>
@@ -94,9 +129,9 @@ export default function FreeReturnsReport() {
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`free-returns-${from}-${to}`}
+          filename={`free-returns-${from}-${to}${selectedCustomerName ? `-${selectedCustomerName}` : ""}`}
           title="مرتجع الكميات المجانية"
-          subtitle={`من ${from} إلى ${to} — إجمالي شامل ضريبة: ${fmt(totals.sellTotalIncVat)}`}
+          subtitle={`من ${from} إلى ${to}${selectedCustomerName ? ` — العميل: ${selectedCustomerName}` : ""} — إجمالي شامل ضريبة: ${fmt(totals.sellTotalIncVat)}`}
         />
       </div>
 
@@ -119,7 +154,7 @@ export default function FreeReturnsReport() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
         <div className="space-y-1.5">
           <Label>من تاريخ</Label>
           <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
@@ -130,6 +165,17 @@ export default function FreeReturnsReport() {
         </div>
         <BranchFilter value={branchId} onChange={setBranchId} />
         <RegionFilter value={regionId} onChange={setRegionId} />
+        <div className="space-y-1.5">
+          <Label>العميل</Label>
+          <SearchCombobox
+            value={customerId}
+            onValueChange={setCustomerId}
+            items={customerOptions}
+            placeholder="كل العملاء"
+            searchPlaceholder="ابحث باسم العميل…"
+            emptyText="لا يوجد عميل بهذا الاسم"
+          />
+        </div>
         <div className="space-y-1.5">
           <Label>بحث</Label>
           <div className="relative">
