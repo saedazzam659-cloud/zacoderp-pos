@@ -1,11 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Plus, Send, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, FileText } from "lucide-react";
+import { Plus, Send, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, FileText, Printer, FileSpreadsheet, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
+import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 
 export default function SisterSettlements() {
   const qc = useQueryClient();
@@ -31,9 +32,49 @@ export default function SisterSettlements() {
 
   return (
     <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-xl font-bold flex items-center gap-2"><Wallet className="h-5 w-5" /> سندات تسوية الشركات الشقيقة</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {(() => {
+            const cols: ExportColumn[] = [
+              { header: "رقم", key: "code", width: 14 },
+              { header: "التاريخ", key: "date", width: 14 },
+              { header: "الشركة الشقيقة", key: "sister", width: 28 },
+              { header: "النوع", key: "direction", width: 10 },
+              { header: "المبلغ", key: "amount", width: 14 },
+              { header: "الحالة", key: "status", width: 10 },
+            ];
+            const data = (rows as any[]).map((r: any) => ({
+              code: r.code, date: r.date,
+              sister: sisterMap[r.sisterCompanyId] ?? `#${r.sisterCompanyId}`,
+              direction: r.direction === "receive" ? "تحصيل" : "سداد",
+              amount: Number(r.amount).toFixed(2),
+              status: r.status === "posted" ? "مُرحَّل" : "مسودة",
+            }));
+            const totals = data.length ? {
+              code: "الإجمالي",
+              amount: (rows as any[]).reduce((s: number, r: any) =>
+                s + (r.direction === "receive" ? Number(r.amount || 0) : -Number(r.amount || 0)), 0).toFixed(2),
+            } : null;
+            return (
+              <>
+                <Button variant="outline" size="sm" onClick={() => window.print()} data-testid="btn-print">
+                  <Printer className="h-4 w-4 ml-1" /> طباعة
+                </Button>
+                <Button variant="outline" size="sm" disabled={data.length === 0}
+                  onClick={() => exportToExcel(data, cols, "sister-settlements", "سندات تسوية الشركات الشقيقة", totals)}
+                  data-testid="btn-export-excel">
+                  <FileSpreadsheet className="h-4 w-4 ml-1" /> Excel
+                </Button>
+                <Button variant="outline" size="sm" disabled={data.length === 0}
+                  onClick={() => exportToPDF(data, cols, "sister-settlements", "سندات تسوية الشركات الشقيقة",
+                    "الصافي = التحصيل − السداد", true, totals)}
+                  data-testid="btn-export-pdf">
+                  <FileDown className="h-4 w-4 ml-1" /> PDF
+                </Button>
+              </>
+            );
+          })()}
           <Link href="/inventory/sister-companies">
             <Button variant="outline" data-testid="button-sister-statements">
               <FileText className="h-4 w-4 ml-1" /> كشف حساب الشركات الشقيقة

@@ -1,11 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Plus, ArrowRightLeft, Send, Trash2, CheckCircle2 } from "lucide-react";
+import { Plus, ArrowRightLeft, Send, Trash2, CheckCircle2, Printer, FileSpreadsheet, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
+import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 
 const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   draft:     { label: "مسودة",   color: "bg-amber-50 text-amber-700" },
@@ -39,13 +40,54 @@ export default function SisterTransfers() {
 
   return (
     <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-xl font-bold flex items-center gap-2">
           <ArrowRightLeft className="h-5 w-5" /> تحويلات الشركات الشقيقة
         </h1>
-        <Link href="/inventory/sister-transfers/new">
-          <Button data-testid="btn-new-transfer"><Plus className="h-4 w-4 ml-1" /> تحويل جديد</Button>
-        </Link>
+        <div className="flex items-center gap-2 flex-wrap">
+          {(() => {
+            const cols: ExportColumn[] = [
+              { header: "رقم", key: "transferNumber", width: 14 },
+              { header: "التاريخ", key: "transferDate", width: 14 },
+              { header: "الشركة الشقيقة", key: "sister", width: 28 },
+              { header: "تكلفة", key: "totalCost", width: 14 },
+              { header: "قيمة التوريد", key: "totalSupply", width: 14 },
+              { header: "الحالة", key: "status", width: 10 },
+            ];
+            const data = (transfers as any[]).map((t: any) => ({
+              transferNumber: t.transferNumber, transferDate: t.transferDate,
+              sister: sisterMap[t.sisterCompanyId] ?? `#${t.sisterCompanyId}`,
+              totalCost: Number(t.totalCost).toFixed(2),
+              totalSupply: Number(t.totalSupply).toFixed(2),
+              status: (STATUS_LABEL[t.status] ?? { label: t.status }).label,
+            }));
+            const totals = data.length ? {
+              transferNumber: "الإجمالي",
+              totalCost: (transfers as any[]).reduce((s: number, t: any) => s + Number(t.totalCost || 0), 0).toFixed(2),
+              totalSupply: (transfers as any[]).reduce((s: number, t: any) => s + Number(t.totalSupply || 0), 0).toFixed(2),
+            } : null;
+            return (
+              <>
+                <Button variant="outline" size="sm" onClick={() => window.print()} data-testid="btn-print">
+                  <Printer className="h-4 w-4 ml-1" /> طباعة
+                </Button>
+                <Button variant="outline" size="sm" disabled={data.length === 0}
+                  onClick={() => exportToExcel(data, cols, "sister-transfers", "تحويلات الشركات الشقيقة", totals)}
+                  data-testid="btn-export-excel">
+                  <FileSpreadsheet className="h-4 w-4 ml-1" /> Excel
+                </Button>
+                <Button variant="outline" size="sm" disabled={data.length === 0}
+                  onClick={() => exportToPDF(data, cols, "sister-transfers", "تحويلات الشركات الشقيقة", undefined, true, totals)}
+                  data-testid="btn-export-pdf">
+                  <FileDown className="h-4 w-4 ml-1" /> PDF
+                </Button>
+              </>
+            );
+          })()}
+          <Link href="/inventory/sister-transfers/new">
+            <Button data-testid="btn-new-transfer"><Plus className="h-4 w-4 ml-1" /> تحويل جديد</Button>
+          </Link>
+        </div>
       </div>
 
       <Card><CardContent className="p-0 overflow-x-auto">

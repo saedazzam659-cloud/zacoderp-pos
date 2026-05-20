@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Plus, Pencil, Trash2, Building2, FileText, ArrowRightLeft, Wallet } from "lucide-react";
+import { Plus, Pencil, Trash2, Building2, FileText, ArrowRightLeft, Wallet, Printer, FileSpreadsheet, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi, type SisterCompany } from "@/lib/sisterCompaniesApi";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 
 const EMPTY: Partial<SisterCompany> = {
   nameAr: "", nameEn: "", vatNumber: "", crNumber: "", phone: "", email: "",
@@ -45,13 +46,50 @@ export default function SisterCompanies() {
 
   return (
     <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-xl font-bold flex items-center gap-2">
           <Building2 className="h-5 w-5" /> الشركات الشقيقة
         </h1>
-        <Button onClick={() => { setEditing(EMPTY); setShowForm(true); }} data-testid="btn-new-sister">
-          <Plus className="h-4 w-4 ml-1" /> جديد
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {(() => {
+            const cols: ExportColumn[] = [
+              { header: "#", key: "n", width: 5 },
+              { header: "الاسم", key: "nameAr", width: 30 },
+              { header: "الاسم بالإنجليزية", key: "nameEn", width: 30 },
+              { header: "الرقم الضريبي", key: "vatNumber", width: 18 },
+              { header: "السجل التجاري", key: "crNumber", width: 18 },
+              { header: "الهاتف", key: "phone", width: 16 },
+              { header: "البريد الإلكتروني", key: "email", width: 24 },
+              { header: "الحالة", key: "status", width: 10 },
+            ];
+            const data = (rows as any[]).map((r, i) => ({
+              n: i + 1, nameAr: r.nameAr ?? "", nameEn: r.nameEn ?? "",
+              vatNumber: r.vatNumber ?? "", crNumber: r.crNumber ?? "",
+              phone: r.phone ?? "", email: r.email ?? "",
+              status: r.isActive ? "نشطة" : "موقوفة",
+            }));
+            return (
+              <>
+                <Button variant="outline" size="sm" onClick={() => window.print()} data-testid="btn-print">
+                  <Printer className="h-4 w-4 ml-1" /> طباعة
+                </Button>
+                <Button variant="outline" size="sm" disabled={data.length === 0}
+                  onClick={() => exportToExcel(data, cols, "sister-companies", "الشركات الشقيقة")}
+                  data-testid="btn-export-excel">
+                  <FileSpreadsheet className="h-4 w-4 ml-1" /> Excel
+                </Button>
+                <Button variant="outline" size="sm" disabled={data.length === 0}
+                  onClick={() => exportToPDF(data, cols, "sister-companies", "الشركات الشقيقة")}
+                  data-testid="btn-export-pdf">
+                  <FileDown className="h-4 w-4 ml-1" /> PDF
+                </Button>
+              </>
+            );
+          })()}
+          <Button onClick={() => { setEditing(EMPTY); setShowForm(true); }} data-testid="btn-new-sister">
+            <Plus className="h-4 w-4 ml-1" /> جديد
+          </Button>
+        </div>
       </div>
 
       {showForm && (

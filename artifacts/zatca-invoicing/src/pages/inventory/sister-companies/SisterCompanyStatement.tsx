@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
-import { FileText, ArrowLeft } from "lucide-react";
+import { FileText, ArrowLeft, Printer, FileSpreadsheet, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
+import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 
 export default function SisterCompanyStatement() {
   const [, params] = useRoute<{ id: string }>("/inventory/sister-companies/:id/statement");
@@ -27,13 +28,60 @@ export default function SisterCompanyStatement() {
 
   return (
     <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-xl font-bold flex items-center gap-2">
           <FileText className="h-5 w-5" /> كشف حساب — {sister?.nameAr ?? "…"}
         </h1>
-        <Link href="/inventory/sister-companies">
-          <Button variant="outline"><ArrowLeft className="h-4 w-4 ml-1" /> رجوع</Button>
-        </Link>
+        <div className="flex items-center gap-2 flex-wrap">
+          {(() => {
+            const cols: ExportColumn[] = [
+              { header: "التاريخ", key: "date", width: 14 },
+              { header: "المستند", key: "docNumber", width: 16 },
+              { header: "النوع", key: "type", width: 16 },
+              { header: "البيان", key: "description", width: 36 },
+              { header: "مدين", key: "debit", width: 14 },
+              { header: "دائن", key: "credit", width: 14 },
+              { header: "الرصيد", key: "balance", width: 14 },
+            ];
+            const data = stmt ? [
+              { date: "", docNumber: "", type: "", description: "الرصيد الافتتاحي", debit: "", credit: "", balance: Number(stmt.opening).toFixed(2) },
+              ...stmt.rows.map((r: any) => ({
+                date: r.date, docNumber: r.docNumber, type: r.type,
+                description: r.description,
+                debit:  r.debit  ? Number(r.debit ).toFixed(2) : "",
+                credit: r.credit ? Number(r.credit).toFixed(2) : "",
+                balance: Number(r.balance).toFixed(2),
+              })),
+            ] : [];
+            const totals = stmt ? {
+              date: "الرصيد الختامي",
+              balance: Number(stmt.closing).toFixed(2),
+            } : null;
+            const title = `كشف حساب — ${sister?.nameAr ?? ""}`;
+            const subtitle = (from || to) ? `الفترة: ${from || "—"} إلى ${to || "—"}` : undefined;
+            const disabled = !stmt || data.length === 0;
+            return (
+              <>
+                <Button variant="outline" size="sm" onClick={() => window.print()} data-testid="btn-print">
+                  <Printer className="h-4 w-4 ml-1" /> طباعة
+                </Button>
+                <Button variant="outline" size="sm" disabled={disabled}
+                  onClick={() => exportToExcel(data, cols, `sister-statement-${sid}`, title, totals)}
+                  data-testid="btn-export-excel">
+                  <FileSpreadsheet className="h-4 w-4 ml-1" /> Excel
+                </Button>
+                <Button variant="outline" size="sm" disabled={disabled}
+                  onClick={() => exportToPDF(data, cols, `sister-statement-${sid}`, title, subtitle, true, totals)}
+                  data-testid="btn-export-pdf">
+                  <FileDown className="h-4 w-4 ml-1" /> PDF
+                </Button>
+              </>
+            );
+          })()}
+          <Link href="/inventory/sister-companies">
+            <Button variant="outline"><ArrowLeft className="h-4 w-4 ml-1" /> رجوع</Button>
+          </Link>
+        </div>
       </div>
 
       <Card><CardContent className="flex flex-wrap gap-3 items-end pt-6">
