@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { MapPin, Users, Clock, AlertTriangle, Trash2, Plus, BarChart3, UserPlus, X, Search, Loader2, Globe2 } from "lucide-react";
+import { MapPin, Users, Clock, AlertTriangle, Trash2, Plus, BarChart3, UserPlus, X, Search, Loader2, Globe2, LocateFixed } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line, Legend } from "recharts";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -422,6 +422,10 @@ function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged:
               <div><Label>خط العرض (Lat)</Label><Input type="number" step="0.0000001" value={form.centerLat} onChange={e => setForm({ ...form, centerLat: Number(e.target.value) })} /></div>
               <div><Label>خط الطول (Lng)</Label><Input type="number" step="0.0000001" value={form.centerLng} onChange={e => setForm({ ...form, centerLng: Number(e.target.value) })} /></div>
             </div>
+            <UseMyLocationButton
+              onPick={(lat, lng) => setForm(f => ({ ...f, centerLat: lat, centerLng: lng }))}
+              onError={(msg) => setErr(msg)}
+            />
             <div><Label>نصف القطر (متر)</Label><Input type="number" value={form.radiusMeters} onChange={e => setForm({ ...form, radiusMeters: Number(e.target.value) })} /></div>
             <div className="flex items-center justify-between rounded-md border p-2">
               <Label>منطقة مسموح بها</Label>
@@ -437,6 +441,72 @@ function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged:
         </DialogContent>
       </Dialog>
     </Card>
+  );
+}
+
+function UseMyLocationButton({
+  onPick,
+  onError,
+}: {
+  onPick: (lat: number, lng: number) => void;
+  onError: (msg: string) => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [accuracy, setAccuracy] = useState<number | null>(null);
+
+  function fetchLocation() {
+    if (!("geolocation" in navigator)) {
+      onError("المتصفح لا يدعم تحديد الموقع الجغرافي");
+      return;
+    }
+    setLoading(true);
+    onError("");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = Number(pos.coords.latitude.toFixed(7));
+        const lng = Number(pos.coords.longitude.toFixed(7));
+        setAccuracy(Math.round(pos.coords.accuracy));
+        onPick(lat, lng);
+        setLoading(false);
+      },
+      (err) => {
+        setLoading(false);
+        const msg =
+          err.code === err.PERMISSION_DENIED
+            ? "تم رفض إذن الموقع. فعّل الإذن من إعدادات المتصفح."
+            : err.code === err.POSITION_UNAVAILABLE
+            ? "تعذّر تحديد الموقع حالياً. تأكد من تشغيل GPS."
+            : err.code === err.TIMEOUT
+            ? "انتهت مهلة تحديد الموقع. أعد المحاولة."
+            : `فشل تحديد الموقع: ${err.message}`;
+        onError(msg);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50/50 p-2">
+      <div className="text-sm text-emerald-800">
+        <div className="font-medium flex items-center gap-1">
+          <LocateFixed className="h-4 w-4" /> استخدام موقعي الحالي
+        </div>
+        {accuracy !== null && (
+          <div className="text-xs text-emerald-700 mt-0.5">تم تعبئة الإحداثيات (دقة ≈ {accuracy} م)</div>
+        )}
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={fetchLocation}
+        disabled={loading}
+        data-testid="btn-use-my-location"
+      >
+        {loading ? <Loader2 className="h-4 w-4 me-1 animate-spin" /> : <LocateFixed className="h-4 w-4 me-1" />}
+        {loading ? "جارٍ التحديد..." : "جلب موقعي"}
+      </Button>
+    </div>
   );
 }
 
