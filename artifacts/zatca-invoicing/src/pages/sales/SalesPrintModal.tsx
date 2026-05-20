@@ -1592,7 +1592,246 @@ function template13(d: PrintData): string {
   </div></body></html>`;
 }
 
+// ── Template 14: الأصلي ─────────────────────────────────────────────────────
+// Per-spec layout requested by the user:
+//   • Top-right  : company info column (AR + EN name, VAT, CR, phone)
+//   • Top-center : centered logo + document title pill (ضريبية / مبسطة)
+//                  + payment-type & date pills underneath
+//   • Top-left   : customer card (name, VAT, account code, phone, building #)
+//   • Lines      : full-width populated table (qty / unit / price / VAT / total)
+//   • Bottom     : totals + ZATCA QR side-by-side, footer with
+//                  created-at + "بواسطة" + username.
+//
+// "ضريبية" vs "مبسطة" follows the ZATCA classification rule: a customer with
+// a VAT number is treated as a B2B taxable invoice (standard), otherwise as
+// a simplified (B2C) invoice. Returns/orders/quotations are handled too.
+function template14(d: PrintData): string {
+  const { doc, lines, customer, company } = d;
+  const totals = computeFullTotals(doc, lines);
+  const safeLogo = safeLogoSrc(company?.logo);
+  const isReturn = d.type === "return";
+  const isQuot   = d.type === "quotation";
+  const isOrder  = d.type === "order";
+  // Standard vs Simplified — driven by buyer-VAT presence per ZATCA spec.
+  // Fall back to the invoice snapshot's `buyerVatNumber` so the title stays
+  // "ضريبية" even when the customer master record is missing or stale
+  // (e.g. walk-in / deleted customer rows where the VAT was captured on the
+  // invoice itself).
+  const hasBuyerVat = !!(customer?.vatNumber ?? doc.buyerVatNumber);
+  const isSimplified = !hasBuyerVat;
+  const titleAr = isReturn ? (isSimplified ? "مرتجع مبيعات مبسط" : "مرتجع مبيعات ضريبي")
+              : isQuot   ? "عرض سعر"
+              : isOrder  ? "أمر بيع"
+              :            (isSimplified ? "فاتورة مبيعات مبسطة" : "فاتورة مبيعات ضريبية");
+  const titleEn = isReturn ? "Sales Return"
+              : isQuot   ? "Quotation"
+              : isOrder  ? "Sales Order"
+              :            (isSimplified ? "Simplified Tax Invoice" : "Tax Invoice");
+  const docNo = doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`;
+  const dateStr = docDate(doc, d.type);
+  const payLabel = doc.paymentType === "cash" ? "نقداً"
+                : doc.paymentType === "bank" ? "على حساب"
+                : "آجل";
+  // Customer "account code" — prefer an explicit code, else fall back to the
+  // chart-of-accounts link, else the customer id (#123) so the field never
+  // shows a blank placeholder.
+  const acctCode = (customer as any)?.accountCode
+                ?? (customer as any)?.code
+                ?? (customer?.accountId != null ? `A-${customer.accountId}` : null)
+                ?? (customer?.id != null ? `#${customer.id}` : null);
+  // Saudi national address building number — pulled from the customer record
+  // (already populated from the national-address service when available).
+  const bldgNo = customer?.buildingNumber ?? (customer as any)?.buyerBuildingNumber ?? null;
+  // Footer audit line — only render the "أنشئ بـ" line when we actually have
+  // a timestamp; some legacy rows may not carry one.
+  const createdAtRaw = doc.createdAt ?? doc.invoiceDate ?? doc.returnDate ?? doc.orderDate ?? doc.quotationDate ?? null;
+  let createdAtStr = "—";
+  if (createdAtRaw) {
+    try {
+      const dt = new Date(createdAtRaw);
+      if (!isNaN(dt.getTime())) {
+        createdAtStr = dt.toLocaleString("ar-SA", {
+          year: "numeric", month: "2-digit", day: "2-digit",
+          hour: "2-digit", minute: "2-digit",
+        });
+      } else {
+        createdAtStr = String(createdAtRaw);
+      }
+    } catch { createdAtStr = String(createdAtRaw); }
+  }
+  const userName = doc.createdByName ?? doc.postedByName ?? "—";
+
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${titleAr} — ${docNo}</title>
+  ${baseStyles("#0f172a")}
+  <style>
+    :root { --ink:#0f172a; --line:#e5e7eb; --soft:#f8fafc; --gold:#b88a2a; --gold2:#e5c277; }
+    body { padding: 0; color: var(--ink); }
+    .sheet { padding: 8mm 6mm; }
+
+    /* ── 3-column header ───────────────────────────────────────────── */
+    .hdr { display:grid; grid-template-columns: 1fr 1.1fr 1fr; gap:12px; align-items:stretch; margin-bottom:14px; }
+    .col-co, .col-cu { background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px 14px; box-shadow: 0 1px 0 rgba(15,23,42,.03); }
+    .col-co .label, .col-cu .label {
+      font-size:10px; letter-spacing:.08em; color:var(--gold);
+      font-weight:800; text-transform:uppercase; margin-bottom:6px;
+      border-bottom:1px solid var(--line); padding-bottom:4px;
+    }
+    .col-co .row, .col-cu .row {
+      display:flex; gap:6px; align-items:baseline; margin-top:4px; font-size:11px; color:#334155;
+    }
+    .col-co .row b, .col-cu .row b { color:var(--ink); font-weight:700; min-width:70px; }
+    .col-co .co-name-ar { font-size:16px; font-weight:800; color:var(--ink); margin-bottom:2px; }
+    .col-co .co-name-en { font-size:11px; color:#64748b; margin-bottom:6px; font-style:italic; }
+    .col-cu .cu-name { font-size:15px; font-weight:800; color:var(--ink); margin-bottom:6px; }
+
+    /* ── Center logo block ─────────────────────────────────────────── */
+    .col-mid { text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; gap:8px; padding-top:2px; position:relative; }
+    .col-mid::before, .col-mid::after {
+      content:""; position:absolute; left:50%; transform:translateX(-50%);
+      width:48px; height:2px; background:linear-gradient(90deg, transparent, var(--gold2), transparent);
+    }
+    .col-mid::before { top:0; }
+    .col-mid::after  { bottom:0; }
+    .logo-wrap {
+      background:#fff; border:1px solid var(--line); border-radius:14px;
+      padding:8px 14px; display:inline-flex; align-items:center; justify-content:center;
+      box-shadow: 0 2px 8px rgba(184,138,42,.10);
+    }
+    .logo-wrap img { max-height:62px; max-width:170px; object-fit:contain; display:block; }
+    .logo-fallback { width:62px; height:62px; border-radius:50%; background:linear-gradient(135deg, var(--gold), var(--gold2)); color:#fff; font-weight:900; font-size:22px; display:inline-flex; align-items:center; justify-content:center; }
+    .doc-title-pill {
+      background:var(--ink); color:#fff; padding:8px 18px; border-radius:24px;
+      font-size:14px; font-weight:800; letter-spacing:.02em;
+      box-shadow:0 2px 6px rgba(15,23,42,.18);
+    }
+    .doc-title-pill .en { display:block; font-size:9px; opacity:.7; font-weight:600; letter-spacing:.1em; margin-top:2px; }
+    .meta-pills { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; }
+    .pill {
+      background:var(--soft); border:1px solid var(--line); border-radius:18px;
+      padding:4px 12px; font-size:10.5px; color:#334155; display:inline-flex; align-items:center; gap:5px;
+    }
+    .pill b { color:var(--ink); font-weight:700; }
+    .pill.pay { background:#fef3c7; border-color:#fcd34d; color:#7c2d12; }
+    .pill.no  { background:#e0f2fe; border-color:#7dd3fc; color:#075985; font-family:'Segoe UI', monospace; }
+
+    /* ── Lines table ───────────────────────────────────────────────── */
+    .lines-wrap { margin-top:6px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+    .lines-wrap table { font-size:11px; }
+    .lines-wrap thead tr { background:var(--ink); color:#fff; }
+    .lines-wrap th { padding:8px 6px; font-weight:700; font-size:10.5px; letter-spacing:.02em; }
+    .lines-wrap td { padding:6px 6px; border-bottom:1px solid var(--line); }
+    .lines-wrap tbody tr:last-child td { border-bottom:none; }
+    .lines-wrap tbody tr:nth-child(even) { background:#fafafa; }
+
+    /* ── Totals + QR + footer ───────────────────────────────────────── */
+    .bottom { display:grid; grid-template-columns: 1fr 280px; gap:14px; margin-top:14px; align-items:flex-start; }
+    .qr-card { border:1px solid var(--line); border-radius:10px; padding:10px; text-align:center; background:#fff; }
+    .qr-card .lbl { font-size:9px; color:#64748b; margin-top:4px; letter-spacing:.08em; }
+    .totals-card { border:1px solid var(--line); border-radius:10px; padding:12px 14px; background:#fff; }
+    .__totalsRow { display:flex; justify-content:space-between; font-size:11.5px; color:#334155; margin-bottom:5px; }
+    .__totalsRow.grand {
+      border-top:1.5px solid var(--ink); margin-top:6px; padding-top:7px;
+      font-size:13.5px; font-weight:800; color:var(--ink);
+    }
+    .audit-footer {
+      margin-top:14px; border-top:2px solid var(--gold); padding-top:8px;
+      display:flex; justify-content:space-between; align-items:center;
+      font-size:10.5px; color:#475569;
+    }
+    .audit-footer .grp { display:flex; flex-direction:column; gap:2px; }
+    .audit-footer b { color:var(--ink); font-weight:700; }
+    .notes-box {
+      margin-top:10px; background:var(--soft); border:1px solid var(--line); border-right:3px solid var(--gold);
+      border-radius:8px; padding:8px 12px; font-size:11px; color:#334155;
+    }
+    .notes-box b { color:var(--ink); }
+  </style>
+  </head><body><div class="sheet">
+
+  <!-- 3-column header ─────────────────────────────────────────────── -->
+  <div class="hdr">
+    <!-- COMPANY (right side in RTL — first in DOM) -->
+    <div class="col-co">
+      <div class="label">بيانات الشركة</div>
+      <div class="co-name-ar">${company?.nameAr ?? "اسم الشركة"}</div>
+      ${company?.nameEn ? `<div class="co-name-en">${company.nameEn}</div>` : ""}
+      ${company?.vatNumber ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${company.vatNumber}</span></div>` : ""}
+      ${company?.crNumber  ? `<div class="row"><b>السجل التجاري:</b><span class="mono">${company.crNumber}</span></div>` : ""}
+      ${(company as any)?.phone ? `<div class="row"><b>الهاتف:</b><span class="mono">${(company as any).phone}</span></div>` : ""}
+    </div>
+
+    <!-- LOGO + TITLE + META (center) -->
+    <div class="col-mid">
+      <div class="logo-wrap">
+        ${safeLogo
+          ? `<img src="${safeLogo}" alt="logo" />`
+          : `<div class="logo-fallback">${(company?.nameAr ?? company?.nameEn ?? "?").trim().slice(0, 2)}</div>`}
+      </div>
+      <div class="doc-title-pill">
+        ${titleAr}
+        <span class="en">${titleEn}</span>
+      </div>
+      <div class="meta-pills">
+        <span class="pill no"><b>${docNo}</b></span>
+        ${!isNonPaymentDoc(d.type) ? `<span class="pill pay"><b>${payLabel}</b></span>` : ""}
+        <span class="pill">📅 <b>${dateStr}</b></span>
+        ${isQuot && doc.validUntil ? `<span class="pill">صالح حتى <b>${doc.validUntil}</b></span>` : ""}
+        ${isReturn && doc.invoiceId ? `<span class="pill">مرجع: <b>${doc.invoiceId}</b></span>` : ""}
+      </div>
+    </div>
+
+    <!-- CUSTOMER (left side in RTL — last in DOM) -->
+    <div class="col-cu">
+      <div class="label">بيانات العميل</div>
+      <div class="cu-name">${customer?.nameAr ?? customer?.nameEn ?? doc.buyerName ?? "—"}</div>
+      ${(customer?.vatNumber ?? doc.buyerVatNumber)
+        ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
+      ${acctCode ? `<div class="row"><b>كود الحساب:</b><span class="mono">${acctCode}</span></div>` : ""}
+      ${customer?.phone ? `<div class="row"><b>الهاتف:</b><span class="mono">${customer.phone}</span></div>` : ""}
+      ${bldgNo ? `<div class="row"><b>رقم المبنى:</b><span class="mono">${bldgNo}</span></div>` : ""}
+    </div>
+  </div>
+
+  <!-- Lines table ─────────────────────────────────────────────────── -->
+  <div class="lines-wrap">
+    ${linesTable(lines)}
+  </div>
+
+  <!-- Bottom : totals + QR ───────────────────────────────────────── -->
+  <div class="bottom">
+    <div class="totals-card">
+      <div class="__totalsRow"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(totals.subtotalPreDiscount)} ${totals.currency}</span></div>
+      <div class="__totalsRow"><span>مبلغ الخصم — Discount</span><span class="mono" style="color:#b91c1c;">${fmt(totals.discountTotal)} ${totals.currency}</span></div>
+      <div class="__totalsRow"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(totals.netPreVat)} ${totals.currency}</span></div>
+      <div class="__totalsRow"><span>ضريبة القيمة المضافة — VAT</span><span class="mono" style="color:#b45309;">${fmt(totals.vatAmount)} ${totals.currency}</span></div>
+      <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(totals.grandTotal)} ${totals.currency}</span></div>
+      ${summaryFooterHtml(totals)}
+    </div>
+    <div class="qr-card">
+      ${qrImgHtml(d, { size: 150 })}
+      <div class="lbl">QR — ZATCA</div>
+    </div>
+  </div>
+
+  ${doc.notes ? `<div class="notes-box"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
+
+  <!-- Audit footer ──────────────────────────────────────────────── -->
+  <div class="audit-footer">
+    <div class="grp">
+      <span>تاريخ الإنشاء: <b>${createdAtStr}</b></span>
+      <span>بواسطة: <b>${userName}</b></span>
+    </div>
+    <div class="grp" style="text-align:left;">
+      <span>طُبع: <b>${new Date().toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" })}</b></span>
+      <span style="color:var(--gold);font-weight:700;">ZATCA e-Invoice</span>
+    </div>
+  </div>
+
+  </div></body></html>`;
+}
+
 const TEMPLATES = [
+  { id: 14, name: "الأصلي",         desc: "نموذج مرتب بشعار وسط وبيانات شركة/عميل جانبية", color: "#b88a2a", fn: template14, thermal: false },
   { id: 1,  name: "كلاسيكي",       desc: "حدود وجداول تقليدية",      color: "#2563eb", fn: template1,  thermal: false },
   { id: 2,  name: "حديث",          desc: "تصميم نظيف بهيدر أخضر",   color: "#059669", fn: template2,  thermal: false },
   { id: 3,  name: "مؤسسي",         desc: "هيدر داكن احترافي",        color: "#1e3a5f", fn: template3,  thermal: false },

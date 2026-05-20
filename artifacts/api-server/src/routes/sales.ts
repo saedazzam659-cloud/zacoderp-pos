@@ -482,9 +482,24 @@ router.get("/sales-invoices/:id", async (req, res) => {
       ...l,
       appliedOfferName: l.appliedOfferId ? (offerNameById.get(l.appliedOfferId) ?? null) : null,
     }));
+    // Resolve `createdByName` / `postedByName` so the print templates (and
+    // the read-only view) can show "أنشأ بواسطة" + "رحّل بواسطة" without
+    // requiring an extra users round-trip from the client.
+    const { usersTable } = await import("@workspace/db");
+    const auditIds = Array.from(new Set(
+      [inv.createdById, inv.postedById].filter((x): x is number => typeof x === "number")
+    ));
+    const auditMap = new Map<number, string>();
+    if (auditIds.length > 0) {
+      const us = await db.select({ id: usersTable.id, username: usersTable.username })
+        .from(usersTable).where(inArray(usersTable.id, auditIds));
+      for (const u of us) auditMap.set(u.id, u.username);
+    }
     res.json({
       ...inv,
       documentOfferName: inv.documentOfferId ? (offerNameById.get(inv.documentOfferId) ?? null) : null,
+      createdByName: inv.createdById != null ? (auditMap.get(inv.createdById) ?? null) : null,
+      postedByName:  inv.postedById  != null ? (auditMap.get(inv.postedById)  ?? null) : null,
       lines: linesWithOfferName,
     });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
