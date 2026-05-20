@@ -984,111 +984,97 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     body {
       font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
       direction: rtl;
-      font-size: 11pt;
+      font-size: 10pt;
       color: #0f172a;
       background: #fff;
       padding: 0;
     }
-    .doc { padding: 10mm 12mm; max-width: 100%; }
-    /* A4 landscape gives the wider table room to breathe — the description
-       column is the main beneficiary (more text without wrapping). */
-    tbody td.desc { min-width: 110mm; }
+    /* Minimal page padding so the company/customer block sits flush to the
+       top of the printable area — combined with the slim @page margins this
+       removes the dead space the user marked in the red box. */
+    .doc { padding: 0; max-width: 100%; }
+    /* Portrait A4 — let the description column flex with available width
+       instead of forcing a fixed minimum that would push other columns off
+       the page. */
+    tbody td.desc { min-width: 0; }
 
-    /* ── Company header card ───────────────────────────── */
+    /* ── Compact header strip ──────────────────────────────────────────
+       One single row: company info (right, RTL) · centered logo + title ·
+       customer/supplier info (left). No card frame, no gradient — just a
+       thin bottom rule so the table sits directly underneath. */
     .co-header {
       display: grid;
       grid-template-columns: 1fr auto 1fr;
-      gap: 16px;
+      gap: 10px;
       align-items: center;
-      padding: 14px 18px;
-      border-bottom: 1.5px dashed #cbd5e1;
-      background: linear-gradient(to bottom, #f8fafc 0%, #fff 100%);
-      border: 1px solid #e2e8f0;
-      border-radius: 12px 12px 0 0;
+      padding: 4px 4px 6px;
+      margin: 0 0 4px;
+      border: none;
+      border-bottom: 1px solid #cbd5e1;
+      background: #fff;
+      border-radius: 0;
     }
-    .co-side { font-size: 9.5pt; line-height: 1.7; color: #475569; }
-    .co-side .name { font-size: 12pt; font-weight: 700; color: #0f172a; margin-bottom: 4px; }
+    .co-side { font-size: 8.5pt; line-height: 1.35; color: #475569; }
+    .co-side .name { font-size: 10.5pt; font-weight: 700; color: #0f172a; margin-bottom: 1px; }
     .co-side .row { white-space: nowrap; }
     .co-side .lbl { color: #94a3b8; }
-    .co-side.left { direction: ltr; text-align: left; }
     .co-side.right { text-align: right; }
     .co-side.party {
       direction: rtl;
       text-align: right;
-      border-right: 4px solid #34d399;
-      background: #ecfdf5;
-      border-radius: 6px;
-      padding: 6px 10px;
+      border: none;
+      background: transparent;
+      border-radius: 0;
+      padding: 0;
     }
     .co-side .mono { font-family: 'Courier New', monospace; }
+    /* Center column: logo + title + date range stacked tightly */
+    .co-center { text-align: center; }
     .co-logo {
-      width: 78px; height: 78px;
-      border: 2px solid #e2e8f0; border-radius: 50%;
+      width: 52px; height: 52px;
+      border: 1px solid #e2e8f0; border-radius: 50%;
       background: #fff;
-      display: flex; align-items: center; justify-content: center;
+      display: inline-flex; align-items: center; justify-content: center;
       overflow: hidden;
-      flex-shrink: 0;
+      margin: 0 auto 2px;
     }
     .co-logo img { max-width: 90%; max-height: 90%; object-fit: contain; }
-    .logo-fallback { font-weight: 700; color: #94a3b8; font-size: 14pt; }
-
-    /* ── Title pill ────────────────────────────────────── */
-    .title-pill-wrap {
-      display: flex; justify-content: center;
-      margin: 18px 0 14px;
+    .logo-fallback { font-weight: 700; color: #94a3b8; font-size: 11pt; }
+    .doc-title {
+      font-size: 11.5pt; font-weight: 700; color: #0f172a;
+      letter-spacing: .3px;
+      margin: 1px 0;
     }
-    .title-pill {
-      padding: 8px 36px;
-      background: #e0f2fe;
-      color: #075985;
-      border: 1px solid #bae6fd;
-      border-radius: 6px;
-      font-weight: 700;
-      font-size: 13pt;
-      letter-spacing: .5px;
+    .date-range {
+      font-size: 8.5pt; color: #475569;
+      font-family: 'Courier New', monospace;
     }
 
-    /* ── Account meta row ──────────────────────────────── */
-    .meta-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px 40px;
-      padding: 0 18px 14px;
-      font-size: 10pt;
-    }
-    .meta-grid.date-strip { grid-template-columns: 1fr 1fr 1fr; }
-    .meta-grid .item {
-      display: grid;
-      grid-template-columns: 110px 8px 1fr;
-      border-bottom: 1px dotted #cbd5e1;
-      padding: 4px 0;
-    }
-    .meta-grid .item .lbl { color: #64748b; }
-    .meta-grid .item .val { font-weight: 500; color: #0f172a; }
-    .meta-grid .item .val.mono { font-family: 'Courier New', monospace; }
-
-    /* ── Table ─────────────────────────────────────────── */
+    /* ── Table — slim, single-page-friendly ────────────────────────── */
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 9.5pt;
+      font-size: 9pt;
       border: 1px solid #cbd5e1;
-      border-radius: 8px;
+      border-radius: 0;
       overflow: hidden;
+      margin-top: 4px;
     }
     thead tr { background: #f1f5f9; color: #334155; }
     thead th {
-      padding: 9px 6px;
+      padding: 4px 5px;
       font-weight: 700;
-      border-bottom: 2px solid #cbd5e1;
+      border-bottom: 1px solid #cbd5e1;
       text-align: center;
       white-space: nowrap;
+      font-size: 9pt;
     }
     tbody td {
-      padding: 7px 6px;
+      padding: 3px 5px;
       border-top: 1px solid #e2e8f0;
       vertical-align: middle;
       text-align: start;
+      line-height: 1.25;
     }
     tbody td.num { text-align: center; }
     tbody td.mono { font-family: 'Courier New', monospace; font-variant-numeric: tabular-nums; }
@@ -1113,14 +1099,14 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     }
     tbody tr.totals td {
       border-top: 2px solid #94a3b8;
-      padding: 10px 6px;
-      font-size: 10pt;
+      padding: 5px 5px;
+      font-size: 9.5pt;
     }
 
-    .empty { text-align: center; padding: 30px; color: #94a3b8; }
+    .empty { text-align: center; padding: 18px; color: #94a3b8; }
 
     .print-meta {
-      margin-top: 10px;
+      margin-top: 6px;
       /* Left-align (LTR direction) the audit footer per user request — the
          print date and the printing user's name sit on the LEFT side of the
          page even on this RTL document. */
@@ -1139,15 +1125,17 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       thead { display: table-header-group; }
     }
     @page {
-      margin: 10mm 12mm 16mm 12mm;
-      /* Landscape gives the description column more room and lets the
-         table breathe so the print layout looks closer to a polished
-         report than a portrait spreadsheet dump. */
-      size: A4 landscape;
+      /* Slim margins push the header to the very top edge of the printable
+         area and reclaim vertical room for more rows per page. Chrome/Edge
+         still inject their own URL/date strip above this — the user can
+         disable that from Chrome's print dialog under
+         "More settings → Headers and footers". */
+      margin: 5mm 6mm 9mm 6mm;
+      size: A4 portrait;
       @bottom-center {
         content: "صفحة " counter(page) " من " counter(pages);
         font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
-        font-size: 9pt;
+        font-size: 8.5pt;
         color: #64748b;
       }
     }
@@ -1164,35 +1152,26 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
         ${company?.phone ? `<div class="row"><span class="lbl">الجوال</span> : ${escape(company.phone)}</div>` : ""}
         ${addressLine ? `<div class="row"><span class="lbl">العنوان</span> : ${escape(addressLine)}</div>` : ""}
       </div>
-      <div class="co-logo">${logoHtml}</div>
-      <!-- Statemented-party identification card. Mirrors the on-screen
-           layout: party-name row prefixed with "اسم العميل"/"اسم المورد",
-           then code / Latin name / level, with the from/to date filters
-           appended at the bottom of the same card (moved down from the
-           old date-strip per user request). -->
+      <!-- Center column: logo, document title, and date range stacked
+           tightly — replaces the old large title-pill block and reclaims
+           the dead space between the header and the table. -->
+      <div class="co-center">
+        <div class="co-logo">${logoHtml}</div>
+        <div class="doc-title">${escape(title)}</div>
+        <div class="date-range">${escape(from)} ← ${escape(to)}</div>
+        ${branchName ? `<div class="date-range" style="margin-top:1px;">${escape(branchName)}</div>` : ""}
+      </div>
+      <!-- Statemented-party identification card (LEFT column in RTL — last
+           in DOM). Compact: name + code + Latin name + level. The from/to
+           dates moved into the center column above. -->
       <div class="co-side party">
-        <div class="row"><span class="lbl">${escape(mode === "supplier" ? "اسم المورد" : "اسم العميل")}</span> : <span class="name" style="display:inline">${escape(account.nameAr || account.nameEn || "—")}</span></div>
+        <div class="name">${escape(account.nameAr || account.nameEn || "—")}</div>
+        <div class="row"><span class="lbl">${escape(mode === "supplier" ? "اسم المورد" : "اسم العميل")}</span></div>
         <div class="row"><span class="lbl">رمز الحساب</span> : <span class="mono">${escape(account.code || "—")}</span></div>
         ${(account.legalName || account.nameEn) ? `<div class="row"><span class="lbl">الاسم اللاتيني</span> : <span dir="ltr">${escape(account.legalName || account.nameEn)}</span></div>` : ""}
         <div class="row"><span class="lbl">مستوى الحساب</span> : ${escape(account.level != null ? String(account.level) : "—")}</div>
-        <div class="row" style="border-top:1px dashed #a7f3d0; padding-top:4px; margin-top:4px;">
-          <span class="lbl">من تاريخ</span> : <span class="mono">${escape(from)}</span>
-          &nbsp;&nbsp;
-          <span class="lbl">إلى تاريخ</span> : <span class="mono">${escape(to)}</span>
-        </div>
       </div>
     </div>
-
-    <!-- Title pill -->
-    <div class="title-pill-wrap">
-      <div class="title-pill">${escape(title)}</div>
-    </div>
-
-    ${branchName ? `
-    <!-- Branch strip (dates moved up to the party card). -->
-    <div class="meta-grid date-strip" style="grid-template-columns: 1fr;">
-      <div class="item"><div class="lbl">الفرع</div><div>:</div><div class="val">${escape(branchName)}</div></div>
-    </div>` : ""}
 
     <!-- Table -->
     <table>
