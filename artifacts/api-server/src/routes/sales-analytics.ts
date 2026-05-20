@@ -358,6 +358,7 @@ router.get("/customer-statement", async (req, res) => {
     const invs = await db.select({
       id: salesInvoicesTable.id, date: salesInvoicesTable.invoiceDate,
       docNumber: salesInvoicesTable.docNumber, total: salesInvoicesTable.totalAmount,
+      notes: salesInvoicesTable.notes,
     }).from(salesInvoicesTable).where(and(...invConds));
 
     const retConds: any[] = [
@@ -372,6 +373,7 @@ router.get("/customer-statement", async (req, res) => {
     const rets = await db.select({
       id: salesReturnsTable.id, date: salesReturnsTable.returnDate,
       docNumber: salesReturnsTable.docNumber, total: salesReturnsTable.totalAmount,
+      notes: salesReturnsTable.notes,
     }).from(salesReturnsTable).where(and(...retConds));
 
     const recConds: any[] = [
@@ -386,13 +388,21 @@ router.get("/customer-statement", async (req, res) => {
     const recs = await db.select({
       id: receiptVouchersTable.id, date: receiptVouchersTable.date,
       docNumber: receiptVouchersTable.code, amount: receiptVouchersTable.amount,
+      notes: receiptVouchersTable.notes,
     }).from(receiptVouchersTable).where(and(...recConds));
+
+    // Compose the "البيان"/"الشرح" description: start with the generic label
+    // and append the user-typed note from the source document when present
+    // (separated by " — "), so the statement reflects whatever the data-entry
+    // user wrote on the originating invoice / return / receipt voucher.
+    const withNote = (base: string, n?: string | null) =>
+      n && String(n).trim() ? `${base} — ${String(n).trim()}` : base;
 
     type Line = { date: string; type: string; docNumber: string | null; debit: number; credit: number; description: string };
     const lines: Line[] = [
-      ...invs.map(i => ({ date: i.date, type: "invoice", docNumber: i.docNumber, debit: Number(i.total), credit: 0, description: "فاتورة مبيعات آجلة" })),
-      ...rets.map(r => ({ date: r.date, type: "return",  docNumber: r.docNumber, debit: 0, credit: Number(r.total), description: "مرتجع مبيعات" })),
-      ...recs.map(r => ({ date: r.date, type: "receipt", docNumber: r.docNumber, debit: 0, credit: Number(r.amount), description: "سند قبض" })),
+      ...invs.map(i => ({ date: i.date, type: "invoice", docNumber: i.docNumber, debit: Number(i.total), credit: 0, description: withNote("فاتورة مبيعات آجلة", i.notes) })),
+      ...rets.map(r => ({ date: r.date, type: "return",  docNumber: r.docNumber, debit: 0, credit: Number(r.total),  description: withNote("مرتجع مبيعات", r.notes) })),
+      ...recs.map(r => ({ date: r.date, type: "receipt", docNumber: r.docNumber, debit: 0, credit: Number(r.amount), description: withNote("سند قبض", r.notes) })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
 
     res.json({ opening, lines });

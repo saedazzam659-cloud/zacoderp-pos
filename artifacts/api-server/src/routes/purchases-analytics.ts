@@ -398,6 +398,7 @@ router.get("/supplier-statement", async (req, res) => {
     const invs = await db.select({
       id: purchaseInvoicesTable.id, date: purchaseInvoicesTable.invoiceDate,
       docNumber: purchaseInvoicesTable.docNumber, total: purchaseInvoicesTable.totalAmount,
+      notes: purchaseInvoicesTable.notes,
     }).from(purchaseInvoicesTable).where(and(...invConds));
 
     const retConds: any[] = [
@@ -412,6 +413,7 @@ router.get("/supplier-statement", async (req, res) => {
     const rets = await db.select({
       id: purchaseReturnsTable.id, date: purchaseReturnsTable.returnDate,
       docNumber: purchaseReturnsTable.docNumber, total: purchaseReturnsTable.totalAmount,
+      notes: purchaseReturnsTable.notes,
     }).from(purchaseReturnsTable).where(and(...retConds));
 
     const payConds: any[] = [
@@ -426,6 +428,7 @@ router.get("/supplier-statement", async (req, res) => {
     const pays = await db.select({
       id: paymentVouchersTable.id, date: paymentVouchersTable.date,
       docNumber: paymentVouchersTable.code, amount: paymentVouchersTable.amount,
+      notes: paymentVouchersTable.notes,
     }).from(paymentVouchersTable).where(and(...payConds));
 
     // Direct JE rows (fixed-asset credit, manual JEs, …) within range.
@@ -434,14 +437,21 @@ router.get("/supplier-statement", async (req, res) => {
       branchScopeSpread(req, journalEntriesTable.branchId, bid),
     );
 
+    // Compose the "البيان"/"الشرح" description: start with the generic label
+    // and append the user-typed note from the source document when present
+    // so the statement reflects whatever was written on the originating
+    // purchase invoice / return / payment voucher.
+    const withNote = (base: string, n?: string | null) =>
+      n && String(n).trim() ? `${base} — ${String(n).trim()}` : base;
+
     // For supplier statements, invoices increase the payable (credit column),
     // returns and payments decrease it (debit column). Direct JE lines carry
     // their own debit/credit as posted.
     type Line = { date: string; type: string; docNumber: string | null; debit: number; credit: number; description: string };
     const lines: Line[] = [
-      ...invs.map(i => ({ date: i.date, type: "invoice", docNumber: i.docNumber, debit: 0, credit: Number(i.total), description: "فاتورة مشتريات آجلة" })),
-      ...rets.map(r => ({ date: r.date, type: "return",  docNumber: r.docNumber, debit: Number(r.total), credit: 0, description: "مرتجع مشتريات" })),
-      ...pays.map(p => ({ date: p.date, type: "payment", docNumber: p.docNumber, debit: Number(p.amount), credit: 0, description: "سند صرف" })),
+      ...invs.map(i => ({ date: i.date, type: "invoice", docNumber: i.docNumber, debit: 0, credit: Number(i.total), description: withNote("فاتورة مشتريات آجلة", i.notes) })),
+      ...rets.map(r => ({ date: r.date, type: "return",  docNumber: r.docNumber, debit: Number(r.total), credit: 0, description: withNote("مرتجع مشتريات", r.notes) })),
+      ...pays.map(p => ({ date: p.date, type: "payment", docNumber: p.docNumber, debit: Number(p.amount), credit: 0, description: withNote("سند صرف", p.notes) })),
       ...jeLines.map(j => ({
         date: j.date, type: "journal", docNumber: j.docNumber,
         debit: j.debit, credit: j.credit,
