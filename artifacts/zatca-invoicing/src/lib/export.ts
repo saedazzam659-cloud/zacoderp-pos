@@ -882,13 +882,17 @@ export interface ExportStatementPdfOpts {
   /** Optional column-visibility map. When omitted every column renders, so
    *  callers that don't yet wire up the chooser keep the old 7-col layout. */
   visibleCols?: StatementPdfVisibleCols;
+  /** Display name / username of the logged-in user who triggered the
+   *  print. Rendered under the print date in the footer so the paper
+   *  copy carries an audit trail of who printed it. */
+  userName?: string | null;
 }
 
 export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
   const {
     mode, company, account, from, to,
     opening, lines, totals, closing,
-    filename, autoPrint = true, branchName,
+    filename, autoPrint = true, branchName, userName,
   } = opts;
   const vc = opts.visibleCols ?? {};
   const v = {
@@ -1196,7 +1200,10 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       </tbody>
     </table>
 
-    <div class="print-meta">تاريخ الطباعة: ${today}</div>
+    <div class="print-meta">
+      <div>تاريخ الطباعة: ${today}</div>
+      ${userName ? `<div>اسم المستخدم: ${escape(userName)}</div>` : ""}
+    </div>
   </div>
   <script>
     ${autoPrint ? `window.onload = function(){ setTimeout(function(){ window.print(); }, 600); };` : ""}

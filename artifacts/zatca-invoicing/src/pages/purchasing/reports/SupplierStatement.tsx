@@ -154,6 +154,7 @@ export default function SupplierStatement() {
           fmt,
           branchName,
           visibleCols,
+          userName: user?.username ?? null,
         });
       }
     };
@@ -194,6 +195,7 @@ export default function SupplierStatement() {
             disabled={!applied.supplierId || isLoading}
             branchName={branchName}
             visibleCols={visibleCols}
+            userName={user?.username ?? null}
           />
         </div>
       </div>

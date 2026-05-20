@@ -46,11 +46,14 @@ interface Props {
    *  exporter so the user sees an identical layout everywhere. Defaults
    *  to all visible when omitted. */
   visibleCols?: StatementVisibleCols;
+  /** Logged-in user's display name — printed in the PDF footer under
+   *  the print date so the paper carries an audit trail. */
+  userName?: string | null;
 }
 
 export default function StatementExportButtons({
   mode, company, account, from, to, opening, lines, totals, closing, filename, disabled, branchName,
-  visibleCols = STATEMENT_COL_DEFAULTS,
+  visibleCols = STATEMENT_COL_DEFAULTS, userName,
 }: Props) {
   const [busy, setBusy] = useState(false);
   const { fmt } = useFmt();
@@ -115,7 +118,7 @@ export default function StatementExportButtons({
       } else {
         exportStatementToPDF({
           mode, company, account, from, to, opening, lines, totals, closing,
-          filename, autoPrint: type === "print", fmt, branchName, visibleCols,
+          filename, autoPrint: type === "print", fmt, branchName, visibleCols, userName,
         });
       }
     } finally {

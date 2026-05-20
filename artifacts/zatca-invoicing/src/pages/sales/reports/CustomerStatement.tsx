@@ -156,6 +156,7 @@ export default function CustomerStatement() {
           fmt,
           branchName,
           visibleCols,
+          userName: user?.username ?? null,
         });
       }
     };
@@ -196,6 +197,7 @@ export default function CustomerStatement() {
             disabled={!applied.customerId || isLoading}
             branchName={branchName}
             visibleCols={visibleCols}
+            userName={user?.username ?? null}
           />
         </div>
       </div>
