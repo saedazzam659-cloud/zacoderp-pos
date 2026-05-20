@@ -1379,6 +1379,219 @@ function template12(d: PrintData): string {
   </body></html>`;
 }
 
+// ── Template 13: أنيق ذهبي ──────────────────────────────────────────────────
+// Elegant gold/onyx layout inspired by premium boutique invoice designs:
+// dark badge with the document number on one side, branded company card on
+// the other, a rounded gold-bordered customer card, a slim accent-bar items
+// table, and a split bottom row that mirrors the reference screenshot —
+// totals stacked on the right with a dark/gold "Grand Total" ribbon, QR +
+// Tafqeet card on the left. Uses the same shared helpers as the rest of
+// the templates so every data field (logo, VAT, CR, branch, line discounts,
+// free qty, Tafqeet, ZATCA QR) flows in unchanged.
+function template13(d: PrintData): string {
+  const { doc, lines, customer, company } = d;
+  const isReturn = d.type === "return";
+  const isQuot = d.type === "quotation";
+  const english = isReturn ? "Sales Return" : isQuot ? "Quotation" : "Sales Invoice";
+  const totals = computeFullTotals(doc, lines);
+  const docNo = doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`;
+  const safeLogo = safeLogoSrc(company?.logo);
+  const GOLD = "#c9a35e";
+  const GOLD_DARK = "#a8823d";
+  const INK = "#0e1726";
+  const CREAM = "#fbf8f1";
+
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  ${baseStyles(GOLD, "#fff")}
+  <style>
+    body { background:#fff; color:${INK}; font-family:'Segoe UI','Tajawal',Tahoma,Arial,sans-serif; }
+    .sheet { padding:6px; }
+    .ribbon-top { display:grid; grid-template-columns:1fr 1.2fr; gap:14px; margin-bottom:14px; }
+    .badge-card {
+      background:${INK}; color:#fff; border-radius:10px; padding:18px 20px;
+      position:relative; overflow:hidden; min-height:130px;
+      display:flex; flex-direction:column; justify-content:center;
+      box-shadow:0 2px 8px rgba(14,23,38,.18);
+    }
+    .badge-card::before {
+      content:""; position:absolute; top:0; right:0; width:6px; height:100%;
+      background:linear-gradient(180deg, ${GOLD} 0%, ${GOLD_DARK} 100%);
+    }
+    .badge-card .lbl { font-size:10px; letter-spacing:2px; color:${GOLD}; text-transform:uppercase; margin-bottom:8px; }
+    .badge-card .num { font-size:36px; font-weight:800; letter-spacing:1px; line-height:1; }
+    .badge-card .meta { font-size:10px; opacity:.7; margin-top:10px; }
+    .brand-card {
+      background:#fff; border:1.5px solid ${GOLD}; border-radius:10px;
+      padding:14px 18px; text-align:center; position:relative; min-height:130px;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+    }
+    .brand-card::before, .brand-card::after {
+      content:""; position:absolute; top:50%; width:30px; height:1px; background:${GOLD}; opacity:.5;
+    }
+    .brand-card::before { right:14px; } .brand-card::after { left:14px; }
+    .brand-card .crown {
+      width:34px; height:14px; margin-bottom:6px;
+      background:radial-gradient(circle at 50% 100%, ${GOLD} 0 38%, transparent 39%),
+                 linear-gradient(90deg, transparent 30%, ${GOLD} 30% 70%, transparent 70%);
+      opacity:.85;
+    }
+    .brand-card img { max-height:48px; max-width:160px; object-fit:contain; margin-bottom:4px; }
+    .brand-card .name { font-size:18px; font-weight:800; color:${INK}; letter-spacing:.5px; }
+    .brand-card .name-en { font-size:10px; color:${GOLD_DARK}; margin-top:2px; letter-spacing:1.5px; text-transform:uppercase; }
+
+    .info-strip {
+      display:grid; grid-template-columns:repeat(3,1fr); gap:0;
+      border:1px solid ${GOLD}; border-radius:8px; overflow:hidden;
+      margin-bottom:12px; background:${CREAM};
+    }
+    .info-strip > div { padding:8px 12px; border-left:1px solid ${GOLD}33; }
+    .info-strip > div:first-child { border-left:0; }
+    .info-strip .lbl { font-size:9px; color:${GOLD_DARK}; text-transform:uppercase; letter-spacing:1px; margin-bottom:2px; }
+    .info-strip .val { font-size:12px; font-weight:700; color:${INK}; }
+
+    .customer-card {
+      border:1.5px solid ${GOLD}; border-radius:10px; padding:12px 16px;
+      margin-bottom:14px; background:#fff; position:relative;
+      display:grid; grid-template-columns:auto 1fr; gap:14px; align-items:center;
+    }
+    .customer-card .seal {
+      width:44px; height:44px; border-radius:50%;
+      background:${INK}; color:${GOLD}; display:flex; align-items:center; justify-content:center;
+      font-size:18px; font-weight:800;
+    }
+    .customer-card .lines > div { font-size:11px; color:${INK}; margin-bottom:2px; }
+    .customer-card .lines .name { font-size:14px; font-weight:700; color:${INK}; margin-bottom:4px; }
+
+    table { border:0; }
+    thead tr { background:${INK}; color:${GOLD}; }
+    thead th { padding:8px 6px; font-size:10px; font-weight:700; letter-spacing:.5px; border:0; }
+    thead th:first-child { border-top-right-radius:6px; }
+    thead th:last-child  { border-top-left-radius:6px; }
+    tbody td { padding:7px 6px; border-bottom:1px solid ${GOLD}33; font-size:11px; }
+    tbody tr:nth-child(even) td { background:${CREAM}; }
+    tbody tr:last-child td { border-bottom:1.5px solid ${GOLD}; }
+
+    .bottom { display:grid; grid-template-columns:1fr 1.1fr; gap:14px; margin-top:14px; }
+    .qr-card {
+      border:1.5px solid ${GOLD}; border-radius:10px; padding:12px;
+      background:${CREAM}; text-align:center;
+    }
+    .qr-card .lbl { font-size:9px; color:${GOLD_DARK}; letter-spacing:1.5px; text-transform:uppercase; margin-top:6px; }
+    .tafqeet-card {
+      margin-top:10px; border:1px dashed ${GOLD}; border-radius:8px;
+      padding:8px 12px; background:#fff; font-size:11px; color:${INK};
+    }
+    .tafqeet-card .lbl { font-size:9px; color:${GOLD_DARK}; letter-spacing:1px; margin-bottom:3px; }
+
+    .totals-card { border:1.5px solid ${GOLD}; border-radius:10px; overflow:hidden; background:#fff; }
+    .totals-card .row {
+      display:flex; justify-content:space-between; align-items:center;
+      padding:8px 14px; font-size:12px; color:${INK}; border-bottom:1px solid ${GOLD}33;
+    }
+    .totals-card .row.muted { color:#6b7280; }
+    .totals-card .row.disc  { color:#b91c1c; }
+    .totals-card .row.vat   { color:${GOLD_DARK}; font-weight:600; }
+    .totals-card .row.grand {
+      background:${INK}; color:#fff; font-size:16px; font-weight:800;
+      letter-spacing:.5px; border:0;
+      position:relative;
+    }
+    .totals-card .row.grand::before {
+      content:""; position:absolute; right:0; top:0; bottom:0; width:6px;
+      background:linear-gradient(180deg, ${GOLD} 0%, ${GOLD_DARK} 100%);
+    }
+    .totals-card .row.grand .v { color:${GOLD}; }
+
+    .doc-footer {
+      margin-top:18px; padding:10px 16px; border-radius:8px;
+      background:${INK}; color:#fff; display:flex; justify-content:space-between;
+      align-items:center; font-size:10px;
+    }
+    .doc-footer .gold { color:${GOLD}; }
+
+    .banner {
+      text-align:center; padding:6px 10px; border-radius:6px; margin-bottom:10px;
+      font-weight:700; font-size:11px;
+    }
+    .banner.ret { background:#fef2f2; border:1.5px solid #ef4444; color:#b91c1c; }
+    .banner.quo { background:#eff6ff; border:1.5px solid #3b82f6; color:#1e40af; }
+
+    .notes { margin-top:10px; padding:8px 12px; border-right:3px solid ${GOLD};
+             background:${CREAM}; font-size:11px; color:${INK}; border-radius:4px; }
+  </style>
+  </head><body><div class="sheet">
+
+    ${isReturn ? `<div class="banner ret">⚠ مستند مرتجع مبيعات — Sales Return</div>` : ""}
+    ${isQuot   ? `<div class="banner quo">عرض سعر — غير فاتورة ضريبية</div>` : ""}
+
+    <div class="ribbon-top">
+      <div class="badge-card">
+        <div class="lbl">${docTitle(d.type)}</div>
+        <div class="num">${docNo}</div>
+        <div class="meta">${english} · ${docDate(doc, d.type)}</div>
+      </div>
+      <div class="brand-card">
+        <div class="crown"></div>
+        ${safeLogo ? `<img src="${safeLogo}" alt="" />` : ""}
+        <div class="name">${company?.nameAr ?? "اسم الشركة"}</div>
+        ${company?.nameEn ? `<div class="name-en">${company.nameEn}</div>` : ""}
+      </div>
+    </div>
+
+    <div class="info-strip">
+      <div><div class="lbl">التاريخ — Date</div><div class="val">${docDate(doc, d.type)}</div></div>
+      <div><div class="lbl">رقم العميل — Cust. No.</div><div class="val">${customer?.code ?? customer?.id ?? "—"}</div></div>
+      <div><div class="lbl">${isQuot ? "صالح حتى — Valid Until" : "طريقة الدفع — Payment"}</div>
+           <div class="val">${isQuot
+             ? (doc.validUntil ?? "—")
+             : (doc.paymentType === "cash" ? "نقدي Cash" : doc.paymentType === "bank" ? "بنك Bank" : "آجل Credit")}</div></div>
+    </div>
+
+    <div class="customer-card">
+      <div class="seal">${(customer?.nameAr ?? customer?.nameEn ?? "؟").trim().charAt(0)}</div>
+      <div class="lines">
+        <div class="name">${customer?.nameAr ?? customer?.nameEn ?? "—"}</div>
+        ${customer?.vatNumber ? `<div><span style="color:${GOLD_DARK}">الرقم الضريبي:</span> ${customer.vatNumber}</div>` : ""}
+        ${customer?.phone     ? `<div><span style="color:${GOLD_DARK}">هاتف:</span> ${customer.phone}</div>` : ""}
+        ${customer?.city      ? `<div><span style="color:${GOLD_DARK}">العنوان:</span> ${customer.city}${customer.country ? ` — ${customer.country}` : ""}</div>` : ""}
+      </div>
+    </div>
+
+    ${linesTable(lines, "", "")}
+
+    <div class="bottom">
+      <div>
+        <div class="qr-card">
+          ${qrImgHtml(d, { size: 120, border: `1px solid ${GOLD}`, bg: "#fff", color: INK })}
+          <div class="lbl">رمز QR — ZATCA</div>
+        </div>
+        <div class="tafqeet-card">
+          <div class="lbl">المبلغ بالحروف — Amount in Words</div>
+          <div><b>${numberToArabicWords(totals.grandTotal)} ${totals.currency === "SAR" ? "ريال سعودي لا غير" : totals.currency}</b></div>
+        </div>
+      </div>
+      <div>
+        <div class="totals-card">
+          <div class="row muted"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(totals.subtotalPreDiscount)} ${totals.currency}</span></div>
+          <div class="row disc"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(totals.discountTotal)} ${totals.currency}</span></div>
+          <div class="row"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(totals.netPreVat)} ${totals.currency}</span></div>
+          <div class="row vat"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(totals.vatAmount)} ${totals.currency}</span></div>
+          <div class="row grand"><span>الصافي شامل الضريبة — Total</span><span class="mono v">${fmt(totals.grandTotal)} ${totals.currency}</span></div>
+        </div>
+        ${summaryFooterHtml(totals)}
+      </div>
+    </div>
+
+    ${doc.notes ? `<div class="notes"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
+
+    <div class="doc-footer">
+      <span><span class="gold">ر.ض:</span> ${company?.vatNumber ?? "—"} · <span class="gold">س.ت:</span> ${company?.crNumber ?? "—"}${company?.phone ? ` · <span class="gold">هاتف:</span> ${company.phone}` : ""}</span>
+      <span class="gold">ZATCA e-Invoice · ${new Date().toLocaleDateString("ar-SA")}</span>
+    </div>
+
+  </div></body></html>`;
+}
+
 const TEMPLATES = [
   { id: 1,  name: "كلاسيكي",       desc: "حدود وجداول تقليدية",      color: "#2563eb", fn: template1,  thermal: false },
   { id: 2,  name: "حديث",          desc: "تصميم نظيف بهيدر أخضر",   color: "#059669", fn: template2,  thermal: false },
@@ -1390,6 +1603,7 @@ const TEMPLATES = [
   { id: 10, name: "بحري عميق",     desc: "تدرج أزرق مع موجة سفلية",  color: "#0e7490", fn: template10, thermal: false },
   { id: 11, name: "حيوي",          desc: "تدرجات بنفسجية ووردية",    color: "#a855f7", fn: template11, thermal: false },
   { id: 12, name: "تنفيذي",        desc: "شريط جانبي ببيانات الشركة", color: "#0f172a", fn: template12, thermal: false },
+  { id: 13, name: "أنيق ذهبي",     desc: "أونكس وذهب فاخر مع QR وتفقيط", color: "#c9a35e", fn: template13, thermal: false },
   { id: 6,  name: "حراري كلاسيكي", desc: "إيصال 80mm أبيض/أسود",    color: "#111111", fn: template6,  thermal: true  },
   { id: 7,  name: "حراري عصري",    desc: "إيصال 80mm ملوّن",         color: "#0f766e", fn: template7,  thermal: true  },
 ];
