@@ -61,6 +61,8 @@ interface ReturnLine {
   freeQty: string;
   unitPrice: string;
   discount: string;
+  /** قيمة الخصم — مبلغ ثابت بالعملة يُطرح بعد الخصم بالنسبة (يطابق نفس الحقل في فاتورة المبيعات). */
+  discountAmount: string;
   vatRate: string;
   lineTotal: string;
   notes: string;
@@ -70,7 +72,7 @@ function newLine(): ReturnLine {
   return {
     _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
     unitId: "", unit: "", conversionFactor: "1", warehouseId: "",
-    qty: "1", freeQty: "0", unitPrice: "0", discount: "0", vatRate: "15", lineTotal: "0",
+    qty: "1", freeQty: "0", unitPrice: "0", discount: "0", discountAmount: "0", vatRate: "15", lineTotal: "0",
     notes: "",
   };
 }
@@ -437,6 +439,7 @@ export default function SalesReturns() {
             freeQty: String(l.freeQty ?? "0"),
             unitPrice: String(l.unitPrice ?? "0"),
             discount: String(l.discount ?? "0"),
+            discountAmount: String(l.discountAmount ?? "0"),
             vatRate: (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
             lineTotal: String(l.lineTotal ?? "0"),
             notes: l.notes ?? "",
@@ -489,6 +492,7 @@ export default function SalesReturns() {
             freeQty: String(l.freeQty ?? "0"),
             unitPrice: String(l.unitPrice ?? "0"),
             discount: String(l.discount ?? "0"),
+            discountAmount: String(l.discountAmount ?? "0"),
             vatRate: (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
             lineTotal: String(l.lineTotal ?? "0"),
             notes: l.notes ?? "",
@@ -612,6 +616,7 @@ export default function SalesReturns() {
         freeQty:     String(l.freeQty ?? "0"),
         unitPrice:   String(l.unitPrice ?? 0),
         discount:    String(l.discount  ?? "0"),
+        discountAmount: String(l.discountAmount ?? "0"),
         vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
         lineTotal:   "0",
         notes:       l.notes ?? "",
@@ -636,8 +641,11 @@ export default function SalesReturns() {
     const qty   = Number(l.qty) || 0;
     const price = Number(l.unitPrice) || 0;
     const disc  = Number(l.discount) || 0;
+    const discAmt = Math.max(0, Number(l.discountAmount) || 0);
     const rate  = (Number(l.vatRate) || 0) / 100;
-    const gross = qty * price * (1 - disc / 100);
+    // المعادلة: الإجمالي = الكمية × سعر البيع × (1 − خصم%/100) − قيمة الخصم
+    // (مطابق لـ SalesDocumentForm حتى يُحسب المرتجع بنفس المنطق المحاسبي).
+    const gross = Math.max(0, qty * price * (1 - disc / 100) - discAmt);
     if (priceIncludesVat) return gross;
     return gross * (1 + rate);
   }
@@ -645,8 +653,9 @@ export default function SalesReturns() {
     const qty   = Number(l.qty) || 0;
     const price = Number(l.unitPrice) || 0;
     const disc  = Number(l.discount) || 0;
+    const discAmt = Math.max(0, Number(l.discountAmount) || 0);
     const rate  = (Number(l.vatRate) || 0) / 100;
-    const gross = qty * price * (1 - disc / 100);
+    const gross = Math.max(0, qty * price * (1 - disc / 100) - discAmt);
     if (priceIncludesVat) {
       const net = rate > -1 ? gross / (1 + rate) : gross;
       return { subtotal: net, vat: gross - net, lineTotal: gross };
@@ -1578,7 +1587,7 @@ ${sections}
                 <span>{t("salesReturns.tabLines", { count: lines.filter(l => l.itemId || l.itemName).length })}</span>
               </div>
               {(() => {
-                const GRID_COLS_SR = "110px minmax(260px,1.4fr) 160px 120px 90px 80px 110px 80px 80px 130px 180px 40px";
+                const GRID_COLS_SR = "110px minmax(260px,1.4fr) 160px 120px 90px 80px 110px 80px 110px 80px 130px 180px 40px";
                 return (
               <div className="rounded-xl border bg-card overflow-x-auto">
                 <div className="min-w-max">
@@ -1592,6 +1601,7 @@ ${sections}
                   { k: "freeQty", l: t("salesDocForm.colFreeQty") },
                   { k: "price", l: t("salesReturns.colPrice") },
                   { k: "disc", l: t("salesReturns.colDiscPct") },
+                  { k: "discAmt", l: "قيمة الخصم" },
                   { k: "vat", l: t("salesReturns.colVatPct") },
                   { k: "total", l: t("salesReturns.colTotal") },
                   { k: "notes", l: t("salesReturns.colNotes") },
@@ -1656,6 +1666,13 @@ ${sections}
                       onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
                     <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.discount}
                       onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
+                    {/* قيمة الخصم — مبلغ ثابت بالعملة يُطرح بعد الخصم بالنسبة.
+                        نفس سلوك حقل قيمة الخصم في فاتورة المبيعات. */}
+                    <Input className="h-8 text-xs font-mono tabular-nums" type="text" inputMode="decimal" dir="ltr"
+                      value={l.discountAmount}
+                      title="قيمة الخصم بالعملة — تُطرح بعد الخصم بالنسبة"
+                      data-testid={`line-discount-amount-${l._id}`}
+                      onChange={e => updateLine(l._id, "discountAmount", e.target.value.replace(/[^0-9.]/g, ""))} />
                     <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
                       onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                     <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
