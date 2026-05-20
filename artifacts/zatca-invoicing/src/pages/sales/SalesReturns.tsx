@@ -529,16 +529,42 @@ export default function SalesReturns() {
       // user can choose exactly which items to return and the qty for each.
       // This is rule #4 of the sales-return policy.
       if (inv.lines?.length) {
-        setPicker({
-          open: true,
-          invoice: inv,
-          rows: inv.lines.map((l: any) => ({
+        // Fetch the cumulative already-returned qty per item across ALL
+        // other returns on this invoice so the picker shows the TRUE
+        // remaining cap (= sold − previously returned) instead of raw
+        // sold qty. Excludes the return currently being edited so its
+        // own lines don't subtract from their own cap.
+        let returnedByItem: Record<string, number> = {};
+        try {
+          const qs = editingId != null ? `&excludeReturnId=${editingId}` : "";
+          const r = await fetch(`${API}/api/sales/sales-invoices/${inv.id}/returned-by-item?companyId=${cid}${qs}`, { headers: authH });
+          if (r.ok) returnedByItem = (await r.json()).byItem ?? {};
+        } catch (_) { /* fall back to raw sold qty if endpoint fails */ }
+        // Allocate the per-item returned total across same-item source
+        // lines in document order, so each row's cap is the portion of
+        // the remaining return budget it can still absorb.
+        const remainingByItem = { ...returnedByItem };
+        const rows = inv.lines.map((l: any) => {
+          const sold = Number(l.qty ?? 0);
+          const conv = Number(l.conversionFactor ?? 1) || 1;
+          const soldBase = sold * conv;
+          const iidKey = l.itemId != null ? String(l.itemId) : null;
+          let consumeBase = 0;
+          if (iidKey && (remainingByItem[iidKey] ?? 0) > 0) {
+            consumeBase = Math.min(remainingByItem[iidKey], soldBase);
+            remainingByItem[iidKey] -= consumeBase;
+          }
+          const remainingRaw = Math.max(0, (soldBase - consumeBase) / conv);
+          // Round to a sensible step (4 decimals) to avoid floating dust.
+          const maxQty = Math.round(remainingRaw * 10000) / 10000;
+          return {
             srcLine: l,
             selected: false,
-            returnQty: String(Math.round(Number(l.qty ?? 1))),
-            maxQty: Number(l.qty ?? 0),
-          })),
+            returnQty: String(maxQty > 0 ? maxQty : 0),
+            maxQty,
+          };
         });
+        setPicker({ open: true, invoice: inv, rows });
       } else {
         toast({ title: "الفاتورة المختارة لا تحتوي على أصناف", variant: "destructive" });
       }
@@ -550,7 +576,11 @@ export default function SalesReturns() {
   // metadata (unit, price, vat, discount, warehouse, …) is preserved.
   function applyPickerSelection() {
     if (!picker) return;
-    const chosen = picker.rows.filter(r => r.selected);
+    // Defensively drop any selected-but-exhausted rows (maxQty<=0). The
+    // UI disables their checkbox, but a stale "select all" interaction
+    // could still flag them — silently skipping is friendlier than
+    // erroring out on "qty must be > 0".
+    const chosen = picker.rows.filter(r => r.selected && r.maxQty > 0);
     if (!chosen.length) {
       toast({ title: "يجب تحديد صنف واحد على الأقل", variant: "destructive" });
       return;
@@ -562,7 +592,7 @@ export default function SalesReturns() {
     if (bad) {
       toast({
         title: "كمية مرتجع غير صالحة",
-        description: `الصنف "${bad.srcLine.itemName ?? bad.srcLine.itemCode ?? ""}" — الكمية يجب أن تكون أكبر من صفر و لا تتجاوز ${bad.maxQty}`,
+        description: `الصنف "${bad.srcLine.itemName ?? bad.srcLine.itemCode ?? ""}" — الكمية يجب أن تكون أكبر من صفر و لا تتجاوز المتاح للإرجاع (${bad.maxQty})`,
         variant: "destructive",
       });
       return;
@@ -2081,7 +2111,7 @@ ${sections}
           selected entries. Backstops rule #4 of the sales-returns policy.
       */}
       <Dialog open={!!picker?.open} onOpenChange={(v) => { if (!v) setPicker(null); }}>
-        <DialogContent className="max-w-3xl" dir="rtl">
+        <DialogContent className="max-w-5xl" dir="rtl">
           <DialogHeader>
             <DialogTitle>
               اختر أصناف المرتجع من الفاتورة {picker?.invoice?.docNumber ?? ""}
@@ -2093,10 +2123,19 @@ ${sections}
                 <tr>
                   <th className="p-2 border w-10">
                     <Checkbox
-                      checked={!!picker && picker.rows.length > 0 && picker.rows.every(r => r.selected)}
+                      // Select-all only considers rows that still have
+                      // remaining return budget (maxQty>0). Fully-returned
+                      // lines are skipped so the confirm step doesn't fail
+                      // with "qty must be > 0".
+                      checked={!!picker
+                        && picker.rows.some(r => r.maxQty > 0)
+                        && picker.rows.filter(r => r.maxQty > 0).every(r => r.selected)}
                       onCheckedChange={(v) => {
                         const sel = v === true;
-                        setPicker(p => p ? { ...p, rows: p.rows.map(r => ({ ...r, selected: sel })) } : p);
+                        setPicker(p => p ? {
+                          ...p,
+                          rows: p.rows.map(r => r.maxQty > 0 ? { ...r, selected: sel } : { ...r, selected: false }),
+                        } : p);
                       }}
                     />
                   </th>
@@ -2104,52 +2143,81 @@ ${sections}
                   <th className="p-2 border text-start">الصنف</th>
                   <th className="p-2 border text-center">الوحدة</th>
                   <th className="p-2 border text-end">المباع</th>
+                  <th className="p-2 border text-end">سعر البيع</th>
+                  <th className="p-2 border text-end">مجاني</th>
+                  <th className="p-2 border text-end">الخصم</th>
+                  <th className="p-2 border text-end">المتاح للإرجاع</th>
                   <th className="p-2 border text-end w-32">كمية المرتجع</th>
                 </tr>
               </thead>
               <tbody>
-                {picker?.rows.map((r, idx) => (
-                  <tr key={idx} className={cn(r.selected && "bg-primary/5")}>
-                    <td className="p-2 border text-center">
-                      <Checkbox
-                        checked={r.selected}
-                        onCheckedChange={(v) => {
-                          const sel = v === true;
-                          setPicker(p => p ? {
-                            ...p,
-                            rows: p.rows.map((x, i) => i === idx ? { ...x, selected: sel } : x),
-                          } : p);
-                        }}
-                      />
-                    </td>
-                    <td className="p-2 border font-mono">{r.srcLine.itemCode ?? ""}</td>
-                    <td className="p-2 border">{r.srcLine.itemName ?? ""}</td>
-                    <td className="p-2 border text-center">{r.srcLine.unit ?? ""}</td>
-                    <td className="p-2 border text-end font-mono">{r.maxQty}</td>
-                    <td className="p-2 border">
-                      <Input
-                        className="h-8 text-xs text-end font-mono"
-                        type="text"
-                        inputMode="decimal"
-                        dir="ltr"
-                        disabled={!r.selected}
-                        value={r.returnQty}
-                        onChange={(e) => {
-                          const v = e.target.value.replace(/[^0-9.]/g, "");
-                          setPicker(p => p ? {
-                            ...p,
-                            rows: p.rows.map((x, i) => i === idx ? { ...x, returnQty: v } : x),
-                          } : p);
-                        }}
-                      />
-                      {Number(r.returnQty) > r.maxQty && (
-                        <p className="text-[10px] text-destructive mt-0.5">يتجاوز المباع ({r.maxQty})</p>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {picker?.rows.map((r, idx) => {
+                  // Pretty-print the source-line discount: prefer the
+                  // money amount when present (priority over %), fall
+                  // back to "X %" when only a percent was used, and show
+                  // an em-dash when neither was applied. Mirrors how the
+                  // sales invoice itself surfaces the discount column.
+                  const discAmt = Number(r.srcLine.discountAmount ?? 0);
+                  const discPct = Number(r.srcLine.discount ?? 0);
+                  const discCell = discAmt > 0
+                    ? fmt(discAmt)
+                    : (discPct > 0 ? `${discPct}%` : "—");
+                  const overCap  = Number(r.returnQty) > r.maxQty + 1e-6;
+                  const capExhausted = r.maxQty <= 0;
+                  return (
+                    <tr key={idx} className={cn(r.selected && "bg-primary/5", capExhausted && "opacity-60")}>
+                      <td className="p-2 border text-center">
+                        <Checkbox
+                          checked={r.selected}
+                          disabled={capExhausted}
+                          onCheckedChange={(v) => {
+                            const sel = v === true;
+                            setPicker(p => p ? {
+                              ...p,
+                              rows: p.rows.map((x, i) => i === idx ? { ...x, selected: sel } : x),
+                            } : p);
+                          }}
+                        />
+                      </td>
+                      <td className="p-2 border font-mono">{r.srcLine.itemCode ?? ""}</td>
+                      <td className="p-2 border">{r.srcLine.itemName ?? ""}</td>
+                      <td className="p-2 border text-center">{r.srcLine.unit ?? ""}</td>
+                      <td className="p-2 border text-end font-mono">{fmt(Number(r.srcLine.qty ?? 0))}</td>
+                      <td className="p-2 border text-end font-mono">{fmt(Number(r.srcLine.unitPrice ?? 0))}</td>
+                      <td className="p-2 border text-end font-mono">{fmt(Number(r.srcLine.freeQty ?? 0))}</td>
+                      <td className="p-2 border text-end font-mono">{discCell}</td>
+                      <td className={cn(
+                        "p-2 border text-end font-mono",
+                        capExhausted ? "text-destructive" : "text-emerald-700",
+                      )}>{fmt(r.maxQty)}</td>
+                      <td className="p-2 border">
+                        <Input
+                          className="h-8 text-xs text-end font-mono"
+                          type="text"
+                          inputMode="decimal"
+                          dir="ltr"
+                          disabled={!r.selected || capExhausted}
+                          value={r.returnQty}
+                          onChange={(e) => {
+                            const v = e.target.value.replace(/[^0-9.]/g, "");
+                            setPicker(p => p ? {
+                              ...p,
+                              rows: p.rows.map((x, i) => i === idx ? { ...x, returnQty: v } : x),
+                            } : p);
+                          }}
+                        />
+                        {capExhausted && (
+                          <p className="text-[10px] text-destructive mt-0.5">تم إرجاع الكمية بالكامل سابقاً</p>
+                        )}
+                        {!capExhausted && overCap && (
+                          <p className="text-[10px] text-destructive mt-0.5">يتجاوز المتاح ({fmt(r.maxQty)})</p>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
                 {picker?.rows.length === 0 && (
-                  <tr><td colSpan={6} className="p-4 text-center text-muted-foreground">لا توجد أصناف في الفاتورة</td></tr>
+                  <tr><td colSpan={10} className="p-4 text-center text-muted-foreground">لا توجد أصناف في الفاتورة</td></tr>
                 )}
               </tbody>
             </table>

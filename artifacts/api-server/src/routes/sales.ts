@@ -475,6 +475,45 @@ router.get("/sales-invoices/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
+// Sum of already-returned quantity (in base units) per itemId across ALL
+// existing sales returns linked to this invoice. Used by the sales-return
+// item picker to compute the remaining cap per line so the UI can show
+// (and enforce) "remaining = sold − previously returned" before the user
+// hits Save. ?excludeReturnId=N excludes a return being edited so its own
+// lines don't subtract from their own cap.
+router.get("/sales-invoices/:id/returned-by-item", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const invId = Number(req.params.id);
+    const excludeReturnId = req.query.excludeReturnId != null
+      ? Number(req.query.excludeReturnId) : null;
+    const where = [
+      eq(salesReturnsTable.companyId, cid),
+      eq(salesReturnsTable.invoiceId, invId),
+      ...(excludeReturnId ? [sql`${salesReturnsTable.id} <> ${excludeReturnId}`] : []),
+    ];
+    const retIds = await db.select({ id: salesReturnsTable.id })
+      .from(salesReturnsTable).where(and(...where));
+    const ids = retIds.map((r: any) => r.id);
+    const byItem: Record<string, number> = {};
+    if (ids.length) {
+      const rows = await db.select({
+        itemId: salesReturnLinesTable.itemId,
+        qty: salesReturnLinesTable.qty,
+        conversionFactor: salesReturnLinesTable.conversionFactor,
+      }).from(salesReturnLinesTable).where(inArray(salesReturnLinesTable.returnId, ids));
+      for (const r of rows) {
+        if (r.itemId == null) continue;
+        const base = Number(r.qty || 0) * Number(r.conversionFactor || 1);
+        const k = String(r.itemId);
+        byItem[k] = (byItem[k] || 0) + base;
+      }
+    }
+    res.json({ invoiceId: invId, byItem });
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
 function mapInvoiceLine(l: any, invoiceId: number, cid: number) {
   return {
     invoiceId, companyId: cid,
