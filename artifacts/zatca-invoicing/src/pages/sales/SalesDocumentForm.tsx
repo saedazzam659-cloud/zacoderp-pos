@@ -1334,13 +1334,30 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const linesSection = (
     <div className="pt-2 space-y-3">
               {(() => {
-                const gridCols = isInvoice
-                  ? "110px minmax(260px,1.4fr) 160px 120px 90px 80px 110px 80px 100px 80px 130px 180px 40px"
-                  : "110px minmax(280px,1.4fr) 120px 90px 80px 110px 80px 100px 80px 130px 200px 40px";
+                // Warehouse column is now rendered for all 3 doc modes
+                // (invoice, order, quotation) — the order matches the sales
+                // invoice layout per the user's request: code · name ·
+                // warehouse · unit · qty · … The header-level warehouse
+                // picker + auto-fill effects (defined earlier) already work
+                // identically across modes, so a newly added line inherits
+                // the default warehouse without any extra wiring here.
+                const gridCols = "110px minmax(260px,1.4fr) 160px 120px 90px 80px 110px 80px 100px 80px 130px 180px 40px";
                 const totalLabel = t("salesDocForm.colTotal");
-                const headers = isInvoice
-                  ? [t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colDiscAmount"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""]
-                  : [t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colDiscAmount"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""];
+                const headers = [
+                  t("salesDocForm.colItemCode"),
+                  t("salesDocForm.colItem"),
+                  t("salesDocForm.colWarehouse"),
+                  t("salesDocForm.colUnit"),
+                  t("salesDocForm.colQty"),
+                  t("salesDocForm.colFreeQty"),
+                  t("salesDocForm.colPrice"),
+                  t("salesDocForm.colDiscPct"),
+                  t("salesDocForm.colDiscAmount"),
+                  t("salesDocForm.colVatPct"),
+                  totalLabel,
+                  t("salesDocForm.colNotes"),
+                  "",
+                ];
                 return (
               <div data-enter-nav-container="lines" className="rounded-xl border bg-card overflow-x-auto">
                 <div className="min-w-max">
@@ -1364,22 +1381,20 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         <Input className="h-8 text-xs" placeholder={t("salesDocForm.itemNamePlaceholder")} value={l.itemName}
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                       )}
-                      {isInvoice && (
-                        warehouses.length > 0 ? (
-                          <div className={cn("rounded-md", l.itemId && !l.warehouseId && "ring-1 ring-amber-400")}>
-                            <SearchCombobox
-                              items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr, labelEn: w.nameEn }))}
-                              value={l.warehouseId}
-                              onValueChange={v => updateLine(l._id, "warehouseId", v)}
-                              placeholder={t("salesDocForm.warehousePlaceholder")}
-                              searchPlaceholder="ابحث بالكود أو الاسم..."
-                              disabled={fp.isReadOnly("warehouse")}
-                              className="h-8 text-xs"
-                            />
-                          </div>
-                        ) : (
-                          <Input className="h-8 text-xs" placeholder="—" readOnly />
-                        )
+                      {warehouses.length > 0 ? (
+                        <div className={cn("rounded-md", l.itemId && !l.warehouseId && "ring-1 ring-amber-400")}>
+                          <SearchCombobox
+                            items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr, labelEn: w.nameEn }))}
+                            value={l.warehouseId}
+                            onValueChange={v => updateLine(l._id, "warehouseId", v)}
+                            placeholder={t("salesDocForm.warehousePlaceholder")}
+                            searchPlaceholder="ابحث بالكود أو الاسم..."
+                            disabled={fp.isReadOnly("warehouse")}
+                            className="h-8 text-xs"
+                          />
+                        </div>
+                      ) : (
+                        <Input className="h-8 text-xs" placeholder="—" readOnly />
                       )}
                       {(() => {
                         const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
