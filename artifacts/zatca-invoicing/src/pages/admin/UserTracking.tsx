@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { MapPin, Users, Clock, AlertTriangle, Trash2, Plus, BarChart3, UserPlus, X, Search, Loader2, Globe2, LocateFixed } from "lucide-react";
+import { MapPin, Users, Clock, AlertTriangle, Trash2, Plus, BarChart3, UserPlus, X, Search, Loader2, Globe2, LocateFixed, Pencil } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line, Legend } from "recharts";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -344,23 +344,51 @@ function VisitsMap({ visits, zones }: { visits: VisitRow[]; zones: TrackingZone[
 
 function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged: () => void; cid?: number }) {
   const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [assigning, setAssigning] = useState<TrackingZone | null>(null);
-  const [form, setForm] = useState({ name: "", centerLat: 24.7136, centerLng: 46.6753, radiusMeters: 500, isAllowed: true, notes: "" });
+  const EMPTY_FORM = { name: "", centerLat: 24.7136, centerLng: 46.6753, radiusMeters: 500, isAllowed: true, notes: "" };
+  const [form, setForm] = useState(EMPTY_FORM);
   const [err, setErr] = useState<string | null>(null);
   const create = useMutation({
     mutationFn: () => userTrackingApi.createZone({ ...form }, cid),
-    onSuccess: () => { setOpen(false); onChanged(); setForm({ name: "", centerLat: 24.7136, centerLng: 46.6753, radiusMeters: 500, isAllowed: true, notes: "" }); },
+    onSuccess: () => { setOpen(false); onChanged(); setForm(EMPTY_FORM); setEditingId(null); },
     onError: (e: any) => setErr(e?.message || "فشل الإنشاء"),
+  });
+  const update = useMutation({
+    mutationFn: () => userTrackingApi.updateZone(editingId!, { ...form }, cid),
+    onSuccess: () => { setOpen(false); onChanged(); setForm(EMPTY_FORM); setEditingId(null); },
+    onError: (e: any) => setErr(e?.message || "فشل التعديل"),
   });
   const del = useMutation({
     mutationFn: (id: number) => userTrackingApi.deleteZone(id, cid),
     onSuccess: () => onChanged(),
   });
+  function openEdit(z: TrackingZone) {
+    setErr(null);
+    setEditingId(z.id);
+    setForm({
+      name: z.name,
+      centerLat: Number(z.centerLat),
+      centerLng: Number(z.centerLng),
+      radiusMeters: Number(z.radiusMeters),
+      isAllowed: !!z.isAllowed,
+      notes: (z as any).notes ?? "",
+    });
+    setOpen(true);
+  }
+  function openCreate() {
+    setErr(null);
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+    setOpen(true);
+  }
+  const isEditing = editingId !== null;
+  const submitting = create.isPending || update.isPending;
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>المناطق المحددة (Geofences)</CardTitle>
-        <Button size="sm" onClick={() => { setErr(null); setOpen(true); }}><Plus className="h-4 w-4 me-1" /> منطقة جديدة</Button>
+        <Button size="sm" onClick={openCreate} data-testid="btn-new-zone"><Plus className="h-4 w-4 me-1" /> منطقة جديدة</Button>
       </CardHeader>
       <CardContent>
         <table className="min-w-full text-sm">
@@ -370,7 +398,7 @@ function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged:
             <th className="py-2 px-2">نصف القطر (م)</th>
             <th className="py-2 px-2">النوع</th>
             <th className="py-2 px-2">المستخدمون</th>
-            <th className="py-2 px-2">حذف</th>
+            <th className="py-2 px-2">إجراءات</th>
           </tr></thead>
           <tbody>
             {zones.map(z => (
@@ -387,9 +415,14 @@ function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged:
                   <ZoneUserChips zoneId={z.id} cid={cid} onManage={() => setAssigning(z)} />
                 </td>
                 <td className="py-2 px-2 text-center">
-                  <Button size="icon" variant="ghost" onClick={() => { if (confirm(`حذف "${z.name}"؟`)) del.mutate(z.id); }}>
-                    <Trash2 className="h-4 w-4 text-rose-600" />
-                  </Button>
+                  <div className="flex items-center justify-center gap-1">
+                    <Button size="icon" variant="ghost" onClick={() => openEdit(z)} data-testid={`btn-edit-zone-${z.id}`} title="تعديل">
+                      <Pencil className="h-4 w-4 text-indigo-600" />
+                    </Button>
+                    <Button size="icon" variant="ghost" onClick={() => { if (confirm(`حذف "${z.name}"؟`)) del.mutate(z.id); }} data-testid={`btn-delete-zone-${z.id}`} title="حذف">
+                      <Trash2 className="h-4 w-4 text-rose-600" />
+                    </Button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -402,9 +435,9 @@ function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged:
       </CardContent>
       {assigning && <ZoneAssignDialog zone={assigning} cid={cid} onClose={() => setAssigning(null)} />}
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setEditingId(null); setForm(EMPTY_FORM); setErr(null); } }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>منطقة جديدة</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{isEditing ? `تعديل المنطقة — ${form.name || ""}` : "منطقة جديدة"}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div><Label>اسم المنطقة</Label><Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
 
@@ -436,7 +469,14 @@ function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged:
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)}>إلغاء</Button>
-            <Button onClick={() => create.mutate()} disabled={!form.name || create.isPending}>حفظ</Button>
+            <Button
+              onClick={() => (isEditing ? update.mutate() : create.mutate())}
+              disabled={!form.name || submitting}
+              data-testid="btn-save-zone"
+            >
+              {submitting ? <Loader2 className="h-4 w-4 me-1 animate-spin" /> : null}
+              {isEditing ? "حفظ التعديلات" : "حفظ"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
