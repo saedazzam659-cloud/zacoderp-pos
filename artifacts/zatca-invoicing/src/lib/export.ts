@@ -1006,7 +1006,11 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       display: grid;
       grid-template-columns: 1fr auto 1fr;
       gap: 10px;
-      align-items: center;
+      /* Top-align the three columns so the customer block (left in RTL)
+         sits at the same vertical level as the company block (right) —
+         otherwise the shorter customer block floats down beside the taller
+         centered logo column and leaves the page top-left corner empty. */
+      align-items: start;
       padding: 4px 4px 6px;
       margin: 0 0 4px;
       border: none;
