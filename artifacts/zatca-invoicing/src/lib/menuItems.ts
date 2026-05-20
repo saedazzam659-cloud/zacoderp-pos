@@ -24,7 +24,7 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "inventory_mobile",   label: "موبيل المخازن",              section: "المخازن" },
   { key: "inventory_reports",  label: "تقارير المخازن",             section: "المخازن" },
-  { key: "sister_companies",   label: "الشركات الشقيقة",            section: "المخازن" },
+  { key: "sister_companies",   label: "معاملات الشركات الشقيقة",    section: "معاملات الشركات الشقيقة" },
 
   { key: "sales_module",       label: "العملاء والمبيعات",          section: "المبيعات" },
   { key: "sales_reports",      label: "تقارير العملاء والمبيعات",   section: "المبيعات" },
@@ -183,4 +183,5 @@ export const SECTION_THEME: Record<string, { bg: string; text: string; border: s
   "الخدمة الميدانية":       { bg: "bg-blue-50",     text: "text-blue-700",     border: "border-blue-200" },
   "تتبع المواقع":          { bg: "bg-indigo-50",   text: "text-indigo-700",   border: "border-indigo-200" },
   "ربط متعدد":              { bg: "bg-cyan-50",     text: "text-cyan-700",     border: "border-cyan-200" },
+  "معاملات الشركات الشقيقة": { bg: "bg-amber-50",    text: "text-amber-700",    border: "border-amber-200" },
 };

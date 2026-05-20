@@ -111,7 +111,11 @@ const PURCHASING_GROUP_PERMS    = ["suppliers","purchase_invoices","purchase_ret
 const PURCHASING_REPORTS_PERMS  = ["suppliers","purchase_invoices","purchase_returns"];
 const CASH_GROUP_PERMS          = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
 const CASH_REPORTS_PERMS        = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
-const INVENTORY_GROUP_PERMS     = ["items","warehouses","stock_transfers","stock_adjustments","stock_counts","sister_companies"];
+const INVENTORY_GROUP_PERMS     = ["items","warehouses","stock_transfers","stock_adjustments","stock_counts"];
+// Sister-companies module promoted to its own top-level sidebar group
+// ("معاملات الشركات الشقيقة"). Single permission key gates the whole
+// group (master, transfers, returns, settlements, statement report).
+const SISTER_GROUP_PERMS        = ["sister_companies"];
 // All inventory report routes are gated as module="items" in App.tsx, so the
 // group should mirror that exactly — a user with only `warehouses.view` has
 // nothing accessible inside this group.
@@ -469,12 +473,18 @@ const inventorySubNav: NavDef[] = [
   { nameKey: "nav.stockAdjustments",  href: "/inventory/adjustments",      icon: SlidersHorizontal, permKey: "stock_adjustments" },
   { nameKey: "nav.stockCounts",       href: "/inventory/counts",           icon: ClipboardList,     permKey: "stock_counts" },
   { nameKey: "nav.offers",            href: "/inventory/offers",           icon: Tag,               permKey: "items" },
-  // ── Sister Companies (الشركات الشقيقة) — locked-by-default module ──
-  // Single permKey gates all 4 entries; auto-hidden until SA enables on tenant.
+];
+
+// ── Sister Companies (معاملات الشركات الشقيقة) — locked-by-default ───────
+// Promoted to its own top-level sidebar group. Single permKey gates all
+// entries; the whole group auto-hides until the SuperAdmin enables it
+// on the tenant from /admin/menu-permissions.
+const sisterSubNav: NavDef[] = [
   { nameKey: "nav.sisterCompanies",   href: "/inventory/sister-companies",   icon: Building2,      permKey: "sister_companies" },
   { nameKey: "nav.sisterTransfers",   href: "/inventory/sister-transfers",   icon: ArrowRightLeft, permKey: "sister_companies" },
   { nameKey: "nav.sisterReturns",     href: "/inventory/sister-returns",     icon: PackageMinus,   permKey: "sister_companies" },
   { nameKey: "nav.sisterSettlements", href: "/inventory/sister-settlements", icon: Wallet,         permKey: "sister_companies" },
+  { nameKey: "nav.sisterStatements",  href: "/inventory/sister-statements",  icon: FileText,       permKey: "sister_companies" },
 ];
 
 const inventoryReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/inventory/reports", icon: LayoutDashboard, exact: true };
@@ -741,6 +751,7 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   dashboard:   ["dashboard"],
   zatca:       ["zatca"],
   inventory:   ["inventory", "inventory_mobile", "inventory_reports"],
+  sister:      ["sister_companies"],
   sales:       ["sales", "sales_module", "sales_reports", "customers"],
   purchasing:  ["purchasing", "purchases_module", "purchases_reports", "suppliers"],
   cash:        ["cash", "cash_module", "cash_reports"],
@@ -1166,6 +1177,47 @@ function InventoryReportsNavGroup({
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           <NavItem item={inventoryReportsHeader} location={location} onClick={onNavigate} indent />
           {inventoryReportsSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SisterNavGroup (top-level sidebar group) ─────────────────────────────────
+// "معاملات الشركات الشقيقة" — promoted out of the inventory group per user
+// request. Locked-by-default module: gated entirely on the `sister_companies`
+// menu permission key; the group hides until SuperAdmin enables it from
+// /admin/menu-permissions for the tenant.
+function SisterNavGroup({
+  location, onNavigate, open, onToggle,
+}: {
+  location: string;
+  onNavigate: () => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  if (!groupVisible(user, SISTER_GROUP_PERMS)) return null;
+  const isOnSister =
+    location.startsWith("/inventory/sister-");
+  return (
+    <div>
+      <HubGroupButton
+        hubHref="/inventory/sister-companies"
+        icon={Building2}
+        label={t("nav.sisterModule")}
+        isOn={isOnSister}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {sisterSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -1858,6 +1910,8 @@ function SidebarInner({
   onInventoryToggle,
   invReportsOpen,
   onInvReportsToggle,
+  sisterOpen,
+  onSisterToggle,
   reportsOpen,
   onReportsToggle,
   purchasingOpen,
@@ -1918,6 +1972,8 @@ function SidebarInner({
   onInventoryToggle: () => void;
   invReportsOpen: boolean;
   onInvReportsToggle: () => void;
+  sisterOpen: boolean;
+  onSisterToggle: () => void;
   reportsOpen: boolean;
   onReportsToggle: () => void;
   purchasingOpen: boolean;
@@ -2099,6 +2155,17 @@ function SidebarInner({
                   onToggle={onInventoryToggle}
                   reportsOpen={invReportsOpen}
                   onReportsToggle={onInvReportsToggle}
+                />
+              </div>
+            )}
+
+            {isGroupAllowed(menuPerms, "sister", isSuperAdmin, user) && (
+              <div className="space-y-0.5">
+                <SisterNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={sisterOpen}
+                  onToggle={onSisterToggle}
                 />
               </div>
             )}
@@ -2693,8 +2760,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   );
   // Reports are nested INSIDE the inventory group, so any /inventory/* route
   // (including /inventory/reports/*) auto-expands the parent.
-  const [inventoryOpen, setInventoryOpen]     = useState(() => location.startsWith("/inventory"));
+  const [inventoryOpen, setInventoryOpen]     = useState(() => location.startsWith("/inventory") && !location.startsWith("/inventory/sister-"));
   const [invReportsOpen, setInvReportsOpen]   = useState(() => location.startsWith("/inventory/reports"));
+  // Sister Companies group — auto-expand when on any /inventory/sister-* route.
+  const [sisterOpen,    setSisterOpen]        = useState(() => location.startsWith("/inventory/sister-"));
   const [reportsOpen, setReportsOpen]         = useState(() => location.startsWith("/accounting/reports"));
   // Reports are nested INSIDE the purchasing group, so any /purchasing/* route
   // (including /purchasing/reports/*) auto-expands the parent.
@@ -2752,13 +2821,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // Accounting) are NOT part of the accordion — they live inside their parent
   // and their own open/closed state is independent.
   type TopLevelGroup =
-    | "dashboard" | "zatcaGroup" | "inventory" | "accounting"
+    | "dashboard" | "zatcaGroup" | "inventory" | "sister" | "accounting"
     | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting" | "maintenance" | "installments" | "hotel" | "hospital" | "crm" | "fixedAssets"
     | "multiLink" | "pos" | "security" | "aiTools" | "liveMonitoring";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
     if (keep !== "zatcaGroup") setZatcaGroupOpen(false);
     if (keep !== "inventory")  setInventoryOpen(false);
+    if (keep !== "sister")     setSisterOpen(false);
     if (keep !== "accounting") setAccountingOpen(false);
     if (keep !== "purchasing") setPurchasingOpen(false);
     if (keep !== "sales")      setSalesOpen(false);
@@ -2797,6 +2867,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleDashboardToggle  = makeAccordionToggle("dashboard",  dashboardOpen,  setDashboardOpen);
   const handleZatcaGroupToggle = makeAccordionToggle("zatcaGroup", zatcaGroupOpen, setZatcaGroupOpen);
   const handleInventoryToggle  = makeAccordionToggle("inventory",  inventoryOpen,  setInventoryOpen);
+  const handleSisterToggle     = makeAccordionToggle("sister",     sisterOpen,     setSisterOpen);
   const handleAccountingToggle = makeAccordionToggle("accounting", accountingOpen, setAccountingOpen);
   const handlePurchasingToggle = makeAccordionToggle("purchasing", purchasingOpen, setPurchasingOpen);
   const handleSalesToggle      = makeAccordionToggle("sales",      salesOpen,      setSalesOpen);
@@ -2861,6 +2932,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     else if (location.startsWith("/purchasing") || location.startsWith("/suppliers")) target = "purchasing";
     else if (location.startsWith("/cash")) target = "cash";
     else if (location.startsWith("/accounting")) target = "accounting";
+    else if (location.startsWith("/inventory/sister-")) target = "sister";
     else if (location.startsWith("/inventory")) target = "inventory";
     else if (location.startsWith("/production")) target = "production";
     else if (location.startsWith("/contracting")) target = "contracting";
@@ -2900,6 +2972,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         dashboard:  setDashboardOpen,
         zatcaGroup: setZatcaGroupOpen,
         inventory:  setInventoryOpen,
+        sister:     setSisterOpen,
         accounting: setAccountingOpen,
         purchasing: setPurchasingOpen,
         sales:      setSalesOpen,
@@ -2937,6 +3010,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onInventoryToggle: handleInventoryToggle,
     invReportsOpen,
     onInvReportsToggle: handleInvReportsToggle,
+    sisterOpen,
+    onSisterToggle: handleSisterToggle,
     reportsOpen,
     onReportsToggle: handleReportsToggle,
     purchasingOpen,
