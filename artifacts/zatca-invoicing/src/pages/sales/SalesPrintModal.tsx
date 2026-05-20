@@ -1679,6 +1679,29 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, autoPrintOnOpen, data, defaultTemplate]);
 
+  // Intercept Ctrl+P / Cmd+P while the modal is open so the user gets the
+  // selected template's print preview (a clean, properly-styled invoice
+  // rendered in a hidden iframe) instead of the browser's default page
+  // print, which would capture the modal UI itself and the surrounding
+  // page chrome. Mirrors the click on the "Print" button.
+  useEffect(() => {
+    if (!open || !data) return;
+    const onKey = (e: KeyboardEvent) => {
+      const isPrintCombo = (e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P");
+      if (!isPrintCombo) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // Run on the next tick so the keydown's default-prevention has
+      // settled before we open the iframe + call win.print().
+      setTimeout(() => { handlePrint(); }, 0);
+    };
+    // Capture phase so we win against any nested listeners (e.g. CodeMirror
+    // editors or the print designer canvas) that might also intercept Ctrl+P.
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true } as any);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, data, selected]);
+
   async function handlePrint() {
     if (!data) return;
     // No "preferred printer" gate: the browser's system print dialog
