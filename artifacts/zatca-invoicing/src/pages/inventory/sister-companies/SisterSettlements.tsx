@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Plus, Send, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle } from "lucide-react";
+import { Plus, Send, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,9 +33,16 @@ export default function SisterSettlements() {
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold flex items-center gap-2"><Wallet className="h-5 w-5" /> سندات تسوية الشركات الشقيقة</h1>
-        <Link href="/inventory/sister-settlements/new">
-          <Button><Plus className="h-4 w-4 ml-1" /> سند جديد</Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link href="/inventory/sister-companies">
+            <Button variant="outline" data-testid="button-sister-statements">
+              <FileText className="h-4 w-4 ml-1" /> كشف حساب الشركات الشقيقة
+            </Button>
+          </Link>
+          <Link href="/inventory/sister-settlements/new">
+            <Button><Plus className="h-4 w-4 ml-1" /> سند جديد</Button>
+          </Link>
+        </div>
       </div>
       <Card><CardContent className="p-0 overflow-x-auto">
         {isLoading ? <div className="p-4"><Skeleton className="h-32" /></div> : (
