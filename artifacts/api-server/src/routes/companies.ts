@@ -261,15 +261,15 @@ router.patch("/:id/general-settings", async (req, res) => {
       const cleaned = Array.from(new Set(
         printEnabledTemplates
           .map((x) => Number(x))
-          .filter((n) => Number.isInteger(n) && n >= 1 && n <= 12),
+          .filter((n) => Number.isInteger(n) && n >= 1 && n <= 14),
       )).sort((a, b) => a - b);
       updates.printEnabledTemplates = cleaned.length === 0 ? null : cleaned;
     }
   }
   if (printDefaultTemplate !== undefined) {
     const n = Number(printDefaultTemplate);
-    if (!Number.isInteger(n) || n < 1 || n > 12) {
-      res.status(400).json({ error: "النموذج الافتراضي يجب أن يكون رقماً بين 1 و 12" }); return;
+    if (!Number.isInteger(n) || n < 1 || n > 14) {
+      res.status(400).json({ error: "النموذج الافتراضي يجب أن يكون رقماً بين 1 و 14" }); return;
     }
     updates.printDefaultTemplate = n;
   }
