@@ -53,6 +53,8 @@ export const goodsDeliveryLinesTable = pgTable("goods_delivery_lines", {
   qty:              numeric("qty",        { precision: 15, scale: 4 }).notNull().default("1"),
   unitPrice:        numeric("unit_price", { precision: 15, scale: 4 }).notNull().default("0"),
   discount:         numeric("discount",   { precision: 5,  scale: 2 }).notNull().default("0"),
+  // Per-line fixed-amount discount (قيمة الخصم), applied AFTER the percent.
+  discountAmount:   numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   vatRate:          numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
   lineTotal:        numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
   notes:            text("notes"),

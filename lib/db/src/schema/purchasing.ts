@@ -124,6 +124,11 @@ export const purchaseInvoiceLinesTable = pgTable("purchase_invoice_lines", {
   weight:          numeric("weight",     { precision: 15, scale: 4 }).default("0"),
   unitPrice:       numeric("unit_price", { precision: 15, scale: 4 }).notNull().default("0"),
   discount:        numeric("discount",   { precision: 15, scale: 2 }).default("0"),
+  // Per-line fixed-amount discount (قيمة الخصم). Applied AFTER the percent
+  // discount: gross = qty * unitPrice * (1 - discount%/100) - discountAmount
+  // Aggregates into the header `discountAmount`, which is what the JE
+  // "خصم مكتسب" credit line uses — both levers share the same GL account.
+  discountAmount:  numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   vatRate:         numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
   lineTotal:       numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
   expenseShare:    numeric("expense_share", { precision: 15, scale: 2 }).default("0"),
@@ -186,6 +191,8 @@ export const purchaseOrderLinesTable = pgTable("purchase_order_lines", {
   weight:           numeric("weight",     { precision: 15, scale: 4 }).default("0"),
   unitPrice:        numeric("unit_price", { precision: 15, scale: 4 }).notNull().default("0"),
   discount:         numeric("discount",   { precision: 15, scale: 2 }).default("0"),
+  // Per-line fixed-amount discount (قيمة الخصم), applied AFTER the percent.
+  discountAmount:   numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   vatRate:          numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
   lineTotal:        numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
   warehouseId:      integer("warehouse_id"),
@@ -236,6 +243,8 @@ export const purchaseReturnLinesTable = pgTable("purchase_return_lines", {
   freeQty:     numeric("free_qty",   { precision: 15, scale: 4 }).notNull().default("0"),
   unitPrice:   numeric("unit_price", { precision: 15, scale: 4 }).notNull().default("0"),
   discount:    numeric("discount",   { precision: 5,  scale: 2 }).notNull().default("0"),
+  // Per-line fixed-amount discount (قيمة الخصم), applied AFTER the percent.
+  discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   vatRate:     numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
   lineTotal:   numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
   notes:       text("notes"),
