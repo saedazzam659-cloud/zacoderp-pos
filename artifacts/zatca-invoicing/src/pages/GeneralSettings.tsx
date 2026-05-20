@@ -1425,6 +1425,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
   // template id — names/colors are display-only). NULL on the company
   // row means "show all".
   const TEMPLATE_CATALOG: { id: number; name: string; desc: string; color: string; thermal: boolean }[] = [
+    { id: 14, name: "الأصلي",         desc: "نموذج مرتب بشعار وسط وبيانات شركة/عميل جانبية", color: "#b88a2a", thermal: false },
     { id: 1,  name: "كلاسيكي",       desc: "حدود وجداول تقليدية",       color: "#2563eb", thermal: false },
     { id: 2,  name: "حديث",          desc: "تصميم نظيف بهيدر أخضر",     color: "#059669", thermal: false },
     { id: 3,  name: "مؤسسي",         desc: "هيدر داكن احترافي",         color: "#1e3a5f", thermal: false },

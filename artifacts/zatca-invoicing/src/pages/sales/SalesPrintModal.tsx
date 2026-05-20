@@ -1699,12 +1699,18 @@ function template14(d: PrintData): string {
     }
     .logo-wrap img { max-height:62px; max-width:170px; object-fit:contain; display:block; }
     .logo-fallback { width:62px; height:62px; border-radius:50%; background:linear-gradient(135deg, var(--gold), var(--gold2)); color:#fff; font-weight:900; font-size:22px; display:inline-flex; align-items:center; justify-content:center; }
+    /* Classic, borderless title — no dark pill, no surrounding frame.
+       Two thin gold accent lines above/below give it an elegant feel
+       without the heavy "badge" look. */
     .doc-title-pill {
-      background:var(--ink); color:#fff; padding:8px 18px; border-radius:24px;
-      font-size:14px; font-weight:800; letter-spacing:.02em;
-      box-shadow:0 2px 6px rgba(15,23,42,.18);
+      background:transparent; color:var(--ink);
+      padding:6px 14px; font-size:16px; font-weight:800;
+      letter-spacing:.02em; text-align:center;
+      border:none;
+      border-top:1px solid var(--gold2);
+      border-bottom:1px solid var(--gold2);
     }
-    .doc-title-pill .en { display:block; font-size:9px; opacity:.7; font-weight:600; letter-spacing:.1em; margin-top:2px; }
+    .doc-title-pill .en { display:block; font-size:10px; color:var(--gold); font-weight:700; letter-spacing:.14em; margin-top:3px; text-transform:uppercase; }
     .meta-pills { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; }
     .pill {
       background:var(--soft); border:1px solid var(--line); border-radius:18px;
