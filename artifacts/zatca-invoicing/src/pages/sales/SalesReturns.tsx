@@ -66,6 +66,14 @@ interface ReturnLine {
   vatRate: string;
   lineTotal: string;
   notes: string;
+  /**
+   * UI-only badge text that appears next to the unit-price field when the
+   * price was auto-adjusted by the source-invoice picker to account for
+   * free units and/or discounts on the original sale (Option B —
+   * "السعر الصافي الفعّال" = صافي الفاتورة ÷ إجمالي الكميات بما فيها المجاني).
+   * Stripped from the payload before sending to the API.
+   */
+  _pricingNote?: string;
 }
 
 function newLine(): ReturnLine {
@@ -122,6 +130,20 @@ export default function SalesReturns() {
       selected: boolean;
       returnQty: string;  // editable, capped at maxQty
       maxQty: number;     // source line qty
+      // ── Option B (السعر الصافي الفعّال) ───────────────────────────────
+      // Effective unit price = (line gross − share of header discount)
+      //                       ÷ (qty + freeQty).
+      // When the source invoice has free units OR any line/header
+      // discount, this differs from `srcLine.unitPrice` and is the
+      // price actually charged per physical unit. Returning at this
+      // price automatically reverses the prorated share of free goods
+      // and discounts without needing separate adjustment lines.
+      effectiveUnitPrice: number;
+      originalUnitPrice:  number;
+      hasAdjustment:      boolean;
+      // Pre-formatted breakdown for the tooltip, e.g.
+      // "10×50 − 20 خصم = 480 صافي ÷ 11 وحدة (10 + 1 مجاني) = 43.64"
+      breakdown: string;
     }>;
   } | null>(null);
   const [branchIds, setBranchIds] = useState<number[]>([]);
@@ -544,11 +566,28 @@ export default function SalesReturns() {
           const r = await fetch(`${API}/api/sales/sales-invoices/${inv.id}/returned-by-item?companyId=${cid}${qs}`, { headers: authH });
           if (r.ok) returnedByItem = (await r.json()).byItem ?? {};
         } catch (_) { /* fall back to raw sold qty if endpoint fails */ }
+        // ── Option B prep: compute the effective unit price per source ───
+        // line. Sum of line "gross" (qty × price × (1−disc%) − discAmt)
+        // is the basis for prorating the invoice's header-level
+        // discount across lines. The effective unit price = lineNet /
+        // (qty + freeQty); returning at this price automatically
+        // accounts for the free units the customer kept and the
+        // discount share for the returned quantity.
+        const headerDisc = Math.max(0, Number(inv.discountAmount ?? 0));
+        const lineGrosses: number[] = inv.lines.map((l: any) => {
+          const q  = Number(l.qty ?? 0);
+          const p  = Number(l.unitPrice ?? 0);
+          const dp = Number(l.discount ?? 0);
+          const da = Math.max(0, Number(l.discountAmount ?? 0));
+          return Math.max(0, q * p * (1 - dp / 100) - da);
+        });
+        const grossSum = lineGrosses.reduce((s, x) => s + x, 0);
+
         // Allocate the per-item returned total across same-item source
         // lines in document order, so each row's cap is the portion of
         // the remaining return budget it can still absorb.
         const remainingByItem = { ...returnedByItem };
-        const rows = inv.lines.map((l: any) => {
+        const rows = inv.lines.map((l: any, idx: number) => {
           const sold = Number(l.qty ?? 0);
           const conv = Number(l.conversionFactor ?? 1) || 1;
           const soldBase = sold * conv;
@@ -561,11 +600,48 @@ export default function SalesReturns() {
           const remainingRaw = Math.max(0, (soldBase - consumeBase) / conv);
           // Round to a sensible step (4 decimals) to avoid floating dust.
           const maxQty = Math.round(remainingRaw * 10000) / 10000;
+
+          // ── Effective unit price (Option B) ─────────────────────────
+          const qty       = Number(l.qty ?? 0);
+          const freeQty   = Number(l.freeQty ?? 0);
+          const origPrice = Number(l.unitPrice ?? 0);
+          const lineDiscPct = Number(l.discount ?? 0);
+          const lineDiscAmt = Math.max(0, Number(l.discountAmount ?? 0));
+          const lineGross   = lineGrosses[idx] ?? 0;
+          const headerShare = grossSum > 0 ? headerDisc * (lineGross / grossSum) : 0;
+          const lineNet     = Math.max(0, lineGross - headerShare);
+          const totalUnits  = qty + freeQty;
+          const effectivePrice = totalUnits > 0 ? lineNet / totalUnits : origPrice;
+          // Treat as "adjusted" when free units exist OR any discount
+          // (line- or header-level) altered the per-unit price. Use a
+          // half-piaster threshold to avoid noisy badges from rounding.
+          const hasAdjustment =
+            freeQty > 0
+            || lineDiscPct > 0
+            || lineDiscAmt > 0
+            || headerShare > 0
+            || Math.abs(effectivePrice - origPrice) > 0.005;
+          // Human-readable breakdown for the tooltip; mirrors the
+          // wording used in the form line badge so users see the same
+          // explanation in both places.
+          const parts: string[] = [`${fmt(qty)} × ${fmt(origPrice)}`];
+          if (lineDiscPct > 0)    parts.push(`− ${lineDiscPct}%`);
+          if (lineDiscAmt > 0)    parts.push(`− ${fmt(lineDiscAmt)} خصم`);
+          if (headerShare > 0)    parts.push(`− ${fmt(headerShare)} حصة الخصم الرأسي`);
+          parts.push(`= ${fmt(lineNet)} صافي`);
+          parts.push(`÷ ${fmt(totalUnits)} وحدة${freeQty > 0 ? ` (${fmt(qty)} + ${fmt(freeQty)} مجاني)` : ""}`);
+          parts.push(`= ${fmt(effectivePrice)}`);
+          const breakdown = parts.join(" ");
+
           return {
             srcLine: l,
             selected: false,
             returnQty: String(maxQty > 0 ? maxQty : 0),
             maxQty,
+            effectiveUnitPrice: effectivePrice,
+            originalUnitPrice:  origPrice,
+            hasAdjustment,
+            breakdown,
           };
         });
         setPicker({ open: true, invoice: inv, rows });
@@ -603,6 +679,13 @@ export default function SalesReturns() {
     }
     setLines(chosen.map(r => {
       const l = r.srcLine;
+      // ── Option B: when the source line carries free units OR any
+      // discount, swap in the effective unit price and zero out the
+      // discount/freeQty so the math doesn't double-apply. The original
+      // price + breakdown live in `_pricingNote` for the UI badge so
+      // the user can see WHY the price differs from the sales invoice.
+      const useEffective = r.hasAdjustment;
+      const effPrice = useEffective ? r.effectiveUnitPrice : Number(l.unitPrice ?? 0);
       const base: ReturnLine = {
         _id: crypto.randomUUID(),
         itemId:      l.itemId      ? String(l.itemId)      : "",
@@ -613,13 +696,19 @@ export default function SalesReturns() {
         conversionFactor: String(l.conversionFactor ?? "1"),
         warehouseId: l.warehouseId ? String(l.warehouseId) : "",
         qty:         r.returnQty,
-        freeQty:     String(l.freeQty ?? "0"),
-        unitPrice:   String(l.unitPrice ?? 0),
-        discount:    String(l.discount  ?? "0"),
-        discountAmount: String(l.discountAmount ?? "0"),
+        // Free units stay with the customer (Option B); their value is
+        // already baked into the effective unit price so the return
+        // line records zero free qty.
+        freeQty:     useEffective ? "0" : String(l.freeQty ?? "0"),
+        unitPrice:   useEffective ? effPrice.toFixed(4) : String(l.unitPrice ?? 0),
+        discount:    useEffective ? "0" : String(l.discount  ?? "0"),
+        discountAmount: useEffective ? "0" : String(l.discountAmount ?? "0"),
         vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
         lineTotal:   "0",
         notes:       l.notes ?? "",
+        _pricingNote: useEffective
+          ? `سعر معدّل تلقائياً: ${fmt(r.originalUnitPrice)} → ${fmt(r.effectiveUnitPrice)} — ${r.breakdown}`
+          : undefined,
       };
       return { ...base, lineTotal: calcLineTotal(base, !!form.priceIncludesVat).toFixed(2) };
     }));
@@ -838,7 +927,7 @@ export default function SalesReturns() {
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
       discountAmount: docDiscountAmt.toFixed(2),
-      lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
+      lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined, _pricingNote: undefined })),
     });
   }
 
@@ -1662,8 +1751,29 @@ ${sections}
                       type="text" inputMode="numeric" dir="ltr" value={l.freeQty}
                       title={t("salesDocForm.colFreeQtyHint") as string}
                       onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />
-                    <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.unitPrice}
-                      onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
+                    {/* Unit price + optional "سعر معدّل" badge when the
+                        picker auto-adjusted the price for free units +
+                        discounts (Option B). The badge is purely
+                        informational; user can still override the price
+                        manually if needed. */}
+                    <div className="flex flex-col gap-0.5">
+                      <Input
+                        className={cn(
+                          "h-8 text-xs",
+                          l._pricingNote && "bg-emerald-50 border-emerald-300 text-emerald-900 font-mono font-semibold",
+                        )}
+                        type="text" inputMode="decimal" dir="ltr" value={l.unitPrice}
+                        title={l._pricingNote ?? undefined}
+                        onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      {l._pricingNote && (
+                        <span
+                          className="text-[10px] text-emerald-700 font-medium leading-tight cursor-help truncate"
+                          title={l._pricingNote}
+                        >
+                          ✻ سعر معدّل (مجاني/خصم)
+                        </span>
+                      )}
+                    </div>
                     <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.discount}
                       onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
                     {/* قيمة الخصم — مبلغ ثابت بالعملة يُطرح بعد الخصم بالنسبة.
@@ -2163,6 +2273,12 @@ ${sections}
                   <th className="p-2 border text-end">سعر البيع</th>
                   <th className="p-2 border text-end">مجاني</th>
                   <th className="p-2 border text-end">الخصم</th>
+                  <th
+                    className="p-2 border text-end bg-emerald-50 text-emerald-900"
+                    title="السعر الصافي الفعّال للوحدة الواحدة بعد توزيع قيمة المجاني والخصم — يُستخدم تلقائياً في احتساب المرتجع"
+                  >
+                    السعر الفعّال
+                  </th>
                   <th className="p-2 border text-end">المتاح للإرجاع</th>
                   <th className="p-2 border text-end w-32">كمية المرتجع</th>
                 </tr>
@@ -2203,6 +2319,24 @@ ${sections}
                       <td className="p-2 border text-end font-mono">{fmt(Number(r.srcLine.unitPrice ?? 0))}</td>
                       <td className="p-2 border text-end font-mono">{fmt(Number(r.srcLine.freeQty ?? 0))}</td>
                       <td className="p-2 border text-end font-mono">{discCell}</td>
+                      <td
+                        className={cn(
+                          "p-2 border text-end font-mono",
+                          r.hasAdjustment ? "bg-emerald-50 text-emerald-900 font-semibold" : "text-muted-foreground",
+                        )}
+                        title={r.breakdown}
+                      >
+                        {r.hasAdjustment ? (
+                          <>
+                            <span className="line-through text-[10px] text-muted-foreground me-1">
+                              {fmt(r.originalUnitPrice)}
+                            </span>
+                            {fmt(r.effectiveUnitPrice)}
+                          </>
+                        ) : (
+                          fmt(r.effectiveUnitPrice)
+                        )}
+                      </td>
                       <td className={cn(
                         "p-2 border text-end font-mono",
                         capExhausted ? "text-destructive" : "text-emerald-700",
@@ -2234,7 +2368,7 @@ ${sections}
                   );
                 })}
                 {picker?.rows.length === 0 && (
-                  <tr><td colSpan={10} className="p-4 text-center text-muted-foreground">لا توجد أصناف في الفاتورة</td></tr>
+                  <tr><td colSpan={11} className="p-4 text-center text-muted-foreground">لا توجد أصناف في الفاتورة</td></tr>
                 )}
               </tbody>
             </table>
