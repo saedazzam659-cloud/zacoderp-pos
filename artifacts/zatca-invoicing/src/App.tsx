@@ -222,6 +222,14 @@ import Items from "@/pages/inventory/Items";
 import Offers from "@/pages/inventory/Offers";
 import OfferForm from "@/pages/inventory/OfferForm";
 import StockTransfer from "@/pages/inventory/StockTransfer";
+import SisterCompanies from "@/pages/inventory/sister-companies/SisterCompanies";
+import SisterTransfers from "@/pages/inventory/sister-companies/SisterTransfers";
+import SisterTransferForm from "@/pages/inventory/sister-companies/SisterTransferForm";
+import SisterReturns from "@/pages/inventory/sister-companies/SisterReturns";
+import SisterReturnForm from "@/pages/inventory/sister-companies/SisterReturnForm";
+import SisterSettlements from "@/pages/inventory/sister-companies/SisterSettlements";
+import SisterSettlementForm from "@/pages/inventory/sister-companies/SisterSettlementForm";
+import SisterCompanyStatement from "@/pages/inventory/sister-companies/SisterCompanyStatement";
 import StockAdjustment from "@/pages/inventory/StockAdjustment";
 import StockCounting from "@/pages/inventory/StockCounting";
 import StockLedger from "@/pages/inventory/StockLedger";
@@ -763,6 +771,15 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/offers/:id/edit"  module="items" action="edit" component={OfferForm} />}
             {!isSuperAdmin && <PermRoute path="/inventory/transfers"        module="stock_transfers"   component={StockTransfer} />}
             {!isSuperAdmin && <PermRoute path="/inventory/transfers/new"    module="stock_transfers" action="create" component={StockTransfer} />}
+            {/* ── Sister Companies (الشركات الشقيقة) — locked-by-default module ── */}
+            {!isSuperAdmin && <PermRoute path="/inventory/sister-companies"               module="sister_companies" component={SisterCompanies} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/sister-companies/:id/statement" module="sister_companies" component={SisterCompanyStatement} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/sister-transfers"               module="sister_companies" component={SisterTransfers} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/sister-transfers/new"           module="sister_companies" action="create" component={SisterTransferForm} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/sister-returns"                 module="sister_companies" component={SisterReturns} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/sister-returns/new"             module="sister_companies" action="create" component={SisterReturnForm} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/sister-settlements"             module="sister_companies" component={SisterSettlements} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/sister-settlements/new"         module="sister_companies" action="create" component={SisterSettlementForm} />}
             {!isSuperAdmin && <PermRoute path="/inventory/adjustments"      module="stock_adjustments" component={StockAdjustment} />}
             {!isSuperAdmin && <PermRoute path="/inventory/adjustments/new"  module="stock_adjustments" action="create" component={StockAdjustment} />}
             {!isSuperAdmin && <PermRoute path="/inventory/counts"           module="stock_counts"      component={StockCounting} />}

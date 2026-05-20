@@ -111,7 +111,7 @@ const PURCHASING_GROUP_PERMS    = ["suppliers","purchase_invoices","purchase_ret
 const PURCHASING_REPORTS_PERMS  = ["suppliers","purchase_invoices","purchase_returns"];
 const CASH_GROUP_PERMS          = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
 const CASH_REPORTS_PERMS        = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
-const INVENTORY_GROUP_PERMS     = ["items","warehouses","stock_transfers","stock_adjustments","stock_counts"];
+const INVENTORY_GROUP_PERMS     = ["items","warehouses","stock_transfers","stock_adjustments","stock_counts","sister_companies"];
 // All inventory report routes are gated as module="items" in App.tsx, so the
 // group should mirror that exactly — a user with only `warehouses.view` has
 // nothing accessible inside this group.
@@ -469,6 +469,12 @@ const inventorySubNav: NavDef[] = [
   { nameKey: "nav.stockAdjustments",  href: "/inventory/adjustments",      icon: SlidersHorizontal, permKey: "stock_adjustments" },
   { nameKey: "nav.stockCounts",       href: "/inventory/counts",           icon: ClipboardList,     permKey: "stock_counts" },
   { nameKey: "nav.offers",            href: "/inventory/offers",           icon: Tag,               permKey: "items" },
+  // ── Sister Companies (الشركات الشقيقة) — locked-by-default module ──
+  // Single permKey gates all 4 entries; auto-hidden until SA enables on tenant.
+  { nameKey: "nav.sisterCompanies",   href: "/inventory/sister-companies",   icon: Building2,      permKey: "sister_companies" },
+  { nameKey: "nav.sisterTransfers",   href: "/inventory/sister-transfers",   icon: ArrowRightLeft, permKey: "sister_companies" },
+  { nameKey: "nav.sisterReturns",     href: "/inventory/sister-returns",     icon: PackageMinus,   permKey: "sister_companies" },
+  { nameKey: "nav.sisterSettlements", href: "/inventory/sister-settlements", icon: Wallet,         permKey: "sister_companies" },
 ];
 
 const inventoryReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/inventory/reports", icon: LayoutDashboard, exact: true };

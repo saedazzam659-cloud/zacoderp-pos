@@ -32,6 +32,8 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   // ── المخازن ──
   "inventory_mobile",
   "inventory_reports",
+  // Sister Companies — locked by default; SuperAdmin enables per tenant.
+  "sister_companies",
   // ── المبيعات ──
   "sales_module",
   "sales_reports",

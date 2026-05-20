@@ -70,3 +70,4 @@ export * from "./accountingStandardsKb";
 export * from "./aiControls";
 export * from "./customPrintTemplates";
 export * from "./userTracking";
+export * from "./sisterCompanies";

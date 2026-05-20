@@ -24,6 +24,7 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "inventory_mobile",   label: "موبيل المخازن",              section: "المخازن" },
   { key: "inventory_reports",  label: "تقارير المخازن",             section: "المخازن" },
+  { key: "sister_companies",   label: "الشركات الشقيقة",            section: "المخازن" },
 
   { key: "sales_module",       label: "العملاء والمبيعات",          section: "المبيعات" },
   { key: "sales_reports",      label: "تقارير العملاء والمبيعات",   section: "المبيعات" },
@@ -107,6 +108,11 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   reports:            "zatca",
   inventory_mobile:   "inventory",
   inventory_reports:  "inventory",
+  // Sister-companies module is LOCKED BY DEFAULT (option B): the
+  // SuperAdmin must explicitly enable it per company from
+  // /admin/menu-permissions. There is no parent billable module — the
+  // permission key itself is the on/off switch.
+  sister_companies:   null,
   sales_module:       "sales",
   sales_reports:      "sales",
   purchases_module:   "purchasing",
