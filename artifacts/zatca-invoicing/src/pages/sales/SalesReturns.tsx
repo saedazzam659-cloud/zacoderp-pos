@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil, Copy, Printer, FileSpreadsheet, FileDown, X, Loader2, Send } from "lucide-react";
+import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil, Copy, Printer, FileSpreadsheet, FileDown, X, Loader2, Send, AlertCircle, StickyNote } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
   downloadCsv, useAuditGridLayout, useColumnResize,
@@ -116,6 +116,12 @@ export default function SalesReturns() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm]         = useState<any>({ ...EMPTY, priceIncludesVat: stickyPriceIncl.initial });
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
+  // Inline-error state for the mandatory "ملاحظات / سبب المرتجع" field.
+  // Goes red+shake when the user tries to save without writing anything,
+  // and clears automatically as soon as they start typing. Pair with the
+  // notesRef below for focus+scroll on validation failure.
+  const [notesError, setNotesError] = useState(false);
+  const notesRef = useRef<HTMLInputElement | null>(null);
   const [printData, setPrintData] = useState<any>(null);
   // Source-invoice picker — when a sales invoice is selected as the source,
   // open this modal instead of auto-importing every line. Lets the user
@@ -891,11 +897,27 @@ export default function SalesReturns() {
     const missing: string[] = [];
     if (!form.customerId) missing.push(t("salesReturns.customer", { defaultValue: "العميل" }));
     if (!form.branchId)   missing.push(t("salesReturns.branch",   { defaultValue: "الفرع" }));
-    if (!form.notes || !String(form.notes).trim()) missing.push("الشرح (الملاحظات)");
+    // حقل الملاحظات — إلزامي. يُعامَل بشكل أنيق inline (شريط + رسالة
+    // حمراء تحت الحقل + focus تلقائي) بالإضافة للظهور في تجميعة
+    // missing الموحّدة في الـ toast، حتى يفهم المستخدم السبب فوراً
+    // سواء كان الحقل ظاهراً أمامه أو في تبويب آخر.
+    const notesMissing = !form.notes || !String(form.notes).trim();
+    if (notesMissing) missing.push("شرح سبب المرتجع (الملاحظات)");
+    if (notesMissing) {
+      setNotesError(true);
+      // تأخير صغير لضمان أن العنصر مرئي قبل التمرير (مفيد إذا كان
+      // في تبويب مغلق أو عنصر مخفي مؤقتاً).
+      setTimeout(() => {
+        notesRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        notesRef.current?.focus({ preventScroll: true });
+      }, 50);
+    }
     if (missing.length) {
       toast({
         title: "⚠️ بيانات ناقصة — لا يمكن حفظ المرتجع",
-        description: `الحقول التالية مطلوبة: ${missing.join("، ")}`,
+        description: notesMissing
+          ? `الحقول التالية مطلوبة: ${missing.join("، ")}\nاكتب جملة قصيرة تشرح سبب المرتجع في حقل الملاحظات (مظلَّل بالأحمر في الأعلى).`
+          : `الحقول التالية مطلوبة: ${missing.join("، ")}`,
         variant: "destructive",
       });
       return;
@@ -1665,7 +1687,75 @@ ${sections}
                   placeholder={t("salesReturns.salesRepPlaceholder")}
                 />
               </Field>
-              <Field label={t("salesReturns.notes")} className="col-span-2 lg:col-span-4"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
+              {/* ─── حقل الملاحظات / سبب المرتجع — إلزامي ──────────────
+                  مُصمَّم ليكون بارزاً بصرياً (شارة "إلزامي" + نجمة حمراء
+                  + شريط جانبي ملوّن + شرح فرعي يُبرر سبب الإلزام).
+                  عند الفشل في الحفظ بدون نص: حد أحمر + خلفية حمراء
+                  خفيفة + رسالة inline + animate-shake، مع focus
+                  وتمرير الصفحة إليه تلقائياً (يُدار من handleSubmit). */}
+              <Field
+                label={
+                  <span className="flex items-center gap-1.5 flex-wrap">
+                    <StickyNote className="h-3.5 w-3.5 text-rose-600" />
+                    <span>{t("salesReturns.notes")}</span>
+                    <span className="text-rose-600 font-bold" aria-hidden>*</span>
+                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+                      إلزامي
+                    </span>
+                    <span className="text-[10.5px] text-muted-foreground font-normal">
+                      — اشرح سبب المرتجع (مثل: عيب في المنتج، طلب العميل، خطأ في الفاتورة)
+                    </span>
+                  </span>
+                }
+                className="col-span-2 lg:col-span-4"
+              >
+                <div className="relative">
+                  {/* شريط لوني جانبي يدل على أن الحقل مطلوب — يتحوّل من
+                      وردي هادئ إلى أحمر صارخ عند الخطأ. */}
+                  <span
+                    className={cn(
+                      "absolute top-0 bottom-0 w-1 rounded-full transition-colors",
+                      isRtl ? "right-0" : "left-0",
+                      notesError ? "bg-rose-500" : "bg-rose-300/60",
+                    )}
+                    aria-hidden
+                  />
+                  <Input
+                    ref={notesRef}
+                    value={form.notes}
+                    aria-required="true"
+                    aria-invalid={notesError}
+                    aria-describedby={notesError ? "notes-error" : undefined}
+                    onChange={e => {
+                      setForm((p: any) => ({ ...p, notes: e.target.value }));
+                      // اطفئ حالة الخطأ بمجرد بدء الكتابة — feedback فوري.
+                      if (notesError && e.target.value.trim()) setNotesError(false);
+                    }}
+                    placeholder="اكتب سبب المرتجع بوضوح…"
+                    className={cn(
+                      isRtl ? "pr-3" : "pl-3",
+                      "transition-all duration-200",
+                      notesError && "border-rose-500 bg-rose-50/60 focus-visible:ring-rose-400 animate-pulse",
+                    )}
+                  />
+                </div>
+                {notesError && (
+                  <div
+                    id="notes-error"
+                    role="alert"
+                    className="mt-2 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-800 shadow-sm"
+                  >
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-rose-600" />
+                    <div className="leading-relaxed">
+                      <p className="font-semibold">حقل الملاحظات إلزامي</p>
+                      <p className="text-rose-700/90">
+                        لا يمكن حفظ المرتجع دون توضيح السبب. اكتب جملة قصيرة
+                        تشرح سبب الإرجاع للرجوع إليها لاحقاً في التدقيق.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </Field>
             </FormGrid>
             </TabsContent>
 
