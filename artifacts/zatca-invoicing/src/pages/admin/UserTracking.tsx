@@ -398,7 +398,7 @@ function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged:
             <th className="py-2 px-2">نصف القطر (م)</th>
             <th className="py-2 px-2">النوع</th>
             <th className="py-2 px-2">المستخدمون</th>
-            <th className="py-2 px-2">إجراءات</th>
+            <th className="py-2 px-2">حذف</th>
           </tr></thead>
           <tbody>
             {zones.map(z => (
@@ -415,14 +415,9 @@ function ZonesTab({ zones, onChanged, cid }: { zones: TrackingZone[]; onChanged:
                   <ZoneUserChips zoneId={z.id} cid={cid} onManage={() => setAssigning(z)} />
                 </td>
                 <td className="py-2 px-2 text-center">
-                  <div className="flex items-center justify-center gap-1">
-                    <Button size="icon" variant="ghost" onClick={() => openEdit(z)} data-testid={`btn-edit-zone-${z.id}`} title="تعديل">
-                      <Pencil className="h-4 w-4 text-indigo-600" />
-                    </Button>
-                    <Button size="icon" variant="ghost" onClick={() => { if (confirm(`حذف "${z.name}"؟`)) del.mutate(z.id); }} data-testid={`btn-delete-zone-${z.id}`} title="حذف">
-                      <Trash2 className="h-4 w-4 text-rose-600" />
-                    </Button>
-                  </div>
+                  <Button size="icon" variant="ghost" onClick={() => { if (confirm(`حذف "${z.name}"؟`)) del.mutate(z.id); }} data-testid={`btn-delete-zone-${z.id}`} title="حذف">
+                    <Trash2 className="h-4 w-4 text-rose-600" />
+                  </Button>
                 </td>
               </tr>
             ))}
