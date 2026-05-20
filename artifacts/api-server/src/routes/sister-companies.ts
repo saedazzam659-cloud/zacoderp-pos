@@ -680,13 +680,55 @@ router.get("/:id/statement", async (req, res) => {
     for (const s of prevSe) opening += s.dir === "pay" ? Number(s.amt) : -Number(s.amt);
   }
 
-  type Row = { date: string; docNumber: string; type: string; debit: number; credit: number; description: string };
+  // Resolve JE doc-numbers for every posted source doc so the statement
+  // can show "رقم القيد" and deep-link to /accounting/journals/:id — same
+  // shape as the customer/supplier statement.
+  const jeIds = [
+    ...transfers.map(t => t.journalEntryId),
+    ...returns_.map(r => r.journalEntryId),
+    ...settlements.map(s => s.journalEntryId),
+  ].filter((x): x is number => x != null);
+  const jeMap = new Map<number, string | null>();
+  if (jeIds.length > 0) {
+    const jes = await db.select({ id: journalEntriesTable.id, docNumber: journalEntriesTable.docNumber })
+      .from(journalEntriesTable)
+      .where(inArray(journalEntriesTable.id, jeIds));
+    for (const j of jes) jeMap.set(j.id, j.docNumber);
+  }
+
+  type Row = {
+    /** Source-doc id (transfer / return / settlement) — used for keys. */
+    id: number;
+    /** Short type code (transfer / return / settlement) — used by the
+     *  client to pick a deep-link route for the docNumber cell. */
+    kind: "transfer" | "return" | "settlement";
+    date: string;
+    docNumber: string;
+    type: string;
+    /** Linked posted JE id + number for the رقم القيد cell. */
+    journalEntryId: number | null;
+    journalEntryNumber: string | null;
+    debit: number;
+    credit: number;
+    description: string;
+  };
   const rows: Row[] = [];
-  for (const t of transfers)   rows.push({ date: String(t.transferDate), docNumber: t.transferNumber, type: "تحويل",  debit: Number(t.totalSupply),  credit: 0,                       description: t.notes ?? "" });
-  for (const r of returns_)    rows.push({ date: String(r.returnDate),   docNumber: r.returnNumber,   type: "مرتجع", debit: 0,                      credit: Number(r.totalSupply),   description: r.notes ?? "" });
+  for (const t of transfers) rows.push({
+    id: t.id, kind: "transfer", date: String(t.transferDate),
+    docNumber: t.transferNumber, type: "تحويل",
+    journalEntryId: t.journalEntryId, journalEntryNumber: t.journalEntryId != null ? jeMap.get(t.journalEntryId) ?? null : null,
+    debit: Number(t.totalSupply), credit: 0, description: t.notes ?? "",
+  });
+  for (const r of returns_) rows.push({
+    id: r.id, kind: "return", date: String(r.returnDate),
+    docNumber: r.returnNumber, type: "مرتجع",
+    journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryId != null ? jeMap.get(r.journalEntryId) ?? null : null,
+    debit: 0, credit: Number(r.totalSupply), description: r.notes ?? "",
+  });
   for (const s of settlements) rows.push({
-    date: String(s.date), docNumber: s.code,
-    type: s.direction === "receive" ? "تحصيل" : "سداد",
+    id: s.id, kind: "settlement", date: String(s.date),
+    docNumber: s.code, type: s.direction === "receive" ? "تحصيل" : "سداد",
+    journalEntryId: s.journalEntryId, journalEntryNumber: s.journalEntryId != null ? jeMap.get(s.journalEntryId) ?? null : null,
     debit:  s.direction === "pay"     ? Number(s.amount) : 0,
     credit: s.direction === "receive" ? Number(s.amount) : 0,
     description: s.description ?? "",

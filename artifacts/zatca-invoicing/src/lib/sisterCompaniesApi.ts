@@ -124,7 +124,19 @@ export const sisterCompaniesApi = {
     return req<{
       opening: number;
       closing: number;
-      rows: Array<{ date: string; docNumber: string; type: string; debit: number; credit: number; description: string; balance: number }>;
+      rows: Array<{
+        id: number;
+        kind: "transfer" | "return" | "settlement";
+        date: string;
+        docNumber: string;
+        type: string;
+        journalEntryId: number | null;
+        journalEntryNumber: string | null;
+        debit: number;
+        credit: number;
+        description: string;
+        balance: number;
+      }>;
     }>("GET", `/${sisterCompanyId}/statement${qs.toString() ? `?${qs}` : ""}`);
   },
 };
