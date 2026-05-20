@@ -1721,13 +1721,15 @@ function template14(d: PrintData): string {
     .pill.no  { background:#e0f2fe; border-color:#7dd3fc; color:#075985; font-family:'Segoe UI', monospace; }
 
     /* ── Lines table ───────────────────────────────────────────────── */
-    .lines-wrap { margin-top:6px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+    /* Borderless, simple look: no outer frame, light grey thead with dark
+       text, soft zebra striping, and only a bottom border on cells. */
+    .lines-wrap { margin-top:6px; border:none; border-radius:0; overflow:visible; }
     .lines-wrap table { font-size:11px; }
-    .lines-wrap thead tr { background:var(--ink); color:#fff; }
-    .lines-wrap th { padding:8px 6px; font-weight:700; font-size:10.5px; letter-spacing:.02em; }
-    .lines-wrap td { padding:6px 6px; border-bottom:1px solid var(--line); }
+    .lines-wrap thead tr { background:#f3f4f6; color:var(--ink); }
+    .lines-wrap th { padding:8px 6px; font-weight:700; font-size:10.5px; letter-spacing:.02em; border:none; border-bottom:1px solid var(--line); }
+    .lines-wrap td { padding:6px 6px; border:none; border-bottom:1px solid var(--line); }
     .lines-wrap tbody tr:last-child td { border-bottom:none; }
-    .lines-wrap tbody tr:nth-child(even) { background:#fafafa; }
+    .lines-wrap tbody tr:nth-child(even) { background:#fafbfc; }
 
     /* ── Totals + QR + footer ───────────────────────────────────────── */
     .bottom { display:grid; grid-template-columns: 1fr 280px; gap:14px; margin-top:14px; align-items:flex-start; }
