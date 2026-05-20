@@ -62,7 +62,7 @@ export default function StatementExportButtons({
     { key: "date", header: "التاريخ", width: 14 },
     { key: "docType", header: "نوع الوثيقة", width: 18 },
     { key: "docNumber", header: "الرقم", width: 16 },
-    { key: "type", header: "البيان", width: 16 },
+    { key: "type", header: "رقم القيد", width: 16 },
     { key: "debit", header: "مدين", width: 14 },
     { key: "credit", header: "دائن", width: 14 },
     { key: "balance", header: "الرصيد", width: 16 },
@@ -76,7 +76,7 @@ export default function StatementExportButtons({
   const excelRows: Record<string, unknown>[] = [
     {
       docType: "رصيد افتتاحي",
-      date: from, docNumber: "—", type: "رصيد افتتاحي",
+      date: from, docNumber: "—", type: "—",
       debit:  openingDebit  ? fmt(openingDebit)  : "",
       credit: openingCredit ? fmt(openingCredit) : "",
       balance: fmt(opening),
@@ -86,7 +86,10 @@ export default function StatementExportButtons({
       docType: (l as any).docType ?? "",
       date: l.date,
       docNumber: l.docNumber ?? "—",
-      type: l.type,
+      // The "type" Excel column was repurposed to "رقم القيد" — surface
+      // the journal-entry number here, falling back to "—" so empty
+      // cells stay legible in the spreadsheet.
+      type: (l as any).journalEntryNumber ?? "—",
       debit:  l.debit  ? fmt(l.debit)  : "",
       credit: l.credit ? fmt(l.credit) : "",
       balance: fmt(l.balance),

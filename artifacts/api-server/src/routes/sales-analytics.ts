@@ -356,13 +356,13 @@ router.get("/customer-statement", async (req, res) => {
     pushBranchScope(req, invConds, salesInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(salesInvoicesTable.invoiceDate, from));
     if (to)   invConds.push(lte(salesInvoicesTable.invoiceDate, to));
-    // We display the posted JOURNAL-ENTRY number (رقم القيد) in the
-    // statement's "الرقم" column — not the source-document number — per
-    // user request. The source docNumber is kept as a fallback for the
-    // (rare) case where the JE link is missing on a legacy posted row.
+    // "الرقم" column = source-document number (invoice / return / voucher).
+    // "رقم القيد" column = posted JE number that produced the balance.
+    // Both are returned so the UI can render them in separate columns.
     const invs = await db.select({
       id: salesInvoicesTable.id, date: salesInvoicesTable.invoiceDate,
-      docNumber: sql<string | null>`coalesce(${journalEntriesTable.docNumber}, ${salesInvoicesTable.docNumber})`,
+      docNumber: salesInvoicesTable.docNumber,
+      journalEntryNumber: journalEntriesTable.docNumber,
       total: salesInvoicesTable.totalAmount,
       notes: salesInvoicesTable.notes,
     }).from(salesInvoicesTable)
@@ -380,7 +380,8 @@ router.get("/customer-statement", async (req, res) => {
     if (to)   retConds.push(lte(salesReturnsTable.returnDate, to));
     const rets = await db.select({
       id: salesReturnsTable.id, date: salesReturnsTable.returnDate,
-      docNumber: sql<string | null>`coalesce(${journalEntriesTable.docNumber}, ${salesReturnsTable.docNumber})`,
+      docNumber: salesReturnsTable.docNumber,
+      journalEntryNumber: journalEntriesTable.docNumber,
       total: salesReturnsTable.totalAmount,
       notes: salesReturnsTable.notes,
     }).from(salesReturnsTable)
@@ -398,7 +399,8 @@ router.get("/customer-statement", async (req, res) => {
     if (to)   recConds.push(lte(receiptVouchersTable.date, to));
     const recs = await db.select({
       id: receiptVouchersTable.id, date: receiptVouchersTable.date,
-      docNumber: sql<string | null>`coalesce(${journalEntriesTable.docNumber}, ${receiptVouchersTable.code})`,
+      docNumber: receiptVouchersTable.code,
+      journalEntryNumber: journalEntriesTable.docNumber,
       amount: receiptVouchersTable.amount,
       notes: receiptVouchersTable.notes,
     }).from(receiptVouchersTable)
@@ -412,11 +414,11 @@ router.get("/customer-statement", async (req, res) => {
     const withNote = (base: string, n?: string | null) =>
       n && String(n).trim() ? `${base} — ${String(n).trim()}` : base;
 
-    type Line = { date: string; type: string; docNumber: string | null; debit: number; credit: number; description: string };
+    type Line = { date: string; type: string; docNumber: string | null; journalEntryNumber: string | null; debit: number; credit: number; description: string };
     const lines: Line[] = [
-      ...invs.map(i => ({ date: i.date, type: "invoice", docNumber: i.docNumber, debit: Number(i.total), credit: 0, description: withNote("فاتورة مبيعات آجلة", i.notes) })),
-      ...rets.map(r => ({ date: r.date, type: "return",  docNumber: r.docNumber, debit: 0, credit: Number(r.total),  description: withNote("مرتجع مبيعات", r.notes) })),
-      ...recs.map(r => ({ date: r.date, type: "receipt", docNumber: r.docNumber, debit: 0, credit: Number(r.amount), description: withNote("سند قبض", r.notes) })),
+      ...invs.map(i => ({ date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryNumber: i.journalEntryNumber, debit: Number(i.total), credit: 0, description: withNote("فاتورة مبيعات آجلة", i.notes) })),
+      ...rets.map(r => ({ date: r.date, type: "return",  docNumber: r.docNumber, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.total),  description: withNote("مرتجع مبيعات", r.notes) })),
+      ...recs.map(r => ({ date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.amount), description: withNote("سند قبض", r.notes) })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
 
     res.json({ opening, lines });

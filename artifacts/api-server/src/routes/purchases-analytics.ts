@@ -395,12 +395,12 @@ router.get("/supplier-statement", async (req, res) => {
     pushBranchScope(req, invConds, purchaseInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(purchaseInvoicesTable.invoiceDate, from));
     if (to)   invConds.push(lte(purchaseInvoicesTable.invoiceDate, to));
-    // Display the posted JOURNAL-ENTRY number (رقم القيد) in the "الرقم"
-    // column — not the source-doc number — per user request. Fallback to
-    // the source docNumber if the JE link is missing on a legacy row.
+    // "الرقم" = source-document number; "رقم القيد" = posted JE number.
+    // Returned as separate fields so the UI can render them in two columns.
     const invs = await db.select({
       id: purchaseInvoicesTable.id, date: purchaseInvoicesTable.invoiceDate,
-      docNumber: sql<string | null>`coalesce(${journalEntriesTable.docNumber}, ${purchaseInvoicesTable.docNumber})`,
+      docNumber: purchaseInvoicesTable.docNumber,
+      journalEntryNumber: journalEntriesTable.docNumber,
       total: purchaseInvoicesTable.totalAmount,
       notes: purchaseInvoicesTable.notes,
     }).from(purchaseInvoicesTable)
@@ -418,7 +418,8 @@ router.get("/supplier-statement", async (req, res) => {
     if (to)   retConds.push(lte(purchaseReturnsTable.returnDate, to));
     const rets = await db.select({
       id: purchaseReturnsTable.id, date: purchaseReturnsTable.returnDate,
-      docNumber: sql<string | null>`coalesce(${journalEntriesTable.docNumber}, ${purchaseReturnsTable.docNumber})`,
+      docNumber: purchaseReturnsTable.docNumber,
+      journalEntryNumber: journalEntriesTable.docNumber,
       total: purchaseReturnsTable.totalAmount,
       notes: purchaseReturnsTable.notes,
     }).from(purchaseReturnsTable)
@@ -436,7 +437,8 @@ router.get("/supplier-statement", async (req, res) => {
     if (to)   payConds.push(lte(paymentVouchersTable.date, to));
     const pays = await db.select({
       id: paymentVouchersTable.id, date: paymentVouchersTable.date,
-      docNumber: sql<string | null>`coalesce(${journalEntriesTable.docNumber}, ${paymentVouchersTable.code})`,
+      docNumber: paymentVouchersTable.code,
+      journalEntryNumber: journalEntriesTable.docNumber,
       amount: paymentVouchersTable.amount,
       notes: paymentVouchersTable.notes,
     }).from(paymentVouchersTable)
@@ -459,13 +461,13 @@ router.get("/supplier-statement", async (req, res) => {
     // For supplier statements, invoices increase the payable (credit column),
     // returns and payments decrease it (debit column). Direct JE lines carry
     // their own debit/credit as posted.
-    type Line = { date: string; type: string; docNumber: string | null; debit: number; credit: number; description: string };
+    type Line = { date: string; type: string; docNumber: string | null; journalEntryNumber: string | null; debit: number; credit: number; description: string };
     const lines: Line[] = [
-      ...invs.map(i => ({ date: i.date, type: "invoice", docNumber: i.docNumber, debit: 0, credit: Number(i.total), description: withNote("فاتورة مشتريات آجلة", i.notes) })),
-      ...rets.map(r => ({ date: r.date, type: "return",  docNumber: r.docNumber, debit: Number(r.total), credit: 0, description: withNote("مرتجع مشتريات", r.notes) })),
-      ...pays.map(p => ({ date: p.date, type: "payment", docNumber: p.docNumber, debit: Number(p.amount), credit: 0, description: withNote("سند صرف", p.notes) })),
+      ...invs.map(i => ({ date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryNumber: i.journalEntryNumber, debit: 0, credit: Number(i.total), description: withNote("فاتورة مشتريات آجلة", i.notes) })),
+      ...rets.map(r => ({ date: r.date, type: "return",  docNumber: r.docNumber, journalEntryNumber: r.journalEntryNumber, debit: Number(r.total), credit: 0, description: withNote("مرتجع مشتريات", r.notes) })),
+      ...pays.map(p => ({ date: p.date, type: "payment", docNumber: p.docNumber, journalEntryNumber: p.journalEntryNumber, debit: Number(p.amount), credit: 0, description: withNote("سند صرف", p.notes) })),
       ...jeLines.map(j => ({
-        date: j.date, type: "journal", docNumber: j.docNumber,
+        date: j.date, type: "journal", docNumber: null, journalEntryNumber: j.docNumber,
         debit: j.debit, credit: j.credit,
         description: jeLineLabel(j.entryType, j.description),
       })),

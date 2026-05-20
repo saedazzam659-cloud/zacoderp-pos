@@ -53,8 +53,9 @@ export type PurchasesByPeriodRow = {
 
 export type SupplierStatementLine = {
   date: string;
-  type: "invoice" | "return" | "payment";
+  type: "invoice" | "return" | "payment" | "journal";
   docNumber: string | null;
+  journalEntryNumber: string | null;
   debit: number;
   credit: number;
   description: string;

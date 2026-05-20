@@ -47,8 +47,11 @@ export type StatementLine = {
    *  `type`, which is the short generic word ("فاتورة", "مرتجع"). Optional
    *  for back-compat with any caller that doesn't yet populate it. */
   docType?: string;
-  type: string;          // localized label (فاتورة، مرتجع، سند قبض ...)
+  type: string;          // localized label (فاتورة، مرتجع، سند قبض ...) — kept for back-compat
   docNumber?: string | null;
+  /** Posted journal-entry number (رقم القيد) — rendered in its own column,
+   *  replacing the former "البيان" column per user request. */
+  journalEntryNumber?: string | null;
   description: string;
   debit: number;
   credit: number;
@@ -164,12 +167,22 @@ export default function AccountStatementView({
               former English company-info card). Shows the statemented party
               info — code, name (AR), Latin name, level — so the header
               displays BOTH parties at a glance: issuing company on the
-              right, statemented party on the left. The duplicate middle
-              "Account info" block below is collapsed into a date-range
-              strip since this card now carries that data. */}
+              right, statemented party on the left. The party name is now
+              prefixed with an "اسم العميل" / "اسم المورد" label per user
+              request, and the from/to date filters were moved INTO this
+              card (just under "مستوى الحساب") so all account-filter context
+              lives in one place. */}
           <div className="text-right text-[12px] leading-relaxed text-slate-700 space-y-1 min-w-0 border-r-4 border-emerald-400 pr-3 bg-emerald-50/40 rounded-md py-2">
-            <div className="font-bold text-base text-slate-900 truncate">
-              {account.nameAr || account.nameEn || "—"}
+            <div className="flex items-baseline gap-2">
+              <span className="text-slate-500 shrink-0">
+                {mode === "supplier"
+                  ? tr("supplierNameLabel", "اسم المورد")
+                  : tr("customerNameLabel", "اسم العميل")}
+              </span>
+              <span className="text-slate-500">:</span>
+              <span className="font-bold text-base text-slate-900 truncate">
+                {account.nameAr || account.nameEn || "—"}
+              </span>
             </div>
             <div>
               <span className="text-slate-500">{tr("accountCode", "رمز الحساب")}</span> :{" "}
@@ -185,6 +198,19 @@ export default function AccountStatementView({
               <span className="text-slate-500">{tr("accountLevel", "مستوى الحساب")}</span> :{" "}
               <span>{account.level != null ? String(account.level) : "—"}</span>
             </div>
+            {/* Date filters moved here (was a separate strip below the
+                title pill) per user request — they belong with the rest of
+                the account-filter context. */}
+            <div className="pt-1 mt-1 border-t border-dashed border-emerald-200 grid grid-cols-2 gap-x-3">
+              <div>
+                <span className="text-slate-500">{tr("fromDate", "من تاريخ")}</span> :{" "}
+                <span className="font-mono">{from}</span>
+              </div>
+              <div>
+                <span className="text-slate-500">{tr("toDate", "إلى تاريخ")}</span> :{" "}
+                <span className="font-mono">{to}</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -198,13 +224,11 @@ export default function AccountStatementView({
         </div>
       </div>
 
-      {/* ─── Date-range strip ──────────────────────────────────────
-          Account identification moved up to the top-header card; this
-          strip carries only the filter window (and branch when set). */}
+      {/* ─── Branch / filter strip ─────────────────────────────────
+          Dates moved up to the party card; this strip carries only the
+          branch (when filtered) and the settlement-factor placeholder. */}
       <div className="px-6 pb-5">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-x-10 gap-y-2 text-[13px]">
-          <Row label={tr("fromDate", "من تاريخ")} value={from} mono />
-          <Row label={tr("toDate",   "إلى تاريخ")} value={to}   mono />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-2 text-[13px]">
           {branchName ? (
             <Row label={tr("branchLabel", "الفرع")} value={branchName} />
           ) : (
@@ -254,8 +278,10 @@ export default function AccountStatementView({
             value: r => r.docNumber ?? "",
             render: r => r.docNumber || "—",
           },
-          { key: "type",        label: tr("colType", "البيان"),   type: "text",
-            value: r => r.type,
+          { key: "type",        label: tr("colJournalEntryNumber", "رقم القيد"), type: "text",
+            className: "font-mono tabular-nums text-slate-600",
+            value: r => r.journalEntryNumber ?? "",
+            render: r => r.journalEntryNumber || "—",
           },
           { key: "debit",       label: tr("colDebit", "مدين"),    type: "num",
             align: "center", totalable: true,
@@ -284,7 +310,7 @@ export default function AccountStatementView({
             render: r => fmt(r.balance),
           },
           { key: "description", label: tr("colDescription", "الشرح"), type: "text",
-            className: "text-slate-700",
+            className: "text-slate-700 min-w-[260px]",
             value: r => r.description,
           },
         ];
@@ -296,7 +322,7 @@ export default function AccountStatementView({
           docType: <span className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</span>,
           date: from,
           docNumber: "—",
-          type: <span className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</span>,
+          type: <span className="text-slate-400">—</span>,
           debit: <span className="font-mono tabular-nums">{openingDebit ? fmt(openingDebit) : "0.00"}</span>,
           credit: <span className="font-mono tabular-nums">{openingCredit ? fmt(openingCredit) : "0.00"}</span>,
           balance: <span className="font-mono tabular-nums font-semibold">{fmt(opening)}</span>,
@@ -337,7 +363,7 @@ export default function AccountStatementView({
                     {v.date        && <Th>{tr("colDate", "التاريخ")}</Th>}
                     {v.docType     && <Th>{tr("colDocType", "نوع الوثيقة")}</Th>}
                     {v.docNumber   && <Th>{tr("colDoc", "الرقم")}</Th>}
-                    {v.type        && <Th>{tr("colType", "البيان")}</Th>}
+                    {v.type        && <Th>{tr("colJournalEntryNumber", "رقم القيد")}</Th>}
                     {v.debit       && <Th center>{tr("colDebit", "مدين")}</Th>}
                     {v.credit      && <Th center>{tr("colCredit", "دائن")}</Th>}
                     {v.balance     && <Th center>{tr("colBalance", "الرصيد")}</Th>}
@@ -352,7 +378,7 @@ export default function AccountStatementView({
                     {v.date        && <Td mono>{from}</Td>}
                     {v.docType     && <Td className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</Td>}
                     {v.docNumber   && <Td>—</Td>}
-                    {v.type        && <Td className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</Td>}
+                    {v.type        && <Td className="text-slate-400">—</Td>}
                     {v.debit       && <Td center mono>{openingDebit  ? fmt(openingDebit)  : "0.00"}</Td>}
                     {v.credit      && <Td center mono>{openingCredit ? fmt(openingCredit) : "0.00"}</Td>}
                     {v.balance     && <Td center mono className="font-semibold">{fmt(opening)}</Td>}
@@ -370,7 +396,7 @@ export default function AccountStatementView({
                       {v.date      && <Td mono className="text-slate-600">{l.date}</Td>}
                       {v.docType   && <Td className="text-slate-700 font-medium">{l.docType || "—"}</Td>}
                       {v.docNumber && <Td mono className="text-slate-600">{l.docNumber || "—"}</Td>}
-                      {v.type      && <Td>{l.type}</Td>}
+                      {v.type      && <Td mono className="text-slate-600">{l.journalEntryNumber || "—"}</Td>}
                       {v.debit && (
                         <Td center mono className={l.debit ? "font-semibold text-sky-700" : "text-slate-400"}>
                           {l.debit ? fmt(l.debit) : "0.00"}
@@ -382,7 +408,7 @@ export default function AccountStatementView({
                         </Td>
                       )}
                       {v.balance     && <Td center mono className="font-bold text-slate-800">{fmt(l.balance)}</Td>}
-                      {v.description && <Td className="text-slate-700">{l.description}</Td>}
+                      {v.description && <Td className="text-slate-700 min-w-[260px]">{l.description}</Td>}
                     </tr>
                   ))}
                 </tbody>

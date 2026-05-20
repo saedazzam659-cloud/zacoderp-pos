@@ -71,6 +71,7 @@ export type CustomerStatementLine = {
   date: string;
   type: "invoice" | "return" | "receipt";
   docNumber: string | null;
+  journalEntryNumber: string | null;
   debit: number;
   credit: number;
   description: string;

@@ -35,7 +35,7 @@ export const STATEMENT_COL_LABELS: Record<StatementColKey, string> = {
   docType:     "نوع الوثيقة",
   date:        "التاريخ",
   docNumber:   "الرقم",
-  type:        "البيان",
+  type:        "رقم القيد",
   debit:       "مدين",
   credit:      "دائن",
   balance:     "الرصيد",

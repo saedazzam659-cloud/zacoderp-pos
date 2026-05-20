@@ -820,6 +820,8 @@ export interface StatementPdfLine {
   docType?: string;
   type: string;
   docNumber?: string | null;
+  /** Posted JE number — printed in the column that replaced "البيان". */
+  journalEntryNumber?: string | null;
   description: string;
   debit: number;
   credit: number;
@@ -949,11 +951,11 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
           ${v.date        ? `<td class="mono">${escape(l.date)}</td>` : ""}
           ${v.docType     ? `<td>${escape(l.docType || "—")}</td>` : ""}
           ${v.docNumber   ? `<td class="mono">${escape(l.docNumber || "—")}</td>` : ""}
-          ${v.type        ? `<td>${escape(l.type)}</td>` : ""}
+          ${v.type        ? `<td class="mono">${escape(l.journalEntryNumber || "—")}</td>` : ""}
           ${v.debit       ? `<td class="mono num ${l.debit  ? "debit"  : "muted"}">${l.debit  ? escape(fmt(l.debit))  : "0.00"}</td>` : ""}
           ${v.credit      ? `<td class="mono num ${l.credit ? "credit" : "muted"}">${l.credit ? escape(fmt(l.credit)) : "0.00"}</td>` : ""}
           ${v.balance     ? `<td class="mono num strong">${escape(fmt(l.balance))}</td>` : ""}
-          ${v.description ? `<td>${escape(l.description)}</td>` : ""}
+          ${v.description ? `<td class="desc">${escape(l.description)}</td>` : ""}
         </tr>`).join("");
 
   const totalsRow = lines.length > 0 ? `
@@ -981,7 +983,10 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       background: #fff;
       padding: 0;
     }
-    .doc { padding: 12mm 10mm; }
+    .doc { padding: 10mm 12mm; max-width: 100%; }
+    /* A4 landscape gives the wider table room to breathe — the description
+       column is the main beneficiary (more text without wrapping). */
+    tbody td.desc { min-width: 110mm; }
 
     /* ── Company header card ───────────────────────────── */
     .co-header {
@@ -1110,10 +1115,15 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
 
     .print-meta {
       margin-top: 10px;
-      text-align: center;
+      /* Left-align (LTR direction) the audit footer per user request — the
+         print date and the printing user's name sit on the LEFT side of the
+         page even on this RTL document. */
+      direction: ltr;
+      text-align: left;
       font-size: 8.5pt;
-      color: #94a3b8;
+      color: #64748b;
     }
+    .print-meta > div { line-height: 1.5; }
 
     @media print {
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -1123,8 +1133,11 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       thead { display: table-header-group; }
     }
     @page {
-      margin: 12mm 10mm 18mm 10mm;
-      size: A4 portrait;
+      margin: 10mm 12mm 16mm 12mm;
+      /* Landscape gives the description column more room and lets the
+         table breathe so the print layout looks closer to a polished
+         report than a portrait spreadsheet dump. */
+      size: A4 landscape;
       @bottom-center {
         content: "صفحة " counter(page) " من " counter(pages);
         font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
@@ -1146,13 +1159,21 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
         ${addressLine ? `<div class="row"><span class="lbl">العنوان</span> : ${escape(addressLine)}</div>` : ""}
       </div>
       <div class="co-logo">${logoHtml}</div>
-      <!-- Statemented-party identification card (replaces former English
-           company-info card to mirror the on-screen layout). -->
+      <!-- Statemented-party identification card. Mirrors the on-screen
+           layout: party-name row prefixed with "اسم العميل"/"اسم المورد",
+           then code / Latin name / level, with the from/to date filters
+           appended at the bottom of the same card (moved down from the
+           old date-strip per user request). -->
       <div class="co-side party">
-        <div class="name">${escape(account.nameAr || account.nameEn || "—")}</div>
+        <div class="row"><span class="lbl">${escape(mode === "supplier" ? "اسم المورد" : "اسم العميل")}</span> : <span class="name" style="display:inline">${escape(account.nameAr || account.nameEn || "—")}</span></div>
         <div class="row"><span class="lbl">رمز الحساب</span> : <span class="mono">${escape(account.code || "—")}</span></div>
         ${(account.legalName || account.nameEn) ? `<div class="row"><span class="lbl">الاسم اللاتيني</span> : <span dir="ltr">${escape(account.legalName || account.nameEn)}</span></div>` : ""}
         <div class="row"><span class="lbl">مستوى الحساب</span> : ${escape(account.level != null ? String(account.level) : "—")}</div>
+        <div class="row" style="border-top:1px dashed #a7f3d0; padding-top:4px; margin-top:4px;">
+          <span class="lbl">من تاريخ</span> : <span class="mono">${escape(from)}</span>
+          &nbsp;&nbsp;
+          <span class="lbl">إلى تاريخ</span> : <span class="mono">${escape(to)}</span>
+        </div>
       </div>
     </div>
 
@@ -1161,14 +1182,11 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       <div class="title-pill">${escape(title)}</div>
     </div>
 
-    <!-- Date-range strip (account info moved up to top-header card). -->
-    <div class="meta-grid date-strip">
-      <div class="item"><div class="lbl">من تاريخ</div><div>:</div><div class="val mono">${escape(from)}</div></div>
-      <div class="item"><div class="lbl">إلى تاريخ</div><div>:</div><div class="val mono">${escape(to)}</div></div>
-      ${branchName
-        ? `<div class="item"><div class="lbl">الفرع</div><div>:</div><div class="val">${escape(branchName)}</div></div>`
-        : `<div class="item"><div class="lbl">معامل التصفية</div><div>:</div><div class="val">—</div></div>`}
-    </div>
+    ${branchName ? `
+    <!-- Branch strip (dates moved up to the party card). -->
+    <div class="meta-grid date-strip" style="grid-template-columns: 1fr;">
+      <div class="item"><div class="lbl">الفرع</div><div>:</div><div class="val">${escape(branchName)}</div></div>
+    </div>` : ""}
 
     <!-- Table -->
     <table>
@@ -1177,7 +1195,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
           ${v.date        ? `<th>التاريخ</th>` : ""}
           ${v.docType     ? `<th>نوع الوثيقة</th>` : ""}
           ${v.docNumber   ? `<th>الرقم</th>` : ""}
-          ${v.type        ? `<th>البيان</th>` : ""}
+          ${v.type        ? `<th>رقم القيد</th>` : ""}
           ${v.debit       ? `<th>مدين</th>` : ""}
           ${v.credit      ? `<th>دائن</th>` : ""}
           ${v.balance     ? `<th>الرصيد</th>` : ""}
@@ -1189,7 +1207,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
           ${v.date        ? `<td class="mono">${escape(from)}</td>` : ""}
           ${v.docType     ? `<td class="lbl">رصيد افتتاحي</td>` : ""}
           ${v.docNumber   ? `<td>—</td>` : ""}
-          ${v.type        ? `<td class="lbl">رصيد افتتاحي</td>` : ""}
+          ${v.type        ? `<td>—</td>` : ""}
           ${v.debit       ? `<td class="mono num">${openingDebit  ? escape(fmt(openingDebit))  : "0.00"}</td>` : ""}
           ${v.credit      ? `<td class="mono num">${openingCredit ? escape(fmt(openingCredit)) : "0.00"}</td>` : ""}
           ${v.balance     ? `<td class="mono num strong">${escape(fmt(opening))}</td>` : ""}
