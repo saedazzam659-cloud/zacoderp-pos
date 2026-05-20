@@ -371,6 +371,7 @@ router.get("/customer-statement", async (req, res) => {
     const invs = await db.select({
       id: salesInvoicesTable.id, date: salesInvoicesTable.invoiceDate,
       docNumber: salesInvoicesTable.docNumber,
+      journalEntryId: salesInvoicesTable.journalEntryId,
       journalEntryNumber: journalEntriesTable.docNumber,
       total: salesInvoicesTable.totalAmount,
       notes: salesInvoicesTable.notes,
@@ -390,6 +391,7 @@ router.get("/customer-statement", async (req, res) => {
     const rets = await db.select({
       id: salesReturnsTable.id, date: salesReturnsTable.returnDate,
       docNumber: salesReturnsTable.docNumber,
+      journalEntryId: salesReturnsTable.journalEntryId,
       journalEntryNumber: journalEntriesTable.docNumber,
       total: salesReturnsTable.totalAmount,
       notes: salesReturnsTable.notes,
@@ -409,6 +411,7 @@ router.get("/customer-statement", async (req, res) => {
     const recs = await db.select({
       id: receiptVouchersTable.id, date: receiptVouchersTable.date,
       docNumber: receiptVouchersTable.code,
+      journalEntryId: receiptVouchersTable.journalEntryId,
       journalEntryNumber: journalEntriesTable.docNumber,
       amount: receiptVouchersTable.amount,
       notes: receiptVouchersTable.notes,
@@ -423,11 +426,11 @@ router.get("/customer-statement", async (req, res) => {
     const withNote = (base: string, n?: string | null) =>
       n && String(n).trim() ? `${base} — ${String(n).trim()}` : base;
 
-    type Line = { date: string; type: string; docNumber: string | null; journalEntryNumber: string | null; debit: number; credit: number; description: string };
+    type Line = { id: number; date: string; type: string; docNumber: string | null; journalEntryId: number | null; journalEntryNumber: string | null; debit: number; credit: number; description: string };
     const lines: Line[] = [
-      ...invs.map(i => ({ date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryNumber: i.journalEntryNumber, debit: Number(i.total), credit: 0, description: withNote("فاتورة مبيعات آجلة", i.notes) })),
-      ...rets.map(r => ({ date: r.date, type: "return",  docNumber: r.docNumber, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.total),  description: withNote("مرتجع مبيعات", r.notes) })),
-      ...recs.map(r => ({ date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.amount), description: withNote("سند قبض", r.notes) })),
+      ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: Number(i.total), credit: 0, description: withNote("فاتورة مبيعات آجلة", i.notes) })),
+      ...rets.map(r => ({ id: r.id, date: r.date, type: "return",  docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.total),  description: withNote("مرتجع مبيعات", r.notes) })),
+      ...recs.map(r => ({ id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.amount), description: withNote("سند قبض", r.notes) })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
 
     res.json({ opening, lines });

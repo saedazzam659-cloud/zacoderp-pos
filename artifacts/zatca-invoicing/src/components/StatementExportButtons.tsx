@@ -85,11 +85,12 @@ export default function StatementExportButtons({
     ...lines.map(l => ({
       docType: (l as any).docType ?? "",
       date: l.date,
-      docNumber: l.docNumber ?? "—",
+      docNumber: l.docNumber || ((l as any).id != null ? `#${(l as any).id}` : "—"),
       // The "type" Excel column was repurposed to "رقم القيد" — surface
-      // the journal-entry number here, falling back to "—" so empty
-      // cells stay legible in the spreadsheet.
-      type: (l as any).journalEntryNumber ?? "—",
+      // the journal-entry number here, falling back to "#${id}" then "—"
+      // so empty cells stay legible in the spreadsheet.
+      type: (l as any).journalEntryNumber
+        || ((l as any).journalEntryId != null ? `#${(l as any).journalEntryId}` : "—"),
       debit:  l.debit  ? fmt(l.debit)  : "",
       credit: l.credit ? fmt(l.credit) : "",
       balance: fmt(l.balance),

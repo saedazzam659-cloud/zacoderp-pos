@@ -142,6 +142,8 @@ export default function CustomerStatement() {
           to: applied.to,
           opening: effectiveOpening,
           lines: augmented.map(l => ({
+            id: l.id,
+            journalEntryId: l.journalEntryId,
             date: l.date,
             docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
             type: TYPE_LABEL[l.type] ?? l.type,
@@ -185,6 +187,8 @@ export default function CustomerStatement() {
             to={applied.to}
             opening={effectiveOpening}
             lines={augmented.map(l => ({
+              id: l.id,
+              journalEntryId: l.journalEntryId,
               date: l.date,
               docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
               type: TYPE_LABEL[l.type] ?? l.type,

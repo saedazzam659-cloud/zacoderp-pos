@@ -815,6 +815,12 @@ export function printSectionsAsPDF(
 // "الإجمالي" footer.
 
 export interface StatementPdfLine {
+  /** Source document id (invoice / return / voucher) — used as a fallback
+   *  display when docNumber is null. */
+  id?: number | null;
+  /** Posted journal-entry id — used as a fallback display when
+   *  journalEntryNumber is null. */
+  journalEntryId?: number | null;
   date: string;
   /** Document-source category (نوع الوثيقة). Optional for back-compat. */
   docType?: string;
@@ -950,8 +956,8 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
         <tr class="${i % 2 === 0 ? "even" : "odd"}">
           ${v.date        ? `<td class="mono">${escape(l.date)}</td>` : ""}
           ${v.docType     ? `<td>${escape(l.docType || "—")}</td>` : ""}
-          ${v.docNumber   ? `<td class="mono">${escape(l.docNumber || "—")}</td>` : ""}
-          ${v.type        ? `<td class="mono">${escape(l.journalEntryNumber || "—")}</td>` : ""}
+          ${v.docNumber   ? `<td class="mono">${escape(l.docNumber || (l.id != null ? `#${l.id}` : "—"))}</td>` : ""}
+          ${v.type        ? `<td class="mono">${escape(l.journalEntryNumber || (l.journalEntryId != null ? `#${l.journalEntryId}` : "—"))}</td>` : ""}
           ${v.debit       ? `<td class="mono num ${l.debit  ? "debit"  : "muted"}">${l.debit  ? escape(fmt(l.debit))  : "0.00"}</td>` : ""}
           ${v.credit      ? `<td class="mono num ${l.credit ? "credit" : "muted"}">${l.credit ? escape(fmt(l.credit)) : "0.00"}</td>` : ""}
           ${v.balance     ? `<td class="mono num strong">${escape(fmt(l.balance))}</td>` : ""}

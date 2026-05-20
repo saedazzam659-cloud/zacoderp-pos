@@ -40,6 +40,11 @@ import AdvancedReportGrid, {
  */
 
 export type StatementLine = {
+  /** Source document id (invoice / return / voucher) — used as a fallback
+   *  display when docNumber is null and to build deep-links. */
+  id?: number | null;
+  /** Posted journal-entry id — used to deep-link the "رقم القيد" cell. */
+  journalEntryId?: number | null;
   date: string;
   /** Document-source category (نوع الوثيقة) — full categorical label such as
    *  "فاتورة مبيعات", "مرتجع مبيعات", "سند قبض" (customer) or
@@ -275,13 +280,26 @@ export default function AccountStatementView({
           },
           { key: "docNumber",   label: tr("colDoc", "الرقم"),     type: "text",
             className: "font-mono tabular-nums text-slate-600",
-            value: r => r.docNumber ?? "",
-            render: r => r.docNumber || "—",
+            value: r => r.docNumber ?? (r.id != null ? `#${r.id}` : ""),
+            render: r => r.docNumber || (r.id != null ? `#${r.id}` : "—"),
           },
           { key: "type",        label: tr("colJournalEntryNumber", "رقم القيد"), type: "text",
             className: "font-mono tabular-nums text-slate-600",
-            value: r => r.journalEntryNumber ?? "",
-            render: r => r.journalEntryNumber || "—",
+            value: r => r.journalEntryNumber ?? (r.journalEntryId != null ? `#${r.journalEntryId}` : ""),
+            render: r => {
+              const label = r.journalEntryNumber || (r.journalEntryId != null ? `#${r.journalEntryId}` : "");
+              if (!label) return "—";
+              if (r.journalEntryId == null) return label;
+              return (
+                <a
+                  href={`/accounting/journals/${r.journalEntryId}`}
+                  className="text-sky-700 hover:text-sky-900 hover:underline"
+                  title="فتح القيد المحاسبي"
+                >
+                  {label}
+                </a>
+              );
+            },
           },
           { key: "debit",       label: tr("colDebit", "مدين"),    type: "num",
             align: "center", totalable: true,
@@ -395,8 +413,8 @@ export default function AccountStatementView({
                     <tr key={i} className="border-t border-slate-200 even:bg-slate-50/40 hover:bg-sky-50/40 transition-colors">
                       {v.date      && <Td mono className="text-slate-600">{l.date}</Td>}
                       {v.docType   && <Td className="text-slate-700 font-medium">{l.docType || "—"}</Td>}
-                      {v.docNumber && <Td mono className="text-slate-600">{l.docNumber || "—"}</Td>}
-                      {v.type      && <Td mono className="text-slate-600">{l.journalEntryNumber || "—"}</Td>}
+                      {v.docNumber && <Td mono className="text-slate-600">{l.docNumber || (l.id != null ? `#${l.id}` : "—")}</Td>}
+                      {v.type      && <Td mono className="text-slate-600">{l.journalEntryNumber || (l.journalEntryId != null ? `#${l.journalEntryId}` : "—")}</Td>}
                       {v.debit && (
                         <Td center mono className={l.debit ? "font-semibold text-sky-700" : "text-slate-400"}>
                           {l.debit ? fmt(l.debit) : "0.00"}

@@ -68,9 +68,11 @@ export type SalesByPeriodRow = {
 };
 
 export type CustomerStatementLine = {
+  id: number;
   date: string;
   type: "invoice" | "return" | "receipt";
   docNumber: string | null;
+  journalEntryId: number | null;
   journalEntryNumber: string | null;
   debit: number;
   credit: number;
