@@ -942,8 +942,8 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     ? `<tr><td colspan="${Math.max(1, colCount)}" class="empty">لا توجد حركات في الفترة المحددة</td></tr>`
     : lines.map((l, i) => `
         <tr class="${i % 2 === 0 ? "even" : "odd"}">
-          ${v.docType     ? `<td>${escape(l.docType || "—")}</td>` : ""}
           ${v.date        ? `<td class="mono">${escape(l.date)}</td>` : ""}
+          ${v.docType     ? `<td>${escape(l.docType || "—")}</td>` : ""}
           ${v.docNumber   ? `<td class="mono">${escape(l.docNumber || "—")}</td>` : ""}
           ${v.type        ? `<td>${escape(l.type)}</td>` : ""}
           ${v.debit       ? `<td class="mono num ${l.debit  ? "debit"  : "muted"}">${l.debit  ? escape(fmt(l.debit))  : "0.00"}</td>` : ""}
@@ -997,6 +997,15 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     .co-side .lbl { color: #94a3b8; }
     .co-side.left { direction: ltr; text-align: left; }
     .co-side.right { text-align: right; }
+    .co-side.party {
+      direction: rtl;
+      text-align: right;
+      border-right: 4px solid #34d399;
+      background: #ecfdf5;
+      border-radius: 6px;
+      padding: 6px 10px;
+    }
+    .co-side .mono { font-family: 'Courier New', monospace; }
     .co-logo {
       width: 78px; height: 78px;
       border: 2px solid #e2e8f0; border-radius: 50%;
@@ -1032,6 +1041,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       padding: 0 18px 14px;
       font-size: 10pt;
     }
+    .meta-grid.date-strip { grid-template-columns: 1fr 1fr 1fr; }
     .meta-grid .item {
       display: grid;
       grid-template-columns: 110px 8px 1fr;
@@ -1132,12 +1142,13 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
         ${addressLine ? `<div class="row"><span class="lbl">العنوان</span> : ${escape(addressLine)}</div>` : ""}
       </div>
       <div class="co-logo">${logoHtml}</div>
-      <div class="co-side left">
-        <div class="name">${escape(company?.nameEn || company?.nameAr || "—")}</div>
-        ${company?.crNumber ? `<div class="row"><span class="lbl">C.R. No</span> : ${escape(company.crNumber)}</div>` : ""}
-        ${company?.vatNumber ? `<div class="row"><span class="lbl">VAT Number</span> : ${escape(company.vatNumber)}</div>` : ""}
-        ${company?.phone ? `<div class="row"><span class="lbl">Phone</span> : ${escape(company.phone)}</div>` : ""}
-        ${addressLine ? `<div class="row"><span class="lbl">Address</span> : ${escape(addressLine)}</div>` : ""}
+      <!-- Statemented-party identification card (replaces former English
+           company-info card to mirror the on-screen layout). -->
+      <div class="co-side party">
+        <div class="name">${escape(account.nameAr || account.nameEn || "—")}</div>
+        <div class="row"><span class="lbl">رمز الحساب</span> : <span class="mono">${escape(account.code || "—")}</span></div>
+        ${(account.legalName || account.nameEn) ? `<div class="row"><span class="lbl">الاسم اللاتيني</span> : <span dir="ltr">${escape(account.legalName || account.nameEn)}</span></div>` : ""}
+        <div class="row"><span class="lbl">مستوى الحساب</span> : ${escape(account.level != null ? String(account.level) : "—")}</div>
       </div>
     </div>
 
@@ -1146,28 +1157,21 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       <div class="title-pill">${escape(title)}</div>
     </div>
 
-    <!-- Account meta -->
-    <div class="meta-grid">
-      <div>
-        <div class="item"><div class="lbl">رمز الحساب</div><div>:</div><div class="val mono">${escape(account.code || "—")}</div></div>
-        <div class="item"><div class="lbl">اسم الحساب</div><div>:</div><div class="val">${escape(account.nameAr || account.nameEn || "—")}</div></div>
-        <div class="item"><div class="lbl">الاسم اللاتيني</div><div>:</div><div class="val">${escape(account.legalName || account.nameEn || "—")}</div></div>
-        <div class="item"><div class="lbl">مستوى الحساب</div><div>:</div><div class="val">${escape(account.level != null ? String(account.level) : "—")}</div></div>
-      </div>
-      <div>
-        ${branchName ? `<div class="item"><div class="lbl">الفرع</div><div>:</div><div class="val">${escape(branchName)}</div></div>` : ""}
-        <div class="item"><div class="lbl">من تاريخ</div><div>:</div><div class="val mono">${escape(from)}</div></div>
-        <div class="item"><div class="lbl">إلى تاريخ</div><div>:</div><div class="val mono">${escape(to)}</div></div>
-        <div class="item"><div class="lbl">معامل التصفية</div><div>:</div><div class="val">—</div></div>
-      </div>
+    <!-- Date-range strip (account info moved up to top-header card). -->
+    <div class="meta-grid date-strip">
+      <div class="item"><div class="lbl">من تاريخ</div><div>:</div><div class="val mono">${escape(from)}</div></div>
+      <div class="item"><div class="lbl">إلى تاريخ</div><div>:</div><div class="val mono">${escape(to)}</div></div>
+      ${branchName
+        ? `<div class="item"><div class="lbl">الفرع</div><div>:</div><div class="val">${escape(branchName)}</div></div>`
+        : `<div class="item"><div class="lbl">معامل التصفية</div><div>:</div><div class="val">—</div></div>`}
     </div>
 
     <!-- Table -->
     <table>
       <thead>
         <tr>
-          ${v.docType     ? `<th>نوع الوثيقة</th>` : ""}
           ${v.date        ? `<th>التاريخ</th>` : ""}
+          ${v.docType     ? `<th>نوع الوثيقة</th>` : ""}
           ${v.docNumber   ? `<th>الرقم</th>` : ""}
           ${v.type        ? `<th>البيان</th>` : ""}
           ${v.debit       ? `<th>مدين</th>` : ""}
@@ -1178,8 +1182,8 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       </thead>
       <tbody>
         <tr class="opening">
-          ${v.docType     ? `<td class="lbl">رصيد افتتاحي</td>` : ""}
           ${v.date        ? `<td class="mono">${escape(from)}</td>` : ""}
+          ${v.docType     ? `<td class="lbl">رصيد افتتاحي</td>` : ""}
           ${v.docNumber   ? `<td>—</td>` : ""}
           ${v.type        ? `<td class="lbl">رصيد افتتاحي</td>` : ""}
           ${v.debit       ? `<td class="mono num">${openingDebit  ? escape(fmt(openingDebit))  : "0.00"}</td>` : ""}

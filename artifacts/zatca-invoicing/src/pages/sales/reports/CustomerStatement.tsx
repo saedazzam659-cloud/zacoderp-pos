@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { salesAnalyticsApi } from "@/lib/salesAnalyticsApi";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import StatementExportButtons from "@/components/StatementExportButtons";
+import { exportStatementToPDF } from "@/lib/export";
 import StatementColumnChooser, { useStatementVisibleCols } from "@/components/StatementColumnChooser";
 import BranchFilter from "@/components/BranchFilter";
 import { useBranches } from "@/hooks/useBranches";
@@ -119,6 +120,49 @@ export default function CustomerStatement() {
   const closing = effectiveOpening + totals.debit - totals.credit;
 
   const customerLabel = customer ? pickName(customer.nameAr, customer.nameEn) : "";
+
+  /* ── Ctrl+P → templated PDF print ──────────────────────────────
+     Intercept the browser's print shortcut while a statement is loaded
+     and route it through `exportStatementToPDF` (autoPrint=true) so the
+     user gets the styled A4 portrait sheet instead of a raw screen
+     capture. Capture phase so we beat the browser dialog. */
+  useEffect(() => {
+    if (!applied.customerId || isLoading) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) {
+        e.preventDefault();
+        e.stopPropagation();
+        exportStatementToPDF({
+          mode: "customer",
+          company: (user?.company as any) ?? null,
+          account: acctView,
+          from: applied.from,
+          to: applied.to,
+          opening: effectiveOpening,
+          lines: augmented.map(l => ({
+            date: l.date,
+            docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
+            type: TYPE_LABEL[l.type] ?? l.type,
+            docNumber: l.docNumber,
+            description: l.description,
+            debit: l.debit,
+            credit: l.credit,
+            balance: l.balance,
+          })),
+          totals,
+          closing,
+          filename: `${tr("exportFilename")}-${customerLabel || "customer"}-${applied.from}-${applied.to}`,
+          autoPrint: true,
+          fmt,
+          branchName,
+          visibleCols,
+        });
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [applied, isLoading, augmented, totals, closing, effectiveOpening,
+      acctView, branchName, visibleCols, customerLabel, user, fmt]);
 
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>

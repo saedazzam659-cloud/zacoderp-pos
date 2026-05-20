@@ -56,8 +56,8 @@ export default function StatementExportButtons({
   const { fmt } = useFmt();
 
   const ALL_EXCEL_COLUMNS: (ExportColumn & { key: StatementColKey })[] = [
-    { key: "docType", header: "نوع الوثيقة", width: 18 },
     { key: "date", header: "التاريخ", width: 14 },
+    { key: "docType", header: "نوع الوثيقة", width: 18 },
     { key: "docNumber", header: "الرقم", width: 16 },
     { key: "type", header: "البيان", width: 16 },
     { key: "debit", header: "مدين", width: 14 },
@@ -95,8 +95,8 @@ export default function StatementExportButtons({
   // user always sees it on the totals row regardless of which columns
   // (docType / date / docNumber / type) are hidden via the chooser.
   const firstLeading: StatementColKey | null =
-    visibleCols.docType ? "docType"
-    : visibleCols.date ? "date"
+    visibleCols.date ? "date"
+    : visibleCols.docType ? "docType"
     : visibleCols.docNumber ? "docNumber"
     : visibleCols.type ? "type"
     : null;

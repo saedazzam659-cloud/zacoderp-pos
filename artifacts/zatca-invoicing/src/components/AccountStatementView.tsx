@@ -160,23 +160,31 @@ export default function AccountStatementView({
             )}
           </div>
 
-          {/* Left: English */}
-          <div className="text-left text-[12px] leading-relaxed text-slate-700 space-y-1 min-w-0" dir="ltr">
+          {/* Left: Customer / Supplier identification card (replaces the
+              former English company-info card). Shows the statemented party
+              info — code, name (AR), Latin name, level — so the header
+              displays BOTH parties at a glance: issuing company on the
+              right, statemented party on the left. The duplicate middle
+              "Account info" block below is collapsed into a date-range
+              strip since this card now carries that data. */}
+          <div className="text-right text-[12px] leading-relaxed text-slate-700 space-y-1 min-w-0 border-r-4 border-emerald-400 pr-3 bg-emerald-50/40 rounded-md py-2">
             <div className="font-bold text-base text-slate-900 truncate">
-              {company?.nameEn || company?.nameAr || "—"}
+              {account.nameAr || account.nameEn || "—"}
             </div>
-            {company?.crNumber && (
-              <div><span className="text-slate-500">C.R. No</span> : <span className="font-mono">{company.crNumber}</span></div>
+            <div>
+              <span className="text-slate-500">{tr("accountCode", "رمز الحساب")}</span> :{" "}
+              <span className="font-mono">{account.code || "—"}</span>
+            </div>
+            {(account.legalName || account.nameEn) && (
+              <div className="truncate">
+                <span className="text-slate-500">{tr("latinName", "الاسم اللاتيني")}</span> :{" "}
+                <span dir="ltr">{account.legalName || account.nameEn}</span>
+              </div>
             )}
-            {company?.vatNumber && (
-              <div><span className="text-slate-500">VAT Number</span> : <span className="font-mono">{company.vatNumber}</span></div>
-            )}
-            {company?.phone && (
-              <div><span className="text-slate-500">Phone</span> : <span className="font-mono">{company.phone}</span></div>
-            )}
-            {addressLine && (
-              <div className="truncate"><span className="text-slate-500">Address</span> : {addressLine}</div>
-            )}
+            <div>
+              <span className="text-slate-500">{tr("accountLevel", "مستوى الحساب")}</span> :{" "}
+              <span>{account.level != null ? String(account.level) : "—"}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -190,25 +198,18 @@ export default function AccountStatementView({
         </div>
       </div>
 
-      {/* ─── Account info row ───────────────────────────────────── */}
+      {/* ─── Date-range strip ──────────────────────────────────────
+          Account identification moved up to the top-header card; this
+          strip carries only the filter window (and branch when set). */}
       <div className="px-6 pb-5">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-2 text-[13px]">
-          {/* Right column: account identification */}
-          <div className="space-y-2">
-            <Row label={tr("accountCode", "رمز الحساب")}    value={account.code || "—"} />
-            <Row label={tr("accountName", "اسم الحساب")}    value={account.nameAr || account.nameEn || "—"} />
-            <Row label={tr("latinName", "الاسم اللاتيني")}  value={account.legalName || account.nameEn || "—"} />
-            <Row label={tr("accountLevel", "مستوى الحساب")} value={account.level != null ? String(account.level) : "—"} />
-          </div>
-          {/* Left column: date range (+ branch when filtered) */}
-          <div className="space-y-2">
-            {branchName ? (
-              <Row label={tr("branchLabel", "الفرع")} value={branchName} />
-            ) : null}
-            <Row label={tr("fromDate", "من تاريخ")} value={from} mono />
-            <Row label={tr("toDate",   "إلى تاريخ")} value={to}   mono />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-x-10 gap-y-2 text-[13px]">
+          <Row label={tr("fromDate", "من تاريخ")} value={from} mono />
+          <Row label={tr("toDate",   "إلى تاريخ")} value={to}   mono />
+          {branchName ? (
+            <Row label={tr("branchLabel", "الفرع")} value={branchName} />
+          ) : (
             <Row label={tr("settlementFactor", "معامل التصفية")} value="—" />
-          </div>
+          )}
         </div>
       </div>
 
@@ -239,14 +240,14 @@ export default function AccountStatementView({
         /* ── Grid columns (screen only). Order here is the DEFAULT; the
            user can reorder via the toolbar (persisted per company). ── */
         const allGridColumns: GridColumn<StatementLine>[] = [
+          { key: "date",        label: tr("colDate", "التاريخ"),  type: "text",
+            className: "font-mono tabular-nums text-slate-600",
+            value: r => r.date,
+          },
           { key: "docType",     label: tr("colDocType", "نوع الوثيقة"), type: "text",
             className: "text-slate-700 font-medium",
             value: r => r.docType ?? "",
             render: r => r.docType || "—",
-          },
-          { key: "date",        label: tr("colDate", "التاريخ"),  type: "text",
-            className: "font-mono tabular-nums text-slate-600",
-            value: r => r.date,
           },
           { key: "docNumber",   label: tr("colDoc", "الرقم"),     type: "text",
             className: "font-mono tabular-nums text-slate-600",
@@ -333,8 +334,8 @@ export default function AccountStatementView({
               <table className="w-full text-[12.5px] border-collapse min-w-[480px]">
                 <thead>
                   <tr className="bg-slate-100 text-slate-700">
-                    {v.docType     && <Th>{tr("colDocType", "نوع الوثيقة")}</Th>}
                     {v.date        && <Th>{tr("colDate", "التاريخ")}</Th>}
+                    {v.docType     && <Th>{tr("colDocType", "نوع الوثيقة")}</Th>}
                     {v.docNumber   && <Th>{tr("colDoc", "الرقم")}</Th>}
                     {v.type        && <Th>{tr("colType", "البيان")}</Th>}
                     {v.debit       && <Th center>{tr("colDebit", "مدين")}</Th>}
@@ -348,8 +349,8 @@ export default function AccountStatementView({
                       - customer: opening > 0 means the customer owes us (debit side)
                       - supplier: opening > 0 means we owe the supplier (credit side) */}
                   <tr className="bg-amber-50/40 border-t border-slate-200">
-                    {v.docType     && <Td className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</Td>}
                     {v.date        && <Td mono>{from}</Td>}
+                    {v.docType     && <Td className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</Td>}
                     {v.docNumber   && <Td>—</Td>}
                     {v.type        && <Td className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</Td>}
                     {v.debit       && <Td center mono>{openingDebit  ? fmt(openingDebit)  : "0.00"}</Td>}
@@ -366,8 +367,8 @@ export default function AccountStatementView({
                     </tr>
                   ) : lines.map((l, i) => (
                     <tr key={i} className="border-t border-slate-200 even:bg-slate-50/40 hover:bg-sky-50/40 transition-colors">
-                      {v.docType   && <Td className="text-slate-700 font-medium">{l.docType || "—"}</Td>}
                       {v.date      && <Td mono className="text-slate-600">{l.date}</Td>}
+                      {v.docType   && <Td className="text-slate-700 font-medium">{l.docType || "—"}</Td>}
                       {v.docNumber && <Td mono className="text-slate-600">{l.docNumber || "—"}</Td>}
                       {v.type      && <Td>{l.type}</Td>}
                       {v.debit && (
