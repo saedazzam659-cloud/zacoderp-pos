@@ -17,7 +17,7 @@ import { AccountCombobox } from "@/components/AccountCombobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useTranslation } from "react-i18next";
 
-const EMPTY = { code: "", nameAr: "", nameEn: "", groupId: "", branchId: "", city: "", region: "", allowNegative: false, negativeLimit: "", accountId: "" };
+const EMPTY = { code: "", nameAr: "", nameEn: "", groupId: "", branchId: "", city: "", region: "", allowNegative: false, negativeLimit: "", accountId: "", isDefault: false };
 
 export default function Warehouses() {
   const { t } = useTranslation();
@@ -145,6 +145,7 @@ export default function Warehouses() {
       branchId:      form.branchId ? Number(form.branchId) : null,
       negativeLimit: form.negativeLimit || null,
       accountId:     form.accountId ? Number(form.accountId) : null,
+      isDefault:     !!form.isDefault,
     };
     if (editId) updateMut.mutate({ id: editId, data: payload });
     else        createMut.mutate(payload);
@@ -250,6 +251,13 @@ export default function Warehouses() {
                   <Label>{t("pages.warehouses.fields.nameEn")}</Label>
                   <Input placeholder="Main Warehouse" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
                 </div>
+                <div className="md:col-span-2 flex items-center gap-3 rounded-lg border bg-amber-50/40 border-amber-200 px-3 py-2.5">
+                  <Switch checked={!!form.isDefault} onCheckedChange={v => setForm((p: any) => ({ ...p, isDefault: v }))} id="is-default-wh" />
+                  <Label htmlFor="is-default-wh" className="text-sm cursor-pointer flex-1">
+                    المخزن الافتراضي للشركة
+                    <span className="block text-[10px] text-muted-foreground font-normal mt-0.5">يُختار تلقائياً في فواتير المبيعات والمشتريات وفي الجرد. مخزن واحد فقط لكل شركة.</span>
+                  </Label>
+                </div>
                 <div className="space-y-1.5 md:col-span-2">
                   <Label>{t("pages.warehouses.fields.branch")}</Label>
                   <SearchCombobox
@@ -330,15 +338,22 @@ export default function Warehouses() {
                 <Warehouse className="h-4 w-4 text-cyan-700" />
                 <span className="font-mono font-bold text-sm text-cyan-900">{w.code}</span>
               </div>
-              {w.allowNegative ? (
-                <span className="text-[10px] rounded-full px-2 py-0.5 font-semibold bg-emerald-100 text-emerald-800 inline-flex items-center gap-1">
-                  <CheckCircle2 className="h-3 w-3" /> سحب على المكشوف
-                </span>
-              ) : (
-                <span className="text-[10px] rounded-full px-2 py-0.5 font-semibold bg-slate-100 text-slate-600 inline-flex items-center gap-1">
-                  <XCircle className="h-3 w-3" /> رصيد فقط
-                </span>
-              )}
+              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                {w.isDefault && (
+                  <span className="text-[10px] rounded-full px-2 py-0.5 font-semibold bg-amber-100 text-amber-800 inline-flex items-center gap-1">
+                    ★ افتراضي
+                  </span>
+                )}
+                {w.allowNegative ? (
+                  <span className="text-[10px] rounded-full px-2 py-0.5 font-semibold bg-emerald-100 text-emerald-800 inline-flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3" /> سحب على المكشوف
+                  </span>
+                ) : (
+                  <span className="text-[10px] rounded-full px-2 py-0.5 font-semibold bg-slate-100 text-slate-600 inline-flex items-center gap-1">
+                    <XCircle className="h-3 w-3" /> رصيد فقط
+                  </span>
+                )}
+              </div>
             </div>
             <button
               type="button"
@@ -411,7 +426,12 @@ export default function Warehouses() {
                   <tr key={w.id} className="hover:bg-muted/30">
                     <td className="px-4 py-3 font-mono text-xs">{w.code}</td>
                     <td className="px-4 py-3">
-                      <p className="font-medium">{w.nameAr}</p>
+                      <p className="font-medium inline-flex items-center gap-1.5">
+                        {w.nameAr}
+                        {w.isDefault && (
+                          <span className="text-[10px] rounded-full px-1.5 py-0.5 font-semibold bg-amber-100 text-amber-800">★ افتراضي</span>
+                        )}
+                      </p>
                       {w.nameEn && <p className="text-xs text-muted-foreground">{w.nameEn}</p>}
                     </td>
                     <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground text-xs">{w.group?.nameAr ?? "—"}</td>

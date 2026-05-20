@@ -394,6 +394,20 @@ router.get("/sales-invoices", async (req, res) => {
       arr.push(l);
       byInvoice.set(l.salesInvoiceId, arr);
     }
+    // Lightweight per-invoice warehouseIds set — used by the audit grid's
+    // warehouse filter so we don't ship every line over the wire. Single
+    // grouped query keeps this O(N+M) instead of N+1.
+    const lineWh = await db.select({
+      invoiceId:   salesInvoiceLinesTable.invoiceId,
+      warehouseId: salesInvoiceLinesTable.warehouseId,
+    }).from(salesInvoiceLinesTable).where(inArray(salesInvoiceLinesTable.invoiceId, ids));
+    const whByInvoice = new Map<number, Set<number>>();
+    for (const lw of lineWh) {
+      if (!lw.invoiceId || lw.warehouseId == null) continue;
+      const s = whByInvoice.get(lw.invoiceId) ?? new Set<number>();
+      s.add(Number(lw.warehouseId));
+      whByInvoice.set(lw.invoiceId, s);
+    }
     const enriched = enrichedRows.map(r => {
       const arr = byInvoice.get(r.id) ?? [];
       const sorted = [...arr].sort((a, b) => {
@@ -404,6 +418,7 @@ router.get("/sales-invoices", async (req, res) => {
       const top = sorted[0];
       return {
         ...r,
+        warehouseIds: Array.from(whByInvoice.get(r.id) ?? []),
         paymentSettlement: top ? {
           voucherId:   top.voucherId,
           code:        top.code,

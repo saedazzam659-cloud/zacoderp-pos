@@ -24,7 +24,7 @@ import {
   notificationsTable,
   subscriptionsTable,
 } from "@workspace/db";
-import { eq, and, sql, desc, asc, gte, lte, lt, inArray, isNull, or, count } from "drizzle-orm";
+import { eq, ne, and, sql, desc, asc, gte, lte, lt, inArray, isNull, or, count } from "drizzle-orm";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { aliasedTable } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
@@ -223,7 +223,7 @@ router.get("/warehouses", async (req, res) => {
 
 router.post("/warehouses", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, groupId, branchId, city, region, allowNegative, negativeLimit, accountId } = req.body;
+  const { code, nameAr, nameEn, groupId, branchId, city, region, allowNegative, negativeLimit, accountId, isDefault } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم المخزن مطلوبان" }); return; }
   // Plan-based cap. Re-checked on every POST so SuperAdmin upgrades take
   // effect immediately. Returns the limit + used count in the body so the
@@ -264,14 +264,19 @@ router.post("/warehouses", async (req, res) => {
       resolvedAccountId = null;
     }
   }
-  const [row] = await db.insert(warehousesTable).values({ companyId: cid, code, nameAr, nameEn, groupId: groupId || null, branchId: branchCheck.branchId, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, accountId: resolvedAccountId }).returning();
+  // إذا طُلب جعله الافتراضي — نلغي الافتراضي من بقية مخازن نفس الشركة أولاً
+  // ليبقى مخزن افتراضي واحد فقط لكل شركة.
+  if (isDefault) {
+    await db.update(warehousesTable).set({ isDefault: false }).where(eq(warehousesTable.companyId, cid));
+  }
+  const [row] = await db.insert(warehousesTable).values({ companyId: cid, code, nameAr, nameEn, groupId: groupId || null, branchId: branchCheck.branchId, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, accountId: resolvedAccountId, isDefault: !!isDefault }).returning();
   res.status(201).json(row);
 });
 
 router.put("/warehouses/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, groupId, branchId, city, region, allowNegative, negativeLimit, isActive, accountId } = req.body;
+  const { code, nameAr, nameEn, groupId, branchId, city, region, allowNegative, negativeLimit, isActive, accountId, isDefault } = req.body;
   // First make sure the existing warehouse is within the caller's branch
   // WRITE scope. Restricted users cannot update shared (NULL) warehouses
   // even though they can SEE them — only admin can mutate shared resources.
@@ -293,7 +298,11 @@ router.put("/warehouses/:id", async (req, res) => {
   if (accountId && others.some(w => w.id !== id && w.accountId === Number(accountId))) {
     res.status(409).json({ error: "هذا الحساب مرتبط بمخزن آخر — اختر حساباً آخر" }); return;
   }
-  const [row] = await db.update(warehousesTable).set({ code, nameAr, nameEn, groupId: groupId || null, branchId: branchCheck.branchId, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, isActive: isActive !== false, accountId: accountId ? Number(accountId) : null }).where(and(eq(warehousesTable.id, id), eq(warehousesTable.companyId, cid))).returning();
+  if (isDefault) {
+    // نلغي الافتراضي من بقية المخازن قبل تعيين هذا
+    await db.update(warehousesTable).set({ isDefault: false }).where(and(eq(warehousesTable.companyId, cid), ne(warehousesTable.id, id)));
+  }
+  const [row] = await db.update(warehousesTable).set({ code, nameAr, nameEn, groupId: groupId || null, branchId: branchCheck.branchId, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, isActive: isActive !== false, accountId: accountId ? Number(accountId) : null, isDefault: !!isDefault }).where(and(eq(warehousesTable.id, id), eq(warehousesTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);
 });

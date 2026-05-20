@@ -250,7 +250,7 @@ export default function SalesReturns() {
     setForm((p: any) => ({ ...p, branchId: String(defaultBranch.id) }));
   }, [showForm, defaultBranch?.id]);
 
-  const defaultWarehouse = (warehouses as any[])[0];
+  const defaultWarehouse = (warehouses as any[]).find((w: any) => w.isDefault) ?? (warehouses as any[])[0];
   const hasEmptyWarehouse = lines.some((l: any) => !l.warehouseId);
   useEffect(() => {
     if (!defaultWarehouse || !hasEmptyWarehouse) return;
@@ -1623,16 +1623,16 @@ ${sections}
                         onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                     )}
                     {warehouses.length > 0 ? (
-                      <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
-                        <SelectTrigger className={cn("h-8 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
-                          <SelectValue placeholder={t("salesReturns.warehousePlaceholder")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {warehouses.map((w: any) => (
-                            <SelectItem key={w.id} value={String(w.id)}>{w.nameAr}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <div className={cn("rounded-md", l.itemId && !l.warehouseId && "ring-1 ring-amber-400")}>
+                        <SearchCombobox
+                          items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr, labelEn: w.nameEn }))}
+                          value={l.warehouseId}
+                          onValueChange={v => updateLine(l._id, "warehouseId", v)}
+                          placeholder={t("salesReturns.warehousePlaceholder")}
+                          searchPlaceholder="ابحث بالكود أو الاسم..."
+                          className="h-8 text-xs"
+                        />
+                      </div>
                     ) : (
                       <Input className="h-8 text-xs" placeholder={t("common.none")} readOnly />
                     )}

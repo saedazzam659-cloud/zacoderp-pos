@@ -32,6 +32,8 @@ import { Label } from "@/components/ui/label";
 import SalesPrintModal, { type PrintData } from "./SalesPrintModal";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import MultiBranchFilter from "@/components/MultiBranchFilter";
+import { SearchCombobox } from "@/components/ui/search-combobox";
+import { inventoryApi } from "@/lib/inventoryApi";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 
 // ── Header color theme palette ────────────────────────────────────────────
@@ -675,6 +677,9 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   const [branchIds, setBranchIds] = useState<number[]>([]);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  // فلتر المخزن — يعرض فقط الفواتير التي تحتوي على بند واحد على الأقل
+  // من المخزن المختار. "" = الكل.
+  const [warehouseFilter, setWarehouseFilter] = useState<string>("");
   const [colFilters, setColFilters] = useState<Record<string, string>>({});
   // Advanced per-column filter state (two-condition with AND/OR).
   // Driven by the column-header Popover; replaces the old inline input row.
@@ -1011,6 +1016,12 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   // has at least one return — a critical audit signal that wasn't visible in
   // the previous row design. We don't need amounts here, just the set of
   // invoiceIds, so a lightweight Set keeps the per-row check O(1).
+  const { data: warehousesList = [] } = useQuery<any[]>({
+    queryKey: ["warehouses", cid],
+    queryFn: () => inventoryApi.getWarehouses(cid),
+    enabled: !!user,
+  });
+
   const { data: salesReturns = [] } = useQuery<any[]>({
     queryKey: ["sales-returns-audit", cid],
     queryFn: () => getList(cid ? `${API}/api/sales/sales-returns?companyId=${cid}` : `${API}/api/sales/sales-returns`).catch(() => []),
@@ -1075,7 +1086,15 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       const matchStatus = statusFilter === "all" || inv.status === statusFilter;
       const matchFrom = !dateFrom || (inv.invoiceDate >= dateFrom);
       const matchTo   = !dateTo   || (inv.invoiceDate <= dateTo);
-      if (!(matchText && matchStatus && matchFrom && matchTo)) return false;
+      // فلتر المخزن — يعتمد على الحقل `warehouseIds` المضاف في استجابة
+      // GET /api/sales/sales-invoices (مجموع كل المخازن المستخدمة في بنود
+      // الفاتورة). list endpoint لا يُرجع البنود كاملةً لتقليل حجم الاستجابة.
+      let matchWarehouse = true;
+      if (warehouseFilter) {
+        const ids: any[] = Array.isArray(inv.warehouseIds) ? inv.warehouseIds : [];
+        matchWarehouse = ids.some((wid: any) => String(wid) === warehouseFilter);
+      }
+      if (!(matchText && matchStatus && matchFrom && matchTo && matchWarehouse)) return false;
 
       // column filters (advanced two-condition popover)
       for (const col of COLUMNS) {
@@ -1109,7 +1128,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       }
       return true;
     });
-  }, [invoices, search, statusFilter, dateFrom, dateTo, cusMap, branchMap, repMap, colAdv]);
+  }, [invoices, search, statusFilter, dateFrom, dateTo, warehouseFilter, cusMap, branchMap, repMap, colAdv]);
 
   // ── Sorting ───────────────────────────────────────────────────────────
   // Resolves the sortable value for a given invoice + column key. Mirrors
@@ -2205,6 +2224,30 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
               </button>
             ))}
           </div>
+          )}
+          {/* فلتر المخزن — اختر مخزناً لتصفية الفواتير التي تحتوي على بند منه */}
+          {warehousesList.length > 0 && (
+            <div className="flex items-center gap-1">
+              <span className="text-slate-600 text-xs">المخزن:</span>
+              <div className="w-48">
+                <SearchCombobox
+                  items={[
+                    { value: "", label: "كل المخازن" },
+                    ...warehousesList.map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr, labelEn: w.nameEn })),
+                  ]}
+                  value={warehouseFilter}
+                  onValueChange={setWarehouseFilter}
+                  placeholder="كل المخازن"
+                  searchPlaceholder="ابحث بالكود أو الاسم..."
+                  className="h-7 text-xs"
+                />
+              </div>
+              {warehouseFilter && (
+                <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setWarehouseFilter("")}>
+                  مسح
+                </Button>
+              )}
+            </div>
           )}
           {fp.isVisible("date_range") && (
           <div className="flex items-center gap-1">

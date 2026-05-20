@@ -44,9 +44,18 @@ export const warehousesTable = pgTable("warehouses", {
   allowNegative:  boolean("allow_negative").default(false).notNull(),
   negativeLimit:  numeric("negative_limit", { precision: 14, scale: 4 }),
   isActive:       boolean("is_active").default(true).notNull(),
+  // المخزن الافتراضي للشركة — يُختار تلقائياً عند فتح فواتير المبيعات/المرتجعات
+  // والمشتريات/مرتجعاتها. مخزن واحد فقط لكل شركة (يفرضه الـ backend عند الحفظ).
+  isDefault:      boolean("is_default").default(false).notNull(),
   accountId:      integer("account_id"),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  // مخزن افتراضي واحد فقط لكل شركة — فهرس فريد جزئي على مستوى DB
+  // يضمن السلامة حتى عند المنافسة (concurrent writes) أو الكتابة المباشرة بـ SQL.
+  oneDefaultPerCompany: uniqueIndex("warehouses_one_default_per_company_idx")
+    .on(t.companyId)
+    .where(sql`is_default = true`),
+}));
 
 // ─── Item Groups ──────────────────────────────────────────────────────────────
 export const itemGroupsTable = pgTable("item_groups", {
