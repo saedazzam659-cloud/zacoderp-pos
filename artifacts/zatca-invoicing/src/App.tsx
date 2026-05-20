@@ -230,6 +230,7 @@ import SisterReturnForm from "@/pages/inventory/sister-companies/SisterReturnFor
 import SisterSettlements from "@/pages/inventory/sister-companies/SisterSettlements";
 import SisterSettlementForm from "@/pages/inventory/sister-companies/SisterSettlementForm";
 import SisterCompanyStatement from "@/pages/inventory/sister-companies/SisterCompanyStatement";
+import SisterStatementsHub from "@/pages/inventory/sister-companies/SisterStatementsHub";
 import StockAdjustment from "@/pages/inventory/StockAdjustment";
 import StockCounting from "@/pages/inventory/StockCounting";
 import StockLedger from "@/pages/inventory/StockLedger";
@@ -780,6 +781,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/sister-returns/new"             module="sister_companies" action="create" component={SisterReturnForm} />}
             {!isSuperAdmin && <PermRoute path="/inventory/sister-settlements"             module="sister_companies" component={SisterSettlements} />}
             {!isSuperAdmin && <PermRoute path="/inventory/sister-settlements/new"         module="sister_companies" action="create" component={SisterSettlementForm} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/sister-statements"              module="sister_companies" component={SisterStatementsHub} />}
             {!isSuperAdmin && <PermRoute path="/inventory/adjustments"      module="stock_adjustments" component={StockAdjustment} />}
             {!isSuperAdmin && <PermRoute path="/inventory/adjustments/new"  module="stock_adjustments" action="create" component={StockAdjustment} />}
             {!isSuperAdmin && <PermRoute path="/inventory/counts"           module="stock_counts"      component={StockCounting} />}
