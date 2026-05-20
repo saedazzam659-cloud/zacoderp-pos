@@ -52,9 +52,13 @@ export type PurchasesByPeriodRow = {
 };
 
 export type SupplierStatementLine = {
+  /** Source document id (invoice / return / voucher). `null` for direct
+   *  JE rows that don't originate from a purchasing document. */
+  id: number | null;
   date: string;
   type: "invoice" | "return" | "payment" | "journal";
   docNumber: string | null;
+  journalEntryId: number | null;
   journalEntryNumber: string | null;
   debit: number;
   credit: number;

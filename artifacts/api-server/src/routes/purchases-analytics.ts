@@ -400,6 +400,7 @@ router.get("/supplier-statement", async (req, res) => {
     const invs = await db.select({
       id: purchaseInvoicesTable.id, date: purchaseInvoicesTable.invoiceDate,
       docNumber: purchaseInvoicesTable.docNumber,
+      journalEntryId: purchaseInvoicesTable.journalEntryId,
       journalEntryNumber: journalEntriesTable.docNumber,
       total: purchaseInvoicesTable.totalAmount,
       notes: purchaseInvoicesTable.notes,
@@ -419,6 +420,7 @@ router.get("/supplier-statement", async (req, res) => {
     const rets = await db.select({
       id: purchaseReturnsTable.id, date: purchaseReturnsTable.returnDate,
       docNumber: purchaseReturnsTable.docNumber,
+      journalEntryId: purchaseReturnsTable.journalEntryId,
       journalEntryNumber: journalEntriesTable.docNumber,
       total: purchaseReturnsTable.totalAmount,
       notes: purchaseReturnsTable.notes,
@@ -438,6 +440,7 @@ router.get("/supplier-statement", async (req, res) => {
     const pays = await db.select({
       id: paymentVouchersTable.id, date: paymentVouchersTable.date,
       docNumber: paymentVouchersTable.code,
+      journalEntryId: paymentVouchersTable.journalEntryId,
       journalEntryNumber: journalEntriesTable.docNumber,
       amount: paymentVouchersTable.amount,
       notes: paymentVouchersTable.notes,
@@ -461,13 +464,14 @@ router.get("/supplier-statement", async (req, res) => {
     // For supplier statements, invoices increase the payable (credit column),
     // returns and payments decrease it (debit column). Direct JE lines carry
     // their own debit/credit as posted.
-    type Line = { date: string; type: string; docNumber: string | null; journalEntryNumber: string | null; debit: number; credit: number; description: string };
+    type Line = { id: number | null; date: string; type: string; docNumber: string | null; journalEntryId: number | null; journalEntryNumber: string | null; debit: number; credit: number; description: string };
     const lines: Line[] = [
-      ...invs.map(i => ({ date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryNumber: i.journalEntryNumber, debit: 0, credit: Number(i.total), description: withNote("فاتورة مشتريات آجلة", i.notes) })),
-      ...rets.map(r => ({ date: r.date, type: "return",  docNumber: r.docNumber, journalEntryNumber: r.journalEntryNumber, debit: Number(r.total), credit: 0, description: withNote("مرتجع مشتريات", r.notes) })),
-      ...pays.map(p => ({ date: p.date, type: "payment", docNumber: p.docNumber, journalEntryNumber: p.journalEntryNumber, debit: Number(p.amount), credit: 0, description: withNote("سند صرف", p.notes) })),
+      ...invs.map(i => ({ id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber, journalEntryId: i.journalEntryId, journalEntryNumber: i.journalEntryNumber, debit: 0, credit: Number(i.total), description: withNote("فاتورة مشتريات آجلة", i.notes) })),
+      ...rets.map(r => ({ id: r.id, date: r.date, type: "return",  docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: Number(r.total), credit: 0, description: withNote("مرتجع مشتريات", r.notes) })),
+      ...pays.map(p => ({ id: p.id, date: p.date, type: "payment", docNumber: p.docNumber, journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber, debit: Number(p.amount), credit: 0, description: withNote("سند صرف", p.notes) })),
       ...jeLines.map(j => ({
-        date: j.date, type: "journal", docNumber: null, journalEntryNumber: j.docNumber,
+        id: null, date: j.date, type: "journal", docNumber: null,
+        journalEntryId: j.id, journalEntryNumber: j.docNumber,
         debit: j.debit, credit: j.credit,
         description: jeLineLabel(j.entryType, j.description),
       })),
