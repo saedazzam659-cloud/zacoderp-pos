@@ -127,11 +127,13 @@ export default function CustomerStatement() {
      user gets the styled A4 portrait sheet instead of a raw screen
      capture. Capture phase so we beat the browser dialog. */
   useEffect(() => {
-    if (!applied.customerId || isLoading) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) {
+        // Always preventDefault so the browser's native print dialog
+        // never fights ours, even if the statement isn't loaded yet.
         e.preventDefault();
         e.stopPropagation();
+        if (!applied.customerId || isLoading) return;
         exportStatementToPDF({
           mode: "customer",
           company: (user?.company as any) ?? null,

@@ -125,11 +125,13 @@ export default function SupplierStatement() {
      shortcut and route it through the styled exporter so the user gets
      the proper A4 sheet, not a raw screen capture. */
   useEffect(() => {
-    if (!applied.supplierId || isLoading) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) {
+        // Always preventDefault so the browser's native print dialog
+        // never fights ours, even if the statement isn't loaded yet.
         e.preventDefault();
         e.stopPropagation();
+        if (!applied.supplierId || isLoading) return;
         exportStatementToPDF({
           mode: "supplier",
           company: (user?.company as any) ?? null,
