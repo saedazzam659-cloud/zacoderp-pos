@@ -617,7 +617,7 @@ function resolveDefaultCurrency(country: string, currencyOverride?: string | nul
 router.post("/register", async (req, res) => {
   const {
     // Company fields
-    nameAr, nameEn, vatNumber, crNumber,
+    nameAr, nameEn, vatNumber, crNumber, phone,
     city, district, street, buildingNumber, postalCode, country,
     currency,
     industryName, invoiceType,
@@ -921,6 +921,7 @@ router.post("/register", async (req, res) => {
     street: street ?? "",
     buildingNumber: buildingNumber ?? "",
     postalCode: postalCode ?? "",
+    phone: phone ?? null,
     country: country ?? "SA",
     industryName: resolvedIndustryName,
     invoiceType: invoiceType ?? "both",

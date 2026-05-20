@@ -262,6 +262,7 @@ export default function CompanyDetails() {
               <InfoRow label="الاسم الإنجليزي" value={company.nameEn} />
               <InfoRow label="الرقم الضريبي" value={company.vatNumber} ltr />
               <InfoRow label="السجل التجاري" value={company.crNumber} ltr />
+              <InfoRow label="رقم الهاتف" value={company.phone} ltr />
               <InfoRow label="مجال الصناعة" value={company.industryName} />
               <InfoRow label="نوع الفواتير" value={
                 company.invoiceType === "both" ? "ضريبية ومبسطة"

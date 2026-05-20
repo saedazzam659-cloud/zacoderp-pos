@@ -33,6 +33,7 @@ export const ListCompaniesResponseItem = zod.object({
   buildingNumber: zod.string(),
   postalCode: zod.string(),
   additionalNumber: zod.string().optional(),
+  phone: zod.string().nullish(),
   country: zod.string().default(listCompaniesResponseCountryDefault),
   industryName: zod.string().optional(),
   invoiceType: zod
@@ -67,6 +68,7 @@ export const CreateCompanyBody = zod.object({
   buildingNumber: zod.string(),
   postalCode: zod.string(),
   additionalNumber: zod.string().optional(),
+  phone: zod.string().optional(),
   country: zod.string().optional(),
   industryName: zod.string().optional(),
   invoiceType: zod.enum(["standard", "simplified", "both"]).optional(),
@@ -102,6 +104,7 @@ export const GetCompanyResponse = zod.object({
   buildingNumber: zod.string(),
   postalCode: zod.string(),
   additionalNumber: zod.string().optional(),
+  phone: zod.string().nullish(),
   country: zod.string().default(getCompanyResponseCountryDefault),
   industryName: zod.string().optional(),
   invoiceType: zod
@@ -139,6 +142,7 @@ export const UpdateCompanyBody = zod.object({
   buildingNumber: zod.string(),
   postalCode: zod.string(),
   additionalNumber: zod.string().optional(),
+  phone: zod.string().optional(),
   country: zod.string().optional(),
   industryName: zod.string().optional(),
   invoiceType: zod.enum(["standard", "simplified", "both"]).optional(),
@@ -167,6 +171,7 @@ export const UpdateCompanyResponse = zod.object({
   buildingNumber: zod.string(),
   postalCode: zod.string(),
   additionalNumber: zod.string().optional(),
+  phone: zod.string().nullish(),
   country: zod.string().default(updateCompanyResponseCountryDefault),
   industryName: zod.string().optional(),
   invoiceType: zod
@@ -408,6 +413,7 @@ export const ListInvoicesResponseItem = zod.object({
       buildingNumber: zod.string(),
       postalCode: zod.string(),
       additionalNumber: zod.string().optional(),
+      phone: zod.string().nullish(),
       country: zod.string().default(listInvoicesResponseCompanyCountryDefault),
       industryName: zod.string().optional(),
       invoiceType: zod
@@ -553,6 +559,7 @@ export const GetInvoiceResponse = zod.object({
       buildingNumber: zod.string(),
       postalCode: zod.string(),
       additionalNumber: zod.string().optional(),
+      phone: zod.string().nullish(),
       country: zod.string().default(getInvoiceResponseCompanyCountryDefault),
       industryName: zod.string().optional(),
       invoiceType: zod
@@ -694,6 +701,7 @@ export const UpdateInvoiceResponse = zod.object({
       buildingNumber: zod.string(),
       postalCode: zod.string(),
       additionalNumber: zod.string().optional(),
+      phone: zod.string().nullish(),
       country: zod.string().default(updateInvoiceResponseCompanyCountryDefault),
       industryName: zod.string().optional(),
       invoiceType: zod
@@ -816,6 +824,7 @@ export const IssueInvoiceResponse = zod.object({
       buildingNumber: zod.string(),
       postalCode: zod.string(),
       additionalNumber: zod.string().optional(),
+      phone: zod.string().nullish(),
       country: zod.string().default(issueInvoiceResponseCompanyCountryDefault),
       industryName: zod.string().optional(),
       invoiceType: zod
@@ -929,6 +938,7 @@ export const CancelInvoiceResponse = zod.object({
       buildingNumber: zod.string(),
       postalCode: zod.string(),
       additionalNumber: zod.string().optional(),
+      phone: zod.string().nullish(),
       country: zod.string().default(cancelInvoiceResponseCompanyCountryDefault),
       industryName: zod.string().optional(),
       invoiceType: zod
@@ -1067,6 +1077,7 @@ export const GetRecentInvoicesResponseItem = zod.object({
       buildingNumber: zod.string(),
       postalCode: zod.string(),
       additionalNumber: zod.string().optional(),
+      phone: zod.string().nullish(),
       country: zod
         .string()
         .default(getRecentInvoicesResponseCompanyCountryDefault),

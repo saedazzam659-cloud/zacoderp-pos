@@ -34,6 +34,7 @@ export interface Company {
   buildingNumber: string;
   postalCode: string;
   additionalNumber?: string;
+  phone?: string | null;
   country: string;
   industryName?: string;
   invoiceType: CompanyInvoiceType;
@@ -71,6 +72,7 @@ export interface CreateCompanyBody {
   buildingNumber: string;
   postalCode: string;
   additionalNumber?: string;
+  phone?: string;
   country?: string;
   industryName?: string;
   invoiceType?: CreateCompanyBodyInvoiceType;

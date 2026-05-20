@@ -779,6 +779,10 @@ export default function Register() {
                     <label className="text-sm font-medium">الرمز البريدي</label>
                     <Input value={form.postalCode ?? ""} onChange={e => set("postalCode", e.target.value)} placeholder="12345" dir="ltr" className="text-left" maxLength={5} />
                   </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">رقم الهاتف</label>
+                    <Input value={form.phone ?? ""} onChange={e => set("phone", e.target.value)} placeholder="0501234567" dir="ltr" className="text-left" maxLength={30} />
+                  </div>
                 </div>
                 <div className="flex justify-end pt-2">
                   <Button onClick={() => {

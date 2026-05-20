@@ -110,6 +110,7 @@ export interface RegisterData {
   vatNumber: string; crNumber: string;
   city?: string; district?: string; street?: string;
   buildingNumber?: string; postalCode?: string; country?: string;
+  phone?: string;
   currency?: string;
   industryName?: string; invoiceType?: string;
   // Multi-industry classification (commercial / industrial / contracting /

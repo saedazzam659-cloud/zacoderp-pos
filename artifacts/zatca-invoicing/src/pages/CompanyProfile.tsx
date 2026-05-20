@@ -17,6 +17,7 @@ interface CompanyProfile {
   country?: string; city?: string; district?: string;
   street?: string; buildingNumber?: string;
   postalCode?: string; additionalNumber?: string;
+  phone?: string;
   industryName?: string;
 }
 
@@ -50,7 +51,7 @@ export default function CompanyProfile() {
       const body: Record<string, any> = {};
       const keys: (keyof CompanyProfile)[] = [
         "nameAr","nameEn","vatNumber","crNumber","country","city","district",
-        "street","buildingNumber","postalCode","additionalNumber","industryName",
+        "street","buildingNumber","postalCode","additionalNumber","phone","industryName",
       ];
       for (const k of keys) if (form[k] !== undefined) body[k] = form[k] ?? "";
       const r = await fetch(`${API}/api/companies/${cid}/profile`, {
@@ -170,6 +171,10 @@ export default function CompanyProfile() {
             <div>
               <Label>{t("companyProfile.additionalNumber", "الرقم الإضافي")}</Label>
               <Input value={form.additionalNumber ?? ""} onChange={set("additionalNumber")} maxLength={20} />
+            </div>
+            <div>
+              <Label>{t("companyProfile.phone", "رقم الهاتف")}</Label>
+              <Input value={form.phone ?? ""} onChange={set("phone")} maxLength={30} dir="ltr" placeholder="0501234567" />
             </div>
           </div>
         </section>

@@ -90,6 +90,7 @@ const companySchema = z.object({
   buildingNumber: z.string().min(1, { message: "رقم المبنى مطلوب" }),
   postalCode: z.string().min(5, { message: "الرمز البريدي مطلوب" }),
   additionalNumber: z.string().optional(),
+  phone: z.string().optional(),
   country: z.string().default("SA"),
   industryName: z.string().optional(),
   invoiceType: z.enum(["standard", "simplified", "both"]).default("both"),
@@ -180,7 +181,7 @@ export default function CompanyNew() {
     defaultValues: {
       nameAr: "", nameEn: "", vatNumber: "", crNumber: "",
       city: "", district: "", street: "", buildingNumber: "", postalCode: "",
-      additionalNumber: "", country: "SA", industryName: "",
+      additionalNumber: "", phone: "", country: "SA", industryName: "",
       invoiceType: "both", isSandbox: true,
       serialNumber: "", deviceSerial1: "", deviceSerial2: "", deviceSerial3: "",
       username: "", email: "", password: "",
@@ -631,6 +632,23 @@ export default function CompanyNew() {
                       <FormDescription>
                         4 أرقام — تجده بعد الشرطة في العنوان الوطني الكامل
                         <br /><ExampleBadge text="12211-6789 ← الـ 6789 هو الرقم الإضافي" />
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>رقم الهاتف <span className="text-muted-foreground text-xs">(اختياري)</span></FormLabel>
+                      <FormControl>
+                        <Input dir="ltr" className="text-left font-mono" maxLength={30} placeholder="0501234567" {...field} />
+                      </FormControl>
+                      <FormDescription>
+                        رقم التواصل الرسمي للشركة
+                        <br /><ExampleBadge text="0501234567" />
                       </FormDescription>
                       <FormMessage />
                     </FormItem>

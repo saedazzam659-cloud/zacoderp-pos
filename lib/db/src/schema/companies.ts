@@ -14,6 +14,7 @@ export const companiesTable = pgTable("companies", {
   buildingNumber: text("building_number").notNull(),
   postalCode: text("postal_code").notNull(),
   additionalNumber: text("additional_number"),
+  phone: text("phone"),
   country: text("country").notNull().default("SA"),
   industryName: text("industry_name"),
   invoiceType: text("invoice_type").notNull().default("both"),

@@ -50,6 +50,7 @@ router.post("/", async (req, res) => {
     buildingNumber: data.buildingNumber,
     postalCode: data.postalCode,
     additionalNumber: data.additionalNumber,
+    phone: data.phone,
     country: data.country ?? "SA",
     industryName: data.industryName,
     invoiceType: data.invoiceType ?? "both",
@@ -341,7 +342,7 @@ router.patch("/:id/profile", async (req, res) => {
   }
   const {
     nameAr, nameEn, vatNumber, crNumber, country, city, district,
-    street, buildingNumber, postalCode, additionalNumber, industryName,
+    street, buildingNumber, postalCode, additionalNumber, industryName, phone,
   } = req.body as Record<string, string | undefined>;
   const updates: Record<string, any> = { updatedAt: new Date() };
   const setStr = (k: string, v: string | undefined, max = 200, min = 0) => {
@@ -358,6 +359,7 @@ router.patch("/:id/profile", async (req, res) => {
     ["district", district, 100, 0], ["street", street, 200, 0],
     ["buildingNumber", buildingNumber, 20, 0], ["postalCode", postalCode, 10, 0],
     ["additionalNumber", additionalNumber, 20, 0], ["industryName", industryName, 100, 0],
+    ["phone", phone, 30, 0],
   ] as const) {
     const err = setStr(k, v as any, max, min);
     if (err) { res.status(400).json({ error: err }); return; }

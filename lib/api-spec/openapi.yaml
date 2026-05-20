@@ -456,6 +456,9 @@ components:
           type: string
         additionalNumber:
           type: string
+        phone:
+          type: string
+          nullable: true
         country:
           type: string
           default: "SA"
@@ -524,6 +527,8 @@ components:
         postalCode:
           type: string
         additionalNumber:
+          type: string
+        phone:
           type: string
         country:
           type: string
