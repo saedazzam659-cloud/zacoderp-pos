@@ -395,11 +395,17 @@ router.get("/supplier-statement", async (req, res) => {
     pushBranchScope(req, invConds, purchaseInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(purchaseInvoicesTable.invoiceDate, from));
     if (to)   invConds.push(lte(purchaseInvoicesTable.invoiceDate, to));
+    // Display the posted JOURNAL-ENTRY number (رقم القيد) in the "الرقم"
+    // column — not the source-doc number — per user request. Fallback to
+    // the source docNumber if the JE link is missing on a legacy row.
     const invs = await db.select({
       id: purchaseInvoicesTable.id, date: purchaseInvoicesTable.invoiceDate,
-      docNumber: purchaseInvoicesTable.docNumber, total: purchaseInvoicesTable.totalAmount,
+      docNumber: sql<string | null>`coalesce(${journalEntriesTable.docNumber}, ${purchaseInvoicesTable.docNumber})`,
+      total: purchaseInvoicesTable.totalAmount,
       notes: purchaseInvoicesTable.notes,
-    }).from(purchaseInvoicesTable).where(and(...invConds));
+    }).from(purchaseInvoicesTable)
+      .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, purchaseInvoicesTable.journalEntryId))
+      .where(and(...invConds));
 
     const retConds: any[] = [
       eq(purchaseReturnsTable.companyId, cid),
@@ -412,9 +418,12 @@ router.get("/supplier-statement", async (req, res) => {
     if (to)   retConds.push(lte(purchaseReturnsTable.returnDate, to));
     const rets = await db.select({
       id: purchaseReturnsTable.id, date: purchaseReturnsTable.returnDate,
-      docNumber: purchaseReturnsTable.docNumber, total: purchaseReturnsTable.totalAmount,
+      docNumber: sql<string | null>`coalesce(${journalEntriesTable.docNumber}, ${purchaseReturnsTable.docNumber})`,
+      total: purchaseReturnsTable.totalAmount,
       notes: purchaseReturnsTable.notes,
-    }).from(purchaseReturnsTable).where(and(...retConds));
+    }).from(purchaseReturnsTable)
+      .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, purchaseReturnsTable.journalEntryId))
+      .where(and(...retConds));
 
     const payConds: any[] = [
       eq(paymentVouchersTable.companyId, cid),
@@ -427,9 +436,12 @@ router.get("/supplier-statement", async (req, res) => {
     if (to)   payConds.push(lte(paymentVouchersTable.date, to));
     const pays = await db.select({
       id: paymentVouchersTable.id, date: paymentVouchersTable.date,
-      docNumber: paymentVouchersTable.code, amount: paymentVouchersTable.amount,
+      docNumber: sql<string | null>`coalesce(${journalEntriesTable.docNumber}, ${paymentVouchersTable.code})`,
+      amount: paymentVouchersTable.amount,
       notes: paymentVouchersTable.notes,
-    }).from(paymentVouchersTable).where(and(...payConds));
+    }).from(paymentVouchersTable)
+      .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, paymentVouchersTable.journalEntryId))
+      .where(and(...payConds));
 
     // Direct JE rows (fixed-asset credit, manual JEs, …) within range.
     const jeLines = await fetchSupplierDirectJeLines(

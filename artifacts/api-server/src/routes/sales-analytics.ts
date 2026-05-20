@@ -11,6 +11,7 @@ import {
   bankAccountsTable,
   stockLedgerTable,
   itemsTable,
+  journalEntriesTable,
 } from "@workspace/db";
 import { and, eq, sql, gte, lte, asc, desc, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, pushRegionScope } from "../middleware/auth.js";
@@ -355,11 +356,18 @@ router.get("/customer-statement", async (req, res) => {
     pushBranchScope(req, invConds, salesInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(salesInvoicesTable.invoiceDate, from));
     if (to)   invConds.push(lte(salesInvoicesTable.invoiceDate, to));
+    // We display the posted JOURNAL-ENTRY number (رقم القيد) in the
+    // statement's "الرقم" column — not the source-document number — per
+    // user request. The source docNumber is kept as a fallback for the
+    // (rare) case where the JE link is missing on a legacy posted row.
     const invs = await db.select({
       id: salesInvoicesTable.id, date: salesInvoicesTable.invoiceDate,
-      docNumber: salesInvoicesTable.docNumber, total: salesInvoicesTable.totalAmount,
+      docNumber: sql<string | null>`coalesce(${journalEntriesTable.docNumber}, ${salesInvoicesTable.docNumber})`,
+      total: salesInvoicesTable.totalAmount,
       notes: salesInvoicesTable.notes,
-    }).from(salesInvoicesTable).where(and(...invConds));
+    }).from(salesInvoicesTable)
+      .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, salesInvoicesTable.journalEntryId))
+      .where(and(...invConds));
 
     const retConds: any[] = [
       eq(salesReturnsTable.companyId, cid),
@@ -372,9 +380,12 @@ router.get("/customer-statement", async (req, res) => {
     if (to)   retConds.push(lte(salesReturnsTable.returnDate, to));
     const rets = await db.select({
       id: salesReturnsTable.id, date: salesReturnsTable.returnDate,
-      docNumber: salesReturnsTable.docNumber, total: salesReturnsTable.totalAmount,
+      docNumber: sql<string | null>`coalesce(${journalEntriesTable.docNumber}, ${salesReturnsTable.docNumber})`,
+      total: salesReturnsTable.totalAmount,
       notes: salesReturnsTable.notes,
-    }).from(salesReturnsTable).where(and(...retConds));
+    }).from(salesReturnsTable)
+      .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, salesReturnsTable.journalEntryId))
+      .where(and(...retConds));
 
     const recConds: any[] = [
       eq(receiptVouchersTable.companyId, cid),
@@ -387,9 +398,12 @@ router.get("/customer-statement", async (req, res) => {
     if (to)   recConds.push(lte(receiptVouchersTable.date, to));
     const recs = await db.select({
       id: receiptVouchersTable.id, date: receiptVouchersTable.date,
-      docNumber: receiptVouchersTable.code, amount: receiptVouchersTable.amount,
+      docNumber: sql<string | null>`coalesce(${journalEntriesTable.docNumber}, ${receiptVouchersTable.code})`,
+      amount: receiptVouchersTable.amount,
       notes: receiptVouchersTable.notes,
-    }).from(receiptVouchersTable).where(and(...recConds));
+    }).from(receiptVouchersTable)
+      .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, receiptVouchersTable.journalEntryId))
+      .where(and(...recConds));
 
     // Compose the "البيان"/"الشرح" description: start with the generic label
     // and append the user-typed note from the source document when present
