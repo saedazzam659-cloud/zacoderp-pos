@@ -371,14 +371,14 @@ function template1(d: PrintData): string {
   return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
   ${baseStyles("#2563eb")}
   <style>
-    .header-box { border: 2px solid #2563eb; border-radius: 4px; padding: 14px 18px; display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
-    .doc-badge  { background: #2563eb; color: #fff; border-radius: 4px; padding: 10px 18px; text-align: center; }
-    .section    { border: 1px solid #ddd; border-radius: 4px; padding: 10px 14px; margin-bottom: 12px; }
-    .section h4 { font-size: 11px; color: #2563eb; border-bottom: 1px solid #e5e7eb; margin-bottom: 8px; padding-bottom: 4px; font-weight: 700; }
+    .header-box { padding: 14px 18px; display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+    .doc-badge  { padding: 10px 18px; text-align: center; color: #1a1a1a; }
+    .section    { padding: 10px 14px; margin-bottom: 12px; }
+    .section h4 { font-size: 11px; color: #1a1a1a; border-bottom: 1px solid #e5e7eb; margin-bottom: 8px; padding-bottom: 4px; font-weight: 700; }
     .parties    { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-    thead tr    { background: #2563eb; color: #fff; }
-    tbody tr:nth-child(even) { background: #eff6ff; }
-    td, th { border: 1px solid #ddd; }
+    thead tr    { background: #f3f4f6; color: #1a1a1a; }
+    tbody tr:nth-child(even) { background: #fafafa; }
+    td, th { border-bottom: 1px solid #e5e7eb; }
     .footer { display: flex; justify-content: space-between; margin-top: 28px; font-size: 11px; color: #888; }
     .stamp { border: 2px dashed #ccc; border-radius: 50%; width: 90px; height: 90px; display: flex; align-items: center; justify-content: center; color: #ccc; font-size: 10px; text-align: center; }
   </style>
