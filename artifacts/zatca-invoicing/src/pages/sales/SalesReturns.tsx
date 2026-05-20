@@ -279,11 +279,31 @@ export default function SalesReturns() {
   }, [showForm, defaultBranch?.id]);
 
   const defaultWarehouse = (warehouses as any[]).find((w: any) => w.isDefault) ?? (warehouses as any[])[0];
+  // Header-level warehouse picker — broadcast to every line on change.
+  const [headerWarehouseId, setHeaderWarehouseId] = useState<string>("");
+  const isNewSR = showForm && editingId == null;
+  useEffect(() => {
+    if (!isNewSR || !defaultWarehouse || headerWarehouseId) return;
+    setHeaderWarehouseId(String(defaultWarehouse.id));
+  }, [isNewSR, defaultWarehouse?.id]);
+  useEffect(() => {
+    if (isNewSR || headerWarehouseId) return;
+    const firstWh = lines.find((l: any) => l.warehouseId)?.warehouseId;
+    if (firstWh) setHeaderWarehouseId(String(firstWh));
+  }, [isNewSR, lines, headerWarehouseId]);
+  useEffect(() => {
+    if (!showForm) setHeaderWarehouseId("");
+  }, [showForm]);
   const hasEmptyWarehouse = lines.some((l: any) => !l.warehouseId);
   useEffect(() => {
-    if (!defaultWarehouse || !hasEmptyWarehouse) return;
-    setLines(prev => prev.map((l: any) => l.warehouseId ? l : { ...l, warehouseId: String(defaultWarehouse.id) }));
-  }, [defaultWarehouse?.id, hasEmptyWarehouse]);
+    if (!headerWarehouseId || !hasEmptyWarehouse) return;
+    setLines(prev => prev.map((l: any) => l.warehouseId ? l : { ...l, warehouseId: headerWarehouseId }));
+  }, [headerWarehouseId, hasEmptyWarehouse]);
+  function applyHeaderWarehouse(v: string) {
+    setHeaderWarehouseId(v);
+    if (!v) return;
+    setLines(prev => prev.map((l: any) => ({ ...l, warehouseId: v })));
+  }
 
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
 
@@ -1599,6 +1619,17 @@ ${sections}
                     ))}
                   </SelectContent>
                 </Select>
+              </Field>
+              <Field label="المستودع">
+                <SearchCombobox
+                  items={(warehouses as any[]).map((w: any) => ({
+                    value: String(w.id),
+                    label: (isRtl ? (w?.nameAr ?? w?.nameEn) : (w?.nameEn ?? w?.nameAr)) || `#${w.id}`,
+                  }))}
+                  value={headerWarehouseId}
+                  onValueChange={applyHeaderWarehouse}
+                  placeholder="اختر المستودع"
+                />
               </Field>
               <Field label={t("salesReturns.currency")}>
                 {currencies.length > 0 ? (
