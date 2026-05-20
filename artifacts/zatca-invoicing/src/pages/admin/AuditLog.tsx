@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useLocation, useSearch } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { CsvExportInspectorBody } from "@/components/admin/CsvExportInspectorBody";
@@ -148,6 +148,144 @@ function AuditLoginLocation(props: {
 }
 
 const PAGE_SIZE = 50;
+
+// ─── API → UI friendly-path translator ───────────────────────────────────────
+// The audit log records raw API requests (e.g. `PUT /api/sales/sales-invoices/141`),
+// but managers reviewing user activity shouldn't have to understand REST or
+// JSON to follow what happened. `friendlyPath` translates a (method, path)
+// pair into:
+//   • `label`  — short Arabic noun for what was touched (e.g. "فاتورة مبيعات #141")
+//   • `href`   — the matching UI route (e.g. "/sales/invoices/141") when one
+//                exists, so the cell becomes a clickable link the reviewer
+//                can jump to. Falls back to the listing page for collection
+//                operations (POST without an id, GET list, etc.).
+//   • `mutation` — true for write methods (POST/PUT/PATCH/DELETE) so the
+//                  caller can style links differently from read views.
+// When no pattern matches we return `null` and the caller falls back to the
+// raw `method path` rendering — the goal is "friendly when possible, never
+// hides the truth".
+type FriendlyPath = { label: string; href: string | null; mutation: boolean };
+
+function friendlyPath(method: string | null, path: string | null): FriendlyPath | null {
+  if (!path) return null;
+  // Strip query string before matching so `/api/x?foo=bar` is treated as `/api/x`.
+  const p = path.split("?")[0] ?? path;
+  const m = (method || "GET").toUpperCase();
+  const isWrite = m === "POST" || m === "PUT" || m === "PATCH" || m === "DELETE";
+
+  // Each entry: regex matching the API path → builder returning label + UI route.
+  // `id` (group 1) is appended to the label as `#id` and to the UI href when present.
+  // Ordering matters — put more specific patterns first.
+  const rules: Array<{
+    re: RegExp;
+    noun: string;        // Arabic noun ("فاتورة مبيعات", "قيد محاسبي", …)
+    list: string | null; // UI listing route (used when no id captured)
+    detail?: (id: string) => string; // UI detail/edit route builder
+  }> = [
+    // ── Auth ──
+    { re: /^\/api\/auth\/login$/,  noun: "تسجيل دخول",  list: null },
+    { re: /^\/api\/auth\/logout$/, noun: "تسجيل خروج", list: null },
+
+    // ── Sales ──
+    { re: /^\/api\/sales\/sales-invoices(?:\/(\d+))?/, noun: "فاتورة مبيعات",
+      list: "/sales/invoices", detail: id => `/sales/invoices/${id}` },
+    { re: /^\/api\/invoices(?:\/(\d+))?/,              noun: "فاتورة مبيعات",
+      list: "/sales/invoices", detail: id => `/sales/invoices/${id}` },
+    { re: /^\/api\/quotations(?:\/(\d+))?/,            noun: "عرض سعر",
+      list: "/sales/quotations", detail: id => `/sales/quotations/${id}` },
+    { re: /^\/api\/sales-orders(?:\/(\d+))?/,          noun: "أمر بيع",
+      list: "/sales/orders", detail: id => `/sales/orders/${id}` },
+    { re: /^\/api\/sales-returns(?:\/(\d+))?/,         noun: "مرتجع مبيعات",
+      list: "/sales/returns" },
+    { re: /^\/api\/customers(?:\/(\d+))?/,             noun: "عميل",
+      list: "/customers", detail: id => `/customers/${id}` },
+
+    // ── Purchasing ──
+    { re: /^\/api\/purchase-invoices(?:\/(\d+))?/, noun: "فاتورة مشتريات",
+      list: "/purchasing/invoices", detail: id => `/purchasing/invoices/${id}` },
+    { re: /^\/api\/purchase-orders(?:\/(\d+))?/,   noun: "أمر شراء",
+      list: "/purchasing/orders",   detail: id => `/purchasing/orders/${id}` },
+    { re: /^\/api\/purchase-returns(?:\/(\d+))?/,  noun: "مرتجع مشتريات",
+      list: "/purchasing/returns" },
+    { re: /^\/api\/suppliers(?:\/(\d+))?/,         noun: "مورد",
+      list: "/suppliers" },
+    { re: /^\/api\/supplier-settlements(?:\/(\d+))?/, noun: "تسوية مورد",
+      list: "/purchasing/settlements" },
+
+    // ── Inventory / Goods movement ──
+    { re: /^\/api\/goods-receipts(?:\/(\d+))?/,    noun: "إذن استلام",
+      list: "/inventory/goods-receipts" },
+    { re: /^\/api\/goods-deliveries(?:\/(\d+))?/,  noun: "إذن تسليم",
+      list: "/inventory/goods-deliveries" },
+    { re: /^\/api\/(?:inventory\/)?items(?:\/(\d+))?/, noun: "صنف",
+      list: "/inventory/items" },
+    { re: /^\/api\/inventory\/warehouses(?:\/(\d+))?/, noun: "مستودع",
+      list: "/inventory/warehouses" },
+    { re: /^\/api\/stock-transfers(?:\/(\d+))?/,   noun: "تحويل مخزني",
+      list: "/inventory/transfers" },
+    { re: /^\/api\/stock-adjustments(?:\/(\d+))?/, noun: "تسوية مخزون",
+      list: "/inventory/adjustments" },
+    { re: /^\/api\/stock-counts(?:\/(\d+))?/,      noun: "جرد",
+      list: "/inventory/counts" },
+    { re: /^\/api\/offers\/match$/,                noun: "مطابقة عروض",
+      list: "/inventory/offers" },
+    { re: /^\/api\/offers(?:\/(\d+))?/,            noun: "عرض ترويجي",
+      list: "/inventory/offers" },
+
+    // ── Accounting & vouchers ──
+    { re: /^\/api\/journal-entries(?:\/(\d+))?/,   noun: "قيد محاسبي",
+      list: "/accounting/journals", detail: id => `/accounting/journals/${id}` },
+    { re: /^\/api\/receipt-vouchers(?:\/(\d+))?/,  noun: "سند قبض",
+      list: "/cash/receipt-vouchers", detail: id => `/cash/receipt-vouchers/${id}` },
+    { re: /^\/api\/payment-vouchers(?:\/(\d+))?/,  noun: "سند صرف",
+      list: "/cash/payment-vouchers", detail: id => `/cash/payment-vouchers/${id}` },
+    { re: /^\/api\/cash-boxes(?:\/(\d+))?/,        noun: "صندوق نقدية",
+      list: "/cash/boxes" },
+    { re: /^\/api\/bank-accounts(?:\/(\d+))?/,     noun: "حساب بنكي",
+      list: "/cash/banks" },
+    { re: /^\/api\/accounts(?:\/(\d+))?/,          noun: "حساب",
+      list: "/accounting/accounts" },
+    { re: /^\/api\/cost-centers(?:\/(\d+))?/,      noun: "مركز تكلفة",
+      list: "/accounting/cost-centers" },
+    { re: /^\/api\/fiscal\/periods(?:\/(\d+))?/,   noun: "فترة مالية",
+      list: "/accounting/fiscal-periods" },
+
+    // ── Production ──
+    { re: /^\/api\/production\/orders(?:\/(\d+))?/, noun: "أمر إنتاج",
+      list: "/production/orders", detail: id => `/production/orders/${id}` },
+    { re: /^\/api\/production\/bom-templates(?:\/(\d+))?/, noun: "قالب مكونات (BOM)",
+      list: "/production/bom-templates", detail: id => `/production/bom-templates/${id}` },
+
+    // ── HR ──
+    { re: /^\/api\/hr\/employees(?:\/(\d+))?/,  noun: "موظف",
+      list: "/hr/employees" },
+    { re: /^\/api\/hr\/payroll(?:\/(\d+))?/,    noun: "مسير رواتب",
+      list: "/hr/payroll" },
+    { re: /^\/api\/hr\/attendance(?:\/(\d+))?/, noun: "حضور وانصراف",
+      list: "/hr/attendance" },
+    { re: /^\/api\/hr\/loans(?:\/(\d+))?/,      noun: "سلفة موظف",
+      list: "/hr/loans" },
+
+    // ── User tracking ──
+    { re: /^\/api\/user-tracking\/zones(?:\/(\d+))?/, noun: "نطاق متابعة",
+      list: "/user-tracking" },
+    { re: /^\/api\/user-tracking/,                    noun: "متابعة المستخدمين",
+      list: "/user-tracking" },
+
+    // ── ZATCA ──
+    { re: /^\/api\/zatca\b/, noun: "تكامل زاتكا", list: "/zatca" },
+  ];
+
+  for (const r of rules) {
+    const match = p.match(r.re);
+    if (!match) continue;
+    const id = match[1];
+    const href = id && r.detail ? r.detail(id) : r.list;
+    const label = id ? `${r.noun} #${id}` : r.noun;
+    return { label, href, mutation: isWrite };
+  }
+  return null;
+}
 
 export default function AuditLog() {
   const { token } = useAuth();
@@ -1120,8 +1258,32 @@ export default function AuditLog() {
                             <span className="text-muted-foreground">—</span>
                           )}
                         </td>
-                        <td className="px-3 py-2 text-xs font-mono text-muted-foreground max-w-[300px] truncate" title={`${r.method ?? ""} ${r.path ?? ""}`}>
-                          <span className="text-foreground/70">{r.method}</span> {r.path}
+                        <td
+                          className="px-3 py-2 text-xs max-w-[300px] truncate"
+                          title={`${r.method ?? ""} ${r.path ?? ""}`}
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >
+                          {(() => {
+                            const fp = friendlyPath(r.method, r.path);
+                            if (!fp) {
+                              // Unknown pattern → fall back to the raw method/path so
+                              // we never hide what actually happened on the server.
+                              return (
+                                <span className="font-mono text-muted-foreground">
+                                  <span className="text-foreground/70">{r.method}</span> {r.path ?? "—"}
+                                </span>
+                              );
+                            }
+                            const cls = fp.mutation
+                              ? "text-blue-700 hover:text-blue-900 hover:underline font-medium"
+                              : "text-slate-700 hover:text-slate-900 hover:underline";
+                            return fp.href ? (
+                              <Link href={fp.href} className={cls}>{fp.label}</Link>
+                            ) : (
+                              <span className="text-slate-700 font-medium">{fp.label}</span>
+                            );
+                          })()}
                         </td>
                         <td className="px-3 py-2 text-xs">
                           {r.statusCode != null && (
@@ -1518,19 +1680,36 @@ function AuditDetailsDialog({
                 )}
               </DetailField>
               <DetailField label={tr("detailsPath")}>
-                <div className="flex items-start gap-1.5">
-                  <span className="font-mono text-xs break-all flex-1">
-                    {row.method ? <span className="text-foreground/70">{row.method} </span> : null}
-                    {row.path ?? "—"}
-                  </span>
-                  {pathCopyValue && (
-                    <CopyIconButton
-                      value={pathCopyValue}
-                      label={tr("copyPath")}
-                      tr={tr}
-                      testId="audit-details-copy-path"
-                    />
-                  )}
+                <div className="flex flex-col gap-1.5 flex-1">
+                  {(() => {
+                    const fp = friendlyPath(row.method, row.path);
+                    if (!fp) return null;
+                    return (
+                      <div className="text-sm">
+                        {fp.href ? (
+                          <Link href={fp.href} className="text-blue-700 hover:text-blue-900 hover:underline font-medium">
+                            {fp.label}
+                          </Link>
+                        ) : (
+                          <span className="text-slate-700 font-medium">{fp.label}</span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  <div className="flex items-start gap-1.5">
+                    <span className="font-mono text-xs break-all flex-1 text-muted-foreground">
+                      {row.method ? <span className="text-foreground/70">{row.method} </span> : null}
+                      {row.path ?? "—"}
+                    </span>
+                    {pathCopyValue && (
+                      <CopyIconButton
+                        value={pathCopyValue}
+                        label={tr("copyPath")}
+                        tr={tr}
+                        testId="audit-details-copy-path"
+                      />
+                    )}
+                  </div>
                 </div>
               </DetailField>
               <DetailField label={tr("detailsUserAgent")} fullWidth>
