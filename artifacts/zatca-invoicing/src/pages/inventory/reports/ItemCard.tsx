@@ -11,6 +11,13 @@ import { IdCard, Search, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useFmt } from "@/hooks/use-fmt";
+import { useTranslation } from "react-i18next";
+
+const API = import.meta.env.VITE_API_URL ?? "";
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem("zatca_token");
+  return token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+}
 
 const TX_LABEL: Record<string, string> = {
   transfer_out: "تحويل خارج",
@@ -37,17 +44,36 @@ const EXPORT_COLS = [
 
 export default function ItemCard() {
   const { fmt, fmtQty } = useFmt();
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
 
   const today = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
 
-  const [filters, setFilters] = useState({ from: firstDay, to: today, itemId: "", warehouseId: "" });
-  const [applied, setApplied] = useState({ from: firstDay, to: today, itemId: "", warehouseId: "" });
+  const [filters, setFilters] = useState({ from: firstDay, to: today, itemId: "", warehouseId: "", customerId: "" });
+  const [applied, setApplied] = useState({ from: firstDay, to: today, itemId: "", warehouseId: "", customerId: "" });
 
   const { data: items = [] }      = useQuery({ queryKey: ["items", cid],      queryFn: () => inventoryApi.getItems(cid) });
   const { data: warehouses = [] } = useQuery({ queryKey: ["warehouses", cid], queryFn: () => inventoryApi.getWarehouses(cid) });
+  const { data: customers = [] } = useQuery({
+    queryKey: ["customers", cid],
+    queryFn: async () => {
+      const r = await fetch(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, { headers: authHeaders() });
+      return r.json();
+    },
+  });
+  const customerOptions = useMemo(
+    () => [
+      { value: "", label: "كل العملاء" },
+      ...(customers as any[]).map((c: any) => ({
+        value: String(c.id),
+        label: isRtl ? (c.nameAr ?? c.nameEn ?? `#${c.id}`) : (c.nameEn ?? c.nameAr ?? `#${c.id}`),
+      })),
+    ],
+    [customers, isRtl],
+  );
 
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["item-card", cid, applied],
@@ -59,11 +85,16 @@ export default function ItemCard() {
       if (applied.to)          params.to          = applied.to;
       if (applied.itemId)      params.itemId      = applied.itemId;
       if (applied.warehouseId) params.warehouseId = applied.warehouseId;
+      if (applied.customerId)  params.customerId  = applied.customerId;
       return inventoryApi.getLedger(params);
     },
   });
 
   const item = (items as any[]).find((i: any) => String(i.id) === applied.itemId);
+  const selectedCustomer = (customers as any[]).find((c: any) => String(c.id) === applied.customerId);
+  const selectedCustomerName = selectedCustomer
+    ? (isRtl ? (selectedCustomer.nameAr ?? selectedCustomer.nameEn) : (selectedCustomer.nameEn ?? selectedCustomer.nameAr))
+    : null;
 
   // Sort ascending (oldest first) and compute running balance
   const augmented = useMemo(() => {
@@ -122,9 +153,11 @@ export default function ItemCard() {
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`كارت-صنف-${item?.code ?? "all"}-${applied.from}-${applied.to}`}
+          filename={`كارت-صنف-${item?.code ?? "all"}-${applied.from}-${applied.to}${selectedCustomerName ? `-${selectedCustomerName}` : ""}`}
           title="كارت الصنف"
-          subtitle={item ? `${item.code} - ${item.nameAr}  |  ${applied.from} → ${applied.to}` : "اختر صنفاً"}
+          subtitle={item
+            ? `${item.code} - ${item.nameAr}  |  ${applied.from} → ${applied.to}${selectedCustomerName ? `  |  العميل: ${selectedCustomerName}` : ""}`
+            : "اختر صنفاً"}
           totalsRow={exportTotalsRow}
         />
       </div>
@@ -162,7 +195,21 @@ export default function ItemCard() {
               placeholder="كل المخازن"
             />
           </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label>العميل</Label>
+            <SearchCombobox
+              items={customerOptions}
+              value={filters.customerId}
+              onValueChange={v => setFilters(p => ({ ...p, customerId: v }))}
+              placeholder="كل العملاء"
+            />
+          </div>
         </div>
+        {filters.customerId && (
+          <p className="text-xs text-muted-foreground mt-3">
+            ℹ️ عند اختيار عميل، يتم عرض حركات البيع والمرتجعات الخاصة بهذا العميل فقط (يتم استبعاد المشتريات والتحويلات والتسويات).
+          </p>
+        )}
         <div className="flex justify-end mt-4">
           <Button size="sm" onClick={() => setApplied({ ...filters })} disabled={!filters.itemId} className="gap-2">
             <Search className="h-3.5 w-3.5" />عرض الكارت

@@ -1396,12 +1396,34 @@ router.delete("/stock-counts/:id", async (req, res) => {
 router.get("/stock-ledger", async (req, res) => {
   const cid = getCompanyId(req);
   if (!cid) { res.json([]); return; }
-  const { itemId, warehouseId, from, to } = req.query as Record<string, string>;
+  const { itemId, warehouseId, from, to, customerId } = req.query as Record<string, string>;
   const conditions = [eq(stockLedgerTable.companyId, cid)];
   if (itemId)      conditions.push(eq(stockLedgerTable.itemId,      Number(itemId)));
   if (warehouseId) conditions.push(eq(stockLedgerTable.warehouseId, Number(warehouseId)));
   if (from)        conditions.push(gte(stockLedgerTable.txDate, from));
   if (to)          conditions.push(lte(stockLedgerTable.txDate, to));
+
+  // Customer filter: restrict ledger to movements that originated from a sales
+  // invoice or sales return belonging to that customer. Non-sale rows
+  // (purchases, transfers, adjustments, openings) are excluded when this
+  // filter is active because they have no customer association.
+  if (customerId) {
+    const custId = Number(customerId);
+    const invIds = await db.select({ id: salesInvoicesTable.id })
+      .from(salesInvoicesTable)
+      .where(and(eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.customerId, custId)));
+    const retIds = await db.select({ id: salesReturnsTable.id })
+      .from(salesReturnsTable)
+      .where(and(eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.customerId, custId)));
+    const invIdList = invIds.map(r => r.id);
+    const retIdList = retIds.map(r => r.id);
+    const parts: any[] = [];
+    if (invIdList.length) parts.push(and(eq(stockLedgerTable.refType, "sales_invoice"), inArray(stockLedgerTable.refId, invIdList)));
+    if (retIdList.length) parts.push(and(eq(stockLedgerTable.refType, "sales_return"),  inArray(stockLedgerTable.refId, retIdList)));
+    if (parts.length === 0) { res.json([]); return; }
+    conditions.push(parts.length === 1 ? parts[0] : or(...parts)!);
+  }
+
   const rows = await db.select({ led: stockLedgerTable, item: itemsTable, wh: warehousesTable })
     .from(stockLedgerTable)
     .leftJoin(itemsTable,      eq(stockLedgerTable.itemId,      itemsTable.id))
