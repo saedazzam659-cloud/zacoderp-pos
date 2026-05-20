@@ -58,6 +58,11 @@ const customerSchema = z.object({
    */
   creditLimit:        z.coerce.number().min(0, "لا يمكن أن يكون سالباً").default(0),
   enforceCreditLimit: z.boolean().default(false),
+  /**
+   * Payment terms in days — 0/empty = no enforcement; > 0 means new credit
+   * invoices are refused when prior credit invoices are unpaid past this term.
+   */
+  paymentTermsDays:   z.coerce.number().int().min(0, "لا يمكن أن يكون سالباً").default(0),
   /** Optional default branch — sent as null when blank. */
   branchId:           z.union([z.coerce.number().int().positive(), z.literal(""), z.null()]).optional(),
 });
@@ -162,6 +167,7 @@ export default function CustomerNew() {
       includeInStatements: true,
       creditLimit: 0,
       enforceCreditLimit: false,
+      paymentTermsDays: 0,
     },
   });
 
@@ -193,6 +199,7 @@ export default function CustomerNew() {
       includeInStatements: c.includeInStatements ?? true,
       creditLimit: Number(c.creditLimit ?? 0),
       enforceCreditLimit: c.enforceCreditLimit ?? false,
+      paymentTermsDays: c.paymentTermsDays == null ? 0 : Number(c.paymentTermsDays),
     });
     if (c.accountId) setCustAccountId(String(c.accountId));
     setBranchId(c.branchId ? String(c.branchId) : "");
@@ -583,6 +590,25 @@ export default function CustomerNew() {
                           </FormControl>
                           <FormDescription>
                             الحد الأقصى للمستحق على العميل. اتركه 0 للسماح بدون حد.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+
+                      <FormField control={form.control} name="paymentTermsDays" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>مدة الاستحقاق (بالأيام)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number" min={0} step="1" inputMode="numeric"
+                              placeholder="0" dir="ltr" className="text-left font-mono"
+                              {...field}
+                              value={field.value ?? 0}
+                              onChange={e => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            عند تجاوز هذه المدة بدون سداد، سيرفض النظام إصدار أي فاتورة آجلة جديدة لهذا العميل. اتركها 0 لعدم التفعيل.
                           </FormDescription>
                           <FormMessage />
                         </FormItem>

@@ -698,6 +698,73 @@ router.post("/sales-invoices", async (req, res) => {
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
+    // ── Overdue-payment guard ──
+    // When the customer has `paymentTermsDays > 0`, refuse a new CREDIT invoice
+    // if any prior posted credit invoice of theirs still has an outstanding
+    // balance AND is older than the term (counted from the new invoice date).
+    // FIFO-applies posted receipts + posted credit returns to oldest invoices
+    // first, then checks the oldest remaining one. Cash invoices and customers
+    // without payment terms bypass the guard entirely.
+    if (pType === "credit" && customerId) {
+      const [cust] = await db.select({
+        nameAr: customersTable.nameAr,
+        paymentTermsDays: customersTable.paymentTermsDays,
+      }).from(customersTable)
+        .where(and(eq(customersTable.id, Number(customerId)), eq(customersTable.companyId, cid)));
+      const terms = Number(cust?.paymentTermsDays ?? 0);
+      if (cust && terms > 0) {
+        const priorInvs = await db.select({
+          date:  salesInvoicesTable.invoiceDate,
+          total: salesInvoicesTable.totalAmount,
+        }).from(salesInvoicesTable)
+          .where(and(
+            eq(salesInvoicesTable.companyId, cid),
+            eq(salesInvoicesTable.customerId, Number(customerId)),
+            eq(salesInvoicesTable.status, "posted"),
+            eq(salesInvoicesTable.paymentType, "credit"),
+          ))
+          .orderBy(asc(salesInvoicesTable.invoiceDate), asc(salesInvoicesTable.id));
+        const [retSum] = await db.select({
+          s: sql<string>`coalesce(sum(${salesReturnsTable.totalAmount}), 0)`,
+        }).from(salesReturnsTable).where(and(
+          eq(salesReturnsTable.companyId, cid),
+          eq(salesReturnsTable.customerId, Number(customerId)),
+          eq(salesReturnsTable.status, "posted"),
+          eq(salesReturnsTable.paymentType, "credit"),
+        ));
+        const [recSum] = await db.select({
+          s: sql<string>`coalesce(sum(${receiptVouchersTable.amount}), 0)`,
+        }).from(receiptVouchersTable).where(and(
+          eq(receiptVouchersTable.companyId, cid),
+          eq(receiptVouchersTable.entityType, "customer"),
+          eq(receiptVouchersTable.entityId, Number(customerId)),
+          eq(receiptVouchersTable.status, "posted"),
+        ));
+        let credit = Number(retSum?.s ?? 0) + Number(recSum?.s ?? 0);
+        const refMs = new Date(invoiceDate).getTime();
+        for (const inv of priorInvs) {
+          let remaining = Number(inv.total);
+          if (credit >= remaining) { credit -= remaining; continue; }
+          remaining -= credit; credit = 0;
+          const days = Math.floor((refMs - new Date(inv.date).getTime()) / 86400000);
+          if (days > terms) {
+            res.status(409).json({
+              error:
+                `لا يمكن إصدار فاتورة جديدة للعميل "${cust.nameAr}" — يوجد فاتورة سابقة بتاريخ ${inv.date} ` +
+                `بمبلغ مستحق ${remaining.toFixed(2)} ر.س لم تُسدَّد خلال مدة الاستحقاق (${terms} يوم — تأخر ${days} يوماً). ` +
+                `الرجاء سرعة السداد لاستكمال عمليات البيع.`,
+              code: "OVERDUE_PAYMENT",
+              overdueDays: days,
+              paymentTermsDays: terms,
+              outstandingAmount: Number(remaining.toFixed(2)),
+              oldestUnpaidInvoiceDate: inv.date,
+            });
+            return;
+          }
+          break; // oldest unpaid is within terms → all newer ones are too
+        }
+      }
+    }
     // Reject the request before INSERT if any offer id (line-level or
     // document-level) doesn't belong to this tenant. Prevents cross-tenant
     // FK pollution and the resulting offer-name leak via the GET join.

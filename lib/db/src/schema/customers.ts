@@ -48,6 +48,14 @@ export const customersTable = pgTable("customers", {
    */
   enforceCreditLimit: boolean("enforce_credit_limit").notNull().default(false),
   /**
+   * Payment terms in days. When > 0, POST /api/invoices refuses to create a
+   * new credit sales invoice for this customer if any prior posted credit
+   * invoice still has an outstanding balance AND is older than
+   * `paymentTermsDays` days from the new invoice date. NULL or 0 = no
+   * enforcement (informational only).
+   */
+  paymentTermsDays: integer("payment_terms_days"),
+  /**
    * When false → this customer is treated as a *display-only* / memo entity:
    *   – Their data still prints on invoices / vouchers / journal entries.
    *   – Their AR balance is EXCLUDED from كشف حساب العملاء، تقارير الأعمار،

@@ -197,6 +197,15 @@ router.post("/", async (req, res) => {
     // someone explicitly toggles it on.
     creditLimit: clampCreditLimit((req.body as any)?.creditLimit) ?? "0",
     enforceCreditLimit: (req.body as any)?.enforceCreditLimit === true,
+    // Payment terms (days). NULL or 0 = no enforcement; > 0 means new credit
+    // invoices are refused when any prior credit invoice from this customer is
+    // unpaid past the term.
+    paymentTermsDays: (() => {
+      const v = (req.body as any)?.paymentTermsDays;
+      if (v === undefined || v === null || v === "") return null;
+      const n = Number(v);
+      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+    })(),
   }).returning();
   res.status(201).json(customer);
 });
@@ -261,6 +270,15 @@ router.put("/:id", async (req, res) => {
   }
   if (typeof (req.body as any)?.enforceCreditLimit === "boolean") {
     setData.enforceCreditLimit = (req.body as any).enforceCreditLimit;
+  }
+  if ((req.body as any)?.paymentTermsDays !== undefined) {
+    const v = (req.body as any).paymentTermsDays;
+    if (v === null || v === "") {
+      setData.paymentTermsDays = null;
+    } else {
+      const n = Number(v);
+      setData.paymentTermsDays = Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+    }
   }
   if ((req.body as any)?.branchId !== undefined) {
     const bv = (req.body as any).branchId;
