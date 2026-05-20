@@ -204,12 +204,33 @@ export default function PurchaseOrderForm() {
     setBranchId(String(defaultBranch.id));
   }, [isNew, defaultBranch?.id]);
 
-  const defaultWarehouse = (warehouses as any[])[0];
+  const defaultWarehouse = (warehouses as any[]).find((w: any) => w.isDefault) ?? (warehouses as any[])[0];
+  // Header-level warehouse picker — broadcast to every line on change.
+  const [headerWarehouseId, setHeaderWarehouseId] = useState<string>("");
+  useEffect(() => {
+    if (!isNew || !defaultWarehouse || headerWarehouseId) return;
+    setHeaderWarehouseId(String(defaultWarehouse.id));
+  }, [isNew, defaultWarehouse?.id]);
+  useEffect(() => {
+    if (isNew || headerWarehouseId) return;
+    const firstWh = lines.find(l => l.warehouseId)?.warehouseId;
+    if (firstWh) setHeaderWarehouseId(String(firstWh));
+  }, [isNew, lines, headerWarehouseId]);
   const hasEmptyWarehouse = lines.some(l => !l.warehouseId);
   useEffect(() => {
-    if (!defaultWarehouse || !hasEmptyWarehouse) return;
-    setLines(prev => prev.map(l => l.warehouseId ? l : { ...l, warehouseId: String(defaultWarehouse.id) }));
-  }, [defaultWarehouse?.id, hasEmptyWarehouse]);
+    if (!headerWarehouseId || !hasEmptyWarehouse) return;
+    setLines(prev => prev.map(l => l.warehouseId ? l : { ...l, warehouseId: headerWarehouseId }));
+  }, [headerWarehouseId, hasEmptyWarehouse]);
+  function applyHeaderWarehouse(v: string) {
+    setHeaderWarehouseId(v);
+    if (!v) return;
+    setLines(prev => prev.map(l => ({ ...l, warehouseId: v })));
+  }
+  // Route-transition safeguard — clear header on doc-id change so init/derive
+  // effects re-populate from the freshly loaded doc.
+  useEffect(() => {
+    setHeaderWarehouseId("");
+  }, [editId, isNew]);
 
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
 
@@ -692,6 +713,19 @@ export default function PurchaseOrderForm() {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">المستودع</Label>
+                  <SearchCombobox
+                    items={(warehouses as any[]).map((w: any) => ({
+                      value: String(w.id),
+                      label: warehouseName(w) || `#${w.id}`,
+                    }))}
+                    value={headerWarehouseId}
+                    onValueChange={applyHeaderWarehouse}
+                    placeholder="اختر المستودع"
+                  />
+                  <p className="text-[10px] text-muted-foreground">يُعبَّأ تلقائياً على كل سطور الأصناف عند الاختيار.</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.currency")}</Label>

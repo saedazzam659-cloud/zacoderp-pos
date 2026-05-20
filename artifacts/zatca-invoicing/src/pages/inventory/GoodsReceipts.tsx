@@ -199,12 +199,33 @@ export default function GoodsReceipts() {
     setForm((p: any) => ({ ...p, branchId: String(defaultBranch.id) }));
   }, [showForm, defaultBranch?.id]);
 
-  const defaultWarehouse = (warehouses as any[])[0];
+  const defaultWarehouse = (warehouses as any[]).find((w: any) => w.isDefault) ?? (warehouses as any[])[0];
+  // Header-level warehouse picker — broadcast to every line on change.
+  const [headerWarehouseId, setHeaderWarehouseId] = useState<string>("");
+  const isNewGR = showForm && editingId == null;
+  useEffect(() => {
+    if (!isNewGR || !defaultWarehouse || headerWarehouseId) return;
+    setHeaderWarehouseId(String(defaultWarehouse.id));
+  }, [isNewGR, defaultWarehouse?.id]);
+  useEffect(() => {
+    if (isNewGR || headerWarehouseId) return;
+    const firstWh = lines.find((l: any) => l.warehouseId)?.warehouseId;
+    if (firstWh) setHeaderWarehouseId(String(firstWh));
+  }, [isNewGR, lines, headerWarehouseId]);
+  // Clear header picker when the form is closed so re-opening starts fresh.
+  useEffect(() => {
+    if (!showForm) setHeaderWarehouseId("");
+  }, [showForm]);
   const hasEmptyWarehouse = lines.some((l: any) => !l.warehouseId);
   useEffect(() => {
-    if (!defaultWarehouse || !hasEmptyWarehouse) return;
-    setLines(prev => prev.map((l: any) => l.warehouseId ? l : { ...l, warehouseId: String(defaultWarehouse.id) }));
-  }, [defaultWarehouse?.id, hasEmptyWarehouse]);
+    if (!headerWarehouseId || !hasEmptyWarehouse) return;
+    setLines(prev => prev.map((l: any) => l.warehouseId ? l : { ...l, warehouseId: headerWarehouseId }));
+  }, [headerWarehouseId, hasEmptyWarehouse]);
+  function applyHeaderWarehouse(v: string) {
+    setHeaderWarehouseId(v);
+    if (!v) return;
+    setLines(prev => prev.map((l: any) => ({ ...l, warehouseId: v })));
+  }
 
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
 
@@ -1075,6 +1096,17 @@ ${sections}
                         ))}
                       </SelectContent>
                     </Select>
+                  </Field>
+                  <Field label="المستودع">
+                    <SearchCombobox
+                      items={(warehouses as any[]).map((w: any) => ({
+                        value: String(w.id),
+                        label: warehouseName(w) || `#${w.id}`,
+                      }))}
+                      value={headerWarehouseId}
+                      onValueChange={applyHeaderWarehouse}
+                      placeholder="اختر المستودع"
+                    />
                   </Field>
                   <Field label={tr("currency")}>
                     <SearchCombobox

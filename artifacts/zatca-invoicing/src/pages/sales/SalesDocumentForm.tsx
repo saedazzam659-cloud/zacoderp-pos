@@ -470,11 +470,37 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   }, [isNew, defaultBranch?.id]);
 
   const defaultWarehouse = (warehouses as any[]).find((w: any) => w.isDefault) ?? (warehouses as any[])[0];
+  // Header-level warehouse picker — when the user selects a warehouse here it
+  // is broadcast to every line, and any newly added line inherits it. Defaults
+  // to the company's default warehouse on new docs, or to the first line's
+  // warehouse when loading an existing one (so the picker reflects reality).
+  const [headerWarehouseId, setHeaderWarehouseId] = useState<string>("");
+  useEffect(() => {
+    if (!isNew || !defaultWarehouse || headerWarehouseId) return;
+    setHeaderWarehouseId(String(defaultWarehouse.id));
+  }, [isNew, defaultWarehouse?.id]);
+  useEffect(() => {
+    if (isNew || headerWarehouseId) return;
+    const firstWh = lines.find(l => l.warehouseId)?.warehouseId;
+    if (firstWh) setHeaderWarehouseId(String(firstWh));
+  }, [isNew, lines, headerWarehouseId]);
   const hasEmptyWarehouse = lines.some(l => !l.warehouseId);
   useEffect(() => {
-    if (!defaultWarehouse || !hasEmptyWarehouse) return;
-    setLines(prev => prev.map(l => l.warehouseId ? l : { ...l, warehouseId: String(defaultWarehouse.id) }));
-  }, [defaultWarehouse?.id, hasEmptyWarehouse]);
+    if (!headerWarehouseId || !hasEmptyWarehouse) return;
+    setLines(prev => prev.map(l => l.warehouseId ? l : { ...l, warehouseId: headerWarehouseId }));
+  }, [headerWarehouseId, hasEmptyWarehouse]);
+  function applyHeaderWarehouse(v: string) {
+    setHeaderWarehouseId(v);
+    if (!v) return;
+    setLines(prev => prev.map(l => ({ ...l, warehouseId: v })));
+  }
+  // Route-transition safeguard: when the user navigates from one doc to
+  // another while this component stays mounted (edit→edit, edit→new, etc.),
+  // clear the header value so the init/derive effects re-populate from the
+  // freshly loaded doc instead of leaking the previous selection.
+  useEffect(() => {
+    setHeaderWarehouseId("");
+  }, [editId, isNew]);
 
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
 
@@ -2385,6 +2411,19 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     <p className="text-[10px] text-muted-foreground">يُسند تلقائياً إلى كل سطور القيد عند الترحيل.</p>
                   </div>
                 )}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">المستودع</Label>
+                  <SearchCombobox
+                    items={(warehouses as any[]).map((w: any) => ({
+                      value: String(w.id),
+                      label: isRtl ? (w.nameAr ?? w.nameEn ?? `#${w.id}`) : (w.nameEn ?? w.nameAr ?? `#${w.id}`),
+                    }))}
+                    value={headerWarehouseId}
+                    onValueChange={applyHeaderWarehouse}
+                    placeholder="اختر المستودع"
+                  />
+                  <p className="text-[10px] text-muted-foreground">يُعبَّأ تلقائياً على كل سطور الأصناف عند الاختيار.</p>
+                </div>
               </div>
 
               <div className="border-t pt-4 mt-2 flex items-center gap-2 text-sm font-semibold text-foreground/80">
