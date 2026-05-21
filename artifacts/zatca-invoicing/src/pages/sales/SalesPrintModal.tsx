@@ -1749,6 +1749,18 @@ function template14(d: PrintData): string {
     .pill b { color:var(--ink); font-weight:700; }
     .pill.pay { background:#fef3c7; border-color:#fcd34d; color:#7c2d12; }
     .pill.no  { background:#e0f2fe; border-color:#7dd3fc; color:#075985; font-family:'Segoe UI', monospace; }
+    /* Customer strip — placed under the meta pills in the center column.
+       Visually echoes the customer card on the far left so the buyer name
+       is impossible to miss, even on a quick glance. */
+    .customer-strip {
+      margin-top:4px; padding:4px 12px;
+      background:linear-gradient(90deg, transparent, #fff7e6 30%, #fff7e6 70%, transparent);
+      border-top:1px solid var(--gold2); border-bottom:1px solid var(--gold2);
+      font-size:12px; color:var(--ink); display:inline-flex; gap:6px; align-items:center;
+      max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    }
+    .customer-strip .lbl { color:var(--gold); font-weight:700; font-size:10px; letter-spacing:.06em; text-transform:uppercase; }
+    .customer-strip b { font-weight:800; font-size:13px; }
 
     /* ── Lines table ───────────────────────────────────────────────── */
     /* Borderless, simple look: no outer frame, light grey thead with dark
@@ -1815,6 +1827,11 @@ function template14(d: PrintData): string {
         <span class="pill">📅 <b>${dateStr}</b></span>
         ${isQuot && doc.validUntil ? `<span class="pill">صالح حتى <b>${doc.validUntil}</b></span>` : ""}
         ${isReturn && doc.invoiceId ? `<span class="pill">مرجع: <b>${doc.invoiceId}</b></span>` : ""}
+      </div>
+      <!-- اسم العميل يظهر هنا بشكل بارز (مكرّر من البطاقة اليسرى) -->
+      <div class="customer-strip">
+        <span class="lbl">العميل:</span>
+        <b>${customer?.nameAr ?? customer?.nameEn ?? doc.buyerName ?? "—"}</b>
       </div>
     </div>
 
