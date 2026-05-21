@@ -1187,7 +1187,6 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
             ? `<span class="name-latin" dir="ltr">${escape(account.partyNameEn)}</span>`
             : ""}
         </div>
-        <div class="row"><span class="lbl">${escape(mode === "supplier" ? "اسم المورد" : "اسم العميل")}</span> : ${escape(account.nameAr || account.nameEn || "—")}</div>
         <div class="row"><span class="lbl">رمز الحساب</span> : <span class="mono">${escape(account.code || "—")}</span></div>
         <div class="row"><span class="lbl">مستوى الحساب</span> : ${escape(account.level != null ? String(account.level) : "—")}</div>
       </div>
