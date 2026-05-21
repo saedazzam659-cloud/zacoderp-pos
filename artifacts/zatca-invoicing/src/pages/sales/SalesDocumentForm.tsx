@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useRegisterScreenActions, type ScreenActionsRegistration } from "@/contexts/ScreenActionsContext";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { validateInvoiceLines } from "@/lib/lineValidation";
+import { syncLineDiscount, effectiveLineDiscount } from "@/lib/lineDiscountSync";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useAutoFocusOnMount } from "@/hooks/useAutoFocusOnMount";
 import { useRoute, useLocation } from "wouter";
@@ -100,12 +101,14 @@ function newLine(): DocLine {
 function calcLine(l: DocLine, priceIncludesVat = false) {
   const qty   = Number(l.qty) || 0;
   const price = Number(l.unitPrice) || 0;
-  const disc  = Number(l.discount) || 0;
-  const discAmt = Number(l.discountAmount) || 0;
   const rate  = (Number(l.vatRate) || 0) / 100;
-  // Apply percent first, then fixed amount. Clamp at 0 so an over-discount
-  // never flips the line negative (server enforces the same clamp).
-  const gross = Math.max(0, qty * price * (1 - disc / 100) - discAmt);
+  // `discount` (%) and `discountAmount` (SAR) are now two views of the
+  // same value — kept in sync via `syncLineDiscount`. We use the SAR
+  // amount as the single source of truth (with a % fallback for legacy
+  // rows that only carry the percentage). Previously both were
+  // subtracted, which double-counted whenever a user typed into either.
+  const discAmtEff = effectiveLineDiscount(l);
+  const gross = Math.max(0, qty * price - discAmtEff);
   if (priceIncludesVat) {
     const net = rate > -1 ? gross / (1 + rate) : gross;
     const vat = gross - net;
@@ -767,6 +770,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       }
       if (field === "discount" && value !== l.engineDiscount) {
         updated.engineDiscount = null;
+      }
+      // Bidirectional sync: editing one of the two discount inputs
+      // (% vs SAR amount) auto-fills the other so they mirror each
+      // other. See `lib/lineDiscountSync.ts`.
+      if (field === "discount" || field === "discountAmount") {
+        const synced = syncLineDiscount(l, field, value);
+        updated.discount       = synced.discount;
+        updated.discountAmount = synced.discountAmount;
       }
       if (l.appliedOfferId && updated.engineUnitPrice === null && updated.engineDiscount === null) {
         updated.appliedOfferId = null;

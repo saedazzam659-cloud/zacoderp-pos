@@ -3,6 +3,7 @@ import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useAutoFocusOnMount } from "@/hooks/useAutoFocusOnMount";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { validateInvoiceLines } from "@/lib/lineValidation";
+import { syncLineDiscount, effectiveLineDiscount } from "@/lib/lineDiscountSync";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -756,22 +757,20 @@ export default function SalesReturns() {
   function calcLineTotal(l: ReturnLine, priceIncludesVat = false) {
     const qty   = Number(l.qty) || 0;
     const price = Number(l.unitPrice) || 0;
-    const disc  = Number(l.discount) || 0;
-    const discAmt = Math.max(0, Number(l.discountAmount) || 0);
     const rate  = (Number(l.vatRate) || 0) / 100;
-    // المعادلة: الإجمالي = الكمية × سعر البيع × (1 − خصم%/100) − قيمة الخصم
-    // (مطابق لـ SalesDocumentForm حتى يُحسب المرتجع بنفس المنطق المحاسبي).
-    const gross = Math.max(0, qty * price * (1 - disc / 100) - discAmt);
+    // الخصم% وقيمة الخصم وجهان لنفس القيمة (يُزامَنان عبر `syncLineDiscount`)
+    // — نستخدم قيمة الخصم بالعملة كمصدر وحيد للحقيقة لتجنّب الخصم المضاعف.
+    const discAmtEff = effectiveLineDiscount(l);
+    const gross = Math.max(0, qty * price - discAmtEff);
     if (priceIncludesVat) return gross;
     return gross * (1 + rate);
   }
   function calcLineParts(l: ReturnLine, priceIncludesVat = false) {
     const qty   = Number(l.qty) || 0;
     const price = Number(l.unitPrice) || 0;
-    const disc  = Number(l.discount) || 0;
-    const discAmt = Math.max(0, Number(l.discountAmount) || 0);
     const rate  = (Number(l.vatRate) || 0) / 100;
-    const gross = Math.max(0, qty * price * (1 - disc / 100) - discAmt);
+    const discAmtEff = effectiveLineDiscount(l);
+    const gross = Math.max(0, qty * price - discAmtEff);
     if (priceIncludesVat) {
       const net = rate > -1 ? gross / (1 + rate) : gross;
       return { subtotal: net, vat: gross - net, lineTotal: gross };
@@ -783,7 +782,13 @@ export default function SalesReturns() {
   function updateLine(id: string, field: keyof ReturnLine, value: string) {
     setLines(prev => prev.map(l => {
       if (l._id !== id) return l;
-      const u = { ...l, [field]: value };
+      const u: any = { ...l, [field]: value };
+      // مزامنة ثنائية بين خانتي الخصم% وقيمة الخصم.
+      if (field === "discount" || field === "discountAmount") {
+        const synced = syncLineDiscount(l as any, field as any, value);
+        u.discount       = synced.discount;
+        u.discountAmount = synced.discountAmount;
+      }
       return { ...u, lineTotal: calcLineTotal(u, !!form.priceIncludesVat).toFixed(2) };
     }));
   }

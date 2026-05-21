@@ -82,7 +82,10 @@ function computeFullTotals(doc: any, lines: any[]): FullTotals {
     const dPct  = Math.max(0, Math.min(100, Number(l.discount) || 0));
     const dAmt  = Math.max(0, Number(l.discountAmount) || 0);
     const gross = qty * price;
-    const disc  = Math.min(gross, gross * dPct / 100 + dAmt);
+    // The two discount fields mirror one value (see `lib/lineDiscountSync.ts`).
+    // Prefer the SAR amount when set, else derive from %. Never sum both
+    // — that would double‑count after sync.
+    const disc  = Math.min(gross, dAmt > 0 ? dAmt : (gross * dPct / 100));
     const net   = gross - disc;
     const vat   = net * ((Number(l.vatRate) || 0) / 100);
     subtotalPreDiscount += gross;
@@ -309,17 +312,22 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
   // keeps the printed table clean for invoices that don't use the feature.
   const showFree = lines.some(l => (Number(l.freeQty) || 0) > 0);
   const rows = lines.map((l, i) => {
+    const qty   = Number(l.qty) || 0;
+    const price = Number(l.unitPrice) || 0;
+    const gross = qty * price;
     const discPct = Math.max(0, Math.min(100, Number(l.discount) || 0));
-    const discAmt = Math.max(0, Number(l.discountAmount) || 0);
-    const sub  = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - discPct / 100) - discAmt;
+    const rawAmt  = Math.max(0, Number(l.discountAmount) || 0);
+    // The two discount fields are mirrors of one value (see
+    // `lib/lineDiscountSync.ts`). Use the SAR amount when present,
+    // otherwise derive it from %. Never subtract both — that would
+    // double-count post-sync.
+    const discAmtEff = rawAmt > 0 ? Math.min(rawAmt, gross) : (gross * discPct) / 100;
+    const sub  = Math.max(0, gross - discAmtEff);
     const vat  = sub * ((Number(l.vatRate) || 0) / 100);
     const tot  = sub + vat;
     const freeQ = Number(l.freeQty) || 0;
-    // Cell label: prefer "X%" when a percentage was used, otherwise the
-    // SAR amount. If both are present (rare) show the % since it's more
-    // informative for the buyer; the SAR impact is still reflected in the
-    // line total and totals footer.
-    const discCell = discPct > 0 ? `${discPct}%` : (discAmt > 0 ? fmt(discAmt) : "—");
+    // Cell label: show "X%" when % is set, else the SAR amount, else "—".
+    const discCell = discPct > 0 ? `${discPct}%` : (rawAmt > 0 ? fmt(rawAmt) : "—");
     return `
       <tr style="${i % 2 === 0 ? rowEvenStyle : ""}">
         <td>${i + 1}</td>
