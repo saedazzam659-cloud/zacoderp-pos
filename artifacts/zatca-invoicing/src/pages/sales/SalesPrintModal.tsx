@@ -1677,14 +1677,18 @@ function template14(d: PrintData): string {
   ${baseStyles("#0f172a")}
   <style>
     /* "النموذج الأصلي" — zero page margin: data should stretch to the full
-       printable area of the sheet. Overrides the default A4 margin from
-       baseStyles() (12mm 14mm). A tiny inner padding keeps text from
-       touching the very edge of the paper but is well under what a normal
-       printer's non-printable area allows. */
-    @page { size: A4; margin: 0; }
+       printable area of the sheet AND suppress the browser-injected
+       header/footer strip (date / title / URL). Chrome hides those
+       automatically when @page margin is 0. The !important + later
+       declaration order ensures we win over baseStyles() (12mm 14mm). */
+    @page { size: A4; margin: 0 !important; }
     :root { --ink:#0f172a; --line:#e5e7eb; --soft:#f8fafc; --gold:#b88a2a; --gold2:#e5c277; }
-    body { padding: 0; margin: 0; color: var(--ink); }
-    .sheet { padding: 4mm 4mm; }
+    html, body { padding: 0 !important; margin: 0 !important; color: var(--ink); }
+    /* Tight side padding only — zero top/bottom so the company/customer
+       cards sit flush against the paper edge. */
+    .sheet { padding: 0 4mm !important; }
+    /* Pull the first row (3-column header) right to the very top edge. */
+    .hdr { margin-top: 0 !important; }
 
     /* ── 3-column header ───────────────────────────────────────────── */
     .hdr { display:grid; grid-template-columns: 1fr 1.1fr 1fr; gap:12px; align-items:stretch; margin-bottom:14px; }
