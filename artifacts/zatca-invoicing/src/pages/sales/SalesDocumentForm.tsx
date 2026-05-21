@@ -290,7 +290,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       return r.json();
     },
     enabled: !!user && isInvoice && isNew,
-    staleTime: 30_000,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
   // Mirrors the backend gate inside POST /sales-invoices (rules pinned in
   // routes/sales.ts): we surface ONLY accepted, not-yet-converted quotations
