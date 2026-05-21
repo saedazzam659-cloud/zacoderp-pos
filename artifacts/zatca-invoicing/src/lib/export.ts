@@ -1028,6 +1028,22 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     .co-side { font-size: 8.5pt; line-height: 1.35; color: #475569; }
     .co-side .name { font-size: 10.5pt; font-weight: 700; color: #0f172a; margin-bottom: 2px; }
     .co-side .name-latin { font-size: 8.5pt; font-weight: 500; color: #64748b; margin-inline-start: 6px; }
+    /* Top party banner — full-width strip above the company header so the
+       customer/supplier identity is the first thing on the page. */
+    .party-banner {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 4px 0 6px;
+      margin-bottom: 6px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .party-banner .name { font-size: 12pt; font-weight: 700; color: #0f172a; }
+    .party-banner .name-latin { font-size: 9pt; font-weight: 500; color: #64748b; margin-inline-start: 8px; }
+    .party-banner .meta { display: flex; gap: 14px; font-size: 8.5pt; color: #475569; }
+    .party-banner .lbl { color: #94a3b8; }
+    .party-banner .mono { font-family: 'Courier New', monospace; }
     .co-side .row { white-space: nowrap; }
     .co-side .lbl { color: #94a3b8; }
     .co-side.right { text-align: right; }
@@ -1159,7 +1175,22 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
 </head>
 <body>
   <div class="doc">
-    <!-- Company header -->
+    <!-- Party banner: customer/supplier name pinned to the very top of the
+         page (above the company header) per user request — "اول حاجه من فوق". -->
+    <div class="party-banner">
+      <div class="name">
+        ${escape(account.partyNameAr || account.partyNameEn || "—")}
+        ${account.partyNameAr && account.partyNameEn
+          ? `<span class="name-latin" dir="ltr">${escape(account.partyNameEn)}</span>`
+          : ""}
+      </div>
+      <div class="meta">
+        <span><span class="lbl">رمز الحساب</span> : <span class="mono">${escape(account.code || "—")}</span></span>
+        <span><span class="lbl">مستوى الحساب</span> : ${escape(account.level != null ? String(account.level) : "—")}</span>
+      </div>
+    </div>
+    <!-- Company header (logo + company info + dates), now sitting below the
+         party banner. -->
     <div class="co-header">
       <div class="co-side right">
         <div class="name">${escape(company?.nameAr || "—")}</div>
@@ -1176,19 +1207,6 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
         <div class="doc-title">${escape(title)}</div>
         <div class="date-range">${escape(from)} ← ${escape(to)}</div>
         ${branchName ? `<div class="date-range" style="margin-top:1px;">${escape(branchName)}</div>` : ""}
-      </div>
-      <!-- Statemented-party identification card (LEFT column in RTL — last
-           in DOM). Compact: name + code + Latin name + level. The from/to
-           dates moved into the center column above. -->
-      <div class="co-side party">
-        <div class="name">
-          ${escape(account.partyNameAr || account.partyNameEn || "—")}
-          ${account.partyNameAr && account.partyNameEn
-            ? `<span class="name-latin" dir="ltr">${escape(account.partyNameEn)}</span>`
-            : ""}
-        </div>
-        <div class="row"><span class="lbl">رمز الحساب</span> : <span class="mono">${escape(account.code || "—")}</span></div>
-        <div class="row"><span class="lbl">مستوى الحساب</span> : ${escape(account.level != null ? String(account.level) : "—")}</div>
       </div>
     </div>
 
