@@ -916,7 +916,12 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     debit:       vc.debit       !== false,
     credit:      vc.credit      !== false,
     balance:     vc.balance     !== false,
-    description: vc.description !== false,
+    // "الشرح" column removed from PDF print per user request — it
+    // duplicates "نوع الوثيقة" for most rows and wastes valuable
+    // horizontal space on the printout. The on-screen grid still shows
+    // it (controlled by the column chooser), only the printed PDF
+    // hardcodes it off.
+    description: false,
   };
   const leadingSpan = (v.docType ? 1 : 0) + (v.date ? 1 : 0) + (v.docNumber ? 1 : 0) + (v.type ? 1 : 0);
   const colCount = leadingSpan + (v.debit ? 1 : 0) + (v.credit ? 1 : 0) + (v.balance ? 1 : 0) + (v.description ? 1 : 0);
