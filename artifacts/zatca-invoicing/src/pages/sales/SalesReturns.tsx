@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useAutoFocusOnMount } from "@/hooks/useAutoFocusOnMount";
 import { useEnterNavContainer } from "@/lib/enterNav";
+import { validateInvoiceLines } from "@/lib/lineValidation";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -942,20 +943,11 @@ export default function SalesReturns() {
       });
       return;
     }
-    // Per-line validation: every line must have an item, qty>0, and a main unit.
-    // Mirrors the server-side gate so the user sees the error instantly.
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
-      if (!l.itemId) {
-        toast({ title: `السطر ${i + 1}: الصنف مطلوب`, variant: "destructive" }); return;
-      }
-      const q = Number(l.qty);
-      if (!Number.isFinite(q) || q <= 0) {
-        toast({ title: `السطر ${i + 1}: الكمية مطلوبة وأكبر من صفر`, variant: "destructive" }); return;
-      }
-      if (!l.unitId) {
-        toast({ title: `السطر ${i + 1}: يجب اختيار الوحدة الرئيسية`, variant: "destructive" }); return;
-      }
+    // Per-line gate: item name + unit + qty + sale price required on every row.
+    const lineCheck = validateInvoiceLines(lines);
+    if (!lineCheck.ok) {
+      toast({ title: lineCheck.title, description: lineCheck.description, variant: "destructive" });
+      return;
     }
     saveMut.mutate({
       ...form,

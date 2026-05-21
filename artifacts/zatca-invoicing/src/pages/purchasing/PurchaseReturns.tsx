@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useEnterNavContainer } from "@/lib/enterNav";
+import { validateInvoiceLines } from "@/lib/lineValidation";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -689,6 +690,12 @@ export default function PurchaseReturns() {
         description: `الحقول التالية مطلوبة: ${missing.join("، ")}`,
         variant: "destructive",
       });
+      return;
+    }
+    // Per-line gate: item name + unit + qty + price required on every row.
+    const lineCheck = validateInvoiceLines(lines);
+    if (!lineCheck.ok) {
+      toast({ title: lineCheck.title, description: lineCheck.description, variant: "destructive" });
       return;
     }
     saveMut.mutate({

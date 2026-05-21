@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useRegisterScreenActions, type ScreenActionsRegistration } from "@/contexts/ScreenActionsContext";
 import { useEnterNavContainer } from "@/lib/enterNav";
+import { validateInvoiceLines } from "@/lib/lineValidation";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useAutoFocusOnMount } from "@/hooks/useAutoFocusOnMount";
 import { useRoute, useLocation } from "wouter";
@@ -1215,6 +1216,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         description: "يجب اختيار العميل قبل الحفظ",
         variant: "destructive",
       });
+      return;
+    }
+    // Per-line gate: item name + unit + qty + sale price must be filled
+    // on every populated row. Skips completely empty rows. Mirrors the
+    // server-side gate so the user sees the failure instantly.
+    const lineCheck = validateInvoiceLines(lines);
+    if (!lineCheck.ok) {
+      toast({ title: lineCheck.title, description: lineCheck.description, variant: "destructive" });
       return;
     }
     const base: any = {
