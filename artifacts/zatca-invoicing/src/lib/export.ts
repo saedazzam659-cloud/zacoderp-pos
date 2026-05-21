@@ -909,19 +909,19 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
   } = opts;
   const vc = opts.visibleCols ?? {};
   const v = {
-    docType:     vc.docType     !== false,
+    // "نوع الوثيقة" column removed from PDF print per user request — its
+    // values (e.g. "فاتورة مبيعات آجلة") duplicate "الشرح" for most rows
+    // and waste horizontal space. The on-screen grid still shows it
+    // (controlled by the column chooser); only the printed PDF hardcodes
+    // it off.
+    docType:     false,
     date:        vc.date        !== false,
     docNumber:   vc.docNumber   !== false,
     type:        vc.type        !== false,
     debit:       vc.debit       !== false,
     credit:      vc.credit      !== false,
     balance:     vc.balance     !== false,
-    // "الشرح" column removed from PDF print per user request — it
-    // duplicates "نوع الوثيقة" for most rows and wastes valuable
-    // horizontal space on the printout. The on-screen grid still shows
-    // it (controlled by the column chooser), only the printed PDF
-    // hardcodes it off.
-    description: false,
+    description: vc.description !== false,
   };
   const leadingSpan = (v.docType ? 1 : 0) + (v.date ? 1 : 0) + (v.docNumber ? 1 : 0) + (v.type ? 1 : 0);
   const colCount = leadingSpan + (v.debit ? 1 : 0) + (v.credit ? 1 : 0) + (v.balance ? 1 : 0) + (v.description ? 1 : 0);
