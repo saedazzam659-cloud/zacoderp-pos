@@ -1027,8 +1027,8 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       direction: rtl;
       /* Pin to the page's LEFT edge (mirroring the company block on the
          right) so this card occupies the empty top-left corner the user
-         flagged. `direction:rtl` keeps the Arabic reading order natural;
-         `text-align:left` just shifts the lines to hug the left margin. */
+         flagged. direction:rtl keeps the Arabic reading order natural;
+         text-align:left just shifts the lines to hug the left margin. */
       text-align: left;
       border: none;
       background: transparent;
