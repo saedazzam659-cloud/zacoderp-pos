@@ -298,16 +298,28 @@ function customerBlock(cu: any) {
 }
 
 function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
-  const showDisc = lines.some(l => (Number(l.discount) || 0) > 0);
+  // Discount column appears when ANY line has either a percentage discount
+  // (`discount`) OR a value-based discount (`discountAmount`). Previously
+  // only the % path was checked, so amount-only discounts were hidden in
+  // the printout even though they affected totals.
+  const showDisc = lines.some(l =>
+    (Number(l.discount) || 0) > 0 || (Number(l.discountAmount) || 0) > 0
+  );
   // Only render the "مجاني" column when at least one line has free qty —
   // keeps the printed table clean for invoices that don't use the feature.
   const showFree = lines.some(l => (Number(l.freeQty) || 0) > 0);
   const rows = lines.map((l, i) => {
-    const disc = Math.max(0, Math.min(100, Number(l.discount) || 0));
-    const sub  = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - disc / 100);
+    const discPct = Math.max(0, Math.min(100, Number(l.discount) || 0));
+    const discAmt = Math.max(0, Number(l.discountAmount) || 0);
+    const sub  = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - discPct / 100) - discAmt;
     const vat  = sub * ((Number(l.vatRate) || 0) / 100);
     const tot  = sub + vat;
     const freeQ = Number(l.freeQty) || 0;
+    // Cell label: prefer "X%" when a percentage was used, otherwise the
+    // SAR amount. If both are present (rare) show the % since it's more
+    // informative for the buyer; the SAR impact is still reflected in the
+    // line total and totals footer.
+    const discCell = discPct > 0 ? `${discPct}%` : (discAmt > 0 ? fmt(discAmt) : "—");
     return `
       <tr style="${i % 2 === 0 ? rowEvenStyle : ""}">
         <td>${i + 1}</td>
@@ -316,7 +328,7 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
         ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
         <td>${l.unit ?? "—"}</td>
         <td class="mono">${fmt(l.unitPrice)}</td>
-        ${showDisc ? `<td class="mono" style="color:#b91c1c;">${disc}%</td>` : ""}
+        ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discCell}</td>` : ""}
         <td class="mono">${l.vatRate ?? 15}%</td>
         <td class="mono">${fmt(vat)}</td>
         <td class="mono" style="font-weight:600;">${fmt(tot)}</td>
@@ -333,7 +345,7 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
           ${showFree ? `<th style="color:#b45309;">مجاني</th>` : ""}
           <th>الوحدة</th>
           <th>سعر الوحدة</th>
-          ${showDisc ? `<th>خصم%</th>` : ""}
+          ${showDisc ? `<th>الخصم</th>` : ""}
           <th>الضريبة</th>
           <th>قيمة الضريبة</th>
           <th>الإجمالي</th>
@@ -1664,9 +1676,15 @@ function template14(d: PrintData): string {
   return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${titleAr} — ${docNo}</title>
   ${baseStyles("#0f172a")}
   <style>
+    /* "النموذج الأصلي" — zero page margin: data should stretch to the full
+       printable area of the sheet. Overrides the default A4 margin from
+       baseStyles() (12mm 14mm). A tiny inner padding keeps text from
+       touching the very edge of the paper but is well under what a normal
+       printer's non-printable area allows. */
+    @page { size: A4; margin: 0; }
     :root { --ink:#0f172a; --line:#e5e7eb; --soft:#f8fafc; --gold:#b88a2a; --gold2:#e5c277; }
-    body { padding: 0; color: var(--ink); }
-    .sheet { padding: 8mm 6mm; }
+    body { padding: 0; margin: 0; color: var(--ink); }
+    .sheet { padding: 4mm 4mm; }
 
     /* ── 3-column header ───────────────────────────────────────────── */
     .hdr { display:grid; grid-template-columns: 1fr 1.1fr 1fr; gap:12px; align-items:stretch; margin-bottom:14px; }
@@ -1796,7 +1814,7 @@ function template14(d: PrintData): string {
         ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
       ${acctCode ? `<div class="row"><b>كود الحساب:</b><span class="mono">${acctCode}</span></div>` : ""}
       ${customer?.phone ? `<div class="row"><b>الهاتف:</b><span class="mono">${customer.phone}</span></div>` : ""}
-      ${bldgNo ? `<div class="row"><b>رقم المبنى:</b><span class="mono">${bldgNo}</span></div>` : ""}
+      ${bldgNo ? `<div class="row"><b>رقم العنوان:</b><span class="mono">${bldgNo}</span></div>` : ""}
     </div>
   </div>
 
