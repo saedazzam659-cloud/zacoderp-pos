@@ -854,6 +854,13 @@ export interface StatementPdfAccount {
   nameEn?: string | null;
   legalName?: string | null;
   level?: string | number | null;
+  /** The party's (customer/supplier) own Arabic name — the headline of
+   *  the identification card. Distinct from `nameAr` which is the linked
+   *  GL account's Arabic name (e.g. "العملاء - محليون"). */
+  partyNameAr?: string | null;
+  /** The party's (customer/supplier) own English / Latin name —
+   *  rendered small next to the Arabic name. */
+  partyNameEn?: string | null;
 }
 
 /** Column-visibility map mirroring the on-screen chooser. All 7 keys are
@@ -1019,7 +1026,8 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       border-radius: 0;
     }
     .co-side { font-size: 8.5pt; line-height: 1.35; color: #475569; }
-    .co-side .name { font-size: 10.5pt; font-weight: 700; color: #0f172a; margin-bottom: 1px; }
+    .co-side .name { font-size: 10.5pt; font-weight: 700; color: #0f172a; margin-bottom: 2px; }
+    .co-side .name-latin { font-size: 8.5pt; font-weight: 500; color: #64748b; margin-inline-start: 6px; }
     .co-side .row { white-space: nowrap; }
     .co-side .lbl { color: #94a3b8; }
     .co-side.right { text-align: right; }
@@ -1173,10 +1181,14 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
            in DOM). Compact: name + code + Latin name + level. The from/to
            dates moved into the center column above. -->
       <div class="co-side party">
-        <div class="name">${escape(account.nameAr || account.nameEn || "—")}</div>
-        <div class="row"><span class="lbl">${escape(mode === "supplier" ? "اسم المورد" : "اسم العميل")}</span></div>
+        <div class="name">
+          ${escape(account.partyNameAr || account.partyNameEn || "—")}
+          ${account.partyNameAr && account.partyNameEn
+            ? `<span class="name-latin" dir="ltr">${escape(account.partyNameEn)}</span>`
+            : ""}
+        </div>
+        <div class="row"><span class="lbl">${escape(mode === "supplier" ? "اسم المورد" : "اسم العميل")}</span> : ${escape(account.nameAr || account.nameEn || "—")}</div>
         <div class="row"><span class="lbl">رمز الحساب</span> : <span class="mono">${escape(account.code || "—")}</span></div>
-        ${(account.legalName || account.nameEn) ? `<div class="row"><span class="lbl">الاسم اللاتيني</span> : <span dir="ltr">${escape(account.legalName || account.nameEn)}</span></div>` : ""}
         <div class="row"><span class="lbl">مستوى الحساب</span> : ${escape(account.level != null ? String(account.level) : "—")}</div>
       </div>
     </div>
