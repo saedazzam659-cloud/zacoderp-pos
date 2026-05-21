@@ -326,8 +326,9 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
     const vat  = sub * ((Number(l.vatRate) || 0) / 100);
     const tot  = sub + vat;
     const freeQ = Number(l.freeQty) || 0;
-    // Cell label: show "X%" when % is set, else the SAR amount, else "—".
-    const discCell = discPct > 0 ? `${discPct}%` : (rawAmt > 0 ? fmt(rawAmt) : "—");
+    // % cell shows percentage; value cell shows the SAR amount.
+    const discPctCell = discPct > 0 ? `${discPct}%` : "—";
+    const discValCell = discAmtEff > 0 ? fmt(discAmtEff) : "—";
     return `
       <tr style="${i % 2 === 0 ? rowEvenStyle : ""}">
         <td>${i + 1}</td>
@@ -336,7 +337,8 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
         ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
         <td>${l.unit ?? "—"}</td>
         <td class="mono">${fmt(l.unitPrice)}</td>
-        ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discCell}</td>` : ""}
+        ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discPctCell}</td>` : ""}
+        ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discValCell}</td>` : ""}
         <td class="mono">${l.vatRate ?? 15}%</td>
         <td class="mono">${fmt(vat)}</td>
         <td class="mono" style="font-weight:600;">${fmt(tot)}</td>
@@ -354,6 +356,7 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
           <th>الوحدة</th>
           <th>سعر الوحدة</th>
           ${showDisc ? `<th>الخصم</th>` : ""}
+          ${showDisc ? `<th>قيمة الخصم</th>` : ""}
           <th>الضريبة</th>
           <th>قيمة الضريبة</th>
           <th>الإجمالي</th>
@@ -1816,8 +1819,6 @@ function template14(d: PrintData): string {
         ${isQuot && doc.validUntil ? `<span class="pill">صالح حتى <b>${doc.validUntil}</b></span>` : ""}
         ${isReturn && doc.invoiceId ? `<span class="pill">مرجع: <b>${doc.invoiceId}</b></span>` : ""}
       </div>
-      <!-- اسم العميل يمين المربع الأحمر -->
-      <div>العميل: ${customer?.nameAr ?? customer?.nameEn ?? doc.buyerName ?? "—"}</div>
     </div>
 
     <!-- CUSTOMER (left side in RTL — last in DOM) -->
