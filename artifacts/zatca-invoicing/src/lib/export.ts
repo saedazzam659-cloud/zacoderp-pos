@@ -1068,13 +1068,13 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     /* Customer strip — sits on the RIGHT (in RTL the start side) directly
        under the black rule. Simple, label-on-the-side, no card frame. */
     .party-strip {
-      padding: 2mm 2mm 3mm;
+      padding: 3mm 2mm 4mm;
       text-align: right; /* right side in RTL */
     }
-    .party-strip .party-line {
-      font-size: 9pt; color: #334155;
-      display: inline-flex; gap: 4mm; flex-wrap: wrap;
-      align-items: baseline;
+    /* Each piece on its own line, stacked vertically — per user request */
+    .party-strip .party-row {
+      font-size: 9.5pt; color: #334155;
+      line-height: 1.7;
     }
     .party-strip .party-name {
       font-size: 11pt; font-weight: 800; color: #0f172a;
@@ -1082,9 +1082,8 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     .party-strip .party-name-latin {
       font-size: 9pt; color: #64748b; margin-inline-start: 6px;
     }
-    .party-strip .party-meta { color: #475569; }
-    .party-strip .party-meta .lbl { color: #94a3b8; }
-    .party-strip .party-meta .mono { font-family: 'Courier New', monospace; }
+    .party-strip .lbl { color: #94a3b8; }
+    .party-strip .mono { font-family: 'Courier New', monospace; }
 
     /* ── Outer layout table (one table = whole page) ─────────────────── */
     table.page-frame {
@@ -1180,19 +1179,20 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       }
     }
     @page {
-      /* Generous margins so the repeated header/footer have predictable
-         room on every page and the data table doesn't crash into them.
-         Chrome/Edge still inject their own URL/date strip — the user can
-         disable that from the print dialog's "Headers and footers" toggle. */
-      margin: 10mm 8mm 12mm 8mm;
+      /* TOP & BOTTOM margins = 0 → Chrome/Edge can no longer draw their
+         auto-injected URL/date strip (the red box in the user's screenshot)
+         because there is literally no margin area for it. We compensate by
+         adding internal padding to .page-header and .page-footer so the
+         content still has breathing room from the paper edges. Side
+         margins kept at 8mm for normal print readability. */
+      margin: 0 8mm 0 8mm;
       size: A4 portrait;
-      @bottom-center {
-        content: "صفحة " counter(page) " من " counter(pages);
-        font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
-        font-size: 8.5pt;
-        color: #64748b;
-      }
     }
+    /* Internal padding replaces the @page top/bottom margins we zeroed
+       out above. This keeps the visual breathing room without giving the
+       browser space to inject its own header/footer strip. */
+    .page-header { padding-top: 12mm; }
+    .page-footer { padding-bottom: 10mm; }
   </style>
 </head>
 <body>
@@ -1228,17 +1228,28 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
           </div>
           <hr class="black-rule" />
 
-          <!-- Customer/supplier strip — sits on the RIGHT under the rule,
-               simple inline layout (no card frame). -->
+          <!-- Customer/supplier strip — sits on the RIGHT under the rule.
+               Each field on its OWN line, stacked vertically (user request). -->
           <div class="party-strip">
-            <div class="party-line">
-              <span>
-                <span class="lbl">${mode === "supplier" ? "اسم المورد" : "اسم العميل"}:</span>
-                <span class="party-name">${escape(account.partyNameAr || account.nameAr || account.nameEn || "—")}</span>
-                ${account.partyNameEn ? `<span class="party-name-latin" dir="ltr">(${escape(account.partyNameEn)})</span>` : ""}
-              </span>
-              <span class="party-meta"><span class="lbl">رمز الحساب:</span> <span class="mono">${escape(account.code || "—")}</span></span>
-              <span class="party-meta"><span class="lbl">مستوى الحساب:</span> ${escape(account.level != null ? String(account.level) : "—")}</span>
+            <div class="party-row">
+              <span class="lbl">${mode === "supplier" ? "اسم المورد" : "اسم العميل"}:</span>
+              <span class="party-name">${escape(account.partyNameAr || account.nameAr || account.nameEn || "—")}</span>
+              ${account.partyNameEn ? `<span class="party-name-latin" dir="ltr">(${escape(account.partyNameEn)})</span>` : ""}
+            </div>
+            <div class="party-row">
+              <span class="lbl">رمز الحساب:</span>
+              <span class="mono">${escape(account.code || "—")}</span>
+            </div>
+            <div class="party-row">
+              <span class="lbl">مستوى الحساب:</span>
+              ${escape(account.level != null ? String(account.level) : "—")}
+            </div>
+            <div class="party-row">
+              <span class="lbl">الفترة:</span>
+              <span class="mono">${escape(from)}</span>
+              <span class="lbl">←</span>
+              <span class="mono">${escape(to)}</span>
+              ${branchName ? `<span class="lbl">— الفرع:</span> ${escape(branchName)}` : ""}
             </div>
           </div>
         </div>
