@@ -419,12 +419,13 @@ router.get("/customer-statement", async (req, res) => {
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, receiptVouchersTable.journalEntryId))
       .where(and(...recConds));
 
-    // Compose the "البيان"/"الشرح" description: start with the generic label
-    // and append the user-typed note from the source document when present
-    // (separated by " — "), so the statement reflects whatever the data-entry
-    // user wrote on the originating invoice / return / receipt voucher.
-    const withNote = (base: string, n?: string | null) =>
-      n && String(n).trim() ? `${base} — ${String(n).trim()}` : base;
+    // Compose the "البيان"/"الشرح" description: show ONLY the user-typed
+    // note from the source document. The generic label (e.g. "فاتورة مبيعات
+    // آجلة") was removed per user request — it duplicated the "نوع الوثيقة"
+    // column and cluttered every row. When the user did not write a note,
+    // the cell falls back to an em-dash so the column stays visually clean.
+    const withNote = (_base: string, n?: string | null) =>
+      n && String(n).trim() ? String(n).trim() : "—";
 
     type Line = { id: number; date: string; type: string; docNumber: string | null; journalEntryId: number | null; journalEntryNumber: string | null; debit: number; credit: number; description: string };
     const lines: Line[] = [

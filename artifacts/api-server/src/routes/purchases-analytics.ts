@@ -458,8 +458,11 @@ router.get("/supplier-statement", async (req, res) => {
     // and append the user-typed note from the source document when present
     // so the statement reflects whatever was written on the originating
     // purchase invoice / return / payment voucher.
-    const withNote = (base: string, n?: string | null) =>
-      n && String(n).trim() ? `${base} — ${String(n).trim()}` : base;
+    // Show ONLY the user-typed note in "الشرح" (the generic label was
+    // dropped per user request — it duplicated "نوع الوثيقة"). Falls back
+    // to em-dash when the source document has no note.
+    const withNote = (_base: string, n?: string | null) =>
+      n && String(n).trim() ? String(n).trim() : "—";
 
     // For supplier statements, invoices increase the payable (credit column),
     // returns and payments decrease it (debit column). Direct JE lines carry
