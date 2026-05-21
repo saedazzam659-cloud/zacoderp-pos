@@ -854,6 +854,11 @@ export interface StatementPdfAccount {
   nameEn?: string | null;
   legalName?: string | null;
   level?: string | number | null;
+  /** Party's Arabic name (customer/supplier) — replaces the linked GL
+   *  account name as the headline of the identification card. */
+  partyNameAr?: string | null;
+  /** Party's Latin / English name — rendered beneath the Arabic name. */
+  partyNameEn?: string | null;
 }
 
 /** Column-visibility map mirroring the on-screen chooser. All 7 keys are
@@ -1020,6 +1025,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     }
     .co-side { font-size: 8.5pt; line-height: 1.35; color: #475569; }
     .co-side .name { font-size: 10.5pt; font-weight: 700; color: #0f172a; margin-bottom: 1px; }
+    .co-side .name-latin { font-size: 8.5pt; font-weight: 500; color: #64748b; margin-bottom: 2px; }
     .co-side .row { white-space: nowrap; }
     .co-side .lbl { color: #94a3b8; }
     .co-side.right { text-align: right; }
@@ -1173,7 +1179,8 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
            in DOM). Shows the GL account linked to the customer/supplier:
            name + code + level. -->
       <div class="co-side party">
-        <div class="name">${escape(account.nameAr || account.nameEn || "—")}</div>
+        <div class="name">${escape(account.partyNameAr || account.nameAr || account.nameEn || "—")}</div>
+        ${account.partyNameEn ? `<div class="name-latin" dir="ltr">${escape(account.partyNameEn)}</div>` : ""}
         <div class="row"><span class="lbl">رمز الحساب</span> : <span class="mono">${escape(account.code || "—")}</span></div>
         <div class="row"><span class="lbl">مستوى الحساب</span> : ${escape(account.level != null ? String(account.level) : "—")}</div>
       </div>

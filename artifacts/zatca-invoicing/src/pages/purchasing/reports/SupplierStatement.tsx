@@ -96,11 +96,13 @@ export default function SupplierStatement() {
     },
   });
   const acctView = {
-    code:      linkedAccount?.code ?? null,
-    nameAr:    linkedAccount?.nameAr ?? null,
-    nameEn:    linkedAccount?.nameEn ?? null,
-    legalName: supplier?.nameEn ?? null,
-    level:     linkedAccount?.level ?? null,
+    code:        linkedAccount?.code ?? null,
+    nameAr:      linkedAccount?.nameAr ?? null,
+    nameEn:      linkedAccount?.nameEn ?? null,
+    legalName:   supplier?.nameEn ?? null,
+    level:       linkedAccount?.level ?? null,
+    partyNameAr: supplier?.nameAr ?? null,
+    partyNameEn: supplier?.nameEn ?? null,
   };
 
   // Toggle: include carried-forward opening balance, or show period-only
