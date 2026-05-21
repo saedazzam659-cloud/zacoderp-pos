@@ -82,13 +82,11 @@ export default function CustomerStatement() {
     },
   });
   const acctView = {
-    code:        linkedAccount?.code ?? null,
-    nameAr:      linkedAccount?.nameAr ?? null,
-    nameEn:      linkedAccount?.nameEn ?? null,
-    legalName:   customer?.nameEn ?? null,
-    level:       linkedAccount?.level ?? null,
-    partyNameAr: customer?.nameAr ?? null,
-    partyNameEn: customer?.nameEn ?? null,
+    code:      linkedAccount?.code ?? null,
+    nameAr:    linkedAccount?.nameAr ?? null,
+    nameEn:    linkedAccount?.nameEn ?? null,
+    legalName: customer?.nameEn ?? null,
+    level:     linkedAccount?.level ?? null,
   };
 
   const TYPE_LABEL: Record<string, string> = {
