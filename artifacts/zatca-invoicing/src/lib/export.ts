@@ -1003,25 +1003,22 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
        the page. */
     tbody td.desc { min-width: 0; }
 
-    /* ── Compact header strip ──────────────────────────────────────────
-       One single row: company info (right, RTL) · centered logo + title ·
-       customer/supplier info (left). No card frame, no gradient — just a
-       thin bottom rule so the table sits directly underneath. */
-    .co-header {
+    /* ── Page header (REPEATS on every printed page) ───────────────────
+       The browser repeats whatever is in <thead> on every printed page
+       when a long <table> breaks across pages. We exploit that by
+       wrapping the entire layout in a single outer table whose <thead>
+       carries the company block / black rule / customer strip / column
+       headers, and whose <tfoot> carries the audit footer. That gives
+       the user "fixed header & footer on every page" without any
+       fragile position:fixed tricks. */
+    .page-header {
+      padding: 6mm 2mm 3mm; /* breathing room at the top of every page */
+    }
+    .page-header .co-row {
       display: grid;
       grid-template-columns: 1fr auto 1fr;
       gap: 10px;
-      /* Top-align the three columns so the customer block (left in RTL)
-         sits at the same vertical level as the company block (right) —
-         otherwise the shorter customer block floats down beside the taller
-         centered logo column and leaves the page top-left corner empty. */
       align-items: start;
-      padding: 4px 4px 6px;
-      margin: 0 0 4px;
-      border: none;
-      border-bottom: 1px solid #cbd5e1;
-      background: #fff;
-      border-radius: 0;
     }
     .co-side { font-size: 8.5pt; line-height: 1.35; color: #475569; }
     .co-side .name { font-size: 10.5pt; font-weight: 700; color: #0f172a; margin-bottom: 1px; }
@@ -1029,53 +1026,92 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     .co-side .row { white-space: nowrap; }
     .co-side .lbl { color: #94a3b8; }
     .co-side.right { text-align: right; }
-    .co-side.party {
-      direction: rtl;
-      /* Pin to the page's LEFT edge (mirroring the company block on the
-         right) so this card occupies the empty top-left corner the user
-         flagged. direction:rtl keeps the Arabic reading order natural;
-         text-align:left just shifts the lines to hug the left margin. */
-      text-align: left;
-      border: none;
-      background: transparent;
-      border-radius: 0;
-      padding: 0;
-    }
     .co-side .mono { font-family: 'Courier New', monospace; }
-    /* Center column: logo + title + date range stacked tightly */
+    /* Center column: logo + (NOTE: title moved BELOW the company row per
+       user request — see .title-bar) */
     .co-center { text-align: center; }
     .co-logo {
-      width: 52px; height: 52px;
+      width: 56px; height: 56px;
       border: 1px solid #e2e8f0; border-radius: 50%;
       background: #fff;
       display: inline-flex; align-items: center; justify-content: center;
       overflow: hidden;
-      margin: 0 auto 2px;
+      margin: 0 auto;
     }
     .co-logo img { max-width: 90%; max-height: 90%; object-fit: contain; }
     .logo-fallback { font-weight: 700; color: #94a3b8; font-size: 11pt; }
-    .doc-title {
-      font-size: 11.5pt; font-weight: 700; color: #0f172a;
-      letter-spacing: .3px;
-      margin: 1px 0;
+
+    /* "كشف حساب" title — pushed DOWN below the company row, centered,
+       followed by a SOLID BLACK horizontal rule that spans the full
+       printable width (user-requested visual separator). */
+    .title-bar {
+      margin-top: 4mm;
+      text-align: center;
     }
-    .date-range {
+    .title-bar .doc-title {
+      font-size: 13pt; font-weight: 800; color: #000;
+      letter-spacing: .5px;
+      margin-bottom: 3mm;
+    }
+    .title-bar .date-range {
       font-size: 8.5pt; color: #475569;
       font-family: 'Courier New', monospace;
+      margin-top: 1mm;
+    }
+    .black-rule {
+      height: 0;
+      border: 0;
+      border-top: 1.5pt solid #000;
+      margin: 0;
     }
 
-    /* ── Table — slim, single-page-friendly ────────────────────────── */
-    table {
+    /* Customer strip — sits on the RIGHT (in RTL the start side) directly
+       under the black rule. Simple, label-on-the-side, no card frame. */
+    .party-strip {
+      padding: 2mm 2mm 3mm;
+      text-align: right; /* right side in RTL */
+    }
+    .party-strip .party-line {
+      font-size: 9pt; color: #334155;
+      display: inline-flex; gap: 4mm; flex-wrap: wrap;
+      align-items: baseline;
+    }
+    .party-strip .party-name {
+      font-size: 11pt; font-weight: 800; color: #0f172a;
+    }
+    .party-strip .party-name-latin {
+      font-size: 9pt; color: #64748b; margin-inline-start: 6px;
+    }
+    .party-strip .party-meta { color: #475569; }
+    .party-strip .party-meta .lbl { color: #94a3b8; }
+    .party-strip .party-meta .mono { font-family: 'Courier New', monospace; }
+
+    /* ── Outer layout table (one table = whole page) ─────────────────── */
+    table.page-frame {
+      width: 100%;
+      border-collapse: collapse;
+      border: 0;
+    }
+    table.page-frame > thead { display: table-header-group; }  /* repeat */
+    table.page-frame > tfoot { display: table-footer-group; }  /* repeat */
+    table.page-frame > thead > tr > td,
+    table.page-frame > tfoot > tr > td {
+      padding: 0;
+      border: 0;
+    }
+
+    /* ── Inner data table ──────────────────────────────────────────── */
+    table.data {
       width: 100%;
       border-collapse: collapse;
       font-size: 9pt;
       border: 1px solid #cbd5e1;
       border-radius: 0;
       overflow: hidden;
-      margin-top: 4px;
+      margin-top: 2mm;
     }
-    thead tr { background: #f1f5f9; color: #334155; }
-    thead th {
+    table.data thead tr { background: #f1f5f9; color: #334155; }
+    table.data thead th {
       padding: 4px 5px;
       font-weight: 700;
       border-bottom: 1px solid #cbd5e1;
@@ -1083,35 +1119,35 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       white-space: nowrap;
       font-size: 9pt;
     }
-    tbody td {
+    table.data tbody td {
       padding: 3px 5px;
       border-top: 1px solid #e2e8f0;
       vertical-align: middle;
       text-align: start;
       line-height: 1.25;
     }
-    tbody td.num { text-align: center; }
-    tbody td.mono { font-family: 'Courier New', monospace; font-variant-numeric: tabular-nums; }
-    tbody td.debit { color: #0369a1; font-weight: 600; }
-    tbody td.credit { color: #047857; font-weight: 600; }
-    tbody td.muted { color: #cbd5e1; }
-    tbody td.strong { font-weight: 700; color: #0f172a; }
-    tr.even { background: #f8fafc; }
-    tr.odd  { background: #ffffff; }
+    table.data tbody td.num { text-align: center; }
+    table.data tbody td.mono { font-family: 'Courier New', monospace; font-variant-numeric: tabular-nums; }
+    table.data tbody td.debit { color: #0369a1; font-weight: 600; }
+    table.data tbody td.credit { color: #047857; font-weight: 600; }
+    table.data tbody td.muted { color: #cbd5e1; }
+    table.data tbody td.strong { font-weight: 700; color: #0f172a; }
+    table.data tr.even { background: #f8fafc; }
+    table.data tr.odd  { background: #ffffff; }
 
     /* Opening row */
-    tbody tr.opening { background: #fffbeb; }
-    tbody tr.opening td.lbl { font-style: italic; color: #64748b; }
+    table.data tbody tr.opening { background: #fffbeb; }
+    table.data tbody tr.opening td.lbl { font-style: italic; color: #64748b; }
 
     /* Totals footer row */
-    tbody tr.totals {
+    table.data tbody tr.totals {
       background: #f1f5f9;
       font-weight: 700;
       color: #0f172a;
       page-break-inside: avoid;
       break-inside: avoid;
     }
-    tbody tr.totals td {
+    table.data tbody tr.totals td {
       border-top: 2px solid #94a3b8;
       padding: 5px 5px;
       font-size: 9.5pt;
@@ -1119,32 +1155,36 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
 
     .empty { text-align: center; padding: 18px; color: #94a3b8; }
 
-    .print-meta {
-      margin-top: 6px;
-      /* Left-align (LTR direction) the audit footer per user request — the
-         print date and the printing user's name sit on the LEFT side of the
-         page even on this RTL document. */
-      direction: ltr;
-      text-align: left;
+    /* ── Page footer (REPEATS on every printed page) ─────────────────
+       Print date on the LEFT, username on the RIGHT, with a thin top
+       rule so it reads as a real footer band. */
+    .page-footer {
+      padding: 3mm 2mm 4mm;
+      margin-top: 2mm;
+      border-top: 1px solid #cbd5e1;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       font-size: 8.5pt;
-      color: #64748b;
+      color: #475569;
     }
-    .print-meta > div { line-height: 1.5; }
+    .page-footer .ftr-date { direction: ltr; }
+    .page-footer .ftr-user { font-weight: 600; color: #0f172a; }
 
     @media print {
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      .co-header, thead tr, .title-pill, tbody tr.opening, tbody tr.totals, tr.even {
+      .page-header, .party-strip, table.data thead tr,
+      table.data tbody tr.opening, table.data tbody tr.totals,
+      table.data tr.even, .page-footer, .black-rule {
         -webkit-print-color-adjust: exact; print-color-adjust: exact;
       }
-      thead { display: table-header-group; }
     }
     @page {
-      /* Slim margins push the header to the very top edge of the printable
-         area and reclaim vertical room for more rows per page. Chrome/Edge
-         still inject their own URL/date strip above this — the user can
-         disable that from Chrome's print dialog under
-         "More settings → Headers and footers". */
-      margin: 5mm 6mm 9mm 6mm;
+      /* Generous margins so the repeated header/footer have predictable
+         room on every page and the data table doesn't crash into them.
+         Chrome/Edge still inject their own URL/date strip — the user can
+         disable that from the print dialog's "Headers and footers" toggle. */
+      margin: 10mm 8mm 12mm 8mm;
       size: A4 portrait;
       @bottom-center {
         content: "صفحة " counter(page) " من " counter(pages);
@@ -1156,71 +1196,98 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
   </style>
 </head>
 <body>
-  <div class="doc">
-    <!-- Company header -->
-    <div class="co-header">
-      <div class="co-side right">
-        <div class="name">${escape(company?.nameAr || "—")}</div>
-        ${company?.crNumber ? `<div class="row"><span class="lbl">س.ت</span> : ${escape(company.crNumber)}</div>` : ""}
-        ${company?.vatNumber ? `<div class="row"><span class="lbl">الرقم الضريبي</span> : ${escape(company.vatNumber)}</div>` : ""}
-        ${company?.phone ? `<div class="row"><span class="lbl">الجوال</span> : ${escape(company.phone)}</div>` : ""}
-        ${addressLine ? `<div class="row"><span class="lbl">العنوان</span> : ${escape(addressLine)}</div>` : ""}
-      </div>
-      <!-- Center column: logo, document title, and date range stacked
-           tightly — replaces the old large title-pill block and reclaims
-           the dead space between the header and the table. -->
-      <div class="co-center">
-        <div class="co-logo">${logoHtml}</div>
-        <div class="doc-title">${escape(title)}</div>
-        <div class="date-range">${escape(from)} ← ${escape(to)}</div>
-        ${branchName ? `<div class="date-range" style="margin-top:1px;">${escape(branchName)}</div>` : ""}
-      </div>
-      <!-- Statemented-party identification card (LEFT column in RTL — last
-           in DOM). Shows the GL account linked to the customer/supplier:
-           name + code + level. -->
-      <div class="co-side party">
-        <div class="name">${escape(account.partyNameAr || account.nameAr || account.nameEn || "—")}</div>
-        ${account.partyNameEn ? `<div class="name-latin" dir="ltr">${escape(account.partyNameEn)}</div>` : ""}
-        <div class="row"><span class="lbl">رمز الحساب</span> : <span class="mono">${escape(account.code || "—")}</span></div>
-        <div class="row"><span class="lbl">مستوى الحساب</span> : ${escape(account.level != null ? String(account.level) : "—")}</div>
-      </div>
-    </div>
+  <!-- Outer layout table — its <thead> repeats on every printed page
+       (company info, black rule, customer strip), <tfoot> repeats too
+       (print date + username), and <tbody> carries the data table. -->
+  <table class="page-frame">
+    <thead>
+      <tr><td>
+        <div class="page-header">
+          <!-- Company row: logo center, company info on the right -->
+          <div class="co-row">
+            <div class="co-side right">
+              <div class="name">${escape(company?.nameAr || "—")}</div>
+              ${company?.crNumber ? `<div class="row"><span class="lbl">س.ت</span> : ${escape(company.crNumber)}</div>` : ""}
+              ${company?.vatNumber ? `<div class="row"><span class="lbl">الرقم الضريبي</span> : ${escape(company.vatNumber)}</div>` : ""}
+              ${company?.phone ? `<div class="row"><span class="lbl">الجوال</span> : ${escape(company.phone)}</div>` : ""}
+              ${addressLine ? `<div class="row"><span class="lbl">العنوان</span> : ${escape(addressLine)}</div>` : ""}
+            </div>
+            <div class="co-center">
+              <div class="co-logo">${logoHtml}</div>
+            </div>
+            <!-- Left placeholder column to keep the logo centered. The
+                 customer info now lives BELOW the black rule per user
+                 request, so this side is intentionally empty. -->
+            <div></div>
+          </div>
 
-    <!-- Table -->
-    <table>
-      <thead>
-        <tr>
-          ${v.date        ? `<th>التاريخ</th>` : ""}
-          ${v.docType     ? `<th>نوع الوثيقة</th>` : ""}
-          ${v.docNumber   ? `<th>الرقم</th>` : ""}
-          ${v.type        ? `<th>رقم القيد</th>` : ""}
-          ${v.debit       ? `<th>مدين</th>` : ""}
-          ${v.credit      ? `<th>دائن</th>` : ""}
-          ${v.balance     ? `<th>الرصيد</th>` : ""}
-          ${v.description ? `<th>الشرح</th>` : ""}
-        </tr>
-      </thead>
-      <tbody>
-        <tr class="opening">
-          ${v.date        ? `<td class="mono">${escape(from)}</td>` : ""}
-          ${v.docType     ? `<td class="lbl">رصيد افتتاحي</td>` : ""}
-          ${v.docNumber   ? `<td>—</td>` : ""}
-          ${v.type        ? `<td>—</td>` : ""}
-          ${v.debit       ? `<td class="mono num">${openingDebit  ? escape(fmt(openingDebit))  : "0.00"}</td>` : ""}
-          ${v.credit      ? `<td class="mono num">${openingCredit ? escape(fmt(openingCredit)) : "0.00"}</td>` : ""}
-          ${v.balance     ? `<td class="mono num strong">${escape(fmt(opening))}</td>` : ""}
-          ${v.description ? `<td>—</td>` : ""}
-        </tr>
-        ${lineRows}
-        ${totalsRow}
-      </tbody>
-    </table>
+          <!-- "كشف حساب" title pushed down + solid black rule full width -->
+          <div class="title-bar">
+            <div class="doc-title">${escape(title)}</div>
+            <div class="date-range">${escape(from)} ← ${escape(to)}${branchName ? ` — ${escape(branchName)}` : ""}</div>
+          </div>
+          <hr class="black-rule" />
 
-    <div class="print-meta">
-      <div>تاريخ الطباعة: ${today}</div>
-      ${userName ? `<div>اسم المستخدم: ${escape(userName)}</div>` : ""}
-    </div>
-  </div>
+          <!-- Customer/supplier strip — sits on the RIGHT under the rule,
+               simple inline layout (no card frame). -->
+          <div class="party-strip">
+            <div class="party-line">
+              <span>
+                <span class="lbl">${mode === "supplier" ? "اسم المورد" : "اسم العميل"}:</span>
+                <span class="party-name">${escape(account.partyNameAr || account.nameAr || account.nameEn || "—")}</span>
+                ${account.partyNameEn ? `<span class="party-name-latin" dir="ltr">(${escape(account.partyNameEn)})</span>` : ""}
+              </span>
+              <span class="party-meta"><span class="lbl">رمز الحساب:</span> <span class="mono">${escape(account.code || "—")}</span></span>
+              <span class="party-meta"><span class="lbl">مستوى الحساب:</span> ${escape(account.level != null ? String(account.level) : "—")}</span>
+            </div>
+          </div>
+        </div>
+      </td></tr>
+    </thead>
+
+    <tbody>
+      <tr><td>
+        <!-- Inner data table -->
+        <table class="data">
+          <thead>
+            <tr>
+              ${v.date        ? `<th>التاريخ</th>` : ""}
+              ${v.docType     ? `<th>نوع الوثيقة</th>` : ""}
+              ${v.docNumber   ? `<th>الرقم</th>` : ""}
+              ${v.type        ? `<th>رقم القيد</th>` : ""}
+              ${v.debit       ? `<th>مدين</th>` : ""}
+              ${v.credit      ? `<th>دائن</th>` : ""}
+              ${v.balance     ? `<th>الرصيد</th>` : ""}
+              ${v.description ? `<th>الشرح</th>` : ""}
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="opening">
+              ${v.date        ? `<td class="mono">${escape(from)}</td>` : ""}
+              ${v.docType     ? `<td class="lbl">رصيد افتتاحي</td>` : ""}
+              ${v.docNumber   ? `<td>—</td>` : ""}
+              ${v.type        ? `<td>—</td>` : ""}
+              ${v.debit       ? `<td class="mono num">${openingDebit  ? escape(fmt(openingDebit))  : "0.00"}</td>` : ""}
+              ${v.credit      ? `<td class="mono num">${openingCredit ? escape(fmt(openingCredit)) : "0.00"}</td>` : ""}
+              ${v.balance     ? `<td class="mono num strong">${escape(fmt(opening))}</td>` : ""}
+              ${v.description ? `<td>—</td>` : ""}
+            </tr>
+            ${lineRows}
+            ${totalsRow}
+          </tbody>
+        </table>
+      </td></tr>
+    </tbody>
+
+    <tfoot>
+      <tr><td>
+        <div class="page-footer">
+          <div class="ftr-date">تاريخ الطباعة: ${today}</div>
+          ${userName ? `<div class="ftr-user">اسم المستخدم: ${escape(userName)}</div>` : `<div></div>`}
+        </div>
+      </td></tr>
+    </tfoot>
+  </table>
   <script>
     ${autoPrint ? `window.onload = function(){ setTimeout(function(){ window.print(); }, 600); };` : ""}
   </script>
