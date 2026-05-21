@@ -191,38 +191,39 @@ export default function CustomerStatement() {
           <h1 className="text-2xl font-bold flex items-center gap-2"><FileText className="h-6 w-6 text-primary" />{tr("title")}</h1>
           <p className="text-muted-foreground text-sm mt-1">{tr("subtitle")}</p>
         </div>
+        {/* الأعمدة chooser stays in the top toolbar; تصدير button was
+            moved down (below the summary cards) per user request so the
+            top bar stays clean. */}
         <div className="flex items-center gap-2">
           <StatementColumnChooser value={visibleCols} onChange={setVisibleCols} />
-          <StatementExportButtons
-            mode="customer"
-            company={(user?.company as any) ?? null}
-            account={acctView}
-            from={applied.from}
-            to={applied.to}
-            opening={effectiveOpening}
-            lines={augmented.map(l => ({
-              id: l.id,
-              journalEntryId: l.journalEntryId,
-              date: l.date,
-              docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
-              type: TYPE_LABEL[l.type] ?? l.type,
-              docNumber: l.docNumber,
-            journalEntryNumber: l.journalEntryNumber,
-              description: l.description,
-              debit: l.debit,
-              credit: l.credit,
-              balance: l.balance,
-            }))}
-            totals={totals}
-            closing={closing}
-            filename={`${tr("exportFilename")}-${customerLabel || "customer"}-${applied.from}-${applied.to}`}
-            disabled={!applied.customerId || isLoading}
-            branchName={branchName}
-            visibleCols={visibleCols}
-            userName={user?.username ?? null}
-          />
         </div>
       </div>
+
+      {/* Summary cards — moved UP per user request so the totals are
+          visible at the TOP of the page right after the title, before
+          the filter form. */}
+      {applied.customerId && (
+        <div className={`grid grid-cols-2 ${applied.withOpening ? "md:grid-cols-4" : "md:grid-cols-3"} gap-4`}>
+          {applied.withOpening && (
+            <div className="rounded-xl border bg-card p-4">
+              <p className="text-xs text-muted-foreground">{tr("opening")}</p>
+              <p className={`text-xl font-bold tabular-nums mt-1 ${(data?.opening ?? 0) >= 0 ? "" : "text-emerald-600"}`}>{fmt(data?.opening ?? 0)}</p>
+            </div>
+          )}
+          <div className="rounded-xl border bg-blue-50 border-blue-200 p-4">
+            <p className="text-xs text-blue-700">{tr("totalDebit")}</p>
+            <p className="text-xl font-bold text-blue-700 tabular-nums mt-1">{fmt(totals.debit)}</p>
+          </div>
+          <div className="rounded-xl border bg-emerald-50 border-emerald-200 p-4">
+            <p className="text-xs text-emerald-700">{tr("totalCredit")}</p>
+            <p className="text-xl font-bold text-emerald-700 tabular-nums mt-1">{fmt(totals.credit)}</p>
+          </div>
+          <div className="rounded-xl border bg-primary/5 border-primary/10 p-4">
+            <p className="text-xs text-muted-foreground">{tr("closing")}</p>
+            <p className={`text-xl font-bold tabular-nums mt-1 ${closing >= 0 ? "" : "text-emerald-600"}`}>{fmt(closing)}</p>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="rounded-xl border bg-card p-4">
@@ -275,39 +276,39 @@ export default function CustomerStatement() {
         </div>
       </div>
 
-      {/* Summary */}
-      {applied.customerId && (
-        <div className={`grid grid-cols-2 ${applied.withOpening ? "md:grid-cols-4" : "md:grid-cols-3"} gap-4`}>
-          {applied.withOpening && (
-            <div className="rounded-xl border bg-card p-4">
-              <p className="text-xs text-muted-foreground">{tr("opening")}</p>
-              <p className={`text-xl font-bold tabular-nums mt-1 ${(data?.opening ?? 0) >= 0 ? "" : "text-emerald-600"}`}>{fmt(data?.opening ?? 0)}</p>
-            </div>
-          )}
-          <div className="rounded-xl border bg-blue-50 border-blue-200 p-4">
-            <p className="text-xs text-blue-700">{tr("totalDebit")}</p>
-            <p className="text-xl font-bold text-blue-700 tabular-nums mt-1">{fmt(totals.debit)}</p>
-          </div>
-          <div className="rounded-xl border bg-emerald-50 border-emerald-200 p-4">
-            <p className="text-xs text-emerald-700">{tr("totalCredit")}</p>
-            <p className="text-xl font-bold text-emerald-700 tabular-nums mt-1">{fmt(totals.credit)}</p>
-          </div>
-          <div className="rounded-xl border bg-primary/5 border-primary/10 p-4">
-            <p className="text-xs text-muted-foreground">{tr("closing")}</p>
-            <p className={`text-xl font-bold tabular-nums mt-1 ${closing >= 0 ? "" : "text-emerald-600"}`}>{fmt(closing)}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Column-visibility chooser — sits right above the table so it stays
-          visible even after the user scrolls past the page header. Hidden in
-          print output. */}
+      {/* تصدير buttons — moved DOWN here (where the summary cards used
+          to live) per user request. The lower الأعمدة chooser strip was
+          deleted (the top الأعمدة button covers that role). */}
       {applied.customerId && !isLoading && (
-        <div className="flex items-center justify-between gap-2 rounded-lg border bg-muted/30 px-3 py-2 print:hidden">
-          <p className="text-xs text-muted-foreground">
-            تحكم في الأعمدة الظاهرة في الجدول والطباعة و Excel و PDF
-          </p>
-          <StatementColumnChooser value={visibleCols} onChange={setVisibleCols} />
+        <div className="flex justify-end print:hidden">
+          <StatementExportButtons
+            mode="customer"
+            company={(user?.company as any) ?? null}
+            account={acctView}
+            from={applied.from}
+            to={applied.to}
+            opening={effectiveOpening}
+            lines={augmented.map(l => ({
+              id: l.id,
+              journalEntryId: l.journalEntryId,
+              date: l.date,
+              docType: DOC_TYPE_LABEL[l.type] ?? (TYPE_LABEL[l.type] ?? l.type),
+              type: TYPE_LABEL[l.type] ?? l.type,
+              docNumber: l.docNumber,
+              journalEntryNumber: l.journalEntryNumber,
+              description: l.description,
+              debit: l.debit,
+              credit: l.credit,
+              balance: l.balance,
+            }))}
+            totals={totals}
+            closing={closing}
+            filename={`${tr("exportFilename")}-${customerLabel || "customer"}-${applied.from}-${applied.to}`}
+            disabled={!applied.customerId || isLoading}
+            branchName={branchName}
+            visibleCols={visibleCols}
+            userName={user?.username ?? null}
+          />
         </div>
       )}
 
