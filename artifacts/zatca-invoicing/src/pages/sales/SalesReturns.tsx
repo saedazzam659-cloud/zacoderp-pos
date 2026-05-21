@@ -707,12 +707,27 @@ export default function SalesReturns() {
     }
     setLines(chosen.map(r => {
       const l = r.srcLine;
+      // ── Full vs partial return detection ─────────────────────────
+      // "Full return" = returning ALL of the originally sold quantity
+      // AND nothing has been returned before (maxQty == sold). In that
+      // case we restore the ORIGINAL price + freeQty + discounts as-is
+      // (free units physically go back to stock at zero price, line
+      // total identical to the source invoice). Only partial returns
+      // need the effective-unit-price prorating, because then the
+      // customer keeps a share of the free units & discount benefit.
+      const soldQty   = Number(l.qty ?? 0);
+      const returnQty = Number(r.returnQty);
+      const isFullReturn =
+        soldQty > 0
+        && Math.abs(returnQty - soldQty) < 1e-6
+        && Math.abs(r.maxQty - soldQty) < 1e-6;
       // ── Option B: when the source line carries free units OR any
-      // discount, swap in the effective unit price and zero out the
-      // discount/freeQty so the math doesn't double-apply. The original
-      // price + breakdown live in `_pricingNote` for the UI badge so
-      // the user can see WHY the price differs from the sales invoice.
-      const useEffective = r.hasAdjustment;
+      // discount AND this is a partial return, swap in the effective
+      // unit price and zero out the discount/freeQty so the math
+      // doesn't double-apply. The original price + breakdown live in
+      // `_pricingNote` for the UI badge so the user can see WHY the
+      // price differs from the sales invoice.
+      const useEffective = r.hasAdjustment && !isFullReturn;
       const effPrice = useEffective ? r.effectiveUnitPrice : Number(l.unitPrice ?? 0);
       const base: ReturnLine = {
         _id: crypto.randomUUID(),
