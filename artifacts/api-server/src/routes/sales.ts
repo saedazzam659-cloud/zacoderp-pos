@@ -1893,10 +1893,33 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
 
+    // Branch-scope guard: prevent cross-branch posting by ID guess.
     const [ret] = await db.select().from(salesReturnsTable)
-      .where(and(eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, cid)));
+      .where(and(
+        eq(salesReturnsTable.id, id),
+        eq(salesReturnsTable.companyId, cid),
+        ...branchScopeSpread(req, salesReturnsTable.branchId, undefined),
+      ));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     if (ret.status === "posted") { res.status(400).json({ error: "المرتجع مُرحَّل مسبقاً" }); return; }
+
+    // Source-invoice integrity: if linked, the source must belong to the same
+    // company (branch scope on the SOURCE is intentionally not enforced — the
+    // return itself is already branch-scoped above, and an invoice raised in
+    // another branch may legitimately be returned through this branch).
+    if (ret.invoiceId) {
+      const [srcCheck] = await db
+        .select({ id: salesInvoicesTable.id })
+        .from(salesInvoicesTable)
+        .where(and(
+          eq(salesInvoicesTable.id, ret.invoiceId),
+          eq(salesInvoicesTable.companyId, cid),
+        ));
+      if (!srcCheck) {
+        res.status(400).json({ error: "الفاتورة المصدر غير موجودة في هذه الشركة — فك ربط الفاتورة أو اختر فاتورة صحيحة." });
+        return;
+      }
+    }
 
     const lines = await db.select().from(salesReturnLinesTable)
       .where(eq(salesReturnLinesTable.returnId, id));
@@ -1912,6 +1935,30 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
     const whInfo = await loadWarehouseInfo(cid, lines.map(l => l.warehouseId).filter(Boolean) as number[]);
 
     // Increase stock for each stockable return line (items coming back into inventory, in base units)
+    //
+    // PHASE H — Batch-aware sales returns:
+    //   * batch_tracking_mode='none'  → legacy single-row WAC restore (unchanged)
+    //   * batch_tracking_mode='fifo|fefo' AND linked to a source invoice →
+    //       read the source invoice's stamped OUT rows for this item+warehouse
+    //       and restore the returned qty back onto those original batches in
+    //       pick order (so a partial return rebuilds the oldest-shipped batch
+    //       first, which keeps FEFO honest for the next outbound). Excess
+    //       beyond the original shipment falls back to an unbatched IN row.
+    //   * batch-tracked with NO source invoice (orphan return) → legacy WAC
+    //       path. We refuse to fabricate a batch for unlinked returns.
+    const retItemIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+    const retItemRows = retItemIds.length
+      ? await db
+          .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode })
+          .from(itemsTable)
+          .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, retItemIds)))
+      : [];
+    const retModeById = new Map<number, "none" | "fifo" | "fefo">();
+    for (const r of retItemRows) {
+      const m = (r.mode ?? "none") as string;
+      retModeById.set(r.id, m === "fifo" || m === "fefo" ? (m as "fifo" | "fefo") : "none");
+    }
+
     let totalCogs = 0;
     const cogsByWarehouse: Record<number, number> = {};
     for (const line of lines) {
@@ -1920,30 +1967,137 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       // Sales return mirrors the original sale: paid qty + free qty came back, so
       // both must be added back to stock and refunded into COGS reversal.
       const qty     = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
+      if (qty <= 0) continue; // skip non-positive returns (mirror /post guard)
       const avgCost = await getAvgCost(cid, line.itemId, line.warehouseId);
       // If item never existed in warehouse, fall back to the line's price as cost.
       // unitPrice is in the SELECTED unit, so divide by factor to get base-unit cost.
       const costUnit = avgCost > 0 ? avgCost : (Number(line.unitPrice) / factor);
-      const lineCogs = qty * costUnit;
-      totalCogs += lineCogs;
-      cogsByWarehouse[line.warehouseId] = (cogsByWarehouse[line.warehouseId] ?? 0) + lineCogs;
 
-      await upsertBalance(cid, line.itemId, line.warehouseId, qty, costUnit);
-      const newBal = await getBalance(cid, line.itemId, line.warehouseId);
-      await addStockLedgerEntry({
-        companyId:   cid,
-        itemId:      line.itemId,
-        warehouseId: line.warehouseId,
-        txDate:      ret.returnDate,
-        txType:      "sales_return",
-        qty:         String(qty),
-        costPrice:   String(costUnit.toFixed(4)),
-        totalCost:   String((qty * costUnit).toFixed(2)),
-        balanceQty:  String(newBal),
-        refId:       id,
-        refType:     "sales_return",
-        notes:       line.notes ?? undefined,
-      });
+      const mode = retModeById.get(line.itemId) ?? "none";
+      const canBatchRestore = mode !== "none" && !!ret.invoiceId;
+
+      // Build the restoration plan: one entry per ledger row to write.
+      type RestorePart = { takeQty: number; costPrice: number; batchNumber: string | null; expiryDate: string | null };
+      const parts: RestorePart[] = [];
+
+      if (canBatchRestore) {
+        // Pull the source invoice's stamped OUT rows for this item+warehouse,
+        // ordered by id (matches the original pick order). Each row may carry
+        // batch_number + expiry_date (Round 4 stamped them) or be a legacy
+        // single row with NULL batch (item was 'none' at sale time but is
+        // batch-tracked now — restore as unbatched).
+        const srcRows = await db
+          .select({
+            qty: stockLedgerTable.qty,
+            costPrice: stockLedgerTable.costPrice,
+            batchNumber: stockLedgerTable.batchNumber,
+            expiryDate: stockLedgerTable.expiryDate,
+          })
+          .from(stockLedgerTable)
+          .where(and(
+            eq(stockLedgerTable.companyId, cid),
+            eq(stockLedgerTable.refType, "sales_invoice"),
+            eq(stockLedgerTable.refId, ret.invoiceId!),
+            eq(stockLedgerTable.itemId, line.itemId),
+            eq(stockLedgerTable.warehouseId, line.warehouseId),
+          ))
+          .orderBy(asc(stockLedgerTable.id));
+        // Subtract any already-returned qty for this item+warehouse on prior
+        // posted returns against the same invoice, so a second partial return
+        // doesn't double-restore into the same batch slot. We allocate the
+        // earlier returns greedily against srcRows in the same pick order.
+        const priorReturned = await db
+          .select({
+            qty: stockLedgerTable.qty,
+            batchNumber: stockLedgerTable.batchNumber,
+          })
+          .from(stockLedgerTable)
+          .innerJoin(salesReturnsTable, eq(stockLedgerTable.refId, salesReturnsTable.id))
+          .where(and(
+            eq(stockLedgerTable.companyId, cid),
+            eq(stockLedgerTable.refType, "sales_return"),
+            eq(stockLedgerTable.itemId, line.itemId),
+            eq(stockLedgerTable.warehouseId, line.warehouseId),
+            eq(salesReturnsTable.invoiceId, ret.invoiceId!),
+            // Only POSTED prior returns count toward the cap. Drafts have no
+            // accounting effect (per "Posted-Only Financial Reports" rule)
+            // and any stale rows from a failed prior post are ignored.
+            eq(salesReturnsTable.status, "posted"),
+            // Exclude the current return itself — defensive against retries
+            // that re-enter this loop after a transient failure.
+            sql`${salesReturnsTable.id} <> ${id}`,
+          ));
+        // Per-batch already-restored qty (NULL-batch returns share the
+        // "unbatched" bucket key '__null__').
+        const alreadyByBatch = new Map<string, number>();
+        for (const r of priorReturned) {
+          const k = r.batchNumber ?? "__null__";
+          alreadyByBatch.set(k, (alreadyByBatch.get(k) ?? 0) + Number(r.qty)); // qty is positive on returns
+        }
+        // Walk source picks (each row was shipped at qty<0); compute remaining
+        // restorable per row and allocate `qty` greedily.
+        let remaining = qty;
+        for (const row of srcRows) {
+          if (remaining <= 0.0001) break;
+          const shipped = Math.abs(Number(row.qty));
+          const k = row.batchNumber ?? "__null__";
+          const consumedFromBucket = alreadyByBatch.get(k) ?? 0;
+          // The bucket is shared across rows with the same batch_number, so
+          // deduct what's already been credited back to it.
+          const restorable = Math.max(0, shipped - consumedFromBucket);
+          if (restorable <= 0.0001) continue;
+          // Decrement bucket so subsequent rows w/ same batch see updated cap.
+          alreadyByBatch.set(k, consumedFromBucket + Math.min(restorable, remaining));
+          const take = Math.min(restorable, remaining);
+          parts.push({
+            takeQty: take,
+            costPrice: Number(row.costPrice),
+            batchNumber: row.batchNumber,
+            expiryDate: row.expiryDate,
+          });
+          remaining -= take;
+        }
+        // Excess (returning more than originally shipped — rare, e.g. legacy
+        // data or operator override) falls back to a single unbatched IN row
+        // at the current WAC so we never silently drop returned units.
+        if (remaining > 0.0001) {
+          parts.push({ takeQty: remaining, costPrice: costUnit, batchNumber: null, expiryDate: null });
+        }
+      } else {
+        // Legacy path — one unbatched row at WAC.
+        parts.push({ takeQty: qty, costPrice: costUnit, batchNumber: null, expiryDate: null });
+      }
+
+      // Aggregate cost across all parts (weighted-sum) for JE math.
+      const lineRestoredCost = parts.reduce((s, p) => s + p.takeQty * p.costPrice, 0);
+      totalCogs += lineRestoredCost;
+      cogsByWarehouse[line.warehouseId] = (cogsByWarehouse[line.warehouseId] ?? 0) + lineRestoredCost;
+
+      // Single balance update for the full qty using the weighted unit cost.
+      const wac = qty > 0 ? lineRestoredCost / qty : costUnit;
+      await upsertBalance(cid, line.itemId, line.warehouseId, qty, wac);
+      let cursor = await getBalance(cid, line.itemId, line.warehouseId);
+      // Walk back so each ledger row's balance_qty reflects post-row state.
+      let pre = cursor - qty; // pre-restore total
+      for (const p of parts) {
+        pre += p.takeQty;
+        await addStockLedgerEntry({
+          companyId:   cid,
+          itemId:      line.itemId,
+          warehouseId: line.warehouseId,
+          txDate:      ret.returnDate,
+          txType:      "sales_return",
+          qty:         String(p.takeQty),
+          costPrice:   String(p.costPrice.toFixed(4)),
+          totalCost:   String((p.takeQty * p.costPrice).toFixed(2)),
+          balanceQty:  String(pre.toFixed(4)),
+          refId:       id,
+          refType:     "sales_return",
+          batchNumber: p.batchNumber,
+          expiryDate:  p.expiryDate,
+          notes:       `${line.notes ?? ""}${p.batchNumber ? ` — استرجاع تشغيلة ${p.batchNumber}` : ""}`.trim() || undefined,
+        });
+      }
     }
 
     // ── Build reversed journal entry ──
@@ -2092,8 +2246,13 @@ router.patch("/sales-returns/:id/unpost", requireAdminRole, async (req, res) => 
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
 
+    // Branch-scope guard (mirrors /post above).
     const [ret] = await db.select().from(salesReturnsTable)
-      .where(and(eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, cid)));
+      .where(and(
+        eq(salesReturnsTable.id, id),
+        eq(salesReturnsTable.companyId, cid),
+        ...branchScopeSpread(req, salesReturnsTable.branchId, undefined),
+      ));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     if (ret.status !== "posted") { res.status(400).json({ error: "المرتجع ليس مُرحَّلاً" }); return; }
 
