@@ -57,11 +57,25 @@ function newLine(): InvoiceLine {
   };
 }
 
-function calcLine(l: InvoiceLine, priceIncludesVat = false) {
+// `taxMode` controls whether VAT is computed before or after the line
+// discount. Defaults to "after_discount" (legacy/ZATCA-standard); the
+// caller passes the company-wide preference read from auth.
+type TaxMode = "before_discount" | "after_discount";
+function calcLine(l: InvoiceLine, priceIncludesVat = false, taxMode: TaxMode = "after_discount") {
   const qty = Number(l.qty) || 0;
   const price = Number(l.unitPrice) || 0;
   const disc = Number(l.discount) || 0;
   const rate = (Number(l.vatRate) || 0) / 100;
+  if (taxMode === "before_discount") {
+    const fullGross = qty * price;
+    const discAmt = fullGross * (disc / 100);
+    if (priceIncludesVat) {
+      const fullNet = rate > -1 ? fullGross / (1 + rate) : fullGross;
+      return { lineTotal: Math.max(0, fullGross - discAmt), subtotal: Math.max(0, fullNet - discAmt) };
+    }
+    const vat = fullGross * rate;
+    return { lineTotal: Math.max(0, fullGross + vat - discAmt), subtotal: Math.max(0, fullGross - discAmt) };
+  }
   const gross = qty * price * (1 - disc / 100);
   if (priceIncludesVat) {
     const net = rate > -1 ? gross / (1 + rate) : gross;

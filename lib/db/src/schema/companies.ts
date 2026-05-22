@@ -184,6 +184,18 @@ export const companiesTable = pgTable("companies", {
   // SuperAdmin can restore (clear deletedAt) or hard-delete from the
   // dedicated /companies/deleted screen.
   deletedAt: timestamp("deleted_at"),
+  // ─── Tax calculation mode (VAT vs discount ordering) ────────────────
+  // Controls whether VAT is computed on the gross line BEFORE the discount
+  // is applied (`before_discount` → vat = qty*price*rate, then
+  // lineTotal = qty*price + vat − disc) or AFTER (`after_discount` →
+  // vat = (qty*price − disc)*rate, then lineTotal = (qty*price − disc) + vat).
+  // Default `after_discount` matches the legacy/current calculator and the
+  // ZATCA-standard behaviour where the discount reduces the taxable base.
+  // The setting is read by every line-tax calculator (sales invoice /
+  // quotation / order, sales return, purchase invoice, purchase return,
+  // POS, fixed assets). Changing it only affects NEW lines typed after
+  // the toggle — already-saved documents retain their stored vatAmount.
+  taxCalculationMode: text("tax_calculation_mode").notNull().default("after_discount"),
   // Public, human-friendly company code (e.g. "ZTC-1042"). Required by
   // login: tenants identify themselves with (companyCode, username,
   // password) so usernames can repeat across companies. Generated at

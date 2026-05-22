@@ -12,7 +12,7 @@ import {
   DatabaseBackup, DatabaseZap, Sparkles, FileJson, AlertTriangle,
   Clock, Repeat, Trash, History, Play, Zap, Hand, Printer, Save,
   LogOut, Timer, ShieldCheck, CalendarDays, CalendarClock,
-  Users as UsersIcon
+  Users as UsersIcon, Percent, Calculator
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -462,6 +462,13 @@ export default function GeneralSettings() {
           >
             <CalendarDays className="h-4 w-4 shrink-0" />
             <span className="truncate">تاريخ المسلسل</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="taxMode"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <Percent className="h-4 w-4 shrink-0" />
+            <span className="truncate">طريقة حساب الضريبة</span>
           </TabsTrigger>
           <TabsTrigger
             value="salesReturnsRules"
@@ -1228,8 +1235,139 @@ export default function GeneralSettings() {
             </ul>
           </div>
         </TabsContent>
+
+        {/* ═══ TAB: Tax Calculation Mode (before/after discount) ════════════ */}
+        <TabsContent value="taxMode" className="mt-5 space-y-6">
+          <TaxCalculationModeCard
+            current={(user?.company?.taxCalculationMode as ("before_discount" | "after_discount" | undefined)) ?? "after_discount"}
+            saving={postingSaving}
+            onChange={(v) => togglePostingMode({ taxCalculationMode: v })}
+          />
+        </TabsContent>
       </Tabs>
 
+    </div>
+  );
+}
+
+// ─── Sub-component: Tax Calculation Mode card ────────────────────────────
+// Renders two large radio-style cards letting the admin choose whether VAT
+// is computed BEFORE or AFTER the line discount. Saves on click via the
+// shared `togglePostingMode` patcher so there is no separate "Save" button
+// (consistent with the other instant-save toggles in this page).
+function TaxCalculationModeCard({
+  current,
+  saving,
+  onChange,
+}: {
+  current: "before_discount" | "after_discount";
+  saving: boolean;
+  onChange: (v: "before_discount" | "after_discount") => void;
+}) {
+  const options: {
+    value: "before_discount" | "after_discount";
+    title: string;
+    subtitle: string;
+    formula: string;
+    example: string;
+    note: string;
+    accent: string;
+  }[] = [
+    {
+      value: "after_discount",
+      title: "احتساب الضريبة بعد الخصم",
+      subtitle: "الوضع الافتراضي — موصى به ومتوافق مع زاتكا",
+      formula: "الضريبة = (السعر − الخصم) × النسبة",
+      example: "مثال: 100 ر.س − 10 خصم = 90 ر.س ثم 15% ضريبة = 13.50 ر.س — الإجمالي 103.50",
+      note: "الخصم يقلّل الوعاء الضريبي قبل احتساب الضريبة (السلوك القياسي للفواتير الضريبية).",
+      accent: "emerald",
+    },
+    {
+      value: "before_discount",
+      title: "احتساب الضريبة قبل الخصم",
+      subtitle: "تُحسب الضريبة على السعر الكامل ثم يُخصم الخصم من الإجمالي",
+      formula: "الضريبة = السعر × النسبة ثم الإجمالي = السعر + الضريبة − الخصم",
+      example: "مثال: 100 × 15% = 15 ر.س ضريبة ثم 100 + 15 − 10 خصم = 105 ر.س",
+      note: "يفيد عند تطبيق خصومات تحفيزية بعد إصدار الفاتورة (كوبونات/عروض ترويجية).",
+      accent: "amber",
+    },
+  ];
+
+  return (
+    <div className="rounded-xl border bg-card p-5 space-y-4">
+      <div className="flex items-start gap-3">
+        <Calculator className="h-5 w-5 text-primary mt-0.5" />
+        <div className="flex-1">
+          <h2 className="font-semibold text-base">طريقة حساب الضريبة</h2>
+          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+            اختر متى تُحتسب الضريبة بالنسبة لخصم السطر. يسري الإعداد على جميع الشاشات التي تحتوي على ضرائب
+            (فواتير المبيعات، عروض الأسعار، أوامر البيع، مرتجعات المبيعات، فواتير الشراء، مرتجعات الشراء، نقاط البيع، الأصول الثابتة).
+            يؤثر الإعداد فقط على السطور الجديدة المُدخلة بعد التغيير — الفواتير المحفوظة تحتفظ بقيم الضريبة المحسوبة وقت حفظها.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {options.map((opt) => {
+          const active = current === opt.value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              disabled={saving || active}
+              onClick={() => onChange(opt.value)}
+              className={cn(
+                "text-right rounded-xl border-2 p-4 transition-all flex flex-col gap-3 group disabled:cursor-not-allowed",
+                active
+                  ? `border-${opt.accent}-500 bg-${opt.accent}-50/50 shadow-md ring-2 ring-${opt.accent}-200`
+                  : "border-border bg-background hover:border-primary/40 hover:bg-muted/40 hover:shadow-sm",
+              )}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <h3 className={cn(
+                    "font-semibold text-sm flex items-center gap-2",
+                    active && `text-${opt.accent}-700`,
+                  )}>
+                    {opt.title}
+                    {active && (
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full bg-${opt.accent}-100 text-${opt.accent}-700 font-medium`}>
+                        مفعَّل
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-1 leading-snug">{opt.subtitle}</p>
+                </div>
+                <div className={cn(
+                  "h-5 w-5 rounded-full border-2 shrink-0 transition-all flex items-center justify-center",
+                  active ? `border-${opt.accent}-500 bg-${opt.accent}-500` : "border-muted-foreground/30 group-hover:border-primary/60",
+                )}>
+                  {active && <CheckCircle2 className="h-3 w-3 text-white" />}
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-muted/40 border border-border/50 p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">الصيغة</span>
+                  <code className="text-xs font-mono text-foreground/90 leading-relaxed" dir="ltr">{opt.formula}</code>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">{opt.example}</p>
+              </div>
+
+              <p className="text-[11px] text-muted-foreground leading-relaxed border-r-2 border-primary/30 pr-2">
+                {opt.note}
+              </p>
+            </button>
+          );
+        })}
+      </div>
+
+      {saving && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          جاري حفظ الإعداد…
+        </div>
+      )}
     </div>
   );
 }

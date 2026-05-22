@@ -769,22 +769,36 @@ export default function SalesReturns() {
     loadInvoiceIntoForm(invId, { openForm: true });
   }, [user, currencies.length]);
 
+  // Company-wide preference; "after_discount" mirrors legacy behaviour.
+  const taxMode: "before_discount" | "after_discount" =
+    (user as any)?.company?.taxCalculationMode === "before_discount" ? "before_discount" : "after_discount";
   function calcLineTotal(l: ReturnLine, priceIncludesVat = false) {
+    return calcLineParts(l, priceIncludesVat).lineTotal;
+  }
+  function calcLineParts(l: ReturnLine, priceIncludesVat = false) {
     const qty   = Number(l.qty) || 0;
     const price = Number(l.unitPrice) || 0;
     const rate  = (Number(l.vatRate) || 0) / 100;
     // الخصم% وقيمة الخصم وجهان لنفس القيمة (يُزامَنان عبر `syncLineDiscount`)
     // — نستخدم قيمة الخصم بالعملة كمصدر وحيد للحقيقة لتجنّب الخصم المضاعف.
     const discAmtEff = effectiveLineDiscount(l);
-    const gross = Math.max(0, qty * price - discAmtEff);
-    if (priceIncludesVat) return gross;
-    return gross * (1 + rate);
-  }
-  function calcLineParts(l: ReturnLine, priceIncludesVat = false) {
-    const qty   = Number(l.qty) || 0;
-    const price = Number(l.unitPrice) || 0;
-    const rate  = (Number(l.vatRate) || 0) / 100;
-    const discAmtEff = effectiveLineDiscount(l);
+    if (taxMode === "before_discount") {
+      const fullGross = Math.max(0, qty * price);
+      if (priceIncludesVat) {
+        const fullNet = rate > -1 ? fullGross / (1 + rate) : fullGross;
+        return {
+          subtotal: Math.max(0, fullNet - discAmtEff),
+          vat: fullGross - fullNet,
+          lineTotal: Math.max(0, fullGross - discAmtEff),
+        };
+      }
+      const vat = fullGross * rate;
+      return {
+        subtotal: Math.max(0, fullGross - discAmtEff),
+        vat,
+        lineTotal: Math.max(0, fullGross + vat - discAmtEff),
+      };
+    }
     const gross = Math.max(0, qty * price - discAmtEff);
     if (priceIncludesVat) {
       const net = rate > -1 ? gross / (1 + rate) : gross;

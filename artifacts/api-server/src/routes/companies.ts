@@ -157,6 +157,8 @@ router.patch("/:id/general-settings", async (req, res) => {
     // "manual" (navigate back to entries list after save). See companies
     // schema for the full semantics.
     journalEntryFormMode,
+    // VAT calc mode: "before_discount" | "after_discount". Validated below.
+    taxCalculationMode,
   } = req.body as {
     logo?: string; decimalPlaces?: number; autoPostingEnabled?: boolean;
     autoPostJournalEntry?: boolean;
@@ -186,6 +188,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     printTemplateSales?: string; printTemplateReceipt?: string;
     printTemplatePayment?: string; printTemplateJournal?: string;
     journalEntryFormMode?: string;
+    taxCalculationMode?: string;
   };
   const updates: Record<string, any> = { updatedAt: new Date() };
   if (logo !== undefined) updates.logo = logo;
@@ -310,6 +313,14 @@ router.patch("/:id/general-settings", async (req, res) => {
       return;
     }
     updates.journalEntryFormMode = journalEntryFormMode;
+  }
+  // Tax calc mode — only the two values the line calculators understand.
+  if (taxCalculationMode !== undefined) {
+    if (taxCalculationMode !== "before_discount" && taxCalculationMode !== "after_discount") {
+      res.status(400).json({ error: "taxCalculationMode يجب أن يكون 'before_discount' أو 'after_discount'" });
+      return;
+    }
+    updates.taxCalculationMode = taxCalculationMode;
   }
   const [company] = await db.update(companiesTable).set(updates)
     .where(eq(companiesTable.id, id)).returning();

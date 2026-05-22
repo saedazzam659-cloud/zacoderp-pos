@@ -93,12 +93,14 @@ function newLine(): DocLine {
   };
 }
 
-// When `priceIncludesVat` is true, the entered unitPrice already contains VAT.
-//   gross    = qty * unitPrice * (1 - disc/100)        ← gross is the displayed line total
-//   net      = gross / (1 + vatRate/100)               ← VAT-exclusive subtotal
-//   vat      = gross - net
-// When false (default), the entered unitPrice is VAT-exclusive — VAT is added on top.
-function calcLine(l: DocLine, priceIncludesVat = false) {
+// Tax calculation mode — comes from the company-wide setting
+// `taxCalculationMode`. "after_discount" (default) = legacy behaviour:
+// discount reduces the taxable base then VAT is added (ZATCA-standard).
+// "before_discount" = VAT is computed on the full price first, then the
+// discount is subtracted from the gross total (used for post-tax
+// incentive discounts like coupons).
+type TaxMode = "before_discount" | "after_discount";
+function calcLine(l: DocLine, priceIncludesVat = false, taxMode: TaxMode = "after_discount") {
   const qty   = Number(l.qty) || 0;
   const price = Number(l.unitPrice) || 0;
   const rate  = (Number(l.vatRate) || 0) / 100;
@@ -108,6 +110,23 @@ function calcLine(l: DocLine, priceIncludesVat = false) {
   // rows that only carry the percentage). Previously both were
   // subtracted, which double-counted whenever a user typed into either.
   const discAmtEff = effectiveLineDiscount(l);
+  if (taxMode === "before_discount") {
+    // VAT is computed on the FULL (un-discounted) price; the discount
+    // then reduces the gross total post-tax.
+    const fullGross = Math.max(0, qty * price);
+    if (priceIncludesVat) {
+      const fullNet = rate > -1 ? fullGross / (1 + rate) : fullGross;
+      const vat = fullGross - fullNet;
+      const lineTotal = Math.max(0, fullGross - discAmtEff);
+      const subtotal = Math.max(0, fullNet - discAmtEff);
+      return { subtotal, vat, lineTotal };
+    }
+    const vat = fullGross * rate;
+    const subtotal = Math.max(0, fullGross - discAmtEff);
+    const lineTotal = Math.max(0, fullGross + vat - discAmtEff);
+    return { subtotal, vat, lineTotal };
+  }
+  // Legacy "after_discount" behaviour — unchanged.
   const gross = Math.max(0, qty * price - discAmtEff);
   if (priceIncludesVat) {
     const net = rate > -1 ? gross / (1 + rate) : gross;
@@ -1061,11 +1080,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchCartQuery.data, priceIncludesVat]);
 
-  const subtotal    = lines.reduce((s, l) => s + calcLine(l, priceIncludesVat).subtotal, 0);
-  const vatAmount   = lines.reduce((s, l) => s + calcLine(l, priceIncludesVat).vat,      0);
+  // Company-wide tax-calc preference. Falls back to "after_discount" so
+  // legacy rows without the column behave exactly as before.
+  const taxMode: TaxMode = (user?.company?.taxCalculationMode === "before_discount")
+    ? "before_discount" : "after_discount";
+  const subtotal    = lines.reduce((s, l) => s + calcLine(l, priceIncludesVat, taxMode).subtotal, 0);
+  const vatAmount   = lines.reduce((s, l) => s + calcLine(l, priceIncludesVat, taxMode).vat,      0);
   const lineDiscountTotal = lines.reduce((s, l) => {
-    const noDisc = calcLine({ ...l, discount: "0" }, priceIncludesVat).lineTotal;
-    const withDisc = calcLine(l, priceIncludesVat).lineTotal;
+    const noDisc = calcLine({ ...l, discount: "0", discountAmount: "0" }, priceIncludesVat, taxMode).lineTotal;
+    const withDisc = calcLine(l, priceIncludesVat, taxMode).lineTotal;
     return s + Math.max(0, noDisc - withDisc);
   }, 0);
   const grossTotal  = subtotal + vatAmount;
