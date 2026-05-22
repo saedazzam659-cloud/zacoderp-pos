@@ -25,6 +25,9 @@ import {
   productionRoutingsTable,
   productionRoutingStagesTable,
   productionOrderStagesTable,
+  productionQualityChecksTable,
+  QC_CHECK_TYPES,
+  QC_RESULTS,
   PRODUCTION_ORDER_STATUSES,
   PRODUCTION_STATUS_TRANSITIONS,
   PRODUCTION_STAGE_STATUSES,
@@ -3316,6 +3319,271 @@ router.post("/seed-maamoul-example", async (req, res) => {
       order: { id: order.id, orderNumber: order.orderNumber },
       stagesCount: stagesSpec.length,
     });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Quality Control (مراقبة الجودة) — universal QC log
+// ─────────────────────────────────────────────────────────────────────────
+// One row per check performed on a production order or a specific stage.
+// `checkType` is free-form (visual / weight / temperature / dimension /
+// barcode / ai_camera / other) so factories can extend without schema
+// changes. A failing check does NOT auto-revert the order/stage status —
+// the UI surfaces it and the operator decides.
+router.get("/quality-checks", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const orderId = req.query.orderId ? Number(req.query.orderId) : null;
+    const stageId = req.query.stageId ? Number(req.query.stageId) : null;
+    const result = typeof req.query.result === "string" ? req.query.result : null;
+    const conds = [eq(productionQualityChecksTable.companyId, cid)];
+    if (orderId) conds.push(eq(productionQualityChecksTable.orderId, orderId));
+    if (stageId) conds.push(eq(productionQualityChecksTable.stageId, stageId));
+    if (result && (QC_RESULTS as readonly string[]).includes(result))
+      conds.push(eq(productionQualityChecksTable.result, result));
+    const rows = await db
+      .select()
+      .from(productionQualityChecksTable)
+      .where(and(...conds))
+      .orderBy(desc(productionQualityChecksTable.checkedAt))
+      .limit(1000);
+    res.json(rows);
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "qc list failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/quality-checks/summary", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const orderId = req.query.orderId ? Number(req.query.orderId) : null;
+    const conds = [eq(productionQualityChecksTable.companyId, cid)];
+    if (orderId) conds.push(eq(productionQualityChecksTable.orderId, orderId));
+    const rows = await db
+      .select({
+        result: productionQualityChecksTable.result,
+        count: sql<number>`count(*)::int`,
+        defects: sql<number>`coalesce(sum(${productionQualityChecksTable.defectsFound}),0)::int`,
+      })
+      .from(productionQualityChecksTable)
+      .where(and(...conds))
+      .groupBy(productionQualityChecksTable.result);
+    const summary = { pass: 0, fail: 0, conditional: 0, totalDefects: 0, total: 0 };
+    for (const r of rows) {
+      const c = Number(r.count) || 0;
+      summary.total += c;
+      summary.totalDefects += Number(r.defects) || 0;
+      if (r.result === "pass") summary.pass = c;
+      else if (r.result === "fail") summary.fail = c;
+      else if (r.result === "conditional") summary.conditional = c;
+    }
+    res.json(summary);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/quality-checks", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const b = req.body ?? {};
+    const orderId = Number(b.orderId);
+    if (!orderId) {
+      res.status(400).json({ error: "أمر الإنتاج مطلوب" });
+      return;
+    }
+    const checkType = typeof b.checkType === "string" ? b.checkType.trim() : "";
+    if (!checkType) {
+      res.status(400).json({ error: "نوع الفحص مطلوب" });
+      return;
+    }
+    const result = typeof b.result === "string" ? b.result.trim() : "";
+    if (!(QC_RESULTS as readonly string[]).includes(result)) {
+      res.status(400).json({
+        error: `نتيجة الفحص يجب أن تكون: ${QC_RESULTS.join(" / ")}`,
+      });
+      return;
+    }
+    // Verify the order belongs to this company.
+    const [ord] = await db
+      .select({ id: productionOrdersTable.id })
+      .from(productionOrdersTable)
+      .where(
+        and(
+          eq(productionOrdersTable.id, orderId),
+          eq(productionOrdersTable.companyId, cid),
+        ),
+      )
+      .limit(1);
+    if (!ord) {
+      res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+      return;
+    }
+    let stageId: number | null = null;
+    if (b.stageId != null && b.stageId !== "") {
+      const sid = Number(b.stageId);
+      if (!Number.isInteger(sid) || sid <= 0) {
+        res.status(400).json({ error: "معرّف المرحلة غير صحيح" });
+        return;
+      }
+      const [st] = await db
+        .select({ id: productionOrderStagesTable.id })
+        .from(productionOrderStagesTable)
+        .where(
+          and(
+            eq(productionOrderStagesTable.id, sid),
+            eq(productionOrderStagesTable.orderId, orderId),
+          ),
+        )
+        .limit(1);
+      if (!st) {
+        res.status(400).json({ error: "المرحلة غير تابعة لهذا الأمر" });
+        return;
+      }
+      stageId = sid;
+    }
+    const defectsRaw = b.defectsFound == null || b.defectsFound === "" ? 0 : Number(b.defectsFound);
+    if (!Number.isFinite(defectsRaw) || !Number.isInteger(defectsRaw) || defectsRaw < 0) {
+      res.status(400).json({ error: "عدد العيوب يجب أن يكون عدداً صحيحاً ≥ 0" });
+      return;
+    }
+    const defectsFound = defectsRaw;
+    let sampleSize: number | null = null;
+    if (b.sampleSize != null && b.sampleSize !== "") {
+      const s = Number(b.sampleSize);
+      if (!Number.isFinite(s) || !Number.isInteger(s) || s < 0) {
+        res.status(400).json({ error: "حجم العينة يجب أن يكون عدداً صحيحاً ≥ 0" });
+        return;
+      }
+      sampleSize = s;
+    }
+    const [row] = await db
+      .insert(productionQualityChecksTable)
+      .values({
+        companyId: cid,
+        orderId,
+        stageId,
+        checkType,
+        result,
+        measuredValue:
+          typeof b.measuredValue === "string" && b.measuredValue.trim()
+            ? b.measuredValue.trim()
+            : null,
+        expectedValue:
+          typeof b.expectedValue === "string" && b.expectedValue.trim()
+            ? b.expectedValue.trim()
+            : null,
+        sampleSize: sampleSize != null && sampleSize >= 0 ? sampleSize : null,
+        defectsFound: defectsFound >= 0 ? defectsFound : 0,
+        mediaUrl:
+          typeof b.mediaUrl === "string" && b.mediaUrl.trim()
+            ? b.mediaUrl.trim()
+            : null,
+        notes:
+          typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null,
+        checkedByUserId: req.authUser?.id ?? null,
+      })
+      .returning();
+    await writeEvent(
+      cid,
+      orderId,
+      `qc.${result}`,
+      { checkId: row.id, checkType, stageId, defectsFound },
+      req.authUser?.id ?? null,
+    );
+    res.status(201).json(row);
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "qc create failed");
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+router.patch("/quality-checks/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const [existing] = await db
+      .select()
+      .from(productionQualityChecksTable)
+      .where(
+        and(
+          eq(productionQualityChecksTable.id, id),
+          eq(productionQualityChecksTable.companyId, cid),
+        ),
+      )
+      .limit(1);
+    if (!existing) {
+      res.status(404).json({ error: "الفحص غير موجود" });
+      return;
+    }
+    const b = req.body ?? {};
+    const patch: Record<string, unknown> = {};
+    if (typeof b.result === "string") {
+      if (!(QC_RESULTS as readonly string[]).includes(b.result)) {
+        res.status(400).json({ error: "نتيجة فحص غير صحيحة" });
+        return;
+      }
+      patch.result = b.result;
+    }
+    if (typeof b.notes === "string") patch.notes = b.notes.trim() || null;
+    if (typeof b.measuredValue === "string")
+      patch.measuredValue = b.measuredValue.trim() || null;
+    if (typeof b.expectedValue === "string")
+      patch.expectedValue = b.expectedValue.trim() || null;
+    if (b.defectsFound != null) {
+      const d = Number(b.defectsFound);
+      if (!Number.isFinite(d) || d < 0) {
+        res.status(400).json({ error: "عدد العيوب غير صحيح" });
+        return;
+      }
+      patch.defectsFound = d;
+    }
+    if (Object.keys(patch).length === 0) {
+      res.json(existing);
+      return;
+    }
+    const [row] = await db
+      .update(productionQualityChecksTable)
+      .set(patch)
+      .where(
+        and(
+          eq(productionQualityChecksTable.id, id),
+          eq(productionQualityChecksTable.companyId, cid),
+        ),
+      )
+      .returning();
+    res.json(row);
+  } catch (e: any) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+router.delete("/quality-checks/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const result = await db
+      .delete(productionQualityChecksTable)
+      .where(
+        and(
+          eq(productionQualityChecksTable.id, id),
+          eq(productionQualityChecksTable.companyId, cid),
+        ),
+      )
+      .returning({ id: productionQualityChecksTable.id });
+    if (result.length === 0) {
+      res.status(404).json({ error: "الفحص غير موجود" });
+      return;
+    }
+    res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

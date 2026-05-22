@@ -613,3 +613,77 @@ export const PRODUCTION_STATUS_TRANSITIONS: Record<
   completed: [],
   cancelled: [],
 };
+
+// ─── PHASE B — Quality Control ───────────────────────────────────────────
+// Universal QC log: one row per check performed on a production order (or
+// a specific stage within it). Industry-neutral by design — `checkType`
+// is a free-form string so any factory can add their own check kinds
+// (visual, weight, temperature, dimension, AI camera, barcode, etc.) via
+// data, NOT new tables. The `measuredValue` / `expectedValue` pair is
+// stored as text so it can hold "250 g", "ok", "16.5 mm", etc., without
+// forcing a numeric type that wouldn't fit qualitative checks.
+//
+// Pairs with `production_order_stages.status` — when a check has
+// `result='fail'`, the FE can prompt to re-open the stage. No automatic
+// status flip server-side (intentional — QC failures often need manual
+// adjudication before the stage is moved back).
+export const QC_CHECK_TYPES = [
+  "visual",
+  "weight",
+  "temperature",
+  "dimension",
+  "barcode",
+  "ai_camera",
+  "other",
+] as const;
+export type QcCheckType = (typeof QC_CHECK_TYPES)[number];
+
+export const QC_RESULTS = ["pass", "fail", "conditional"] as const;
+export type QcResult = (typeof QC_RESULTS)[number];
+
+export const productionQualityChecksTable = pgTable(
+  "production_quality_checks",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    orderId: integer("order_id")
+      .notNull()
+      .references(() => productionOrdersTable.id, { onDelete: "cascade" }),
+    // Optional — when the check is tied to a specific stage of the order.
+    stageId: integer("stage_id").references(
+      () => productionOrderStagesTable.id,
+      { onDelete: "set null" },
+    ),
+    checkType: text("check_type").notNull(), // QcCheckType (string for extensibility)
+    result: text("result").notNull(),         // QcResult
+    measuredValue: text("measured_value"),
+    expectedValue: text("expected_value"),
+    sampleSize: integer("sample_size"),
+    defectsFound: integer("defects_found").notNull().default(0),
+    mediaUrl: text("media_url"),              // optional photo / AI evidence
+    notes: text("notes"),
+    checkedByUserId: integer("checked_by_user_id").references(
+      () => usersTable.id,
+      { onDelete: "set null" },
+    ),
+    checkedAt: timestamp("checked_at").defaultNow().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byOrder: index("prod_qc_order_idx").on(t.orderId),
+    byCompany: index("prod_qc_company_idx").on(t.companyId),
+    byStage: index("prod_qc_stage_idx").on(t.stageId),
+  }),
+);
+
+export const insertProductionQualityCheckSchema = createInsertSchema(
+  productionQualityChecksTable,
+).omit({ id: true, createdAt: true });
+
+export type ProductionQualityCheck =
+  typeof productionQualityChecksTable.$inferSelect;
+export type InsertProductionQualityCheck = z.infer<
+  typeof insertProductionQualityCheckSchema
+>;

@@ -464,6 +464,9 @@ export default function ProductionOrderDetail() {
               <TabsTrigger value="events" data-testid="tab-events">
                 <Activity className="h-4 w-4 me-1" /> {t("production.eventsTab")}
               </TabsTrigger>
+              <TabsTrigger value="quality" data-testid="tab-quality">
+                <ClipboardCheck className="h-4 w-4 me-1" /> مراقبة الجودة
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="items" className="space-y-3">
               <div className="flex justify-end">
@@ -633,6 +636,22 @@ export default function ProductionOrderDetail() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </TabsContent>
+            <TabsContent value="quality">
+              <div className="rounded-lg border bg-white dark:bg-slate-900 p-4 text-center space-y-3">
+                <ClipboardCheck className="h-10 w-10 mx-auto text-emerald-600 opacity-70" />
+                <div className="text-sm text-slate-600 dark:text-slate-300">
+                  سجّل وراجع فحوصات الجودة الخاصة بهذا الأمر (بصري، وزن، أبعاد، كاميرا ذكية...)
+                </div>
+                <a
+                  href="/production/quality"
+                  className="inline-flex items-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-2"
+                  data-testid="link-open-quality"
+                >
+                  <ClipboardCheck className="h-4 w-4" />
+                  افتح مراقبة الجودة
+                </a>
               </div>
             </TabsContent>
           </Tabs>

@@ -125,6 +125,7 @@ import ManufacturingSettings from "@/pages/production/ManufacturingSettings";
 import BomTemplates from "@/pages/production/BomTemplates";
 import BomTemplateEditor from "@/pages/production/BomTemplateEditor";
 import WorkCenters from "@/pages/production/WorkCenters";
+import QualityChecks from "@/pages/production/QualityChecks";
 import ProductionRoutings from "@/pages/production/ProductionRoutings";
 import ProductionBoard from "@/pages/production/ProductionBoard";
 import ContractingDashboard from "@/pages/ContractingDashboard";
@@ -686,6 +687,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/production/routings"          module="production"     component={ProductionRoutings} />}
             {!isSuperAdmin && <PermRoute path="/production/board"             module="production"     component={ProductionBoard} />}
             {!isSuperAdmin && <PermRoute path="/production/settings"          module="production"     component={ManufacturingSettings} />}
+            {!isSuperAdmin && <PermRoute path="/production/quality"           module="production"     component={QualityChecks} />}
 
             {/* Contracting / Construction ERP — gated by `contracting` permission. */}
             {!isSuperAdmin && <PermRoute path="/contracting"                  module="contracting"    component={ContractingDashboard} />}
