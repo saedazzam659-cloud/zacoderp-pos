@@ -58,6 +58,11 @@ const EMPTY = {
   // Optional expiry date. Most useful for manufactured items (those that
   // have a BOM / bundle composition) but stored on every item uniformly.
   expiryDate: "" as string,
+  // PHASE E — Per-item batch picking mode for raw issues / sales:
+  //   'none' (default) → legacy WAC behaviour
+  //   'fifo'           → oldest received batch first
+  //   'fefo'           → earliest expiry first (best for perishables)
+  batchTrackingMode: "none" as "none" | "fifo" | "fefo",
 };
 
 // ─── Helpers: tags as array ↔ string ─────────────────────────────────────────
@@ -1002,6 +1007,7 @@ export default function Items() {
       discountValue: item.discountValue != null ? String(item.discountValue) : "0",
       showInPos: item.showInPos !== false,
       expiryDate: item.expiryDate ?? "",
+      batchTrackingMode: (["none","fifo","fefo"].includes(item.batchTrackingMode) ? item.batchTrackingMode : "none") as "none"|"fifo"|"fefo",
     });
     setEditId(item.id);
     setShowForm(true);
@@ -1303,6 +1309,26 @@ export default function Items() {
                       className="text-left"
                       value={form.expiryDate ?? ""}
                       onChange={(e) => setForm((p: any) => ({ ...p, expiryDate: e.target.value }))}
+                    />
+                  </Field>
+                </FormGrid>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">تتبّع التشغيلات (FIFO / FEFO)</p>
+                <FormGrid>
+                  <Field
+                    label="نمط سحب التشغيلات على الصرف"
+                    hint="عند بدء الإنتاج، يتم سحب الكمية المطلوبة من تشغيلات الخامة وفق هذا الترتيب. الوضع الافتراضي (بدون تتبّع) يُبقي الحركة الحالية كسطر واحد بالتكلفة المتوسطة."
+                  >
+                    <SearchCombobox
+                      items={[
+                        { value: "none", label: "بدون تتبّع — التكلفة المتوسطة (الوضع الحالي)" },
+                        { value: "fifo", label: "FIFO — الأقدم استلاماً أولاً" },
+                        { value: "fefo", label: "FEFO — الأقرب انتهاءً أولاً (مناسب للمنتجات القابلة للتلف)" },
+                      ]}
+                      value={form.batchTrackingMode ?? "none"}
+                      onValueChange={(v) => setForm((p: any) => ({ ...p, batchTrackingMode: v }))}
+                      placeholder="اختر نمط السحب"
                     />
                   </Field>
                 </FormGrid>

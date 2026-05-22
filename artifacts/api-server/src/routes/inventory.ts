@@ -625,7 +625,7 @@ function normalizeDiscount(rawType: unknown, rawValue: unknown): { type: "none"|
 
 router.post("/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate, batchTrackingMode } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم الصنف مطلوبان" }); return; }
   const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   if (existing.some(i => i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
@@ -681,6 +681,10 @@ router.post("/items", async (req, res) => {
     variantAttributes: variantAttrsCheck.value,
     showInPos: showInPos === undefined ? true : showInPos === true,
     expiryDate: expiryDate || null,
+    // PHASE E — Per-item batch picking mode. Validated to one of the three
+    // allowed values; anything else (including legacy clients) falls back to
+    // 'none' so the current WAC issue flow is preserved.
+    batchTrackingMode: ["none","fifo","fefo"].includes(batchTrackingMode) ? batchTrackingMode : "none",
   }).returning();
   void writeAudit({
     userId:     (req as any).authUser?.id ?? null,
@@ -704,7 +708,7 @@ router.post("/items", async (req, res) => {
 router.put("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes, showInPos, expiryDate } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes, showInPos, expiryDate, batchTrackingMode } = req.body;
   // PRO Extension #20 — variantAttributes is editable; parentItemId is
   // set-once at create time (re-parenting requires DELETE + recreate so
   // we don't have to reason about stock-balance migration).
@@ -758,6 +762,10 @@ router.put("/items/:id", async (req, res) => {
     ...(variantAttrsCheck.value !== undefined ? { variantAttributes: variantAttrsCheck.value } : {}),
     ...(showInPos !== undefined ? { showInPos: showInPos === true } : {}),
     ...(expiryDate !== undefined ? { expiryDate: expiryDate || null } : {}),
+    // PHASE E — only touch when client explicitly sent; constrained list.
+    ...(batchTrackingMode !== undefined && ["none","fifo","fefo"].includes(batchTrackingMode)
+      ? { batchTrackingMode }
+      : {}),
     status: status || "active", updatedAt: new Date(),
   }).where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }

@@ -450,6 +450,11 @@ export default function ProductionOrderDetail() {
             />
           )}
 
+          {/* ─── Phase E — Issue preview (which batches will be pulled) ─── */}
+          {!order.issueJournalEntryId && order.rawWarehouseId && (
+            <IssuePreviewPanel orderId={orderId} token={token ?? ""} />
+          )}
+
           {/* ─── SAP-style WIP setup panel — editable while pre-issue, locked after ─── */}
           <WipSetupPanel
             order={order}
@@ -1075,6 +1080,138 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div>
       <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{label}</Label>
       <div className="mt-1">{children}</div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PHASE E — Issue Preview Panel
+// Shows the per-batch allocation the system WILL apply when the operator
+// clicks "بدء التشغيل". Lazy-loaded (only fetched once expanded) so the
+// detail page stays light for orders where the operator isn't planning to
+// issue right now. For items with `batchTrackingMode='none'` we show a
+// single "WAC" row so the operator still sees that line will be issued.
+// ─────────────────────────────────────────────────────────────────────────
+function IssuePreviewPanel({
+  orderId,
+  token,
+}: {
+  orderId: number;
+  token: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<any | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  async function load() {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch(`${API}/api/production/orders/${orderId}/issue-preview`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      setData(j);
+    } catch (e: any) {
+      setErr(e?.message || "تعذّر تحميل المعاينة");
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => {
+    if (open && !data && !loading) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  const lines = (data?.lines ?? []) as any[];
+  const hasShortfall = lines.some((l) => Number(l.shortfall) > 0);
+  return (
+    <div
+      className="rounded-lg border border-violet-200 dark:border-violet-900/50 bg-violet-50/40 dark:bg-violet-950/10"
+      data-testid="panel-issue-preview"
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-violet-700 dark:text-violet-300"
+      >
+        <span className="flex items-center gap-2">
+          <ClipboardCheck className="h-4 w-4" />
+          معاينة سحب التشغيلات (FIFO/FEFO)
+          {hasShortfall && (
+            <span className="rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-xs">
+              نقص متاح
+            </span>
+          )}
+        </span>
+        <span className="text-xs text-violet-600/70">{open ? "إخفاء" : "عرض"}</span>
+      </button>
+      {open && (
+        <div className="border-t border-violet-200 dark:border-violet-900/50 p-3 space-y-3">
+          {loading && <div className="text-xs text-slate-500">جارٍ تحميل التوزيع...</div>}
+          {err && <div className="text-xs text-red-600">{err}</div>}
+          {!loading && !err && lines.length === 0 && (
+            <div className="text-xs text-slate-500">لا توجد سطور خامات قابلة للصرف بعد.</div>
+          )}
+          {!loading && !err && lines.map((ln) => (
+            <div
+              key={ln.lineId}
+              className="rounded-md border bg-white dark:bg-slate-900 p-3"
+              data-testid={`preview-line-${ln.lineId}`}
+            >
+              <div className="flex items-center justify-between text-xs">
+                <div>
+                  <span className="font-medium">{ln.itemNameAr}</span>
+                  {ln.itemCode && <span className="text-slate-400 ms-2 font-mono">{ln.itemCode}</span>}
+                  <span className="ms-2 rounded-full bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 uppercase">
+                    {ln.mode}
+                  </span>
+                </div>
+                <div className="text-slate-600 dark:text-slate-400">
+                  مطلوب {Number(ln.requestedQty).toLocaleString()} — متاح {Number(ln.available).toLocaleString()}
+                  {Number(ln.shortfall) > 0 && (
+                    <span className="text-red-600 ms-2">نقص {Number(ln.shortfall).toLocaleString()}</span>
+                  )}
+                </div>
+              </div>
+              {ln.picks && ln.picks.length > 0 ? (
+                <table className="w-full mt-2 text-xs">
+                  <thead className="text-slate-500">
+                    <tr>
+                      <th className="text-start font-normal pb-1">التشغيلة</th>
+                      <th className="text-start font-normal pb-1">انتهاء</th>
+                      <th className="text-end font-normal pb-1">الكمية</th>
+                      <th className="text-end font-normal pb-1">سعر</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ln.picks.map((p: any, i: number) => (
+                      <tr key={`${ln.lineId}-${i}`} className="border-t">
+                        <td className="py-1 font-mono">{p.batchNumber ?? <span className="text-slate-400">— غير مرمَّز —</span>}</td>
+                        <td className="py-1">{p.expiryDate ?? <span className="text-slate-400">—</span>}</td>
+                        <td className="py-1 text-end">{Number(p.takeQty).toLocaleString()}</td>
+                        <td className="py-1 text-end">{p.costPrice != null ? Number(p.costPrice).toFixed(4) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="text-xs text-red-600 mt-2">{ln.error ?? "—"}</div>
+              )}
+            </div>
+          ))}
+          {!loading && (
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="text-xs text-violet-600 hover:underline"
+              data-testid="btn-preview-refresh"
+            >
+              تحديث المعاينة
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

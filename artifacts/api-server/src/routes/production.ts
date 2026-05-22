@@ -37,7 +37,7 @@ import {
   type ProductionStageStatus,
 } from "@workspace/db";
 import { randomBytes } from "node:crypto";
-import { and, asc, desc, eq, ilike, sql, or } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, sql, or, inArray } from "drizzle-orm";
 import {
   extractAuth,
   resolveCompanyId,
@@ -47,7 +47,7 @@ import {
 } from "../middleware/auth.js";
 import { requireModulePermission, moduleAudit } from "../middleware/permissions.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
-import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
+import { upsertBalance, getBalance, addStockLedgerEntry, pickBatches, readBatchRemaining } from "../lib/stockHelpers.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
@@ -1192,33 +1192,109 @@ router.post("/orders/:id/status", async (req, res) => {
         }
       }
 
-      // c) Decrement stock + ledger entries; track total raw cost from WAC.
+      // c) Decrement stock + ledger entries; track total raw cost.
+      //
+      // PHASE E — Per-item batch picking:
+      //   * batch_tracking_mode='none'  → legacy single-row WAC issue
+      //   * batch_tracking_mode='fifo'  → split into per-batch ledger rows,
+      //                                    oldest received batch first
+      //   * batch_tracking_mode='fefo'  → earliest expiry first (NULLS LAST)
+      // The JE total stays identical (same total cost), only the ledger
+      // OUT rows are split + stamped with batchNumber/expiryDate so
+      // traceability (recall, FEFO compliance) works on the OUT side too.
+      // Items' batch modes are fetched in one query to avoid N+1.
+      const itemIds = issuableLines.map((l) => l.itemId!);
+      const itemRows = itemIds.length
+        ? await db
+            .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode })
+            .from(itemsTable)
+            .where(
+              and(
+                eq(itemsTable.companyId, cid),
+                inArray(itemsTable.id, itemIds),
+              ),
+            )
+        : [];
+      const modeById = new Map<number, "none" | "fifo" | "fefo">();
+      for (const r of itemRows) {
+        const m = (r.mode ?? "none") as string;
+        modeById.set(
+          r.id,
+          m === "fifo" || m === "fefo" ? (m as "fifo" | "fefo") : "none",
+        );
+      }
       let rawTotal = 0;
       for (const ln of issuableLines) {
         const qty = Number(ln.quantity);
-        const cost = await readAvgCost(
-          cid,
-          ln.itemId!,
-          order.rawWarehouseId,
-          Number(ln.unitCost),
-        );
-        await upsertBalance(cid, ln.itemId!, order.rawWarehouseId, -qty, cost);
-        const newBal = await getBalance(cid, ln.itemId!, order.rawWarehouseId);
-        await addStockLedgerEntry({
-          companyId: cid,
-          itemId: ln.itemId!,
-          warehouseId: order.rawWarehouseId,
-          txDate: todayIso,
-          txType: "production_issue",
-          qty: String(-qty),
-          costPrice: String(cost.toFixed(4)),
-          totalCost: String((-qty * cost).toFixed(2)),
-          balanceQty: String(newBal),
-          refId: id,
-          refType: "production_order",
-          notes: `صرف لأمر إنتاج ${order.orderNumber}`,
-        });
-        rawTotal += qty * cost;
+        const mode = modeById.get(ln.itemId!) ?? "none";
+        if (mode === "none") {
+          // Legacy path — single WAC ledger row, no batch stamp on OUT.
+          const cost = await readAvgCost(
+            cid,
+            ln.itemId!,
+            order.rawWarehouseId,
+            Number(ln.unitCost),
+          );
+          await upsertBalance(cid, ln.itemId!, order.rawWarehouseId, -qty, cost);
+          const newBal = await getBalance(cid, ln.itemId!, order.rawWarehouseId);
+          await addStockLedgerEntry({
+            companyId: cid,
+            itemId: ln.itemId!,
+            warehouseId: order.rawWarehouseId,
+            txDate: todayIso,
+            txType: "production_issue",
+            qty: String(-qty),
+            costPrice: String(cost.toFixed(4)),
+            totalCost: String((-qty * cost).toFixed(2)),
+            balanceQty: String(newBal),
+            refId: id,
+            refType: "production_order",
+            notes: `صرف لأمر إنتاج ${order.orderNumber}`,
+          });
+          rawTotal += qty * cost;
+        } else {
+          // FIFO / FEFO path — derive per-batch picks then write N
+          // ledger rows. stock_balance.qty still drops by the full qty
+          // (we don't maintain per-batch balances); avgCost is preserved
+          // because we pass the WAC cost into upsertBalance (negative
+          // delta keeps avgCost unchanged anyway).
+          const picks = await pickBatches(
+            cid,
+            ln.itemId!,
+            order.rawWarehouseId,
+            qty,
+            mode,
+          );
+          const linecost = picks.reduce((s, p) => s + p.takeQty * p.costPrice, 0);
+          // Update aggregated balance (single update for the whole line)
+          const wac = qty > 0 ? linecost / qty : 0;
+          await upsertBalance(cid, ln.itemId!, order.rawWarehouseId, -qty, wac);
+          let runningBal = await getBalance(cid, ln.itemId!, order.rawWarehouseId);
+          // We've already decremented runningBal once for the whole qty.
+          // Each ledger row's `balance_qty` should reflect the post-row
+          // running total, so walk back up from the final value.
+          let cursor = runningBal + qty; // pre-issue total
+          for (const p of picks) {
+            cursor -= p.takeQty;
+            await addStockLedgerEntry({
+              companyId: cid,
+              itemId: ln.itemId!,
+              warehouseId: order.rawWarehouseId,
+              txDate: todayIso,
+              txType: "production_issue",
+              qty: String(-p.takeQty),
+              costPrice: String(p.costPrice.toFixed(4)),
+              totalCost: String((-p.takeQty * p.costPrice).toFixed(2)),
+              balanceQty: String(cursor.toFixed(4)),
+              refId: id,
+              refType: "production_order",
+              batchNumber: p.batchNumber,
+              expiryDate: p.expiryDate,
+              notes: `صرف لأمر إنتاج ${order.orderNumber}${p.batchNumber ? ` — تشغيلة ${p.batchNumber}` : ""}`,
+            });
+          }
+          rawTotal += linecost;
+        }
       }
 
       const labor = Number(order.laborCost ?? 0);
@@ -3794,6 +3870,121 @@ router.delete("/orders/:orderId/waste-records/:id", async (req, res) => {
   }
 });
 
+// ─── PHASE E — Issue Preview ────────────────────────────────────────────────
+// Returns the per-batch allocation that WOULD be made if the operator clicked
+// "بدء التشغيل" right now. Pure read endpoint — does not mutate any state.
+// Used by the production order detail UI to show a "سيتم سحب من التشغيلات
+// التالية" preview before confirming the issue. Per-item modes:
+//   * none → returns a single virtual pick representing the WAC issue (legacy)
+//   * fifo/fefo → returns the actual ordered batches pickBatches() would use
+router.get("/orders/:id/issue-preview", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const scope = await assertOrderInScope(req, cid, id);
+    if (!scope.ok) { res.status(scope.status).json({ error: scope.error }); return; }
+    const [order] = await db
+      .select()
+      .from(productionOrdersTable)
+      .where(and(eq(productionOrdersTable.id, id), eq(productionOrdersTable.companyId, cid)));
+    if (!order) { res.status(404).json({ error: "أمر الإنتاج غير موجود" }); return; }
+    if (!order.rawWarehouseId) {
+      res.status(400).json({ error: "حدّد مخزن الخامات قبل عرض المعاينة" });
+      return;
+    }
+    const rawLines = await db
+      .select()
+      .from(productionOrderItemsTable)
+      .where(
+        and(
+          eq(productionOrderItemsTable.orderId, id),
+          eq(productionOrderItemsTable.kind, "raw"),
+        ),
+      );
+    const issuable = rawLines.filter((l) => l.itemId && Number(l.quantity) > 0);
+    const itemIds = issuable.map((l) => l.itemId!);
+    const itemRows = itemIds.length
+      ? await db
+          .select({
+            id: itemsTable.id,
+            mode: itemsTable.batchTrackingMode,
+            nameAr: itemsTable.nameAr,
+            code: itemsTable.code,
+          })
+          .from(itemsTable)
+          .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, itemIds)))
+      : [];
+    const meta = new Map<number, { mode: "none"|"fifo"|"fefo"; nameAr: string; code: string }>();
+    for (const r of itemRows) {
+      const m = (r.mode ?? "none") as string;
+      meta.set(r.id, {
+        mode: (m === "fifo" || m === "fefo" ? m : "none") as "none"|"fifo"|"fefo",
+        nameAr: r.nameAr ?? "",
+        code: r.code ?? "",
+      });
+    }
+    const out: any[] = [];
+    for (const ln of issuable) {
+      const info = meta.get(ln.itemId!) ?? { mode: "none" as const, nameAr: "", code: "" };
+      const qty = Number(ln.quantity);
+      if (info.mode === "none") {
+        const have = await getBalance(cid, ln.itemId!, order.rawWarehouseId);
+        out.push({
+          lineId: ln.id,
+          itemId: ln.itemId,
+          itemNameAr: info.nameAr || ln.description,
+          itemCode: info.code,
+          mode: "none",
+          requestedQty: qty,
+          available: have,
+          shortfall: Math.max(0, qty - have),
+          picks: [{ batchNumber: null, expiryDate: null, takeQty: qty, note: "WAC (بدون تتبّع تشغيلات)" }],
+        });
+        continue;
+      }
+      try {
+        const picks = await pickBatches(cid, ln.itemId!, order.rawWarehouseId, qty, info.mode);
+        out.push({
+          lineId: ln.id,
+          itemId: ln.itemId,
+          itemNameAr: info.nameAr || ln.description,
+          itemCode: info.code,
+          mode: info.mode,
+          requestedQty: qty,
+          available: picks.reduce((s, p) => s + p.takeQty, 0),
+          shortfall: 0,
+          picks: picks.map((p) => ({
+            batchNumber: p.batchNumber,
+            expiryDate: p.expiryDate,
+            takeQty: p.takeQty,
+            costPrice: p.costPrice,
+          })),
+        });
+      } catch (e: any) {
+        // Not enough stock across batches — return partial info so the UI
+        // can warn the operator without blocking the preview.
+        const have = await getBalance(cid, ln.itemId!, order.rawWarehouseId);
+        out.push({
+          lineId: ln.id,
+          itemId: ln.itemId,
+          itemNameAr: info.nameAr || ln.description,
+          itemCode: info.code,
+          mode: info.mode,
+          requestedQty: qty,
+          available: have,
+          shortfall: Math.max(0, qty - have),
+          picks: [],
+          error: e?.message || "تعذّر حساب التوزيع",
+        });
+      }
+    }
+    res.json({ lines: out });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Company-wide aggregated scrap report for the dashboard.
 // Branch-scoped: joins to `production_orders` and reuses the same
 // `effectiveBranchCondition` semantics as other tenant endpoints so a
@@ -3810,8 +4001,9 @@ router.get("/waste-records/summary", async (req, res) => {
     // Branch isolation — restricted users only aggregate orders in their
     // assigned branches. NULL-branch orders are shared/company-wide per
     // the project-wide `effectiveBranchCondition` convention.
-    const branchCond = effectiveBranchCondition(req, productionOrdersTable.branchId);
-    if (branchCond) conditions.push(branchCond);
+    const branchScope = effectiveBranchCondition(req, productionOrdersTable.branchId, req.query.branchId);
+    if (branchScope.deny) { res.json([]); return; }
+    if (branchScope.cond) conditions.push(branchScope.cond);
     const rows = await db
       .select({
         wasteType: productionWasteRecordsTable.wasteType,

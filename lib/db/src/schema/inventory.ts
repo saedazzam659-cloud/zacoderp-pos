@@ -142,6 +142,17 @@ export const itemsTable = pgTable("items", {
   expiryDate:       date("expiry_date"),
   costAccountId:    integer("cost_account_id"),
   revenueAccountId: integer("revenue_account_id"),
+  // PHASE E — Per-item batch picking mode for raw issues / sales.
+  //   'none' (default) → keep current WAC behavior (single ledger row,
+  //                       no batch stamp on OUT side). Zero regression for
+  //                       legacy items.
+  //   'fifo'           → pick oldest received batch first (by inbound
+  //                       stock_ledger.tx_date, then created_at).
+  //   'fefo'           → pick earliest expiry first (NULL expiry last),
+  //                       then FIFO tie-break. Best for perishables.
+  // Stored as plain text (not enum) so future modes can be added without
+  // a migration. Validated at the Zod/route layer.
+  batchTrackingMode: text("batch_tracking_mode").default("none").notNull(),
   createdAt:        timestamp("created_at").defaultNow().notNull(),
   updatedAt:        timestamp("updated_at").defaultNow().notNull(),
 });
