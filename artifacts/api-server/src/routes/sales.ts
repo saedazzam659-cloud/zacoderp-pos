@@ -1961,6 +1961,13 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
 
     let totalCogs = 0;
     const cogsByWarehouse: Record<number, number> = {};
+    // Cross-line bucket consumption — when the same return document has
+    // multiple lines for the same (item, warehouse), a batch's restorable
+    // headroom must shrink as each line allocates against it. Without this,
+    // both lines would each see the same `alreadyByBucket` from DB and
+    // collectively over-restore into the same source batch.
+    // Key: `${itemId}|${warehouseId}|${batch||__null__}|${expiry||""}`
+    const consumedThisDoc = new Map<string, number>();
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
       const factor  = Number(line.conversionFactor || "1") || 1;
@@ -1988,6 +1995,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
         // batch-tracked now — restore as unbatched).
         const srcRows = await db
           .select({
+            id: stockLedgerTable.id,
             qty: stockLedgerTable.qty,
             costPrice: stockLedgerTable.costPrice,
             batchNumber: stockLedgerTable.batchNumber,
@@ -2002,14 +2010,41 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
             eq(stockLedgerTable.warehouseId, line.warehouseId),
           ))
           .orderBy(asc(stockLedgerTable.id));
-        // Subtract any already-returned qty for this item+warehouse on prior
-        // posted returns against the same invoice, so a second partial return
-        // doesn't double-restore into the same batch slot. We allocate the
-        // earlier returns greedily against srcRows in the same pick order.
+        // Aggregate source OUT rows by (batchNumber, expiryDate) so a batch
+        // shipped across multiple ledger rows forms a single restorable
+        // bucket — prevents the prior-return cap from being applied per row
+        // (which would under-allocate when the same batch appears in
+        // multiple source rows). firstId preserves pick order for stable
+        // allocation.
+        type Bucket = { batchNumber: string | null; expiryDate: string | null; shipped: number; costSum: number; firstId: number };
+        const buckets = new Map<string, Bucket>();
+        for (const row of srcRows) {
+          const shipped = Math.abs(Number(row.qty));
+          if (shipped <= 0) continue;
+          const k = `${row.batchNumber ?? "__null__"}|${row.expiryDate ?? ""}`;
+          const b = buckets.get(k);
+          if (b) {
+            b.shipped += shipped;
+            b.costSum += shipped * Number(row.costPrice);
+          } else {
+            buckets.set(k, {
+              batchNumber: row.batchNumber,
+              expiryDate: row.expiryDate,
+              shipped,
+              costSum: shipped * Number(row.costPrice),
+              firstId: row.id,
+            });
+          }
+        }
+        // Prior POSTED returns against same invoice — subtract per-bucket
+        // restored qty so a second partial return can't double-credit the
+        // same batch slot. Keyed by (batch,expiry) to match bucket
+        // granularity. Excludes current return id defensively.
         const priorReturned = await db
           .select({
             qty: stockLedgerTable.qty,
             batchNumber: stockLedgerTable.batchNumber,
+            expiryDate: stockLedgerTable.expiryDate,
           })
           .from(stockLedgerTable)
           .innerJoin(salesReturnsTable, eq(stockLedgerTable.refId, salesReturnsTable.id))
@@ -2020,41 +2055,34 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
             eq(stockLedgerTable.warehouseId, line.warehouseId),
             eq(salesReturnsTable.invoiceId, ret.invoiceId!),
             // Only POSTED prior returns count toward the cap. Drafts have no
-            // accounting effect (per "Posted-Only Financial Reports" rule)
-            // and any stale rows from a failed prior post are ignored.
+            // accounting effect (per "Posted-Only Financial Reports" rule).
             eq(salesReturnsTable.status, "posted"),
-            // Exclude the current return itself — defensive against retries
-            // that re-enter this loop after a transient failure.
+            // Exclude the current return itself — defensive against retries.
             sql`${salesReturnsTable.id} <> ${id}`,
           ));
-        // Per-batch already-restored qty (NULL-batch returns share the
-        // "unbatched" bucket key '__null__').
-        const alreadyByBatch = new Map<string, number>();
+        const alreadyByBucket = new Map<string, number>();
         for (const r of priorReturned) {
-          const k = r.batchNumber ?? "__null__";
-          alreadyByBatch.set(k, (alreadyByBatch.get(k) ?? 0) + Number(r.qty)); // qty is positive on returns
+          const k = `${r.batchNumber ?? "__null__"}|${r.expiryDate ?? ""}`;
+          alreadyByBucket.set(k, (alreadyByBucket.get(k) ?? 0) + Number(r.qty)); // qty positive on returns
         }
-        // Walk source picks (each row was shipped at qty<0); compute remaining
-        // restorable per row and allocate `qty` greedily.
+        const ordered = Array.from(buckets.entries()).sort((a, b) => a[1].firstId - b[1].firstId);
         let remaining = qty;
-        for (const row of srcRows) {
+        for (const [k, b] of ordered) {
           if (remaining <= 0.0001) break;
-          const shipped = Math.abs(Number(row.qty));
-          const k = row.batchNumber ?? "__null__";
-          const consumedFromBucket = alreadyByBatch.get(k) ?? 0;
-          // The bucket is shared across rows with the same batch_number, so
-          // deduct what's already been credited back to it.
-          const restorable = Math.max(0, shipped - consumedFromBucket);
+          const docKey = `${line.itemId}|${line.warehouseId}|${k}`;
+          const consumedPrior = alreadyByBucket.get(k) ?? 0;
+          const consumedDoc   = consumedThisDoc.get(docKey) ?? 0;
+          const restorable = Math.max(0, b.shipped - consumedPrior - consumedDoc);
           if (restorable <= 0.0001) continue;
-          // Decrement bucket so subsequent rows w/ same batch see updated cap.
-          alreadyByBatch.set(k, consumedFromBucket + Math.min(restorable, remaining));
           const take = Math.min(restorable, remaining);
+          const wacCost = b.shipped > 0 ? b.costSum / b.shipped : 0;
           parts.push({
             takeQty: take,
-            costPrice: Number(row.costPrice),
-            batchNumber: row.batchNumber,
-            expiryDate: row.expiryDate,
+            costPrice: wacCost,
+            batchNumber: b.batchNumber,
+            expiryDate: b.expiryDate,
           });
+          consumedThisDoc.set(docKey, consumedDoc + take);
           remaining -= take;
         }
         // Excess (returning more than originally shipped — rare, e.g. legacy

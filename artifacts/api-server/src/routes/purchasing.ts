@@ -12,6 +12,7 @@ import {
   stockBalanceTable, stockLedgerTable, warehousesTable,
   receiptVouchersTable, paymentVouchersTable,
   currenciesTable,
+  itemsTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread, multiBranchScopeSpread } from "../middleware/auth.js";
@@ -2157,10 +2158,30 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
 
+    // Branch-scope guard: prevent cross-branch posting by ID guess.
     const [ret] = await db.select().from(purchaseReturnsTable)
-      .where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid)));
+      .where(and(
+        eq(purchaseReturnsTable.id, id),
+        eq(purchaseReturnsTable.companyId, cid),
+        ...branchScopeSpread(req, purchaseReturnsTable.branchId, undefined),
+      ));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     if (ret.status === "posted") { res.status(400).json({ error: "المرتجع مُرحَّل مسبقاً" }); return; }
+
+    // Source-invoice integrity check: if linked, must exist in same company.
+    if (ret.invoiceId) {
+      const [srcCheck] = await db
+        .select({ id: purchaseInvoicesTable.id })
+        .from(purchaseInvoicesTable)
+        .where(and(
+          eq(purchaseInvoicesTable.id, ret.invoiceId),
+          eq(purchaseInvoicesTable.companyId, cid),
+        ));
+      if (!srcCheck) {
+        res.status(400).json({ error: "فاتورة المشتريات المصدر غير موجودة في هذه الشركة — فك ربط الفاتورة أو اختر فاتورة صحيحة." });
+        return;
+      }
+    }
 
     const lines = await db.select().from(purchaseReturnLinesTable)
       .where(eq(purchaseReturnLinesTable.returnId, id));
@@ -2175,25 +2196,68 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
     // Load warehouse info (account + allow-negative)
     const whInfo = await loadWarehouseInfo(cid, lines.map(l => l.warehouseId).filter(Boolean) as number[]);
 
-    // Validate stock availability first — purchase returns ship goods OUT to the supplier
-    for (const line of lines) {
-      if (!line.itemId || !line.warehouseId) continue;
-      const wh = whInfo[line.warehouseId];
-      if (wh?.allowNegative) continue;
-      const factor = Number(line.conversionFactor || "1") || 1;
-      // Returning paid qty + free qty back to supplier — both leave stock.
-      const qty = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
-      const cur = await getBalance(cid, line.itemId, line.warehouseId);
-      if (cur < qty) {
-        res.status(400).json({
-          error: `رصيد الصنف "${line.itemName}" غير كافٍ في مخزن "${wh?.nameAr ?? line.warehouseId}" — المتاح ${cur} والمطلوب ${qty}. فعّل خاصية "السماح بالسالب" على المخزن إن كنت ترغب بتجاوز الرصيد.`,
-        });
-        return;
+    // Validate stock availability — purchase returns ship goods OUT to the supplier.
+    // Pre-aggregate required qty per (item, warehouse) so multiple lines for the
+    // same item+warehouse can't each pass against the same opening balance and
+    // collectively over-issue when allowNegative=false.
+    {
+      const reqByKey = new Map<string, { itemId: number; warehouseId: number; qty: number; itemName: string | null }>();
+      for (const line of lines) {
+        if (!line.itemId || !line.warehouseId) continue;
+        const wh = whInfo[line.warehouseId];
+        if (wh?.allowNegative) continue;
+        const factor = Number(line.conversionFactor || "1") || 1;
+        const qty = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
+        if (qty <= 0) continue;
+        const k = `${line.itemId}|${line.warehouseId}`;
+        const prev = reqByKey.get(k);
+        if (prev) prev.qty += qty;
+        else reqByKey.set(k, { itemId: line.itemId, warehouseId: line.warehouseId, qty, itemName: line.itemName });
+      }
+      for (const r of reqByKey.values()) {
+        const cur = await getBalance(cid, r.itemId, r.warehouseId);
+        if (cur < r.qty) {
+          const wh = whInfo[r.warehouseId];
+          res.status(400).json({
+            error: `رصيد الصنف "${r.itemName}" غير كافٍ في مخزن "${wh?.nameAr ?? r.warehouseId}" — المتاح ${cur} والمطلوب ${r.qty}. فعّل خاصية "السماح بالسالب" على المخزن إن كنت ترغب بتجاوز الرصيد.`,
+          });
+          return;
+        }
       }
     }
 
     // Decrease stock for each stockable return line (in base units), accumulate per-warehouse credits
+    //
+    // PHASE I — Batch-aware purchase returns:
+    //   * batch_tracking_mode='none'  → legacy single-row WAC OUT (unchanged)
+    //   * batch_tracking_mode='fifo|fefo' AND linked to source invoice →
+    //       read the source invoice's stamped IN rows (qty>0, with
+    //       batch_number/expiry_date from Round 1) and decrement returned
+    //       qty from those specific batches in original receipt order so a
+    //       partial return shrinks the oldest received batch first. Excess
+    //       beyond what was originally received falls back to an unbatched
+    //       OUT row at the line's derived cost.
+    //   * batch-tracked WITHOUT source invoice → legacy WAC OUT path.
+    const retItemIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+    const retItemRows = retItemIds.length
+      ? await db
+          .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode })
+          .from(itemsTable)
+          .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, retItemIds)))
+      : [];
+    const retModeById = new Map<number, "none" | "fifo" | "fefo">();
+    for (const r of retItemRows) {
+      const m = (r.mode ?? "none") as string;
+      retModeById.set(r.id, m === "fifo" || m === "fefo" ? (m as "fifo" | "fefo") : "none");
+    }
+
     const inventoryByWarehouse: Record<number, number> = {};
+    // Cross-line bucket consumption — duplicate (item, warehouse) lines in
+    // the same return must share a batch's returnable headroom. Without
+    // this, both lines would see the same `alreadyByBucket` snapshot and
+    // collectively over-deduct the same source batch.
+    // Key: `${itemId}|${warehouseId}|${batch||__null__}|${expiry||""}`
+    const consumedThisDoc = new Map<string, number>();
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
       const factor   = Number(line.conversionFactor || "1") || 1;
@@ -2204,27 +2268,143 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       const paidQty  = Number(line.qty) * factor;
       const freeQ    = Number(line.freeQty || 0) * factor;
       const qty      = paidQty + freeQ;
+      if (qty <= 0) continue; // skip non-positive returns
       const lineDisc = Math.max(0, Math.min(100, Number((line as any).discount) || 0));
       const paidLineValue = Number(line.unitPrice) * Number(line.qty) * (1 - lineDisc / 100);
       const costUnit = qty > 0 ? paidLineValue / qty : 0;
-      inventoryByWarehouse[line.warehouseId] = (inventoryByWarehouse[line.warehouseId] ?? 0) + qty * costUnit;
 
-      await upsertBalance(cid, line.itemId, line.warehouseId, -qty, costUnit);
+      const mode = retModeById.get(line.itemId) ?? "none";
+      const canBatchTrace = mode !== "none" && !!ret.invoiceId;
+
+      type ReturnPart = { takeQty: number; costPrice: number; batchNumber: string | null; expiryDate: string | null };
+      const parts: ReturnPart[] = [];
+
+      if (canBatchTrace) {
+        // Source IN rows from the original purchase invoice for this
+        // item+warehouse, in receipt order.
+        const srcRows = await db
+          .select({
+            id: stockLedgerTable.id,
+            qty: stockLedgerTable.qty,
+            costPrice: stockLedgerTable.costPrice,
+            batchNumber: stockLedgerTable.batchNumber,
+            expiryDate: stockLedgerTable.expiryDate,
+          })
+          .from(stockLedgerTable)
+          .where(and(
+            eq(stockLedgerTable.companyId, cid),
+            eq(stockLedgerTable.refType, "purchase_invoice"),
+            eq(stockLedgerTable.refId, ret.invoiceId!),
+            eq(stockLedgerTable.itemId, line.itemId),
+            eq(stockLedgerTable.warehouseId, line.warehouseId),
+          ))
+          .orderBy(asc(stockLedgerTable.id));
+        // Aggregate source rows by (batchNumber, expiryDate) so a batch
+        // received across multiple split lines/receipts forms a single
+        // returnable bucket. Weighted-avg cost = Σ(qty×price)/Σ(qty);
+        // firstId preserves receipt order for deterministic allocation.
+        type Bucket = { batchNumber: string | null; expiryDate: string | null; received: number; costSum: number; firstId: number };
+        const buckets = new Map<string, Bucket>();
+        for (const row of srcRows) {
+          const received = Number(row.qty);
+          if (received <= 0) continue;
+          const k = `${row.batchNumber ?? "__null__"}|${row.expiryDate ?? ""}`;
+          const b = buckets.get(k);
+          if (b) {
+            b.received += received;
+            b.costSum += received * Number(row.costPrice);
+          } else {
+            buckets.set(k, {
+              batchNumber: row.batchNumber,
+              expiryDate: row.expiryDate,
+              received,
+              costSum: received * Number(row.costPrice),
+              firstId: row.id,
+            });
+          }
+        }
+        // Prior POSTED returns against the same invoice — subtract per-bucket
+        // returned qty so a second partial return doesn't double-deduct.
+        // Excludes current return id defensively. Keyed by (batch,expiry) to
+        // match bucket granularity exactly.
+        const priorReturned = await db
+          .select({
+            qty: stockLedgerTable.qty,
+            batchNumber: stockLedgerTable.batchNumber,
+            expiryDate: stockLedgerTable.expiryDate,
+          })
+          .from(stockLedgerTable)
+          .innerJoin(purchaseReturnsTable, eq(stockLedgerTable.refId, purchaseReturnsTable.id))
+          .where(and(
+            eq(stockLedgerTable.companyId, cid),
+            eq(stockLedgerTable.refType, "purchase_return"),
+            eq(stockLedgerTable.itemId, line.itemId),
+            eq(stockLedgerTable.warehouseId, line.warehouseId),
+            eq(purchaseReturnsTable.invoiceId, ret.invoiceId!),
+            eq(purchaseReturnsTable.status, "posted"),
+            sql`${purchaseReturnsTable.id} <> ${id}`,
+          ));
+        const alreadyByBucket = new Map<string, number>();
+        for (const r of priorReturned) {
+          const k = `${r.batchNumber ?? "__null__"}|${r.expiryDate ?? ""}`;
+          // Returns are OUT (qty<0) — abs() so the cap math is positive.
+          alreadyByBucket.set(k, (alreadyByBucket.get(k) ?? 0) + Math.abs(Number(r.qty)));
+        }
+        // Walk buckets in receipt order (firstId asc) and allocate `qty`.
+        const ordered = Array.from(buckets.entries()).sort((a, b) => a[1].firstId - b[1].firstId);
+        let remaining = qty;
+        for (const [k, b] of ordered) {
+          if (remaining <= 0.0001) break;
+          const docKey = `${line.itemId}|${line.warehouseId}|${k}`;
+          const consumedPrior = alreadyByBucket.get(k) ?? 0;
+          const consumedDoc   = consumedThisDoc.get(docKey) ?? 0;
+          const returnable = Math.max(0, b.received - consumedPrior - consumedDoc);
+          if (returnable <= 0.0001) continue;
+          const take = Math.min(returnable, remaining);
+          const wacCost = b.received > 0 ? b.costSum / b.received : 0;
+          parts.push({
+            takeQty: take,
+            costPrice: wacCost,
+            batchNumber: b.batchNumber,
+            expiryDate: b.expiryDate,
+          });
+          consumedThisDoc.set(docKey, consumedDoc + take);
+          remaining -= take;
+        }
+        // Excess overflow → single unbatched OUT row at the line's derived cost.
+        if (remaining > 0.0001) {
+          parts.push({ takeQty: remaining, costPrice: costUnit, batchNumber: null, expiryDate: null });
+        }
+      } else {
+        parts.push({ takeQty: qty, costPrice: costUnit, batchNumber: null, expiryDate: null });
+      }
+
+      const lineRemovedCost = parts.reduce((s, p) => s + p.takeQty * p.costPrice, 0);
+      inventoryByWarehouse[line.warehouseId] = (inventoryByWarehouse[line.warehouseId] ?? 0) + lineRemovedCost;
+
+      const wac = qty > 0 ? lineRemovedCost / qty : costUnit;
+      await upsertBalance(cid, line.itemId, line.warehouseId, -qty, wac);
       const newBal = await getBalance(cid, line.itemId, line.warehouseId);
-      await addStockLedgerEntry({
-        companyId:   cid,
-        itemId:      line.itemId,
-        warehouseId: line.warehouseId,
-        txDate:      ret.returnDate,
-        txType:      "purchase_return",
-        qty:         String(-qty),
-        costPrice:   String(costUnit.toFixed(4)),
-        totalCost:   String((-qty * costUnit).toFixed(2)),
-        balanceQty:  String(newBal),
-        refId:       id,
-        refType:     "purchase_return",
-        notes:       line.notes ?? undefined,
-      });
+      let cursor = newBal + qty; // pre-issue total
+      for (const p of parts) {
+        cursor -= p.takeQty;
+        await addStockLedgerEntry({
+          companyId:   cid,
+          itemId:      line.itemId,
+          warehouseId: line.warehouseId,
+          txDate:      ret.returnDate,
+          txType:      "purchase_return",
+          qty:         String(-p.takeQty),
+          costPrice:   String(p.costPrice.toFixed(4)),
+          totalCost:   String((-p.takeQty * p.costPrice).toFixed(2)),
+          balanceQty:  String(cursor.toFixed(4)),
+          refId:       id,
+          refType:     "purchase_return",
+          batchNumber: p.batchNumber,
+          expiryDate:  p.expiryDate,
+          notes:       `${line.notes ?? ""}${p.batchNumber ? ` — ارتجاع تشغيلة ${p.batchNumber}` : ""}`.trim() || undefined,
+        });
+      }
     }
 
     // ── Create journal entry (قيد محاسبي) — reverse of purchase invoice ──
@@ -2324,8 +2504,13 @@ router.patch("/purchase-returns/:id/unpost", requireAdminRole, async (req, res) 
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
 
+    // Branch-scope guard (mirrors /post above).
     const [ret] = await db.select().from(purchaseReturnsTable)
-      .where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid)));
+      .where(and(
+        eq(purchaseReturnsTable.id, id),
+        eq(purchaseReturnsTable.companyId, cid),
+        ...branchScopeSpread(req, purchaseReturnsTable.branchId, undefined),
+      ));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     if (ret.status !== "posted") { res.status(400).json({ error: "المرتجع ليس مُرحَّلاً" }); return; }
 
