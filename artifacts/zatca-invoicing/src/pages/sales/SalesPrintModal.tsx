@@ -1684,22 +1684,43 @@ function template14(d: PrintData): string {
   }
   const userName = doc.createdByName ?? doc.postedByName ?? "—";
 
-  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${titleAr} — ${docNo}</title>
+  // Split the lines into chunks of 10 per page so a long invoice paginates
+  // cleanly. The page-frame `<thead>`/`<tfoot>` (company/customer + audit
+  // footer) re-renders on every printed page automatically thanks to
+  // `display: table-header-group / table-footer-group`.
+  const LINES_PER_PAGE = 10;
+  const lineChunks: any[][] = [];
+  for (let i = 0; i < lines.length; i += LINES_PER_PAGE) {
+    lineChunks.push(lines.slice(i, i + LINES_PER_PAGE));
+  }
+  // Empty-invoice safety: always render at least one chunk so the table
+  // structure (thead row, etc.) shows even when there are no items.
+  if (lineChunks.length === 0) lineChunks.push([]);
+
+  const docHead = `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${titleAr} — ${docNo}</title>
   ${baseStyles("#0f172a")}
   <style>
-    /* "النموذج الأصلي" — zero page margin: data should stretch to the full
-       printable area of the sheet AND suppress the browser-injected
-       header/footer strip (date / title / URL). Chrome hides those
-       automatically when @page margin is 0. The !important + later
-       declaration order ensures we win over baseStyles() (12mm 14mm). */
-    @page { size: A4; margin: 0 !important; }
+    /* "النموذج الأصلي" — reasonable page margins so the running header
+       (red box) and running footer (green box) have breathing room on
+       every printed page. The browser injects whatever space it needs
+       for the thead/tfoot inside .page-frame at the top/bottom of each
+       page; the @page margin reserves the outer padding. */
+    @page { size: A4; margin: 15mm 8mm 18mm 8mm !important; }
     :root { --ink:#0f172a; --line:#e5e7eb; --soft:#f8fafc; --gold:#b88a2a; --gold2:#e5c277; }
     html, body { padding: 0 !important; margin: 0 !important; color: var(--ink); }
-    /* Tight side padding only — zero top/bottom so the company/customer
-       cards sit flush against the paper edge. */
-    .sheet { padding: 0 4mm !important; }
-    /* Pull the first row (3-column header) right to the very top edge. */
-    .hdr { margin-top: 0 !important; }
+    .sheet { padding: 0 !important; }
+
+    /* ── Page frame: repeating header + footer on every printed page ─ */
+    .page-frame { width: 100%; border-collapse: collapse; }
+    .page-frame > thead { display: table-header-group; }
+    .page-frame > tfoot { display: table-footer-group; }
+    .page-frame > thead > tr > td,
+    .page-frame > tfoot > tr > td,
+    .page-frame > tbody > tr > td { padding: 0; vertical-align: top; }
+    /* A little vertical breathing space so the header doesn't kiss the
+       page edge after each break. */
+    .running-header { padding-top: 4mm; padding-bottom: 6px; }
+    .running-footer { padding-top: 6px; padding-bottom: 2mm; }
 
     /* ── 3-column header ───────────────────────────────────────────── */
     .hdr { display:grid; grid-template-columns: 1fr 1.1fr 1fr; gap:12px; align-items:stretch; margin-bottom:14px; }
@@ -1755,14 +1776,33 @@ function template14(d: PrintData): string {
 
     /* ── Lines table ───────────────────────────────────────────────── */
     /* Borderless, simple look: no outer frame, light grey thead with dark
-       text, soft zebra striping, and only a bottom border on cells. */
+       text, soft zebra striping, and only a bottom border on cells.
+       Each chunk of 10 lines is its own <table> followed by an explicit
+       page-break so pages stay capped at exactly 10 items. */
     .lines-wrap { margin-top:6px; border:none; border-radius:0; overflow:visible; }
-    .lines-wrap table { font-size:11px; }
-    .lines-wrap thead tr { background:#f3f4f6; color:var(--ink); }
-    .lines-wrap th { padding:8px 6px; font-weight:700; font-size:10.5px; letter-spacing:.02em; border:none; border-bottom:1px solid var(--line); }
-    .lines-wrap td { padding:6px 6px; border:none; border-bottom:1px solid var(--line); }
-    .lines-wrap tbody tr:last-child td { border-bottom:none; }
-    .lines-wrap tbody tr:nth-child(even) { background:#fafbfc; }
+    .lines-chunk { width:100%; border-collapse:collapse; font-size:11px; margin-bottom:0; }
+    .lines-chunk + .lines-chunk { margin-top:0; }
+    .lines-chunk thead tr { background:#f3f4f6; color:var(--ink); }
+    .lines-chunk th { padding:8px 6px; font-weight:700; font-size:10.5px; letter-spacing:.02em; border:none; border-bottom:1px solid var(--line); text-align:right; }
+    .lines-chunk td { padding:10px 6px; border:none; border-bottom:1px solid var(--line); text-align:right; }
+    .lines-chunk tbody tr.item-row:nth-of-type(odd) td { background:#fafbfc; }
+    /* Avoid splitting an item row (and its notes companion row) across
+       pages — keeps line + its description glued together. */
+    .lines-chunk tbody tr { page-break-inside: avoid; break-inside: avoid; }
+    /* Per-line notes — a simple, lightweight row under the item with a
+       gold side accent and italic body text. colspan is set inline so
+       it matches the variable number of columns. */
+    .lines-chunk tbody tr.line-notes td {
+      padding:6px 10px 10px;
+      background:#fff;
+      border-bottom:1px solid var(--line);
+      font-size:10.5px;
+      color:#475569;
+      font-style:italic;
+      border-right:3px solid var(--gold2);
+    }
+    .lines-chunk tbody tr.line-notes .nlbl { color:var(--gold); font-weight:700; font-style:normal; margin-left:4px; }
+    .page-break { page-break-after: always; break-after: page; height:0; }
 
     /* ── Totals + QR + footer ───────────────────────────────────────── */
     .bottom { display:grid; grid-template-columns: 1fr 280px; gap:14px; margin-top:14px; align-items:flex-start; }
@@ -1787,87 +1827,172 @@ function template14(d: PrintData): string {
     }
     .notes-box b { color:var(--ink); }
   </style>
-  </head><body><div class="sheet">
+  </head>`;
 
-  <!-- 3-column header ─────────────────────────────────────────────── -->
-  <div class="hdr">
-    <!-- COMPANY (right side in RTL — first in DOM) -->
-    <div class="col-co">
-      <div class="label">بيانات الشركة</div>
-      <div class="co-name-ar">${company?.nameAr ?? "اسم الشركة"}</div>
-      ${company?.nameEn ? `<div class="co-name-en">${company.nameEn}</div>` : ""}
-      ${company?.vatNumber ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${company.vatNumber}</span></div>` : ""}
-      ${company?.crNumber  ? `<div class="row"><b>السجل التجاري:</b><span class="mono">${company.crNumber}</span></div>` : ""}
-      ${(company as any)?.phone ? `<div class="row"><b>الهاتف:</b><span class="mono">${(company as any).phone}</span></div>` : ""}
-    </div>
-
-    <!-- LOGO + TITLE + META (center) -->
-    <div class="col-mid">
-      <div class="logo-wrap">
-        ${safeLogo
-          ? `<img src="${safeLogo}" alt="logo" />`
-          : `<div class="logo-fallback">${(company?.nameAr ?? company?.nameEn ?? "?").trim().slice(0, 2)}</div>`}
+  // Build the per-page red-box header HTML once — repeated by the
+  // browser's table-header-group machinery on every page.
+  const headerHtml = `
+    <div class="hdr">
+      <!-- COMPANY (right side in RTL — first in DOM) -->
+      <div class="col-co">
+        <div class="label">بيانات الشركة</div>
+        <div class="co-name-ar">${company?.nameAr ?? "اسم الشركة"}</div>
+        ${company?.nameEn ? `<div class="co-name-en">${company.nameEn}</div>` : ""}
+        ${company?.vatNumber ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${company.vatNumber}</span></div>` : ""}
+        ${company?.crNumber  ? `<div class="row"><b>السجل التجاري:</b><span class="mono">${company.crNumber}</span></div>` : ""}
+        ${(company as any)?.phone ? `<div class="row"><b>الهاتف:</b><span class="mono">${(company as any).phone}</span></div>` : ""}
       </div>
-      <div class="doc-title-pill">
-        ${titleAr}
-        <span class="en">${titleEn}</span>
+
+      <!-- LOGO + TITLE + META (center) -->
+      <div class="col-mid">
+        <div class="logo-wrap">
+          ${safeLogo
+            ? `<img src="${safeLogo}" alt="logo" />`
+            : `<div class="logo-fallback">${(company?.nameAr ?? company?.nameEn ?? "?").trim().slice(0, 2)}</div>`}
+        </div>
+        <div class="doc-title-pill">
+          ${titleAr}
+          <span class="en">${titleEn}</span>
+        </div>
+        <div class="meta-pills">
+          <span class="pill no"><b>${docNo}</b></span>
+          ${!isNonPaymentDoc(d.type) ? `<span class="pill pay"><b>${payLabel}</b></span>` : ""}
+          <span class="pill">📅 <b>${dateStr}</b></span>
+          ${isQuot && doc.validUntil ? `<span class="pill">صالح حتى <b>${doc.validUntil}</b></span>` : ""}
+          ${isReturn && doc.invoiceId ? `<span class="pill">مرجع: <b>${doc.invoiceId}</b></span>` : ""}
+        </div>
       </div>
-      <div class="meta-pills">
-        <span class="pill no"><b>${docNo}</b></span>
-        ${!isNonPaymentDoc(d.type) ? `<span class="pill pay"><b>${payLabel}</b></span>` : ""}
-        <span class="pill">📅 <b>${dateStr}</b></span>
-        ${isQuot && doc.validUntil ? `<span class="pill">صالح حتى <b>${doc.validUntil}</b></span>` : ""}
-        ${isReturn && doc.invoiceId ? `<span class="pill">مرجع: <b>${doc.invoiceId}</b></span>` : ""}
+
+      <!-- CUSTOMER (left side in RTL — last in DOM) -->
+      <div class="col-cu">
+        <div class="label">بيانات العميل</div>
+        <div class="cu-name">${customer?.nameAr ?? customer?.nameEn ?? doc.buyerName ?? "—"}</div>
+        ${(customer?.vatNumber ?? doc.buyerVatNumber)
+          ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
+        ${acctCode ? `<div class="row"><b>كود الحساب:</b><span class="mono">${acctCode}</span></div>` : ""}
+        ${customer?.phone ? `<div class="row"><b>الهاتف:</b><span class="mono">${customer.phone}</span></div>` : ""}
+        ${bldgNo ? `<div class="row"><b>رقم العنوان:</b><span class="mono">${bldgNo}</span></div>` : ""}
       </div>
-    </div>
+    </div>`;
 
-    <!-- CUSTOMER (left side in RTL — last in DOM) -->
-    <div class="col-cu">
-      <div class="label">بيانات العميل</div>
-      <div class="cu-name">${customer?.nameAr ?? customer?.nameEn ?? doc.buyerName ?? "—"}</div>
-      ${(customer?.vatNumber ?? doc.buyerVatNumber)
-        ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
-      ${acctCode ? `<div class="row"><b>كود الحساب:</b><span class="mono">${acctCode}</span></div>` : ""}
-      ${customer?.phone ? `<div class="row"><b>الهاتف:</b><span class="mono">${customer.phone}</span></div>` : ""}
-      ${bldgNo ? `<div class="row"><b>رقم العنوان:</b><span class="mono">${bldgNo}</span></div>` : ""}
-    </div>
-  </div>
+  // Green-box running footer — appears on every printed page.
+  const footerHtml = `
+    <div class="audit-footer">
+      <div class="grp">
+        <span>تاريخ الإنشاء: <b>${createdAtStr}</b></span>
+        <span>بواسطة: <b>${userName}</b></span>
+      </div>
+      <div class="grp" style="text-align:left;">
+        <span>طُبع: <b>${new Date().toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" })}</b></span>
+        <span style="color:var(--gold);font-weight:700;">ZATCA e-Invoice</span>
+      </div>
+    </div>`;
 
-  <!-- Lines table ─────────────────────────────────────────────────── -->
-  <div class="lines-wrap">
-    ${linesTable(lines)}
-  </div>
+  // ── Build the per-chunk line tables (max 10 rows each) ──────────────
+  // Column visibility mirrors the shared `linesTable()` so we don't show
+  // the discount / free columns when no line uses them.
+  const showDisc = lines.some(l =>
+    (Number(l.discount) || 0) > 0 || (Number(l.discountAmount) || 0) > 0
+  );
+  const showFree = lines.some(l => (Number(l.freeQty) || 0) > 0);
+  // Total visible column count — needed for the per-line notes colspan.
+  const colCount = 7 + (showFree ? 1 : 0) + (showDisc ? 2 : 0);
 
-  <!-- Bottom : totals + QR ───────────────────────────────────────── -->
-  <div class="bottom">
-    <div class="totals-card">
-      <div class="__totalsRow"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(totals.subtotalPreDiscount)} ${totals.currency}</span></div>
-      <div class="__totalsRow"><span>مبلغ الخصم — Discount</span><span class="mono" style="color:#b91c1c;">${fmt(totals.discountTotal)} ${totals.currency}</span></div>
-      <div class="__totalsRow"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(totals.netPreVat)} ${totals.currency}</span></div>
-      <div class="__totalsRow"><span>ضريبة القيمة المضافة — VAT</span><span class="mono" style="color:#b45309;">${fmt(totals.vatAmount)} ${totals.currency}</span></div>
-      <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(totals.grandTotal)} ${totals.currency}</span></div>
-      ${summaryFooterHtml(totals)}
-    </div>
-    <div class="qr-card">
-      ${qrImgHtml(d, { size: 150 })}
-      <div class="lbl">QR — ZATCA</div>
-    </div>
-  </div>
+  const linesHeadHtml = `
+    <thead>
+      <tr>
+        <th style="width:30px">#</th>
+        <th>الصنف / الخدمة</th>
+        <th>الكمية</th>
+        ${showFree ? `<th style="color:#b45309;">مجاني</th>` : ""}
+        <th>الوحدة</th>
+        <th>سعر الوحدة</th>
+        ${showDisc ? `<th>الخصم</th>` : ""}
+        ${showDisc ? `<th>قيمة الخصم</th>` : ""}
+        <th>الضريبة</th>
+        <th>قيمة الضريبة</th>
+        <th>الإجمالي</th>
+      </tr>
+    </thead>`;
 
-  ${doc.notes ? `<div class="notes-box"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
+  const chunkTablesHtml = lineChunks.map((chunk, chunkIdx) => {
+    const rowsHtml = chunk.map((l: any, j: number) => {
+      const idx = chunkIdx * LINES_PER_PAGE + j;
+      const qty   = Number(l.qty) || 0;
+      const price = Number(l.unitPrice) || 0;
+      const gross = qty * price;
+      const discPct = Math.max(0, Math.min(100, Number(l.discount) || 0));
+      const rawAmt  = Math.max(0, Number(l.discountAmount) || 0);
+      const discAmtEff = rawAmt > 0 ? Math.min(rawAmt, gross) : (gross * discPct) / 100;
+      const sub  = Math.max(0, gross - discAmtEff);
+      const vat  = sub * ((Number(l.vatRate) || 0) / 100);
+      const tot  = sub + vat;
+      const freeQ = Number(l.freeQty) || 0;
+      const discPctCell = discPct > 0 ? `${discPct}%` : "—";
+      const discValCell = discAmtEff > 0 ? fmt(discAmtEff) : "—";
+      const noteText = (l.notes ?? l.description ?? "").toString().trim();
+      const itemRow = `
+        <tr class="item-row">
+          <td>${idx + 1}</td>
+          <td>${l.itemName ?? l.itemCode ?? "—"}</td>
+          <td class="mono">${Math.round(qty)}</td>
+          ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
+          <td>${l.unit ?? "—"}</td>
+          <td class="mono">${fmt(l.unitPrice)}</td>
+          ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discPctCell}</td>` : ""}
+          ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discValCell}</td>` : ""}
+          <td class="mono">${l.vatRate ?? 15}%</td>
+          <td class="mono">${fmt(vat)}</td>
+          <td class="mono" style="font-weight:600;">${fmt(tot)}</td>
+        </tr>`;
+      const notesRow = noteText
+        ? `<tr class="line-notes"><td colspan="${colCount}"><span class="nlbl">📝 ملاحظات:</span>${noteText}</td></tr>`
+        : "";
+      return itemRow + notesRow;
+    }).join("");
 
-  <!-- Audit footer ──────────────────────────────────────────────── -->
-  <div class="audit-footer">
-    <div class="grp">
-      <span>تاريخ الإنشاء: <b>${createdAtStr}</b></span>
-      <span>بواسطة: <b>${userName}</b></span>
-    </div>
-    <div class="grp" style="text-align:left;">
-      <span>طُبع: <b>${new Date().toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" })}</b></span>
-      <span style="color:var(--gold);font-weight:700;">ZATCA e-Invoice</span>
-    </div>
-  </div>
+    const isLast = chunkIdx === lineChunks.length - 1;
+    return `
+      <table class="lines-chunk">
+        ${linesHeadHtml}
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      ${!isLast ? `<div class="page-break"></div>` : ""}`;
+  }).join("");
 
+  return `${docHead}
+  <body><div class="sheet">
+    <table class="page-frame">
+      <thead>
+        <tr><td><div class="running-header">${headerHtml}</div></td></tr>
+      </thead>
+      <tfoot>
+        <tr><td><div class="running-footer">${footerHtml}</div></td></tr>
+      </tfoot>
+      <tbody>
+        <tr><td>
+          <div class="lines-wrap">${chunkTablesHtml}</div>
+
+          <!-- Bottom : totals + QR (only after the last chunk) ───────── -->
+          <div class="bottom">
+            <div class="totals-card">
+              <div class="__totalsRow"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(totals.subtotalPreDiscount)} ${totals.currency}</span></div>
+              <div class="__totalsRow"><span>مبلغ الخصم — Discount</span><span class="mono" style="color:#b91c1c;">${fmt(totals.discountTotal)} ${totals.currency}</span></div>
+              <div class="__totalsRow"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(totals.netPreVat)} ${totals.currency}</span></div>
+              <div class="__totalsRow"><span>ضريبة القيمة المضافة — VAT</span><span class="mono" style="color:#b45309;">${fmt(totals.vatAmount)} ${totals.currency}</span></div>
+              <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(totals.grandTotal)} ${totals.currency}</span></div>
+              ${summaryFooterHtml(totals)}
+            </div>
+            <div class="qr-card">
+              ${qrImgHtml(d, { size: 150 })}
+              <div class="lbl">QR — ZATCA</div>
+            </div>
+          </div>
+
+          ${doc.notes ? `<div class="notes-box"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
+        </td></tr>
+      </tbody>
+    </table>
   </div></body></html>`;
 }
 
