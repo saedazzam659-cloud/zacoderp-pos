@@ -1,5 +1,5 @@
 import {
-  pgTable, serial, text, integer, boolean, timestamp, numeric, pgEnum,
+  pgTable, serial, text, integer, boolean, timestamp, numeric, pgEnum, date,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { suppliersTable } from "./suppliers";
@@ -135,6 +135,8 @@ export const purchaseInvoiceLinesTable = pgTable("purchase_invoice_lines", {
   finalCost:       numeric("final_cost",    { precision: 15, scale: 2 }).default("0"),
   accountId:       integer("account_id").references(() => accountsTable.id),
   warehouseId:     integer("warehouse_id"),
+  batchNumber:     text("batch_number"),
+  expiryDate:      date("expiry_date"),
   notes:           text("notes"),
 });
 

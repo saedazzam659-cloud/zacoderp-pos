@@ -1,5 +1,5 @@
 import {
-  pgTable, serial, text, integer, boolean, timestamp, numeric, pgEnum,
+  pgTable, serial, text, integer, boolean, timestamp, numeric, pgEnum, date,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { suppliersTable } from "./suppliers";
@@ -57,6 +57,8 @@ export const goodsReceiptLinesTable = pgTable("goods_receipt_lines", {
   discountAmount:   numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   vatRate:          numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
   lineTotal:        numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
+  batchNumber:      text("batch_number"),
+  expiryDate:       date("expiry_date"),
   notes:            text("notes"),
 });
 

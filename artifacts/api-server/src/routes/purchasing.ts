@@ -1081,6 +1081,8 @@ router.post("/purchase-invoices", async (req, res) => {
           finalCost: String(l.finalCost || "0"),
           accountId: l.accountId ? Number(l.accountId) : null,
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
+          batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
+          expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
           notes: l.notes || null,
         }))
       );
@@ -1160,6 +1162,8 @@ router.put("/purchase-invoices/:id", async (req, res) => {
             finalCost: String(l.finalCost || "0"),
             accountId: l.accountId ? Number(l.accountId) : null,
             warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
+            batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
+            expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
             notes: l.notes || null,
           }))
         );
@@ -1229,6 +1233,8 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
         balanceQty:  String(newBal),
         refId:       id,
         refType:     "purchase_invoice",
+        batchNumber: line.batchNumber ? String(line.batchNumber).trim() || null : null,
+        expiryDate:  line.expiryDate  ? String(line.expiryDate)  : null,
         notes:       line.notes ?? undefined,
       });
     }

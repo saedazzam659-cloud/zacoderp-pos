@@ -318,6 +318,8 @@ router.post("/", async (req, res) => {
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
           vatRate: String(l.vatRate || "15"),
           lineTotal: String(l.lineTotal || "0"),
+          batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
+          expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
           notes: l.notes || null,
         }))
       );
@@ -384,6 +386,8 @@ router.put("/:id", async (req, res) => {
             discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
             vatRate: String(l.vatRate || "15"),
             lineTotal: String(l.lineTotal || "0"),
+            batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
+            expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
             notes: l.notes || null,
           }))
         );
@@ -447,7 +451,7 @@ router.patch("/:id/post", async (req, res) => {
     // Goods cost per warehouse (excluding VAT). Receiving Clearing is
     // credited for the same total (no VAT, no discount loading at GRN
     // stage — those land on the linked purchase invoice).
-    type LineComputed = { itemId: number; warehouseId: number; qtyBase: number; costUnit: number; goodsNet: number; notes: string | null };
+    type LineComputed = { itemId: number; warehouseId: number; qtyBase: number; costUnit: number; goodsNet: number; notes: string | null; batchNumber: string | null; expiryDate: string | null };
     const computed: LineComputed[] = [];
     const goodsByWh: Record<number, number> = {};
     for (const line of lines) {
@@ -472,6 +476,8 @@ router.patch("/:id/post", async (req, res) => {
         costUnit,
         goodsNet,
         notes: line.notes ?? null,
+        batchNumber: line.batchNumber ? String(line.batchNumber).trim() || null : null,
+        expiryDate:  line.expiryDate  ? String(line.expiryDate)  : null,
       });
     }
 
@@ -591,6 +597,8 @@ router.patch("/:id/post", async (req, res) => {
           balanceQty:  String(newBal),
           refId:       id,
           refType:     "goods_receipt",
+          batchNumber: c.batchNumber,
+          expiryDate:  c.expiryDate,
           notes:       c.notes ?? undefined,
         });
       }
@@ -845,6 +853,8 @@ router.post("/:id/convert-to-invoice", async (req, res) => {
             expenseShare: "0",
             finalCost: "0",
             warehouseId: l.warehouseId,
+            batchNumber: (l as any).batchNumber ?? null,
+            expiryDate:  (l as any).expiryDate  ?? null,
             notes: l.notes,
           }))
         );

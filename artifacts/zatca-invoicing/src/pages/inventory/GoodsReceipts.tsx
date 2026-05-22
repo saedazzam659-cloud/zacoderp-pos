@@ -59,6 +59,8 @@ interface ReceiptLine {
   discount: string;
   vatRate: string;
   lineTotal: string;
+  batchNumber: string;
+  expiryDate: string;
   notes: string;
 }
 
@@ -67,7 +69,7 @@ function newLine(): ReceiptLine {
     _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
     unitId: "", unit: "", conversionFactor: "1", warehouseId: "",
     qty: "1", unitPrice: "0", discount: "0", vatRate: "15", lineTotal: "0",
-    notes: "",
+    batchNumber: "", expiryDate: "", notes: "",
   };
 }
 
@@ -374,6 +376,8 @@ export default function GoodsReceipts() {
         discount:    String(l.discount ?? "0"),
         vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
         lineTotal:   String(l.lineTotal ?? "0"),
+        batchNumber: l.batchNumber ?? "",
+        expiryDate:  l.expiryDate  ?? "",
         notes:       l.notes ?? "",
       })) : [newLine()]);
       setShowForm(true);
@@ -414,6 +418,8 @@ export default function GoodsReceipts() {
         discount:    String(l.discount ?? "0"),
         vatRate:     (l.vatRate != null && l.vatRate !== "" ? String(l.vatRate) : "15"),
         lineTotal:   String(l.lineTotal ?? "0"),
+        batchNumber: l.batchNumber ?? "",
+        expiryDate:  l.expiryDate  ?? "",
         notes:       l.notes ?? "",
       })) : [newLine()]);
       setShowForm(true);
@@ -559,6 +565,7 @@ export default function GoodsReceipts() {
     tr("lineCols.itemCode"), tr("lineCols.item"), tr("lineCols.warehouse"),
     tr("lineCols.unit"), tr("lineCols.qty"), tr("lineCols.price"),
     tr("lineCols.discount"), tr("lineCols.vat"), tr("lineCols.total"),
+    "رقم الدفعة", "تاريخ الانتهاء",
     tr("lineCols.notes"), "",
   ];
 
@@ -1134,7 +1141,7 @@ ${sections}
                     <span>{tr("linesTitle")} ({lines.filter(l => l.itemId || l.itemName).length})</span>
                   </div>
                   {(() => {
-                    const GRID_COLS_GR = "110px minmax(260px,1.4fr) 160px 120px 90px 110px 80px 80px 130px 180px 40px";
+                    const GRID_COLS_GR = "110px minmax(260px,1.4fr) 160px 120px 90px 110px 80px 80px 130px 120px 130px 180px 40px";
                     return (
                   <div className="rounded-xl border bg-card overflow-x-auto" dir={isRtl ? "rtl" : "ltr"}>
                     <div className="min-w-max">
@@ -1201,6 +1208,10 @@ ${sections}
                         <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.vatRate}
                           onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                         <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
+                        <Input className="h-8 text-xs" placeholder="رقم الدفعة" value={l.batchNumber}
+                          onChange={e => updateLine(l._id, "batchNumber", e.target.value)} />
+                        <Input className="h-8 text-xs" type="date" value={l.expiryDate}
+                          onChange={e => updateLine(l._id, "expiryDate", e.target.value)} />
                         <Input className="h-8 text-xs" value={l.notes}
                           onChange={e => updateLine(l._id, "notes", e.target.value)} />
                         <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive"
