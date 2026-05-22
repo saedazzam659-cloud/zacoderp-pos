@@ -602,12 +602,20 @@ export default function SalesReturns() {
         // accounts for the free units the customer kept and the
         // discount share for the returned quantity.
         const headerDisc = Math.max(0, Number(inv.discountAmount ?? 0));
+        // IMPORTANT: نسبة الخصم وقيمة الخصم وجهان لنفس القيمة (مُتزامنان عبر
+        // `syncLineDiscount`). لا يُسمح بطرحهما معاً وإلا تضاعَف الخصم
+        // (الخطأ القديم: 2000 − 5% − 100 = 1800 بدلاً من 1900). نستخدم
+        // `effectiveLineDiscount` الذي يأخذ القيمة بالعملة أولاً، ويشتقّ
+        // من النسبة فقط عند غياب القيمة (سجلات قديمة).
         const lineGrosses: number[] = inv.lines.map((l: any) => {
-          const q  = Number(l.qty ?? 0);
-          const p  = Number(l.unitPrice ?? 0);
-          const dp = Number(l.discount ?? 0);
-          const da = Math.max(0, Number(l.discountAmount ?? 0));
-          return Math.max(0, q * p * (1 - dp / 100) - da);
+          const q = Number(l.qty ?? 0);
+          const p = Number(l.unitPrice ?? 0);
+          const discEff = effectiveLineDiscount({
+            qty: q, unitPrice: p,
+            discount: String(l.discount ?? "0"),
+            discountAmount: String(l.discountAmount ?? "0"),
+          });
+          return Math.max(0, q * p - discEff);
         });
         const grossSum = lineGrosses.reduce((s, x) => s + x, 0);
 
@@ -633,8 +641,16 @@ export default function SalesReturns() {
           const qty       = Number(l.qty ?? 0);
           const freeQty   = Number(l.freeQty ?? 0);
           const origPrice = Number(l.unitPrice ?? 0);
-          const lineDiscPct = Number(l.discount ?? 0);
-          const lineDiscAmt = Math.max(0, Number(l.discountAmount ?? 0));
+          // قيمة الخصم الفعّالة (واحدة فقط — الفلدان وجهان لنفس القيمة).
+          const lineDiscEff = effectiveLineDiscount({
+            qty, unitPrice: origPrice,
+            discount: String(l.discount ?? "0"),
+            discountAmount: String(l.discountAmount ?? "0"),
+          });
+          // النسبة المعروضة — مشتقّة من القيمة الفعلية (وليست حقلاً مستقلاً)
+          // لضمان توافق العرض مع الحساب الفعلي.
+          const lineGrossPre = qty * origPrice;
+          const lineDiscPctDerived = lineGrossPre > 0 ? (lineDiscEff / lineGrossPre) * 100 : 0;
           const lineGross   = lineGrosses[idx] ?? 0;
           const headerShare = grossSum > 0 ? headerDisc * (lineGross / grossSum) : 0;
           const lineNet     = Math.max(0, lineGross - headerShare);
@@ -645,16 +661,21 @@ export default function SalesReturns() {
           // half-piaster threshold to avoid noisy badges from rounding.
           const hasAdjustment =
             freeQty > 0
-            || lineDiscPct > 0
-            || lineDiscAmt > 0
+            || lineDiscEff > 0
             || headerShare > 0
             || Math.abs(effectivePrice - origPrice) > 0.005;
           // Human-readable breakdown for the tooltip; mirrors the
           // wording used in the form line badge so users see the same
-          // explanation in both places.
+          // explanation in both places. We show the discount EXACTLY ONCE
+          // — as a single SAR value with the equivalent % in parentheses
+          // — because % and amount are two views of the same number.
           const parts: string[] = [`${fmt(qty)} × ${fmt(origPrice)}`];
-          if (lineDiscPct > 0)    parts.push(`− ${lineDiscPct}%`);
-          if (lineDiscAmt > 0)    parts.push(`− ${fmt(lineDiscAmt)} خصم`);
+          if (lineDiscEff > 0) {
+            const pctTxt = lineDiscPctDerived > 0
+              ? ` (${(Math.round(lineDiscPctDerived * 100) / 100)}%)`
+              : "";
+            parts.push(`− ${fmt(lineDiscEff)} خصم${pctTxt}`);
+          }
           if (headerShare > 0)    parts.push(`− ${fmt(headerShare)} حصة الخصم الرأسي`);
           parts.push(`= ${fmt(lineNet)} صافي`);
           parts.push(`÷ ${fmt(totalUnits)} وحدة${freeQty > 0 ? ` (${fmt(qty)} + ${fmt(freeQty)} مجاني)` : ""}`);
