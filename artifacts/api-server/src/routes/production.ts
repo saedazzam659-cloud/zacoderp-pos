@@ -4025,4 +4025,249 @@ router.get("/waste-records/summary", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// PHASE F — Batch Traceability / Genealogy
+//
+// Two read-only endpoints that reconstruct the lot genealogy from
+// `stock_ledger`. We don't materialise a separate genealogy table —
+// every issue/receipt row already carries (batch_number, expiry_date,
+// ref_id = production_order.id, ref_type = 'production_order'), so a
+// few JOINs give an exact answer.
+//
+// Downstream (order → raws consumed):
+//   GET /api/production/orders/:id/traceability
+//
+// Upstream / recall (raw batch → every FG it flowed into):
+//   GET /api/production/trace-by-batch?batchNumber=&itemId=
+//
+// Both endpoints are guarded by company + branch scope; raw-batch
+// recall is intentionally NOT restricted by item so an operator can
+// search for a poisoned supplier batch even when they don't know
+// which SKU it sits under (itemId is optional and narrows the search).
+// ─────────────────────────────────────────────────────────────────────────
+router.get("/orders/:id/traceability", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const scope = await assertOrderInScope(req, cid, id);
+    if (!scope.ok) { res.status(scope.status).json({ error: scope.error }); return; }
+    const [order] = await db
+      .select()
+      .from(productionOrdersTable)
+      .where(and(eq(productionOrdersTable.id, id), eq(productionOrdersTable.companyId, cid)));
+    if (!order) { res.status(404).json({ error: "أمر الإنتاج غير موجود" }); return; }
+
+    // a) FG side — every production_receipt row for this order (one per
+    //    completion; usually just one, but the schema doesn't forbid more).
+    const fgRows = await db.execute(sql`
+      SELECT
+        sl.id, sl.tx_date AS "txDate", sl.qty, sl.cost_price AS "costPrice",
+        sl.total_cost AS "totalCost", sl.batch_number AS "batchNumber",
+        sl.expiry_date AS "expiryDate", sl.warehouse_id AS "warehouseId",
+        sl.item_id AS "itemId",
+        i.code AS "itemCode", i.name_ar AS "itemNameAr", i.name_en AS "itemNameEn",
+        w.name_ar AS "warehouseName"
+      FROM stock_ledger sl
+      JOIN items i ON i.id = sl.item_id
+      LEFT JOIN warehouses w ON w.id = sl.warehouse_id
+      WHERE sl.company_id = ${cid}
+        AND sl.ref_type   = 'production_order'
+        AND sl.ref_id     = ${id}
+        AND sl.tx_type    = 'production_receipt'
+      ORDER BY sl.tx_date ASC, sl.id ASC
+    `);
+
+    // b) Raw side — every production_issue row consumed by this order,
+    //    grouped by (item, batch, expiry) so two ledger rows from the same
+    //    batch/expiry merge into one genealogy entry.
+    const rawRows = await db.execute(sql`
+      SELECT
+        sl.item_id    AS "itemId",
+        i.code        AS "itemCode",
+        i.name_ar     AS "itemNameAr",
+        i.name_en     AS "itemNameEn",
+        sl.batch_number AS "batchNumber",
+        sl.expiry_date  AS "expiryDate",
+        SUM(-sl.qty)::numeric        AS "qty",
+        SUM(-sl.total_cost)::numeric AS "totalCost",
+        MIN(sl.tx_date)              AS "earliestTxDate"
+      FROM stock_ledger sl
+      JOIN items i ON i.id = sl.item_id
+      WHERE sl.company_id = ${cid}
+        AND sl.ref_type   = 'production_order'
+        AND sl.ref_id     = ${id}
+        AND sl.tx_type    = 'production_issue'
+      GROUP BY sl.item_id, i.code, i.name_ar, i.name_en, sl.batch_number, sl.expiry_date
+      ORDER BY i.name_ar ASC, sl.batch_number ASC NULLS LAST
+    `);
+
+    const fg = ((fgRows as any).rows ?? fgRows) as any[];
+    const raws = ((rawRows as any).rows ?? rawRows) as any[];
+    res.json({
+      order: {
+        id: order.id,
+        orderNumber: order.orderNumber,
+        title: order.title,
+        status: order.status,
+        batchNumber: order.batchNumber,
+        qrToken: order.qrToken,
+        fgExpiryDate: order.fgExpiryDate,
+        productItemId: order.productItemId,
+        plannedQty: order.plannedQty,
+        producedQty: order.producedQty,
+        wasteQty: order.wasteQty,
+        rawMaterialsCost: order.rawMaterialsCost,
+        laborCost: order.laborCost,
+        overheadCost: order.overheadCost,
+        actualCost: order.actualCost,
+        issueJournalEntryId: order.issueJournalEntryId,
+        receiptJournalEntryId: order.receiptJournalEntryId,
+      },
+      fg: fg.map((r) => ({
+        ...r,
+        qty: Number(r.qty),
+        costPrice: Number(r.costPrice),
+        totalCost: Number(r.totalCost),
+      })),
+      raws: raws.map((r) => ({
+        ...r,
+        qty: Number(r.qty),
+        totalCost: Number(r.totalCost),
+        avgCost: Number(r.qty) > 0 ? Number(r.totalCost) / Number(r.qty) : 0,
+      })),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/trace-by-batch", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const batchNumber = typeof req.query.batchNumber === "string" ? req.query.batchNumber.trim() : "";
+    if (!batchNumber) {
+      res.status(400).json({ error: "حدّد رقم التشغيلة (batchNumber)" });
+      return;
+    }
+    const itemIdRaw = req.query.itemId;
+    const itemId = itemIdRaw != null && itemIdRaw !== "" ? Number(itemIdRaw) : null;
+
+    // Branch isolation — honour `effectiveBranchCondition` against BOTH
+    // production_orders.branch_id (for consumedBy) and warehouses.branch_id
+    // (for movements), so a branch-restricted operator only sees rows from
+    // their assigned branches. NULL-branch rows remain visible per the
+    // project-wide convention (shared/company-wide stock).
+    const consumedBranchScope = effectiveBranchCondition(
+      req,
+      productionOrdersTable.branchId,
+      req.query.branchId,
+    );
+    const moveBranchScope = effectiveBranchCondition(
+      req,
+      warehousesTable.branchId,
+      req.query.branchId,
+    );
+    if (consumedBranchScope.deny && moveBranchScope.deny) {
+      res.json({ batchNumber, itemId, consumedBy: [], movements: [] });
+      return;
+    }
+
+    const itemFilter = itemId && Number.isFinite(itemId)
+      ? sql`AND sl.item_id = ${itemId}`
+      : sql``;
+    const consumedBranchFilter = consumedBranchScope.deny
+      ? sql`AND FALSE`
+      : consumedBranchScope.cond
+        ? sql`AND ${consumedBranchScope.cond}`
+        : sql``;
+    const moveBranchFilter = moveBranchScope.deny
+      ? sql`AND FALSE`
+      : moveBranchScope.cond
+        ? sql`AND ${moveBranchScope.cond}`
+        : sql``;
+
+    // Orders that CONSUMED this batch as raw input.
+    const consumedRows = await db.execute(sql`
+      SELECT
+        po.id            AS "orderId",
+        po.order_number  AS "orderNumber",
+        po.title         AS "title",
+        po.status        AS "status",
+        po.batch_number  AS "fgBatch",
+        po.fg_expiry_date AS "fgExpiryDate",
+        po.product_item_id AS "fgItemId",
+        fgi.name_ar      AS "fgItemNameAr",
+        fgi.code         AS "fgItemCode",
+        sl.item_id       AS "rawItemId",
+        i.code           AS "rawItemCode",
+        i.name_ar        AS "rawItemNameAr",
+        SUM(-sl.qty)::numeric        AS "consumedQty",
+        SUM(-sl.total_cost)::numeric AS "consumedCost",
+        MIN(sl.tx_date)              AS "issuedOn"
+      FROM stock_ledger sl
+      JOIN production_orders po ON po.id = sl.ref_id AND po.company_id = sl.company_id
+      JOIN items i              ON i.id = sl.item_id
+      LEFT JOIN items fgi       ON fgi.id = po.product_item_id
+      WHERE sl.company_id = ${cid}
+        AND sl.ref_type   = 'production_order'
+        AND sl.tx_type    = 'production_issue'
+        AND sl.batch_number = ${batchNumber}
+        ${itemFilter}
+        ${consumedBranchFilter}
+      GROUP BY po.id, po.order_number, po.title, po.status, po.batch_number,
+               po.fg_expiry_date, po.product_item_id, fgi.name_ar, fgi.code,
+               sl.item_id, i.code, i.name_ar
+      ORDER BY MIN(sl.tx_date) ASC, po.order_number ASC
+    `);
+
+    // Also locate every stock movement of THIS exact batch (in case the
+    // batch was directly received/transferred/sold without going through
+    // a production order — useful for full forensic trail). Branch-scoped
+    // via warehouses.branch_id so restricted operators only see movements
+    // in their warehouses.
+    const directMoves = await db.execute(sql`
+      SELECT
+        sl.tx_date AS "txDate", sl.tx_type AS "txType",
+        sl.qty, sl.cost_price AS "costPrice", sl.total_cost AS "totalCost",
+        sl.warehouse_id AS "warehouseId",
+        sl.item_id AS "itemId",
+        i.code AS "itemCode", i.name_ar AS "itemNameAr",
+        w.name_ar AS "warehouseName",
+        sl.ref_type AS "refType", sl.ref_id AS "refId",
+        sl.notes
+      FROM stock_ledger sl
+      JOIN items i ON i.id = sl.item_id
+      LEFT JOIN warehouses w ON w.id = sl.warehouse_id
+      WHERE sl.company_id = ${cid}
+        AND sl.batch_number = ${batchNumber}
+        ${itemFilter}
+        ${moveBranchFilter}
+      ORDER BY sl.tx_date ASC, sl.id ASC
+      LIMIT 500
+    `);
+
+    const consumed = ((consumedRows as any).rows ?? consumedRows) as any[];
+    const moves = ((directMoves as any).rows ?? directMoves) as any[];
+    res.json({
+      batchNumber,
+      itemId,
+      consumedBy: consumed.map((r) => ({
+        ...r,
+        consumedQty: Number(r.consumedQty),
+        consumedCost: Number(r.consumedCost),
+      })),
+      movements: moves.map((r) => ({
+        ...r,
+        qty: Number(r.qty),
+        costPrice: Number(r.costPrice),
+        totalCost: Number(r.totalCost),
+      })),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

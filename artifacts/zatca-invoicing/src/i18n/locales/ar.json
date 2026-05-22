@@ -607,6 +607,7 @@
     "bomTemplates": "قوالب المكوّنات (BOM)",
     "workCenters": "مراكز العمل",
     "productionQuality": "مراقبة الجودة",
+    "productionTraceability": "تتبّع التشغيلات",
     "manufacturingSettings": "إعدادات التصنيع",
     "contractingGroup": "إدارة المقاولات",
     "contractingDashboard": "لوحة المقاولات",

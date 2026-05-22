@@ -601,6 +601,7 @@
     "productionBoard": "Visual Production Line",
     "productionRoutings": "Production Routings",
     "productionQuality": "Quality Control",
+    "productionTraceability": "Batch Traceability",
     "maintenanceGroup": "Maintenance",
     "maintenanceHub": "Maintenance Hub",
     "maintenanceAssets": "Assets & Equipment",
