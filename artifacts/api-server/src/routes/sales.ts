@@ -14,12 +14,13 @@ import {
   salesRepsTable, offersTable,
   goodsDeliveriesTable,
   subscriptionsTable,
+  itemsTable,
 } from "@workspace/db";
 import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
 import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter, multiBranchScopeSpread } from "../middleware/auth.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
-import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
+import { upsertBalance, getBalance, addStockLedgerEntry, pickBatches, type BatchPick } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
@@ -1009,8 +1010,15 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
 
+    // Branch-scope guard: a restricted user must not be able to post
+    // another branch's invoice by guessing the id. Shared (branch_id NULL)
+    // rows remain visible, mirroring the GET-by-id route at L459.
     const [inv] = await db.select().from(salesInvoicesTable)
-      .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
+      .where(and(
+        eq(salesInvoicesTable.id, id),
+        eq(salesInvoicesTable.companyId, cid),
+        ...branchScopeSpread(req, salesInvoicesTable.branchId, undefined),
+      ));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.status === "posted") { res.status(400).json({ error: "الفاتورة مُرحَّلة مسبقاً" }); return; }
 
@@ -1066,9 +1074,36 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     // writes the ledger. GDN-sourced invoices skip COGS entirely.
     let totalCogs = 0;
     const cogsByWarehouse: Record<number, number> = {};
-    type StockOp = { itemId: number; warehouseId: number; qty: number; avgCost: number; notes: string | null };
+    // PHASE G — FG outbound batch picking on sales invoice posting.
+    //   * batch_tracking_mode='none'  → legacy single-row WAC issue (picks=null)
+    //   * batch_tracking_mode='fifo'  → oldest received batch first
+    //   * batch_tracking_mode='fefo'  → earliest expiry first (NULLS LAST)
+    // COGS for batch-tracked items uses the weighted sum of picks instead of
+    // a single getAvgCost(); the ledger write loop below emits N stamped rows
+    // per line (one per pick) so traceability/recall works on sales OUT too.
+    type StockOp = {
+      itemId: number;
+      warehouseId: number;
+      qty: number;
+      avgCost: number;
+      notes: string | null;
+      picks: BatchPick[] | null; // null = legacy single-row, [] = nothing to pick
+    };
     const stockOps: StockOp[] = [];
     if (!gdnSourced) {
+      // Fetch batch_tracking_mode for every line item in one query.
+      const lineItemIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
+      const itemRows = lineItemIds.length
+        ? await db
+            .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode })
+            .from(itemsTable)
+            .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, lineItemIds)))
+        : [];
+      const modeById = new Map<number, "none" | "fifo" | "fefo">();
+      for (const r of itemRows) {
+        const m = (r.mode ?? "none") as string;
+        modeById.set(r.id, m === "fifo" || m === "fefo" ? (m as "fifo" | "fefo") : "none");
+      }
       for (const line of lines) {
         if (!line.itemId || !line.warehouseId) continue;
         const factor  = Number(line.conversionFactor || "1") || 1;
@@ -1076,11 +1111,31 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
         // both legs add to COGS so the inventory credit matches the actual
         // units leaving the warehouse. Revenue stays on `qty` only.
         const qty     = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
-        const avgCost = await getAvgCost(cid, line.itemId, line.warehouseId);
+        // Skip non-positive effective qty: a zero/negative line has nothing
+        // to issue and would either write a no-op ledger row or (worse)
+        // *increase* stock on a sale via the `-op.qty` upsertBalance below.
+        if (qty <= 0) continue;
+        const mode = modeById.get(line.itemId) ?? "none";
+        let avgCost: number;
+        let picks: BatchPick[] | null;
+        if (mode === "none") {
+          avgCost = await getAvgCost(cid, line.itemId, line.warehouseId);
+          picks = null;
+        } else {
+          // pickBatches throws when stock is insufficient — surface as 400.
+          try {
+            picks = await pickBatches(cid, line.itemId, line.warehouseId, qty, mode);
+          } catch (e: any) {
+            res.status(400).json({ error: `${line.itemName ?? "صنف"}: ${e?.message ?? "كمية غير متاحة"}` });
+            return;
+          }
+          const lineCost = picks.reduce((s, p) => s + p.takeQty * p.costPrice, 0);
+          avgCost = qty > 0 ? lineCost / qty : 0;
+        }
         const lineCogs = qty * avgCost;
         totalCogs += lineCogs;
         cogsByWarehouse[line.warehouseId] = (cogsByWarehouse[line.warehouseId] ?? 0) + lineCogs;
-        stockOps.push({ itemId: line.itemId, warehouseId: line.warehouseId, qty, avgCost, notes: line.notes ?? null });
+        stockOps.push({ itemId: line.itemId, warehouseId: line.warehouseId, qty, avgCost, notes: line.notes ?? null, picks });
       }
     }
 
@@ -1265,20 +1320,47 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     for (const op of stockOps) {
       await upsertBalance(cid, op.itemId, op.warehouseId, -op.qty, op.avgCost);
       const newBal = await getBalance(cid, op.itemId, op.warehouseId);
-      await addStockLedgerEntry({
-        companyId:   cid,
-        itemId:      op.itemId,
-        warehouseId: op.warehouseId,
-        txDate:      inv.invoiceDate,
-        txType:      "sale",
-        qty:         String(-op.qty),
-        costPrice:   String(op.avgCost.toFixed(4)),
-        totalCost:   String((-op.qty * op.avgCost).toFixed(2)),
-        balanceQty:  String(newBal),
-        refId:       id,
-        refType:     "sales_invoice",
-        notes:       op.notes ?? undefined,
-      });
+      if (!op.picks || op.picks.length === 0) {
+        // Legacy single-row WAC issue (batch_tracking_mode='none').
+        await addStockLedgerEntry({
+          companyId:   cid,
+          itemId:      op.itemId,
+          warehouseId: op.warehouseId,
+          txDate:      inv.invoiceDate,
+          txType:      "sale",
+          qty:         String(-op.qty),
+          costPrice:   String(op.avgCost.toFixed(4)),
+          totalCost:   String((-op.qty * op.avgCost).toFixed(2)),
+          balanceQty:  String(newBal),
+          refId:       id,
+          refType:     "sales_invoice",
+          notes:       op.notes ?? undefined,
+        });
+      } else {
+        // FIFO/FEFO — write one stamped ledger row per pick.
+        // balance_qty walks down from the pre-issue total so each row reflects
+        // the post-row running balance (mirrors production_issue pattern).
+        let cursor = newBal + op.qty; // pre-issue total
+        for (const p of op.picks) {
+          cursor -= p.takeQty;
+          await addStockLedgerEntry({
+            companyId:   cid,
+            itemId:      op.itemId,
+            warehouseId: op.warehouseId,
+            txDate:      inv.invoiceDate,
+            txType:      "sale",
+            qty:         String(-p.takeQty),
+            costPrice:   String(p.costPrice.toFixed(4)),
+            totalCost:   String((-p.takeQty * p.costPrice).toFixed(2)),
+            balanceQty:  String(cursor.toFixed(4)),
+            refId:       id,
+            refType:     "sales_invoice",
+            batchNumber: p.batchNumber,
+            expiryDate:  p.expiryDate,
+            notes:       `${op.notes ?? ""}${p.batchNumber ? ` — تشغيلة ${p.batchNumber}` : ""}`.trim() || undefined,
+          });
+        }
+      }
     }
 
     const [updated] = await db.update(salesInvoicesTable)
@@ -1305,8 +1387,13 @@ router.patch("/sales-invoices/:id/unpost", requireAdminRole, async (req, res) =>
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
 
+    // Branch-scope guard (mirrors /post above).
     const [inv] = await db.select().from(salesInvoicesTable)
-      .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
+      .where(and(
+        eq(salesInvoicesTable.id, id),
+        eq(salesInvoicesTable.companyId, cid),
+        ...branchScopeSpread(req, salesInvoicesTable.branchId, undefined),
+      ));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.status !== "posted") { res.status(400).json({ error: "الفاتورة ليست مُرحَّلة" }); return; }
 
