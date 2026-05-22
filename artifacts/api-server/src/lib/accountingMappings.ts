@@ -80,6 +80,15 @@ export const DEFAULT_MAPPINGS: DefaultMapping[] = [
   { documentType: "purchase_return",      roleKey: "inventory",              accountCode: "11051" },
   { documentType: "purchase_return",      roleKey: "vat_input",              accountCode: "11071" },
   { documentType: "purchase_return",      roleKey: "discount",               accountCode: "4103"  },
+  // Note: `variance` role intentionally NOT seeded — there is no canonical
+  // "purchase-return variance" account in the standard COA template, and
+  // the role is only required when the document's refund total drifts
+  // meaningfully from the stock-out cost (e.g. supplier agreed a flat
+  // restocking deduction). The user wires it manually via
+  // /admin/accounting-mappings when first needed; until then the post
+  // endpoint nudges sub-cent drift into the last inventory line and
+  // rejects larger drift with a clear Arabic error pointing to the
+  // mapping. Suggested hint code: 5108 (purchase-return price variance).
 
   // تسوية الموردين
   { documentType: "supplier_settlement",  roleKey: "payable",                accountCode: "21011" },

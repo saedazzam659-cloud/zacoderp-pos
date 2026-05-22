@@ -2420,6 +2420,7 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
     const mapPr = await loadMappings(cid, "purchase_return");
     const taxAccId      = pickAccount((ret as any).taxAccountId,      mapPr("purchase_return", "vat_input"));
     const discountAccId = pickAccount((ret as any).discountAccountId, mapPr("purchase_return", "discount"));
+    const varianceAccId = mapPr("purchase_return", "variance");
 
     const counterpartyAccountId =
       ret.paymentType === "cash" ? await getCashBoxAccountId(cid, ret.cashBoxId)
@@ -2438,24 +2439,39 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       if (!whInfo[wid]?.accountId) missingWh.push(whInfo[wid]?.nameAr ?? String(wid));
     }
     if (missingWh.length) missing.push(`حساب المخزون لـ: ${missingWh.join("، ")}`);
+
+    // ── GL vs stock variance handling ─────────────────────────────────────
+    // Inventory CR lines now post at ACTUAL stock-out cost (= sum of
+    // `lineRemovedCost` accumulated above, which uses each batch's weighted-
+    // average source cost). This keeps GL inventory movement perfectly in
+    // sync with the stock subledger.
+    //
+    // When the document subtotal (what we agreed to refund with the
+    // supplier) differs from the actual stock-out cost — e.g. supplier
+    // applied a flat restocking fee, prices changed since the original
+    // receipt, or the return value was negotiated independently — the
+    // difference is routed to a dedicated "purchase-return variance"
+    // account. Sub-cent drift (≤ 0.01 SAR) is silently nudged into the
+    // last inventory line instead of forcing the user to wire a variance
+    // account just for rounding.
+    const goodsCostTotal = Object.values(inventoryByWarehouse).reduce((s, v) => s + v, 0);
+    const varianceDelta  = subtotal - goodsCostTotal; // >0 → CR variance (refund > cost = gain); <0 → DR variance (refund < cost = loss)
+    const VARIANCE_NUDGE_THRESHOLD = 0.01;
+    const needsVarianceLine = Math.abs(varianceDelta) > VARIANCE_NUDGE_THRESHOLD;
+    if (needsVarianceLine && !varianceAccId) {
+      missing.push(`حساب فروق سعر مرتجع المشتريات (الفرق = ${varianceDelta.toFixed(2)} ر.س — اربط الحساب من /admin/accounting-mappings تحت "مرتجع المشتريات")`);
+    }
     if (missing.length) {
       throw new Error(`يجب تحديد الحسابات التالية قبل الترحيل: ${missing.join("، ")}`);
     }
 
-    // Scale per-warehouse credits so they sum to the JE subtotal (handles rounding/discount differences)
-    const goodsCostTotal = Object.values(inventoryByWarehouse).reduce((s, v) => s + v, 0);
-    const inventoryCreditByWh: Record<number, number> = {};
-    if (goodsCostTotal > 0) {
-      const ratio = subtotal / goodsCostTotal;
-      for (const [widStr, amt] of Object.entries(inventoryByWarehouse)) {
-        inventoryCreditByWh[Number(widStr)] = amt * ratio;
-      }
-      const sum = Object.values(inventoryCreditByWh).reduce((s, v) => s + v, 0);
-      const drift = subtotal - sum;
-      if (Math.abs(drift) > 0.001) {
-        const lastKey = Object.keys(inventoryCreditByWh).pop();
-        if (lastKey) inventoryCreditByWh[Number(lastKey)] += drift;
-      }
+    // Build inventory credits at actual cost; nudge sub-cent drift only.
+    const inventoryCreditByWh: Record<number, number> = { ...inventoryByWarehouse };
+    if (!needsVarianceLine && Math.abs(varianceDelta) > 0) {
+      // Sub-cent rounding — push the leftover into the last inventory line
+      // so the JE still balances without needing a variance account.
+      const lastKey = Object.keys(inventoryCreditByWh).pop();
+      if (lastKey) inventoryCreditByWh[Number(lastKey)] += varianceDelta;
     }
 
     const desc = `قيد مرتجع مشتريات رقم ${ret.docNumber || ret.id}`;
@@ -2474,7 +2490,9 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       lines: [
         { accountId: counterpartyAccountId,           debit:  totalAmount,    description: ret.paymentType === "cash" ? "استرداد نقدي" : ret.paymentType === "bank" ? "استرداد بنكي" : "تخفيض رصيد المورد" },
         { accountId: discountAccId,                   debit:  discountAmount, description: "إلغاء خصم مكتسب" },
-        // Inventory: one credit line per warehouse using its own GL account
+        // Inventory: one credit line per warehouse using its own GL account.
+        // Posted at actual stock-out cost (weighted source cost) so GL ties
+        // exactly to the stock subledger.
         ...Object.entries(inventoryCreditByWh)
           .filter(([, amt]) => amt > 0)
           .map(([widStr, amt]) => {
@@ -2485,7 +2503,20 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
               description: `ارتجاع البضاعة — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
             };
           }),
-        { accountId: (ret as any).taxAccountId,       credit: vatAmount,      description: "إلغاء ضريبة القيمة المضافة" },
+        { accountId: taxAccId,                        credit: vatAmount,      description: "إلغاء ضريبة القيمة المضافة" },
+        // Variance: balances the JE when refund value ≠ actual stock cost.
+        // delta > 0 → CR variance (refund exceeds cost = gain for buyer).
+        // delta < 0 → DR variance (refund below cost = loss for buyer).
+        ...(needsVarianceLine
+          ? [{
+              accountId: varianceAccId!,
+              debit:  varianceDelta < 0 ? -varianceDelta : 0,
+              credit: varianceDelta > 0 ?  varianceDelta : 0,
+              description: varianceDelta < 0
+                ? `فرق سعر مرتجع — تكلفة المخزون أعلى من قيمة الاسترداد بمقدار ${(-varianceDelta).toFixed(2)}`
+                : `فرق سعر مرتجع — قيمة الاسترداد أعلى من تكلفة المخزون بمقدار ${varianceDelta.toFixed(2)}`,
+            }]
+          : []),
       ],
     });
 
