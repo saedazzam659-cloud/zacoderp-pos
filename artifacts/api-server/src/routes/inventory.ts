@@ -32,6 +32,7 @@ import { pathRbac, writeAudit } from "../middleware/permissions.js";
 import { ensureWarehouseAccount } from "../lib/entityAccounts.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
+import { pickBatches, type BatchPick } from "../lib/stockHelpers.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -1050,67 +1051,163 @@ router.put("/stock-transfers/:id", async (req, res) => {
 router.post("/stock-transfers/:id/post", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  // Atomic status flip: draft → posting (claims the transfer; concurrent calls will get 0 rows)
-  const claim = await db.update(stockTransfersTable)
-    .set({ updatedAt: new Date() })
-    .where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid), eq(stockTransfersTable.status, "draft")))
-    .returning();
-  if (!claim.length) { res.status(400).json({ error: "الحركة غير موجودة أو مُرحَّلة مسبقاً" }); return; }
-  const tr = claim[0];
-  const lines = await db.select().from(stockTransferItemsTable).where(eq(stockTransferItemsTable.transferId, id));
-  if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف" }); return; }
-  // Process each line: deduct from source, add to destination
-  for (const line of lines) {
-    await upsertBalance(cid, line.itemId, tr.fromWarehouseId, -Number(line.qty), Number(line.costPrice));
-    await upsertBalance(cid, line.itemId, tr.toWarehouseId,   +Number(line.qty), Number(line.costPrice));
-    // Ledger entries
-    const newFromBal = await getBalance(cid, line.itemId, tr.fromWarehouseId);
-    const newToBal   = await getBalance(cid, line.itemId, tr.toWarehouseId);
-    await db.insert(stockLedgerTable).values([
-      { companyId: cid, itemId: line.itemId, warehouseId: tr.fromWarehouseId, txDate: tr.transferDate, txType: "transfer_out", qty: String(-Number(line.qty)), costPrice: line.costPrice, totalCost: String(-Number(line.qty) * Number(line.costPrice)), balanceQty: String(newFromBal), refId: id, refType: "transfer" },
-      { companyId: cid, itemId: line.itemId, warehouseId: tr.toWarehouseId,   txDate: tr.transferDate, txType: "transfer_in",  qty: line.qty, costPrice: line.costPrice, totalCost: String(Number(line.qty) * Number(line.costPrice)), balanceQty: String(newToBal),   refId: id, refType: "transfer" },
-    ]);
+
+  // ── Round 8 v3 atomicity + single-winner concurrency control ──
+  // Everything (claim, ledger, balances, JE, final status flip) runs inside
+  // a single DB transaction. The claim itself is now a SELECT … FOR UPDATE
+  // on the transfer row so two concurrent /post calls cannot both proceed:
+  // the second one blocks until the first commits, then re-reads the row,
+  // sees status='posted', and aborts with 400. On any failure (insufficient
+  // stock, closed period, DB error) the tx rolls back so no partial ledger
+  // rows / balance mutations / JEs remain, and status stays 'draft' so the
+  // request is safely retryable. User-facing 4xx are signalled via a
+  // file-local `HttpError` thrown inside the tx and caught outside; any
+  // other throw bubbles up as 500 with full rollback.
+  class HttpError extends Error {
+    constructor(public httpStatus: number, msg: string) { super(msg); }
   }
 
-  // ─── Auto-generate balanced journal entry (DR: destination inventory, CR: source inventory) ───
-  // Resolve account IDs: prefer transfer-level overrides, fallback to warehouse.accountId.
-  // Always scope warehouse lookup by company (defense-in-depth multi-tenant guard).
-  let fromAcc = tr.fromAccountId;
-  let toAcc   = tr.toAccountId;
-  if (!fromAcc || !toAcc) {
-    const [fromWh] = await db.select().from(warehousesTable)
-      .where(and(eq(warehousesTable.id, tr.fromWarehouseId), eq(warehousesTable.companyId, cid)));
-    const [toWh]   = await db.select().from(warehousesTable)
-      .where(and(eq(warehousesTable.id, tr.toWarehouseId),   eq(warehousesTable.companyId, cid)));
-    fromAcc = fromAcc || (fromWh?.accountId ?? null);
-    toAcc   = toAcc   || (toWh?.accountId   ?? null);
-  }
-  let journalEntryId: number | null = null;
-  const totalAmount = lines.reduce((s, l) => s + Number(l.qty) * Number(l.costPrice), 0);
-  if (fromAcc && toAcc && fromAcc !== toAcc && totalAmount > 0) {
-    const desc = `تحويل مخزني ${tr.transferNumber}${tr.notes ? " - " + tr.notes : ""}`;
-    // Period guard: block stock-transfer posting into a closed period.
-    const writability = await assertWritableForDate(cid, tr.transferDate);
-    if (!writability.ok) { res.status(423).json({ error: writability.reason }); return; }
-    const jeStatus = await resolvePostingStatus(cid, "stockMovement");
-    const [entry] = await db.insert(journalEntriesTable).values({
-      companyId: cid, docNumber: tr.transferNumber, entryDate: tr.transferDate,
-      currency: "SAR", exchangeRate: "1",
-      description: desc, entryType: "stock_transfer",
-      status: jeStatus,
-      periodId: writability.period?.id ?? null,
-      ...fullAuditFor(req, jeStatus),
-    }).returning();
-    await db.insert(journalEntryLinesTable).values([
-      { entryId: entry.id, accountId: toAcc,   debit: totalAmount.toFixed(2), credit: "0.00", description: `استلام بالمخزن (${tr.transferNumber})`, sortOrder: 0 },
-      { entryId: entry.id, accountId: fromAcc, debit: "0.00", credit: totalAmount.toFixed(2), description: `صرف من المخزن (${tr.transferNumber})`, sortOrder: 1 },
-    ]);
-    journalEntryId = entry.id;
-  }
+  try {
+    const result = await db.transaction(async (tx) => {
+      // Row-lock + re-check status under the lock. Pessimistic FOR UPDATE
+      // is the right tool here: posting touches many rows, so the
+      // serialisable retry path of an optimistic CAS would amplify
+      // contention. Lock window = the whole posting flow (intentional).
+      const [tr] = await tx.select().from(stockTransfersTable)
+        .where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid)))
+        .for("update");
+      if (!tr) throw new HttpError(404, "الحركة غير موجودة");
+      if (tr.status !== "draft") throw new HttpError(400, "الحركة مُرحَّلة مسبقاً");
+      const lines = await tx.select().from(stockTransferItemsTable).where(eq(stockTransferItemsTable.transferId, id));
+      if (!lines.length) throw new HttpError(400, "لا توجد أصناف");
 
-  await db.update(stockTransfersTable).set({ status: "posted", journalEntryId, updatedAt: new Date() })
-    .where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid)));
-  res.json({ ok: true, journalEntryId });
+      // Period guard: do this BEFORE any mutations so a closed period
+      // can't even partially write ledger rows. The post-loop JE branch
+      // checks `writability.period?.id` but the guard itself must run
+      // upfront — same intent as production-order/sales-invoice posting.
+      const writability = await assertWritableForDate(cid, tr.transferDate);
+      if (!writability.ok) throw new HttpError(423, writability.reason ?? "الفترة مغلقة");
+
+      // ── Round 8: batch-aware transfers ──
+      // For items with batch_tracking_mode='fifo'|'fefo', the source
+      // warehouse releases stock via FIFO/FEFO across its tracked batches
+      // and we stamp batch_number/expiry_date + the batch's actual cost
+      // onto BOTH the OUT (source) and IN (destination) ledger rows. The
+      // destination warehouse inherits the same batch identity → future
+      // issues from there can continue FEFO correctly.
+      // Items with mode='none' keep the legacy single-row WAC flow.
+      const lineItemIds = Array.from(new Set(lines.map(l => l.itemId)));
+      const itemRows = lineItemIds.length
+        ? await tx.select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode })
+            .from(itemsTable)
+            .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, lineItemIds)))
+        : [];
+      const modeById = new Map<number, "none" | "fifo" | "fefo">();
+      for (const r of itemRows) {
+        const m = (r.mode ?? "none") as string;
+        modeById.set(r.id, m === "fifo" || m === "fefo" ? (m as "fifo" | "fefo") : "none");
+      }
+
+      // Aggregate the real cost moved so the JE below totals from batch
+      // picks (not the user-entered cost field) — keeps GL inventory
+      // movement tied exactly to the stock subledger (Rounds 6/7 pattern).
+      let realTotalCost = 0;
+
+      for (const line of lines) {
+        const qty = Number(line.qty);
+        if (qty <= 0) continue;
+        const mode = modeById.get(line.itemId) ?? "none";
+
+        if (mode === "none") {
+          // Legacy single-row WAC issue at the line's recorded cost.
+          const cost = Number(line.costPrice);
+          const lineCost = qty * cost;
+          realTotalCost += lineCost;
+          await upsertBalance(cid, line.itemId, tr.fromWarehouseId, -qty, cost, tx);
+          await upsertBalance(cid, line.itemId, tr.toWarehouseId,   +qty, cost, tx);
+          const newFromBal = await getBalance(cid, line.itemId, tr.fromWarehouseId, tx);
+          const newToBal   = await getBalance(cid, line.itemId, tr.toWarehouseId,   tx);
+          await tx.insert(stockLedgerTable).values([
+            { companyId: cid, itemId: line.itemId, warehouseId: tr.fromWarehouseId, txDate: tr.transferDate, txType: "transfer_out", qty: String(-qty), costPrice: String(cost), totalCost: String(-lineCost), balanceQty: String(newFromBal), refId: id, refType: "transfer" },
+            { companyId: cid, itemId: line.itemId, warehouseId: tr.toWarehouseId,   txDate: tr.transferDate, txType: "transfer_in",  qty: String(qty), costPrice: String(cost), totalCost: String(lineCost),  balanceQty: String(newToBal),   refId: id, refType: "transfer" },
+          ]);
+        } else {
+          // FIFO/FEFO: allocate across source-warehouse batches; emit one
+          // OUT + one IN ledger row per batch with the batch's actual cost
+          // and stamped batch_number/expiry_date on both sides.
+          let picks: BatchPick[];
+          try {
+            // Pass `tx` so the batch read happens inside the same SQL
+            // transaction as the subsequent ledger writes — keeps the
+            // pick consistent with any partial mutations from earlier
+            // lines in this same posting (e.g. when two lines on the
+            // same item drain a tracked batch).
+            picks = await pickBatches(cid, line.itemId, tr.fromWarehouseId, qty, mode, tx);
+          } catch (e: any) {
+            throw new HttpError(400, `الصنف #${line.itemId}: ${e?.message ?? "كمية غير متاحة بالتشغيلات"}`);
+          }
+          for (const p of picks) {
+            const lineCost = p.takeQty * p.costPrice;
+            realTotalCost += lineCost;
+            // Source: WAC balance decreases at the batch's actual cost.
+            await upsertBalance(cid, line.itemId, tr.fromWarehouseId, -p.takeQty, p.costPrice, tx);
+            // Destination: same cost (transfer moves stock, doesn't revalue).
+            await upsertBalance(cid, line.itemId, tr.toWarehouseId,   +p.takeQty, p.costPrice, tx);
+            const newFromBal = await getBalance(cid, line.itemId, tr.fromWarehouseId, tx);
+            const newToBal   = await getBalance(cid, line.itemId, tr.toWarehouseId,   tx);
+            await tx.insert(stockLedgerTable).values([
+              { companyId: cid, itemId: line.itemId, warehouseId: tr.fromWarehouseId, txDate: tr.transferDate, txType: "transfer_out", qty: String(-p.takeQty), costPrice: String(p.costPrice), totalCost: String(-lineCost), balanceQty: String(newFromBal), refId: id, refType: "transfer", batchNumber: p.batchNumber, expiryDate: p.expiryDate },
+              { companyId: cid, itemId: line.itemId, warehouseId: tr.toWarehouseId,   txDate: tr.transferDate, txType: "transfer_in",  qty: String(p.takeQty),  costPrice: String(p.costPrice), totalCost: String(lineCost),  balanceQty: String(newToBal),   refId: id, refType: "transfer", batchNumber: p.batchNumber, expiryDate: p.expiryDate },
+            ]);
+          }
+        }
+      }
+
+      // ─── Auto-generate balanced journal entry (DR destination / CR source) ───
+      // Resolve account IDs: prefer transfer-level overrides, fallback to
+      // warehouse.accountId. Always scope warehouse lookup by company.
+      let fromAcc = tr.fromAccountId;
+      let toAcc   = tr.toAccountId;
+      if (!fromAcc || !toAcc) {
+        const [fromWh] = await tx.select().from(warehousesTable)
+          .where(and(eq(warehousesTable.id, tr.fromWarehouseId), eq(warehousesTable.companyId, cid)));
+        const [toWh]   = await tx.select().from(warehousesTable)
+          .where(and(eq(warehousesTable.id, tr.toWarehouseId),   eq(warehousesTable.companyId, cid)));
+        fromAcc = fromAcc || (fromWh?.accountId ?? null);
+        toAcc   = toAcc   || (toWh?.accountId   ?? null);
+      }
+      let journalEntryId: number | null = null;
+      const totalAmount = realTotalCost;
+      if (fromAcc && toAcc && fromAcc !== toAcc && totalAmount > 0) {
+        const desc = `تحويل مخزني ${tr.transferNumber}${tr.notes ? " - " + tr.notes : ""}`;
+        const jeStatus = await resolvePostingStatus(cid, "stockMovement");
+        const [entry] = await tx.insert(journalEntriesTable).values({
+          companyId: cid, docNumber: tr.transferNumber, entryDate: tr.transferDate,
+          currency: "SAR", exchangeRate: "1",
+          description: desc, entryType: "stock_transfer",
+          status: jeStatus,
+          periodId: writability.period?.id ?? null,
+          ...fullAuditFor(req, jeStatus),
+        }).returning();
+        await tx.insert(journalEntryLinesTable).values([
+          { entryId: entry.id, accountId: toAcc,   debit: totalAmount.toFixed(2), credit: "0.00", description: `استلام بالمخزن (${tr.transferNumber})`, sortOrder: 0 },
+          { entryId: entry.id, accountId: fromAcc, debit: "0.00", credit: totalAmount.toFixed(2), description: `صرف من المخزن (${tr.transferNumber})`, sortOrder: 1 },
+        ]);
+        journalEntryId = entry.id;
+      }
+
+      await tx.update(stockTransfersTable).set({ status: "posted", journalEntryId, updatedAt: new Date() })
+        .where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid)));
+      return { journalEntryId };
+    });
+    res.json({ ok: true, journalEntryId: result.journalEntryId });
+  } catch (e: any) {
+    if (e instanceof HttpError) {
+      res.status(e.httpStatus).json({ error: e.message });
+      return;
+    }
+    throw e;
+  }
 });
 
 router.delete("/stock-transfers/:id", async (req, res) => {
@@ -1520,16 +1617,25 @@ router.get("/dashboard", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════
-async function getBalance(companyId: number, itemId: number, warehouseId: number): Promise<number> {
-  const [bal] = await db.select().from(stockBalanceTable).where(and(eq(stockBalanceTable.companyId, companyId), eq(stockBalanceTable.itemId, itemId), eq(stockBalanceTable.warehouseId, warehouseId)));
+// `executor` defaults to the top-level `db` so legacy callers work unchanged.
+// Pass a transaction handle (from `db.transaction(async (tx) => …)`) to make
+// the read+write atomic with the surrounding writes — required for posting
+// flows like stock transfers where partial failure must roll back.
+// `Executor` is intentionally widened to `any` so a drizzle `PgTransaction`
+// (passed from inside `db.transaction(async (tx) => …)`) satisfies the
+// signature. Drizzle's tx and db share all query-builder methods at runtime
+// but their generic instantiations don't unify in TS.
+type Executor = any;
+async function getBalance(companyId: number, itemId: number, warehouseId: number, executor: Executor = db): Promise<number> {
+  const [bal] = await executor.select().from(stockBalanceTable).where(and(eq(stockBalanceTable.companyId, companyId), eq(stockBalanceTable.itemId, itemId), eq(stockBalanceTable.warehouseId, warehouseId)));
   return Number(bal?.qty ?? 0);
 }
 
-async function upsertBalance(companyId: number, itemId: number, warehouseId: number, deltaQty: number, costPrice: number) {
-  const [existing] = await db.select().from(stockBalanceTable).where(and(eq(stockBalanceTable.companyId, companyId), eq(stockBalanceTable.itemId, itemId), eq(stockBalanceTable.warehouseId, warehouseId)));
+async function upsertBalance(companyId: number, itemId: number, warehouseId: number, deltaQty: number, costPrice: number, executor: Executor = db) {
+  const [existing] = await executor.select().from(stockBalanceTable).where(and(eq(stockBalanceTable.companyId, companyId), eq(stockBalanceTable.itemId, itemId), eq(stockBalanceTable.warehouseId, warehouseId)));
   if (!existing) {
     const newQty = deltaQty;
-    await db.insert(stockBalanceTable).values({ companyId, itemId, warehouseId, qty: String(newQty), avgCost: String(costPrice) });
+    await executor.insert(stockBalanceTable).values({ companyId, itemId, warehouseId, qty: String(newQty), avgCost: String(costPrice) });
   } else {
     const oldQty  = Number(existing.qty);
     const oldCost = Number(existing.avgCost);
@@ -1543,7 +1649,7 @@ async function upsertBalance(companyId: number, itemId: number, warehouseId: num
       newQty = oldQty + deltaQty;
       newAvg = oldCost;
     }
-    await db.update(stockBalanceTable).set({ qty: String(newQty), avgCost: String(newAvg), updatedAt: new Date() }).where(eq(stockBalanceTable.id, existing.id));
+    await executor.update(stockBalanceTable).set({ qty: String(newQty), avgCost: String(newAvg), updatedAt: new Date() }).where(eq(stockBalanceTable.id, existing.id));
   }
 }
 

@@ -27,11 +27,17 @@ export interface BatchPick {
 //   - fefo: NULLS LAST on expiry, then earliest tx_date (oldest first)
 //   - fifo: earliest tx_date first (NULLS LAST so unbatched is last resort)
 // Tie-breaker: batch_number ASC so the order is deterministic across calls.
+// `executor` defaults to the top-level `db`. Pass a drizzle `PgTransaction`
+// (from `db.transaction(async (tx) => …)`) when batch picking must be
+// transactional with surrounding writes — required so that pre-pick reads
+// see the same snapshot as the subsequent ledger/balance writes inside the
+// same tx, and so the read is logically inside the same SQL transaction.
 export async function readBatchRemaining(
   companyId: number,
   itemId: number,
   warehouseId: number,
   mode: "fifo" | "fefo",
+  executor: any = db,
 ): Promise<Array<{
   batchNumber: string | null;
   expiryDate: string | null;
@@ -47,7 +53,7 @@ export async function readBatchRemaining(
   // different expiries forms two independent lots — required for FEFO
   // correctness when messy real-world data has mismatched expiries on the
   // same batch label.
-  const rows = await db.execute(sql`
+  const rows = await executor.execute(sql`
     SELECT
       batch_number                                                    AS "batchNumber",
       expiry_date                                                     AS "expiryDate",
@@ -88,9 +94,10 @@ export async function pickBatches(
   warehouseId: number,
   requestedQty: number,
   mode: "fifo" | "fefo",
+  executor: any = db,
 ): Promise<BatchPick[]> {
   if (requestedQty <= 0) return [];
-  const batches = await readBatchRemaining(companyId, itemId, warehouseId, mode);
+  const batches = await readBatchRemaining(companyId, itemId, warehouseId, mode, executor);
   const picks: BatchPick[] = [];
   let remaining = requestedQty;
   for (const b of batches) {
