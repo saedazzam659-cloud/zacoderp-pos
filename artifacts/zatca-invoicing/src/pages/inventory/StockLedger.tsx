@@ -69,6 +69,8 @@ export default function StockLedger() {
     { key: "qty",          header: tr("exportQty"),        width: 14 },
     { key: "costPrice",    header: tr("exportCostPrice"),  width: 16 },
     { key: "totalCost",    header: tr("exportTotalCost"),  width: 18 },
+    { key: "batchNumber",  header: isRtl ? "رقم الدفعة" : "Batch No.", width: 16 },
+    { key: "expiryDate",   header: isRtl ? "تاريخ الانتهاء" : "Expiry Date", width: 16 },
   ];
 
   const exportRows = rows.map((r: any) => ({
@@ -80,6 +82,8 @@ export default function StockLedger() {
     qty:           fmtQty(r.qty),
     costPrice:     fmt(r.costPrice),
     totalCost:     fmt(r.totalCost),
+    batchNumber:   r.batchNumber ?? "",
+    expiryDate:    r.expiryDate  ?? "",
   }));
 
   return (
@@ -157,13 +161,15 @@ export default function StockLedger() {
                 <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{tr("colCostPrice")}</th>
                 <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{tr("colTotalCost")}</th>
                 <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{isRtl ? "رصيد الكمية" : "Balance Qty"}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{isRtl ? "رقم الدفعة" : "Batch No."}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{isRtl ? "تاريخ الانتهاء" : "Expiry"}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {isLoading
-                ? [...Array(8)].map((_, i) => <tr key={i}><td colSpan={8} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
+                ? [...Array(8)].map((_, i) => <tr key={i}><td colSpan={10} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                 : rows.length === 0
-                ? <tr><td colSpan={8} className="py-12 text-center text-muted-foreground"><BookOpen className="h-8 w-8 mx-auto mb-2 opacity-30" />{tr("noMoves")}</td></tr>
+                ? <tr><td colSpan={10} className="py-12 text-center text-muted-foreground"><BookOpen className="h-8 w-8 mx-auto mb-2 opacity-30" />{tr("noMoves")}</td></tr>
                 : rows.map((r: any) => {
                     const color = TX_TYPE_COLOR[r.txType] ?? "bg-slate-50 text-slate-600";
                     return (
@@ -183,6 +189,8 @@ export default function StockLedger() {
                         <td className="px-4 py-3 text-center tabular-nums text-xs">{fmt(r.costPrice)}</td>
                         <td className="px-4 py-3 text-center tabular-nums text-xs">{fmt(r.totalCost)}</td>
                         <td className="px-4 py-3 text-center tabular-nums text-xs font-medium">{fmtQty(r.balanceQty)}</td>
+                        <td className="px-4 py-3 text-center font-mono text-[11px]">{r.batchNumber ?? <span className="text-muted-foreground/40">—</span>}</td>
+                        <td className="px-4 py-3 text-center tabular-nums text-[11px]">{r.expiryDate ?? <span className="text-muted-foreground/40">—</span>}</td>
                       </tr>
                     );
                   })}

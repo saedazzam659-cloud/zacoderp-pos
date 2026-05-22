@@ -242,6 +242,25 @@ export const inventoryApi = {
   getReorderSuggestion: (itemId: number) =>
     get<ReorderSuggestion>(`/items/${itemId}/reorder-suggestion`),
 
+  // Batches per item (رقم الدفعة + تاريخ الانتهاء)
+  getItemBatches: (itemId: number) =>
+    get<{
+      itemId: number;
+      batches: Array<{
+        batchNumber: string;
+        expiryDate: string | null;
+        warehouseId: number | null;
+        warehouse: { id: number | null; nameAr: string | null; nameEn: string | null };
+        receivedQty: number;
+        avgCost: number;
+        firstSeen: string;
+        lastSeen: string;
+        daysToExpiry: number | null;
+        status: "expired" | "expiring_soon" | "active" | "no_expiry";
+      }>;
+      summary: { totalBatches: number; expiredCount: number; expiringSoonCount: number; activeCount: number };
+    }>(`/items/${itemId}/batches`),
+
   // PRO Extension #18 — manufacturing BOM steps
   getItemBomSteps: (itemId: number) =>
     get<BomStepsResponse>(`/items/${itemId}/bom-steps`),

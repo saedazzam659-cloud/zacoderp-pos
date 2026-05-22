@@ -2865,6 +2865,102 @@ router.get("/items/:id/reorder-suggestion", async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+// Batches per item (رقم الدفعة + تاريخ الانتهاء)
+// ════════════════════════════════════════════════════════════════════════════
+// Aggregates incoming stock movements (purchases + goods receipts) by
+// (batch_number, expiry_date, warehouse). "Received" is the sum of positive
+// qty entries for that combination. Outgoing movements do NOT carry a
+// batch reference in this phase (medium scope: historical recording only,
+// no FIFO/FEFO lot tracking), so we cannot subtract usage per batch — the
+// UI shows received quantity + expiry status only.
+router.get("/items/:id/batches", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  // Existence check (matches sibling endpoints like /reorder-suggestion)
+  const [item] = await db.select({ id: itemsTable.id })
+    .from(itemsTable)
+    .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+  if (!item) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+
+  // Restrict aggregation to inbound tx types that legitimately carry a batch
+  // reference (purchases + goods receipts). Other tx types may incidentally
+  // copy a batch field on outbound moves, but counting them would distort
+  // "received" totals.
+  const INBOUND_TX = ["purchase", "goods_receipt"] as const;
+
+  const rows = await db
+    .select({
+      batchNumber:  stockLedgerTable.batchNumber,
+      expiryDate:   stockLedgerTable.expiryDate,
+      warehouseId:  stockLedgerTable.warehouseId,
+      warehouseAr:  warehousesTable.nameAr,
+      warehouseEn:  warehousesTable.nameEn,
+      receivedQty:  sql<string>`coalesce(sum(${stockLedgerTable.qty}) filter (where ${stockLedgerTable.qty} > 0), 0)`,
+      firstSeen:    sql<string>`min(${stockLedgerTable.txDate})`,
+      lastSeen:     sql<string>`max(${stockLedgerTable.txDate})`,
+      avgCost:      sql<string>`coalesce(avg(nullif(${stockLedgerTable.costPrice}, 0)), 0)`,
+    })
+    .from(stockLedgerTable)
+    .leftJoin(warehousesTable, eq(stockLedgerTable.warehouseId, warehousesTable.id))
+    .where(and(
+      eq(stockLedgerTable.companyId, cid),
+      eq(stockLedgerTable.itemId, id),
+      inArray(stockLedgerTable.txType, INBOUND_TX as unknown as string[]),
+      sql`${stockLedgerTable.batchNumber} is not null`,
+      sql`length(trim(${stockLedgerTable.batchNumber})) > 0`,
+    ))
+    .groupBy(stockLedgerTable.batchNumber, stockLedgerTable.expiryDate, stockLedgerTable.warehouseId, warehousesTable.nameAr, warehousesTable.nameEn)
+    .having(sql`coalesce(sum(${stockLedgerTable.qty}) filter (where ${stockLedgerTable.qty} > 0), 0) > 0`)
+    .orderBy(asc(stockLedgerTable.expiryDate), asc(stockLedgerTable.batchNumber));
+
+  // Date-only arithmetic (timezone-safe). Both `today` and `expiryDate` are
+  // treated as YYYY-MM-DD strings and compared via UTC day count to avoid
+  // off-by-one drift across timezones.
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const dayDiff = (a: string, b: string): number => {
+    const [ay, am, ad] = a.split("-").map(Number);
+    const [by, bm, bd] = b.split("-").map(Number);
+    const aUtc = Date.UTC(ay, am - 1, ad);
+    const bUtc = Date.UTC(by, bm - 1, bd);
+    return Math.round((aUtc - bUtc) / 86400000);
+  };
+
+  const out = rows.map(r => {
+    let status: "expired" | "expiring_soon" | "active" | "no_expiry" = "no_expiry";
+    let daysToExpiry: number | null = null;
+    if (r.expiryDate) {
+      daysToExpiry = dayDiff(String(r.expiryDate), todayStr);
+      status = daysToExpiry < 0 ? "expired" : daysToExpiry <= 30 ? "expiring_soon" : "active";
+    }
+    return {
+      batchNumber: r.batchNumber,
+      expiryDate:  r.expiryDate,
+      warehouseId: r.warehouseId,
+      warehouse:   { id: r.warehouseId, nameAr: r.warehouseAr, nameEn: r.warehouseEn },
+      receivedQty: Number(r.receivedQty),
+      avgCost:     Number(r.avgCost),
+      firstSeen:   r.firstSeen,
+      lastSeen:    r.lastSeen,
+      daysToExpiry,
+      status,
+    };
+  });
+
+  res.json({
+    itemId: id,
+    batches: out,
+    summary: {
+      totalBatches:    out.length,
+      expiredCount:    out.filter(b => b.status === "expired").length,
+      expiringSoonCount: out.filter(b => b.status === "expiring_soon").length,
+      activeCount:     out.filter(b => b.status === "active" || b.status === "no_expiry").length,
+    },
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
 // PRO Extension #18 — BOM Steps (manufacturing steps)
 // ════════════════════════════════════════════════════════════════════════════
 // Steps are only meaningful for items where `isBundle = true` — but we don't

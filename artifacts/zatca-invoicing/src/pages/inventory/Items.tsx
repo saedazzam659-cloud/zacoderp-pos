@@ -22,7 +22,7 @@ import {
   TrendingUp, Calendar, DollarSign, BarChart3,
   ScanLine, FileText, Upload, ExternalLink,
   Truck, Check, Boxes, Layers,
-  Building2, Cog, Bell, Store,
+  Building2, Cog, Bell, Store, FlaskConical,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import BulkLabelDialog from "@/components/BulkLabelDialog";
@@ -936,7 +936,7 @@ export default function Items() {
   const [showForm, setShowForm] = useState(false);
   const [activeItemTab, setActiveItemTab] = useState("basic");
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics" | "documents" | "suppliers" | "bundle" | "variants" | "currencies" | "branches" | "reorder" | "bomSteps">("balances");
+  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics" | "documents" | "suppliers" | "bundle" | "variants" | "currencies" | "branches" | "reorder" | "bomSteps" | "batches">("balances");
   const [aiOpen, setAiOpen] = useState(false);
   const [qrItem, setQrItem] = useState<any>(null);
   const [historyItem, setHistoryItem] = useState<any>(null);
@@ -1596,6 +1596,14 @@ export default function Items() {
                             >
                               <Building2 className="h-3.5 w-3.5" />{t("pages.items.branches.tabLabel")}
                             </button>
+                            {/* Batches: رقم الدفعة + تاريخ الانتهاء */}
+                            <button
+                              onClick={() => setExpandedTab("batches")}
+                              className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                                expandedTab === "batches" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
+                            >
+                              <FlaskConical className="h-3.5 w-3.5" />الدفعات
+                            </button>
                             {/* PRO Extension #16 — Smart reorder suggestion */}
                             <button
                               onClick={() => setExpandedTab("reorder")}
@@ -1677,6 +1685,10 @@ export default function Items() {
 
                           {expandedTab === "reorder" && (
                             <ItemReorderPanel itemId={it.id} unitCode={it.unit?.code ?? ""} />
+                          )}
+
+                          {expandedTab === "batches" && (
+                            <ItemBatchesPanel itemId={it.id} unitCode={it.unit?.code ?? ""} />
                           )}
 
                           {expandedTab === "bomSteps" && (
@@ -3139,6 +3151,123 @@ function ItemReorderPanel({ itemId, unitCode }: { itemId: number; unitCode: stri
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Batches panel — رقم الدفعة + تاريخ الانتهاء
+// ════════════════════════════════════════════════════════════════════════════
+// Aggregates incoming purchase / goods-receipt movements by
+// (batchNumber, expiryDate, warehouse). Outgoing movements do not yet
+// carry a batch reference (medium-scope feature: historical recording
+// only, no FIFO/FEFO lot tracking), so we show *received* qty + expiry
+// status — not "remaining per batch".
+function ItemBatchesPanel({ itemId, unitCode }: { itemId: number; unitCode: string }) {
+  const { i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const { fmt, fmtQty } = useFmt();
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["item-batches", itemId],
+    queryFn: () => inventoryApi.getItemBatches(itemId),
+  });
+
+  if (isLoading) return <Skeleton className="h-32 w-full" />;
+  if (isError || !data) return (
+    <div className="text-center text-xs text-destructive py-4 border border-dashed border-destructive/30 rounded-lg">
+      تعذّر تحميل الدفعات
+    </div>
+  );
+
+  if (!data.batches.length) return (
+    <div className="text-xs text-muted-foreground py-6 text-center border border-dashed rounded-lg">
+      <FlaskConical className="h-6 w-6 mx-auto mb-1.5 opacity-30" />
+      لا توجد دفعات مسجّلة لهذا الصنف بعد.
+      <p className="text-[10px] mt-1 opacity-70">أدخل رقم الدفعة وتاريخ الانتهاء في فاتورة المشتريات أو سند الاستلام، وستظهر هنا.</p>
+    </div>
+  );
+
+  const s = data.summary;
+  const statusBadge = (st: string) => {
+    if (st === "expired")        return { cls: "bg-red-100 text-red-700 border-red-200",         label: "منتهية" };
+    if (st === "expiring_soon")  return { cls: "bg-amber-100 text-amber-800 border-amber-200",   label: "قاربت على الانتهاء" };
+    if (st === "active")         return { cls: "bg-emerald-100 text-emerald-700 border-emerald-200", label: "صالحة" };
+    return                          { cls: "bg-slate-100 text-slate-600 border-slate-200",      label: "بدون انتهاء" };
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="rounded-lg border bg-background p-3">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">إجمالي الدفعات</p>
+          <p className="text-lg font-bold tabular-nums mt-0.5">{s.totalBatches}</p>
+        </div>
+        <div className="rounded-lg border bg-emerald-50 dark:bg-emerald-900/10 p-3">
+          <p className="text-[10px] uppercase tracking-wide text-emerald-700">صالحة</p>
+          <p className="text-lg font-bold tabular-nums mt-0.5 text-emerald-700">{s.activeCount}</p>
+        </div>
+        <div className="rounded-lg border bg-amber-50 dark:bg-amber-900/10 p-3">
+          <p className="text-[10px] uppercase tracking-wide text-amber-700">تنتهي خلال 30 يوم</p>
+          <p className="text-lg font-bold tabular-nums mt-0.5 text-amber-700">{s.expiringSoonCount}</p>
+        </div>
+        <div className="rounded-lg border bg-red-50 dark:bg-red-900/10 p-3">
+          <p className="text-[10px] uppercase tracking-wide text-red-700">منتهية</p>
+          <p className="text-lg font-bold tabular-nums mt-0.5 text-red-700">{s.expiredCount}</p>
+        </div>
+      </div>
+
+      <div className="rounded-lg border overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/50 border-b">
+            <tr>
+              <th className={cn("px-3 py-2 font-semibold text-muted-foreground text-xs", isRtl ? "text-right" : "text-left")}>رقم الدفعة</th>
+              <th className={cn("px-3 py-2 font-semibold text-muted-foreground text-xs", isRtl ? "text-right" : "text-left")}>تاريخ الانتهاء</th>
+              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">الحالة</th>
+              <th className={cn("px-3 py-2 font-semibold text-muted-foreground text-xs", isRtl ? "text-right" : "text-left")}>المستودع</th>
+              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">الكمية المستلمة</th>
+              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">متوسط التكلفة</th>
+              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">أول استلام</th>
+              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">آخر استلام</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {data.batches.map((b, i) => {
+              const badge = statusBadge(b.status);
+              return (
+                <tr key={`${b.batchNumber}-${b.expiryDate ?? ""}-${b.warehouseId ?? ""}-${i}`} className="hover:bg-muted/20">
+                  <td className="px-3 py-2 font-mono text-xs font-medium">{b.batchNumber}</td>
+                  <td className="px-3 py-2 tabular-nums text-xs">
+                    {b.expiryDate ?? <span className="text-muted-foreground">—</span>}
+                    {b.daysToExpiry != null && (
+                      <span className="block text-[10px] text-muted-foreground">
+                        {b.daysToExpiry < 0 ? `منذ ${-b.daysToExpiry} يوم` : `بعد ${b.daysToExpiry} يوم`}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5 border", badge.cls)}>
+                      {badge.label}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground">
+                    {isRtl ? (b.warehouse.nameAr ?? b.warehouse.nameEn ?? "—") : (b.warehouse.nameEn ?? b.warehouse.nameAr ?? "—")}
+                  </td>
+                  <td className="px-3 py-2 text-center tabular-nums text-xs font-semibold">
+                    {fmtQty(b.receivedQty)} <span className="text-muted-foreground font-normal">{unitCode}</span>
+                  </td>
+                  <td className="px-3 py-2 text-center tabular-nums text-xs">{fmt(b.avgCost)}</td>
+                  <td className="px-3 py-2 text-center tabular-nums text-[10px] text-muted-foreground">{b.firstSeen}</td>
+                  <td className="px-3 py-2 text-center tabular-nums text-[10px] text-muted-foreground">{b.lastSeen}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-[10px] text-muted-foreground leading-relaxed border-r-2 border-amber-300 ps-3 py-1">
+        <span className="font-semibold">ملاحظة:</span> العمود "الكمية المستلمة" يعرض إجمالي ما دخل المخزون بهذه الدفعة منذ أول تسجيل لها. حركات البيع/الصرف لا ترتبط بدفعة معينة في هذه المرحلة، لذلك لا يوجد عمود "المتبقي من الدفعة" — أُضيف لاحقاً عند ترقية النظام لتتبّع الدفعات الكامل (FIFO/FEFO).
+      </p>
     </div>
   );
 }

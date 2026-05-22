@@ -62,6 +62,8 @@ export async function addStockLedgerEntry(entry: {
   balanceQty: string;
   refId: number;
   refType: string;
+  batchNumber?: string | null;
+  expiryDate?: string | null;
   notes?: string;
 }) {
   await db.insert(stockLedgerTable).values(entry);
