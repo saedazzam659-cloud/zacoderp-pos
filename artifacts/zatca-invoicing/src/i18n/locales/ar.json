@@ -606,6 +606,7 @@
     "productionResources": "الماكينات والموارد",
     "bomTemplates": "قوالب المكوّنات (BOM)",
     "workCenters": "مراكز العمل",
+    "productionQuality": "مراقبة الجودة",
     "manufacturingSettings": "إعدادات التصنيع",
     "contractingGroup": "إدارة المقاولات",
     "contractingDashboard": "لوحة المقاولات",
