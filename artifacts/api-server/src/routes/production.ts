@@ -3512,6 +3512,81 @@ router.get("/quality-checks/summary", async (req, res) => {
   }
 });
 
+// Round 10 — Company-wide QC analytics. Returns pass / fail / conditional
+// counts in the date range, plus per-checkType and top-failing-products
+// breakdowns so a QC manager can spot the worst offenders fast. Branch-
+// scoped via the standard `effectiveBranchCondition` so a restricted user
+// only aggregates orders in their assigned branches.
+router.get("/quality-checks/report", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const from = typeof req.query.from === "string" ? req.query.from : null;
+    const to = typeof req.query.to === "string" ? req.query.to : null;
+    const conditions = [eq(productionQualityChecksTable.companyId, cid)];
+    if (from) conditions.push(sql`${productionQualityChecksTable.checkedAt} >= ${from}`);
+    if (to) conditions.push(sql`${productionQualityChecksTable.checkedAt} < (${to}::date + interval '1 day')`);
+    const branchScope = effectiveBranchCondition(req, productionOrdersTable.branchId, req.query.branchId);
+    if (branchScope.deny) {
+      res.json({ byResult: [], byCheckType: [], topFailingProducts: [], qcResults: QC_RESULTS });
+      return;
+    }
+    if (branchScope.cond) conditions.push(branchScope.cond);
+
+    const byResult = await db
+      .select({
+        result: productionQualityChecksTable.result,
+        count: sql<number>`COUNT(*)::int`,
+        defects: sql<number>`COALESCE(SUM(${productionQualityChecksTable.defectsFound}),0)::int`,
+      })
+      .from(productionQualityChecksTable)
+      .innerJoin(
+        productionOrdersTable,
+        eq(productionQualityChecksTable.orderId, productionOrdersTable.id),
+      )
+      .where(and(...conditions))
+      .groupBy(productionQualityChecksTable.result);
+
+    const byCheckType = await db
+      .select({
+        checkType: productionQualityChecksTable.checkType,
+        total: sql<number>`COUNT(*)::int`,
+        fails: sql<number>`COUNT(*) FILTER (WHERE ${productionQualityChecksTable.result} = 'fail')::int`,
+        conditionals: sql<number>`COUNT(*) FILTER (WHERE ${productionQualityChecksTable.result} = 'conditional')::int`,
+      })
+      .from(productionQualityChecksTable)
+      .innerJoin(
+        productionOrdersTable,
+        eq(productionQualityChecksTable.orderId, productionOrdersTable.id),
+      )
+      .where(and(...conditions))
+      .groupBy(productionQualityChecksTable.checkType)
+      .orderBy(sql`COUNT(*) DESC`);
+
+    const topFailingProducts = await db
+      .select({
+        productItemId: productionOrdersTable.productItemId,
+        productNameAr: itemsTable.nameAr,
+        total: sql<number>`COUNT(*)::int`,
+        fails: sql<number>`COUNT(*) FILTER (WHERE ${productionQualityChecksTable.result} = 'fail')::int`,
+      })
+      .from(productionQualityChecksTable)
+      .innerJoin(
+        productionOrdersTable,
+        eq(productionQualityChecksTable.orderId, productionOrdersTable.id),
+      )
+      .leftJoin(itemsTable, eq(productionOrdersTable.productItemId, itemsTable.id))
+      .where(and(...conditions))
+      .groupBy(productionOrdersTable.productItemId, itemsTable.nameAr)
+      .orderBy(sql`COUNT(*) FILTER (WHERE ${productionQualityChecksTable.result} = 'fail') DESC`)
+      .limit(15);
+
+    res.json({ byResult, byCheckType, topFailingProducts, qcResults: QC_RESULTS });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.post("/quality-checks", async (req, res) => {
   try {
     const cid = guard(req, res);
@@ -3534,9 +3609,14 @@ router.post("/quality-checks", async (req, res) => {
       });
       return;
     }
-    // Verify the order belongs to this company.
+    // Verify the order belongs to this company AND falls in the user's
+    // branch scope. Round 10 — without the rowInScope check, a branch-
+    // restricted user could create QC failures / auto-waste rows on any
+    // tenant order by guessing IDs, polluting both the QC report and the
+    // Round-9 waste analytics. Mirrors the pattern used elsewhere in this
+    // file (e.g. PATCH /orders, POST /orders/:id/waste-records).
     const [ord] = await db
-      .select({ id: productionOrdersTable.id })
+      .select({ id: productionOrdersTable.id, branchId: productionOrdersTable.branchId })
       .from(productionOrdersTable)
       .where(
         and(
@@ -3547,6 +3627,10 @@ router.post("/quality-checks", async (req, res) => {
       .limit(1);
     if (!ord) {
       res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+      return;
+    }
+    if (!rowInScope(req, ord.branchId)) {
+      res.status(403).json({ error: "أمر الإنتاج خارج نطاق الفرع المسموح" });
       return;
     }
     let stageId: number | null = null;
@@ -3587,41 +3671,99 @@ router.post("/quality-checks", async (req, res) => {
       }
       sampleSize = s;
     }
-    const [row] = await db
-      .insert(productionQualityChecksTable)
-      .values({
-        companyId: cid,
-        orderId,
-        stageId,
-        checkType,
-        result,
-        measuredValue:
-          typeof b.measuredValue === "string" && b.measuredValue.trim()
-            ? b.measuredValue.trim()
-            : null,
-        expectedValue:
-          typeof b.expectedValue === "string" && b.expectedValue.trim()
-            ? b.expectedValue.trim()
-            : null,
-        sampleSize: sampleSize != null && sampleSize >= 0 ? sampleSize : null,
-        defectsFound: defectsFound >= 0 ? defectsFound : 0,
-        mediaUrl:
-          typeof b.mediaUrl === "string" && b.mediaUrl.trim()
-            ? b.mediaUrl.trim()
-            : null,
-        notes:
-          typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null,
-        checkedByUserId: req.authUser?.id ?? null,
-      })
-      .returning();
+    // Round 10 — Optional QC-fail → waste-record bridge. When the operator
+    // marks a check as `fail` (or `conditional`) and ticks "تسجيل كهالك", we
+    // create a `production_waste_records` row in the same DB transaction so
+    // the failure shows up in the Round-9 waste report immediately and is
+    // attributed to the same stage. No accounting JE is posted here — the
+    // financial impact of scrap is still booked at completion via the
+    // existing `wasteAccountId` JE line. wasteType must validate against the
+    // shared enum; bad values reject the WHOLE request (atomicity).
+    let autoWaste: { qty: number; wasteType: string; reason: string | null; costImpact: number; unitCode: string } | null = null;
+    if (b.createWasteRecord === true && result !== "pass") {
+      const wq = Number(b.wasteQty ?? 0);
+      if (!(wq > 0)) {
+        res.status(400).json({ error: "كمية الهالك (wasteQty) مطلوبة وأكبر من صفر عند تسجيل كهالك" });
+        return;
+      }
+      const wt = String(b.wasteType ?? "").trim();
+      if (!(PRODUCTION_WASTE_TYPES as readonly string[]).includes(wt)) {
+        res.status(400).json({
+          error: `نوع الهالك غير صحيح. المسموح: ${PRODUCTION_WASTE_TYPES.join(", ")}`,
+        });
+        return;
+      }
+      const wc = Number(b.wasteCostImpact ?? 0);
+      autoWaste = {
+        qty: wq,
+        wasteType: wt,
+        reason:
+          typeof b.wasteReason === "string" && b.wasteReason.trim()
+            ? b.wasteReason.trim()
+            : typeof b.notes === "string" && b.notes.trim()
+              ? b.notes.trim()
+              : null,
+        costImpact: Number.isFinite(wc) && wc >= 0 ? wc : 0,
+        unitCode: typeof b.wasteUnitCode === "string" && b.wasteUnitCode ? b.wasteUnitCode : "PCE",
+      };
+    }
+    const { row, wasteRow } = await db.transaction(async (tx) => {
+      const [qcRow] = await tx
+        .insert(productionQualityChecksTable)
+        .values({
+          companyId: cid,
+          orderId,
+          stageId,
+          checkType,
+          result,
+          measuredValue:
+            typeof b.measuredValue === "string" && b.measuredValue.trim()
+              ? b.measuredValue.trim()
+              : null,
+          expectedValue:
+            typeof b.expectedValue === "string" && b.expectedValue.trim()
+              ? b.expectedValue.trim()
+              : null,
+          sampleSize: sampleSize != null && sampleSize >= 0 ? sampleSize : null,
+          defectsFound: defectsFound >= 0 ? defectsFound : 0,
+          mediaUrl:
+            typeof b.mediaUrl === "string" && b.mediaUrl.trim()
+              ? b.mediaUrl.trim()
+              : null,
+          notes:
+            typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null,
+          checkedByUserId: req.authUser?.id ?? null,
+        })
+        .returning();
+      let w: any = null;
+      if (autoWaste) {
+        const [inserted] = await tx
+          .insert(productionWasteRecordsTable)
+          .values({
+            companyId: cid,
+            orderId,
+            stageId,
+            wasteType: autoWaste.wasteType,
+            reason: autoWaste.reason,
+            qty: String(autoWaste.qty),
+            unitCode: autoWaste.unitCode,
+            costImpact: String(autoWaste.costImpact),
+            notes: `تم إنشاؤه تلقائياً من فحص جودة #${qcRow.id}`,
+            createdBy: req.authUser?.id ?? null,
+          })
+          .returning();
+        w = inserted;
+      }
+      return { row: qcRow, wasteRow: w };
+    });
     await writeEvent(
       cid,
       orderId,
       `qc.${result}`,
-      { checkId: row.id, checkType, stageId, defectsFound },
+      { checkId: row.id, checkType, stageId, defectsFound, wasteRecordId: wasteRow?.id ?? null },
       req.authUser?.id ?? null,
     );
-    res.status(201).json(row);
+    res.status(201).json({ ...row, wasteRecord: wasteRow });
   } catch (e: any) {
     req.log?.error?.({ err: e }, "qc create failed");
     res.status(e.status || 500).json({ error: e.message });
@@ -3633,9 +3775,19 @@ router.patch("/quality-checks/:id", async (req, res) => {
     const cid = guard(req, res);
     if (!cid) return;
     const id = Number(req.params.id);
-    const [existing] = await db
-      .select()
+    // Round 10 — Join to parent order so we can enforce branch scope on
+    // updates. Without this, a branch-restricted user could mutate any QC
+    // row by guessing IDs (same class of bypass as the POST path).
+    const [existingRow] = await db
+      .select({
+        qc: productionQualityChecksTable,
+        orderBranchId: productionOrdersTable.branchId,
+      })
       .from(productionQualityChecksTable)
+      .innerJoin(
+        productionOrdersTable,
+        eq(productionOrdersTable.id, productionQualityChecksTable.orderId),
+      )
       .where(
         and(
           eq(productionQualityChecksTable.id, id),
@@ -3643,10 +3795,15 @@ router.patch("/quality-checks/:id", async (req, res) => {
         ),
       )
       .limit(1);
-    if (!existing) {
+    if (!existingRow) {
       res.status(404).json({ error: "الفحص غير موجود" });
       return;
     }
+    if (!rowInScope(req, existingRow.orderBranchId)) {
+      res.status(403).json({ error: "الفحص خارج نطاق الفرع المسموح" });
+      return;
+    }
+    const existing = existingRow.qc;
     const b = req.body ?? {};
     const patch: Record<string, unknown> = {};
     if (typeof b.result === "string") {
@@ -3694,19 +3851,41 @@ router.delete("/quality-checks/:id", async (req, res) => {
     const cid = guard(req, res);
     if (!cid) return;
     const id = Number(req.params.id);
-    const result = await db
-      .delete(productionQualityChecksTable)
+    // Round 10 — Same branch-scope gate as PATCH. Resolve the parent order
+    // first so we can 403 out-of-scope IDs instead of silently deleting.
+    const [existingRow] = await db
+      .select({
+        qcId: productionQualityChecksTable.id,
+        orderBranchId: productionOrdersTable.branchId,
+      })
+      .from(productionQualityChecksTable)
+      .innerJoin(
+        productionOrdersTable,
+        eq(productionOrdersTable.id, productionQualityChecksTable.orderId),
+      )
       .where(
         and(
           eq(productionQualityChecksTable.id, id),
           eq(productionQualityChecksTable.companyId, cid),
         ),
       )
-      .returning({ id: productionQualityChecksTable.id });
-    if (result.length === 0) {
+      .limit(1);
+    if (!existingRow) {
       res.status(404).json({ error: "الفحص غير موجود" });
       return;
     }
+    if (!rowInScope(req, existingRow.orderBranchId)) {
+      res.status(403).json({ error: "الفحص خارج نطاق الفرع المسموح" });
+      return;
+    }
+    await db
+      .delete(productionQualityChecksTable)
+      .where(
+        and(
+          eq(productionQualityChecksTable.id, id),
+          eq(productionQualityChecksTable.companyId, cid),
+        ),
+      );
     res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });

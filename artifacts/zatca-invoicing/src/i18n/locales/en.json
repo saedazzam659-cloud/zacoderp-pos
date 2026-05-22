@@ -601,6 +601,7 @@
     "productionBoard": "Visual Production Line",
     "productionRoutings": "Production Routings",
     "productionQuality": "Quality Control",
+    "productionQualityReport": "QC Report",
     "productionTraceability": "Batch Traceability",
     "productionWasteReport": "Waste & Scrap Report",
     "maintenanceGroup": "Maintenance",
