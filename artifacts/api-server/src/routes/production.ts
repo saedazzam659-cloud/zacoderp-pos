@@ -3998,11 +3998,28 @@ router.get("/waste-records/summary", async (req, res) => {
     const conditions = [eq(productionWasteRecordsTable.companyId, cid)];
     if (from) conditions.push(sql`${productionWasteRecordsTable.createdAt} >= ${from}`);
     if (to) conditions.push(sql`${productionWasteRecordsTable.createdAt} < (${to}::date + interval '1 day')`);
+    // Round 9 — optional `wasteType` (CSV) filter so users can isolate one
+    // or more loss categories (e.g. only burn+break). Unknown values are
+    // silently dropped to avoid leaking enum validation through the filter.
+    const wasteTypeRaw = typeof req.query.wasteType === "string" ? req.query.wasteType : "";
+    const wasteTypes = wasteTypeRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => (PRODUCTION_WASTE_TYPES as readonly string[]).includes(s));
+    if (wasteTypes.length > 0) {
+      conditions.push(inArray(productionWasteRecordsTable.wasteType, wasteTypes));
+    }
+    // Round 9 — optional free-text reason search (case-insensitive contains).
+    // Matches against the operator-entered root cause text, not the type enum.
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    if (q) {
+      conditions.push(sql`${productionWasteRecordsTable.reason} ILIKE ${"%" + q + "%"}`);
+    }
     // Branch isolation — restricted users only aggregate orders in their
     // assigned branches. NULL-branch orders are shared/company-wide per
     // the project-wide `effectiveBranchCondition` convention.
     const branchScope = effectiveBranchCondition(req, productionOrdersTable.branchId, req.query.branchId);
-    if (branchScope.deny) { res.json([]); return; }
+    if (branchScope.deny) { res.json({ byType: [], wasteTypes: PRODUCTION_WASTE_TYPES }); return; }
     if (branchScope.cond) conditions.push(branchScope.cond);
     const rows = await db
       .select({
@@ -4020,6 +4037,62 @@ router.get("/waste-records/summary", async (req, res) => {
       .groupBy(productionWasteRecordsTable.wasteType)
       .orderBy(sql`SUM(${productionWasteRecordsTable.costImpact}) DESC`);
     res.json({ byType: rows, wasteTypes: PRODUCTION_WASTE_TYPES });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Round 9 — top free-text reasons aggregator. Reasons are user-entered root
+// causes (not the bounded `wasteType` enum). Trims + lowercases for grouping
+// so "Bag tear" and "bag tear " collapse into one bucket. Filters and branch
+// scope mirror /waste-records/summary so the two cards on the report page
+// stay consistent.
+router.get("/waste-records/by-reason", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const from = typeof req.query.from === "string" ? req.query.from : null;
+    const to = typeof req.query.to === "string" ? req.query.to : null;
+    const conditions = [
+      eq(productionWasteRecordsTable.companyId, cid),
+      sql`${productionWasteRecordsTable.reason} IS NOT NULL`,
+      sql`length(trim(${productionWasteRecordsTable.reason})) > 0`,
+    ];
+    if (from) conditions.push(sql`${productionWasteRecordsTable.createdAt} >= ${from}`);
+    if (to) conditions.push(sql`${productionWasteRecordsTable.createdAt} < (${to}::date + interval '1 day')`);
+    const wasteTypeRaw = typeof req.query.wasteType === "string" ? req.query.wasteType : "";
+    const wasteTypes = wasteTypeRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => (PRODUCTION_WASTE_TYPES as readonly string[]).includes(s));
+    if (wasteTypes.length > 0) {
+      conditions.push(inArray(productionWasteRecordsTable.wasteType, wasteTypes));
+    }
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    if (q) {
+      conditions.push(sql`${productionWasteRecordsTable.reason} ILIKE ${"%" + q + "%"}`);
+    }
+    const branchScope = effectiveBranchCondition(req, productionOrdersTable.branchId, req.query.branchId);
+    if (branchScope.deny) { res.json([]); return; }
+    if (branchScope.cond) conditions.push(branchScope.cond);
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 20) || 20, 1), 100);
+    const rows = await db
+      .select({
+        reason: sql<string>`lower(trim(${productionWasteRecordsTable.reason}))`,
+        totalQty: sql<string>`COALESCE(SUM(${productionWasteRecordsTable.qty}), 0)`,
+        totalCost: sql<string>`COALESCE(SUM(${productionWasteRecordsTable.costImpact}), 0)`,
+        count: sql<number>`COUNT(*)::int`,
+      })
+      .from(productionWasteRecordsTable)
+      .innerJoin(
+        productionOrdersTable,
+        eq(productionWasteRecordsTable.orderId, productionOrdersTable.id),
+      )
+      .where(and(...conditions))
+      .groupBy(sql`lower(trim(${productionWasteRecordsTable.reason}))`)
+      .orderBy(sql`SUM(${productionWasteRecordsTable.costImpact}) DESC`)
+      .limit(limit);
+    res.json(rows);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

@@ -207,6 +207,7 @@ const productionSubNav: NavDef[] = [
   { nameKey: "nav.workCenters",         href: "/production/work-centers", icon: Factory, permKey: "production" },
   { nameKey: "nav.productionQuality",   href: "/production/quality",   icon: ShieldCheck, permKey: "production" },
   { nameKey: "nav.productionTraceability", href: "/production/traceability", icon: GitBranch, permKey: "production" },
+  { nameKey: "nav.productionWasteReport", href: "/production/waste-report", icon: Trash2, permKey: "production" },
   { nameKey: "nav.manufacturingSettings", href: "/production/settings", icon: Settings2, permKey: "production" },
 ];
 const PRODUCTION_GROUP_PERMS = ["production"];
