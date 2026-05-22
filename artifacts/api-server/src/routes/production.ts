@@ -26,6 +26,8 @@ import {
   productionRoutingStagesTable,
   productionOrderStagesTable,
   productionQualityChecksTable,
+  productionWasteRecordsTable,
+  PRODUCTION_WASTE_TYPES,
   QC_CHECK_TYPES,
   QC_RESULTS,
   PRODUCTION_ORDER_STATUSES,
@@ -34,12 +36,14 @@ import {
   type ProductionOrderStatus,
   type ProductionStageStatus,
 } from "@workspace/db";
+import { randomBytes } from "node:crypto";
 import { and, asc, desc, eq, ilike, sql, or } from "drizzle-orm";
 import {
   extractAuth,
   resolveCompanyId,
   branchScopeFilter,
   intersectBranchRequest,
+  effectiveBranchCondition,
 } from "../middleware/auth.js";
 import { requireModulePermission, moduleAudit } from "../middleware/permissions.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
@@ -574,7 +578,18 @@ router.get("/orders/:id", async (req, res) => {
       )
       .orderBy(desc(productionEventsTable.createdAt))
       .limit(50);
-    res.json({ order, items, events });
+    // PHASE D — include scrap records so the UI can show them alongside.
+    const wasteRecords = await db
+      .select()
+      .from(productionWasteRecordsTable)
+      .where(
+        and(
+          eq(productionWasteRecordsTable.companyId, cid),
+          eq(productionWasteRecordsTable.orderId, id),
+        ),
+      )
+      .orderBy(desc(productionWasteRecordsTable.createdAt));
+    res.json({ order, items, events, wasteRecords });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -978,6 +993,11 @@ router.patch("/orders/:id", async (req, res) => {
           : null;
     if (b.wipAccountId !== undefined && !lockedAfterIssue)
       updates.wipAccountId = await validateAccount(cid, b.wipAccountId ? Number(b.wipAccountId) : null);
+    // PHASE D — FG expiry date is user-tunable pre-completion (gets stamped
+    // onto the production_receipt ledger row at completion → flows to the
+    // batches panel). Editable while the receipt JE hasn't posted.
+    if (b.fgExpiryDate !== undefined && !existingOrder.status?.toString().includes("completed"))
+      updates.fgExpiryDate = b.fgExpiryDate || null;
     if (b.rawInventoryAccountId !== undefined && !lockedAfterIssue)
       updates.rawInventoryAccountId = await validateAccount(cid, b.rawInventoryAccountId ? Number(b.rawInventoryAccountId) : null);
     if (b.finishedGoodsAccountId !== undefined)
@@ -1251,6 +1271,17 @@ router.post("/orders/:id/status", async (req, res) => {
       updates.actualCost = String(wipDr.toFixed(2));
       updates.issueJournalEntryId = issueJournalId;
       if (!order.actualStartAt) updates.actualStartAt = new Date();
+
+      // ─── PHASE D: generate batchNumber + qrToken when issuing ──────────────
+      // Format: PRD-YYYYMMDD-{orderId} (zero-padded). Unique per company via
+      // the partial index `prod_orders_company_batch_uniq`. Skipped if the
+      // user already supplied a batchNumber via PATCH (manual override).
+      if (!order.batchNumber) {
+        const d = new Date();
+        const dStr = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}`;
+        updates.batchNumber = `PRD-${dStr}-${String(id).padStart(5, "0")}`;
+        updates.qrToken = `${updates.batchNumber}-${randomBytes(4).toString("hex").toUpperCase()}`;
+      }
     }
 
     // ─── 2) RECEIPT — moving to "completed" ─────────────────────────────────
@@ -1261,6 +1292,15 @@ router.post("/orders/:id/status", async (req, res) => {
           error: `إذن إضافة البضاعة التامة سبق ترحيله (قيد رقم ${order.receiptJournalEntryId}). أعد تحميل الصفحة.`,
         });
         return;
+      }
+      // PHASE D — Honour fgExpiryDate sent in the completion body. The UI
+      // posts it alongside producedQty/wasteQty so the operator can set the
+      // shelf-life right before closing the order. We persist it via the
+      // same `updates` map and re-read into `effectiveFgExpiry` so the
+      // ledger row below stamps the value the user just typed (instead of
+      // the stale order row loaded above).
+      if (req.body?.fgExpiryDate !== undefined) {
+        updates.fgExpiryDate = req.body.fgExpiryDate || null;
       }
       if (!order.finishedWarehouseId) {
         res.status(400).json({ error: "حدّد مخزن البضاعة التامة قبل الإقفال" });
@@ -1348,6 +1388,9 @@ router.post("/orders/:id/status", async (req, res) => {
         order.productItemId,
         order.finishedWarehouseId,
       );
+      // PHASE D: stamp the production batchNumber + expiry onto the ledger
+      // row so the FG batch shows up in the item's "الدفعات" panel and is
+      // discoverable by FEFO/expiry reports.
       await addStockLedgerEntry({
         companyId: cid,
         itemId: order.productItemId,
@@ -1360,7 +1403,12 @@ router.post("/orders/:id/status", async (req, res) => {
         balanceQty: String(newBal),
         refId: id,
         refType: "production_order",
-        notes: `إذن إضافة بضاعة تامة من أمر إنتاج ${order.orderNumber}`,
+        batchNumber: order.batchNumber ?? null,
+        // PHASE D — prefer the just-set value from the completion body over
+        // the stale row loaded at the top of the handler.
+        expiryDate:
+          ((updates.fgExpiryDate as string | null | undefined) ?? order.fgExpiryDate) ?? null,
+        notes: `إذن إضافة بضاعة تامة من أمر إنتاج ${order.orderNumber}${order.batchNumber ? ` — تشغيلة ${order.batchNumber}` : ""}`,
       });
 
       // b) Receipt JE: DR FG (+ DR Waste/Variance) / CR WIP
@@ -3584,6 +3632,202 @@ router.delete("/quality-checks/:id", async (req, res) => {
       return;
     }
     res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// PHASE D — Waste Records (سجلّات التالف)
+// ─────────────────────────────────────────────────────────────────────────
+// Detailed scrap log per production order. See schema comment for design
+// notes. CRUD only — no JE posting (the wasteAccount JE line at completion
+// already books the financial impact).
+async function assertOrderInScope(req: any, cid: number, orderId: number) {
+  const [o] = await db
+    .select({
+      id: productionOrdersTable.id,
+      branchId: productionOrdersTable.branchId,
+    })
+    .from(productionOrdersTable)
+    .where(
+      and(
+        eq(productionOrdersTable.id, orderId),
+        eq(productionOrdersTable.companyId, cid),
+      ),
+    );
+  if (!o) return { ok: false as const, error: "أمر الإنتاج غير موجود", status: 404 };
+  if (!rowInScope(req, o.branchId))
+    return { ok: false as const, error: "لا يمكنك العمل على هذا الفرع", status: 403 };
+  return { ok: true as const };
+}
+
+router.get("/orders/:id/waste-records", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const orderId = Number(req.params.id);
+    const scope = await assertOrderInScope(req, cid, orderId);
+    if (!scope.ok) { res.status(scope.status).json({ error: scope.error }); return; }
+    const rows = await db
+      .select()
+      .from(productionWasteRecordsTable)
+      .where(
+        and(
+          eq(productionWasteRecordsTable.companyId, cid),
+          eq(productionWasteRecordsTable.orderId, orderId),
+        ),
+      )
+      .orderBy(desc(productionWasteRecordsTable.createdAt));
+    // Group totals by type for the analytics tile.
+    const byType: Record<string, { qty: number; cost: number; count: number }> = {};
+    for (const r of rows) {
+      const k = r.wasteType;
+      const t = byType[k] ?? { qty: 0, cost: 0, count: 0 };
+      t.qty += Number(r.qty);
+      t.cost += Number(r.costImpact);
+      t.count += 1;
+      byType[k] = t;
+    }
+    res.json({ records: rows, summary: { byType, totalCount: rows.length } });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/orders/:id/waste-records", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const orderId = Number(req.params.id);
+    const scope = await assertOrderInScope(req, cid, orderId);
+    if (!scope.ok) { res.status(scope.status).json({ error: scope.error }); return; }
+    const b = req.body ?? {};
+    const wasteType = String(b.wasteType ?? "").trim();
+    if (!(PRODUCTION_WASTE_TYPES as readonly string[]).includes(wasteType)) {
+      res.status(400).json({ error: `نوع التالف غير صحيح. القيم المسموحة: ${PRODUCTION_WASTE_TYPES.join(", ")}` });
+      return;
+    }
+    const qty = Number(b.qty ?? 0);
+    if (!(qty > 0)) {
+      res.status(400).json({ error: "الكمية يجب أن تكون أكبر من صفر" });
+      return;
+    }
+    // PHASE D — Validate FK ownership so a guessed/forged ID from another
+    // tenant cannot be attached to this company's waste record.
+    const stageId = b.stageId ? Number(b.stageId) : null;
+    const resourceId = b.resourceId ? Number(b.resourceId) : null;
+    const workCenterId = b.workCenterId ? Number(b.workCenterId) : null;
+    if (stageId) {
+      const [s] = await db
+        .select({ id: productionOrderStagesTable.id })
+        .from(productionOrderStagesTable)
+        .where(and(eq(productionOrderStagesTable.id, stageId), eq(productionOrderStagesTable.orderId, orderId)))
+        .limit(1);
+      if (!s) { res.status(400).json({ error: "المرحلة المحددة لا تخص هذا الأمر" }); return; }
+    }
+    if (resourceId) {
+      const [r] = await db
+        .select({ id: productionResourcesTable.id })
+        .from(productionResourcesTable)
+        .where(and(eq(productionResourcesTable.id, resourceId), eq(productionResourcesTable.companyId, cid)))
+        .limit(1);
+      if (!r) { res.status(400).json({ error: "المورد المحدد لا يخص هذه الشركة" }); return; }
+    }
+    if (workCenterId) {
+      const [w] = await db
+        .select({ id: workCentersTable.id })
+        .from(workCentersTable)
+        .where(and(eq(workCentersTable.id, workCenterId), eq(workCentersTable.companyId, cid)))
+        .limit(1);
+      if (!w) { res.status(400).json({ error: "مركز العمل المحدد لا يخص هذه الشركة" }); return; }
+    }
+    const [row] = await db
+      .insert(productionWasteRecordsTable)
+      .values({
+        companyId: cid,
+        orderId,
+        stageId: b.stageId ? Number(b.stageId) : null,
+        wasteType,
+        reason: typeof b.reason === "string" && b.reason.trim() ? b.reason.trim() : null,
+        qty: String(qty),
+        unitCode: typeof b.unitCode === "string" && b.unitCode ? b.unitCode : "PCE",
+        costImpact: String(Number(b.costImpact ?? 0)),
+        resourceId: b.resourceId ? Number(b.resourceId) : null,
+        workCenterId: b.workCenterId ? Number(b.workCenterId) : null,
+        operatorUserId: b.operatorUserId ? Number(b.operatorUserId) : null,
+        notes: typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null,
+        createdBy: (req as any).user?.id ?? null,
+      })
+      .returning();
+    res.status(201).json(row);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete("/orders/:orderId/waste-records/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const orderId = Number(req.params.orderId);
+    const id = Number(req.params.id);
+    const scope = await assertOrderInScope(req, cid, orderId);
+    if (!scope.ok) { res.status(scope.status).json({ error: scope.error }); return; }
+    const result = await db
+      .delete(productionWasteRecordsTable)
+      .where(
+        and(
+          eq(productionWasteRecordsTable.id, id),
+          eq(productionWasteRecordsTable.companyId, cid),
+          eq(productionWasteRecordsTable.orderId, orderId),
+        ),
+      )
+      .returning({ id: productionWasteRecordsTable.id });
+    if (result.length === 0) {
+      res.status(404).json({ error: "السجل غير موجود" });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Company-wide aggregated scrap report for the dashboard.
+// Branch-scoped: joins to `production_orders` and reuses the same
+// `effectiveBranchCondition` semantics as other tenant endpoints so a
+// user restricted to branch X never sees waste tonnage from branch Y.
+router.get("/waste-records/summary", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const from = typeof req.query.from === "string" ? req.query.from : null;
+    const to = typeof req.query.to === "string" ? req.query.to : null;
+    const conditions = [eq(productionWasteRecordsTable.companyId, cid)];
+    if (from) conditions.push(sql`${productionWasteRecordsTable.createdAt} >= ${from}`);
+    if (to) conditions.push(sql`${productionWasteRecordsTable.createdAt} < (${to}::date + interval '1 day')`);
+    // Branch isolation — restricted users only aggregate orders in their
+    // assigned branches. NULL-branch orders are shared/company-wide per
+    // the project-wide `effectiveBranchCondition` convention.
+    const branchCond = effectiveBranchCondition(req, productionOrdersTable.branchId);
+    if (branchCond) conditions.push(branchCond);
+    const rows = await db
+      .select({
+        wasteType: productionWasteRecordsTable.wasteType,
+        totalQty: sql<string>`COALESCE(SUM(${productionWasteRecordsTable.qty}), 0)`,
+        totalCost: sql<string>`COALESCE(SUM(${productionWasteRecordsTable.costImpact}), 0)`,
+        count: sql<number>`COUNT(*)::int`,
+      })
+      .from(productionWasteRecordsTable)
+      .innerJoin(
+        productionOrdersTable,
+        eq(productionWasteRecordsTable.orderId, productionOrdersTable.id),
+      )
+      .where(and(...conditions))
+      .groupBy(productionWasteRecordsTable.wasteType)
+      .orderBy(sql`SUM(${productionWasteRecordsTable.costImpact}) DESC`);
+    res.json({ byType: rows, wasteTypes: PRODUCTION_WASTE_TYPES });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

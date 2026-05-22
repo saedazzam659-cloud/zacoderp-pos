@@ -7,7 +7,9 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, Plus, Trash2, Activity, ListChecks, Sparkles,
   CheckCircle2, PlayCircle, ClipboardCheck, Flag, Ban, X,
+  QrCode, AlertTriangle, Printer,
 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -72,6 +74,24 @@ type Order = {
   workCenterId: number | null;
   plannedHours: string;
   actualHours: string;
+  // ─── Phase D — batch / QR / FG expiry ───
+  batchNumber: string | null;
+  qrToken: string | null;
+  fgExpiryDate: string | null;
+};
+type WasteRecord = {
+  id: number;
+  wasteType: string;
+  reason: string | null;
+  qty: string;
+  unitCode: string;
+  costImpact: string;
+  stageId: number | null;
+  resourceId: number | null;
+  workCenterId: number | null;
+  operatorUserId: number | null;
+  notes: string | null;
+  createdAt: string;
 };
 type Warehouse = { id: number; code?: string | null; nameAr: string; nameEn?: string | null };
 type Account = { id: number; code: string; nameAr: string; accountType: string };
@@ -141,7 +161,8 @@ export default function ProductionOrderDetail() {
   const [itemRefs, setItemRefs] = useState<ItemRef[]>([]);
   const [workCenters, setWorkCenters] = useState<WorkCenterRef[]>([]);
   const [savingWip, setSavingWip] = useState(false);
-  const [completion, setCompletion] = useState({ producedQty: "", wasteQty: "" });
+  const [completion, setCompletion] = useState({ producedQty: "", wasteQty: "", fgExpiryDate: "" });
+  const [wasteRecords, setWasteRecords] = useState<WasteRecord[]>([]);
   const [itemForm, setItemForm] = useState({
     kind: "raw" as Item["kind"],
     description: "",
@@ -185,6 +206,7 @@ export default function ProductionOrderDetail() {
       setOrder(j.order);
       setItems(j.items ?? []);
       setEvents(j.events ?? []);
+      setWasteRecords(j.wasteRecords ?? []);
     } catch (e: any) {
       toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
     } finally {
@@ -224,6 +246,7 @@ export default function ProductionOrderDetail() {
       setCompletion({
         producedQty: order.producedQty && Number(order.producedQty) > 0 ? order.producedQty : order.plannedQty,
         wasteQty: order.wasteQty || "0",
+        fgExpiryDate: order.fgExpiryDate ?? "",
       });
     }
   }, [order?.status]);  // eslint-disable-line react-hooks/exhaustive-deps
@@ -363,7 +386,11 @@ export default function ProductionOrderDetail() {
                     });
                     return;
                   }
-                  void transitionTo("completed", { producedQty: pq, wasteQty: wq });
+                  void transitionTo("completed", {
+                    producedQty: pq,
+                    wasteQty: wq,
+                    ...(completion.fgExpiryDate ? { fgExpiryDate: completion.fgExpiryDate } : {}),
+                  });
                 } else {
                   void transitionTo(tr.to);
                 }
@@ -412,6 +439,17 @@ export default function ProductionOrderDetail() {
             />
           </div>
 
+          {/* ─── Phase D — Batch + QR code banner (visible after issue) ─── */}
+          {order.batchNumber && (
+            <BatchQrBanner
+              batchNumber={order.batchNumber}
+              qrToken={order.qrToken}
+              fgExpiryDate={order.fgExpiryDate}
+              orderNumber={order.orderNumber}
+              productTitle={order.title}
+            />
+          )}
+
           {/* ─── SAP-style WIP setup panel — editable while pre-issue, locked after ─── */}
           <WipSetupPanel
             order={order}
@@ -429,7 +467,7 @@ export default function ProductionOrderDetail() {
               <div className="text-sm font-semibold text-emerald-700 dark:text-emerald-300 mb-2">
                 <Flag className="h-4 w-4 inline me-1" /> كميات الإقفال
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <Label className="text-xs">الكمية المنتَجة (تدخل لمخزن البضاعة التامة)</Label>
                   <Input
@@ -446,6 +484,16 @@ export default function ProductionOrderDetail() {
                     value={completion.wasteQty}
                     onChange={(e) => setCompletion({ ...completion, wasteQty: e.target.value })}
                     data-testid="input-waste-qty" className="mt-1"
+                  />
+                </div>
+                {/* PHASE D — Optional FG expiry stamped on the receipt batch */}
+                <div>
+                  <Label className="text-xs">تاريخ انتهاء البضاعة التامة (اختياري)</Label>
+                  <Input
+                    type="date"
+                    value={completion.fgExpiryDate}
+                    onChange={(e) => setCompletion({ ...completion, fgExpiryDate: e.target.value })}
+                    data-testid="input-fg-expiry" className="mt-1"
                   />
                 </div>
               </div>
@@ -466,6 +514,14 @@ export default function ProductionOrderDetail() {
               </TabsTrigger>
               <TabsTrigger value="quality" data-testid="tab-quality">
                 <ClipboardCheck className="h-4 w-4 me-1" /> مراقبة الجودة
+              </TabsTrigger>
+              <TabsTrigger value="waste" data-testid="tab-waste">
+                <AlertTriangle className="h-4 w-4 me-1" /> التالف المفصّل
+                {wasteRecords.length > 0 && (
+                  <span className="ms-1 rounded-full bg-rose-100 text-rose-700 px-1.5 py-0.5 text-[10px] font-semibold dark:bg-rose-900/40 dark:text-rose-300">
+                    {wasteRecords.length}
+                  </span>
+                )}
               </TabsTrigger>
             </TabsList>
             <TabsContent value="items" className="space-y-3">
@@ -653,6 +709,16 @@ export default function ProductionOrderDetail() {
                   افتح مراقبة الجودة
                 </a>
               </div>
+            </TabsContent>
+            <TabsContent value="waste" className="space-y-3">
+              <WasteRecordsTab
+                orderId={orderId}
+                token={token ?? ""}
+                records={wasteRecords}
+                onReload={load}
+                workCenters={workCenters}
+                disabled={order.status === "draft" || order.status === "cancelled"}
+              />
             </TabsContent>
           </Tabs>
         </div>
@@ -1009,6 +1075,384 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div>
       <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{label}</Label>
       <div className="mt-1">{children}</div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PHASE D — Batch + QR banner shown once production has started
+// ─────────────────────────────────────────────────────────────────────────
+function BatchQrBanner({
+  batchNumber,
+  qrToken,
+  fgExpiryDate,
+  orderNumber,
+  productTitle,
+}: {
+  batchNumber: string;
+  qrToken: string | null;
+  fgExpiryDate: string | null;
+  orderNumber: string;
+  productTitle: string;
+}) {
+  // QR payload: a structured JSON the warehouse/QC scanner can parse to
+  // resolve the production order without hitting the search box.
+  const payload = JSON.stringify({
+    type: "production_batch",
+    batch: batchNumber,
+    token: qrToken,
+    order: orderNumber,
+    expiry: fgExpiryDate ?? null,
+  });
+  const print = () => {
+    const w = window.open("", "_blank", "width=420,height=560");
+    if (!w) return;
+    w.document.write(`
+      <html dir="rtl" lang="ar"><head><title>ملصق التشغيلة ${batchNumber}</title>
+      <style>
+        body{font-family:Arial,sans-serif;text-align:center;padding:14px;}
+        h2{margin:6px 0;font-size:18px}
+        .num{font-family:monospace;font-size:13px;color:#444}
+        .exp{font-size:13px;color:#a00;margin-top:6px}
+        svg{margin:8px auto}
+      </style></head><body>
+        <h2>${productTitle}</h2>
+        <div class="num">${orderNumber} — ${batchNumber}</div>
+        ${document.getElementById(`qr-${batchNumber}`)?.outerHTML ?? ""}
+        ${fgExpiryDate ? `<div class="exp">انتهاء الصلاحية: ${fgExpiryDate}</div>` : ""}
+        <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),400)}<\/script>
+      </body></html>`);
+    w.document.close();
+  };
+  return (
+    <div
+      className="rounded-lg border border-sky-200 dark:border-sky-900/50 bg-gradient-to-br from-sky-50 to-cyan-50/40 dark:from-sky-950/20 dark:to-cyan-950/10 p-4 flex flex-wrap items-center gap-4"
+      data-testid="banner-batch-qr"
+    >
+      <div className="shrink-0 bg-white p-2 rounded-md border border-sky-200">
+        <QRCodeSVG
+          id={`qr-${batchNumber}`}
+          value={payload}
+          size={96}
+          level="M"
+          includeMargin={false}
+        />
+      </div>
+      <div className="flex-1 min-w-[200px] space-y-1">
+        <div className="flex items-center gap-2 text-sm font-semibold text-sky-700 dark:text-sky-300">
+          <QrCode className="h-4 w-4" /> رقم التشغيلة (Batch)
+        </div>
+        <div className="font-mono text-lg font-bold text-slate-800 dark:text-slate-100" data-testid="text-batch-number">
+          {batchNumber}
+        </div>
+        {fgExpiryDate && (
+          <div className="text-xs text-rose-700 dark:text-rose-300">
+            انتهاء الصلاحية: <span className="font-semibold">{fgExpiryDate}</span>
+          </div>
+        )}
+        <div className="text-[11px] text-slate-500">
+          امسح الـQR من جهاز المخزن لربط البضاعة التامة بالتشغيلة تلقائياً.
+        </div>
+      </div>
+      <Button type="button" variant="outline" size="sm" onClick={print} data-testid="btn-print-batch-label">
+        <Printer className="h-3.5 w-3.5 me-1" /> طباعة ملصق
+      </Button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PHASE D — Detailed waste-records panel (per production order)
+// ─────────────────────────────────────────────────────────────────────────
+const WASTE_TYPES: { value: string; labelAr: string; tone: string }[] = [
+  { value: "burn", labelAr: "احتراق", tone: "bg-orange-100 text-orange-800" },
+  { value: "break", labelAr: "كسر", tone: "bg-rose-100 text-rose-800" },
+  { value: "deform", labelAr: "تشوّه/عيب شكل", tone: "bg-amber-100 text-amber-800" },
+  { value: "packaging_error", labelAr: "خطأ تغليف", tone: "bg-yellow-100 text-yellow-800" },
+  { value: "quality", labelAr: "رفض الجودة", tone: "bg-red-100 text-red-800" },
+  { value: "overweight", labelAr: "زيادة وزن", tone: "bg-blue-100 text-blue-800" },
+  { value: "underweight", labelAr: "نقص وزن", tone: "bg-indigo-100 text-indigo-800" },
+  { value: "contamination", labelAr: "تلوث", tone: "bg-fuchsia-100 text-fuchsia-800" },
+  { value: "other", labelAr: "أخرى", tone: "bg-slate-100 text-slate-700" },
+];
+
+function WasteRecordsTab({
+  orderId,
+  token,
+  records,
+  onReload,
+  workCenters,
+  disabled,
+}: {
+  orderId: number;
+  token: string;
+  records: WasteRecord[];
+  onReload: () => Promise<void> | void;
+  workCenters: WorkCenterRef[];
+  disabled: boolean;
+}) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    wasteType: "break",
+    qty: "",
+    unitCode: "PCE",
+    costImpact: "",
+    workCenterId: "" as number | "",
+    reason: "",
+    notes: "",
+  });
+
+  function reset() {
+    setForm({ wasteType: "break", qty: "", unitCode: "PCE", costImpact: "", workCenterId: "", reason: "", notes: "" });
+    setOpen(false);
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.qty || Number(form.qty) <= 0) {
+      toast({ title: "خطأ", description: "أدخل كمية أكبر من صفر", variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const r = await fetch(`${API}/api/production/orders/${orderId}/waste-records`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          wasteType: form.wasteType,
+          qty: Number(form.qty),
+          unitCode: form.unitCode || "PCE",
+          costImpact: Number(form.costImpact) || 0,
+          workCenterId: form.workCenterId === "" ? null : Number(form.workCenterId),
+          reason: form.reason.trim() || null,
+          notes: form.notes.trim() || null,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      toast({ title: "✓ تم تسجيل التالف" });
+      reset();
+      await onReload();
+    } catch (err: any) {
+      toast({ title: "خطأ", description: err?.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove(id: number) {
+    if (!confirm("حذف سجل التالف؟")) return;
+    try {
+      const r = await fetch(`${API}/api/production/orders/${orderId}/waste-records/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j?.error || `HTTP ${r.status}`);
+      }
+      toast({ title: "✓ تم الحذف" });
+      await onReload();
+    } catch (err: any) {
+      toast({ title: "خطأ", description: err?.message, variant: "destructive" });
+    }
+  }
+
+  // Aggregate stats for the summary tiles.
+  const summary = records.reduce<Record<string, { qty: number; cost: number; count: number }>>((acc, r) => {
+    const k = r.wasteType;
+    const cur = acc[k] ?? { qty: 0, cost: 0, count: 0 };
+    cur.qty += Number(r.qty);
+    cur.cost += Number(r.costImpact);
+    cur.count += 1;
+    acc[k] = cur;
+    return acc;
+  }, {});
+  const totalQty = records.reduce((s, r) => s + Number(r.qty), 0);
+  const totalCost = records.reduce((s, r) => s + Number(r.costImpact), 0);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm text-slate-600 dark:text-slate-300">
+          سجلّات التالف التفصيلية لهذا الأمر (مستقلة عن إجمالي الهالك في الإقفال — تساعد على التحليل بنوع السبب).
+        </div>
+        {!disabled && (
+          <Button
+            size="sm"
+            data-testid="btn-add-waste"
+            onClick={() => setOpen((o) => !o)}
+            variant={open ? "outline" : "default"}
+          >
+            {open ? <X className="h-4 w-4 me-1" /> : <Plus className="h-4 w-4 me-1" />}
+            {open ? "إلغاء" : "إضافة سجل تالف"}
+          </Button>
+        )}
+      </div>
+
+      {/* By-type tiles */}
+      {records.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+          {WASTE_TYPES.filter((t) => summary[t.value]).map((t) => (
+            <div
+              key={t.value}
+              className="rounded-lg border bg-white dark:bg-slate-900 p-2.5"
+              data-testid={`tile-waste-${t.value}`}
+            >
+              <div className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${t.tone}`}>
+                {t.labelAr}
+              </div>
+              <div className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-100">
+                {summary[t.value].qty.toLocaleString()}
+              </div>
+              <div className="text-[11px] text-slate-500">
+                {summary[t.value].count} سجل · {summary[t.value].cost.toLocaleString()} ر.س
+              </div>
+            </div>
+          ))}
+          <div className="rounded-lg border border-slate-300 bg-slate-50 dark:bg-slate-800/50 p-2.5">
+            <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">الإجمالي</div>
+            <div className="mt-1 text-sm font-bold">{totalQty.toLocaleString()}</div>
+            <div className="text-[11px] text-slate-500">{totalCost.toLocaleString()} ر.س</div>
+          </div>
+        </div>
+      )}
+
+      {/* Add-form */}
+      {open && !disabled && (
+        <form
+          onSubmit={submit}
+          className="rounded-lg border border-rose-200 dark:border-rose-900/50 bg-rose-50/40 dark:bg-rose-950/10 p-3 space-y-3"
+          data-testid="form-waste"
+        >
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Field label="نوع التالف">
+              <select
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={form.wasteType}
+                onChange={(e) => setForm({ ...form, wasteType: e.target.value })}
+                data-testid="select-waste-type"
+              >
+                {WASTE_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>{t.labelAr}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="الكمية">
+              <Input
+                type="number" step="0.01" min={0}
+                value={form.qty}
+                onChange={(e) => setForm({ ...form, qty: e.target.value })}
+                data-testid="input-waste-qty-rec"
+              />
+            </Field>
+            <Field label="الوحدة">
+              <Input
+                value={form.unitCode}
+                onChange={(e) => setForm({ ...form, unitCode: e.target.value })}
+                data-testid="input-waste-unit"
+              />
+            </Field>
+            <Field label="التكلفة (ر.س) — اختياري">
+              <Input
+                type="number" step="0.01" min={0}
+                value={form.costImpact}
+                onChange={(e) => setForm({ ...form, costImpact: e.target.value })}
+                data-testid="input-waste-cost"
+              />
+            </Field>
+            <Field label="مركز العمل (اختياري)">
+              <select
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={form.workCenterId === "" ? "" : String(form.workCenterId)}
+                onChange={(e) => setForm({ ...form, workCenterId: e.target.value === "" ? "" : Number(e.target.value) })}
+                data-testid="select-waste-wc"
+              >
+                <option value="">—</option>
+                {workCenters.filter((w) => w.isActive).map((w) => (
+                  <option key={w.id} value={w.id}>{w.code} — {w.nameAr}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="السبب المختصر">
+              <Input
+                value={form.reason}
+                onChange={(e) => setForm({ ...form, reason: e.target.value })}
+                placeholder="مثال: ارتفاع حرارة الفرن"
+                data-testid="input-waste-reason"
+              />
+            </Field>
+          </div>
+          <Field label="ملاحظات (اختياري)">
+            <Input
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              data-testid="input-waste-notes"
+            />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={reset} disabled={saving}>إلغاء</Button>
+            <Button type="submit" size="sm" disabled={saving} data-testid="btn-save-waste">
+              {saving ? "جارٍ الحفظ…" : "حفظ"}
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {/* Records table */}
+      {records.length === 0 ? (
+        <div className="rounded-lg border bg-white dark:bg-slate-900 p-6 text-center text-sm text-slate-500">
+          لا توجد سجلّات تالف بعد.
+        </div>
+      ) : (
+        <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 dark:bg-slate-800/50 text-xs">
+              <tr>
+                <th className="text-start px-3 py-2">النوع</th>
+                <th className="text-start px-3 py-2">الكمية</th>
+                <th className="text-start px-3 py-2">التكلفة</th>
+                <th className="text-start px-3 py-2">السبب</th>
+                <th className="text-start px-3 py-2">التاريخ</th>
+                <th className="px-3 py-2 w-10"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {records.map((r) => {
+                const t = WASTE_TYPES.find((x) => x.value === r.wasteType);
+                return (
+                  <tr key={r.id} className="border-t" data-testid={`row-waste-${r.id}`}>
+                    <td className="px-3 py-2">
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${t?.tone ?? "bg-slate-100"}`}>
+                        {t?.labelAr ?? r.wasteType}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 font-medium">{Number(r.qty).toLocaleString()} {r.unitCode}</td>
+                    <td className="px-3 py-2">{Number(r.costImpact).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-xs text-slate-600">{r.reason ?? "—"}</td>
+                    <td className="px-3 py-2 text-xs text-slate-500">
+                      {new Date(r.createdAt).toLocaleString("ar-SA")}
+                    </td>
+                    <td className="px-3 py-2">
+                      {!disabled && (
+                        <Button
+                          size="icon" variant="ghost" className="h-7 w-7 text-rose-600"
+                          onClick={() => remove(r.id)}
+                          data-testid={`btn-delete-waste-${r.id}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

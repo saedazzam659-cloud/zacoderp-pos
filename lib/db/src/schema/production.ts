@@ -11,6 +11,7 @@ import {
   uniqueIndex,
   index,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { companiesTable } from "./companies";
@@ -149,6 +150,21 @@ export const productionOrdersTable = pgTable(
     actualHours: numeric("actual_hours", { precision: 14, scale: 4 })
       .notNull()
       .default("0"),
+    // ─── PHASE D — Batch tracking (تتبّع التشغيلات) ────────────────────────
+    // Generated automatically when the order moves to `in_production`. Format:
+    // PRD-YYYYMMDD-{orderId} (unique per company). Propagated to the
+    // `production_receipt` stock-ledger row at completion so the produced
+    // batch appears in the item's batches panel and is traceable downstream
+    // (sales, returns, recall, expiry).
+    batchNumber: text("batch_number"),
+    // Opaque token used as the QR-code payload. Includes batchNumber + a
+    // random suffix so two batches with the same number (e.g. across tenants
+    // in printouts) still scan to distinct codes. Generated alongside
+    // batchNumber on issue.
+    qrToken: text("qr_token"),
+    // Optional shelf-life on the produced FG batch. When set, also flows into
+    // the stock_ledger.expiry_date column so the FEFO reports work.
+    fgExpiryDate: date("fg_expiry_date"),
     notes: text("notes"),
     meta: jsonb("meta").$type<Record<string, unknown>>().default({}),
     createdBy: integer("created_by").references(() => usersTable.id, {
@@ -166,6 +182,12 @@ export const productionOrdersTable = pgTable(
       t.companyId,
       t.status,
     ),
+    // PHASE D — partial unique index: prevents duplicate batchNumbers per
+    // company. NULL values are excluded (drafts/pre-issue orders allowed to
+    // share the empty slot). Also guards the manual-override PATCH path.
+    byCompanyBatch: uniqueIndex("prod_orders_company_batch_uniq")
+      .on(t.companyId, t.batchNumber)
+      .where(sql`${t.batchNumber} IS NOT NULL`),
   }),
 );
 
@@ -686,4 +708,90 @@ export type ProductionQualityCheck =
   typeof productionQualityChecksTable.$inferSelect;
 export type InsertProductionQualityCheck = z.infer<
   typeof insertProductionQualityCheckSchema
+>;
+
+// ─── PHASE D — Waste / Scrap Records (سجلّات التالف والهالك) ───────────────
+// Detailed scrap log per production order. Unlike `productionOrders.wasteQty`
+// (a single rolled-up number used for accounting), this table captures the
+// *why* of each scrap event: type, root cause, stage, machine, operator,
+// quantity & cost impact. Aggregating by waste_type / reason / machine_id
+// powers the scrap-analytics dashboard (top loss reasons, machine-level
+// scrap rates, operator coaching).
+//
+// Cost is informational — the financial impact of waste is already booked
+// at completion via the existing `wasteAccountId` JE line, so these records
+// don't post their own journal entries. Adding/removing a record after
+// completion is allowed (forensic edits); it does NOT re-post any JE.
+export const PRODUCTION_WASTE_TYPES = [
+  "burn",            // احتراق
+  "break",           // كسر
+  "deform",          // تشوّه
+  "packaging_error", // خطأ تعبئة
+  "quality",         // نقص جودة
+  "overweight",      // زيادة وزن
+  "underweight",     // نقص وزن
+  "contamination",   // تلوّث
+  "other",           // أخرى
+] as const;
+export type ProductionWasteType = (typeof PRODUCTION_WASTE_TYPES)[number];
+
+export const productionWasteRecordsTable = pgTable(
+  "production_waste_records",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    orderId: integer("order_id")
+      .notNull()
+      .references(() => productionOrdersTable.id, { onDelete: "cascade" }),
+    // Optional link to a specific routing stage so analytics can attribute
+    // waste to a phase (mixing vs packaging vs oven). Set NULL for waste
+    // detected outside any stage.
+    stageId: integer("stage_id").references(
+      () => productionOrderStagesTable.id,
+      { onDelete: "set null" },
+    ),
+    wasteType: text("waste_type").notNull(), // ProductionWasteType
+    reason: text("reason"),                  // free-form root cause
+    qty: numeric("qty", { precision: 14, scale: 4 }).notNull().default("0"),
+    unitCode: text("unit_code").notNull().default("PCE"),
+    costImpact: numeric("cost_impact", { precision: 14, scale: 2 })
+      .notNull()
+      .default("0"),
+    // Either the machine (productionResource) or work-center the scrap came
+    // from. Both nullable — small shops won't always tag this.
+    resourceId: integer("resource_id").references(
+      () => productionResourcesTable.id,
+      { onDelete: "set null" },
+    ),
+    workCenterId: integer("work_center_id").references(
+      () => workCentersTable.id,
+      { onDelete: "set null" },
+    ),
+    operatorUserId: integer("operator_user_id").references(
+      () => usersTable.id,
+      { onDelete: "set null" },
+    ),
+    notes: text("notes"),
+    createdBy: integer("created_by").references(() => usersTable.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byOrder: index("prod_waste_order_idx").on(t.orderId),
+    byCompany: index("prod_waste_company_idx").on(t.companyId),
+    byType: index("prod_waste_type_idx").on(t.companyId, t.wasteType),
+  }),
+);
+
+export const insertProductionWasteRecordSchema = createInsertSchema(
+  productionWasteRecordsTable,
+).omit({ id: true, createdAt: true });
+
+export type ProductionWasteRecord =
+  typeof productionWasteRecordsTable.$inferSelect;
+export type InsertProductionWasteRecord = z.infer<
+  typeof insertProductionWasteRecordSchema
 >;
