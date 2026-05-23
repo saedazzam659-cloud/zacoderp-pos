@@ -1684,11 +1684,16 @@ function template14(d: PrintData): string {
   }
   const userName = doc.createdByName ?? doc.postedByName ?? "—";
 
-  // Split the lines into chunks of 10 per page so a long invoice paginates
+  // Split the lines into chunks per page so a long invoice paginates
   // cleanly. The page-frame `<thead>`/`<tfoot>` (company/customer + audit
   // footer) re-renders on every printed page automatically thanks to
   // `display: table-header-group / table-footer-group`.
-  const LINES_PER_PAGE = 10;
+  //
+  // Sized to USE the full A4 print area between the running header and
+  // running footer — previously we capped at 10 which left a big empty
+  // band at the bottom of each page. ~18 rows fits a standard A4 with
+  // our current row height (~10mm) and the bottom block (totals+QR).
+  const LINES_PER_PAGE = 18;
   const lineChunks: any[][] = [];
   for (let i = 0; i < lines.length; i += LINES_PER_PAGE) {
     lineChunks.push(lines.slice(i, i + LINES_PER_PAGE));
@@ -1705,7 +1710,10 @@ function template14(d: PrintData): string {
        every printed page. The browser injects whatever space it needs
        for the thead/tfoot inside .page-frame at the top/bottom of each
        page; the @page margin reserves the outer padding. */
-    @page { size: A4; margin: 15mm 8mm 18mm 8mm !important; }
+    /* Tightened bottom & top margins so the running header on each
+       new page sits closer to the previous page's running footer —
+       removes the visual "gap between the red boxes" the user flagged. */
+    @page { size: A4; margin: 8mm 8mm 10mm 8mm !important; }
     :root { --ink:#0f172a; --line:#e5e7eb; --soft:#f8fafc; --gold:#b88a2a; --gold2:#e5c277; }
     html, body { padding: 0 !important; margin: 0 !important; color: var(--ink); }
     .sheet { padding: 0 !important; }
@@ -1717,10 +1725,10 @@ function template14(d: PrintData): string {
     .page-frame > thead > tr > td,
     .page-frame > tfoot > tr > td,
     .page-frame > tbody > tr > td { padding: 0; vertical-align: top; }
-    /* A little vertical breathing space so the header doesn't kiss the
-       page edge after each break. */
-    .running-header { padding-top: 4mm; padding-bottom: 6px; }
-    .running-footer { padding-top: 6px; padding-bottom: 2mm; }
+    /* Tight breathing space so consecutive page header/footer pairs
+       sit close together across the page break. */
+    .running-header { padding-top: 2mm; padding-bottom: 4px; }
+    .running-footer { padding-top: 4px; padding-bottom: 1mm; }
 
     /* ── 3-column header ───────────────────────────────────────────── */
     .hdr { display:grid; grid-template-columns: 1fr 1.1fr 1fr; gap:12px; align-items:stretch; margin-bottom:14px; }
