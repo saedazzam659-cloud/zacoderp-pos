@@ -7,16 +7,38 @@ import { safeLogoSrc } from "@/lib/export";
 import { useToast } from "@/hooks/use-toast";
 import QRCode from "qrcode";
 
-// Force the Arabic-Indic numbering system explicitly so EVERY browser /
-// device renders the digits identically. Without `numberingSystem: "arab"`
-// some devices (limited ICU data or missing Arabic-Indic glyphs in the
-// default font) fall back to Latin digits, which produces the visual
-// "column of 1" the user reported on the totals card — the leading "١"
-// of every number was being rendered as Latin "1" while the rest of the
-// digits stayed Arabic-Indic, creating a stacked-1 illusion next to the
-// totals labels.
+// Number formatter — uses Arabic-Indic digits with a deterministic
+// separator scheme so output is identical on every device.
+//
+// CRITICAL: `Intl.NumberFormat` for Arabic locales (and any RTL locale)
+// frequently emits INVISIBLE BiDi control characters at the start /
+// between groups of the formatted string — typically `U+061C` (Arabic
+// Letter Mark) or `U+200F` (Right-to-Left Mark). These are zero-width on
+// fonts that ship a `.notdef`-suppressing rule (Chrome on Linux /
+// macOS), but on Windows + fonts that lack a glyph for them, the
+// browser falls back to rendering the `.notdef` box — which in many
+// system fonts on Saudi Windows installs is drawn as a *plain vertical
+// stroke that is visually identical to the digit "1"*. That is the
+// mysterious vertical "1" column the user kept seeing next to the
+// totals card on the second device — one stray BiDi marker prefixing
+// every formatted amount.
+//
+// Strip every BiDi / formatting control codepoint after formatting so
+// the printed string contains ONLY real visible glyphs (digits +
+// separators). Belt-and-braces: the wrapping `.mono` span in the
+// totals card is also forced to `direction:ltr; unicode-bidi:isolate`
+// in `baseStyles()` so the browser never injects new BiDi marks at
+// render time.
 const NUM_FMT = new Intl.NumberFormat("ar-SA-u-nu-arab", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmt = (n: any) => NUM_FMT.format(Number(n || 0));
+// Codepoints to strip:
+//   U+061C  Arabic Letter Mark
+//   U+200E  LTR Mark
+//   U+200F  RTL Mark
+//   U+202A-U+202E  LRE / RLE / PDF / LRO / RLO  (legacy bidi)
+//   U+2066-U+2069  LRI / RLI / FSI / PDI        (isolate bidi)
+//   U+FEFF  Zero-width no-break space (BOM)
+const STRIP_INVISIBLE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+const fmt = (n: any) => NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
 
 // ── Arabic number-to-words (tafqeet) ─────────────────────────────────────────
 // Copied verbatim from voucherPrint.ts so the print modal stays self-contained
@@ -263,7 +285,14 @@ function baseStyles(accent: string, accentText = "#fff") {
       .accent-border { border-color: ${accent}; }
       table { width: 100%; border-collapse: collapse; }
       th, td { padding: 5px 8px; text-align: right; }
-      .mono { font-variant-numeric: tabular-nums; }
+      /* direction:ltr + unicode-bidi:isolate prevents the browser from
+         inserting any BiDi marks at render time around the formatted
+         numbers — pairs with the JS-side stripping of invisible BiDi
+         control characters so the printed numeric span contains ONLY
+         visible glyphs (digits + separators). Without this, some
+         Windows fonts render an injected RTL/ALM marker as a stray
+         vertical-stroke .notdef glyph next to every total. */
+      .mono { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
       @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
     </style>`;
 }
@@ -795,7 +824,14 @@ function template6(d: PrintData): string {
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { direction: rtl; font-family: 'Courier New', 'Tahoma', monospace; font-size: 11px; color: #000; padding: 4mm 3mm; width: 80mm; }
     .center { text-align: center; }
-    .mono { font-variant-numeric: tabular-nums; }
+    /* direction:ltr + unicode-bidi:isolate prevents the browser from
+       inserting any BiDi marks at render time around the formatted
+       numbers — pairs with the JS-side stripping of invisible BiDi
+       control characters so the printed numeric span contains ONLY
+       visible glyphs (digits + separators). Without this, some Windows
+       fonts render an injected RTL/ALM marker as a stray
+       vertical-stroke .notdef glyph next to every total. */
+    .mono { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
     .name-ar { font-size: 14px; font-weight: 700; }
     .name-en { font-size: 9px; opacity: .75; margin-top: 2px; }
     .meta { font-size: 10px; line-height: 1.45; }
@@ -912,7 +948,14 @@ function template7(d: PrintData): string {
     @page { size: 80mm auto; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', 'Tahoma', sans-serif; }
     body { direction: rtl; font-size: 11px; color: #1a1a1a; width: 80mm; padding: 0; }
-    .mono { font-variant-numeric: tabular-nums; }
+    /* direction:ltr + unicode-bidi:isolate prevents the browser from
+       inserting any BiDi marks at render time around the formatted
+       numbers — pairs with the JS-side stripping of invisible BiDi
+       control characters so the printed numeric span contains ONLY
+       visible glyphs (digits + separators). Without this, some Windows
+       fonts render an injected RTL/ALM marker as a stray
+       vertical-stroke .notdef glyph next to every total. */
+    .mono { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
     .header { background: ${accent}; color: #fff; padding: 8px 4mm 10px; text-align: center; }
     .header .name-ar { font-size: 14px; font-weight: 800; letter-spacing: .3px; }
     .header .name-en { font-size: 9px; opacity: .85; margin-top: 2px; }
