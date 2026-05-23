@@ -710,6 +710,78 @@ export type InsertProductionQualityCheck = z.infer<
   typeof insertProductionQualityCheckSchema
 >;
 
+// ─── PHASE H (Round 14) — QC Templates ────────────────────────────────────
+// Reusable QC checklists. A template is OPTIONALLY tied to a productItemId
+// (so per-product checklists can be auto-suggested when filling a QC for
+// an order producing that item) — when productItemId is NULL the template
+// is a generic checklist available for any order.
+//
+// Each template holds one or more items, each describing a single check
+// (label, type, expected value, sample size). The UI uses a template to
+// pre-fill the QC form fields; nothing is auto-inserted into the QC log
+// without an operator clicking save.
+export const productionQualityCheckTemplatesTable = pgTable(
+  "production_quality_check_templates",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    // Nullable — when set, this template is the default suggestion when
+    // a QC is filed against an order producing this item.
+    productItemId: integer("product_item_id").references(() => itemsTable.id, {
+      onDelete: "set null",
+    }),
+    notes: text("notes"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdByUserId: integer("created_by_user_id").references(
+      () => usersTable.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byCompany: index("prod_qc_tpl_company_idx").on(t.companyId),
+    byProduct: index("prod_qc_tpl_product_idx").on(t.productItemId),
+  }),
+);
+
+export const productionQualityCheckTemplateItemsTable = pgTable(
+  "production_quality_check_template_items",
+  {
+    id: serial("id").primaryKey(),
+    templateId: integer("template_id")
+      .notNull()
+      .references(() => productionQualityCheckTemplatesTable.id, {
+        onDelete: "cascade",
+      }),
+    label: text("label").notNull(), // human-readable e.g. "Weight check"
+    checkType: text("check_type").notNull(), // QcCheckType
+    expectedValue: text("expected_value"),
+    sampleSize: integer("sample_size"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    isRequired: boolean("is_required").notNull().default(true),
+  },
+  (t) => ({
+    byTemplate: index("prod_qc_tpl_item_template_idx").on(t.templateId),
+  }),
+);
+
+export const insertProductionQualityCheckTemplateSchema = createInsertSchema(
+  productionQualityCheckTemplatesTable,
+).omit({ id: true, createdAt: true, updatedAt: true });
+
+export const insertProductionQualityCheckTemplateItemSchema = createInsertSchema(
+  productionQualityCheckTemplateItemsTable,
+).omit({ id: true });
+
+export type ProductionQualityCheckTemplate =
+  typeof productionQualityCheckTemplatesTable.$inferSelect;
+export type ProductionQualityCheckTemplateItem =
+  typeof productionQualityCheckTemplateItemsTable.$inferSelect;
+
 // ─── PHASE D — Waste / Scrap Records (سجلّات التالف والهالك) ───────────────
 // Detailed scrap log per production order. Unlike `productionOrders.wasteQty`
 // (a single rolled-up number used for accounting), this table captures the

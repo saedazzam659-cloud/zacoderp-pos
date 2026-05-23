@@ -601,6 +601,7 @@
     "productionBoard": "Visual Production Line",
     "productionRoutings": "Production Routings",
     "productionQuality": "Quality Control",
+    "qualityTemplates": "QC Templates",
     "productionQualityReport": "QC Report",
     "operatorPerformance": "Operator Performance",
     "myPerformance": "My Performance",

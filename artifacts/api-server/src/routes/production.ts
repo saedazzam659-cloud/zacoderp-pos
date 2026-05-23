@@ -26,6 +26,8 @@ import {
   productionRoutingStagesTable,
   productionOrderStagesTable,
   productionQualityChecksTable,
+  productionQualityCheckTemplatesTable,
+  productionQualityCheckTemplateItemsTable,
   productionWasteRecordsTable,
   PRODUCTION_WASTE_TYPES,
   QC_CHECK_TYPES,
@@ -4948,6 +4950,315 @@ router.get("/trace-by-batch", async (req, res) => {
       })),
     });
   } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Round 14 — QC Templates (قوالب فحص الجودة) ───────────────────────────
+// Reusable checklists that pre-fill the QC form. Per-product templates are
+// auto-suggested in the UI when a QC is being filed against an order that
+// produces the matching item; generic templates (productItemId=NULL) are
+// always selectable.
+//
+// Multi-tenant: every endpoint guards companyId. NOT branch-scoped on
+// purpose — templates are catalog/master data and apply across branches.
+// Items are managed inline via PUT /quality-templates/:id (full replace
+// of the items array, simplest correctness model — the editor sends the
+// whole list back).
+
+router.get("/quality-templates", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const productItemId = req.query.productItemId
+      ? Number(req.query.productItemId)
+      : null;
+    const activeOnly = req.query.activeOnly === "true";
+    const conds = [eq(productionQualityCheckTemplatesTable.companyId, cid)];
+    if (activeOnly)
+      conds.push(eq(productionQualityCheckTemplatesTable.isActive, true));
+    if (productItemId) {
+      // Match templates tied to this product OR generic (NULL product).
+      conds.push(
+        or(
+          eq(productionQualityCheckTemplatesTable.productItemId, productItemId),
+          sql`${productionQualityCheckTemplatesTable.productItemId} IS NULL`,
+        )!,
+      );
+    }
+    const rows = await db
+      .select()
+      .from(productionQualityCheckTemplatesTable)
+      .where(and(...conds))
+      .orderBy(
+        // Product-specific first (when filtering), then by name.
+        sql`${productionQualityCheckTemplatesTable.productItemId} IS NULL`,
+        asc(productionQualityCheckTemplatesTable.name),
+      );
+    res.json(rows);
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /quality-templates failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/quality-templates/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ error: "معرّف غير صالح" });
+      return;
+    }
+    const [tpl] = await db
+      .select()
+      .from(productionQualityCheckTemplatesTable)
+      .where(
+        and(
+          eq(productionQualityCheckTemplatesTable.id, id),
+          eq(productionQualityCheckTemplatesTable.companyId, cid),
+        ),
+      )
+      .limit(1);
+    if (!tpl) {
+      res.status(404).json({ error: "القالب غير موجود" });
+      return;
+    }
+    const items = await db
+      .select()
+      .from(productionQualityCheckTemplateItemsTable)
+      .where(eq(productionQualityCheckTemplateItemsTable.templateId, id))
+      .orderBy(
+        asc(productionQualityCheckTemplateItemsTable.sortOrder),
+        asc(productionQualityCheckTemplateItemsTable.id),
+      );
+    res.json({ ...tpl, items });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /quality-templates/:id failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/quality-templates", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const b = req.body ?? {};
+    const name = typeof b.name === "string" ? b.name.trim() : "";
+    if (!name) {
+      res.status(400).json({ error: "اسم القالب مطلوب" });
+      return;
+    }
+    const productItemId =
+      b.productItemId != null && b.productItemId !== ""
+        ? Number(b.productItemId)
+        : null;
+    const items = Array.isArray(b.items) ? b.items : [];
+    // Validate items up-front before any insert so the transaction is atomic.
+    const cleanItems: {
+      label: string;
+      checkType: string;
+      expectedValue: string | null;
+      sampleSize: number | null;
+      sortOrder: number;
+      isRequired: boolean;
+    }[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i] ?? {};
+      const label = typeof it.label === "string" ? it.label.trim() : "";
+      const checkType = typeof it.checkType === "string" ? it.checkType.trim() : "";
+      if (!label || !checkType) {
+        res
+          .status(400)
+          .json({ error: `البند رقم ${i + 1}: التسمية ونوع الفحص مطلوبان` });
+        return;
+      }
+      if (!(QC_CHECK_TYPES as readonly string[]).includes(checkType)) {
+        res.status(400).json({
+          error: `البند رقم ${i + 1}: نوع فحص غير معروف (${checkType})`,
+        });
+        return;
+      }
+      cleanItems.push({
+        label,
+        checkType,
+        expectedValue:
+          typeof it.expectedValue === "string" && it.expectedValue.trim()
+            ? it.expectedValue.trim()
+            : null,
+        sampleSize:
+          it.sampleSize != null && it.sampleSize !== ""
+            ? Number(it.sampleSize)
+            : null,
+        sortOrder: Number.isFinite(Number(it.sortOrder))
+          ? Number(it.sortOrder)
+          : i,
+        isRequired: it.isRequired !== false,
+      });
+    }
+    const result = await db.transaction(async (tx) => {
+      const [tpl] = await tx
+        .insert(productionQualityCheckTemplatesTable)
+        .values({
+          companyId: cid,
+          name,
+          productItemId,
+          notes: typeof b.notes === "string" ? b.notes.trim() || null : null,
+          isActive: b.isActive !== false,
+          createdByUserId: req.authUser?.id ?? null,
+        })
+        .returning();
+      if (cleanItems.length > 0) {
+        await tx.insert(productionQualityCheckTemplateItemsTable).values(
+          cleanItems.map((it) => ({ ...it, templateId: tpl.id })),
+        );
+      }
+      return tpl;
+    });
+    res.status(201).json(result);
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "POST /quality-templates failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put("/quality-templates/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ error: "معرّف غير صالح" });
+      return;
+    }
+    // Ensure template belongs to caller's company BEFORE any write.
+    const [existing] = await db
+      .select({ id: productionQualityCheckTemplatesTable.id })
+      .from(productionQualityCheckTemplatesTable)
+      .where(
+        and(
+          eq(productionQualityCheckTemplatesTable.id, id),
+          eq(productionQualityCheckTemplatesTable.companyId, cid),
+        ),
+      )
+      .limit(1);
+    if (!existing) {
+      res.status(404).json({ error: "القالب غير موجود" });
+      return;
+    }
+    const b = req.body ?? {};
+    const updates: Record<string, unknown> = {};
+    if (typeof b.name === "string") {
+      const n = b.name.trim();
+      if (!n) {
+        res.status(400).json({ error: "اسم القالب مطلوب" });
+        return;
+      }
+      updates.name = n;
+    }
+    if (b.productItemId !== undefined) {
+      updates.productItemId =
+        b.productItemId != null && b.productItemId !== ""
+          ? Number(b.productItemId)
+          : null;
+    }
+    if (b.notes !== undefined) {
+      updates.notes =
+        typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null;
+    }
+    if (b.isActive !== undefined) updates.isActive = !!b.isActive;
+    updates.updatedAt = new Date();
+
+    // Item replacement is OPTIONAL — only when client sends an `items` array
+    // do we wipe + re-insert. PATCH-like field updates without `items` leave
+    // existing items intact.
+    let cleanItems: any[] | null = null;
+    if (Array.isArray(b.items)) {
+      cleanItems = [];
+      for (let i = 0; i < b.items.length; i++) {
+        const it = b.items[i] ?? {};
+        const label = typeof it.label === "string" ? it.label.trim() : "";
+        const checkType =
+          typeof it.checkType === "string" ? it.checkType.trim() : "";
+        if (!label || !checkType) {
+          res.status(400).json({
+            error: `البند رقم ${i + 1}: التسمية ونوع الفحص مطلوبان`,
+          });
+          return;
+        }
+        if (!(QC_CHECK_TYPES as readonly string[]).includes(checkType)) {
+          res.status(400).json({
+            error: `البند رقم ${i + 1}: نوع فحص غير معروف (${checkType})`,
+          });
+          return;
+        }
+        cleanItems.push({
+          label,
+          checkType,
+          expectedValue:
+            typeof it.expectedValue === "string" && it.expectedValue.trim()
+              ? it.expectedValue.trim()
+              : null,
+          sampleSize:
+            it.sampleSize != null && it.sampleSize !== ""
+              ? Number(it.sampleSize)
+              : null,
+          sortOrder: Number.isFinite(Number(it.sortOrder))
+            ? Number(it.sortOrder)
+            : i,
+          isRequired: it.isRequired !== false,
+          templateId: id,
+        });
+      }
+    }
+    await db.transaction(async (tx) => {
+      await tx
+        .update(productionQualityCheckTemplatesTable)
+        .set(updates)
+        .where(eq(productionQualityCheckTemplatesTable.id, id));
+      if (cleanItems !== null) {
+        await tx
+          .delete(productionQualityCheckTemplateItemsTable)
+          .where(eq(productionQualityCheckTemplateItemsTable.templateId, id));
+        if (cleanItems.length > 0) {
+          await tx
+            .insert(productionQualityCheckTemplateItemsTable)
+            .values(cleanItems);
+        }
+      }
+    });
+    res.json({ ok: true });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "PUT /quality-templates/:id failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete("/quality-templates/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ error: "معرّف غير صالح" });
+      return;
+    }
+    const r = await db
+      .delete(productionQualityCheckTemplatesTable)
+      .where(
+        and(
+          eq(productionQualityCheckTemplatesTable.id, id),
+          eq(productionQualityCheckTemplatesTable.companyId, cid),
+        ),
+      );
+    if ((r as any).rowCount === 0) {
+      res.status(404).json({ error: "القالب غير موجود" });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "DELETE /quality-templates/:id failed");
     res.status(500).json({ error: e.message });
   }
 });

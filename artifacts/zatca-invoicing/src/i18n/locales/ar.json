@@ -607,6 +607,7 @@
     "bomTemplates": "قوالب المكوّنات (BOM)",
     "workCenters": "مراكز العمل",
     "productionQuality": "مراقبة الجودة",
+    "qualityTemplates": "قوالب فحص الجودة",
     "productionQualityReport": "تقرير مراقبة الجودة",
     "operatorPerformance": "أداء المشغّلين",
     "myPerformance": "أدائي",

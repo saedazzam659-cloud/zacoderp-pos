@@ -4,7 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import {
   Plus, Search, ShieldCheck, ShieldAlert, ShieldQuestion,
-  Trash2, X, Save, Camera, Activity, RotateCcw,
+  Trash2, X, Save, Camera, Activity, RotateCcw, FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,9 +33,26 @@ type QC = {
   checkedAt: string;
   createdAt: string;
 };
-type Order = { id: number; orderNumber: string; productNameAr?: string | null };
+type Order = { id: number; orderNumber: string; productNameAr?: string | null; productItemId?: number | null };
 type Stage = { id: number; orderId: number; sequence: number; nameAr: string; code: string; status?: string };
 type Summary = { pass: number; fail: number; conditional: number; totalDefects: number; total: number };
+type TemplateItem = {
+  id: number;
+  label: string;
+  checkType: string;
+  expectedValue: string | null;
+  sampleSize: number | null;
+  sortOrder: number;
+  isRequired: boolean;
+};
+type Template = {
+  id: number;
+  name: string;
+  productItemId: number | null;
+  notes: string | null;
+  isActive: boolean;
+  items?: TemplateItem[];
+};
 
 const CHECK_TYPES: { value: string; label: string }[] = [
   { value: "visual",      label: "بصري" },
@@ -73,6 +90,9 @@ export default function QualityChecks() {
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<typeof EMPTY | null>(null);
   const [saving, setSaving] = useState(false);
+  // Round 14 — QC templates for the current order's product.
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [activeTemplate, setActiveTemplate] = useState<Template | null>(null);
 
   const headers = useMemo(
     () => ({ Authorization: `Bearer ${token}`, "Content-Type": "application/json" }),
@@ -126,6 +146,64 @@ export default function QualityChecks() {
       .catch(() => { if (active) setStages([]); });
     return () => { active = false; };
   }, [editing?.orderId, headers]);
+
+  // Round 14 — Load QC templates whenever order changes. Filters to the
+  // order's product + generic templates (productItemId IS NULL). Clears
+  // the active template selection on order switch so we don't pre-fill
+  // from a stale checklist.
+  useEffect(() => {
+    if (!editing?.orderId) {
+      setTemplates([]);
+      setActiveTemplate(null);
+      return;
+    }
+    const order = orders.find((o) => o.id === editing.orderId);
+    const productItemId = order?.productItemId ?? null;
+    let active = true;
+    const qs = new URLSearchParams({ activeOnly: "true" });
+    if (productItemId) qs.set("productItemId", String(productItemId));
+    fetch(`${API}/api/production/quality-templates?${qs}`, { headers })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => {
+        if (!active) return;
+        setTemplates(Array.isArray(d) ? d : []);
+        setActiveTemplate(null);
+      })
+      .catch(() => { if (active) setTemplates([]); });
+    return () => { active = false; };
+  }, [editing?.orderId, headers, orders]);
+
+  // Load a template (fetch its items) and apply the first item to the form.
+  const applyTemplate = useCallback(async (templateId: number) => {
+    if (!editing) return;
+    try {
+      const r = await fetch(`${API}/api/production/quality-templates/${templateId}`, { headers });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const tpl: Template = await r.json();
+      setActiveTemplate(tpl);
+      const first = (tpl.items ?? [])[0];
+      if (first) applyTemplateItem(first);
+    } catch (e: any) {
+      toast({ title: "خطأ في تحميل القالب", description: e?.message, variant: "destructive" });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, headers, toast]);
+
+  const applyTemplateItem = useCallback((it: TemplateItem) => {
+    setEditing((prev) => prev && ({
+      ...prev,
+      checkType: it.checkType,
+      expectedValue: it.expectedValue ?? "",
+      sampleSize: it.sampleSize != null ? String(it.sampleSize) : "",
+      // Don't overwrite measured value — that's what the operator just measured.
+      // Don't overwrite result — operator must explicitly set it after measuring.
+      // Append the label to notes if not already present so the operator sees
+      // which checklist item this row corresponds to.
+      notes: prev.notes && prev.notes.includes(it.label)
+        ? prev.notes
+        : (prev.notes ? `${prev.notes}\n${it.label}` : it.label),
+    }));
+  }, []);
 
   const filtered = useMemo(() => {
     if (!rows) return null;
@@ -307,6 +385,61 @@ export default function QualityChecks() {
             <CardTitle className="text-base">فحص جودة جديد</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            {/* Round 14 — Template loader. Visible only when an order is
+                picked AND at least one matching template exists. */}
+            {editing.orderId && templates.length > 0 && (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50/40 p-2 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <FileText className="h-4 w-4 text-emerald-700" />
+                  <span className="text-sm font-bold text-emerald-900">
+                    تحميل من قالب:
+                  </span>
+                  <select
+                    value={activeTemplate?.id ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v) void applyTemplate(Number(v));
+                      else setActiveTemplate(null);
+                    }}
+                    className="h-8 rounded border border-input bg-background px-2 text-sm flex-1 min-w-[200px]"
+                    data-testid="select-qc-template"
+                  >
+                    <option value="">— اختر قالباً —</option>
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}{t.productItemId == null ? " (عام)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {activeTemplate && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2"
+                      onClick={() => setActiveTemplate(null)}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+                {activeTemplate && (activeTemplate.items?.length ?? 0) > 1 && (
+                  <div className="flex flex-wrap items-center gap-1 text-xs">
+                    <span className="text-slate-600">بنود القالب (انقر لتطبيق):</span>
+                    {activeTemplate.items!.map((it, i) => (
+                      <Button
+                        key={it.id}
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => applyTemplateItem(it)}
+                      >
+                        {i + 1}. {it.label}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <Label className="text-xs">أمر الإنتاج *</Label>
