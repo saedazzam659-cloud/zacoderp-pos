@@ -252,12 +252,15 @@ export async function exportToPDF(
        this applies to BOTH browser print AND the html2pdf rasteriser
        (html2pdf honours page-break-inside:avoid on direct children
        of the captured root via its pagebreak.mode=['css'] option). */
-    tbody tr        { page-break-inside: avoid; break-inside: avoid; }
+    /* We intentionally do NOT set page-break-inside:avoid on every
+       tbody tr — with long tables that forces html2pdf to push rows
+       onto fresh pages aggressively and leaves large blank gaps.
+       Natural slicing at row boundaries is good enough. Keep
+       avoid-rules only on small fixed blocks that MUST stay whole. */
     .summary-card   { page-break-inside: avoid; break-inside: avoid; }
     .summary-footer { page-break-inside: avoid; break-inside: avoid; }
     .footer         { page-break-inside: avoid; break-inside: avoid; }
-    h2              { page-break-inside: avoid; break-inside: avoid;
-                      page-break-after: avoid;  break-after: avoid; }
+    h2              { page-break-after: avoid;  break-after: avoid; }
     /* Grand-totals row sits inside <tbody> so it doesn't repeat per
        printed page (which is what a <tfoot> would do). It's pinned to
        the bottom of the data via document order, so it always appears
@@ -474,17 +477,12 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
         image:       { type: "jpeg", quality: 0.97 },
         html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", windowWidth: 1123 },
         jsPDF:       { unit: "mm", format: "a4", orientation: "landscape" },
-        // `css` honours our `page-break-inside: avoid` declarations.
+        // `css` honours the page-break declarations in the template's
+        // <style> block (kept narrow: .summary-card / .footer / h2).
         // `legacy` keeps backward-compat with `.html2pdf__page-break`.
-        // We deliberately do NOT use `avoid-all` here: it forced every
-        // measurable element onto its own page and produced large
-        // empty pages with multi-line Arabic tables. The explicit
-        // `avoid` selector list below targets the specific elements
-        // that must never split, without the runaway behaviour.
-        pagebreak:   {
-          mode:  ["css", "legacy"],
-          avoid: ["tr", ".summary-card", ".summary-footer", ".footer", "h2"],
-        },
+        // No `avoid` list: adding "tr" caused html2pdf to insert blank
+        // pages on long tables because EVERY row got pushed forward.
+        pagebreak:   { mode: ["css", "legacy"] },
       })
       .from(target);
 
