@@ -1786,6 +1786,16 @@ function template14(d: PrintData): string {
     .lines-chunk th { padding:8px 6px; font-weight:700; font-size:10.5px; letter-spacing:.02em; border:none; border-bottom:1px solid var(--line); text-align:right; }
     .lines-chunk td { padding:10px 6px; border:none; border-bottom:1px solid var(--line); text-align:right; }
     .lines-chunk tbody tr.item-row:nth-of-type(odd) td { background:#fafbfc; }
+    /* Empty filler rows on the last chunk — keep the same visual rhythm
+       as a full 10-row page so the bottom block (totals + QR) lands at
+       a consistent position and the audit footer (running tfoot) pins
+       cleanly to the page bottom. Slightly muted background so they
+       don't look like real data, but kept readable. */
+    .lines-chunk tbody tr.empty-row td {
+      height:38px; background:#fff; border-bottom:1px solid var(--line);
+      color:transparent;
+    }
+    .lines-chunk tbody tr.empty-row:nth-of-type(odd) td { background:#fafbfc; }
     /* Avoid splitting an item row (and its notes companion row) across
        pages — keeps line + its description glued together. */
     .lines-chunk tbody tr { page-break-inside: avoid; break-inside: avoid; }
@@ -1952,10 +1962,31 @@ function template14(d: PrintData): string {
     }).join("");
 
     const isLast = chunkIdx === lineChunks.length - 1;
+    // ── Last-chunk row padding ────────────────────────────────────────
+    // When this is the FINAL chunk and the invoice has NO document-level
+    // notes, top up the chunk with empty filler rows so every printed
+    // page (including the last) shows exactly LINES_PER_PAGE rows. This
+    // anchors the bottom block (totals + QR) at a consistent vertical
+    // position, matching the position of the running audit-footer at
+    // the page bottom — that's the "make red & blue boxes share the
+    // same bottom margin" behaviour the user asked for.
+    //
+    // When document notes ARE present we skip padding: the notes box
+    // takes that space naturally, and any items that overflow the
+    // remaining room paginate to the next page using the same chunk
+    // mechanism as before.
+    let padHtml = "";
+    if (isLast && !doc.notes && chunk.length < LINES_PER_PAGE) {
+      const pad = LINES_PER_PAGE - chunk.length;
+      const emptyCells = Array(colCount).fill('<td>&nbsp;</td>').join("");
+      padHtml = Array(pad)
+        .fill(`<tr class="empty-row">${emptyCells}</tr>`)
+        .join("");
+    }
     return `
       <table class="lines-chunk">
         ${linesHeadHtml}
-        <tbody>${rowsHtml}</tbody>
+        <tbody>${rowsHtml}${padHtml}</tbody>
       </table>
       ${!isLast ? `<div class="page-break"></div>` : ""}`;
   }).join("");
