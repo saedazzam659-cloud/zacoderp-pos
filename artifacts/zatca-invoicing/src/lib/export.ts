@@ -1,4 +1,13 @@
 import * as XLSX from "xlsx";
+// html2pdf.js has no bundled TS types; we only call the fluent API surface
+// we need, so a minimal local typing is enough.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Html2PdfChain = {
+  set: (opts: Record<string, unknown>) => Html2PdfChain;
+  from: (el: HTMLElement) => Html2PdfChain;
+  save: () => Promise<void>;
+  outputPdf?: (kind?: string) => Promise<unknown>;
+};
 
 export interface ExportColumn {
   header: string;
@@ -101,12 +110,21 @@ export interface ExportExtraSection {
   totalsRow?: Record<string, unknown> | null;
 }
 
-export function exportToPDF(
+export async function exportToPDF(
   rows: Record<string, unknown>[],
   columns: ExportColumn[],
   filename: string,
   title: string,
   subtitle?: string,
+  // `autoPrint=true`  → open the HTML report in a new tab and trigger
+  //                    `window.print()` (used by the "طباعة" menu item).
+  // `autoPrint=false` → DOWNLOAD a real `.pdf` file using html2pdf.js
+  //                    (used by the "PDF (.pdf)" menu item). The same HTML
+  //                    template is rendered offscreen into an iframe and
+  //                    rasterised via html2canvas → embedded into a PDF
+  //                    by jsPDF, so Arabic/RTL renders identically to the
+  //                    print preview without needing an embedded Arabic
+  //                    font for jsPDF's text layer.
   autoPrint: boolean = true,
   // Optional grand-totals row rendered as a bold <tfoot> tr beneath the
   // table body. Same shape as data rows (keys map to column.key).
@@ -363,13 +381,79 @@ export function exportToPDF(
 </body>
 </html>`;
 
-  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-  const url  = URL.createObjectURL(blob);
-  const win  = window.open(url, "_blank");
-  if (win) {
-    win.addEventListener("afterprint", () => {
-      URL.revokeObjectURL(url);
+  if (autoPrint) {
+    // Print path — open the formatted HTML in a new tab and let the
+    // browser's native print dialog handle the rest. Unchanged behaviour.
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url  = URL.createObjectURL(blob);
+    const win  = window.open(url, "_blank");
+    if (win) {
+      win.addEventListener("afterprint", () => {
+        URL.revokeObjectURL(url);
+      });
+    }
+    return;
+  }
+
+  // PDF download path — render the same HTML offscreen and convert it
+  // to an actual `.pdf` file via html2pdf.js (html2canvas + jsPDF).
+  await downloadHtmlAsPdf(html, filename);
+}
+
+// Render an HTML report string into a real downloadable .pdf file.
+// Works for Arabic/RTL because html2canvas rasterises the rendered DOM
+// (so font shaping/bidi are done by the browser, not jsPDF). The HTML
+// is mounted in a hidden iframe so the page's own styles cannot leak
+// into the report layout.
+async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> {
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.cssText =
+    "position:fixed;left:-99999px;top:0;width:1123px;height:794px;border:0;visibility:hidden;";
+  document.body.appendChild(iframe);
+  try {
+    const doc = iframe.contentDocument;
+    if (!doc) throw new Error("iframe contentDocument unavailable");
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    // Wait for layout + images to settle so html2canvas captures the
+    // final rendered state (logo image, fonts, table reflow).
+    await new Promise<void>((resolve) => {
+      const imgs = Array.from(doc.images);
+      if (imgs.length === 0) return resolve();
+      let remaining = imgs.length;
+      const done = () => { if (--remaining <= 0) resolve(); };
+      imgs.forEach((img) => {
+        if (img.complete) done();
+        else { img.addEventListener("load", done); img.addEventListener("error", done); }
+      });
+      // Hard timeout so a slow/blocked image never freezes the download.
+      setTimeout(resolve, 2500);
     });
+    await new Promise((r) => setTimeout(r, 200));
+
+    const target = doc.body;
+    // Dynamic import keeps the heavy html2canvas+jsPDF bundle out of
+    // the initial page load — only fetched when the user actually
+    // clicks "PDF (.pdf)".
+    const mod = await import("html2pdf.js");
+    const html2pdf = ((mod as { default?: unknown }).default ?? mod) as () => Html2PdfChain;
+
+    await html2pdf()
+      .set({
+        margin:      [8, 8, 8, 8],
+        filename:    `${filename}.pdf`,
+        image:       { type: "jpeg", quality: 0.97 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", windowWidth: 1123 },
+        jsPDF:       { unit: "mm", format: "a4", orientation: "landscape" },
+        pagebreak:   { mode: ["css", "legacy"] },
+      })
+      .from(target)
+      .save();
+  } finally {
+    iframe.remove();
   }
 }
 

@@ -78,11 +78,14 @@ export default function ExportButtons({
         });
         exportToExcel([...rows, ...extra, ...sectionRows], columns, filename, "Sheet1", totalsRow);
       } else if (type === "pdf") {
-        // Open PDF view without auto-print so user can save as PDF (Ctrl+S)
-        exportToPDF(rows, columns, filename, title, subtitle, false, totalsRow, summaryFooter, companyLogo, extraSections);
+        // Real .pdf download — html2pdf.js renders the same HTML report
+        // offscreen, rasterises it (so Arabic/RTL renders correctly) and
+        // saves as `${filename}.pdf`. Must await so the busy spinner
+        // stays visible until the file dialog appears.
+        await exportToPDF(rows, columns, filename, title, subtitle, false, totalsRow, summaryFooter, companyLogo, extraSections);
       } else {
         // Print: open the formatted HTML and trigger window.print() automatically
-        exportToPDF(rows, columns, filename, title, subtitle, true, totalsRow, summaryFooter, companyLogo, extraSections);
+        await exportToPDF(rows, columns, filename, title, subtitle, true, totalsRow, summaryFooter, companyLogo, extraSections);
       }
     } finally {
       setBusy(false);
