@@ -6414,8 +6414,8 @@ router.get("/oee", async (req, res) => {
             eq(productionOrdersTable.companyId, cid),
             inArray(productionOrdersTable.workCenterId, centerIds),
             eq(productionOrdersTable.status, "completed"),
-            sql`${productionOrdersTable.completedAt} >= ${from}::date`,
-            sql`${productionOrdersTable.completedAt} < (${to}::date + INTERVAL '1 day')`,
+            sql`${productionOrdersTable.actualEndAt} >= ${from}::date`,
+            sql`${productionOrdersTable.actualEndAt} < (${to}::date + INTERVAL '1 day')`,
           ),
         )
         .groupBy(productionOrdersTable.workCenterId),
@@ -6561,8 +6561,8 @@ router.get("/kpi-dashboard", async (req, res) => {
         and(
           eq(productionOrdersTable.companyId, cid),
           eq(productionOrdersTable.status, "completed"),
-          sql`${productionOrdersTable.completedAt}::date >= ${fromIso}`,
-          sql`${productionOrdersTable.completedAt}::date <= ${toIso}`,
+          sql`${productionOrdersTable.actualEndAt}::date >= ${fromIso}`,
+          sql`${productionOrdersTable.actualEndAt}::date <= ${toIso}`,
         ),
       );
     const scrapProduced = Number(scrapRow?.produced ?? 0);
@@ -6578,15 +6578,15 @@ router.get("/kpi-dashboard", async (req, res) => {
     const completedOrders = await db
       .select({
         plannedEndDate: productionOrdersTable.plannedEndDate,
-        completedAt: productionOrdersTable.completedAt,
+        completedAt: productionOrdersTable.actualEndAt,
       })
       .from(productionOrdersTable)
       .where(
         and(
           eq(productionOrdersTable.companyId, cid),
           eq(productionOrdersTable.status, "completed"),
-          sql`${productionOrdersTable.completedAt}::date >= ${fromIso}`,
-          sql`${productionOrdersTable.completedAt}::date <= ${toIso}`,
+          sql`${productionOrdersTable.actualEndAt}::date >= ${fromIso}`,
+          sql`${productionOrdersTable.actualEndAt}::date <= ${toIso}`,
         ),
       );
     let onTimeCount = 0;
@@ -6768,8 +6768,8 @@ router.get("/kpi-dashboard", async (req, res) => {
         and(
           eq(productionOrdersTable.companyId, cid),
           eq(productionOrdersTable.status, "completed"),
-          sql`${productionOrdersTable.completedAt}::date >= ${fromIso}`,
-          sql`${productionOrdersTable.completedAt}::date <= ${toIso}`,
+          sql`${productionOrdersTable.actualEndAt}::date >= ${fromIso}`,
+          sql`${productionOrdersTable.actualEndAt}::date <= ${toIso}`,
         ),
       )
       .groupBy(productionOrdersTable.workCenterId);
