@@ -4,7 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import {
   Plus, Search, ShieldCheck, ShieldAlert, ShieldQuestion,
-  Trash2, X, Save, Camera, Activity,
+  Trash2, X, Save, Camera, Activity, RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,7 +34,7 @@ type QC = {
   createdAt: string;
 };
 type Order = { id: number; orderNumber: string; productNameAr?: string | null };
-type Stage = { id: number; orderId: number; sequence: number; nameAr: string; code: string };
+type Stage = { id: number; orderId: number; sequence: number; nameAr: string; code: string; status?: string };
 type Summary = { pass: number; fail: number; conditional: number; totalDefects: number; total: number };
 
 const CHECK_TYPES: { value: string; label: string }[] = [
@@ -171,13 +171,44 @@ export default function QualityChecks() {
         const err = await r.json().catch(() => ({}));
         throw new Error(err?.error || `HTTP ${r.status}`);
       }
-      toast({ title: "تم الحفظ", description: "تم تسجيل فحص الجودة" });
+      const saved = await r.json().catch(() => ({}));
+      if (saved?.stageNeedsReopen) {
+        toast({
+          title: "تم الحفظ — فحص فاشل",
+          description:
+            "هذا الفحص فاشل ومرتبط بمرحلة. يمكنك إعادة فتح المرحلة من زر «إعادة فتح» في الصف.",
+        });
+      } else {
+        toast({ title: "تم الحفظ", description: "تم تسجيل فحص الجودة" });
+      }
       setEditing(null);
       await load();
     } catch (e: any) {
       toast({ title: "خطأ", description: e?.message, variant: "destructive" });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function reopenStage(id: number) {
+    if (!confirm("هل تريد إعادة فتح المرحلة المرتبطة بهذا الفحص؟")) return;
+    try {
+      const r = await fetch(`${API}/api/production/quality-checks/${id}/reopen-stage`, {
+        method: "POST", headers,
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err?.error || `HTTP ${r.status}`);
+      }
+      const data = await r.json().catch(() => ({}));
+      toast({
+        title: data?.alreadyOpen ? "المرحلة مفتوحة بالفعل" : "تم إعادة فتح المرحلة",
+        description: data?.alreadyOpen
+          ? "لم يتم تغيير الحالة — المرحلة لم تكن مكتملة."
+          : "حالة المرحلة → قيد التنفيذ.",
+      });
+    } catch (e: any) {
+      toast({ title: "خطأ", description: e?.message, variant: "destructive" });
     }
   }
 
@@ -415,9 +446,22 @@ export default function QualityChecks() {
                       </td>
                       <td className="p-3 text-xs text-slate-500">{new Date(r.checkedAt).toLocaleString()}</td>
                       <td className="p-3 text-end">
-                        <Button size="sm" variant="ghost" onClick={() => remove(r.id)} data-testid={`btn-del-qc-${r.id}`}>
-                          <Trash2 className="h-4 w-4 text-rose-600" />
-                        </Button>
+                        <div className="flex justify-end gap-1">
+                          {r.result === "fail" && r.stageId != null && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => reopenStage(r.id)}
+                              title="إعادة فتح المرحلة"
+                              data-testid={`btn-reopen-stage-${r.id}`}
+                            >
+                              <RotateCcw className="h-4 w-4 text-amber-600" />
+                            </Button>
+                          )}
+                          <Button size="sm" variant="ghost" onClick={() => remove(r.id)} data-testid={`btn-del-qc-${r.id}`}>
+                            <Trash2 className="h-4 w-4 text-rose-600" />
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}

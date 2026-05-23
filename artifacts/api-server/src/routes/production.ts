@@ -3763,7 +3763,15 @@ router.post("/quality-checks", async (req, res) => {
       { checkId: row.id, checkType, stageId, defectsFound, wasteRecordId: wasteRow?.id ?? null },
       req.authUser?.id ?? null,
     );
-    res.status(201).json({ ...row, wasteRecord: wasteRow });
+    res.status(201).json({
+      ...row,
+      wasteRecord: wasteRow,
+      // Round 11 — Surface a hint to the UI when a failed check is bound
+      // to a stage; the operator can then re-open that stage in one click
+      // via POST /quality-checks/:id/reopen-stage. We do NOT auto-flip the
+      // stage (manual adjudication is the documented QC policy).
+      stageNeedsReopen: result === "fail" && stageId != null,
+    });
   } catch (e: any) {
     req.log?.error?.({ err: e }, "qc create failed");
     res.status(e.status || 500).json({ error: e.message });
@@ -3888,6 +3896,94 @@ router.delete("/quality-checks/:id", async (req, res) => {
       );
     res.json({ ok: true });
   } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Round 11 — Re-open the stage tied to a failed QC. Manual one-click action
+// (no auto-flip on QC create). Only acts when QC.result === 'fail' and a
+// stageId is bound; flips the stage from 'done' back to 'in_progress' and
+// clears completedAt. Idempotent: if the stage is already 'in_progress' or
+// 'pending', returns the current row without re-writing it.
+router.post("/quality-checks/:id/reopen-stage", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    const [row] = await db
+      .select({
+        qc: productionQualityChecksTable,
+        orderBranchId: productionOrdersTable.branchId,
+      })
+      .from(productionQualityChecksTable)
+      .innerJoin(
+        productionOrdersTable,
+        eq(productionOrdersTable.id, productionQualityChecksTable.orderId),
+      )
+      .where(
+        and(
+          eq(productionQualityChecksTable.id, id),
+          eq(productionQualityChecksTable.companyId, cid),
+        ),
+      )
+      .limit(1);
+    if (!row) {
+      res.status(404).json({ error: "الفحص غير موجود" });
+      return;
+    }
+    if (!rowInScope(req, row.orderBranchId)) {
+      res.status(403).json({ error: "الفحص خارج نطاق الفرع المسموح" });
+      return;
+    }
+    const qc = row.qc;
+    if (qc.result !== "fail") {
+      res
+        .status(400)
+        .json({ error: "إعادة فتح المرحلة متاحة فقط للفحوص الفاشلة" });
+      return;
+    }
+    if (qc.stageId == null) {
+      res.status(400).json({ error: "هذا الفحص غير مرتبط بأي مرحلة" });
+      return;
+    }
+    const [stage] = await db
+      .select()
+      .from(productionOrderStagesTable)
+      .where(
+        and(
+          eq(productionOrderStagesTable.id, qc.stageId),
+          eq(productionOrderStagesTable.orderId, qc.orderId),
+        ),
+      )
+      .limit(1);
+    if (!stage) {
+      res.status(404).json({ error: "المرحلة غير موجودة" });
+      return;
+    }
+    if (stage.status === "in_progress" || stage.status === "pending") {
+      // Already open — idempotent no-op.
+      res.json({ ok: true, stage, alreadyOpen: true });
+      return;
+    }
+    const [updated] = await db
+      .update(productionOrderStagesTable)
+      .set({ status: "in_progress", completedAt: null })
+      .where(eq(productionOrderStagesTable.id, qc.stageId))
+      .returning();
+    await writeEvent(
+      cid,
+      qc.orderId,
+      "stage.reopened_from_qc",
+      {
+        stageId: qc.stageId,
+        qcId: qc.id,
+        previousStatus: stage.status,
+      },
+      req.authUser?.id ?? null,
+    );
+    res.json({ ok: true, stage: updated, alreadyOpen: false });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "qc reopen-stage failed");
     res.status(500).json({ error: e.message });
   }
 });
