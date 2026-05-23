@@ -298,8 +298,41 @@ function friendlyPath(method: string | null, path: string | null): FriendlyPath 
 }
 
 export default function AuditLog() {
-  const { token, user } = useAuth();
+  const { token, user, actingCompanyId, setActingCompany } = useAuth() as any;
   const isSuperAdmin = user?.role === "superadmin";
+
+  // When a SuperAdmin clicks a friendly path link on an audit row (e.g.
+  // "مطابقة عروض" → /inventory/offers), the destination is a tenant route
+  // gated behind `!isSuperAdmin` in App.tsx — without an acting-company
+  // context the SA hits the "no access" fallback instead of the actual
+  // page. This helper auto-enters the row's company first when needed so
+  // the click goes to a working page; it returns an onClick handler that
+  // short-circuits the <Link> navigation only when we have to switch
+  // context. Regular users (non-SA) are unaffected: there's no
+  // impersonation, so the link follows its normal route.
+  const onPathLinkClick = useCallback(
+    (row: AuditRow) => (e: React.MouseEvent) => {
+      if (!isSuperAdmin) return;
+      if (row.companyId == null) return; // nothing to enter into
+      // Already inside the right company? Let the link navigate normally.
+      if (actingCompanyId === row.companyId) return;
+      // Otherwise: prevent the wouter <Link> from navigating, flip the
+      // acting-company context, and trigger a full reload to the target
+      // URL. The reload guarantees the new isSuperAdmin=false routing
+      // takes effect (App.tsx derives isSuperAdmin from actingCompanyId
+      // at render time, and React Query caches need a fresh fetch under
+      // the new x-acting-company-id header).
+      e.preventDefault();
+      e.stopPropagation();
+      setActingCompany(row.companyId);
+      const target = (e.currentTarget as HTMLAnchorElement).getAttribute("href") ?? "/";
+      // Defer to next tick so the localStorage write + state update flush
+      // before the navigation; a full reload re-bootstraps the auth
+      // context with the new acting-company set.
+      setTimeout(() => { window.location.href = target; }, 0);
+    },
+    [isSuperAdmin, actingCompanyId, setActingCompany],
+  );
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
   const isRtl = i18n.language === "ar";
@@ -1332,7 +1365,7 @@ export default function AuditLog() {
                               ? "text-blue-700 hover:text-blue-900 hover:underline font-medium"
                               : "text-slate-700 hover:text-slate-900 hover:underline";
                             return fp.href ? (
-                              <Link href={fp.href} className={cls}>{fp.label}</Link>
+                              <Link href={fp.href} className={cls} onClick={onPathLinkClick(r)}>{fp.label}</Link>
                             ) : (
                               <span className="text-slate-700 font-medium">{fp.label}</span>
                             );
@@ -1504,6 +1537,7 @@ export default function AuditLog() {
         shareLinkLabelForRow={shareLinkLabelForRow}
         isSuperAdmin={isSuperAdmin}
         token={token ?? ""}
+        onPathLinkClick={onPathLinkClick}
       />
 
       {/* Confirm-before-delete dialog for the toolbar bulk-delete action.
@@ -1567,6 +1601,7 @@ function AuditDetailsDialog({
   shareLinkLabelForRow,
   isSuperAdmin,
   token,
+  onPathLinkClick,
 }: {
   open: boolean;
   row: AuditRow | null;
@@ -1581,6 +1616,7 @@ function AuditDetailsDialog({
   shareLinkLabelForRow: (row: AuditRow) => string;
   isSuperAdmin: boolean;
   token: string;
+  onPathLinkClick: (row: AuditRow) => (e: React.MouseEvent) => void;
 }) {
   // Metadata can be any JSON shape — usually an object for our writers, but
   // we don't want to silently drop primitives (string/number/array) if a
@@ -1759,7 +1795,11 @@ function AuditDetailsDialog({
                     return (
                       <div className="text-sm">
                         {fp.href ? (
-                          <Link href={fp.href} className="text-blue-700 hover:text-blue-900 hover:underline font-medium">
+                          <Link
+                            href={fp.href}
+                            className="text-blue-700 hover:text-blue-900 hover:underline font-medium"
+                            onClick={onPathLinkClick(row)}
+                          >
                             {fp.label}
                           </Link>
                         ) : (
