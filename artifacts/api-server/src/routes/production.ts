@@ -550,11 +550,99 @@ router.get("/orders", async (req, res) => {
   }
 });
 
+// Pending  — GET /api/production/orders/pending-approval
+//   Lists draft orders for the current company, newest first. The
+//   manufacturingSettings.approvalRequired and .approvalThreshold flags
+//   are returned in a 'needsApproval' boolean per order so the queue
+//   can highlight the ones that truly need a second pair of eyes.
+//
+// IMPORTANT: registered BEFORE `/orders/:id` because Express 5 /
+// path-to-regexp 8 no longer supports inline regex constraints
+// (`/:id(\d+)`) — registration order is the only thing that prevents
+// `:id` from swallowing the literal `pending-approval` segment.
+router.get("/orders/pending-approval", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const [settings] = await db
+      .select({
+        approvalRequired: manufacturingSettingsTable.approvalRequired,
+        approvalThreshold: manufacturingSettingsTable.approvalThreshold,
+      })
+      .from(manufacturingSettingsTable)
+      .where(eq(manufacturingSettingsTable.companyId, cid))
+      .limit(1);
+
+    const threshold = settings?.approvalThreshold
+      ? Number(settings.approvalThreshold)
+      : null;
+    const required = settings?.approvalRequired === true;
+
+    const rows = await db
+      .select({
+        id: productionOrdersTable.id,
+        orderNumber: productionOrdersTable.orderNumber,
+        title: productionOrdersTable.title,
+        status: productionOrdersTable.status,
+        plannedQty: productionOrdersTable.plannedQty,
+        unitCode: productionOrdersTable.unitCode,
+        estimatedCost: productionOrdersTable.estimatedCost,
+        plannedStartDate: productionOrdersTable.plannedStartDate,
+        plannedEndDate: productionOrdersTable.plannedEndDate,
+        createdAt: productionOrdersTable.createdAt,
+        createdBy: productionOrdersTable.createdBy,
+        productItemId: productionOrdersTable.productItemId,
+        productNameAr: itemsTable.nameAr,
+        creatorName: sql<string>`coalesce(${usersTable.nameAr}, ${usersTable.nameEn}, ${usersTable.username})`,
+      })
+      .from(productionOrdersTable)
+      .leftJoin(
+        itemsTable,
+        and(
+          eq(itemsTable.id, productionOrdersTable.productItemId),
+          eq(itemsTable.companyId, cid),
+        ),
+      )
+      .leftJoin(usersTable, eq(usersTable.id, productionOrdersTable.createdBy))
+      .where(
+        and(
+          eq(productionOrdersTable.companyId, cid),
+          eq(productionOrdersTable.status, "draft"),
+        ),
+      )
+      .orderBy(desc(productionOrdersTable.createdAt))
+      .limit(500);
+
+    const items = rows.map((r) => {
+      const cost = Number(r.estimatedCost) || 0;
+      const overThreshold = threshold != null && cost >= threshold;
+      return {
+        ...r,
+        needsApproval: required || overThreshold,
+        overThreshold,
+      };
+    });
+
+    res.json({
+      settings: {
+        approvalRequired: required,
+        approvalThreshold: threshold,
+      },
+      items,
+    });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /orders/pending-approval failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get("/orders/:id", async (req, res) => {
   try {
     const cid = guard(req, res);
     if (!cid) return;
     const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return void res.status(400).json({ error: "id غير صحيح" });
     const [order] = await db
       .select()
       .from(productionOrdersTable)
@@ -6874,86 +6962,8 @@ router.get("/kpi-dashboard", async (req, res) => {
 //   Order must currently be 'draft'. Sets status='cancelled',
 //   rejectionReason. Reason ≥ 5 chars required (audit trail).
 //
-// Pending  — GET /api/production/orders/pending-approval
-//   Lists draft orders for the current company, newest first. The
-//   manufacturingSettings.approvalRequired and .approvalThreshold flags
-//   are returned in a 'needsApproval' boolean per order so the queue
-//   can highlight the ones that truly need a second pair of eyes.
-router.get("/orders/pending-approval", async (req, res) => {
-  try {
-    const cid = guard(req, res);
-    if (!cid) return;
-    const [settings] = await db
-      .select({
-        approvalRequired: manufacturingSettingsTable.approvalRequired,
-        approvalThreshold: manufacturingSettingsTable.approvalThreshold,
-      })
-      .from(manufacturingSettingsTable)
-      .where(eq(manufacturingSettingsTable.companyId, cid))
-      .limit(1);
-
-    const threshold = settings?.approvalThreshold
-      ? Number(settings.approvalThreshold)
-      : null;
-    const required = settings?.approvalRequired === true;
-
-    const rows = await db
-      .select({
-        id: productionOrdersTable.id,
-        orderNumber: productionOrdersTable.orderNumber,
-        title: productionOrdersTable.title,
-        status: productionOrdersTable.status,
-        plannedQty: productionOrdersTable.plannedQty,
-        unitCode: productionOrdersTable.unitCode,
-        estimatedCost: productionOrdersTable.estimatedCost,
-        plannedStartDate: productionOrdersTable.plannedStartDate,
-        plannedEndDate: productionOrdersTable.plannedEndDate,
-        createdAt: productionOrdersTable.createdAt,
-        createdBy: productionOrdersTable.createdBy,
-        productItemId: productionOrdersTable.productItemId,
-        productNameAr: itemsTable.nameAr,
-        creatorName: sql<string>`coalesce(${usersTable.nameAr}, ${usersTable.nameEn}, ${usersTable.username})`,
-      })
-      .from(productionOrdersTable)
-      .leftJoin(
-        itemsTable,
-        and(
-          eq(itemsTable.id, productionOrdersTable.productItemId),
-          eq(itemsTable.companyId, cid),
-        ),
-      )
-      .leftJoin(usersTable, eq(usersTable.id, productionOrdersTable.createdBy))
-      .where(
-        and(
-          eq(productionOrdersTable.companyId, cid),
-          eq(productionOrdersTable.status, "draft"),
-        ),
-      )
-      .orderBy(desc(productionOrdersTable.createdAt))
-      .limit(500);
-
-    const items = rows.map((r) => {
-      const cost = Number(r.estimatedCost) || 0;
-      const overThreshold = threshold != null && cost >= threshold;
-      return {
-        ...r,
-        needsApproval: required || overThreshold,
-        overThreshold,
-      };
-    });
-
-    res.json({
-      settings: {
-        approvalRequired: required,
-        approvalThreshold: threshold,
-      },
-      items,
-    });
-  } catch (e: any) {
-    req.log?.error?.({ err: e }, "GET /orders/pending-approval failed");
-    res.status(500).json({ error: e.message });
-  }
-});
+// Pending-approval handler is registered earlier (before /orders/:id) to
+// avoid Express 5 / path-to-regexp 8 swallowing the literal segment as :id.
 
 router.post("/orders/:id/approve", async (req, res) => {
   try {
