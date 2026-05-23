@@ -23,6 +23,7 @@ import {
   Brain,
   Trophy,
   CalendarClock,
+  Gauge,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
