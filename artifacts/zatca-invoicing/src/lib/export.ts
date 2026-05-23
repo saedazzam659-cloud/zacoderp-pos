@@ -247,6 +247,18 @@ export async function exportToPDF(
     tr.even { background: #f8fafb; }
     tr.odd  { background: #ffffff; }
     tbody tr:hover { background: #f0fdf4; }
+    /* Prevent any single table row, summary card, footer block or
+       section heading from being sliced in half between two pages —
+       this applies to BOTH browser print AND the html2pdf rasteriser
+       (html2pdf honours `page-break-inside: avoid` on direct children
+       of the captured root via its `pagebreak: { mode: ['css'] }`
+       option). */
+    tbody tr        { page-break-inside: avoid; break-inside: avoid; }
+    .summary-card   { page-break-inside: avoid; break-inside: avoid; }
+    .summary-footer { page-break-inside: avoid; break-inside: avoid; }
+    .footer         { page-break-inside: avoid; break-inside: avoid; }
+    h2              { page-break-inside: avoid; break-inside: avoid;
+                      page-break-after: avoid;  break-after: avoid; }
     /* Grand-totals row sits inside <tbody> so it doesn't repeat per
        printed page (which is what a <tfoot> would do). It's pinned to
        the bottom of the data via document order, so it always appears
@@ -441,16 +453,53 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
     const mod = await import("html2pdf.js");
     const html2pdf = ((mod as { default?: unknown }).default ?? mod) as () => Html2PdfChain;
 
-    await html2pdf()
+    // Simple, balanced A4 landscape margins (mm). The bottom margin is a
+    // touch wider so the page-number footer never overlaps the content.
+    const margin = [10, 10, 14, 10];
+
+    // Build the worker pipeline:
+    //   set(...) → from(el) → toPdf() → get('pdf') → [add page numbers] → save()
+    // We dive into the underlying jsPDF doc after the canvas pass so we
+    // can stamp a real text-layer page number on each page — html2canvas
+    // does NOT honour the print template's CSS `@page` margin boxes, so
+    // the numbers MUST be added here.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const worker: any = html2pdf()
       .set({
-        margin:      [8, 8, 8, 8],
+        margin,
         filename:    `${filename}.pdf`,
         image:       { type: "jpeg", quality: 0.97 },
         html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", windowWidth: 1123 },
         jsPDF:       { unit: "mm", format: "a4", orientation: "landscape" },
-        pagebreak:   { mode: ["css", "legacy"] },
+        // `css` honours our `page-break-inside: avoid` declarations so
+        // table rows / summary cards / footer blocks are NOT sliced
+        // between pages. `legacy` keeps backward-compat with the older
+        // `.html2pdf__page-break` divs (none currently used, but cheap
+        // insurance for any future caller).
+        pagebreak:   { mode: ["css", "legacy"], avoid: ["tr", ".summary-card", ".footer", "h2"] },
       })
-      .from(target)
+      .from(target);
+
+    await worker
+      .toPdf()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .get("pdf")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .then((pdf: any) => {
+        const total = pdf.internal.getNumberOfPages();
+        const pageW = pdf.internal.pageSize.getWidth();
+        const pageH = pdf.internal.pageSize.getHeight();
+        for (let i = 1; i <= total; i++) {
+          pdf.setPage(i);
+          pdf.setFontSize(9);
+          pdf.setTextColor(120, 120, 120);
+          // Centered "i / total" — using plain digits + slash keeps it
+          // unambiguous in any RTL/LTR rendering context inside jsPDF
+          // (jsPDF's default font has no Arabic glyphs, so we avoid
+          // Arabic labels here on purpose).
+          pdf.text(`${i} / ${total}`, pageW / 2, pageH - 5, { align: "center" });
+        }
+      })
       .save();
   } finally {
     iframe.remove();
