@@ -250,9 +250,8 @@ export async function exportToPDF(
     /* Prevent any single table row, summary card, footer block or
        section heading from being sliced in half between two pages —
        this applies to BOTH browser print AND the html2pdf rasteriser
-       (html2pdf honours `page-break-inside: avoid` on direct children
-       of the captured root via its `pagebreak: { mode: ['css'] }`
-       option). */
+       (html2pdf honours page-break-inside:avoid on direct children
+       of the captured root via its pagebreak.mode=['css'] option). */
     tbody tr        { page-break-inside: avoid; break-inside: avoid; }
     .summary-card   { page-break-inside: avoid; break-inside: avoid; }
     .summary-footer { page-break-inside: avoid; break-inside: avoid; }
