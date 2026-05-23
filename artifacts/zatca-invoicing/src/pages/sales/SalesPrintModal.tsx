@@ -2069,11 +2069,11 @@ function template14(d: PrintData): string {
           <!-- Bottom : totals + QR (only after the last chunk) ───────── -->
           <div class="bottom">
             <div class="totals-card">
-              <div class="__totalsRow"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(totals.subtotalPreDiscount)} ${totals.currency}</span></div>
-              <div class="__totalsRow"><span>مبلغ الخصم — Discount</span><span class="mono" style="color:#b91c1c;">${fmt(totals.discountTotal)} ${totals.currency}</span></div>
-              <div class="__totalsRow"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(totals.netPreVat)} ${totals.currency}</span></div>
-              <div class="__totalsRow"><span>ضريبة القيمة المضافة — VAT</span><span class="mono" style="color:#b45309;">${fmt(totals.vatAmount)} ${totals.currency}</span></div>
-              <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(totals.grandTotal)} ${totals.currency}</span></div>
+              <div class="__totalsRow"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(totals.subtotalPreDiscount)}</span></div>
+              <div class="__totalsRow"><span>مبلغ الخصم — Discount</span><span class="mono" style="color:#b91c1c;">${fmt(totals.discountTotal)}</span></div>
+              <div class="__totalsRow"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(totals.netPreVat)}</span></div>
+              <div class="__totalsRow"><span>ضريبة القيمة المضافة — VAT</span><span class="mono" style="color:#b45309;">${fmt(totals.vatAmount)}</span></div>
+              <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(totals.grandTotal)}</span></div>
               ${summaryFooterHtml(totals)}
             </div>
             <div class="qr-card">
