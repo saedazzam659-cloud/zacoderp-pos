@@ -18,7 +18,40 @@ setSessionIdGetter(() => {
 // honours `x-acting-company-id` only when the caller's role is superadmin,
 // so this is a safe default to attach to every request. A tampered value
 // from a tenant user is silently ignored.
+// Per-tab override: when the URL hash contains `#__actAs=<number>` (used by
+// the audit-log "open in popup" flow so a SuperAdmin can drill into a tenant
+// page without polluting their own tab's React state or localStorage), the
+// hash wins. We also mirror it into sessionStorage (which is per-tab in
+// modern browsers, so it does NOT leak to other tabs) so that subsequent
+// in-tab navigations — which may strip the hash via wouter's history
+// pushState — still resolve to the same tenant. localStorage is left
+// untouched so the original SA tab keeps its plain SA view.
+const SESSION_ACTING_COMPANY_KEY = "zatca_acting_company_session";
+function readActingCompanyHashOverride(): number | null {
+  if (typeof window === "undefined") return null;
+  const m = window.location.hash.match(/__actAs=(\d+)/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  if (!(Number.isFinite(n) && n > 0)) return null;
+  // Pin for the rest of the tab's lifetime — survives the first wouter
+  // navigation that strips the hash, until the tab is closed.
+  try { sessionStorage.setItem(SESSION_ACTING_COMPANY_KEY, String(n)); } catch {}
+  return n;
+}
+function readActingCompanyFromTab(): number | null {
+  const fromHash = readActingCompanyHashOverride();
+  if (fromHash != null) return fromHash;
+  if (typeof window === "undefined") return null;
+  try {
+    const v = sessionStorage.getItem(SESSION_ACTING_COMPANY_KEY);
+    if (!v) return null;
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch { return null; }
+}
 setActingCompanyIdGetter(() => {
+  const tabOverride = readActingCompanyFromTab();
+  if (tabOverride != null) return tabOverride;
   const v = localStorage.getItem("zatca_acting_company_id");
   if (!v) return null;
   const n = parseInt(v, 10);
@@ -143,6 +176,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return Number.isFinite(n) && n > 0 ? n : null;
   });
   const [actingCompanyId, setActingCompanyIdState] = useState<number | null>(() => {
+    // Per-tab override (hash + sessionStorage) wins — used by the
+    // audit-log popup so a tab opened with `#__actAs=N` boots in that
+    // tenant's context regardless of what's in localStorage, AND stays
+    // there for the rest of the tab's lifetime even after wouter strips
+    // the hash on the first internal navigation.
+    const tabOverride = readActingCompanyFromTab();
+    if (tabOverride != null) return tabOverride;
     const v = localStorage.getItem(ACTING_COMPANY_KEY);
     const n = v ? parseInt(v, 10) : NaN;
     return Number.isFinite(n) && n > 0 ? n : null;
