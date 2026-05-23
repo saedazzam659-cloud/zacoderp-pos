@@ -1689,11 +1689,12 @@ function template14(d: PrintData): string {
   // footer) re-renders on every printed page automatically thanks to
   // `display: table-header-group / table-footer-group`.
   //
-  // Sized to USE the full A4 print area between the running header and
-  // running footer — previously we capped at 10 which left a big empty
-  // band at the bottom of each page. ~18 rows fits a standard A4 with
-  // our current row height (~10mm) and the bottom block (totals+QR).
-  const LINES_PER_PAGE = 18;
+  // Sized so the LAST page can always fit both the remaining items AND
+  // the bottom block (totals + QR ~40mm) together — otherwise the
+  // bottom block flows to a fresh page alone and the audit footer
+  // (running tfoot) ends up floating in the middle. 14 rows leaves
+  // ~40mm of headroom for the bottom block on every page.
+  const LINES_PER_PAGE = 14;
   const lineChunks: any[][] = [];
   for (let i = 0; i < lines.length; i += LINES_PER_PAGE) {
     lineChunks.push(lines.slice(i, i + LINES_PER_PAGE));
