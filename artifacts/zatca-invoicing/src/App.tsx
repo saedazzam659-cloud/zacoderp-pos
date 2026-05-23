@@ -133,6 +133,9 @@ import QualityTemplates from "@/pages/production/QualityTemplates";
 import ShiftCalendar from "@/pages/production/ShiftCalendar";
 import MrpPlanning from "@/pages/production/MrpPlanning";
 import DowntimeOee from "@/pages/production/DowntimeOee";
+import CostRollup from "@/pages/production/CostRollup";
+import PendingApprovals from "@/pages/production/PendingApprovals";
+import ManufacturingKpis from "@/pages/production/ManufacturingKpis";
 import WorkCenters from "@/pages/production/WorkCenters";
 import QualityChecks from "@/pages/production/QualityChecks";
 import ProductionRoutings from "@/pages/production/ProductionRoutings";
@@ -706,6 +709,9 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/production/shifts"             module="production"     component={ShiftCalendar} />}
             {!isSuperAdmin && <PermRoute path="/production/mrp"                module="production"     component={MrpPlanning} />}
             {!isSuperAdmin && <PermRoute path="/production/downtime"           module="production"     component={DowntimeOee} />}
+            {!isSuperAdmin && <PermRoute path="/production/cost-rollup"        module="production"     component={CostRollup} />}
+            {!isSuperAdmin && <PermRoute path="/production/approvals"          module="production"     component={PendingApprovals} />}
+            {!isSuperAdmin && <PermRoute path="/production/kpis"               module="production"     component={ManufacturingKpis} />}
 
             {/* Contracting / Construction ERP — gated by `contracting` permission. */}
             {!isSuperAdmin && <PermRoute path="/contracting"                  module="contracting"    component={ContractingDashboard} />}

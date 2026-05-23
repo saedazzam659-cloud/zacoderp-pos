@@ -1146,6 +1146,22 @@ router.post("/orders/:id/status", async (req, res) => {
       updatedAt: new Date(),
     };
 
+    // ─── Round A — audit stamp on draft → approved via canonical endpoint ───
+    // The dedicated POST /orders/:id/approve stamps these fields, but the
+    // canonical status endpoint must do the same when the same transition is
+    // performed here, otherwise we'd have an audit gap (approvedByUserId NULL
+    // even though the order is 'approved'). Only stamp on the actual
+    // draft → approved edge, not on any other transition that happens to land
+    // on 'approved' (currently none exist, but defensive).
+    if (
+      target === "approved" &&
+      order.status === "draft" &&
+      !order.approvedAt
+    ) {
+      updates.approvedByUserId = (req as any).user?.id ?? null;
+      updates.approvedAt = new Date();
+    }
+
     // ─── 1) ISSUE — entering "in_production" ────────────────────────────────
     if (target === "in_production" && order.status !== "in_production") {
       // GUARD: idempotency — if an issue JE was already posted (e.g. concurrent
@@ -6464,6 +6480,857 @@ router.get("/oee", async (req, res) => {
     res.json({ from, to, dayCount, centers: result });
   } catch (e: any) {
     req.log?.error?.({ err: e }, "GET /oee failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Round K — Manufacturing KPI Cockpit ────────────────────────────────
+// Single endpoint that pulls all module aggregates needed for an executive
+// "shop floor at a glance" screen. Designed to replace the need to open
+// orders + downtime + MRP + approvals separately.
+//
+// GET /api/production/kpi-dashboard?days=30
+//
+// Returns:
+//   period: { from, to, days }
+//   orders: { byStatus[], totals: {planned, produced, waste} }
+//   scrap: { rate, producedQty, wasteQty }
+//   onTime: { completedCount, onTimeCount, lateCount, rate }  -- completed
+//       orders whose actualEndAt date <= plannedEndDate are "on time".
+//       Orders with no plannedEndDate are excluded from rate denominator.
+//   approvals: { pendingDrafts, mandatory }   -- mandatory = drafts that
+//       trigger the approval gate (approvalRequired OR over threshold).
+//   downtime: { totalMinutes, plannedMinutes, unplannedMinutes,
+//       topReasons[{ reasonCode, nameAr, category, minutes }] (top 5) }
+//   oee: { avgAvailability, avgQuality, avgOee, workCenterCount }
+//       (mean across active work centers; reuses the same formula as
+//       /api/production/oee.)
+//   mrp: { shortageCount, topShortages[{ itemId, nameAr, net, reorderPoint }] }
+//       Shortages = items whose (stockOnHand + on-order) < reorder_point.
+//
+// All scoped by companyId. Date defaults: last 30 days.
+router.get("/kpi-dashboard", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - (days - 1));
+    const fromIso = from.toISOString().slice(0, 10);
+    const toIso = to.toISOString().slice(0, 10);
+
+    // ── Orders by status (lifetime, not period — gives current state) ──
+    const byStatusRows = await db
+      .select({
+        status: productionOrdersTable.status,
+        count: sql<string>`count(*)::text`,
+        plannedQty: sql<string>`coalesce(sum(${productionOrdersTable.plannedQty}),0)::text`,
+        producedQty: sql<string>`coalesce(sum(${productionOrdersTable.producedQty}),0)::text`,
+        wasteQty: sql<string>`coalesce(sum(${productionOrdersTable.wasteQty}),0)::text`,
+      })
+      .from(productionOrdersTable)
+      .where(eq(productionOrdersTable.companyId, cid))
+      .groupBy(productionOrdersTable.status);
+
+    const byStatus = byStatusRows.map((r) => ({
+      status: r.status,
+      count: Number(r.count),
+      plannedQty: Number(r.plannedQty),
+      producedQty: Number(r.producedQty),
+      wasteQty: Number(r.wasteQty),
+    }));
+    const totals = byStatus.reduce(
+      (acc, r) => {
+        acc.planned += r.plannedQty;
+        acc.produced += r.producedQty;
+        acc.waste += r.wasteQty;
+        return acc;
+      },
+      { planned: 0, produced: 0, waste: 0 },
+    );
+
+    // ── Scrap rate (period) ──
+    const [scrapRow] = await db
+      .select({
+        produced: sql<string>`coalesce(sum(${productionOrdersTable.producedQty}),0)::text`,
+        waste: sql<string>`coalesce(sum(${productionOrdersTable.wasteQty}),0)::text`,
+      })
+      .from(productionOrdersTable)
+      .where(
+        and(
+          eq(productionOrdersTable.companyId, cid),
+          eq(productionOrdersTable.status, "completed"),
+          sql`${productionOrdersTable.completedAt}::date >= ${fromIso}`,
+          sql`${productionOrdersTable.completedAt}::date <= ${toIso}`,
+        ),
+      );
+    const scrapProduced = Number(scrapRow?.produced ?? 0);
+    const scrapWaste = Number(scrapRow?.waste ?? 0);
+    const scrapDenom = scrapProduced + scrapWaste;
+    const scrap = {
+      producedQty: scrapProduced,
+      wasteQty: scrapWaste,
+      rate: scrapDenom > 0 ? scrapWaste / scrapDenom : 0,
+    };
+
+    // ── On-time delivery (period) ──
+    const completedOrders = await db
+      .select({
+        plannedEndDate: productionOrdersTable.plannedEndDate,
+        completedAt: productionOrdersTable.completedAt,
+      })
+      .from(productionOrdersTable)
+      .where(
+        and(
+          eq(productionOrdersTable.companyId, cid),
+          eq(productionOrdersTable.status, "completed"),
+          sql`${productionOrdersTable.completedAt}::date >= ${fromIso}`,
+          sql`${productionOrdersTable.completedAt}::date <= ${toIso}`,
+        ),
+      );
+    let onTimeCount = 0;
+    let lateCount = 0;
+    let measurableCount = 0;
+    for (const o of completedOrders) {
+      if (!o.plannedEndDate || !o.completedAt) continue;
+      measurableCount++;
+      const completedDate = new Date(o.completedAt).toISOString().slice(0, 10);
+      if (completedDate <= o.plannedEndDate) onTimeCount++;
+      else lateCount++;
+    }
+    const onTime = {
+      completedCount: completedOrders.length,
+      measurableCount,
+      onTimeCount,
+      lateCount,
+      rate: measurableCount > 0 ? onTimeCount / measurableCount : 0,
+    };
+
+    // ── Approvals queue ──
+    const [settings] = await db
+      .select({
+        approvalRequired: manufacturingSettingsTable.approvalRequired,
+        approvalThreshold: manufacturingSettingsTable.approvalThreshold,
+      })
+      .from(manufacturingSettingsTable)
+      .where(eq(manufacturingSettingsTable.companyId, cid))
+      .limit(1);
+    const reqApproval = settings?.approvalRequired === true;
+    const threshold = settings?.approvalThreshold
+      ? Number(settings.approvalThreshold)
+      : null;
+
+    const draftOrders = await db
+      .select({
+        id: productionOrdersTable.id,
+        estimatedCost: productionOrdersTable.estimatedCost,
+      })
+      .from(productionOrdersTable)
+      .where(
+        and(
+          eq(productionOrdersTable.companyId, cid),
+          eq(productionOrdersTable.status, "draft"),
+        ),
+      );
+    let mandatory = 0;
+    for (const d of draftOrders) {
+      const cost = Number(d.estimatedCost) || 0;
+      if (reqApproval || (threshold != null && cost >= threshold)) mandatory++;
+    }
+    const approvals = { pendingDrafts: draftOrders.length, mandatory };
+
+    // ── Downtime (period) ──
+    const dtRows = await db
+      .select({
+        category: productionDowntimeReasonsTable.category,
+        minutes: sql<string>`coalesce(sum(${productionDowntimeEventsTable.durationMinutes}),0)::text`,
+      })
+      .from(productionDowntimeEventsTable)
+      .leftJoin(
+        productionDowntimeReasonsTable,
+        and(
+          eq(
+            productionDowntimeReasonsTable.id,
+            productionDowntimeEventsTable.reasonId,
+          ),
+          eq(productionDowntimeReasonsTable.companyId, cid),
+        ),
+      )
+      .where(
+        and(
+          eq(productionDowntimeEventsTable.companyId, cid),
+          sql`${productionDowntimeEventsTable.startAt}::date >= ${fromIso}`,
+          sql`${productionDowntimeEventsTable.startAt}::date <= ${toIso}`,
+        ),
+      )
+      .groupBy(productionDowntimeReasonsTable.category);
+    let dtPlanned = 0;
+    let dtUnplanned = 0;
+    for (const r of dtRows) {
+      const m = Number(r.minutes);
+      if (r.category === "planned") dtPlanned += m;
+      else if (r.category === "unplanned") dtUnplanned += m;
+    }
+    const topReasonsRows = await db
+      .select({
+        reasonId: productionDowntimeEventsTable.reasonId,
+        code: productionDowntimeReasonsTable.code,
+        nameAr: productionDowntimeReasonsTable.nameAr,
+        category: productionDowntimeReasonsTable.category,
+        minutes: sql<string>`coalesce(sum(${productionDowntimeEventsTable.durationMinutes}),0)::text`,
+      })
+      .from(productionDowntimeEventsTable)
+      .leftJoin(
+        productionDowntimeReasonsTable,
+        and(
+          eq(
+            productionDowntimeReasonsTable.id,
+            productionDowntimeEventsTable.reasonId,
+          ),
+          eq(productionDowntimeReasonsTable.companyId, cid),
+        ),
+      )
+      .where(
+        and(
+          eq(productionDowntimeEventsTable.companyId, cid),
+          sql`${productionDowntimeEventsTable.startAt}::date >= ${fromIso}`,
+          sql`${productionDowntimeEventsTable.startAt}::date <= ${toIso}`,
+        ),
+      )
+      .groupBy(
+        productionDowntimeEventsTable.reasonId,
+        productionDowntimeReasonsTable.code,
+        productionDowntimeReasonsTable.nameAr,
+        productionDowntimeReasonsTable.category,
+      )
+      .orderBy(
+        sql`coalesce(sum(${productionDowntimeEventsTable.durationMinutes}),0) desc`,
+      )
+      .limit(5);
+    const topReasons = topReasonsRows.map((r) => ({
+      reasonId: r.reasonId,
+      code: r.code,
+      nameAr: r.nameAr,
+      category: r.category,
+      minutes: Number(r.minutes),
+    }));
+    const downtime = {
+      totalMinutes: dtPlanned + dtUnplanned,
+      plannedMinutes: dtPlanned,
+      unplannedMinutes: dtUnplanned,
+      topReasons,
+    };
+
+    // ── OEE summary (mean across active work centers) ──
+    const dayCount = days;
+    const workCenters = await db
+      .select({
+        id: workCentersTable.id,
+        capacityHoursPerDay: workCentersTable.capacityHoursPerDay,
+      })
+      .from(workCentersTable)
+      .where(
+        and(
+          eq(workCentersTable.companyId, cid),
+          eq(workCentersTable.isActive, true),
+        ),
+      );
+
+    // Per-WC downtime in period
+    const wcDowntimeRows = await db
+      .select({
+        workCenterId: productionDowntimeEventsTable.workCenterId,
+        minutes: sql<string>`coalesce(sum(${productionDowntimeEventsTable.durationMinutes}),0)::text`,
+      })
+      .from(productionDowntimeEventsTable)
+      .where(
+        and(
+          eq(productionDowntimeEventsTable.companyId, cid),
+          sql`${productionDowntimeEventsTable.startAt}::date >= ${fromIso}`,
+          sql`${productionDowntimeEventsTable.startAt}::date <= ${toIso}`,
+        ),
+      )
+      .groupBy(productionDowntimeEventsTable.workCenterId);
+    const wcDtMap = new Map(
+      wcDowntimeRows.map((r) => [r.workCenterId, Number(r.minutes)]),
+    );
+
+    // Per-WC production in period
+    const wcProdRows = await db
+      .select({
+        workCenterId: productionOrdersTable.workCenterId,
+        produced: sql<string>`coalesce(sum(${productionOrdersTable.producedQty}),0)::text`,
+        waste: sql<string>`coalesce(sum(${productionOrdersTable.wasteQty}),0)::text`,
+      })
+      .from(productionOrdersTable)
+      .where(
+        and(
+          eq(productionOrdersTable.companyId, cid),
+          eq(productionOrdersTable.status, "completed"),
+          sql`${productionOrdersTable.completedAt}::date >= ${fromIso}`,
+          sql`${productionOrdersTable.completedAt}::date <= ${toIso}`,
+        ),
+      )
+      .groupBy(productionOrdersTable.workCenterId);
+    const wcProdMap = new Map(
+      wcProdRows.map((r) => [
+        r.workCenterId,
+        { produced: Number(r.produced), waste: Number(r.waste) },
+      ]),
+    );
+
+    let availSum = 0;
+    let qualSum = 0;
+    let oeeSum = 0;
+    let wcMeasured = 0;
+    for (const wc of workCenters) {
+      const planned = Number(wc.capacityHoursPerDay) * 60 * dayCount;
+      if (planned <= 0) continue;
+      const dt = wcDtMap.get(wc.id) ?? 0;
+      const avail = Math.max(0, planned - dt) / planned;
+      const p = wcProdMap.get(wc.id) ?? { produced: 0, waste: 0 };
+      const total = p.produced + p.waste;
+      // Same convention as /oee: quality=0 when no production (idle WCs
+      // should not inflate the average to 100%).
+      const qual = total > 0 ? p.produced / total : 0;
+      availSum += avail;
+      qualSum += qual;
+      oeeSum += avail * qual;
+      wcMeasured++;
+    }
+    const oee = {
+      workCenterCount: wcMeasured,
+      avgAvailability: wcMeasured > 0 ? availSum / wcMeasured : 0,
+      avgQuality: wcMeasured > 0 ? qualSum / wcMeasured : 0,
+      avgOee: wcMeasured > 0 ? oeeSum / wcMeasured : 0,
+    };
+
+    // ── MRP shortages (current snapshot, not period) ──
+    // Items with reorder_point > 0 and on-hand below it. Cheap proxy for
+    // the full MRP run (which already exists as its own endpoint).
+    const shortageRows = await db
+      .select({
+        itemId: itemsTable.id,
+        nameAr: itemsTable.nameAr,
+        reorderLevel: itemsTable.reorderLevel,
+        onHand: sql<string>`coalesce((
+          select sum(${stockBalanceTable.qty})
+            from ${stockBalanceTable}
+           where ${stockBalanceTable.itemId} = ${itemsTable.id}
+             and ${stockBalanceTable.companyId} = ${cid}
+        ),0)::text`,
+      })
+      .from(itemsTable)
+      .where(
+        and(
+          eq(itemsTable.companyId, cid),
+          sql`${itemsTable.reorderLevel} > 0`,
+        ),
+      )
+      .limit(2000);
+    const shortages = shortageRows
+      .map((r) => ({
+        itemId: r.itemId,
+        nameAr: r.nameAr,
+        reorderLevel: Number(r.reorderLevel),
+        onHand: Number(r.onHand),
+        net: Number(r.onHand) - Number(r.reorderLevel),
+      }))
+      .filter((r) => r.net < 0)
+      .sort((a, b) => a.net - b.net);
+    const mrp = {
+      shortageCount: shortages.length,
+      topShortages: shortages.slice(0, 8),
+    };
+
+    res.json({
+      period: { from: fromIso, to: toIso, days },
+      orders: { byStatus, totals },
+      scrap,
+      onTime,
+      approvals,
+      downtime,
+      oee,
+      mrp,
+    });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /kpi-dashboard failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Round A — Production Order Approval Workflow ──────────────────────
+// Optional explicit approval step before an order can leave draft.
+// The canonical status transition (draft→approved) is still enforced by
+// PATCH /:id/status; these endpoints add the audit stamp and a friendlier
+// API for an approvals queue UI.
+//
+// Approve  — POST /api/production/orders/:id/approve
+//   Order must currently be 'draft' AND not already approved.
+//   Sets status='approved', approvedByUserId, approvedAt.
+//
+// Reject   — POST /api/production/orders/:id/reject  body { reason }
+//   Order must currently be 'draft'. Sets status='cancelled',
+//   rejectionReason. Reason ≥ 5 chars required (audit trail).
+//
+// Pending  — GET /api/production/orders/pending-approval
+//   Lists draft orders for the current company, newest first. The
+//   manufacturingSettings.approvalRequired and .approvalThreshold flags
+//   are returned in a 'needsApproval' boolean per order so the queue
+//   can highlight the ones that truly need a second pair of eyes.
+router.get("/orders/pending-approval", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const [settings] = await db
+      .select({
+        approvalRequired: manufacturingSettingsTable.approvalRequired,
+        approvalThreshold: manufacturingSettingsTable.approvalThreshold,
+      })
+      .from(manufacturingSettingsTable)
+      .where(eq(manufacturingSettingsTable.companyId, cid))
+      .limit(1);
+
+    const threshold = settings?.approvalThreshold
+      ? Number(settings.approvalThreshold)
+      : null;
+    const required = settings?.approvalRequired === true;
+
+    const rows = await db
+      .select({
+        id: productionOrdersTable.id,
+        orderNumber: productionOrdersTable.orderNumber,
+        title: productionOrdersTable.title,
+        status: productionOrdersTable.status,
+        plannedQty: productionOrdersTable.plannedQty,
+        unitCode: productionOrdersTable.unitCode,
+        estimatedCost: productionOrdersTable.estimatedCost,
+        plannedStartDate: productionOrdersTable.plannedStartDate,
+        plannedEndDate: productionOrdersTable.plannedEndDate,
+        createdAt: productionOrdersTable.createdAt,
+        createdBy: productionOrdersTable.createdBy,
+        productItemId: productionOrdersTable.productItemId,
+        productNameAr: itemsTable.nameAr,
+        creatorName: usersTable.fullName,
+      })
+      .from(productionOrdersTable)
+      .leftJoin(
+        itemsTable,
+        and(
+          eq(itemsTable.id, productionOrdersTable.productItemId),
+          eq(itemsTable.companyId, cid),
+        ),
+      )
+      .leftJoin(usersTable, eq(usersTable.id, productionOrdersTable.createdBy))
+      .where(
+        and(
+          eq(productionOrdersTable.companyId, cid),
+          eq(productionOrdersTable.status, "draft"),
+        ),
+      )
+      .orderBy(desc(productionOrdersTable.createdAt))
+      .limit(500);
+
+    const items = rows.map((r) => {
+      const cost = Number(r.estimatedCost) || 0;
+      const overThreshold = threshold != null && cost >= threshold;
+      return {
+        ...r,
+        needsApproval: required || overThreshold,
+        overThreshold,
+      };
+    });
+
+    res.json({
+      settings: {
+        approvalRequired: required,
+        approvalThreshold: threshold,
+      },
+      items,
+    });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /orders/pending-approval failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/orders/:id/approve", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return void res.status(400).json({ error: "id غير صحيح" });
+
+    const userId = (req as any).user?.id ?? null;
+
+    const [order] = await db
+      .select({
+        id: productionOrdersTable.id,
+        status: productionOrdersTable.status,
+        approvedAt: productionOrdersTable.approvedAt,
+      })
+      .from(productionOrdersTable)
+      .where(
+        and(
+          eq(productionOrdersTable.id, id),
+          eq(productionOrdersTable.companyId, cid),
+        ),
+      )
+      .limit(1);
+    if (!order) return void res.status(404).json({ error: "الأمر غير موجود" });
+    if (order.status !== "draft")
+      return void res
+        .status(409)
+        .json({ error: `لا يمكن اعتماد أمر بالحالة "${order.status}"` });
+
+    const [updated] = await db
+      .update(productionOrdersTable)
+      .set({
+        status: "approved",
+        approvedByUserId: userId,
+        approvedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(productionOrdersTable.id, id),
+          eq(productionOrdersTable.companyId, cid),
+          eq(productionOrdersTable.status, "draft"), // optimistic guard
+        ),
+      )
+      .returning();
+
+    if (!updated)
+      return void res
+        .status(409)
+        .json({ error: "تغيّرت حالة الأمر — أعد التحميل" });
+
+    await db.insert(productionEventsTable).values({
+      companyId: cid,
+      orderId: id,
+      eventType: "order_approved",
+      userId,
+      payload: { from: "draft", to: "approved" },
+    });
+
+    res.json({ ok: true, order: updated });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "POST /orders/:id/approve failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/orders/:id/reject", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return void res.status(400).json({ error: "id غير صحيح" });
+
+    const reason = String(req.body?.reason ?? "").trim();
+    if (reason.length < 5)
+      return void res
+        .status(400)
+        .json({ error: "سبب الرفض مطلوب (5 أحرف على الأقل)" });
+
+    const userId = (req as any).user?.id ?? null;
+
+    const [order] = await db
+      .select({ status: productionOrdersTable.status })
+      .from(productionOrdersTable)
+      .where(
+        and(
+          eq(productionOrdersTable.id, id),
+          eq(productionOrdersTable.companyId, cid),
+        ),
+      )
+      .limit(1);
+    if (!order) return void res.status(404).json({ error: "الأمر غير موجود" });
+    if (order.status !== "draft")
+      return void res
+        .status(409)
+        .json({ error: `لا يمكن رفض أمر بالحالة "${order.status}"` });
+
+    const [updated] = await db
+      .update(productionOrdersTable)
+      .set({
+        status: "cancelled",
+        rejectionReason: reason,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(productionOrdersTable.id, id),
+          eq(productionOrdersTable.companyId, cid),
+          eq(productionOrdersTable.status, "draft"),
+        ),
+      )
+      .returning();
+    if (!updated)
+      return void res
+        .status(409)
+        .json({ error: "تغيّرت حالة الأمر — أعد التحميل" });
+
+    await db.insert(productionEventsTable).values({
+      companyId: cid,
+      orderId: id,
+      eventType: "order_rejected",
+      userId,
+      payload: { from: "draft", to: "cancelled", reason },
+    });
+
+    res.json({ ok: true, order: updated });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "POST /orders/:id/reject failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Round C — Standard Cost Rollup (تكلفة المنتج المعيارية) ─────────────
+// Live calculation (NOT persisted) of an FG product's standard cost based on:
+//   * Materials  — from the active BOM template:
+//       For each raw line, unitCost = weighted avg of stock_balance.avgCost
+//         across all warehouses (sum(qty*avgCost)/sum(qty)).
+//       lineCost = unitCost × scaledQty (scaled so the BOM produces 1 unit
+//         of FG: scaledQty = templateLine.quantity / template.outputQty).
+//   * Operating cost — from the active routing's stages:
+//       If stage.expectedCost > 0, use it directly (manual override).
+//       Else: hours = expectedDurationMinutes / 60;
+//             stageCost = hours × (workCenter.laborRatePerHour
+//                                 + workCenter.overheadRatePerHour)
+//
+// Returns per-unit cost (already divided by 1 since BOM is scaled to 1 unit).
+// All queries scoped by companyId.
+router.get("/cost-rollup", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const productItemId = Number(req.query.productItemId);
+    if (!Number.isInteger(productItemId) || productItemId <= 0)
+      return void res.status(400).json({ error: "productItemId مطلوب" });
+
+    const [product] = await db
+      .select({
+        id: itemsTable.id,
+        nameAr: itemsTable.nameAr,
+        nameEn: itemsTable.nameEn,
+        sku: itemsTable.sku,
+      })
+      .from(itemsTable)
+      .where(and(eq(itemsTable.id, productItemId), eq(itemsTable.companyId, cid)))
+      .limit(1);
+    if (!product) return void res.status(404).json({ error: "المنتج غير موجود" });
+
+    // ── BOM (materials) ──────────────────────────────────────────────
+    const [tpl] = await db
+      .select({
+        id: bomTemplatesTable.id,
+        nameAr: bomTemplatesTable.nameAr,
+        outputQty: bomTemplatesTable.outputQty,
+      })
+      .from(bomTemplatesTable)
+      .where(
+        and(
+          eq(bomTemplatesTable.companyId, cid),
+          eq(bomTemplatesTable.productItemId, productItemId),
+          eq(bomTemplatesTable.isActive, true),
+        ),
+      )
+      .orderBy(desc(bomTemplatesTable.updatedAt))
+      .limit(1);
+
+    let materials: Array<{
+      itemId: number | null;
+      nameAr: string | null;
+      sku: string | null;
+      qty: number;
+      unitCost: number;
+      totalCost: number;
+    }> = [];
+    let materialsCost = 0;
+
+    if (tpl) {
+      const tplOutput = Number(tpl.outputQty) || 1;
+      const rawLines = await db
+        .select({
+          id: bomTemplateLinesTable.id,
+          itemId: bomTemplateLinesTable.itemId,
+          description: bomTemplateLinesTable.description,
+          quantity: bomTemplateLinesTable.quantity,
+          itemNameAr: itemsTable.nameAr,
+          itemSku: itemsTable.sku,
+        })
+        .from(bomTemplateLinesTable)
+        .leftJoin(
+          itemsTable,
+          and(
+            eq(itemsTable.id, bomTemplateLinesTable.itemId),
+            eq(itemsTable.companyId, cid),
+          ),
+        )
+        .where(eq(bomTemplateLinesTable.templateId, tpl.id));
+
+      const rawItemIds = rawLines.map((l) => l.itemId).filter((x): x is number => x != null);
+      let costMap = new Map<number, number>();
+      if (rawItemIds.length > 0) {
+        // Weighted avg cost per item across all warehouses for the company.
+        const stockRows = await db
+          .select({
+            itemId: stockBalanceTable.itemId,
+            // weighted_avg = sum(qty*avgCost) / NULLIF(sum(qty),0)
+            weightedAvg: sql<string>`
+              CASE WHEN sum(${stockBalanceTable.qty}) > 0
+                THEN sum(${stockBalanceTable.qty} * ${stockBalanceTable.avgCost})
+                     / sum(${stockBalanceTable.qty})
+                ELSE 0
+              END::text
+            `,
+          })
+          .from(stockBalanceTable)
+          .where(
+            and(
+              eq(stockBalanceTable.companyId, cid),
+              inArray(stockBalanceTable.itemId, rawItemIds),
+            ),
+          )
+          .groupBy(stockBalanceTable.itemId);
+        costMap = new Map(stockRows.map((s) => [s.itemId, Number(s.weightedAvg)]));
+      }
+
+      for (const rl of rawLines) {
+        const scaledQty = (Number(rl.quantity) || 0) / tplOutput;
+        const unitCost = rl.itemId ? costMap.get(rl.itemId) ?? 0 : 0;
+        const totalCost = scaledQty * unitCost;
+        materialsCost += totalCost;
+        materials.push({
+          itemId: rl.itemId,
+          nameAr: rl.itemNameAr ?? rl.description,
+          sku: rl.itemSku ?? null,
+          qty: Number(scaledQty.toFixed(4)),
+          unitCost: Number(unitCost.toFixed(4)),
+          totalCost: Number(totalCost.toFixed(4)),
+        });
+      }
+    }
+
+    // ── Routing (operating cost) ─────────────────────────────────────
+    const [rt] = await db
+      .select({
+        id: productionRoutingsTable.id,
+        nameAr: productionRoutingsTable.nameAr,
+      })
+      .from(productionRoutingsTable)
+      .where(
+        and(
+          eq(productionRoutingsTable.companyId, cid),
+          eq(productionRoutingsTable.productItemId, productItemId),
+          eq(productionRoutingsTable.isActive, true),
+        ),
+      )
+      .orderBy(desc(productionRoutingsTable.updatedAt))
+      .limit(1);
+
+    let stages: Array<{
+      stageId: number;
+      sequence: number;
+      nameAr: string;
+      workCenterId: number | null;
+      workCenterNameAr: string | null;
+      durationMinutes: number | null;
+      laborCost: number;
+      overheadCost: number;
+      stageCost: number;
+      source: "expectedCost" | "rates" | "none";
+    }> = [];
+    let laborCost = 0;
+    let overheadCost = 0;
+    let routingExplicitCost = 0; // when stage.expectedCost is used we can't split
+
+    if (rt) {
+      const rstages = await db
+        .select({
+          id: productionRoutingStagesTable.id,
+          sequence: productionRoutingStagesTable.sequence,
+          nameAr: productionRoutingStagesTable.nameAr,
+          workCenterId: productionRoutingStagesTable.workCenterId,
+          expectedDurationMinutes: productionRoutingStagesTable.expectedDurationMinutes,
+          expectedCost: productionRoutingStagesTable.expectedCost,
+          wcNameAr: workCentersTable.nameAr,
+          wcLaborRate: workCentersTable.laborRatePerHour,
+          wcOverheadRate: workCentersTable.overheadRatePerHour,
+        })
+        .from(productionRoutingStagesTable)
+        .leftJoin(
+          workCentersTable,
+          and(
+            eq(workCentersTable.id, productionRoutingStagesTable.workCenterId),
+            eq(workCentersTable.companyId, cid),
+          ),
+        )
+        .where(eq(productionRoutingStagesTable.routingId, rt.id))
+        .orderBy(asc(productionRoutingStagesTable.sequence));
+
+      for (const s of rstages) {
+        const explicit = Number(s.expectedCost) || 0;
+        let stLabor = 0;
+        let stOverhead = 0;
+        let stTotal = 0;
+        let source: "expectedCost" | "rates" | "none" = "none";
+        if (explicit > 0) {
+          stTotal = explicit;
+          routingExplicitCost += explicit;
+          source = "expectedCost";
+        } else if (s.expectedDurationMinutes && s.expectedDurationMinutes > 0) {
+          const hours = s.expectedDurationMinutes / 60;
+          stLabor = hours * (Number(s.wcLaborRate) || 0);
+          stOverhead = hours * (Number(s.wcOverheadRate) || 0);
+          stTotal = stLabor + stOverhead;
+          laborCost += stLabor;
+          overheadCost += stOverhead;
+          source = "rates";
+        }
+        stages.push({
+          stageId: s.id,
+          sequence: s.sequence,
+          nameAr: s.nameAr,
+          workCenterId: s.workCenterId,
+          workCenterNameAr: s.wcNameAr,
+          durationMinutes: s.expectedDurationMinutes,
+          laborCost: Number(stLabor.toFixed(4)),
+          overheadCost: Number(stOverhead.toFixed(4)),
+          stageCost: Number(stTotal.toFixed(4)),
+          source,
+        });
+      }
+    }
+
+    const operatingCost = laborCost + overheadCost + routingExplicitCost;
+    const totalCost = materialsCost + operatingCost;
+
+    res.json({
+      product,
+      bom: tpl
+        ? { templateId: tpl.id, nameAr: tpl.nameAr, outputQty: Number(tpl.outputQty) }
+        : null,
+      routing: rt ? { routingId: rt.id, nameAr: rt.nameAr } : null,
+      materials,
+      stages,
+      totals: {
+        materialsCost: Number(materialsCost.toFixed(4)),
+        laborCost: Number(laborCost.toFixed(4)),
+        overheadCost: Number(overheadCost.toFixed(4)),
+        routingExplicitCost: Number(routingExplicitCost.toFixed(4)),
+        operatingCost: Number(operatingCost.toFixed(4)),
+        totalCost: Number(totalCost.toFixed(4)),
+        // BOM is scaled to 1 unit of FG, so totalCost IS the unit cost.
+        unitCost: Number(totalCost.toFixed(4)),
+      },
+    });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /cost-rollup failed");
     res.status(500).json({ error: e.message });
   }
 });

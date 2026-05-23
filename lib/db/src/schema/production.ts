@@ -166,6 +166,16 @@ export const productionOrdersTable = pgTable(
     // the stock_ledger.expiry_date column so the FEFO reports work.
     fgExpiryDate: date("fg_expiry_date"),
     notes: text("notes"),
+    // ─── Round A — Approval workflow audit ───────────────────────────────
+    // Stamped when an approver moves the order draft→approved via
+    // POST /orders/:id/approve. Rejection is modeled as draft→cancelled
+    // with a reason text. Both stamps are immutable once set.
+    approvedByUserId: integer("approved_by_user_id").references(
+      () => usersTable.id,
+      { onDelete: "set null" },
+    ),
+    approvedAt: timestamp("approved_at"),
+    rejectionReason: text("rejection_reason"),
     meta: jsonb("meta").$type<Record<string, unknown>>().default({}),
     createdBy: integer("created_by").references(() => usersTable.id, {
       onDelete: "set null",
@@ -378,6 +388,17 @@ export const manufacturingSettingsTable = pgTable(
       () => accountsTable.id,
       { onDelete: "set null" },
     ),
+    // ─── Round A — Approval gate (informational on this MVP) ─────────────
+    // When approvalRequired is true (or estimatedCost >= approvalThreshold),
+    // the order's pending-approval UI surfaces it for manual approval before
+    // it can leave the draft state. Enforcement is in the UI/queue layer;
+    // the existing PATCH /:id/status guard already enforces the canonical
+    // draft→approved transition.
+    approvalRequired: boolean("approval_required").notNull().default(false),
+    approvalThreshold: numeric("approval_threshold", {
+      precision: 14,
+      scale: 2,
+    }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
