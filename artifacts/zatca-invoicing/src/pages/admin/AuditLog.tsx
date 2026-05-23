@@ -24,6 +24,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Loader2,
   ScrollText,
   ShieldAlert,
@@ -38,6 +43,11 @@ import {
   X,
   Download,
   Trash2,
+  MessageCircle,
+  Mail,
+  Send,
+  Calendar,
+  Building2,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -288,7 +298,8 @@ function friendlyPath(method: string | null, path: string | null): FriendlyPath 
 }
 
 export default function AuditLog() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const isSuperAdmin = user?.role === "superadmin";
   const { t, i18n } = useTranslation();
   const { toast } = useToast();
   const isRtl = i18n.language === "ar";
@@ -299,12 +310,13 @@ export default function AuditLog() {
 
   const [module, setModule] = useState<string>("__all");
   const [action, setAction] = useState<string>("__all");
+  const [companyId, setCompanyId] = useState<string>("__all");
   const [q,      setQ]      = useState("");
   const [from,   setFrom]   = useState("");
   const [to,     setTo]     = useState("");
   const [page,   setPage]   = useState(0);
 
-  useEffect(() => { setPage(0); }, [module, action, q, from, to]);
+  useEffect(() => { setPage(0); }, [module, action, companyId, q, from, to]);
 
   // ── Shareable permalinks (task #126) ───────────────────────────────────
   // The currently-open details dialog is encoded as `?entry=N` in the URL
@@ -393,13 +405,14 @@ export default function AuditLog() {
     const p = new URLSearchParams();
     if (module !== "__all") p.set("module", module);
     if (action !== "__all") p.set("action", action);
+    if (isSuperAdmin && companyId !== "__all") p.set("companyId", companyId);
     if (q.trim())            p.set("q", q.trim());
     if (from)                p.set("from", new Date(from).toISOString());
     if (to)                  p.set("to",   new Date(to + "T23:59:59").toISOString());
     p.set("limit",  String(PAGE_SIZE));
     p.set("offset", String(page * PAGE_SIZE));
     return p.toString();
-  }, [module, action, q, from, to, page]);
+  }, [module, action, companyId, isSuperAdmin, q, from, to, page]);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery<{ rows: AuditRow[]; total: number }>({
     queryKey: ["audit-log", params],
@@ -410,10 +423,28 @@ export default function AuditLog() {
     },
   });
 
+  // Modules dropdown — when SuperAdmin filters by a specific company, re-query
+  // so the module list reflects only that tenant's activity instead of the
+  // global catalogue (otherwise the picker would offer modules that yield
+  // zero rows for the current filter).
+  const modulesQs = isSuperAdmin && companyId !== "__all" ? `?companyId=${companyId}` : "";
   const { data: modules = [] } = useQuery<string[]>({
-    queryKey: ["audit-log-modules"],
+    queryKey: ["audit-log-modules", modulesQs],
     queryFn: async () => {
-      const r = await fetch(`${API}/api/audit-log/modules`, { headers });
+      const r = await fetch(`${API}/api/audit-log/modules${modulesQs}`, { headers });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+
+  // Companies dropdown — SuperAdmin only. Same endpoint already used by
+  // /admin/users and /admin/menu-permissions; soft-deleted companies are
+  // already excluded server-side.
+  const { data: companies = [] } = useQuery<Array<{ id: number; nameAr: string | null; nameEn: string | null }>>({
+    queryKey: ["audit-log-companies"],
+    enabled: isSuperAdmin,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/companies`, { headers });
       if (!r.ok) return [];
       return r.json();
     },
@@ -917,11 +948,33 @@ export default function AuditLog() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+          <div className={`grid grid-cols-1 gap-2 ${isSuperAdmin ? "md:grid-cols-7" : "md:grid-cols-6"}`}>
             <div className="md:col-span-2">
               <label className="text-xs text-muted-foreground mb-1 block">{tr("searchLabel")}</label>
               <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("searchPh")} />
             </div>
+            {/* Company filter (SuperAdmin only). Allows scoping the audit
+                log to one specific tenant — useful when triaging activity
+                across many companies. Non-SA admins are server-pinned to
+                their own company, so the picker would be redundant. */}
+            {isSuperAdmin && (
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
+                  <Building2 className="h-3 w-3" />
+                  {tr("companyLabel")}
+                </label>
+                <Select value={companyId} onValueChange={setCompanyId}>
+                  <SelectTrigger data-testid="audit-filter-company"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all">{tr("allCompanies")}</SelectItem>
+                    {companies.map(c => {
+                      const name = isRtl ? (c.nameAr ?? c.nameEn ?? `#${c.id}`) : (c.nameEn ?? c.nameAr ?? `#${c.id}`);
+                      return <SelectItem key={c.id} value={String(c.id)}>{name}</SelectItem>;
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">{tr("moduleLabel")}</label>
               <Select value={module} onValueChange={setModule}>
@@ -1449,6 +1502,8 @@ export default function AuditLog() {
         tr={tr}
         trAction={trAction}
         shareLinkLabelForRow={shareLinkLabelForRow}
+        isSuperAdmin={isSuperAdmin}
+        token={token ?? ""}
       />
 
       {/* Confirm-before-delete dialog for the toolbar bulk-delete action.
@@ -1510,6 +1565,8 @@ function AuditDetailsDialog({
   tr,
   trAction,
   shareLinkLabelForRow,
+  isSuperAdmin,
+  token,
 }: {
   open: boolean;
   row: AuditRow | null;
@@ -1522,6 +1579,8 @@ function AuditDetailsDialog({
   tr: (k: string, opts?: any) => string;
   trAction: (a: string) => string;
   shareLinkLabelForRow: (row: AuditRow) => string;
+  isSuperAdmin: boolean;
+  token: string;
 }) {
   // Metadata can be any JSON shape — usually an object for our writers, but
   // we don't want to silently drop primitives (string/number/array) if a
@@ -1611,6 +1670,19 @@ function AuditDetailsDialog({
 
         {row && (
           <div className="space-y-4 text-sm">
+            {/* Polished single-event timestamp panel — shows the full
+                long-form date, time + timezone, and a relative "X minutes
+                ago" hint so the reviewer can see at a glance both WHEN
+                exactly and HOW LONG AGO the event happened without
+                squinting at the compact `yyyy-mm-dd hh:mm:ss` line in
+                the dialog description. */}
+            <AuditWhenPanel
+              isoDate={row.createdAt}
+              locale={locale}
+              isRtl={isRtl}
+              tr={tr}
+            />
+
             <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
               <DetailField label={tr("detailsUser")}>
                 <span className="font-medium">{row.username ?? "—"}</span>
@@ -1843,10 +1915,355 @@ function AuditDetailsDialog({
                 </Tooltip>
               </div>
             </div>
+
+            {/* Share via WhatsApp / Email / company users — all client-side.
+                WhatsApp uses wa.me which opens WhatsApp Web/mobile with the
+                message pre-filled; Email uses mailto: which opens the user's
+                native mail client (Gmail/Outlook/Apple Mail) with subject
+                and body pre-filled. No SMTP or WA Business API needed.
+                The user picker (SuperAdmin only) lists company users so the
+                reviewer can address a specific recipient by email. */}
+            <ShareSection
+              row={row}
+              shareLink={shareLink}
+              locale={locale}
+              isRtl={isRtl}
+              tr={tr}
+              trAction={trAction}
+              isSuperAdmin={isSuperAdmin}
+              token={token}
+            />
           </div>
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─── Polished single-event timestamp panel ──────────────────────────────
+// Renders the absolute long-form date/time (with weekday, month name and
+// timezone) alongside a live relative "X minutes ago" hint. The relative
+// portion re-ticks every 30s so a dialog left open keeps drifting forward
+// instead of going stale. Falls back gracefully when `Intl.RelativeTimeFormat`
+// is unavailable (older runtimes).
+function AuditWhenPanel({
+  isoDate,
+  locale,
+  isRtl,
+  tr,
+}: {
+  isoDate: string;
+  locale: string;
+  isRtl: boolean;
+  tr: (k: string, opts?: any) => string;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const d = new Date(isoDate);
+  const longDate = new Intl.DateTimeFormat(locale, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(d);
+  const longTime = new Intl.DateTimeFormat(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZoneName: "short",
+  }).format(d);
+
+  const relative = formatRelative(d.getTime(), now, isRtl ? "ar" : "en");
+
+  return (
+    <div
+      data-testid="audit-details-when"
+      className="rounded-md border bg-gradient-to-l from-sky-50/50 to-indigo-50/30 px-3 py-2"
+    >
+      <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-1">
+        <Calendar className="h-3.5 w-3.5" />
+        {tr("detailsWhen")}
+      </div>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+        <span className="text-sm font-medium text-foreground" dir="auto">
+          {longDate}
+        </span>
+        <span className="text-xs font-mono text-foreground/70" dir="ltr">
+          {longTime}
+        </span>
+        {relative && (
+          <span className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5">
+            {relative}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Best-effort relative formatter. Picks the largest unit whose absolute
+// magnitude is ≥1 so "just now" → seconds, then minutes, hours, days, etc.
+// Uses Intl.RelativeTimeFormat for proper Arabic plural/dual forms; returns
+// an empty string when unavailable so the panel collapses cleanly.
+function formatRelative(then: number, now: number, lang: "ar" | "en"): string {
+  try {
+    const rtf = new Intl.RelativeTimeFormat(lang, { numeric: "auto" });
+    const diffSec = Math.round((then - now) / 1000);
+    const abs = Math.abs(diffSec);
+    const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+      ["year", 60 * 60 * 24 * 365],
+      ["month", 60 * 60 * 24 * 30],
+      ["day", 60 * 60 * 24],
+      ["hour", 60 * 60],
+      ["minute", 60],
+      ["second", 1],
+    ];
+    for (const [unit, sec] of units) {
+      if (abs >= sec || unit === "second") {
+        return rtf.format(Math.round(diffSec / sec), unit);
+      }
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+// ─── Share section (WhatsApp / Email / company users) ───────────────────
+// All actions are client-side: WhatsApp opens wa.me and email opens mailto:,
+// both pre-populated with the audit summary + permalink. The "send to user"
+// popover (SuperAdmin only) fetches the row's company users so the reviewer
+// can address a specific recipient by email — users without email are
+// shown as disabled rows so the picker still surfaces who is on the team.
+function ShareSection({
+  row,
+  shareLink,
+  locale,
+  isRtl,
+  tr,
+  trAction,
+  isSuperAdmin,
+  token,
+}: {
+  row: AuditRow;
+  shareLink: string;
+  locale: string;
+  isRtl: boolean;
+  tr: (k: string, opts?: any) => string;
+  trAction: (a: string) => string;
+  isSuperAdmin: boolean;
+  token: string;
+}) {
+  const { toast } = useToast();
+  const [userPickerOpen, setUserPickerOpen] = useState(false);
+
+  // Plain-text summary used by all share targets. Mirrors the dialog's
+  // visible fields so the recipient gets enough context to look the entry
+  // up without needing to be logged in to follow the link first.
+  const friendly = friendlyPath(row.method, row.path);
+  const subject = tr("shareEmailSubject", {
+    action: trAction(row.action),
+    module: row.module,
+    id: row.id,
+  });
+  const summary = [
+    `${tr("shareIntro")}:`,
+    `• ${tr("sharePreviewAction")}: ${trAction(row.action)}`,
+    `• ${tr("sharePreviewModule")}: ${row.module}`,
+    friendly ? `• ${tr("detailsPath")}: ${friendly.label}` : null,
+    row.username ? `• ${tr("detailsUser")}: ${row.username}` : null,
+    `• ${tr("sharePreviewTime")}: ${new Date(row.createdAt).toLocaleString(locale, { hour12: false })}`,
+    "",
+    shareLink,
+  ].filter(Boolean).join("\n");
+
+  // Fetch the row's company users for the picker. Only enabled for
+  // SuperAdmin (the admin endpoint is gated), only when the row has a
+  // resolved companyId, and only after the popover is opened — keeps the
+  // dialog lightweight for the common case where the reviewer doesn't
+  // need to address a specific person.
+  type CompanyUser = {
+    id: number;
+    username: string | null;
+    email: string | null;
+    role: string | null;
+    isActive?: boolean;
+  };
+  const { data: companyDetails, isLoading: loadingUsers, error: usersError } = useQuery<{
+    users: CompanyUser[];
+  }>({
+    queryKey: ["audit-share-company-users", row.companyId],
+    enabled: userPickerOpen && isSuperAdmin && row.companyId != null,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/companies/${row.companyId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+    retry: false,
+  });
+  const users = companyDetails?.users ?? [];
+
+  const openWhatsApp = (phone?: string) => {
+    // wa.me/<phone>?text=... opens a chat with that number (if given) and
+    // pre-fills the text; wa.me/?text=... lets the sender pick a chat.
+    // Phone must be digits-only with country code, no +/spaces.
+    const cleaned = (phone ?? "").replace(/[^0-9]/g, "");
+    const url = `https://wa.me/${cleaned}?text=${encodeURIComponent(summary)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+  const openMail = (toEmail?: string) => {
+    const to = toEmail ?? "";
+    const url = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(summary)}`;
+    // Use location assignment for mailto: so the OS handler opens correctly
+    // (window.open with mailto can leave an empty about:blank tab behind).
+    window.location.href = url;
+  };
+  const copyAll = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(summary);
+        toast({ title: tr("copySuccessTitle"), description: tr("shareCopySummary") });
+        return;
+      }
+      throw new Error("no clipboard");
+    } catch {
+      toast({
+        title: tr("copyFailureTitle"),
+        description: tr("copyFailureDescription"),
+        variant: "destructive",
+      });
+    }
+  };
+
+  return (
+    <div data-testid="audit-details-share-actions" className="rounded-md border bg-muted/20 p-2.5">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-2">
+        <Send className="h-3.5 w-3.5" />
+        {tr("shareTitle")}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => openWhatsApp()}
+          data-testid="audit-share-whatsapp"
+          className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+        >
+          <MessageCircle className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />
+          {tr("shareWhatsApp")}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => openMail()}
+          data-testid="audit-share-email"
+          className="border-sky-300 text-sky-700 hover:bg-sky-50 hover:text-sky-800"
+        >
+          <Mail className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />
+          {tr("shareEmail")}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={copyAll}
+          data-testid="audit-share-copy-summary"
+        >
+          <Copy className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />
+          {tr("shareCopySummary")}
+        </Button>
+        {/* User picker — SuperAdmin only AND only when the row carries a
+            companyId (some system-generated rows have NULL companyId).
+            Opens a popover listing all users in that company; each user
+            with an email gets a one-click mailto button. */}
+        {isSuperAdmin && row.companyId != null && (
+          <Popover open={userPickerOpen} onOpenChange={setUserPickerOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                data-testid="audit-share-user-picker"
+              >
+                <Send className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />
+                {tr("shareToUser")}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align={isRtl ? "end" : "start"}
+              className="w-72 p-0"
+              dir={isRtl ? "rtl" : "ltr"}
+            >
+              <div className="px-3 py-2 border-b text-xs font-medium text-muted-foreground">
+                {tr("shareToUserTitle")}
+              </div>
+              <div className="max-h-64 overflow-y-auto">
+                {loadingUsers ? (
+                  <div className="p-4 flex justify-center">
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  </div>
+                ) : usersError ? (
+                  <div className="p-3 text-xs text-rose-600">
+                    {tr("shareToUserLoadFailed")}
+                  </div>
+                ) : users.length === 0 ? (
+                  <div className="p-3 text-xs text-muted-foreground">
+                    {tr("shareToUserEmpty")}
+                  </div>
+                ) : (
+                  <ul className="divide-y">
+                    {users.map((u) => {
+                      const hasEmail = !!(u.email && u.email.trim());
+                      return (
+                        <li
+                          key={u.id}
+                          className="px-3 py-2 flex items-center justify-between gap-2"
+                          data-testid={`audit-share-user-row-${u.id}`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-medium truncate">
+                              {u.username ?? `#${u.id}`}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground truncate" dir="ltr">
+                              {u.email ?? tr("shareToUserNoEmail")}
+                            </div>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            disabled={!hasEmail}
+                            onClick={() => {
+                              if (!hasEmail) return;
+                              openMail(u.email!);
+                              setUserPickerOpen(false);
+                            }}
+                            title={hasEmail ? tr("shareEmailToUser", { user: u.username ?? `#${u.id}` }) : tr("shareToUserNoEmail")}
+                            data-testid={`audit-share-user-mail-${u.id}`}
+                            className="h-7 w-7 p-0 shrink-0"
+                          >
+                            <Mail className="h-3.5 w-3.5 text-sky-700" />
+                          </Button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
+      </div>
+    </div>
   );
 }
 
