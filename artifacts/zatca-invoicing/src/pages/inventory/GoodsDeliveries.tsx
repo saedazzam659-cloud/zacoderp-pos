@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -560,10 +560,29 @@ export default function GoodsDeliveries() {
   ];
 
   // ── Audit grid ───────────────────────────────────────────
-  const [tableSearch, setTableSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "posted" | "invoiced">("all");
+  const searchString = useSearch();
+  const initialParams = useMemo(() => new URLSearchParams(searchString || ""), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [tableSearch, setTableSearch] = useState(initialParams.get("q") || "");
+  const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "posted" | "invoiced">(
+    (initialParams.get("status") as any) || "all"
+  );
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkPrintBusy, setBulkPrintBusy] = useState(false);
+
+  // Mirror filter state into the URL so navigating to a JE and pressing
+  // browser-back returns here with the same search/status filters.
+  // `replace: true` keeps history clean — only the JE click pushes.
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (tableSearch) next.set("q", tableSearch);
+    if (statusFilter !== "all") next.set("status", statusFilter);
+    const nextStr = next.toString();
+    const currentStr = new URLSearchParams(searchString || "").toString();
+    if (nextStr !== currentStr) {
+      navigate(`/inventory/goods-deliveries${nextStr ? "?" + nextStr : ""}`, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tableSearch, statusFilter]);
 
   const statusLabel = (s: string) =>
     s === "all" ? t("common.all") : s === "posted" ? tr("postedM") : s === "invoiced" ? tr("invoicedM") : tr("draft");

@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useLocation, useSearch } from "wouter";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useFormatters } from "@/lib/format";
@@ -51,6 +52,28 @@ export default function CostCenters() {
     { key: "isPosting", header: t("costCenters.isPosting"), width: 10 },
     { key: "isActive",  header: t("costCenters.isActive"),  width: 10 },
   ];
+
+  // ── Tab state synced to URL (?tab=analysis) so navigating to a JE and
+  // hitting browser-back returns to the same tab. `replace: true` keeps
+  // history clean — only the JE link click pushes a forward entry.
+  const [, setLocation] = useLocation();
+  const searchString    = useSearch();
+  const initialTab      = useMemo(() => {
+    const t = new URLSearchParams(searchString || "").get("tab");
+    return t === "analysis" ? "analysis" : "manage";
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [tab, setTab]   = useState<string>(initialTab);
+  useEffect(() => {
+    const next = new URLSearchParams(searchString || "");
+    if (tab === "analysis") next.set("tab", "analysis");
+    else next.delete("tab");
+    const nextStr = next.toString();
+    const currentStr = new URLSearchParams(searchString || "").toString();
+    if (nextStr !== currentStr) {
+      setLocation(`/accounting/cost-centers${nextStr ? "?" + nextStr : ""}`, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   const [search, setSearch]     = useState("");
   const [filter, setFilter]     = useState<"all" | "active" | "inactive">("all");
@@ -200,7 +223,7 @@ export default function CostCenters() {
         </div>
       </div>
 
-      <Tabs defaultValue="manage" className="space-y-4">
+      <Tabs value={tab} onValueChange={setTab} className="space-y-4">
         <TabsList className="grid w-full grid-cols-2 max-w-md">
           <TabsTrigger value="manage" className="gap-2">
             <ListTree className="h-4 w-4" />
@@ -528,11 +551,41 @@ type AiResp = { headline: string; highlights: string[]; concerns: string[]; reco
 function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]; headers: any; t: any; isRtl: boolean }) {
   const { fmtMoney } = useFormatters();
   const { toast } = useToast();
-  const [centerIds, setCenterIds] = useState<string[]>([]);
+  // Hydrate filter state from URL (?cc=1,3,7&from=...&to=...) so back-nav
+  // from a JE detail returns to the same selection.
+  const [, setLocation] = useLocation();
+  const searchString    = useSearch();
+  const initialFilters  = useMemo(() => {
+    const p = new URLSearchParams(searchString || "");
+    const today = new Date().toISOString().slice(0, 10);
+    const monthStart = today.slice(0, 8) + "01";
+    const cc = (p.get("cc") || "").split(",").map(s => s.trim()).filter(Boolean);
+    return {
+      centerIds: cc,
+      from: p.get("from") || monthStart,
+      to:   p.get("to")   || today,
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [centerIds, setCenterIds] = useState<string[]>(initialFilters.centerIds);
   const today = new Date().toISOString().slice(0, 10);
   const monthStart = today.slice(0, 8) + "01";
-  const [from, setFrom] = useState<string>(monthStart);
-  const [to, setTo]     = useState<string>(today);
+  const [from, setFrom] = useState<string>(initialFilters.from);
+  const [to, setTo]     = useState<string>(initialFilters.to);
+
+  // Mirror selection into URL with replace:true. Preserves ?tab=analysis
+  // (managed by parent) by merging into the existing params.
+  useEffect(() => {
+    const next = new URLSearchParams(searchString || "");
+    if (centerIds.length) next.set("cc", centerIds.join(",")); else next.delete("cc");
+    if (from && from !== monthStart) next.set("from", from); else next.delete("from");
+    if (to   && to   !== today)      next.set("to",   to);   else next.delete("to");
+    const nextStr = next.toString();
+    const currentStr = new URLSearchParams(searchString || "").toString();
+    if (nextStr !== currentStr) {
+      setLocation(`/accounting/cost-centers${nextStr ? "?" + nextStr : ""}`, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [centerIds.join(","), from, to]);
   const [ai, setAi]         = useState<AiResp | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
 
