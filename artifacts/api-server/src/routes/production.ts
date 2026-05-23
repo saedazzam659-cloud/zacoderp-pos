@@ -33,8 +33,9 @@ import {
   productionForecastsTable,
   productionForecastLinesTable,
   PRODUCTION_FORECAST_STATUSES,
-  bomTemplatesTable,
-  bomTemplateLinesTable,
+  productionDowntimeReasonsTable,
+  productionDowntimeEventsTable,
+  DOWNTIME_CATEGORIES,
   productionWasteRecordsTable,
   PRODUCTION_WASTE_TYPES,
   QC_CHECK_TYPES,
@@ -6021,6 +6022,448 @@ router.post("/mrp/run", async (req, res) => {
     res.json({ demand: demandLines, requirements });
   } catch (e: any) {
     req.log?.error?.({ err: e }, "POST /mrp/run failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Round D — Downtime Tracking + OEE (تتبع التوقفات) ───────────────────
+// Two catalogs (reasons, events) + an OEE summary endpoint that combines
+// downtime minutes, work-center capacity, and production-order qty stats.
+// All endpoints companyId-guarded. workCenterId is verified in-company
+// on every write to prevent cross-tenant injection via FK reference.
+
+// ── Reasons catalog ────────────────────────────────────────────────────
+router.get("/downtime-reasons", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const rows = await db
+      .select()
+      .from(productionDowntimeReasonsTable)
+      .where(eq(productionDowntimeReasonsTable.companyId, cid))
+      .orderBy(asc(productionDowntimeReasonsTable.code));
+    res.json(rows);
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /downtime-reasons failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+function validateReasonBody(b: any, res: any) {
+  const code = typeof b.code === "string" ? b.code.trim() : "";
+  const nameAr = typeof b.nameAr === "string" ? b.nameAr.trim() : "";
+  if (!code) { res.status(400).json({ error: "الرمز مطلوب" }); return null; }
+  if (!nameAr) { res.status(400).json({ error: "الاسم العربي مطلوب" }); return null; }
+  const category = typeof b.category === "string"
+    && (DOWNTIME_CATEGORIES as readonly string[]).includes(b.category)
+    ? b.category : "unplanned";
+  return {
+    code,
+    nameAr,
+    nameEn: typeof b.nameEn === "string" && b.nameEn.trim() ? b.nameEn.trim() : null,
+    category,
+    isActive: b.isActive !== false,
+  };
+}
+
+router.post("/downtime-reasons", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const data = validateReasonBody(req.body ?? {}, res);
+    if (!data) return;
+    try {
+      const [row] = await db
+        .insert(productionDowntimeReasonsTable)
+        .values({ ...data, companyId: cid })
+        .returning();
+      res.status(201).json(row);
+    } catch (e: any) {
+      if (e.code === "23505")
+        return void res.status(409).json({ error: "الرمز مستخدم بالفعل" });
+      throw e;
+    }
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "POST /downtime-reasons failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put("/downtime-reasons/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return void res.status(400).json({ error: "معرّف غير صالح" });
+    const data = validateReasonBody(req.body ?? {}, res);
+    if (!data) return;
+    try {
+      const r = await db
+        .update(productionDowntimeReasonsTable)
+        .set(data)
+        .where(
+          and(
+            eq(productionDowntimeReasonsTable.id, id),
+            eq(productionDowntimeReasonsTable.companyId, cid),
+          ),
+        );
+      if ((r as any).rowCount === 0)
+        return void res.status(404).json({ error: "السبب غير موجود" });
+      res.json({ ok: true });
+    } catch (e: any) {
+      if (e.code === "23505")
+        return void res.status(409).json({ error: "الرمز مستخدم بالفعل" });
+      throw e;
+    }
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "PUT /downtime-reasons/:id failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete("/downtime-reasons/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return void res.status(400).json({ error: "معرّف غير صالح" });
+    const r = await db
+      .delete(productionDowntimeReasonsTable)
+      .where(
+        and(
+          eq(productionDowntimeReasonsTable.id, id),
+          eq(productionDowntimeReasonsTable.companyId, cid),
+        ),
+      );
+    if ((r as any).rowCount === 0)
+      return void res.status(404).json({ error: "السبب غير موجود" });
+    res.json({ ok: true });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "DELETE /downtime-reasons/:id failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Events log ────────────────────────────────────────────────────────
+// Filter params: workCenterId (int), from (date YYYY-MM-DD), to (date YYYY-MM-DD)
+// "from/to" filter on startAt by [from 00:00, to+1day 00:00).
+router.get("/downtime-events", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const conds = [eq(productionDowntimeEventsTable.companyId, cid)];
+    if (req.query.workCenterId) {
+      const wcid = Number(req.query.workCenterId);
+      if (Number.isInteger(wcid) && wcid > 0)
+        conds.push(eq(productionDowntimeEventsTable.workCenterId, wcid));
+    }
+    if (typeof req.query.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from)) {
+      conds.push(sql`${productionDowntimeEventsTable.startAt} >= ${req.query.from}::date`);
+    }
+    if (typeof req.query.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to)) {
+      conds.push(sql`${productionDowntimeEventsTable.startAt} < (${req.query.to}::date + INTERVAL '1 day')`);
+    }
+    const rows = await db
+      .select({
+        id: productionDowntimeEventsTable.id,
+        workCenterId: productionDowntimeEventsTable.workCenterId,
+        reasonId: productionDowntimeEventsTable.reasonId,
+        productionOrderId: productionDowntimeEventsTable.productionOrderId,
+        startAt: productionDowntimeEventsTable.startAt,
+        endAt: productionDowntimeEventsTable.endAt,
+        durationMinutes: productionDowntimeEventsTable.durationMinutes,
+        notes: productionDowntimeEventsTable.notes,
+        workCenterCode: workCentersTable.code,
+        workCenterNameAr: workCentersTable.nameAr,
+        reasonCode: productionDowntimeReasonsTable.code,
+        reasonNameAr: productionDowntimeReasonsTable.nameAr,
+        reasonCategory: productionDowntimeReasonsTable.category,
+      })
+      .from(productionDowntimeEventsTable)
+      // Defense-in-depth: even though events.companyId is already filtered,
+      // restrict joined rows to the same company so accidental schema bugs
+      // can never bleed cross-tenant names into the response.
+      .leftJoin(
+        workCentersTable,
+        and(
+          eq(workCentersTable.id, productionDowntimeEventsTable.workCenterId),
+          eq(workCentersTable.companyId, cid),
+        ),
+      )
+      .leftJoin(
+        productionDowntimeReasonsTable,
+        and(
+          eq(productionDowntimeReasonsTable.id, productionDowntimeEventsTable.reasonId),
+          eq(productionDowntimeReasonsTable.companyId, cid),
+        ),
+      )
+      .where(and(...conds))
+      .orderBy(desc(productionDowntimeEventsTable.startAt))
+      .limit(500);
+    res.json(rows);
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /downtime-events failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+async function validateEventBody(cid: number, b: any, res: any) {
+  const wcid = Number(b.workCenterId);
+  if (!Number.isInteger(wcid) || wcid <= 0) {
+    res.status(400).json({ error: "مركز العمل مطلوب" }); return null;
+  }
+  const startAt = b.startAt ? new Date(b.startAt) : null;
+  const endAt = b.endAt ? new Date(b.endAt) : null;
+  if (!startAt || isNaN(startAt.getTime())) {
+    res.status(400).json({ error: "وقت البداية غير صالح" }); return null;
+  }
+  if (!endAt || isNaN(endAt.getTime())) {
+    res.status(400).json({ error: "وقت النهاية غير صالح" }); return null;
+  }
+  if (endAt.getTime() <= startAt.getTime()) {
+    res.status(400).json({ error: "وقت النهاية يجب أن يكون بعد البداية" }); return null;
+  }
+  // Verify workCenter belongs to company — prevents cross-tenant FK ref.
+  const [wc] = await db
+    .select({ id: workCentersTable.id })
+    .from(workCentersTable)
+    .where(and(eq(workCentersTable.id, wcid), eq(workCentersTable.companyId, cid)))
+    .limit(1);
+  if (!wc) {
+    res.status(404).json({ error: "مركز العمل غير موجود" }); return null;
+  }
+  let reasonId: number | null = null;
+  if (b.reasonId !== null && b.reasonId !== undefined && b.reasonId !== "") {
+    const rid = Number(b.reasonId);
+    if (!Number.isInteger(rid) || rid <= 0) {
+      res.status(400).json({ error: "السبب غير صالح" }); return null;
+    }
+    const [rr] = await db
+      .select({ id: productionDowntimeReasonsTable.id })
+      .from(productionDowntimeReasonsTable)
+      .where(and(
+        eq(productionDowntimeReasonsTable.id, rid),
+        eq(productionDowntimeReasonsTable.companyId, cid),
+      ))
+      .limit(1);
+    if (!rr) {
+      res.status(404).json({ error: "السبب غير موجود" }); return null;
+    }
+    reasonId = rid;
+  }
+  const durationMinutes = Math.round((endAt.getTime() - startAt.getTime()) / 60000);
+  return {
+    workCenterId: wcid,
+    reasonId,
+    productionOrderId: b.productionOrderId ? Number(b.productionOrderId) : null,
+    startAt,
+    endAt,
+    durationMinutes,
+    notes: typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null,
+  };
+}
+
+router.post("/downtime-events", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const data = await validateEventBody(cid, req.body ?? {}, res);
+    if (!data) return;
+    const [row] = await db
+      .insert(productionDowntimeEventsTable)
+      .values({
+        ...data,
+        companyId: cid,
+        loggedByUserId: req.authUser?.id ?? null,
+      })
+      .returning();
+    res.status(201).json(row);
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "POST /downtime-events failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete("/downtime-events/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return void res.status(400).json({ error: "معرّف غير صالح" });
+    const r = await db
+      .delete(productionDowntimeEventsTable)
+      .where(
+        and(
+          eq(productionDowntimeEventsTable.id, id),
+          eq(productionDowntimeEventsTable.companyId, cid),
+        ),
+      );
+    if ((r as any).rowCount === 0)
+      return void res.status(404).json({ error: "الحدث غير موجود" });
+    res.json({ ok: true });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "DELETE /downtime-events/:id failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── OEE Summary ────────────────────────────────────────────────────────
+// GET /api/production/oee?from=YYYY-MM-DD&to=YYYY-MM-DD[&workCenterId=N]
+// Returns one row per work center with:
+//   plannedMinutes      = capacityHoursPerDay * 60 * dayCount
+//   downtimeMinutes     = sum(events.duration in range, split planned/unplanned)
+//   availableMinutes    = plannedMinutes - downtimeMinutes (clamped >=0)
+//   producedQty/wasteQty/goodQty = aggregated from production_orders
+//                          where workCenterId matches AND status='completed'
+//                          AND completedAt in [from, to+1day)
+//   availability        = availableMinutes / plannedMinutes
+//   quality             = goodQty / (goodQty + wasteQty)
+//   oee                 = availability * quality
+router.get("/oee", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const from = typeof req.query.from === "string" ? req.query.from : "";
+    const to = typeof req.query.to === "string" ? req.query.to : "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to))
+      return void res.status(400).json({ error: "from و to بصيغة YYYY-MM-DD" });
+    if (to < from)
+      return void res.status(400).json({ error: "to قبل from" });
+    // Inclusive day count.
+    const dayCount = Math.round(
+      (new Date(to + "T00:00:00Z").getTime() - new Date(from + "T00:00:00Z").getTime())
+        / 86400000,
+    ) + 1;
+
+    const wcConds = [
+      eq(workCentersTable.companyId, cid),
+      eq(workCentersTable.isActive, true),
+    ];
+    if (req.query.workCenterId) {
+      const wcid = Number(req.query.workCenterId);
+      if (Number.isInteger(wcid) && wcid > 0)
+        wcConds.push(eq(workCentersTable.id, wcid));
+    }
+    const centers = await db
+      .select({
+        id: workCentersTable.id,
+        code: workCentersTable.code,
+        nameAr: workCentersTable.nameAr,
+        capacityHoursPerDay: workCentersTable.capacityHoursPerDay,
+      })
+      .from(workCentersTable)
+      .where(and(...wcConds))
+      .orderBy(asc(workCentersTable.code));
+    if (centers.length === 0)
+      return void res.json({ from, to, dayCount, centers: [] });
+
+    const centerIds = centers.map((c) => c.id);
+    // Pull downtime + production aggregates in parallel.
+    const [downtimeAgg, prodAgg] = await Promise.all([
+      db
+        .select({
+          workCenterId: productionDowntimeEventsTable.workCenterId,
+          category: productionDowntimeReasonsTable.category,
+          totalMinutes: sql<string>`coalesce(sum(${productionDowntimeEventsTable.durationMinutes}), 0)::text`,
+        })
+        .from(productionDowntimeEventsTable)
+        .leftJoin(
+          productionDowntimeReasonsTable,
+          eq(productionDowntimeReasonsTable.id, productionDowntimeEventsTable.reasonId),
+        )
+        .where(
+          and(
+            eq(productionDowntimeEventsTable.companyId, cid),
+            inArray(productionDowntimeEventsTable.workCenterId, centerIds),
+            sql`${productionDowntimeEventsTable.startAt} >= ${from}::date`,
+            sql`${productionDowntimeEventsTable.startAt} < (${to}::date + INTERVAL '1 day')`,
+          ),
+        )
+        .groupBy(
+          productionDowntimeEventsTable.workCenterId,
+          productionDowntimeReasonsTable.category,
+        ),
+      db
+        .select({
+          workCenterId: productionOrdersTable.workCenterId,
+          produced: sql<string>`coalesce(sum(${productionOrdersTable.producedQty}), 0)::text`,
+          waste: sql<string>`coalesce(sum(${productionOrdersTable.wasteQty}), 0)::text`,
+        })
+        .from(productionOrdersTable)
+        .where(
+          and(
+            eq(productionOrdersTable.companyId, cid),
+            inArray(productionOrdersTable.workCenterId, centerIds),
+            eq(productionOrdersTable.status, "completed"),
+            sql`${productionOrdersTable.completedAt} >= ${from}::date`,
+            sql`${productionOrdersTable.completedAt} < (${to}::date + INTERVAL '1 day')`,
+          ),
+        )
+        .groupBy(productionOrdersTable.workCenterId),
+    ]);
+
+    // Build lookup maps. plannedMap[wcid] / unplannedMap[wcid] / nullCategoryMap[wcid]
+    const dtMap = new Map<number, { planned: number; unplanned: number; uncategorized: number }>();
+    for (const r of downtimeAgg) {
+      if (r.workCenterId == null) continue;
+      const cur = dtMap.get(r.workCenterId) ?? { planned: 0, unplanned: 0, uncategorized: 0 };
+      const mins = Number(r.totalMinutes);
+      if (r.category === "planned") cur.planned += mins;
+      else if (r.category === "unplanned") cur.unplanned += mins;
+      else cur.uncategorized += mins;
+      dtMap.set(r.workCenterId, cur);
+    }
+    const prodMap = new Map<number, { produced: number; waste: number }>();
+    for (const r of prodAgg) {
+      if (r.workCenterId == null) continue;
+      prodMap.set(r.workCenterId, {
+        produced: Number(r.produced),
+        waste: Number(r.waste),
+      });
+    }
+
+    const result = centers.map((c) => {
+      const plannedMinutes = Math.round(Number(c.capacityHoursPerDay) * 60 * dayCount);
+      const dt = dtMap.get(c.id) ?? { planned: 0, unplanned: 0, uncategorized: 0 };
+      const downtimeMinutes = dt.planned + dt.unplanned + dt.uncategorized;
+      const availableMinutes = Math.max(0, plannedMinutes - downtimeMinutes);
+      const prod = prodMap.get(c.id) ?? { produced: 0, waste: 0 };
+      const totalUnits = prod.produced + prod.waste;
+      // produced already excludes waste in this schema's accounting.
+      const goodQty = prod.produced;
+      const availability = plannedMinutes > 0 ? availableMinutes / plannedMinutes : 0;
+      // If nothing was produced in the period we cannot evaluate quality.
+      // Returning 1.0 here would falsely inflate OEE to 100% for an idle
+      // machine, so we set quality=0 and let oee collapse to 0. The UI
+      // can distinguish "no production" via totalUnits=0 if it wants to
+      // show a separate "N/A" label.
+      const quality = totalUnits > 0 ? goodQty / totalUnits : 0;
+      const oee = availability * quality;
+      return {
+        workCenterId: c.id,
+        code: c.code,
+        nameAr: c.nameAr,
+        capacityHoursPerDay: Number(c.capacityHoursPerDay),
+        plannedMinutes,
+        downtimePlanned: dt.planned,
+        downtimeUnplanned: dt.unplanned,
+        downtimeUncategorized: dt.uncategorized,
+        downtimeMinutes,
+        availableMinutes,
+        producedQty: prod.produced,
+        wasteQty: prod.waste,
+        goodQty,
+        availability: Number(availability.toFixed(4)),
+        quality: Number(quality.toFixed(4)),
+        oee: Number(oee.toFixed(4)),
+      };
+    });
+    res.json({ from, to, dayCount, centers: result });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /oee failed");
     res.status(500).json({ error: e.message });
   }
 });

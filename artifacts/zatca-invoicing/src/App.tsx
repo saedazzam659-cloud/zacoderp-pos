@@ -132,6 +132,7 @@ import MyPerformance from "@/pages/production/MyPerformance";
 import QualityTemplates from "@/pages/production/QualityTemplates";
 import ShiftCalendar from "@/pages/production/ShiftCalendar";
 import MrpPlanning from "@/pages/production/MrpPlanning";
+import DowntimeOee from "@/pages/production/DowntimeOee";
 import WorkCenters from "@/pages/production/WorkCenters";
 import QualityChecks from "@/pages/production/QualityChecks";
 import ProductionRoutings from "@/pages/production/ProductionRoutings";
@@ -704,6 +705,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/production/quality-templates"  module="production"     component={QualityTemplates} />}
             {!isSuperAdmin && <PermRoute path="/production/shifts"             module="production"     component={ShiftCalendar} />}
             {!isSuperAdmin && <PermRoute path="/production/mrp"                module="production"     component={MrpPlanning} />}
+            {!isSuperAdmin && <PermRoute path="/production/downtime"           module="production"     component={DowntimeOee} />}
 
             {/* Contracting / Construction ERP — gated by `contracting` permission. */}
             {!isSuperAdmin && <PermRoute path="/contracting"                  module="contracting"    component={ContractingDashboard} />}

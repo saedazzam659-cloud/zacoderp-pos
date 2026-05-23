@@ -604,6 +604,7 @@
     "qualityTemplates": "QC Templates",
     "shiftCalendar": "Shift Calendar",
     "mrpPlanning": "MRP Planning",
+    "downtimeOee": "Downtime & OEE",
     "productionQualityReport": "QC Report",
     "operatorPerformance": "Operator Performance",
     "myPerformance": "My Performance",

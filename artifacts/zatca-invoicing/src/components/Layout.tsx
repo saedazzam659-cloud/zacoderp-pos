@@ -211,6 +211,7 @@ const productionSubNav: NavDef[] = [
   { nameKey: "nav.qualityTemplates",    href: "/production/quality-templates", icon: FileText, permKey: "production" },
   { nameKey: "nav.shiftCalendar",       href: "/production/shifts",            icon: CalendarClock, permKey: "production" },
   { nameKey: "nav.mrpPlanning",         href: "/production/mrp",               icon: Calculator, permKey: "production" },
+  { nameKey: "nav.downtimeOee",         href: "/production/downtime",          icon: Activity, permKey: "production" },
   { nameKey: "nav.productionQualityReport", href: "/production/quality-report", icon: ShieldCheck, permKey: "production" },
   { nameKey: "nav.operatorPerformance", href: "/production/operator-performance", icon: Users, permKey: "production" },
   { nameKey: "nav.myPerformance",       href: "/production/my-performance",       icon: Trophy, permKey: "production" },

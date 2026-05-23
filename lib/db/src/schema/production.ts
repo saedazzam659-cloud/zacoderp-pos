@@ -1032,3 +1032,91 @@ export const insertProductionForecastLineSchema = createInsertSchema(
 export type ProductionForecast = typeof productionForecastsTable.$inferSelect;
 export type ProductionForecastLine =
   typeof productionForecastLinesTable.$inferSelect;
+
+// ─── ROUND D — Downtime Tracking + OEE (تتبع التوقفات + OEE) ─────────────
+// Downtime events log every minute a work center is NOT producing —
+// either planned (PM, changeover, breaks) or unplanned (breakdown,
+// material shortage). Combined with the existing shift capacity
+// (`workCenters.capacityHoursPerDay`) and production order qty fields
+// (`producedQty` / `wasteQty`), we can compute an OEE-lite metric:
+//
+//   Availability = (planned_minutes - downtime_minutes) / planned_minutes
+//   Quality      = producedQty / (producedQty + wasteQty)
+//   OEE          = Availability × Quality
+//
+// Performance dimension (actual rate vs ideal cycle time) is omitted in
+// this MVP because we don't yet store per-product ideal cycle times.
+//
+// Multi-tenant: every table has companyId; queries scope on it.
+// Not branch-scoped — downtime is a work-center concern.
+export const DOWNTIME_CATEGORIES = ["planned", "unplanned"] as const;
+export type DowntimeCategory = (typeof DOWNTIME_CATEGORIES)[number];
+
+export const productionDowntimeReasonsTable = pgTable(
+  "production_downtime_reasons",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    code: text("code").notNull(),           // e.g. "BRK01", "PM"
+    nameAr: text("name_ar").notNull(),
+    nameEn: text("name_en"),
+    category: text("category").notNull().default("unplanned"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byCompany: index("dt_reason_company_idx").on(t.companyId),
+    uniqCode: uniqueIndex("dt_reason_company_code_uniq").on(
+      t.companyId,
+      t.code,
+    ),
+  }),
+);
+
+export const productionDowntimeEventsTable = pgTable(
+  "production_downtime_events",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    workCenterId: integer("work_center_id")
+      .notNull()
+      .references(() => workCentersTable.id, { onDelete: "cascade" }),
+    reasonId: integer("reason_id").references(
+      () => productionDowntimeReasonsTable.id,
+      { onDelete: "set null" },
+    ),
+    productionOrderId: integer("production_order_id"),
+    startAt: timestamp("start_at").notNull(),
+    endAt: timestamp("end_at").notNull(),
+    // Materialised on save so reporting queries don't need EXTRACT(epoch …)
+    // every time. Required to be non-null and >= 0.
+    durationMinutes: integer("duration_minutes").notNull().default(0),
+    notes: text("notes"),
+    loggedByUserId: integer("logged_by_user_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byCompany: index("dt_event_company_idx").on(t.companyId),
+    byWcStart: index("dt_event_wc_start_idx").on(
+      t.companyId,
+      t.workCenterId,
+      t.startAt,
+    ),
+  }),
+);
+
+export const insertDowntimeReasonSchema = createInsertSchema(
+  productionDowntimeReasonsTable,
+).omit({ id: true, createdAt: true });
+export const insertDowntimeEventSchema = createInsertSchema(
+  productionDowntimeEventsTable,
+).omit({ id: true, createdAt: true, durationMinutes: true });
+
+export type ProductionDowntimeReason =
+  typeof productionDowntimeReasonsTable.$inferSelect;
+export type ProductionDowntimeEvent =
+  typeof productionDowntimeEventsTable.$inferSelect;
