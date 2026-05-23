@@ -28,6 +28,8 @@ import {
   productionQualityChecksTable,
   productionQualityCheckTemplatesTable,
   productionQualityCheckTemplateItemsTable,
+  productionShiftsTable,
+  productionShiftHolidaysTable,
   productionWasteRecordsTable,
   PRODUCTION_WASTE_TYPES,
   QC_CHECK_TYPES,
@@ -5259,6 +5261,316 @@ router.delete("/quality-templates/:id", async (req, res) => {
     res.json({ ok: true });
   } catch (e: any) {
     req.log?.error?.({ err: e }, "DELETE /quality-templates/:id failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Round I — Shift Calendar (تقويم الورديات) ────────────────────────────
+// Catalog data — NOT branch-scoped. Code is unique per company. Times are
+// stored as "HH:MM" strings; daysOfWeek is an int array [0..6] (Sun=0).
+//
+// Holidays: when `shiftId` is NULL the holiday applies to ALL shifts that
+// day; otherwise just that one shift. Used by the planning UI to grey
+// out non-working days.
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+function normalizeDaysOfWeek(input: unknown): number[] | null {
+  if (!Array.isArray(input)) return null;
+  const out: number[] = [];
+  for (const v of input) {
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 0 || n > 6) return null;
+    if (!out.includes(n)) out.push(n);
+  }
+  out.sort();
+  return out;
+}
+
+router.get("/shifts", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const activeOnly = req.query.activeOnly === "true";
+    const conds = [eq(productionShiftsTable.companyId, cid)];
+    if (activeOnly) conds.push(eq(productionShiftsTable.isActive, true));
+    const rows = await db
+      .select()
+      .from(productionShiftsTable)
+      .where(and(...conds))
+      .orderBy(asc(productionShiftsTable.startTime), asc(productionShiftsTable.name));
+    res.json(rows);
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /shifts failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/shifts", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const b = req.body ?? {};
+    const name = typeof b.name === "string" ? b.name.trim() : "";
+    const code = typeof b.code === "string" ? b.code.trim() : "";
+    const startTime = typeof b.startTime === "string" ? b.startTime.trim() : "";
+    const endTime = typeof b.endTime === "string" ? b.endTime.trim() : "";
+    if (!name) return void res.status(400).json({ error: "اسم الوردية مطلوب" });
+    if (!code) return void res.status(400).json({ error: "رمز الوردية مطلوب" });
+    if (!TIME_RE.test(startTime))
+      return void res.status(400).json({ error: "وقت البداية بصيغة HH:MM" });
+    if (!TIME_RE.test(endTime))
+      return void res.status(400).json({ error: "وقت النهاية بصيغة HH:MM" });
+    if (startTime === endTime)
+      return void res
+        .status(400)
+        .json({ error: "وقت البداية والنهاية لا يمكن أن يكونا متطابقين" });
+    const dow = normalizeDaysOfWeek(b.daysOfWeek);
+    if (!dow || dow.length === 0)
+      return void res
+        .status(400)
+        .json({ error: "اختر يوماً واحداً على الأقل من أيام الأسبوع" });
+    const color =
+      typeof b.color === "string" && HEX_RE.test(b.color) ? b.color : "#3b82f6";
+    const breakMinutes =
+      b.breakMinutes != null && b.breakMinutes !== ""
+        ? Math.max(0, Number(b.breakMinutes))
+        : 0;
+    if (!Number.isFinite(breakMinutes))
+      return void res.status(400).json({ error: "مدة الراحة غير صالحة" });
+    try {
+      const [row] = await db
+        .insert(productionShiftsTable)
+        .values({
+          companyId: cid,
+          name,
+          code,
+          startTime,
+          endTime,
+          daysOfWeek: dow,
+          breakMinutes,
+          color,
+          isActive: b.isActive !== false,
+          notes: typeof b.notes === "string" ? b.notes.trim() || null : null,
+        })
+        .returning();
+      res.status(201).json(row);
+    } catch (err: any) {
+      // Unique violation on (company_id, code).
+      if (err?.code === "23505") {
+        res.status(409).json({ error: `رمز الوردية "${code}" مستخدم مسبقاً` });
+        return;
+      }
+      throw err;
+    }
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "POST /shifts failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put("/shifts/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return void res.status(400).json({ error: "معرّف غير صالح" });
+    const [existing] = await db
+      .select({ id: productionShiftsTable.id })
+      .from(productionShiftsTable)
+      .where(
+        and(
+          eq(productionShiftsTable.id, id),
+          eq(productionShiftsTable.companyId, cid),
+        ),
+      )
+      .limit(1);
+    if (!existing) return void res.status(404).json({ error: "الوردية غير موجودة" });
+    const b = req.body ?? {};
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+    if (typeof b.name === "string") {
+      const n = b.name.trim();
+      if (!n) return void res.status(400).json({ error: "اسم الوردية مطلوب" });
+      updates.name = n;
+    }
+    if (typeof b.code === "string") {
+      const c = b.code.trim();
+      if (!c) return void res.status(400).json({ error: "رمز الوردية مطلوب" });
+      updates.code = c;
+    }
+    if (b.startTime !== undefined) {
+      const t = String(b.startTime).trim();
+      if (!TIME_RE.test(t))
+        return void res.status(400).json({ error: "وقت البداية بصيغة HH:MM" });
+      updates.startTime = t;
+    }
+    if (b.endTime !== undefined) {
+      const t = String(b.endTime).trim();
+      if (!TIME_RE.test(t))
+        return void res.status(400).json({ error: "وقت النهاية بصيغة HH:MM" });
+      updates.endTime = t;
+    }
+    if (b.daysOfWeek !== undefined) {
+      const dow = normalizeDaysOfWeek(b.daysOfWeek);
+      if (!dow || dow.length === 0)
+        return void res
+          .status(400)
+          .json({ error: "اختر يوماً واحداً على الأقل من أيام الأسبوع" });
+      updates.daysOfWeek = dow;
+    }
+    if (b.color !== undefined) {
+      const c = String(b.color);
+      if (!HEX_RE.test(c))
+        return void res.status(400).json({ error: "اللون يجب أن يكون hex مثل #3b82f6" });
+      updates.color = c;
+    }
+    if (b.breakMinutes !== undefined) {
+      const n = Number(b.breakMinutes);
+      if (!Number.isFinite(n) || n < 0)
+        return void res.status(400).json({ error: "مدة الراحة غير صالحة" });
+      updates.breakMinutes = n;
+    }
+    if (b.isActive !== undefined) updates.isActive = !!b.isActive;
+    if (b.notes !== undefined) {
+      updates.notes =
+        typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null;
+    }
+    try {
+      await db
+        .update(productionShiftsTable)
+        .set(updates)
+        .where(eq(productionShiftsTable.id, id));
+      res.json({ ok: true });
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        res.status(409).json({ error: "رمز الوردية مستخدم مسبقاً" });
+        return;
+      }
+      throw err;
+    }
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "PUT /shifts/:id failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete("/shifts/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return void res.status(400).json({ error: "معرّف غير صالح" });
+    const r = await db
+      .delete(productionShiftsTable)
+      .where(
+        and(
+          eq(productionShiftsTable.id, id),
+          eq(productionShiftsTable.companyId, cid),
+        ),
+      );
+    if ((r as any).rowCount === 0)
+      return void res.status(404).json({ error: "الوردية غير موجودة" });
+    res.json({ ok: true });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "DELETE /shifts/:id failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Holidays ─────────────────────────────────────────────────────────────
+router.get("/shift-holidays", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const from = typeof req.query.from === "string" && DATE_RE.test(req.query.from)
+      ? req.query.from
+      : null;
+    const to = typeof req.query.to === "string" && DATE_RE.test(req.query.to)
+      ? req.query.to
+      : null;
+    const conds = [eq(productionShiftHolidaysTable.companyId, cid)];
+    if (from) conds.push(sql`${productionShiftHolidaysTable.date} >= ${from}`);
+    if (to) conds.push(sql`${productionShiftHolidaysTable.date} <= ${to}`);
+    const rows = await db
+      .select()
+      .from(productionShiftHolidaysTable)
+      .where(and(...conds))
+      .orderBy(asc(productionShiftHolidaysTable.date));
+    res.json(rows);
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /shift-holidays failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/shift-holidays", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const b = req.body ?? {};
+    const name = typeof b.name === "string" ? b.name.trim() : "";
+    const date = typeof b.date === "string" ? b.date.trim() : "";
+    if (!name) return void res.status(400).json({ error: "اسم العطلة مطلوب" });
+    if (!DATE_RE.test(date))
+      return void res.status(400).json({ error: "التاريخ بصيغة YYYY-MM-DD" });
+    const shiftId =
+      b.shiftId != null && b.shiftId !== "" ? Number(b.shiftId) : null;
+    // If a specific shift is named, make sure it belongs to the caller's company.
+    if (shiftId) {
+      const [s] = await db
+        .select({ id: productionShiftsTable.id })
+        .from(productionShiftsTable)
+        .where(
+          and(
+            eq(productionShiftsTable.id, shiftId),
+            eq(productionShiftsTable.companyId, cid),
+          ),
+        )
+        .limit(1);
+      if (!s) return void res.status(400).json({ error: "الوردية المحددة غير موجودة" });
+    }
+    const [row] = await db
+      .insert(productionShiftHolidaysTable)
+      .values({
+        companyId: cid,
+        shiftId,
+        date,
+        name,
+        isFullDay: b.isFullDay !== false,
+        notes: typeof b.notes === "string" ? b.notes.trim() || null : null,
+      })
+      .returning();
+    res.status(201).json(row);
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "POST /shift-holidays failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete("/shift-holidays/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return void res.status(400).json({ error: "معرّف غير صالح" });
+    const r = await db
+      .delete(productionShiftHolidaysTable)
+      .where(
+        and(
+          eq(productionShiftHolidaysTable.id, id),
+          eq(productionShiftHolidaysTable.companyId, cid),
+        ),
+      );
+    if ((r as any).rowCount === 0)
+      return void res.status(404).json({ error: "العطلة غير موجودة" });
+    res.json({ ok: true });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "DELETE /shift-holidays/:id failed");
     res.status(500).json({ error: e.message });
   }
 });

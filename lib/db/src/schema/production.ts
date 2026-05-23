@@ -867,3 +867,87 @@ export type ProductionWasteRecord =
 export type InsertProductionWasteRecord = z.infer<
   typeof insertProductionWasteRecordSchema
 >;
+
+// ─── ROUND I — Shift Calendar (تقويم الورديات) ─────────────────────────────
+// Defines named shifts (morning/evening/night/custom) per company with
+// start/end times and active weekdays. Shifts are catalog data (NOT
+// branch-scoped) used to plan capacity and bound production-order
+// scheduling. Holidays/exception dates override the weekly pattern.
+//
+// `daysOfWeek` is a Postgres int[] of weekday ordinals 0..6 where 0=Sunday
+// (matches `Date.prototype.getDay()`). Stored as int array to keep
+// "which days does this shift run?" trivially queryable without a join
+// table — typical row has 5-7 entries.
+//
+// `startTime`/`endTime` are stored as text "HH:MM" (24h). When endTime
+// is lexicographically <= startTime, the shift spans midnight (e.g.
+// 22:00 → 06:00) — consumers must handle that.
+//
+// No JE / no posting — purely planning + analytics master data.
+export const productionShiftsTable = pgTable(
+  "production_shifts",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    name: text("name").notNull(), // "وردية الصباح"
+    code: text("code").notNull(), // "M" / "MORNING" — unique per company
+    startTime: text("start_time").notNull(), // "06:00"
+    endTime: text("end_time").notNull(),     // "14:00"
+    daysOfWeek: jsonb("days_of_week")
+      .$type<number[]>()
+      .notNull()
+      .default(sql`'[0,1,2,3,4]'::jsonb`),
+    breakMinutes: integer("break_minutes").notNull().default(0),
+    color: text("color").notNull().default("#3b82f6"),
+    isActive: boolean("is_active").notNull().default(true),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byCompany: index("prod_shift_company_idx").on(t.companyId),
+    uniqCode: uniqueIndex("prod_shift_company_code_uniq").on(
+      t.companyId,
+      t.code,
+    ),
+  }),
+);
+
+// Exception dates: full-day closures (national holidays, plant
+// shutdowns) OR partial overrides (single-shift adjustments). When
+// `shiftId` is NULL the holiday applies to ALL shifts that day; when
+// set, only that one shift is overridden.
+export const productionShiftHolidaysTable = pgTable(
+  "production_shift_holidays",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    shiftId: integer("shift_id").references(() => productionShiftsTable.id, {
+      onDelete: "cascade",
+    }),
+    date: date("date").notNull(),
+    name: text("name").notNull(), // "اليوم الوطني"
+    isFullDay: boolean("is_full_day").notNull().default(true),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byCompany: index("prod_shift_holiday_company_idx").on(t.companyId),
+    byDate: index("prod_shift_holiday_date_idx").on(t.companyId, t.date),
+  }),
+);
+
+export const insertProductionShiftSchema = createInsertSchema(
+  productionShiftsTable,
+).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertProductionShiftHolidaySchema = createInsertSchema(
+  productionShiftHolidaysTable,
+).omit({ id: true, createdAt: true });
+
+export type ProductionShift = typeof productionShiftsTable.$inferSelect;
+export type ProductionShiftHoliday =
+  typeof productionShiftHolidaysTable.$inferSelect;

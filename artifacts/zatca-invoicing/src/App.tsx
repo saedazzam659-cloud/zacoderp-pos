@@ -130,6 +130,7 @@ import QualityReport from "@/pages/production/QualityReport";
 import OperatorPerformance from "@/pages/production/OperatorPerformance";
 import MyPerformance from "@/pages/production/MyPerformance";
 import QualityTemplates from "@/pages/production/QualityTemplates";
+import ShiftCalendar from "@/pages/production/ShiftCalendar";
 import WorkCenters from "@/pages/production/WorkCenters";
 import QualityChecks from "@/pages/production/QualityChecks";
 import ProductionRoutings from "@/pages/production/ProductionRoutings";
@@ -700,6 +701,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/production/operator-performance" module="production"  component={OperatorPerformance} />}
             {!isSuperAdmin && <PermRoute path="/production/my-performance"     module="production"     component={MyPerformance} />}
             {!isSuperAdmin && <PermRoute path="/production/quality-templates"  module="production"     component={QualityTemplates} />}
+            {!isSuperAdmin && <PermRoute path="/production/shifts"             module="production"     component={ShiftCalendar} />}
 
             {/* Contracting / Construction ERP — gated by `contracting` permission. */}
             {!isSuperAdmin && <PermRoute path="/contracting"                  module="contracting"    component={ContractingDashboard} />}

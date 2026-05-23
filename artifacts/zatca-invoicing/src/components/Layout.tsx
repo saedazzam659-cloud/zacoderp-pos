@@ -22,6 +22,7 @@ import {
   Library,
   Brain,
   Trophy,
+  CalendarClock,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -208,6 +209,7 @@ const productionSubNav: NavDef[] = [
   { nameKey: "nav.workCenters",         href: "/production/work-centers", icon: Factory, permKey: "production" },
   { nameKey: "nav.productionQuality",   href: "/production/quality",   icon: ShieldCheck, permKey: "production" },
   { nameKey: "nav.qualityTemplates",    href: "/production/quality-templates", icon: FileText, permKey: "production" },
+  { nameKey: "nav.shiftCalendar",       href: "/production/shifts",            icon: CalendarClock, permKey: "production" },
   { nameKey: "nav.productionQualityReport", href: "/production/quality-report", icon: ShieldCheck, permKey: "production" },
   { nameKey: "nav.operatorPerformance", href: "/production/operator-performance", icon: Users, permKey: "production" },
   { nameKey: "nav.myPerformance",       href: "/production/my-performance",       icon: Trophy, permKey: "production" },
