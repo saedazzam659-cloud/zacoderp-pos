@@ -33,6 +33,7 @@ import {
   PRODUCTION_ORDER_STATUSES,
   PRODUCTION_STATUS_TRANSITIONS,
   PRODUCTION_STAGE_STATUSES,
+  usersTable,
   type ProductionOrderStatus,
   type ProductionStageStatus,
 } from "@workspace/db";
@@ -3583,6 +3584,244 @@ router.get("/quality-checks/report", async (req, res) => {
 
     res.json({ byResult, byCheckType, topFailingProducts, qcResults: QC_RESULTS });
   } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Round 12 — Operator Performance Report. Aggregates per-operator stats from
+// three existing data sources (no new tables): production_order_stages
+// (throughput + duration), production_waste_records (scrap attribution), and
+// production_quality_checks (QC fails on stages they ran). All sources are
+// branch-scoped via the parent order. Read-only.
+router.get("/operators/performance", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const from = typeof req.query.from === "string" ? req.query.from : null;
+    const to = typeof req.query.to === "string" ? req.query.to : null;
+    const branchScope = effectiveBranchCondition(
+      req,
+      productionOrdersTable.branchId,
+      req.query.branchId,
+    );
+    if (branchScope.deny) {
+      res.json({ operators: [], totals: null });
+      return;
+    }
+
+    // ── Stages: throughput, duration, stage-level waste, output ────────────
+    // Anchor the date filter on the stage's completedAt (a finished stage is
+    // the unit of "operator productivity"); fall back to startedAt for the
+    // in-progress edge case so we don't lose recently started work.
+    const stageConds = [eq(productionOrdersTable.companyId, cid)];
+    if (from)
+      stageConds.push(
+        sql`COALESCE(${productionOrderStagesTable.completedAt}, ${productionOrderStagesTable.startedAt}) >= ${from}`,
+      );
+    if (to)
+      stageConds.push(
+        sql`COALESCE(${productionOrderStagesTable.completedAt}, ${productionOrderStagesTable.startedAt}) < (${to}::date + interval '1 day')`,
+      );
+    if (branchScope.cond) stageConds.push(branchScope.cond);
+    stageConds.push(sql`${productionOrderStagesTable.operatorUserId} IS NOT NULL`);
+
+    const stageRows = await db
+      .select({
+        operatorUserId: productionOrderStagesTable.operatorUserId,
+        stagesTotal: sql<number>`COUNT(*)::int`,
+        stagesCompleted: sql<number>`COUNT(*) FILTER (WHERE ${productionOrderStagesTable.status} = 'done')::int`,
+        avgDurationMins: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (${productionOrderStagesTable.completedAt} - ${productionOrderStagesTable.startedAt}))/60.0) FILTER (WHERE ${productionOrderStagesTable.completedAt} IS NOT NULL AND ${productionOrderStagesTable.startedAt} IS NOT NULL),0)::float`,
+        totalOutput: sql<number>`COALESCE(SUM(${productionOrderStagesTable.outputQty}),0)::float`,
+        stageWasteQty: sql<number>`COALESCE(SUM(${productionOrderStagesTable.wasteQty}),0)::float`,
+      })
+      .from(productionOrderStagesTable)
+      .innerJoin(
+        productionOrdersTable,
+        eq(productionOrdersTable.id, productionOrderStagesTable.orderId),
+      )
+      .where(and(...stageConds))
+      .groupBy(productionOrderStagesTable.operatorUserId);
+
+    // ── Waste records: events, qty, cost — anchored on createdAt ───────────
+    const wasteConds = [eq(productionOrdersTable.companyId, cid)];
+    if (from)
+      wasteConds.push(sql`${productionWasteRecordsTable.createdAt} >= ${from}`);
+    if (to)
+      wasteConds.push(
+        sql`${productionWasteRecordsTable.createdAt} < (${to}::date + interval '1 day')`,
+      );
+    if (branchScope.cond) wasteConds.push(branchScope.cond);
+    wasteConds.push(sql`${productionWasteRecordsTable.operatorUserId} IS NOT NULL`);
+
+    const wasteRows = await db
+      .select({
+        operatorUserId: productionWasteRecordsTable.operatorUserId,
+        wasteEvents: sql<number>`COUNT(*)::int`,
+        wasteQty: sql<number>`COALESCE(SUM(${productionWasteRecordsTable.qty}),0)::float`,
+        wasteCost: sql<number>`COALESCE(SUM(${productionWasteRecordsTable.costImpact}),0)::float`,
+      })
+      .from(productionWasteRecordsTable)
+      .innerJoin(
+        productionOrdersTable,
+        eq(productionOrdersTable.id, productionWasteRecordsTable.orderId),
+      )
+      .where(and(...wasteConds))
+      .groupBy(productionWasteRecordsTable.operatorUserId);
+
+    // ── QC fails attributed to operator via stage.operatorUserId ───────────
+    // We join QC → stage (the operator field lives on the stage, not on the
+    // check), so checks without a stageId or without an operator are not
+    // attributed to anyone — that's by design.
+    const qcConds = [eq(productionQualityChecksTable.companyId, cid)];
+    if (from)
+      qcConds.push(sql`${productionQualityChecksTable.checkedAt} >= ${from}`);
+    if (to)
+      qcConds.push(
+        sql`${productionQualityChecksTable.checkedAt} < (${to}::date + interval '1 day')`,
+      );
+    if (branchScope.cond) qcConds.push(branchScope.cond);
+    qcConds.push(sql`${productionOrderStagesTable.operatorUserId} IS NOT NULL`);
+
+    const qcRows = await db
+      .select({
+        operatorUserId: productionOrderStagesTable.operatorUserId,
+        qcChecks: sql<number>`COUNT(*)::int`,
+        qcFails: sql<number>`COUNT(*) FILTER (WHERE ${productionQualityChecksTable.result} = 'fail')::int`,
+        qcConditionals: sql<number>`COUNT(*) FILTER (WHERE ${productionQualityChecksTable.result} = 'conditional')::int`,
+      })
+      .from(productionQualityChecksTable)
+      .innerJoin(
+        productionOrderStagesTable,
+        eq(productionOrderStagesTable.id, productionQualityChecksTable.stageId),
+      )
+      .innerJoin(
+        productionOrdersTable,
+        eq(productionOrdersTable.id, productionQualityChecksTable.orderId),
+      )
+      .where(and(...qcConds))
+      .groupBy(productionOrderStagesTable.operatorUserId);
+
+    // ── Merge in JS keyed by operatorUserId ────────────────────────────────
+    type Row = {
+      operatorUserId: number;
+      operatorName: string | null;
+      stagesTotal: number;
+      stagesCompleted: number;
+      avgDurationMins: number;
+      totalOutput: number;
+      stageWasteQty: number;
+      wasteEvents: number;
+      wasteQty: number;
+      wasteCost: number;
+      qcChecks: number;
+      qcFails: number;
+      qcConditionals: number;
+      wasteRatePct: number;
+      qcFailRatePct: number;
+    };
+    const map = new Map<number, Row>();
+    const ensure = (uid: number | null): Row | null => {
+      if (uid == null) return null;
+      let r = map.get(uid);
+      if (!r) {
+        r = {
+          operatorUserId: uid,
+          operatorName: null,
+          stagesTotal: 0,
+          stagesCompleted: 0,
+          avgDurationMins: 0,
+          totalOutput: 0,
+          stageWasteQty: 0,
+          wasteEvents: 0,
+          wasteQty: 0,
+          wasteCost: 0,
+          qcChecks: 0,
+          qcFails: 0,
+          qcConditionals: 0,
+          wasteRatePct: 0,
+          qcFailRatePct: 0,
+        };
+        map.set(uid, r);
+      }
+      return r;
+    };
+    for (const s of stageRows) {
+      const r = ensure(s.operatorUserId);
+      if (!r) continue;
+      r.stagesTotal = Number(s.stagesTotal) || 0;
+      r.stagesCompleted = Number(s.stagesCompleted) || 0;
+      r.avgDurationMins = Number(s.avgDurationMins) || 0;
+      r.totalOutput = Number(s.totalOutput) || 0;
+      r.stageWasteQty = Number(s.stageWasteQty) || 0;
+    }
+    for (const w of wasteRows) {
+      const r = ensure(w.operatorUserId);
+      if (!r) continue;
+      r.wasteEvents = Number(w.wasteEvents) || 0;
+      r.wasteQty = Number(w.wasteQty) || 0;
+      r.wasteCost = Number(w.wasteCost) || 0;
+    }
+    for (const q of qcRows) {
+      const r = ensure(q.operatorUserId);
+      if (!r) continue;
+      r.qcChecks = Number(q.qcChecks) || 0;
+      r.qcFails = Number(q.qcFails) || 0;
+      r.qcConditionals = Number(q.qcConditionals) || 0;
+    }
+    // Derived: waste rate uses the LARGER of stage-tracked vs record-tracked
+    // waste so operators aren't under-attributed when one channel is empty.
+    for (const r of map.values()) {
+      const effectiveWaste = Math.max(r.stageWasteQty, r.wasteQty);
+      const denom = r.totalOutput + effectiveWaste;
+      r.wasteRatePct = denom > 0 ? (effectiveWaste / denom) * 100 : 0;
+      r.qcFailRatePct =
+        r.qcChecks > 0 ? (r.qcFails / r.qcChecks) * 100 : 0;
+    }
+
+    // ── Resolve operator names in one query ────────────────────────────────
+    const ids = [...map.keys()];
+    if (ids.length > 0) {
+      const users = await db
+        .select({ id: usersTable.id, name: usersTable.name })
+        .from(usersTable)
+        .where(inArray(usersTable.id, ids));
+      for (const u of users) {
+        const r = map.get(u.id);
+        if (r) r.operatorName = u.name ?? null;
+      }
+    }
+
+    // Sort by stagesCompleted desc, then output desc (most productive first).
+    const operators = [...map.values()].sort(
+      (a, b) =>
+        b.stagesCompleted - a.stagesCompleted ||
+        b.totalOutput - a.totalOutput,
+    );
+
+    const totals = operators.reduce(
+      (acc, r) => ({
+        operators: acc.operators + 1,
+        stagesCompleted: acc.stagesCompleted + r.stagesCompleted,
+        totalOutput: acc.totalOutput + r.totalOutput,
+        totalWaste: acc.totalWaste + Math.max(r.stageWasteQty, r.wasteQty),
+        totalWasteCost: acc.totalWasteCost + r.wasteCost,
+        qcChecks: acc.qcChecks + r.qcChecks,
+        qcFails: acc.qcFails + r.qcFails,
+      }),
+      {
+        operators: 0,
+        stagesCompleted: 0,
+        totalOutput: 0,
+        totalWaste: 0,
+        totalWasteCost: 0,
+        qcChecks: 0,
+        qcFails: 0,
+      },
+    );
+
+    res.json({ operators, totals });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "operators/performance failed");
     res.status(500).json({ error: e.message });
   }
 });

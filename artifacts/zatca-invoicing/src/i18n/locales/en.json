@@ -602,6 +602,7 @@
     "productionRoutings": "Production Routings",
     "productionQuality": "Quality Control",
     "productionQualityReport": "QC Report",
+    "operatorPerformance": "Operator Performance",
     "productionTraceability": "Batch Traceability",
     "productionWasteReport": "Waste & Scrap Report",
     "maintenanceGroup": "Maintenance",
