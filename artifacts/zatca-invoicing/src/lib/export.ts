@@ -459,11 +459,36 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
 
     const SCALE = 2;
     const body = doc.body;
+
+    // CRITICAL: grow the iframe to fit the ENTIRE document before we
+    // start measuring or capturing. Two reasons:
+    //   1. `getBoundingClientRect()` is viewport-relative — if the iframe
+    //      is shorter than the content, any internal scroll position
+    //      shifts those coordinates relative to the canvas origin and
+    //      our row boundaries land at the wrong y on the captured image.
+    //   2. html2canvas needs a stable, scroll-free layout to render the
+    //      full body without internally scrolling and producing
+    //      coordinates that disagree with what we later measure.
+    // We also explicitly set scroll = (0, 0) so the first element sits
+    // at rect.top ≈ 0 regardless of prior browser behaviour.
+    const fullHeight = Math.max(
+      body.scrollHeight,
+      doc.documentElement.scrollHeight,
+      body.offsetHeight,
+    );
+    iframe.style.height = `${fullHeight + 100}px`;
+    iframe.contentWindow?.scrollTo(0, 0);
+    // One more tick after resize so layout flushes.
+    await new Promise((r) => setTimeout(r, 100));
+
     const canvas = await html2canvas(body, {
       scale:           SCALE,
       useCORS:         true,
       backgroundColor: "#ffffff",
       windowWidth:     1123,
+      windowHeight:    fullHeight + 100,
+      scrollX:         0,
+      scrollY:         0,
       logging:         false,
     });
 
@@ -477,6 +502,11 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
     // don't have to worry about iframe scroll offsets or body margin
     // shifting things vs. the canvas origin (html2canvas captures from
     // body's content-box top-left).
+    // Defensively re-scroll to top — html2canvas v1 clones the doc into
+    // an offscreen container so it should NOT touch the original
+    // iframe's scroll, but if any future upgrade ever does, this
+    // guarantees rect coordinates are still document-absolute.
+    iframe.contentWindow?.scrollTo(0, 0);
     const breakElements = Array.from(
       doc.querySelectorAll("tbody tr, thead, h2, .summary-card, .summary-footer, .footer"),
     ) as HTMLElement[];
