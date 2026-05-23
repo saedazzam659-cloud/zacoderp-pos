@@ -6912,7 +6912,7 @@ router.get("/orders/pending-approval", async (req, res) => {
         createdBy: productionOrdersTable.createdBy,
         productItemId: productionOrdersTable.productItemId,
         productNameAr: itemsTable.nameAr,
-        creatorName: usersTable.fullName,
+        creatorName: sql<string>`coalesce(${usersTable.nameAr}, ${usersTable.nameEn}, ${usersTable.username})`,
       })
       .from(productionOrdersTable)
       .leftJoin(
