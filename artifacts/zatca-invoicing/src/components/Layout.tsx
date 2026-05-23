@@ -21,6 +21,7 @@ import {
   X,
   Library,
   Brain,
+  Trophy,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -208,6 +209,7 @@ const productionSubNav: NavDef[] = [
   { nameKey: "nav.productionQuality",   href: "/production/quality",   icon: ShieldCheck, permKey: "production" },
   { nameKey: "nav.productionQualityReport", href: "/production/quality-report", icon: ShieldCheck, permKey: "production" },
   { nameKey: "nav.operatorPerformance", href: "/production/operator-performance", icon: Users, permKey: "production" },
+  { nameKey: "nav.myPerformance",       href: "/production/my-performance",       icon: Trophy, permKey: "production" },
   { nameKey: "nav.productionTraceability", href: "/production/traceability", icon: GitBranch, permKey: "production" },
   { nameKey: "nav.productionWasteReport", href: "/production/waste-report", icon: Trash2, permKey: "production" },
   { nameKey: "nav.manufacturingSettings", href: "/production/settings", icon: Settings2, permKey: "production" },

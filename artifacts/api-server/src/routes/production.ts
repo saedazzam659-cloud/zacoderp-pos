@@ -3605,9 +3605,28 @@ router.get("/operators/performance", async (req, res) => {
       req.query.branchId,
     );
     if (branchScope.deny) {
-      res.json({ operators: [], totals: null });
+      res.json({ operators: [], totals: null, companyAvg: null });
       return;
     }
+    // Round 13 — Optional per-operator filter. Non-admin/non-superadmin
+    // users are clamped to their own user id so an operator can never use
+    // ?operatorUserId=X to peek at a colleague's stats. Admins and
+    // superadmins may pass any id or omit it to see everyone.
+    const role = req.authUser?.role ?? "";
+    const isPrivileged = role === "superadmin" || role === "admin";
+    let operatorFilter: number | null = null;
+    if (req.query.operatorUserId != null && req.query.operatorUserId !== "") {
+      const n = Number(req.query.operatorUserId);
+      if (Number.isInteger(n) && n > 0) operatorFilter = n;
+    }
+    if (!isPrivileged) {
+      operatorFilter = req.authUser?.id ?? null;
+      if (operatorFilter == null) {
+        res.json({ operators: [], totals: null, companyAvg: null });
+        return;
+      }
+    }
+    const includeCompanyAvg = req.query.includeCompanyAvg === "true";
 
     // ── Stages: throughput, duration, stage-level waste, output ────────────
     // Anchor the date filter on the stage's completedAt (a finished stage is
@@ -3631,6 +3650,11 @@ router.get("/operators/performance", async (req, res) => {
         stagesTotal: sql<number>`COUNT(*)::int`,
         stagesCompleted: sql<number>`COUNT(*) FILTER (WHERE ${productionOrderStagesTable.status} = 'done')::int`,
         avgDurationMins: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (${productionOrderStagesTable.completedAt} - ${productionOrderStagesTable.startedAt}))/60.0) FILTER (WHERE ${productionOrderStagesTable.completedAt} IS NOT NULL AND ${productionOrderStagesTable.startedAt} IS NOT NULL),0)::float`,
+        // Round 13 fix — count of stages that actually have a duration sample,
+        // used for pooled (weighted) avgDurationMins across operators and to
+        // distinguish "operator has 0 duration data" from "operator has data
+        // averaging 0" (so we don't bias the company mean either direction).
+        stagesWithDuration: sql<number>`COUNT(*) FILTER (WHERE ${productionOrderStagesTable.completedAt} IS NOT NULL AND ${productionOrderStagesTable.startedAt} IS NOT NULL)::int`,
         totalOutput: sql<number>`COALESCE(SUM(${productionOrderStagesTable.outputQty}),0)::float`,
         stageWasteQty: sql<number>`COALESCE(SUM(${productionOrderStagesTable.wasteQty}),0)::float`,
       })
@@ -3708,6 +3732,7 @@ router.get("/operators/performance", async (req, res) => {
       stagesTotal: number;
       stagesCompleted: number;
       avgDurationMins: number;
+      stagesWithDuration: number;
       totalOutput: number;
       stageWasteQty: number;
       wasteEvents: number;
@@ -3730,6 +3755,7 @@ router.get("/operators/performance", async (req, res) => {
           stagesTotal: 0,
           stagesCompleted: 0,
           avgDurationMins: 0,
+          stagesWithDuration: 0,
           totalOutput: 0,
           stageWasteQty: 0,
           wasteEvents: 0,
@@ -3751,6 +3777,7 @@ router.get("/operators/performance", async (req, res) => {
       r.stagesTotal = Number(s.stagesTotal) || 0;
       r.stagesCompleted = Number(s.stagesCompleted) || 0;
       r.avgDurationMins = Number(s.avgDurationMins) || 0;
+      r.stagesWithDuration = Number(s.stagesWithDuration) || 0;
       r.totalOutput = Number(s.totalOutput) || 0;
       r.stageWasteQty = Number(s.stageWasteQty) || 0;
     }
@@ -3792,13 +3819,16 @@ router.get("/operators/performance", async (req, res) => {
     }
 
     // Sort by stagesCompleted desc, then output desc (most productive first).
-    const operators = [...map.values()].sort(
+    const allOperators = [...map.values()].sort(
       (a, b) =>
         b.stagesCompleted - a.stagesCompleted ||
         b.totalOutput - a.totalOutput,
     );
 
-    const totals = operators.reduce(
+    // Round 13 — Company-wide rollup MUST be computed from the unfiltered
+    // set so the personal page can show a "you vs company avg" comparison
+    // even when operatorUserId narrows the visible rows.
+    const totals = allOperators.reduce(
       (acc, r) => ({
         operators: acc.operators + 1,
         stagesCompleted: acc.stagesCompleted + r.stagesCompleted,
@@ -3819,7 +3849,72 @@ router.get("/operators/performance", async (req, res) => {
       },
     );
 
-    res.json({ operators, totals });
+    // Round 13 fix (architect) — Privacy + math corrections.
+    //
+    // Privacy: when a non-privileged user is clamped to self, returning
+    // `totals` + `companyAvg` lets them subtract their own row and infer
+    // colleagues' KPIs (an aggregate side-channel). For non-privileged
+    // callers we enforce a k-anonymity floor: company-wide aggregates are
+    // only returned when at least K_ANON other operators exist in scope
+    // (so subtracting self still leaves K_ANON−1 ≥ 4 unknowns).
+    //
+    // Math:
+    //  - avgQcFailRatePct: POOLED (totalQcFails / totalQcChecks) so
+    //    operators with many checks weight more — replaces the previous
+    //    unweighted mean of per-operator rates.
+    //  - avgDurationMins: weighted by stagesWithDuration (number of
+    //    stage samples each operator contributed), so an operator with 1
+    //    sample doesn't equal one with 100.
+    //  - avgWasteRatePct kept as unweighted operator-mean (already
+    //    reasonable for "per-operator typical waste").
+    const K_ANON = 5;
+    const includeAggregates =
+      isPrivileged || allOperators.length >= K_ANON;
+
+    let companyAvg: {
+      avgStagesCompleted: number;
+      avgOutput: number;
+      avgWasteRatePct: number;
+      avgQcFailRatePct: number;
+      avgDurationMins: number;
+      operatorCount: number;
+    } | null = null;
+    if (includeCompanyAvg && includeAggregates && allOperators.length > 0) {
+      const n = allOperators.length;
+      const sumWasteRate = allOperators.reduce(
+        (s, r) => s + r.wasteRatePct,
+        0,
+      );
+      const totalDurationSamples = allOperators.reduce(
+        (s, r) => s + r.stagesWithDuration,
+        0,
+      );
+      const weightedDurSum = allOperators.reduce(
+        (s, r) => s + r.avgDurationMins * r.stagesWithDuration,
+        0,
+      );
+      companyAvg = {
+        avgStagesCompleted: totals.stagesCompleted / n,
+        avgOutput: totals.totalOutput / n,
+        avgWasteRatePct: sumWasteRate / n,
+        avgQcFailRatePct:
+          totals.qcChecks > 0 ? (totals.qcFails / totals.qcChecks) * 100 : 0,
+        avgDurationMins:
+          totalDurationSamples > 0 ? weightedDurSum / totalDurationSamples : 0,
+        operatorCount: n,
+      };
+    }
+
+    const operators =
+      operatorFilter != null
+        ? allOperators.filter((r) => r.operatorUserId === operatorFilter)
+        : allOperators;
+
+    res.json({
+      operators,
+      totals: includeAggregates ? totals : null,
+      companyAvg,
+    });
   } catch (e: any) {
     req.log?.error?.({ err: e }, "operators/performance failed");
     res.status(500).json({ error: e.message });
