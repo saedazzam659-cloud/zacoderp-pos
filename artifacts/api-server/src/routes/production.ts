@@ -30,6 +30,11 @@ import {
   productionQualityCheckTemplateItemsTable,
   productionShiftsTable,
   productionShiftHolidaysTable,
+  productionForecastsTable,
+  productionForecastLinesTable,
+  PRODUCTION_FORECAST_STATUSES,
+  bomTemplatesTable,
+  bomTemplateLinesTable,
   productionWasteRecordsTable,
   PRODUCTION_WASTE_TYPES,
   QC_CHECK_TYPES,
@@ -5571,6 +5576,451 @@ router.delete("/shift-holidays/:id", async (req, res) => {
     res.json({ ok: true });
   } catch (e: any) {
     req.log?.error?.({ err: e }, "DELETE /shift-holidays/:id failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Round F — Forecasting / MRP (تخطيط احتياجات المواد) ──────────────────
+// Forecast CRUD + a live MRP run endpoint that explodes forecasts through
+// BOM templates and computes net requirements. The MRP result is NOT
+// persisted — every call recomputes from current stock + open orders so
+// the output is always fresh.
+//
+// Multi-tenant: companyId guard on every endpoint, BOM/item joins all
+// scoped by company. NOT branch-scoped.
+
+router.get("/forecasts", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const status = typeof req.query.status === "string" ? req.query.status : null;
+    const conds = [eq(productionForecastsTable.companyId, cid)];
+    if (status && (PRODUCTION_FORECAST_STATUSES as readonly string[]).includes(status)) {
+      conds.push(eq(productionForecastsTable.status, status));
+    }
+    const rows = await db
+      .select({
+        id: productionForecastsTable.id,
+        name: productionForecastsTable.name,
+        periodStart: productionForecastsTable.periodStart,
+        periodEnd: productionForecastsTable.periodEnd,
+        status: productionForecastsTable.status,
+        notes: productionForecastsTable.notes,
+        createdAt: productionForecastsTable.createdAt,
+        updatedAt: productionForecastsTable.updatedAt,
+        lineCount: sql<number>`(
+          SELECT COUNT(*)::int FROM ${productionForecastLinesTable}
+          WHERE ${productionForecastLinesTable.forecastId} = ${productionForecastsTable.id}
+        )`,
+      })
+      .from(productionForecastsTable)
+      .where(and(...conds))
+      .orderBy(desc(productionForecastsTable.periodStart), desc(productionForecastsTable.id));
+    res.json(rows);
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /forecasts failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/forecasts/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return void res.status(400).json({ error: "معرّف غير صالح" });
+    const [fc] = await db
+      .select()
+      .from(productionForecastsTable)
+      .where(
+        and(
+          eq(productionForecastsTable.id, id),
+          eq(productionForecastsTable.companyId, cid),
+        ),
+      )
+      .limit(1);
+    if (!fc) return void res.status(404).json({ error: "التوقع غير موجود" });
+    const lines = await db
+      .select({
+        id: productionForecastLinesTable.id,
+        productItemId: productionForecastLinesTable.productItemId,
+        forecastQty: productionForecastLinesTable.forecastQty,
+        notes: productionForecastLinesTable.notes,
+        productNameAr: itemsTable.nameAr,
+        productNameEn: itemsTable.nameEn,
+        productSku: itemsTable.sku,
+      })
+      .from(productionForecastLinesTable)
+      .leftJoin(itemsTable, eq(itemsTable.id, productionForecastLinesTable.productItemId))
+      .where(eq(productionForecastLinesTable.forecastId, id))
+      .orderBy(asc(productionForecastLinesTable.id));
+    res.json({ ...fc, lines });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /forecasts/:id failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+function validateForecastBody(b: any, res: any) {
+  const name = typeof b.name === "string" ? b.name.trim() : "";
+  const periodStart = typeof b.periodStart === "string" ? b.periodStart.trim() : "";
+  const periodEnd = typeof b.periodEnd === "string" ? b.periodEnd.trim() : "";
+  if (!name) { res.status(400).json({ error: "اسم التوقع مطلوب" }); return null; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)) {
+    res.status(400).json({ error: "تواريخ الفترة بصيغة YYYY-MM-DD" }); return null;
+  }
+  if (periodEnd < periodStart) {
+    res.status(400).json({ error: "نهاية الفترة قبل بدايتها" }); return null;
+  }
+  const status = typeof b.status === "string" && (PRODUCTION_FORECAST_STATUSES as readonly string[]).includes(b.status)
+    ? b.status : "draft";
+  return { name, periodStart, periodEnd, status };
+}
+
+function validateForecastLines(b: any, res: any) {
+  if (!Array.isArray(b.lines)) return [];
+  const out: { productItemId: number; forecastQty: string; notes: string | null }[] = [];
+  for (let i = 0; i < b.lines.length; i++) {
+    const ln = b.lines[i] ?? {};
+    const pid = Number(ln.productItemId);
+    const qty = Number(ln.forecastQty);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      res.status(400).json({ error: `السطر ${i + 1}: المنتج مطلوب` });
+      return null;
+    }
+    if (!Number.isFinite(qty) || qty <= 0) {
+      res.status(400).json({ error: `السطر ${i + 1}: الكمية يجب أن تكون موجبة` });
+      return null;
+    }
+    out.push({
+      productItemId: pid,
+      forecastQty: String(qty),
+      notes: typeof ln.notes === "string" && ln.notes.trim() ? ln.notes.trim() : null,
+    });
+  }
+  return out;
+}
+
+router.post("/forecasts", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const b = req.body ?? {};
+    const head = validateForecastBody(b, res);
+    if (!head) return;
+    const lines = validateForecastLines(b, res);
+    if (lines === null) return;
+    const result = await db.transaction(async (tx) => {
+      const [fc] = await tx
+        .insert(productionForecastsTable)
+        .values({
+          companyId: cid,
+          name: head.name,
+          periodStart: head.periodStart,
+          periodEnd: head.periodEnd,
+          status: head.status,
+          notes: typeof b.notes === "string" ? b.notes.trim() || null : null,
+          createdByUserId: req.authUser?.id ?? null,
+        })
+        .returning();
+      if (lines.length > 0) {
+        await tx.insert(productionForecastLinesTable).values(
+          lines.map((l) => ({ ...l, forecastId: fc.id })),
+        );
+      }
+      return fc;
+    });
+    res.status(201).json(result);
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "POST /forecasts failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put("/forecasts/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return void res.status(400).json({ error: "معرّف غير صالح" });
+    const [existing] = await db
+      .select({ id: productionForecastsTable.id })
+      .from(productionForecastsTable)
+      .where(
+        and(
+          eq(productionForecastsTable.id, id),
+          eq(productionForecastsTable.companyId, cid),
+        ),
+      )
+      .limit(1);
+    if (!existing) return void res.status(404).json({ error: "التوقع غير موجود" });
+    const b = req.body ?? {};
+    const head = validateForecastBody(b, res);
+    if (!head) return;
+    const lines = validateForecastLines(b, res);
+    if (lines === null) return;
+    await db.transaction(async (tx) => {
+      await tx
+        .update(productionForecastsTable)
+        .set({
+          name: head.name,
+          periodStart: head.periodStart,
+          periodEnd: head.periodEnd,
+          status: head.status,
+          notes: typeof b.notes === "string" ? b.notes.trim() || null : null,
+          updatedAt: new Date(),
+        })
+        .where(eq(productionForecastsTable.id, id));
+      if (Array.isArray(b.lines)) {
+        // Full-replace pattern (same as QC templates).
+        await tx
+          .delete(productionForecastLinesTable)
+          .where(eq(productionForecastLinesTable.forecastId, id));
+        if (lines.length > 0) {
+          await tx.insert(productionForecastLinesTable).values(
+            lines.map((l) => ({ ...l, forecastId: id })),
+          );
+        }
+      }
+    });
+    res.json({ ok: true });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "PUT /forecasts/:id failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete("/forecasts/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return void res.status(400).json({ error: "معرّف غير صالح" });
+    const r = await db
+      .delete(productionForecastsTable)
+      .where(
+        and(
+          eq(productionForecastsTable.id, id),
+          eq(productionForecastsTable.companyId, cid),
+        ),
+      );
+    if ((r as any).rowCount === 0)
+      return void res.status(404).json({ error: "التوقع غير موجود" });
+    res.json({ ok: true });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "DELETE /forecasts/:id failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── MRP Run ────────────────────────────────────────────────────────────────
+// POST body: { forecastId?: number, lines?: [{ productItemId, forecastQty }] }
+// Returns: {
+//   demand: [...source FG lines exploded],
+//   requirements: [
+//     {
+//       itemId, nameAr, sku, kind: 'fg'|'raw',
+//       requiredQty, onHandQty, openProductionQty, netRequirement,
+//       suggestedAction: 'produce'|'purchase'|'ok',
+//       missingBomTemplate?: boolean  // FG only
+//     }, ...
+//   ]
+// }
+router.post("/mrp/run", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const b = req.body ?? {};
+    let demandLines: { productItemId: number; forecastQty: number }[] = [];
+
+    if (b.forecastId) {
+      const fid = Number(b.forecastId);
+      if (!Number.isInteger(fid) || fid <= 0)
+        return void res.status(400).json({ error: "معرّف توقع غير صالح" });
+      // Confirm forecast is in caller's company before reading lines.
+      const [fc] = await db
+        .select({ id: productionForecastsTable.id })
+        .from(productionForecastsTable)
+        .where(
+          and(
+            eq(productionForecastsTable.id, fid),
+            eq(productionForecastsTable.companyId, cid),
+          ),
+        )
+        .limit(1);
+      if (!fc) return void res.status(404).json({ error: "التوقع غير موجود" });
+      const rows = await db
+        .select({
+          productItemId: productionForecastLinesTable.productItemId,
+          forecastQty: productionForecastLinesTable.forecastQty,
+        })
+        .from(productionForecastLinesTable)
+        .where(eq(productionForecastLinesTable.forecastId, fid));
+      demandLines = rows.map((r) => ({
+        productItemId: r.productItemId,
+        forecastQty: Number(r.forecastQty),
+      }));
+    } else if (Array.isArray(b.lines)) {
+      const lines = validateForecastLines({ lines: b.lines }, res);
+      if (lines === null) return;
+      demandLines = lines.map((l) => ({
+        productItemId: l.productItemId,
+        forecastQty: Number(l.forecastQty),
+      }));
+    } else {
+      return void res.status(400).json({ error: "أرسل forecastId أو lines" });
+    }
+    if (demandLines.length === 0)
+      return void res.json({ demand: [], requirements: [] });
+
+    // 1) Expand BOM. requiredQty[itemId] = { qty, kind }
+    //    FG entries get kind='fg', raw entries kind='raw'.
+    type Req = {
+      qty: number;
+      kind: "fg" | "raw";
+      missingBomTemplate?: boolean;
+    };
+    const reqs = new Map<number, Req>();
+    const bump = (id: number, qty: number, kind: "fg" | "raw") => {
+      const cur = reqs.get(id);
+      if (cur) {
+        cur.qty += qty;
+        // Promote raw→fg if any path needs it as FG (rare; keeps display sane).
+        if (kind === "fg") cur.kind = "fg";
+      } else {
+        reqs.set(id, { qty, kind });
+      }
+    };
+
+    for (const dl of demandLines) {
+      bump(dl.productItemId, dl.forecastQty, "fg");
+      // Find active BOM template for this FG within the company.
+      const [tpl] = await db
+        .select({
+          id: bomTemplatesTable.id,
+          outputQty: bomTemplatesTable.outputQty,
+        })
+        .from(bomTemplatesTable)
+        .where(
+          and(
+            eq(bomTemplatesTable.companyId, cid),
+            eq(bomTemplatesTable.productItemId, dl.productItemId),
+            eq(bomTemplatesTable.isActive, true),
+          ),
+        )
+        .orderBy(desc(bomTemplatesTable.updatedAt))
+        .limit(1);
+      if (!tpl) {
+        // Mark FG as having no BOM so UI can surface it.
+        const cur = reqs.get(dl.productItemId);
+        if (cur) cur.missingBomTemplate = true;
+        continue;
+      }
+      const outputQty = Number(tpl.outputQty) || 1;
+      const scale = dl.forecastQty / outputQty;
+      const rawLines = await db
+        .select({
+          itemId: bomTemplateLinesTable.itemId,
+          quantity: bomTemplateLinesTable.quantity,
+        })
+        .from(bomTemplateLinesTable)
+        .where(eq(bomTemplateLinesTable.templateId, tpl.id));
+      for (const rl of rawLines) {
+        if (!rl.itemId) continue; // free-text BOM line (no item linked)
+        bump(rl.itemId, Number(rl.quantity) * scale, "raw");
+      }
+    }
+
+    const allItemIds = Array.from(reqs.keys());
+    if (allItemIds.length === 0)
+      return void res.json({ demand: demandLines, requirements: [] });
+
+    // 2) Pull item names + on-hand stock + open production qty in 3 parallel queries.
+    const [itemRows, stockRows, prodRows] = await Promise.all([
+      db
+        .select({
+          id: itemsTable.id,
+          nameAr: itemsTable.nameAr,
+          nameEn: itemsTable.nameEn,
+          sku: itemsTable.sku,
+        })
+        .from(itemsTable)
+        .where(
+          and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, allItemIds)),
+        ),
+      db
+        .select({
+          itemId: stockBalanceTable.itemId,
+          totalQty: sql<string>`coalesce(sum(${stockBalanceTable.qty}), 0)::text`,
+        })
+        .from(stockBalanceTable)
+        .where(
+          and(
+            eq(stockBalanceTable.companyId, cid),
+            inArray(stockBalanceTable.itemId, allItemIds),
+          ),
+        )
+        .groupBy(stockBalanceTable.itemId),
+      // Open production orders for FG items only (raw items aren't directly
+      // produced). Excludes completed + cancelled — those don't add supply.
+      db
+        .select({
+          productItemId: productionOrdersTable.productItemId,
+          openQty: sql<string>`coalesce(sum(${productionOrdersTable.plannedQty}), 0)::text`,
+        })
+        .from(productionOrdersTable)
+        .where(
+          and(
+            eq(productionOrdersTable.companyId, cid),
+            inArray(productionOrdersTable.productItemId, allItemIds),
+            sql`${productionOrdersTable.status} NOT IN ('completed','cancelled')`,
+          ),
+        )
+        .groupBy(productionOrdersTable.productItemId),
+    ]);
+
+    const itemMap = new Map(itemRows.map((r) => [r.id, r]));
+    const stockMap = new Map(stockRows.map((r) => [r.itemId, Number(r.totalQty)]));
+    const prodMap = new Map(
+      prodRows.map((r) => [r.productItemId, Number(r.openQty)]),
+    );
+
+    const requirements = allItemIds.map((id) => {
+      const r = reqs.get(id)!;
+      const meta = itemMap.get(id);
+      const onHand = stockMap.get(id) ?? 0;
+      const openProd = r.kind === "fg" ? prodMap.get(id) ?? 0 : 0;
+      const net = Math.max(0, r.qty - onHand - openProd);
+      let action: "produce" | "purchase" | "ok" = "ok";
+      if (net > 0) action = r.kind === "fg" ? "produce" : "purchase";
+      return {
+        itemId: id,
+        nameAr: meta?.nameAr ?? null,
+        nameEn: meta?.nameEn ?? null,
+        sku: meta?.sku ?? null,
+        kind: r.kind,
+        requiredQty: Number(r.qty.toFixed(4)),
+        onHandQty: Number(onHand.toFixed(4)),
+        openProductionQty: Number(openProd.toFixed(4)),
+        netRequirement: Number(net.toFixed(4)),
+        suggestedAction: action,
+        missingBomTemplate: r.missingBomTemplate ?? false,
+      };
+    });
+
+    // Sort: shortages first, then by name.
+    requirements.sort((a, b) => {
+      if (a.netRequirement !== b.netRequirement)
+        return b.netRequirement - a.netRequirement;
+      return (a.nameAr ?? "").localeCompare(b.nameAr ?? "");
+    });
+
+    res.json({ demand: demandLines, requirements });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "POST /mrp/run failed");
     res.status(500).json({ error: e.message });
   }
 });

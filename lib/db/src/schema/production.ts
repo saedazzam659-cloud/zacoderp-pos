@@ -951,3 +951,84 @@ export const insertProductionShiftHolidaySchema = createInsertSchema(
 export type ProductionShift = typeof productionShiftsTable.$inferSelect;
 export type ProductionShiftHoliday =
   typeof productionShiftHolidaysTable.$inferSelect;
+
+// ─── ROUND F — Forecasts / MRP (تخطيط احتياجات المواد) ────────────────────
+// A *forecast* groups one or more demand lines for a future period. Each
+// line names a FINISHED GOOD item and an expected sales quantity. The MRP
+// engine (live calculation — not persisted) then:
+//   1) Expands every FG line through its active BOM template into raw
+//      material requirements (scale = forecastQty / template.outputQty).
+//   2) For every affected item (FG + raw), subtracts on-hand stock
+//      (sum of stock_balance.qty across all warehouses for the company).
+//   3) For FG items, additionally subtracts already-open production
+//      orders (status NOT IN completed/cancelled).
+//   4) Returns a "net requirement" per item with a suggested action
+//      (produce vs purchase).
+//
+// Forecasts are catalog-style master data: per-company, NOT branch-scoped.
+// Status drives lifecycle only — `draft` is editable, `active` is the
+// one(s) MRP runs against by default, `archived` keeps history.
+export const PRODUCTION_FORECAST_STATUSES = [
+  "draft",
+  "active",
+  "archived",
+] as const;
+export type ProductionForecastStatus =
+  (typeof PRODUCTION_FORECAST_STATUSES)[number];
+
+export const productionForecastsTable = pgTable(
+  "production_forecasts",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    status: text("status").notNull().default("draft"),
+    notes: text("notes"),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byCompany: index("prod_forecast_company_idx").on(t.companyId),
+    byPeriod: index("prod_forecast_period_idx").on(
+      t.companyId,
+      t.periodStart,
+      t.periodEnd,
+    ),
+  }),
+);
+
+export const productionForecastLinesTable = pgTable(
+  "production_forecast_lines",
+  {
+    id: serial("id").primaryKey(),
+    forecastId: integer("forecast_id")
+      .notNull()
+      .references(() => productionForecastsTable.id, { onDelete: "cascade" }),
+    productItemId: integer("product_item_id")
+      .notNull()
+      .references(() => itemsTable.id, { onDelete: "cascade" }),
+    forecastQty: numeric("forecast_qty", { precision: 14, scale: 4 })
+      .notNull()
+      .default("0"),
+    notes: text("notes"),
+  },
+  (t) => ({
+    byForecast: index("prod_forecast_line_fc_idx").on(t.forecastId),
+  }),
+);
+
+export const insertProductionForecastSchema = createInsertSchema(
+  productionForecastsTable,
+).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertProductionForecastLineSchema = createInsertSchema(
+  productionForecastLinesTable,
+).omit({ id: true });
+
+export type ProductionForecast = typeof productionForecastsTable.$inferSelect;
+export type ProductionForecastLine =
+  typeof productionForecastLinesTable.$inferSelect;
