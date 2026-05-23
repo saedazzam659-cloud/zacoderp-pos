@@ -3146,6 +3146,8 @@
       "tableDescription": "Description",
       "tableDebit": "Debit",
       "tableCredit": "Credit",
+      "tableBalance": "Balance",
+      "tableNature": "Balance Type",
       "tableEntries": "entries",
       "aiButton": "Analyse with AI",
       "aiLoading": "Analysing...",

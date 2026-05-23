@@ -3149,6 +3149,8 @@
       "tableDescription": "البيان",
       "tableDebit": "مدين",
       "tableCredit": "دائن",
+      "tableBalance": "الرصيد",
+      "tableNature": "نوع الرصيد",
       "tableEntries": "قيود",
       "aiButton": "حلّل بالذكاء الاصطناعي",
       "aiLoading": "جاري التحليل...",

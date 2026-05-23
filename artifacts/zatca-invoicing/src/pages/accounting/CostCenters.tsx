@@ -665,11 +665,23 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
   }
 
   // ─── Export rows for the per-line transactions table ────────────────────
+  // Per-line balance = debit − credit. Positive → debit nature ("مدين"),
+  // negative → credit nature ("دائن"), zero → "—". Both the absolute amount
+  // AND a separate "balance type" column are emitted so the user can see at
+  // a glance whether each posting increased the debit side or the credit
+  // side of the centre — answering "ارصده دائنه او مدينه" in both Excel
+  // and PDF exports.
+  const natureLabel = (n: number) =>
+    n > 0 ? t("costCenters.txTab.balanceDebit")
+    : n < 0 ? t("costCenters.txTab.balanceCredit")
+    : t("costCenters.txTab.balanceBalanced");
+
   const exportRows = useMemo(() => {
     if (!data) return [];
     return data.rows.map(r => {
       const debit  = Number(r.debit);
       const credit = Number(r.credit);
+      const bal    = debit - credit;
       return {
         entryDate:   r.entryDate,
         docNumber:   r.docNumber || ("#" + r.entryId),
@@ -678,9 +690,12 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
         description: r.lineDescription || r.entryDescription || "",
         debit:       debit  > 0 ? fmtMoney(debit)  : "",
         credit:      credit > 0 ? fmtMoney(credit) : "",
+        balance:     bal !== 0 ? fmtMoney(Math.abs(bal)) : "—",
+        nature:      bal !== 0 ? natureLabel(bal) : "—",
       };
     });
-  }, [data, isRtl, fmtMoney]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, isRtl, fmtMoney, t]);
 
   const exportColumns = useMemo(() => [
     { key: "entryDate",   header: t("costCenters.txTab.tableDate"),        width: 14 },
@@ -690,10 +705,17 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
     { key: "description", header: t("costCenters.txTab.tableDescription"), width: 32 },
     { key: "debit",       header: t("costCenters.txTab.tableDebit"),       width: 14 },
     { key: "credit",      header: t("costCenters.txTab.tableCredit"),      width: 14 },
+    { key: "balance",     header: t("costCenters.txTab.tableBalance"),     width: 14 },
+    { key: "nature",      header: t("costCenters.txTab.tableNature"),      width: 12 },
   ], [t]);
 
+  // Net balance for the totals row, with explicit nature label appended
+  // (e.g. "1,200.00 مدين") so the closing balance and its side are visible
+  // on a single line at the bottom of the exported sheet / PDF — same
+  // information the on-screen KPI cards show.
   const totalsRow = useMemo(() => {
     if (!data || !totals) return null;
+    const bal = totals.balance;
     return {
       entryDate:   "",
       docNumber:   "",
@@ -702,7 +724,10 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
       description: t("costCenters.txTab.lineCount") + ": " + totals.lineCount,
       debit:       fmtMoney(totals.totalDebit),
       credit:      fmtMoney(totals.totalCredit),
+      balance:     fmtMoney(Math.abs(bal)),
+      nature:      natureLabel(bal),
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, totals, fmtMoney, t]);
 
   const summaryFooter = useMemo(() => {
