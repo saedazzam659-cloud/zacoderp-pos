@@ -5666,7 +5666,7 @@ router.get("/forecasts/:id", async (req, res) => {
         notes: productionForecastLinesTable.notes,
         productNameAr: itemsTable.nameAr,
         productNameEn: itemsTable.nameEn,
-        productSku: itemsTable.sku,
+        productSku: itemsTable.code,
       })
       .from(productionForecastLinesTable)
       .leftJoin(itemsTable, eq(itemsTable.id, productionForecastLinesTable.productItemId))
@@ -5962,7 +5962,7 @@ router.post("/mrp/run", async (req, res) => {
           id: itemsTable.id,
           nameAr: itemsTable.nameAr,
           nameEn: itemsTable.nameEn,
-          sku: itemsTable.sku,
+          sku: itemsTable.code,
         })
         .from(itemsTable)
         .where(
@@ -7117,7 +7117,7 @@ router.get("/cost-rollup", async (req, res) => {
         id: itemsTable.id,
         nameAr: itemsTable.nameAr,
         nameEn: itemsTable.nameEn,
-        sku: itemsTable.sku,
+        sku: itemsTable.code,
       })
       .from(itemsTable)
       .where(and(eq(itemsTable.id, productItemId), eq(itemsTable.companyId, cid)))
@@ -7161,7 +7161,7 @@ router.get("/cost-rollup", async (req, res) => {
           description: bomTemplateLinesTable.description,
           quantity: bomTemplateLinesTable.quantity,
           itemNameAr: itemsTable.nameAr,
-          itemSku: itemsTable.sku,
+          itemSku: itemsTable.code,
         })
         .from(bomTemplateLinesTable)
         .leftJoin(
