@@ -122,6 +122,7 @@ import ProductionOrders from "@/pages/ProductionOrders";
 import ProductionOrderDetail from "@/pages/ProductionOrderDetail";
 import ProductionResources from "@/pages/ProductionResources";
 import ManufacturingSettings from "@/pages/production/ManufacturingSettings";
+import ProductionGuide from "@/pages/production/ProductionGuide";
 import BomTemplates from "@/pages/production/BomTemplates";
 import BomTemplateEditor from "@/pages/production/BomTemplateEditor";
 import ProductionTraceability from "@/pages/production/Traceability";
@@ -689,6 +690,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/security/reports" module="security_events" component={SecurityReports} />}
             {!isSuperAdmin && <PermRoute path="/security/notification-rules" module="security_events" component={SecurityNotificationRules} />}
 
+            {!isSuperAdmin && <PermRoute path="/production/guide"            module="production"     component={ProductionGuide} />}
             {!isSuperAdmin && <PermRoute path="/production"                  module="production"     component={ProductionDashboard} />}
             {!isSuperAdmin && <PermRoute path="/production/orders"           module="production"     component={ProductionOrders} />}
             {!isSuperAdmin && <PermRoute path="/production/orders/:id"       module="production"     component={ProductionOrderDetail} />}
