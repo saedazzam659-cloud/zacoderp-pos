@@ -1690,11 +1690,12 @@ function template14(d: PrintData): string {
   // `display: table-header-group / table-footer-group`.
   //
   // Sized so the LAST page can always fit both the remaining items AND
-  // the bottom block (totals + QR ~40mm) together — otherwise the
-  // bottom block flows to a fresh page alone and the audit footer
-  // (running tfoot) ends up floating in the middle. 14 rows leaves
-  // ~40mm of headroom for the bottom block on every page.
-  const LINES_PER_PAGE = 14;
+  // the bottom block (totals + QR ~50mm) together with safety margin —
+  // otherwise overflow pushes the audit footer (or worse, the whole
+  // bottom block) onto a fresh blank page. 12 rows × ~10mm + bottom
+  // block ~50mm ≈ 170mm, well inside the ~200mm content area between
+  // the running header and running footer on A4.
+  const LINES_PER_PAGE = 12;
   const lineChunks: any[][] = [];
   for (let i = 0; i < lines.length; i += LINES_PER_PAGE) {
     lineChunks.push(lines.slice(i, i + LINES_PER_PAGE));
@@ -1801,7 +1802,7 @@ function template14(d: PrintData): string {
        cleanly to the page bottom. Slightly muted background so they
        don't look like real data, but kept readable. */
     .lines-chunk tbody tr.empty-row td {
-      height:38px; background:#fff; border-bottom:1px solid var(--line);
+      height:30px; background:#fff; border-bottom:1px solid var(--line);
       color:transparent;
     }
     .lines-chunk tbody tr.empty-row:nth-of-type(odd) td { background:#fafbfc; }
