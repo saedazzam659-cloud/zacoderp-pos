@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Link, useSearch } from "wouter";
+import { Link, useSearch, useLocation } from "wouter";
 import { useFormatters } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -188,6 +188,7 @@ export default function AccountStatement() {
   // ?accountId=&fromDate=&toDate=&branchId=&costCenterId=, pre-fill the
   // form and auto-trigger the search so the statement is shown immediately.
   const searchString = useSearch();
+  const [, setLocation] = useLocation();
   useEffect(() => {
     if (!searchString) return;
     const params = new URLSearchParams(searchString);
@@ -208,6 +209,29 @@ export default function AccountStatement() {
     if (a) setSearched(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchString]);
+
+  // Mirror filter state into the URL once the user has run a search, so
+  // navigating away (e.g. clicking a JE link → /accounting/journals/:id)
+  // and then hitting browser-back returns to this page WITH the same
+  // account/period/branch/cost-centers — the read-from-URL effect above
+  // re-hydrates state and the query auto-refires. We use `replace: true`
+  // so each filter tweak doesn't pollute browser history; only the JE
+  // navigation creates a forward history entry.
+  useEffect(() => {
+    if (!searched || !accountId) return;
+    const next = new URLSearchParams();
+    next.set("accountId", accountId);
+    if (fromDate) next.set("fromDate", fromDate);
+    if (toDate)   next.set("toDate", toDate);
+    if (branchId) next.set("branchId", String(branchId));
+    if (ccCsv)    next.set("costCenterId", ccCsv);
+    const nextStr = next.toString();
+    const currentStr = new URLSearchParams(searchString || "").toString();
+    if (nextStr !== currentStr) {
+      setLocation(`/accounting/reports/account-statement?${nextStr}`, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searched, accountId, fromDate, toDate, branchId, ccCsv]);
 
   // Cost-center column is shown only when the user has explicitly
   // picked one or more cost centers in the filter. The default
