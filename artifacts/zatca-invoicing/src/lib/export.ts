@@ -452,9 +452,13 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
     const mod = await import("html2pdf.js");
     const html2pdf = ((mod as { default?: unknown }).default ?? mod) as () => Html2PdfChain;
 
-    // Simple, balanced A4 landscape margins (mm). The bottom margin is a
-    // touch wider so the page-number footer never overlaps the content.
-    const margin = [10, 10, 14, 10];
+    // A4 landscape margins (mm): top, right, bottom, left.
+    // Bottom is generous (22mm) so (a) the page-number footer at pageH-8
+    // sits cleanly in white space and (b) html2pdf has buffer room to
+    // push a tall row onto the next page instead of slicing through it.
+    // Top is matched (14mm) so the visual top-of-page also has breathing
+    // room after a forced break.
+    const margin = [14, 12, 22, 12];
 
     // Build the worker pipeline:
     //   set(...) → from(el) → toPdf() → get('pdf') → [add page numbers] → save()
@@ -470,12 +474,18 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
         image:       { type: "jpeg", quality: 0.97 },
         html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", windowWidth: 1123 },
         jsPDF:       { unit: "mm", format: "a4", orientation: "landscape" },
-        // `css` honours our `page-break-inside: avoid` declarations so
-        // table rows / summary cards / footer blocks are NOT sliced
-        // between pages. `legacy` keeps backward-compat with the older
-        // `.html2pdf__page-break` divs (none currently used, but cheap
-        // insurance for any future caller).
-        pagebreak:   { mode: ["css", "legacy"], avoid: ["tr", ".summary-card", ".footer", "h2"] },
+        // avoid-all: the strictest mode — html2pdf measures each leaf
+        // element and inserts a forced break BEFORE any element that
+        // would otherwise straddle a page boundary. This is what
+        // actually prevents tall <tr> cells from being sliced (the
+        // milder 'css' mode alone is unreliable for <tr> because the
+        // table is rasterised as one image then cut). 'css' + 'legacy'
+        // remain as fallbacks. The explicit avoid list reinforces the
+        // contract for our specific report elements.
+        pagebreak:   {
+          mode:  ["avoid-all", "css", "legacy"],
+          avoid: ["tr", ".summary-card", ".summary-footer", ".footer", "h2"],
+        },
       })
       .from(target);
 
@@ -496,7 +506,7 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
           // unambiguous in any RTL/LTR rendering context inside jsPDF
           // (jsPDF's default font has no Arabic glyphs, so we avoid
           // Arabic labels here on purpose).
-          pdf.text(`${i} / ${total}`, pageW / 2, pageH - 5, { align: "center" });
+          pdf.text(`${i} / ${total}`, pageW / 2, pageH - 8, { align: "center" });
         }
       })
       .save();
