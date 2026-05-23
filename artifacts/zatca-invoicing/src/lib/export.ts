@@ -469,18 +469,28 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
 
     // Collect every safe break y-coordinate (in canvas pixels). A break
     // is "safe" when it sits BETWEEN two block-level report elements,
-    // never inside one. We include both the TOP of each row (a safe
-    // place to start a new page) and the bottom of the canvas itself.
+    // never inside one. We collect BOTH the TOP and the BOTTOM of every
+    // row / heading / card / footer — top is a safe place to start a new
+    // page, bottom is a safe place to end one.
+    //
+    // Coordinates are taken relative to `body` (not the viewport) so we
+    // don't have to worry about iframe scroll offsets or body margin
+    // shifting things vs. the canvas origin (html2canvas captures from
+    // body's content-box top-left).
     const breakElements = Array.from(
-      doc.querySelectorAll("tbody tr, h2, .summary-card, .summary-footer, .footer, thead"),
+      doc.querySelectorAll("tbody tr, thead, h2, .summary-card, .summary-footer, .footer"),
     ) as HTMLElement[];
+    const bodyRect = body.getBoundingClientRect();
     const safeBreaks: number[] = [0];
     for (const el of breakElements) {
       const rect = el.getBoundingClientRect();
-      // getBoundingClientRect is relative to the viewport; since the
-      // iframe is at y=0 and body starts at y=0, top is the y-offset
-      // from the document origin (* SCALE for canvas px).
-      safeBreaks.push(Math.round(rect.top * SCALE));
+      // Monotonic rounding so a break NEVER lands inside an element:
+      // floor the top (cut can only be at-or-above the element's top
+      // edge → element starts the next page intact) and ceil the bottom
+      // (cut can only be at-or-below the element's bottom edge → element
+      // ends the current page intact).
+      safeBreaks.push(Math.max(0, Math.floor((rect.top    - bodyRect.top) * SCALE)));
+      safeBreaks.push(Math.max(0, Math.ceil ((rect.bottom - bodyRect.top) * SCALE)));
     }
     safeBreaks.push(canvas.height);
     // Sort + dedupe.
@@ -498,32 +508,57 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
     const pxPerMm     = canvas.width / contentW;
     const pageHeightPx = contentH * pxPerMm;
 
-    // Walk the canvas top → bottom, one page worth at a time, snapping
-    // each cut to the nearest preceding safe break to avoid slicing
-    // through any row.
+    // Walk the canvas top → bottom one page at a time. For every page
+    // we ALWAYS cut on a safe (row-boundary) line — never inside a row:
+    //
+    //  • Prefer the LARGEST safe break in (cursor, idealCut] — gives a
+    //    page that fits perfectly (or ends slightly early at a row top).
+    //  • If none exists (i.e. one row crosses the page boundary), take
+    //    the SMALLEST safe break > idealCut so the row stays whole, then
+    //    SHRINK that page's image to fit the printable area. The visual
+    //    effect is the last row of the page being rendered ~5–15% smaller
+    //    than the rest — exactly the trade-off the user asked for, and
+    //    guarantees the row is never split mid-text.
+    //  • Only if there is literally no safe break ahead (degenerate
+    //    single huge row) do we hard-cut as a last resort.
     let cursor  = 0;
     let pageIdx = 0;
-    while (cursor < canvas.height - 1) {
-      let nextCut = Math.min(cursor + pageHeightPx, canvas.height);
+    // Max-iter cap: even at 1 page per canvas-pixel-row this is wildly
+    // generous. Guards against any pathological non-finite geometry.
+    const MAX_ITERS = Math.max(1000, Math.ceil(canvas.height) + 10);
+    let iter = 0;
+    while (cursor < canvas.height) {
+      if (++iter > MAX_ITERS) {
+        // eslint-disable-next-line no-console
+        console.error("downloadHtmlAsPdf: page-walk did not terminate", { cursor, canvasHeight: canvas.height });
+        break;
+      }
+      if (!Number.isFinite(pageHeightPx) || pageHeightPx <= 0) {
+        throw new Error("downloadHtmlAsPdf: invalid pageHeightPx");
+      }
+      const idealCut = cursor + pageHeightPx;
+      let   nextCut  = Math.min(idealCut, canvas.height);
 
       if (nextCut < canvas.height) {
-        // Find the LARGEST safe break that is > cursor AND <= nextCut.
-        // That becomes our cut point, so the row starting just after
-        // it begins fresh on the next page.
-        let best = -1;
+        // Largest safe break in (cursor, idealCut].
+        let bestFit = -1;
+        // Smallest safe break > idealCut (used as overflow fallback).
+        let nextAfter = -1;
         for (const b of breaks) {
-          if (b > cursor && b <= nextCut) best = b;
-          else if (b > nextCut) break;
+          if (b <= cursor) continue;
+          if (b <= idealCut) bestFit = b;
+          else { nextAfter = b; break; }
         }
-        // Only snap if it gives meaningful forward progress (at least
-        // 20% of a page). Otherwise the slice would be a sliver and
-        // we'd loop forever on a row that's taller than the page.
-        if (best > cursor + pageHeightPx * 0.2) {
-          nextCut = best;
+
+        if (bestFit > cursor) {
+          nextCut = bestFit;          // perfect fit, page underflows a little
+        } else if (nextAfter > cursor) {
+          nextCut = nextAfter;        // page overflows — will be scaled down
         }
+        // else: no safe break ahead — fall through with hard cut.
       }
 
-      // Defensive: ensure we always advance.
+      // Defensive: always advance.
       if (nextCut <= cursor) nextCut = Math.min(cursor + pageHeightPx, canvas.height);
 
       // Crop the slice into its own canvas.
@@ -539,8 +574,18 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
       const imgData = slice.toDataURL("image/jpeg", 0.95);
 
       if (pageIdx > 0) pdf.addPage();
-      const imgHeightMm = sliceHeightPx / pxPerMm;
-      pdf.addImage(imgData, "JPEG", marginX, marginTop, contentW, imgHeightMm, undefined, "FAST");
+
+      // Natural mm height of this slice; cap at contentH (this is where
+      // the "shrink to fit" happens for overflow pages — width stays at
+      // contentW because every page comes from the same source width).
+      const naturalHeightMm = sliceHeightPx / pxPerMm;
+      const renderHeightMm  = Math.min(naturalHeightMm, contentH);
+      const renderWidthMm   = naturalHeightMm > contentH
+        ? contentW * (contentH / naturalHeightMm)  // scale width proportionally
+        : contentW;
+      // Keep the (possibly scaled-down) image centered horizontally.
+      const xOffset = marginX + (contentW - renderWidthMm) / 2;
+      pdf.addImage(imgData, "JPEG", xOffset, marginTop, renderWidthMm, renderHeightMm, undefined, "FAST");
 
       cursor = nextCut;
       pageIdx++;
