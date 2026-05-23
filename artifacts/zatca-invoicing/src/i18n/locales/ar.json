@@ -3158,7 +3158,21 @@
       "aiRecommendation": "التوصية",
       "aiError": "تعذر إجراء التحليل",
       "aiNeedDataFirst": "حمّل البيانات أولاً ثم اضغط للتحليل",
-      "linkToEntry": "فتح القيد"
+      "aiSingleOnly": "اختر مركزاً واحداً فقط لتفعيل التحليل بالذكاء الاصطناعي",
+      "linkToEntry": "فتح القيد",
+      "pickCenters": "اختر مراكز التكلفة",
+      "pickCentersPlaceholder": "ابحث أو اختر مراكز...",
+      "selectedOne": "مركز واحد",
+      "selectedAll": "كل المراكز ({{count}})",
+      "selectedSome": "{{count}} مراكز",
+      "selectAll": "تحديد الكل",
+      "clearSelection": "إلغاء الاختيار",
+      "noCentersMulti": "اختر مركز تكلفة واحد على الأقل لعرض الحركة",
+      "tableCenter": "مركز التكلفة",
+      "exportTitle": "تحليل مراكز التكلفة",
+      "exportSubtitleSingle": "{{center}} — من {{from}} إلى {{to}}",
+      "exportSubtitleMulti": "{{count}} مراكز — من {{from}} إلى {{to}}",
+      "centersHeader": "المراكز المحددة"
     }
   },
   "fiscalPeriods": {

@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useFormatters } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
@@ -10,10 +10,12 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
-import { Plus, Pencil, Trash2, Target, Search, ChevronLeft, ChevronRight, FolderTree, Sparkles, TrendingUp, TrendingDown, Scale, ListTree, BarChart3, ExternalLink, Loader2, Lightbulb, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Target, Search, ChevronLeft, ChevronRight, ChevronDown, FolderTree, Sparkles, TrendingUp, TrendingDown, Scale, ListTree, BarChart3, ExternalLink, Loader2, Lightbulb, AlertTriangle, CheckCircle2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Link } from "wouter";
@@ -526,7 +528,7 @@ type AiResp = { headline: string; highlights: string[]; concerns: string[]; reco
 function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]; headers: any; t: any; isRtl: boolean }) {
   const { fmtMoney } = useFormatters();
   const { toast } = useToast();
-  const [centerId, setCenterId] = useState<string>("");
+  const [centerIds, setCenterIds] = useState<string[]>([]);
   const today = new Date().toISOString().slice(0, 10);
   const monthStart = today.slice(0, 8) + "01";
   const [from, setFrom] = useState<string>(monthStart);
@@ -534,42 +536,115 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
   const [ai, setAi]         = useState<AiResp | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
 
-  const centerOptions = useMemo(() => [
-    { value: "", label: t("costCenters.txTab.pickCenterPlaceholder") },
-    ...centers.filter(c => c.isActive !== false).map(c => ({
-      value: String(c.id),
-      label: `${c.code} — ${isRtl ? c.nameAr : (c.nameEn || c.nameAr)}`,
-    })),
-  ], [centers, isRtl, t]);
+  const activeCenters = useMemo(() => centers.filter(c => c.isActive !== false), [centers]);
 
-  const txQuery = useQuery<TxResp | null>({
-    queryKey: ["cost-center-transactions", centerId, from, to],
-    enabled: !!centerId,
-    queryFn: async () => {
-      const qs = new URLSearchParams();
-      if (from) qs.set("from", from);
-      if (to)   qs.set("to", to);
-      const r = await fetch(`${API}/api/cost-centers/${centerId}/transactions?${qs.toString()}`, { headers });
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({}));
-        throw new Error(d?.error || "Request failed");
-      }
-      return r.json();
-    },
+  // Parallel fetch one query per selected center
+  const txQueries = useQueries({
+    queries: centerIds.map(id => ({
+      queryKey: ["cost-center-transactions", id, from, to],
+      queryFn: async (): Promise<TxResp> => {
+        const qs = new URLSearchParams();
+        if (from) qs.set("from", from);
+        if (to)   qs.set("to", to);
+        const r = await fetch(`${API}/api/cost-centers/${id}/transactions?${qs.toString()}`, { headers });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error(d?.error || "Request failed");
+        }
+        return r.json();
+      },
+    })),
   });
 
-  const data = txQuery.data;
+  const isLoading  = centerIds.length > 0 && txQueries.some(q => q.isLoading);
+  const allSuccess = centerIds.length > 0 && txQueries.every(q => q.isSuccess);
+  const errorIdxs  = txQueries
+    .map((q, i) => q.isError ? i : -1)
+    .filter(i => i >= 0);
+  const hasErrors  = errorIdxs.length > 0;
+  const updatedKey = txQueries.map(q => q.dataUpdatedAt).join(",");
+
+  type Row = TxRow & { centerId: number; centerCode: string; centerNameAr: string; centerNameEn: string | null };
+  type Merged = {
+    centers: TxResp["center"][];
+    range:   TxResp["range"];
+    totals:  TxResp["totals"];
+    byAccount: TxResp["byAccount"];
+    rows: Row[];
+  };
+
+  // Only build merged data when EVERY selected query has succeeded, so
+  // totals/byAccount/rows always reflect the full selection — never a
+  // partial set caused by a still-loading or errored center.
+  const data: Merged | null = useMemo(() => {
+    if (!allSuccess) return null;
+    const datas = txQueries.map(q => q.data).filter(Boolean) as TxResp[];
+    if (datas.length === 0 || datas.length !== centerIds.length) return null;
+
+    const totals = datas.reduce((acc, d) => ({
+      totalDebit:  acc.totalDebit  + d.totals.totalDebit,
+      totalCredit: acc.totalCredit + d.totals.totalCredit,
+      balance:     acc.balance     + d.totals.balance,
+      lineCount:   acc.lineCount   + d.totals.lineCount,
+    }), { totalDebit: 0, totalCredit: 0, balance: 0, lineCount: 0 });
+
+    const acctMap = new Map<number, Merged["byAccount"][number]>();
+    datas.forEach(d => d.byAccount.forEach(a => {
+      const ex = acctMap.get(a.accountId);
+      if (ex) {
+        ex.debit   += a.debit;
+        ex.credit  += a.credit;
+        ex.balance += a.balance;
+        ex.count   += a.count;
+      } else {
+        acctMap.set(a.accountId, { ...a });
+      }
+    }));
+    const byAccount = Array.from(acctMap.values())
+      .sort((a, b) => (b.debit + b.credit) - (a.debit + a.credit));
+
+    const rows: Row[] = datas.flatMap(d => d.rows.map(r => ({
+      ...r,
+      centerId: d.center.id,
+      centerCode: d.center.code,
+      centerNameAr: d.center.nameAr,
+      centerNameEn: d.center.nameEn,
+    })));
+    rows.sort((a, b) => {
+      if (a.entryDate !== b.entryDate) return b.entryDate.localeCompare(a.entryDate);
+      return b.entryId - a.entryId;
+    });
+
+    return { centers: datas.map(d => d.center), range: datas[0].range, totals, byAccount, rows };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [updatedKey, centerIds.join(",")]);
+
   const totals = data?.totals;
   const balanceSign = totals ? (totals.balance > 0 ? "debit" : totals.balance < 0 ? "credit" : "zero") : "zero";
 
+  const isAll = centerIds.length > 0 && centerIds.length === activeCenters.length;
+  const centersLabel =
+    centerIds.length === 0 ? ""
+      : isAll ? t("costCenters.txTab.selectedAll", { count: activeCenters.length })
+      : centerIds.length === 1
+        ? (() => {
+            const c = activeCenters.find(x => String(x.id) === centerIds[0]);
+            return c ? `${c.code} — ${isRtl ? c.nameAr : (c.nameEn || c.nameAr)}` : t("costCenters.txTab.selectedOne");
+          })()
+        : t("costCenters.txTab.selectedSome", { count: centerIds.length });
+
   async function runAi() {
-    if (!centerId || !data) {
+    if (centerIds.length !== 1) {
+      toast({ title: t("costCenters.txTab.aiSingleOnly") });
+      return;
+    }
+    if (!data) {
       toast({ title: t("costCenters.txTab.aiNeedDataFirst") });
       return;
     }
     setAiLoading(true); setAi(null);
     try {
-      const r = await fetch(`${API}/api/cost-centers/${centerId}/ai-insights`, {
+      const r = await fetch(`${API}/api/cost-centers/${centerIds[0]}/ai-insights`, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -589,18 +664,89 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
     }
   }
 
+  // ─── Export rows for the per-line transactions table ────────────────────
+  const exportRows = useMemo(() => {
+    if (!data) return [];
+    return data.rows.map(r => {
+      const debit  = Number(r.debit);
+      const credit = Number(r.credit);
+      return {
+        entryDate:   r.entryDate,
+        docNumber:   r.docNumber || ("#" + r.entryId),
+        center:      `${r.centerCode} — ${isRtl ? r.centerNameAr : (r.centerNameEn || r.centerNameAr)}`,
+        account:     `${r.accountCode ?? ""} — ${isRtl ? (r.accountNameAr ?? "") : (r.accountNameEn || r.accountNameAr || "")}`,
+        description: r.lineDescription || r.entryDescription || "",
+        debit:       debit  > 0 ? fmtMoney(debit)  : "",
+        credit:      credit > 0 ? fmtMoney(credit) : "",
+      };
+    });
+  }, [data, isRtl, fmtMoney]);
+
+  const exportColumns = useMemo(() => [
+    { key: "entryDate",   header: t("costCenters.txTab.tableDate"),        width: 14 },
+    { key: "docNumber",   header: t("costCenters.txTab.tableDoc"),         width: 14 },
+    { key: "center",      header: t("costCenters.txTab.tableCenter"),      width: 24 },
+    { key: "account",     header: t("costCenters.txTab.tableAccount"),     width: 28 },
+    { key: "description", header: t("costCenters.txTab.tableDescription"), width: 32 },
+    { key: "debit",       header: t("costCenters.txTab.tableDebit"),       width: 14 },
+    { key: "credit",      header: t("costCenters.txTab.tableCredit"),      width: 14 },
+  ], [t]);
+
+  const totalsRow = useMemo(() => {
+    if (!data || !totals) return null;
+    return {
+      entryDate:   "",
+      docNumber:   "",
+      center:      "",
+      account:     "",
+      description: t("costCenters.txTab.lineCount") + ": " + totals.lineCount,
+      debit:       fmtMoney(totals.totalDebit),
+      credit:      fmtMoney(totals.totalCredit),
+    };
+  }, [data, totals, fmtMoney, t]);
+
+  const summaryFooter = useMemo(() => {
+    if (!data || !totals) return null;
+    return [
+      { label: t("costCenters.txTab.totalDebit"),  value: fmtMoney(totals.totalDebit),  tone: "debit"   as const },
+      { label: t("costCenters.txTab.totalCredit"), value: fmtMoney(totals.totalCredit), tone: "credit"  as const },
+      { label: t("costCenters.txTab.balance"),
+        value: fmtMoney(Math.abs(totals.balance)) + " " + (
+          balanceSign === "debit"  ? t("costCenters.txTab.balanceDebit")
+          : balanceSign === "credit" ? t("costCenters.txTab.balanceCredit")
+          : t("costCenters.txTab.balanceBalanced")
+        ),
+        tone: "primary" as const },
+    ];
+  }, [data, totals, balanceSign, fmtMoney, t]);
+
+  const exportSubtitle = data
+    ? (centerIds.length === 1
+        ? t("costCenters.txTab.exportSubtitleSingle", {
+            center: centersLabel,
+            from: from || "—",
+            to:   to   || "—",
+          })
+        : t("costCenters.txTab.exportSubtitleMulti", {
+            count: data.centers.length,
+            from:  from || "—",
+            to:    to   || "—",
+          }))
+    : "";
+
   return (
     <div className="space-y-4">
       {/* Filters bar */}
       <div className="rounded-xl border bg-gradient-to-br from-slate-50 to-cyan-50/40 p-4 shadow-sm">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
           <div className="md:col-span-5">
-            <Label className="text-xs font-semibold mb-1.5 block">{t("costCenters.txTab.pickCenter")}</Label>
-            <SearchCombobox
-              items={centerOptions}
-              value={centerId}
-              onValueChange={(v) => { setCenterId(v); setAi(null); }}
-              placeholder={t("costCenters.txTab.pickCenterPlaceholder")}
+            <Label className="text-xs font-semibold mb-1.5 block">{t("costCenters.txTab.pickCenters")}</Label>
+            <MultiCenterPicker
+              centers={activeCenters}
+              value={centerIds}
+              onChange={(ids) => { setCenterIds(ids); setAi(null); }}
+              t={t}
+              isRtl={isRtl}
             />
           </div>
           <div className="md:col-span-3">
@@ -623,27 +769,86 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
             </Button>
           </div>
         </div>
+
+        {/* Selected centers badges + export */}
+        {centerIds.length > 0 && (
+          <div className="mt-3 pt-3 border-t flex items-start justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+              <span className="text-[11px] font-semibold text-muted-foreground">{t("costCenters.txTab.centersHeader")}:</span>
+              {isAll ? (
+                <Badge variant="secondary" className="gap-1 text-[11px]">
+                  {t("costCenters.txTab.selectedAll", { count: activeCenters.length })}
+                  <button onClick={() => setCenterIds([])} className="opacity-60 hover:opacity-100">
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              ) : (
+                centerIds.slice(0, 8).map(id => {
+                  const c = activeCenters.find(x => String(x.id) === id);
+                  if (!c) return null;
+                  return (
+                    <Badge key={id} variant="secondary" className="gap-1 text-[11px]">
+                      <span className="font-mono">{c.code}</span>
+                      <button
+                        onClick={() => setCenterIds(centerIds.filter(v => v !== id))}
+                        className="opacity-60 hover:opacity-100"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  );
+                })
+              )}
+              {!isAll && centerIds.length > 8 && (
+                <Badge variant="outline" className="text-[11px]">+{centerIds.length - 8}</Badge>
+              )}
+            </div>
+            <ExportButtons
+              rows={exportRows}
+              columns={exportColumns}
+              filename={t("costCenters.txTab.exportTitle")}
+              title={t("costCenters.txTab.exportTitle")}
+              subtitle={exportSubtitle}
+              totalsRow={totalsRow}
+              summaryFooter={summaryFooter}
+              disabled={!data || exportRows.length === 0}
+              size="sm"
+            />
+          </div>
+        )}
       </div>
 
-      {/* Empty state when no center is picked */}
-      {!centerId && (
+      {/* Empty state when no centers picked */}
+      {centerIds.length === 0 && (
         <div className="rounded-xl border border-dashed bg-card p-12 text-center text-muted-foreground">
           <BarChart3 className="h-12 w-12 mx-auto mb-3 opacity-30" />
-          <p className="text-sm font-semibold">{t("costCenters.txTab.noCenter")}</p>
+          <p className="text-sm font-semibold">{t("costCenters.txTab.noCentersMulti")}</p>
         </div>
       )}
 
-      {centerId && txQuery.isError && (
+      {centerIds.length > 0 && hasErrors && (
         <div className="rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800 flex items-start gap-2">
           <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="font-bold mb-0.5">{t("costCenters.error")}</div>
-            <div className="text-xs">{(txQuery.error as any)?.message || ""}</div>
+            <div className="text-xs mb-1">
+              {(txQueries[errorIdxs[0]]?.error as any)?.message || ""}
+            </div>
+            <div className="text-[11px] opacity-80 flex flex-wrap gap-1">
+              {errorIdxs.map(i => {
+                const c = activeCenters.find(x => String(x.id) === centerIds[i]);
+                return c ? (
+                  <span key={i} className="font-mono px-1.5 py-0.5 rounded bg-rose-100 border border-rose-200">
+                    {c.code}
+                  </span>
+                ) : null;
+              })}
+            </div>
           </div>
         </div>
       )}
 
-      {centerId && txQuery.isLoading && (
+      {centerIds.length > 0 && isLoading && !data && !hasErrors && (
         <div className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}
@@ -652,7 +857,7 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
         </div>
       )}
 
-      {centerId && data && (
+      {centerIds.length > 0 && data && (
         <>
           {/* KPI cards: debit / credit / balance */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -668,7 +873,7 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
               icon={<TrendingDown className="h-5 w-5" />}
               label={t("costCenters.txTab.totalCredit")}
               value={fmtMoney(totals!.totalCredit)}
-              sub={data.center.code + " — " + (isRtl ? data.center.nameAr : (data.center.nameEn || data.center.nameAr))}
+              sub={centersLabel}
             />
             <KpiCard
               tone={balanceSign === "debit" ? "blue" : balanceSign === "credit" ? "amber" : "slate"}
@@ -692,20 +897,23 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
                 </div>
                 <div>
                   <div className="text-sm font-bold">{t("costCenters.txTab.aiTitle")}</div>
-                  <div className="text-[11px] text-muted-foreground">gpt-5.4 · {data.center.code}</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    gpt-5.4 · {centerIds.length === 1 ? data.centers[0]?.code : t("costCenters.txTab.aiSingleOnly")}
+                  </div>
                 </div>
               </div>
               <Button
                 onClick={runAi}
-                disabled={aiLoading || !data || data.totals.lineCount === 0}
+                disabled={aiLoading || !data || data.totals.lineCount === 0 || centerIds.length !== 1}
                 className="gap-2 bg-gradient-to-l from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white shadow"
+                title={centerIds.length !== 1 ? t("costCenters.txTab.aiSingleOnly") : undefined}
               >
                 {aiLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                 {aiLoading ? t("costCenters.txTab.aiLoading") : t("costCenters.txTab.aiButton")}
               </Button>
             </div>
 
-            {ai && (
+            {ai && centerIds.length === 1 && (
               <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
                 {ai.headline && (
                   <div className="md:col-span-2 rounded-lg bg-white/70 backdrop-blur border border-violet-200 p-3">
@@ -793,6 +1001,9 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
                     <tr>
                       <th className={cn("p-2 font-semibold", isRtl ? "text-right" : "text-left")}>{t("costCenters.txTab.tableDate")}</th>
                       <th className={cn("p-2 font-semibold", isRtl ? "text-right" : "text-left")}>{t("costCenters.txTab.tableDoc")}</th>
+                      {centerIds.length > 1 && (
+                        <th className={cn("p-2 font-semibold", isRtl ? "text-right" : "text-left")}>{t("costCenters.txTab.tableCenter")}</th>
+                      )}
                       <th className={cn("p-2 font-semibold", isRtl ? "text-right" : "text-left")}>{t("costCenters.txTab.tableAccount")}</th>
                       <th className={cn("p-2 font-semibold", isRtl ? "text-right" : "text-left")}>{t("costCenters.txTab.tableDescription")}</th>
                       <th className="p-2 font-semibold text-end">{t("costCenters.txTab.tableDebit")}</th>
@@ -805,9 +1016,14 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
                       const d = Number(r.debit);
                       const c = Number(r.credit);
                       return (
-                        <tr key={r.lineId} className="hover:bg-muted/20 transition-colors">
+                        <tr key={r.centerId + ":" + r.lineId} className="hover:bg-muted/20 transition-colors">
                           <td className="p-2 font-mono text-xs whitespace-nowrap">{r.entryDate}</td>
                           <td className="p-2 font-mono text-xs">{r.docNumber || ("#" + r.entryId)}</td>
+                          {centerIds.length > 1 && (
+                            <td className="p-2 text-xs">
+                              <span className="font-mono px-1.5 py-0.5 rounded bg-cyan-50 border border-cyan-200 text-cyan-800">{r.centerCode}</span>
+                            </td>
+                          )}
                           <td className="p-2 text-xs">
                             <span className="font-mono px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700 mx-1">{r.accountCode}</span>
                             <span className="font-medium">{isRtl ? r.accountNameAr : (r.accountNameEn || r.accountNameAr)}</span>
@@ -840,7 +1056,7 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
                   </tbody>
                   <tfoot className="bg-muted/20 font-bold text-sm">
                     <tr>
-                      <td colSpan={4} className={cn("p-2", isRtl ? "text-right" : "text-left")}>
+                      <td colSpan={centerIds.length > 1 ? 5 : 4} className={cn("p-2", isRtl ? "text-right" : "text-left")}>
                         {t("costCenters.txTab.lineCount")}: {data.rows.length}
                       </td>
                       <td className="p-2 text-end font-mono text-emerald-700">{fmtMoney(totals!.totalDebit)}</td>
@@ -855,6 +1071,115 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
         </>
       )}
     </div>
+  );
+}
+
+// ─── Multi-select cost-center picker ────────────────────────────────────────
+function MultiCenterPicker({
+  centers, value, onChange, t, isRtl,
+}: {
+  centers: CostCenter[]; value: string[]; onChange: (v: string[]) => void;
+  t: any; isRtl: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return centers;
+    return centers.filter(c =>
+      c.code.toLowerCase().includes(q)
+      || c.nameAr.toLowerCase().includes(q)
+      || (c.nameEn ?? "").toLowerCase().includes(q),
+    );
+  }, [centers, search]);
+
+  const allSelected = value.length === centers.length && centers.length > 0;
+  const label =
+    value.length === 0      ? t("costCenters.txTab.pickCentersPlaceholder")
+    : allSelected           ? t("costCenters.txTab.selectedAll", { count: centers.length })
+    : value.length === 1    ? (() => {
+        const c = centers.find(x => String(x.id) === value[0]);
+        return c ? `${c.code} — ${isRtl ? c.nameAr : (c.nameEn || c.nameAr)}` : t("costCenters.txTab.selectedOne");
+      })()
+    : t("costCenters.txTab.selectedSome", { count: value.length });
+
+  function toggle(id: string) {
+    onChange(value.includes(id) ? value.filter(v => v !== id) : [...value, id]);
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between font-normal h-9"
+        >
+          <span className={cn("truncate", value.length === 0 && "text-muted-foreground")}>{label}</span>
+          <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+        <div className="p-2 border-b">
+          <Input
+            placeholder={t("costCenters.txTab.pickCentersPlaceholder")}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="h-8 text-sm"
+            autoFocus
+          />
+        </div>
+        <div className="p-2 border-b flex gap-2">
+          <Button
+            size="sm" variant="outline" className="h-7 flex-1 text-xs"
+            onClick={() => onChange(centers.map(c => String(c.id)))}
+            disabled={allSelected}
+          >
+            {t("costCenters.txTab.selectAll")}
+          </Button>
+          <Button
+            size="sm" variant="outline" className="h-7 flex-1 text-xs"
+            onClick={() => onChange([])}
+            disabled={value.length === 0}
+          >
+            {t("costCenters.txTab.clearSelection")}
+          </Button>
+        </div>
+        <div className="max-h-72 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <div className="px-3 py-6 text-center text-xs text-muted-foreground">—</div>
+          ) : (
+            filtered.map(c => {
+              const id = String(c.id);
+              const checked = value.includes(id);
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => toggle(id)}
+                  className={cn(
+                    "w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 text-sm",
+                    isRtl ? "text-right" : "text-left",
+                    checked && "bg-cyan-50/40",
+                  )}
+                >
+                  <Checkbox checked={checked} className="pointer-events-none shrink-0" />
+                  <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700 shrink-0">{c.code}</span>
+                  <span className="truncate flex-1">{isRtl ? c.nameAr : (c.nameEn || c.nameAr)}</span>
+                </button>
+              );
+            })
+          )}
+        </div>
+        {value.length > 0 && (
+          <div className="p-2 border-t text-[11px] text-muted-foreground text-center">
+            {t("costCenters.txTab.selectedSome", { count: value.length })}
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
 

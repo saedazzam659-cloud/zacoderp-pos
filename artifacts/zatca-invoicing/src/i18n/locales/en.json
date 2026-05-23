@@ -3155,7 +3155,21 @@
       "aiRecommendation": "Recommendation",
       "aiError": "AI analysis failed",
       "aiNeedDataFirst": "Load data first, then click to analyse",
-      "linkToEntry": "Open entry"
+      "aiSingleOnly": "Pick exactly one center to enable AI analysis",
+      "linkToEntry": "Open entry",
+      "pickCenters": "Choose cost centers",
+      "pickCentersPlaceholder": "Search or pick centers...",
+      "selectedOne": "1 center",
+      "selectedAll": "All centers ({{count}})",
+      "selectedSome": "{{count}} centers",
+      "selectAll": "Select all",
+      "clearSelection": "Clear",
+      "noCentersMulti": "Pick at least one cost center to view activity",
+      "tableCenter": "Cost center",
+      "exportTitle": "Cost Centers Analysis",
+      "exportSubtitleSingle": "{{center}} — {{from}} to {{to}}",
+      "exportSubtitleMulti": "{{count}} centers — {{from}} to {{to}}",
+      "centersHeader": "Selected centers"
     }
   },
   "fiscalPeriods": {
