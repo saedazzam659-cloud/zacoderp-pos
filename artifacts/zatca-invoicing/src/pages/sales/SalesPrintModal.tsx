@@ -7,7 +7,16 @@ import { safeLogoSrc } from "@/lib/export";
 import { useToast } from "@/hooks/use-toast";
 import QRCode from "qrcode";
 
-const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
+// Force the Arabic-Indic numbering system explicitly so EVERY browser /
+// device renders the digits identically. Without `numberingSystem: "arab"`
+// some devices (limited ICU data or missing Arabic-Indic glyphs in the
+// default font) fall back to Latin digits, which produces the visual
+// "column of 1" the user reported on the totals card — the leading "١"
+// of every number was being rendered as Latin "1" while the rest of the
+// digits stayed Arabic-Indic, creating a stacked-1 illusion next to the
+// totals labels.
+const NUM_FMT = new Intl.NumberFormat("ar-SA-u-nu-arab", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (n: any) => NUM_FMT.format(Number(n || 0));
 
 // ── Arabic number-to-words (tafqeet) ─────────────────────────────────────────
 // Copied verbatim from voucherPrint.ts so the print modal stays self-contained
