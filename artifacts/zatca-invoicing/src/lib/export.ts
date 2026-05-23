@@ -1,13 +1,4 @@
 import * as XLSX from "xlsx";
-// html2pdf.js has no bundled TS types; we only call the fluent API surface
-// we need, so a minimal local typing is enough.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Html2PdfChain = {
-  set: (opts: Record<string, unknown>) => Html2PdfChain;
-  from: (el: HTMLElement) => Html2PdfChain;
-  save: () => Promise<void>;
-  outputPdf?: (kind?: string) => Promise<unknown>;
-};
 
 export interface ExportColumn {
   header: string;
@@ -415,10 +406,23 @@ export async function exportToPDF(
 }
 
 // Render an HTML report string into a real downloadable .pdf file.
-// Works for Arabic/RTL because html2canvas rasterises the rendered DOM
-// (so font shaping/bidi are done by the browser, not jsPDF). The HTML
-// is mounted in a hidden iframe so the page's own styles cannot leak
-// into the report layout.
+//
+// Approach: row-aware canvas slicing.
+//   1. Mount HTML in a hidden iframe, wait for images/fonts.
+//   2. Use html2canvas to capture the WHOLE body as ONE tall canvas
+//      (browser does Arabic/RTL shaping correctly).
+//   3. Read every <tbody tr> and <h2> position (in canvas pixels) and
+//      build a list of "natural break boundaries" — y-coordinates
+//      where it is SAFE to cut without slicing through a row.
+//   4. Walk down the canvas a page-height at a time; whenever the
+//      tentative cut line would fall in the middle of a row, snap
+//      backward to the previous safe boundary.
+//   5. Crop each page-sized slice into its own small canvas, embed in
+//      a jsPDF doc, and finally stamp `i / total` page numbers.
+//
+// This is the ONLY reliable way to avoid row-cutting with html2canvas —
+// html2pdf's built-in `pagebreak.avoid` either leaves giant blank gaps
+// (when too aggressive) or ignores <tr> entirely (when too lenient).
 async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> {
   const iframe = document.createElement("iframe");
   iframe.setAttribute("aria-hidden", "true");
@@ -432,8 +436,7 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
     doc.write(html);
     doc.close();
 
-    // Wait for layout + images to settle so html2canvas captures the
-    // final rendered state (logo image, fonts, table reflow).
+    // Wait for images + a tick for fonts / layout to settle.
     await new Promise<void>((resolve) => {
       const imgs = Array.from(doc.images);
       if (imgs.length === 0) return resolve();
@@ -443,70 +446,119 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
         if (img.complete) done();
         else { img.addEventListener("load", done); img.addEventListener("error", done); }
       });
-      // Hard timeout so a slow/blocked image never freezes the download.
       setTimeout(resolve, 2500);
     });
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 250));
 
-    const target = doc.body;
-    // Dynamic import keeps the heavy html2canvas+jsPDF bundle out of
-    // the initial page load — only fetched when the user actually
-    // clicks "PDF (.pdf)".
-    const mod = await import("html2pdf.js");
-    const html2pdf = ((mod as { default?: unknown }).default ?? mod) as () => Html2PdfChain;
+    // Dynamic imports keep the heavy rendering libs out of the initial
+    // page bundle — only fetched when the user clicks "PDF (.pdf)".
+    const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+      import("html2canvas"),
+      import("jspdf"),
+    ]);
 
-    // A4 landscape margins (mm): top, right, bottom, left.
-    // Bottom is generous (22mm) so (a) the page-number footer at pageH-8
-    // sits cleanly in white space and (b) html2pdf has buffer room to
-    // push a tall row onto the next page instead of slicing through it.
-    // Top is matched (14mm) so the visual top-of-page also has breathing
-    // room after a forced break.
-    const margin = [14, 12, 22, 12];
+    const SCALE = 2;
+    const body = doc.body;
+    const canvas = await html2canvas(body, {
+      scale:           SCALE,
+      useCORS:         true,
+      backgroundColor: "#ffffff",
+      windowWidth:     1123,
+      logging:         false,
+    });
 
-    // Build the worker pipeline:
-    //   set(...) → from(el) → toPdf() → get('pdf') → [add page numbers] → save()
-    // We dive into the underlying jsPDF doc after the canvas pass so we
-    // can stamp a real text-layer page number on each page — html2canvas
-    // does NOT honour the print template's CSS `@page` margin boxes, so
-    // the numbers MUST be added here.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const worker: any = html2pdf()
-      .set({
-        margin,
-        filename:    `${filename}.pdf`,
-        image:       { type: "jpeg", quality: 0.97 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", windowWidth: 1123 },
-        jsPDF:       { unit: "mm", format: "a4", orientation: "landscape" },
-        // `css` honours the page-break declarations in the template's
-        // <style> block (kept narrow: .summary-card / .footer / h2).
-        // `legacy` keeps backward-compat with `.html2pdf__page-break`.
-        // No `avoid` list: adding "tr" caused html2pdf to insert blank
-        // pages on long tables because EVERY row got pushed forward.
-        pagebreak:   { mode: ["css", "legacy"] },
-      })
-      .from(target);
+    // Collect every safe break y-coordinate (in canvas pixels). A break
+    // is "safe" when it sits BETWEEN two block-level report elements,
+    // never inside one. We include both the TOP of each row (a safe
+    // place to start a new page) and the bottom of the canvas itself.
+    const breakElements = Array.from(
+      doc.querySelectorAll("tbody tr, h2, .summary-card, .summary-footer, .footer, thead"),
+    ) as HTMLElement[];
+    const safeBreaks: number[] = [0];
+    for (const el of breakElements) {
+      const rect = el.getBoundingClientRect();
+      // getBoundingClientRect is relative to the viewport; since the
+      // iframe is at y=0 and body starts at y=0, top is the y-offset
+      // from the document origin (* SCALE for canvas px).
+      safeBreaks.push(Math.round(rect.top * SCALE));
+    }
+    safeBreaks.push(canvas.height);
+    // Sort + dedupe.
+    const breaks = Array.from(new Set(safeBreaks)).sort((a, b) => a - b);
 
-    await worker
-      .toPdf()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .get("pdf")
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .then((pdf: any) => {
-        const total = pdf.internal.getNumberOfPages();
-        const pageW = pdf.internal.pageSize.getWidth();
-        const pageH = pdf.internal.pageSize.getHeight();
-        for (let i = 1; i <= total; i++) {
-          pdf.setPage(i);
-          pdf.setFontSize(9);
-          pdf.setTextColor(120, 120, 120);
-          // Centered "i / total" — using plain digits + slash keeps it
-          // unambiguous in any RTL/LTR rendering context inside jsPDF
-          // (jsPDF's default font has no Arabic glyphs, so we avoid
-          // Arabic labels here on purpose).
-          pdf.text(`${i} / ${total}`, pageW / 2, pageH - 8, { align: "center" });
+    // PDF setup — A4 landscape, simple symmetric margins.
+    const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
+    const pageW       = pdf.internal.pageSize.getWidth();
+    const pageH       = pdf.internal.pageSize.getHeight();
+    const marginX     = 10;
+    const marginTop   = 10;
+    const marginBot   = 14;            // reserves room for page-number footer
+    const contentW    = pageW - marginX * 2;
+    const contentH    = pageH - marginTop - marginBot;
+    const pxPerMm     = canvas.width / contentW;
+    const pageHeightPx = contentH * pxPerMm;
+
+    // Walk the canvas top → bottom, one page worth at a time, snapping
+    // each cut to the nearest preceding safe break to avoid slicing
+    // through any row.
+    let cursor  = 0;
+    let pageIdx = 0;
+    while (cursor < canvas.height - 1) {
+      let nextCut = Math.min(cursor + pageHeightPx, canvas.height);
+
+      if (nextCut < canvas.height) {
+        // Find the LARGEST safe break that is > cursor AND <= nextCut.
+        // That becomes our cut point, so the row starting just after
+        // it begins fresh on the next page.
+        let best = -1;
+        for (const b of breaks) {
+          if (b > cursor && b <= nextCut) best = b;
+          else if (b > nextCut) break;
         }
-      })
-      .save();
+        // Only snap if it gives meaningful forward progress (at least
+        // 20% of a page). Otherwise the slice would be a sliver and
+        // we'd loop forever on a row that's taller than the page.
+        if (best > cursor + pageHeightPx * 0.2) {
+          nextCut = best;
+        }
+      }
+
+      // Defensive: ensure we always advance.
+      if (nextCut <= cursor) nextCut = Math.min(cursor + pageHeightPx, canvas.height);
+
+      // Crop the slice into its own canvas.
+      const sliceHeightPx = nextCut - cursor;
+      const slice = document.createElement("canvas");
+      slice.width  = canvas.width;
+      slice.height = sliceHeightPx;
+      const ctx = slice.getContext("2d");
+      if (!ctx) throw new Error("2d canvas context unavailable");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, slice.width, slice.height);
+      ctx.drawImage(canvas, 0, cursor, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx);
+      const imgData = slice.toDataURL("image/jpeg", 0.95);
+
+      if (pageIdx > 0) pdf.addPage();
+      const imgHeightMm = sliceHeightPx / pxPerMm;
+      pdf.addImage(imgData, "JPEG", marginX, marginTop, contentW, imgHeightMm, undefined, "FAST");
+
+      cursor = nextCut;
+      pageIdx++;
+    }
+
+    // Stamp "i / total" page numbers on every page.
+    // jsPDF v4 types omit `getNumberOfPages` on `internal` even though
+    // it exists at runtime; `getNumberOfPages()` is also exposed
+    // directly on the doc instance, which is type-safe.
+    const total = pdf.getNumberOfPages();
+    for (let i = 1; i <= total; i++) {
+      pdf.setPage(i);
+      pdf.setFontSize(9);
+      pdf.setTextColor(120, 120, 120);
+      pdf.text(`${i} / ${total}`, pageW / 2, pageH - 5, { align: "center" });
+    }
+
+    pdf.save(`${filename}.pdf`);
   } finally {
     iframe.remove();
   }
