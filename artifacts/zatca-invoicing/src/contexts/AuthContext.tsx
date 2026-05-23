@@ -18,40 +18,38 @@ setSessionIdGetter(() => {
 // honours `x-acting-company-id` only when the caller's role is superadmin,
 // so this is a safe default to attach to every request. A tampered value
 // from a tenant user is silently ignored.
-// Per-tab override: when the URL hash contains `#__actAs=<number>` (used by
-// the audit-log "open in popup" flow so a SuperAdmin can drill into a tenant
-// page without polluting their own tab's React state or localStorage), the
-// hash wins. We also mirror it into sessionStorage (which is per-tab in
-// modern browsers, so it does NOT leak to other tabs) so that subsequent
-// in-tab navigations — which may strip the hash via wouter's history
-// pushState — still resolve to the same tenant. localStorage is left
-// untouched so the original SA tab keeps its plain SA view.
-const SESSION_ACTING_COMPANY_KEY = "zatca_acting_company_session";
+// Per-realm override: when the URL hash contains `#__actAs=<number>` (used
+// by the audit-log "open in popup" flow so a SuperAdmin can drill into a
+// tenant page without polluting their own session, localStorage, or React
+// state), the hash wins for THIS JS realm only.
+//
+// We pin the resolved value in a module-level variable. Each browsing
+// context (top window AND each iframe) gets its own copy of this module
+// and therefore its own pin — so an iframe running with `#__actAs=42`
+// resolves to company 42 while the parent SA window (same tab, same
+// origin) keeps resolving to whatever its own localStorage says, with
+// zero cross-talk. We deliberately avoid sessionStorage here because it
+// IS shared between an iframe and its same-origin parent, which would
+// leak the override.
+let pinnedActingCompanyForRealm: number | null = null;
 function readActingCompanyHashOverride(): number | null {
   if (typeof window === "undefined") return null;
   const m = window.location.hash.match(/__actAs=(\d+)/);
   if (!m) return null;
   const n = parseInt(m[1], 10);
   if (!(Number.isFinite(n) && n > 0)) return null;
-  // Pin for the rest of the tab's lifetime — survives the first wouter
-  // navigation that strips the hash, until the tab is closed.
-  try { sessionStorage.setItem(SESSION_ACTING_COMPANY_KEY, String(n)); } catch {}
+  // Pin for the lifetime of this realm — survives the first wouter
+  // navigation that strips the hash.
+  pinnedActingCompanyForRealm = n;
   return n;
 }
-function readActingCompanyFromTab(): number | null {
-  const fromHash = readActingCompanyHashOverride();
-  if (fromHash != null) return fromHash;
-  if (typeof window === "undefined") return null;
-  try {
-    const v = sessionStorage.getItem(SESSION_ACTING_COMPANY_KEY);
-    if (!v) return null;
-    const n = parseInt(v, 10);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  } catch { return null; }
+function readActingCompanyFromRealm(): number | null {
+  if (pinnedActingCompanyForRealm != null) return pinnedActingCompanyForRealm;
+  return readActingCompanyHashOverride();
 }
 setActingCompanyIdGetter(() => {
-  const tabOverride = readActingCompanyFromTab();
-  if (tabOverride != null) return tabOverride;
+  const realmOverride = readActingCompanyFromRealm();
+  if (realmOverride != null) return realmOverride;
   const v = localStorage.getItem("zatca_acting_company_id");
   if (!v) return null;
   const n = parseInt(v, 10);
@@ -176,13 +174,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return Number.isFinite(n) && n > 0 ? n : null;
   });
   const [actingCompanyId, setActingCompanyIdState] = useState<number | null>(() => {
-    // Per-tab override (hash + sessionStorage) wins — used by the
-    // audit-log popup so a tab opened with `#__actAs=N` boots in that
-    // tenant's context regardless of what's in localStorage, AND stays
-    // there for the rest of the tab's lifetime even after wouter strips
-    // the hash on the first internal navigation.
-    const tabOverride = readActingCompanyFromTab();
-    if (tabOverride != null) return tabOverride;
+    // Per-realm override wins — used by the audit-log in-app iframe
+    // popup so an iframe loaded with `#__actAs=N` boots in that tenant's
+    // context regardless of what's in localStorage, and stays there for
+    // the lifetime of the iframe's JS realm even after wouter strips
+    // the hash. The pin lives in a module-level variable that does NOT
+    // leak to the parent SA window (each browsing context has its own
+    // module instance).
+    const realmOverride = readActingCompanyFromRealm();
+    if (realmOverride != null) return realmOverride;
     const v = localStorage.getItem(ACTING_COMPANY_KEY);
     const n = v ? parseInt(v, 10) : NaN;
     return Number.isFinite(n) && n > 0 ? n : null;

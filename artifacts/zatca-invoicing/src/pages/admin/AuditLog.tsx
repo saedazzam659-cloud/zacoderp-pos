@@ -39,6 +39,7 @@ import {
   Copy,
   Check,
   Link2,
+  ExternalLink,
   FileCode2,
   X,
   Download,
@@ -301,15 +302,17 @@ export default function AuditLog() {
   const { token, user, actingCompanyId, setActingCompany } = useAuth() as any;
   const isSuperAdmin = user?.role === "superadmin";
 
-  // When a SuperAdmin clicks a friendly path link on an audit row (e.g.
-  // "مطابقة عروض" → /inventory/offers), the destination is a tenant route
-  // gated behind `!isSuperAdmin` in App.tsx — without an acting-company
-  // context the SA hits the "no access" fallback. We open the target in a
-  // dedicated popup window with `#__actAs=<companyId>` appended; the auth
-  // context reads that hash override on boot (see AuthContext.tsx) so the
-  // popup runs in the row's tenant context, while THIS tab (and its
-  // audit-log query) stays in plain SA mode. No localStorage writes →
-  // zero cross-tab leakage even if the SA keeps multiple popups open.
+  // In-app tenant-preview popup state. When the SA clicks a friendly path
+  // link on an audit row, instead of navigating away we open the target
+  // tenant page in a full-screen Dialog with an iframe. The iframe URL
+  // carries `#__actAs=<companyId>` so its own AuthContext boots in the
+  // row's tenant context (see AuthContext.tsx — per-realm pin). The
+  // parent SA window is completely unaffected: no localStorage write, no
+  // React state change, no cross-talk via sessionStorage. Closing the
+  // dialog tears the iframe down (its React tree, queries, etc.).
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewCompanyId, setPreviewCompanyId] = useState<number | null>(null);
   const onPathLinkClick = useCallback(
     (row: AuditRow) => (e: React.MouseEvent) => {
       if (!isSuperAdmin) return;
@@ -319,23 +322,10 @@ export default function AuditLog() {
       e.preventDefault();
       e.stopPropagation();
       const rawHref = (e.currentTarget as HTMLAnchorElement).getAttribute("href") ?? "/";
-      // Strip any existing hash from the target so our override is the
-      // only hash on the URL. Use a real URL parser to handle absolute
-      // paths cleanly (wouter uses pathnames so this is the common case).
       const [pathPart] = rawHref.split("#");
-      const url = `${pathPart}#__actAs=${row.companyId}`;
-      // Popup window features — sized for the typical admin layout. The
-      // unique name (`zatca_audit_popup_<id>`) lets multiple rows from
-      // different companies open side by side instead of reusing one
-      // window; fall back to a new tab if the browser blocks popups.
-      const features = "popup=yes,width=1280,height=860,scrollbars=yes,resizable=yes";
-      const win = window.open(url, `zatca_audit_popup_${row.companyId}`, features);
-      if (!win) {
-        // Popup blocked — degrade to a same-tab navigation so the click
-        // still does something useful. The hash override still scopes
-        // the SA into the row's tenant for that page load.
-        window.location.href = url;
-      }
+      setPreviewUrl(`${pathPart}#__actAs=${row.companyId}`);
+      setPreviewCompanyId(row.companyId);
+      setPreviewOpen(true);
     },
     [isSuperAdmin, actingCompanyId],
   );
@@ -1528,6 +1518,100 @@ export default function AuditLog() {
           )}
         </CardContent>
       </Card>
+
+      {/* In-app tenant-page preview — opens when the SA clicks a friendly
+          path link on an audit row. The iframe's URL carries
+          `#__actAs=<companyId>` so its AuthContext boots in that tenant's
+          context; the parent SA window stays untouched (separate JS realm,
+          no localStorage write). The dialog is full-viewport so the
+          embedded page has room to render its own Layout + sidebar
+          naturally. "فتح في تبويب جديد" copies the same URL to a real new
+          tab for cases where the SA wants to keep working in it. */}
+      <Dialog
+        open={previewOpen}
+        onOpenChange={(v) => {
+          if (!v) {
+            setPreviewOpen(false);
+            // Drop the iframe URL on close so re-opening for a different
+            // company doesn't briefly show the old tenant before the new
+            // src takes effect.
+            setTimeout(() => { setPreviewUrl(null); setPreviewCompanyId(null); }, 200);
+          }
+        }}
+      >
+        <DialogContent
+          dir={isRtl ? "rtl" : "ltr"}
+          className="max-w-[98vw] w-[98vw] h-[95vh] p-0 gap-0 flex flex-col overflow-hidden"
+        >
+          <DialogHeader className="px-4 py-2 border-b bg-muted/30 flex-row items-center justify-between gap-2 space-y-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
+              <DialogTitle className="text-sm font-medium truncate">
+                {previewCompanyId != null
+                  ? tr("previewTitle", {
+                      company:
+                        companies.find((c) => c.id === previewCompanyId)
+                          ? (isRtl
+                              ? companies.find((c) => c.id === previewCompanyId)?.nameAr ||
+                                companies.find((c) => c.id === previewCompanyId)?.nameEn ||
+                                `#${previewCompanyId}`
+                              : companies.find((c) => c.id === previewCompanyId)?.nameEn ||
+                                companies.find((c) => c.id === previewCompanyId)?.nameAr ||
+                                `#${previewCompanyId}`)
+                          : `#${previewCompanyId}`,
+                    })
+                  : tr("previewTitleFallback")}
+              </DialogTitle>
+              {previewUrl && (
+                <span
+                  dir="ltr"
+                  className="font-mono text-[10px] text-muted-foreground truncate"
+                  title={previewUrl}
+                >
+                  {previewUrl.split("#")[0]}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              {previewUrl && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}
+                  data-testid="audit-preview-open-tab"
+                  className="h-7"
+                >
+                  <ExternalLink className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />
+                  {tr("previewOpenInTab")}
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                onClick={() => setPreviewOpen(false)}
+                aria-label={tr("previewClose")}
+                data-testid="audit-preview-close"
+                className="h-7 w-7"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </DialogHeader>
+          {previewUrl && (
+            <iframe
+              key={previewUrl /* full remount when target changes so the
+                                  inner React tree boots fresh under the new
+                                  hash override */}
+              src={previewUrl}
+              title={tr("previewTitleFallback")}
+              data-testid="audit-preview-iframe"
+              className="flex-1 w-full border-0 bg-background"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       <AuditDetailsDialog
         open={entryId != null}
