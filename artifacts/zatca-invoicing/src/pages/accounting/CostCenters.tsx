@@ -1112,7 +1112,7 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
                             ) : <span className="text-muted-foreground">—</span>}
                           </td>
                           <td className="p-2 text-center">
-                            <Link href={`/accounting/journal-entries/${r.entryId}`}>
+                            <Link href={`/accounting/journals/${r.entryId}`}>
                               <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title={t("costCenters.txTab.linkToEntry")}>
                                 <ExternalLink className="h-3.5 w-3.5" />
                               </Button>

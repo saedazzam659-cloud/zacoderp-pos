@@ -421,14 +421,14 @@ export default function ProductionOrderDetail() {
               value={
                 <div className="text-xs flex flex-col gap-0.5">
                   {order.issueJournalEntryId ? (
-                    <Link href={`/accounting/journal-entries/${order.issueJournalEntryId}`}>
+                    <Link href={`/accounting/journals/${order.issueJournalEntryId}`}>
                       <a className="text-violet-600 hover:underline" data-testid="link-issue-je">
                         صرف #{order.issueJournalEntryId}
                       </a>
                     </Link>
                   ) : (<span className="text-slate-400">لم يُرحّل</span>)}
                   {order.receiptJournalEntryId ? (
-                    <Link href={`/accounting/journal-entries/${order.receiptJournalEntryId}`}>
+                    <Link href={`/accounting/journals/${order.receiptJournalEntryId}`}>
                       <a className="text-emerald-600 hover:underline" data-testid="link-receipt-je">
                         إضافة #{order.receiptJournalEntryId}
                       </a>

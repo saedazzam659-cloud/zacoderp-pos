@@ -1577,7 +1577,7 @@ ${sections}
                                 )}
                                 {r.journalEntryId && (
                                   <Button type="button" size="icon" variant="ghost" className="h-6 w-6 text-slate-600 hover:bg-slate-100"
-                                    onClick={() => navigate(`/accounting/journal-entries?id=${r.journalEntryId}`)}
+                                    onClick={() => navigate(`/accounting/journals/${r.journalEntryId}`)}
                                     title={tr("viewJournalTip")}>
                                     <FileText className="h-3.5 w-3.5" />
                                   </Button>
