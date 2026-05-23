@@ -88,6 +88,19 @@ export function safeLogoSrc(raw: unknown): string | null {
 // ─── PDF Export (HTML Print) ──────────────────────────────────────────────────
 // Uses the browser's native print-to-PDF which fully supports Arabic/RTL text.
 
+// A self-contained extra section rendered AFTER the main table in the
+// PDF and APPENDED below the main rows in the Excel sheet. Each section
+// carries its own title, columns, rows, and optional totals/aggregate
+// row — useful for reports that want to print BOTH a per-line detail
+// table AND a pre-aggregated summary (e.g. cost-centre transactions
+// followed by a "totals per GL account" breakdown).
+export interface ExportExtraSection {
+  title: string;
+  rows: Record<string, unknown>[];
+  columns: ExportColumn[];
+  totalsRow?: Record<string, unknown> | null;
+}
+
 export function exportToPDF(
   rows: Record<string, unknown>[],
   columns: ExportColumn[],
@@ -106,6 +119,11 @@ export function exportToPDF(
   // Optional company logo (base64 data URL or absolute http(s) URL) shown
   // centered above the title in the green header of the printed page.
   logo?: string | null,
+  // Optional extra tables (each with its own title, columns, rows and
+  // totals) rendered AFTER the main table and BEFORE the summary cards.
+  // Used by the cost-centres report to print the per-account aggregate
+  // alongside the per-transaction detail.
+  extraSections?: ExportExtraSection[] | null,
 ) {
   const escape = (s: unknown) =>
     String(s ?? "")
@@ -316,6 +334,20 @@ export function exportToPDF(
         ${totalsTbodyRow}
       </tbody>
     </table>
+    ${(extraSections ?? [])
+      .filter(s => s.rows.length > 0)
+      .map(s => {
+        const th = s.columns.map(c => `<th>${escape(c.header)}</th>`).join("");
+        const tb = s.rows.map((r, i) =>
+          `<tr class="${i % 2 === 0 ? "even" : "odd"}">${s.columns
+            .map(c => `<td>${escape(r[c.key])}</td>`).join("")}</tr>`).join("");
+        const tot = s.totalsRow
+          ? `<tr class="totals">${s.columns.map(c => `<td>${escape(s.totalsRow![c.key])}</td>`).join("")}</tr>`
+          : "";
+        return `<h2 style="margin:18px 0 8px;font-size:12pt;color:#14532d;border-bottom:2px solid #166534;padding-bottom:4px;page-break-before:auto;page-break-inside:avoid;">${escape(s.title)}</h2>
+          <table><thead><tr>${th}</tr></thead><tbody>${tb}${tot}</tbody></table>`;
+      })
+      .join("")}
     ${summaryFooter && summaryFooter.length > 0
       ? `<div class="summary-footer">${summaryFooter
           .map(c => `<div class="summary-card ${c.tone ?? "default"}"><div class="label">${escape(c.label)}</div><div class="value">${escape(c.value)}</div></div>`)

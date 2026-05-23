@@ -730,6 +730,48 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, totals, fmtMoney, t]);
 
+  // ─── Extra export section: pre-aggregated "totals per GL account" ─────
+  // Mirrors the on-screen "تجميع حسب الحساب" card so PDF and Excel
+  // exports of the cost-centre report carry the SAME aggregate the
+  // user sees in the UI: one row per GL account with entry count,
+  // debit, credit, balance and nature (debit/credit/balanced).
+  const byAccountSection = useMemo(() => {
+    if (!data || data.byAccount.length === 0) return null;
+    return {
+      title: t("costCenters.txTab.byAccount"),
+      columns: [
+        { key: "account", header: t("costCenters.txTab.tableAccount"), width: 32 },
+        { key: "count",   header: t("costCenters.txTab.tableEntries"), width: 10 },
+        { key: "debit",   header: t("costCenters.txTab.tableDebit"),   width: 16 },
+        { key: "credit",  header: t("costCenters.txTab.tableCredit"),  width: 16 },
+        { key: "balance", header: t("costCenters.txTab.tableBalance"), width: 16 },
+        { key: "nature",  header: t("costCenters.txTab.tableNature"),  width: 12 },
+      ],
+      rows: data.byAccount.map(a => ({
+        account: `${a.accountCode ?? ""} — ${isRtl ? (a.accountNameAr ?? "") : (a.accountNameEn || a.accountNameAr || "")}`,
+        count:   a.count,
+        debit:   a.debit  > 0 ? fmtMoney(a.debit)  : "—",
+        credit:  a.credit > 0 ? fmtMoney(a.credit) : "—",
+        balance: a.balance !== 0 ? fmtMoney(Math.abs(a.balance)) : "—",
+        nature:  a.balance !== 0 ? natureLabel(a.balance) : t("costCenters.txTab.balanceBalanced"),
+      })),
+      totalsRow: totals ? {
+        account: t("costCenters.txTab.total") || "الإجمالي",
+        count:   totals.lineCount,
+        debit:   fmtMoney(totals.totalDebit),
+        credit:  fmtMoney(totals.totalCredit),
+        balance: fmtMoney(Math.abs(totals.balance)),
+        nature:  natureLabel(totals.balance),
+      } : null,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, totals, isRtl, fmtMoney, t]);
+
+  const extraSections = useMemo(
+    () => (byAccountSection ? [byAccountSection] : null),
+    [byAccountSection],
+  );
+
   const summaryFooter = useMemo(() => {
     if (!data || !totals) return null;
     return [
@@ -836,6 +878,7 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
               subtitle={exportSubtitle}
               totalsRow={totalsRow}
               summaryFooter={summaryFooter}
+              extraSections={extraSections}
               disabled={!data || exportRows.length === 0}
               size="sm"
             />

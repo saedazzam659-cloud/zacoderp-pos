@@ -6,7 +6,7 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Download, FileSpreadsheet, FileText, ChevronDown, Loader2, Printer } from "lucide-react";
-import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+import { exportToExcel, exportToPDF, type ExportColumn, type ExportExtraSection } from "@/lib/export";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface ExportButtonsProps {
@@ -26,10 +26,14 @@ interface ExportButtonsProps {
   // Customer Statement to render the classic "previous balance /
   // movement / closing balance" cards beneath the table.
   summaryFooter?: Array<{ label: string; value: string; tone?: "default" | "debit" | "credit" | "primary" }> | null;
+  // Optional extra tables exported AFTER the main one. In PDF they
+  // render as titled sub-tables; in Excel they are appended below the
+  // main rows, separated by a blank row and a bold title row.
+  extraSections?: ExportExtraSection[] | null;
 }
 
 export default function ExportButtons({
-  rows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow, summaryFooter,
+  rows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow, summaryFooter, extraSections,
 }: ExportButtonsProps) {
   const [busy, setBusy] = useState(false);
   // The company logo is stored on the user's `company` object as a base64
@@ -45,13 +49,40 @@ export default function ExportButtons({
         // Excel can't render the summary cards — instead append the
         // same numbers as extra rows so they're not lost from the file.
         const extra = (summaryFooter ?? []).map(c => ({ [columns[0]?.key ?? "label"]: c.label, [columns[columns.length - 1]?.key ?? "value"]: c.value }));
-        exportToExcel([...rows, ...extra], columns, filename, "Sheet1", totalsRow);
+        // Append each extra section below the main rows in the same
+        // sheet. Each section is preceded by a blank separator row and
+        // a "title" row placed in the first column, followed by its
+        // own header row (rendered into the SAME main columns by
+        // mapping the section's columns into the first N main keys).
+        // We keep the main `columns` array as the source-of-truth grid
+        // so the sheet stays a single rectangular table — sections
+        // simply re-use the leading columns.
+        const sectionRows: Record<string, unknown>[] = [];
+        (extraSections ?? []).filter(s => s.rows.length > 0).forEach(s => {
+          const firstKey = columns[0]?.key ?? "label";
+          sectionRows.push({});                                              // blank separator
+          sectionRows.push({ [firstKey]: `── ${s.title} ──` });              // section title
+          const headerRow: Record<string, unknown> = {};                      // section headers
+          s.columns.forEach((c, i) => { headerRow[columns[i]?.key ?? c.key] = c.header; });
+          sectionRows.push(headerRow);
+          s.rows.forEach(r => {
+            const mapped: Record<string, unknown> = {};
+            s.columns.forEach((c, i) => { mapped[columns[i]?.key ?? c.key] = r[c.key]; });
+            sectionRows.push(mapped);
+          });
+          if (s.totalsRow) {
+            const mappedT: Record<string, unknown> = {};
+            s.columns.forEach((c, i) => { mappedT[columns[i]?.key ?? c.key] = s.totalsRow![c.key]; });
+            sectionRows.push(mappedT);
+          }
+        });
+        exportToExcel([...rows, ...extra, ...sectionRows], columns, filename, "Sheet1", totalsRow);
       } else if (type === "pdf") {
         // Open PDF view without auto-print so user can save as PDF (Ctrl+S)
-        exportToPDF(rows, columns, filename, title, subtitle, false, totalsRow, summaryFooter, companyLogo);
+        exportToPDF(rows, columns, filename, title, subtitle, false, totalsRow, summaryFooter, companyLogo, extraSections);
       } else {
         // Print: open the formatted HTML and trigger window.print() automatically
-        exportToPDF(rows, columns, filename, title, subtitle, true, totalsRow, summaryFooter, companyLogo);
+        exportToPDF(rows, columns, filename, title, subtitle, true, totalsRow, summaryFooter, companyLogo, extraSections);
       }
     } finally {
       setBusy(false);
