@@ -474,16 +474,15 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
         image:       { type: "jpeg", quality: 0.97 },
         html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", windowWidth: 1123 },
         jsPDF:       { unit: "mm", format: "a4", orientation: "landscape" },
-        // avoid-all: the strictest mode — html2pdf measures each leaf
-        // element and inserts a forced break BEFORE any element that
-        // would otherwise straddle a page boundary. This is what
-        // actually prevents tall <tr> cells from being sliced (the
-        // milder 'css' mode alone is unreliable for <tr> because the
-        // table is rasterised as one image then cut). 'css' + 'legacy'
-        // remain as fallbacks. The explicit avoid list reinforces the
-        // contract for our specific report elements.
+        // `css` honours our `page-break-inside: avoid` declarations.
+        // `legacy` keeps backward-compat with `.html2pdf__page-break`.
+        // We deliberately do NOT use `avoid-all` here: it forced every
+        // measurable element onto its own page and produced large
+        // empty pages with multi-line Arabic tables. The explicit
+        // `avoid` selector list below targets the specific elements
+        // that must never split, without the runaway behaviour.
         pagebreak:   {
-          mode:  ["avoid-all", "css", "legacy"],
+          mode:  ["css", "legacy"],
           avoid: ["tr", ".summary-card", ".summary-footer", ".footer", "h2"],
         },
       })
