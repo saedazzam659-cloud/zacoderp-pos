@@ -19,6 +19,8 @@ import SuperAdminDashboard from "@/pages/SuperAdminDashboard";
 import OrphanStockCleanup from "@/pages/admin/OrphanStockCleanup";
 import InvoiceFieldPolicies from "@/pages/admin/InvoiceFieldPolicies";
 import EnterCompany from "@/pages/admin/EnterCompany";
+import PosDevices from "@/pages/admin/PosDevices";
+import Download from "@/pages/Download";
 import DatabaseStats from "@/pages/admin/DatabaseStats";
 import AICompanyFix from "@/pages/admin/AICompanyFix";
 import CompanyDataDoctor from "@/pages/admin/CompanyDataDoctor";
@@ -487,6 +489,7 @@ function AppRoutes() {
       location === "/pricing" ||
       location === "/compare" ||
       location === "/why-zacod" ||
+      location === "/download" ||
       location === "/pending-approval" ||
       location === "/recover-superadmin" ||
       location.startsWith("/recover-superadmin/") ||
@@ -544,6 +547,7 @@ function AppRoutes() {
       <Route path="/compare" component={CompareSystems} />
       <Route path="/why-zacod" component={WhyZacod} />
       <Route path="/pos-system" component={PosLanding} />
+      <Route path="/download" component={Download} />
       <Route path="/blog/:slug" component={BlogArticle} />
       <Route path="/pending-approval" component={PendingApproval} />
       <Route path="/recover-superadmin" component={RecoverSuperAdmin} />
@@ -575,6 +579,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/modules" component={Modules} />}
             {isSuperAdmin && <Route path="/admin/industries" component={Industries} />}
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
+            {isSuperAdmin && <Route path="/admin/pos-devices" component={PosDevices} />}
             {isSuperAdmin && <Route path="/admin/security-superadmin" component={SuperAdminSecurity} />}
             {isSuperAdmin && <Route path="/admin/security" component={SecurityCenter} />}
             <Route path="/integrations/gateway" component={IntegrationGateway} />

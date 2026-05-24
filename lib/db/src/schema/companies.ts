@@ -196,6 +196,13 @@ export const companiesTable = pgTable("companies", {
   // POS, fixed assets). Changing it only affects NEW lines typed after
   // the toggle — already-saved documents retain their stored vatAmount.
   taxCalculationMode: text("tax_calculation_mode").notNull().default("after_discount"),
+  // ─── Windows Desktop POS feature flag (Task #174) ─────────────────────
+  // When true, the company is opted into the offline Windows POS desktop
+  // app (Tauri-based). All sync/license/device-management APIs reject
+  // requests with HTTP 403 when this is false. The flag is opt-in only and
+  // defaults to false so existing tenants are completely unaffected by
+  // the new code paths until SuperAdmin explicitly enables it.
+  enableOfflinePos: boolean("enable_offline_pos").notNull().default(false),
   // Public, human-friendly company code (e.g. "ZTC-1042"). Required by
   // login: tenants identify themselves with (companyCode, username,
   // password) so usernames can repeat across companies. Generated at

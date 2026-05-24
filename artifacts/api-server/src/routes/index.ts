@@ -104,6 +104,10 @@ import reportInvitationsRouter from "./report-invitations";
 import realtimeRouter from "./realtime";
 import userTrackingRouter from "./userTracking";
 import sisterCompaniesRouter from "./sister-companies";
+import deviceLicensesRouter from "./device-licenses";
+import posDesktopSyncRouter from "./pos-desktop-sync";
+import adminPosDevicesRouter from "./admin-pos-devices";
+import publicDownloadRouter from "./public-download";
 
 const router: IRouter = Router();
 
@@ -192,6 +196,14 @@ router.use("/audit-log", auditLogRouter);
 router.use("/sequences", sequencesRouter);
 router.use("/offers", offersRouter);
 router.use(deviceInfoRouter);
+// ─── Windows Desktop POS (Task #174) — additive only ──────────────────
+// MUST be mounted BEFORE path-less zatcaRouter (which applies a catch-all
+// auth check on unmatched /api/* requests). All endpoints feature-flag
+// gated via companies.enable_offline_pos (default false).
+router.use("/public/download", publicDownloadRouter);
+router.use("/device-licenses", deviceLicensesRouter);
+router.use("/sync", posDesktopSyncRouter);
+router.use("/admin/pos-devices", adminPosDevicesRouter);
 router.use(zatcaRouter);
 router.use("/contracting", contractingRouter);
 router.use("/contracting-ai", contractingAiRouter);

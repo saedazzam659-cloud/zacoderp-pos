@@ -1008,6 +1008,115 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE goods_deliveries ADD COLUMN IF NOT EXISTS posted_by_id INTEGER` },
     { label: "alter goods_deliveries add postedAt",
       sql:   `ALTER TABLE goods_deliveries ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP` },
+
+    // ─── Windows Desktop POS (Task #174) — additive only ──────────────
+    // Five new tables for offline POS + sync + licensing + per-device
+    // invoice ranges + per-country download URLs. All gated behind
+    // companies.enable_offline_pos (default false) so zero impact on
+    // existing tenants until SuperAdmin opts a company in.
+    { label: "create device_licenses table",
+      sql:   `CREATE TABLE IF NOT EXISTS device_licenses (
+        id                   SERIAL PRIMARY KEY,
+        license_key          TEXT NOT NULL,
+        company_id           INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+        device_id            INTEGER,
+        status               TEXT NOT NULL DEFAULT 'unassigned',
+        plan                 TEXT NOT NULL DEFAULT 'pos_full',
+        max_devices          INTEGER NOT NULL DEFAULT 1,
+        issued_at            TIMESTAMP NOT NULL DEFAULT NOW(),
+        activated_at         TIMESTAMP,
+        expires_at           TIMESTAMP,
+        revoked_at           TIMESTAMP,
+        notes                TEXT,
+        created_by_user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at           TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at           TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "device_licenses_key_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS device_licenses_key_uniq ON device_licenses (license_key)` },
+    { label: "device_licenses_company_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS device_licenses_company_idx ON device_licenses (company_id)` },
+    { label: "device_licenses_status_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS device_licenses_status_idx ON device_licenses (status)` },
+
+    { label: "create pos_devices table",
+      sql:   `CREATE TABLE IF NOT EXISTS pos_devices (
+        id                   SERIAL PRIMARY KEY,
+        company_id           INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        branch_id            INTEGER REFERENCES branches(id) ON DELETE SET NULL,
+        device_name          TEXT NOT NULL,
+        fingerprint_hash     TEXT NOT NULL,
+        license_id           INTEGER REFERENCES device_licenses(id) ON DELETE SET NULL,
+        device_token         TEXT NOT NULL,
+        status               TEXT NOT NULL DEFAULT 'active',
+        app_version          TEXT,
+        os_info              TEXT,
+        last_heartbeat_at    TIMESTAMP,
+        last_seen_ip         TEXT,
+        last_sync_at         TIMESTAMP,
+        metadata             JSONB,
+        created_at           TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at           TIMESTAMP NOT NULL DEFAULT NOW(),
+        deactivated_at       TIMESTAMP
+      )` },
+    { label: "pos_devices_token_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS pos_devices_token_uniq ON pos_devices (device_token)` },
+    { label: "pos_devices_company_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS pos_devices_company_idx ON pos_devices (company_id)` },
+    { label: "pos_devices_fp_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS pos_devices_fp_idx ON pos_devices (company_id, fingerprint_hash)` },
+
+    { label: "create sync_queue_log table",
+      sql:   `CREATE TABLE IF NOT EXISTS sync_queue_log (
+        id              SERIAL PRIMARY KEY,
+        company_id      INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+        device_id       INTEGER REFERENCES pos_devices(id) ON DELETE SET NULL,
+        direction       TEXT NOT NULL,
+        entity_type     TEXT,
+        payload_count   INTEGER NOT NULL DEFAULT 0,
+        status          TEXT NOT NULL DEFAULT 'ok',
+        error_message   TEXT,
+        duration_ms     INTEGER,
+        created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "sync_queue_log_device_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS sync_queue_log_device_idx ON sync_queue_log (device_id, created_at)` },
+    { label: "sync_queue_log_company_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS sync_queue_log_company_idx ON sync_queue_log (company_id, created_at)` },
+
+    { label: "create device_invoice_ranges table",
+      sql:   `CREATE TABLE IF NOT EXISTS device_invoice_ranges (
+        id             SERIAL PRIMARY KEY,
+        company_id     INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        device_id      INTEGER NOT NULL REFERENCES pos_devices(id) ON DELETE CASCADE,
+        doc_type       TEXT NOT NULL DEFAULT 'pos_invoice',
+        range_start    BIGINT NOT NULL,
+        range_end      BIGINT NOT NULL,
+        next_number    BIGINT NOT NULL,
+        exhausted_at   TIMESTAMP,
+        created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at     TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "device_invoice_ranges_device_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS device_invoice_ranges_device_idx ON device_invoice_ranges (device_id, doc_type)` },
+
+    { label: "create download_releases table",
+      sql:   `CREATE TABLE IF NOT EXISTS download_releases (
+        id                 SERIAL PRIMARY KEY,
+        country_code       TEXT NOT NULL,
+        platform           TEXT NOT NULL DEFAULT 'win-x64',
+        version            TEXT NOT NULL,
+        download_url       TEXT NOT NULL,
+        file_size_bytes    BIGINT,
+        checksum_sha256    TEXT,
+        release_notes      TEXT,
+        is_active          BOOLEAN NOT NULL DEFAULT TRUE,
+        published_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+        created_at         TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at         TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "download_releases_country_platform_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS download_releases_country_platform_idx ON download_releases (country_code, platform, is_active)` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {
