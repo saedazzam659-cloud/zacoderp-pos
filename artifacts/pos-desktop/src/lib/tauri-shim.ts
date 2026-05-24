@@ -40,8 +40,8 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 //                     reactivation behaviour as a real device.
 export async function getFingerprint(): Promise<string> {
   if (IS_TAURI) {
-    try { return await invoke<string>("collect_fingerprint"); }
-    catch (e) { console.warn("Tauri collect_fingerprint failed, falling back to stub", e); }
+    try { return await invoke<string>("get_hardware_fingerprint"); }
+    catch (e) { console.warn("Tauri get_hardware_fingerprint failed, falling back to stub", e); }
   }
   const KEY = "pos_desktop_dev_fingerprint";
   let fp = localStorage.getItem(KEY);

@@ -34,6 +34,48 @@ fn get_hardware_fingerprint() -> Result<String, String> {
     license::hardware_fingerprint().map_err(|e| e.to_string())
 }
 
+// ─── Commands consumed by src/lib/tauri-shim.ts ──────────────────────
+// These align the Tauri ↔ React contract so the activation wizard's
+// shim resolves to real native calls in the desktop build (instead of
+// silently falling back to localStorage stubs).
+
+#[tauri::command]
+fn get_device_name() -> String {
+    // COMPUTERNAME on Windows, fall back to "DESKTOP" if unset.
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "DESKTOP".into())
+}
+
+#[tauri::command]
+fn get_os_info() -> String {
+    format!(
+        "{} {} ({})",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        std::env::consts::FAMILY
+    )
+}
+
+// Secure device-token storage. Real impl in Step 8 uses the `keyring` crate
+// (Windows Credential Manager). For the scaffold, these are explicit stubs
+// that always Err so the shim's fallback path is used and the dev knows
+// secure storage is not yet wired.
+#[tauri::command]
+fn save_device_token(_token: String) -> Result<(), String> {
+    Err("save_device_token: not implemented yet (Task #174 Step 8)".into())
+}
+
+#[tauri::command]
+fn load_device_token() -> Result<Option<String>, String> {
+    Err("load_device_token: not implemented yet (Task #174 Step 8)".into())
+}
+
+#[tauri::command]
+fn clear_device_token() -> Result<(), String> {
+    Err("clear_device_token: not implemented yet (Task #174 Step 8)".into())
+}
+
 fn main() {
     env_logger::init();
     tauri::Builder::default()
@@ -50,6 +92,11 @@ fn main() {
             activate_device,
             sync_now,
             get_hardware_fingerprint,
+            get_device_name,
+            get_os_info,
+            save_device_token,
+            load_device_token,
+            clear_device_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
