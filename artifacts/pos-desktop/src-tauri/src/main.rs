@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod db;
+mod invoices;
 mod items;
 mod license;
 mod peripherals;
@@ -111,6 +112,9 @@ fn main() {
             items::list_items,
             items::find_item_by_barcode,
             items::seed_demo_items,
+            invoices::save_offline_invoice,
+            invoices::list_pending_invoices,
+            invoices::count_pending_invoices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

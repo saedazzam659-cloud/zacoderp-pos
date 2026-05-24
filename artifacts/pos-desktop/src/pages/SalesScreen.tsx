@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 import { printReceipt, openCashDrawer, type ReceiptLine } from "../lib/peripherals";
 import { generateZatcaQr } from "../lib/zatca";
 import { listItems, findItemByBarcode, seedDemoItems, type LocalItem } from "../lib/items";
+import { saveOfflineInvoice, type OfflineInvoicePayload } from "../lib/invoices";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 
 const VAT_RATE = 0.15;
@@ -25,6 +26,11 @@ type Props = { companyName?: string; vatNumber?: string };
 
 export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003" }: Props) {
   const [cart, setCart] = useState<CartLine[]>([]);
+  // Idempotency key for the current cart. Generated lazily on first checkout
+  // attempt; cleared when the cart is cleared (after a successful sale or
+  // explicit reset). A retried checkout for the same cart reuses the same key
+  // so save_offline_invoice returns the existing row instead of duplicating.
+  const [checkoutKey, setCheckoutKey] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [items, setItems] = useState<LocalItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
@@ -93,7 +99,11 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
   }
 
   function removeLine(itemId: number) {
-    setCart((prev) => prev.filter((l) => l.item.id !== itemId));
+    setCart((prev) => {
+      const next = prev.filter((l) => l.item.id !== itemId);
+      if (next.length === 0) setCheckoutKey(null);
+      return next;
+    });
   }
 
   async function checkout(paymentMethod: "cash" | "card") {
@@ -106,10 +116,9 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
 
     setPaying(true); setMsg(null);
     try {
-      // Generate a local invoice number — production code will use sync sequence
-      const invNum = `INV-${Date.now()}`;
       const ts = new Date().toISOString();
 
+      // 1) ZATCA QR first — cheapest step, no side effects.
       const qr = await generateZatcaQr({
         sellerName: companyName,
         vatNumber,
@@ -117,6 +126,36 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
         invoiceTotal: totals.grandTotal.toFixed(2),
         vatTotal: totals.vat.toFixed(2),
       });
+
+      // 2) Persist BEFORE printing. If save fails we abort the whole flow —
+      //    we must never print a receipt the system can't track (would be
+      //    invisible to the cloud push and break audit). If print later
+      //    fails, the row is still safely in `offline_invoices` and can be
+      //    reprinted from the pending queue (TODO: reprint UI).
+      const payload: OfflineInvoicePayload = {
+        vatNumber,
+        paymentMethod,
+        timestamp: ts,
+        subtotal: Number(totals.subtotal.toFixed(2)),
+        vat: Number(totals.vat.toFixed(2)),
+        grandTotal: Number(totals.grandTotal.toFixed(2)),
+        lines: cart.map((l) => ({
+          itemId: l.item.id,
+          nameAr: l.item.nameAr,
+          qty: l.qty,
+          unitPrice: l.item.salePrice,
+          vatRate: l.item.vatRate,
+        })),
+      };
+      // Reuse the cart's idempotency key across retries; generate once.
+      let key = checkoutKey;
+      if (!key) {
+        key = (crypto as any).randomUUID?.() ??
+          `idem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        setCheckoutKey(key);
+      }
+      const saved = await saveOfflineInvoice(payload, qr, undefined, key);
+      const invNum = saved.invoiceNo;
 
       const body: ReceiptLine[] = [];
       for (const l of cart) {
@@ -154,6 +193,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
 
       setLastInvoice(invNum);
       setCart([]);
+      setCheckoutKey(null); // fresh key for the next cart
       setMsg({ kind: "ok", text: `✅ تم إنهاء البيع — فاتورة ${invNum}` });
     } catch (e: any) {
       setMsg({ kind: "err", text: `فشل إنهاء البيع: ${e?.message ?? e}` });
