@@ -46,12 +46,59 @@ GitHub‑Actions artifact (`win-x64.msi`).
 All endpoints are feature‑gated by `companies.enable_offline_pos` (default `false`).
 Toggle per company from `/admin/pos-devices` → company licenses tab.
 
-## Next steps (when picked up)
+## Building the MSI
 
-1. Add `pos-desktop` to GitHub Actions matrix (`windows-latest` runner).
+A GitHub Actions workflow at `.github/workflows/pos-desktop-build.yml` builds the
+Windows MSI on a `windows-latest` runner. **This cannot be built from Replit** —
+the sandbox is Linux and lacks the MSVC toolchain.
+
+### Triggers
+
+| Trigger | Effect |
+|---|---|
+| Push to `main` touching `artifacts/pos-desktop/**` | Build + upload MSI as artifact (30-day retention) |
+| Pull request touching `artifacts/pos-desktop/**`   | Build-only validation (catches Rust/TS regressions) |
+| Push tag `pos-desktop-v*` (e.g. `pos-desktop-v1.0.0`) | Build + create **draft** GitHub Release with MSI attached |
+| Manual run from the Actions tab | Optional `sign=true` / `release=true` inputs |
+
+### Code-signing (optional)
+
+The workflow is **opt-in** for signing — it produces an unsigned build by default
+(end users will see a SmartScreen warning until your IT distributes the cert via
+GPO, but the MSI installs fine). To enable signing, add these repo secrets:
+
+| Secret | Description |
+|---|---|
+| `WINDOWS_CERT_BASE64`     | Base64-encoded `.pfx` Code Signing certificate |
+| `WINDOWS_CERT_PASSWORD`   | Password for the `.pfx` |
+| `WINDOWS_CERT_THUMBPRINT` | SHA-1 thumbprint (no spaces, uppercase) |
+| `TAURI_SIGNING_PRIVATE_KEY` | (auto-updater) Tauri ed25519 signing key |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | password for the above |
+
+Once all 3 `WINDOWS_CERT_*` secrets exist, the next build auto-detects them and
+switches to signed mode. The signed `.msi` is timestamp-stamped against DigiCert
+so it stays trusted after the cert expires.
+
+### Cutting a release
+
+```bash
+# 1) Bump version in artifacts/pos-desktop/package.json + src-tauri/tauri.conf.json + Cargo.toml
+# 2) Commit, then tag:
+git tag pos-desktop-v1.0.0
+git push origin pos-desktop-v1.0.0
+# 3) Wait ~15 min for the Windows runner. A DRAFT release appears at
+#    Releases tab with the .msi attached. Review, then publish.
+# 4) Copy the asset URL → SuperAdmin UI → POS Devices → Releases tab → paste
+#    per country (or use ALL as the fallback).
+```
+
+### What still needs to be done (Steps 7-12 of Task #174)
+
+1. ~~Add `pos-desktop` to GitHub Actions matrix (`windows-latest` runner).~~ ✅ done
 2. Implement `src-tauri/src/zatca.rs` — local ZATCA Phase 2 UBL 2.1 signing
    (port logic from `artifacts/api-server/src/lib/zatca`).
 3. Wire Activation wizard to cloud endpoints (already typed in `src/lib/api.ts`).
 4. Implement printer/cash‑drawer/barcode‑scanner native bridges via Tauri plugins.
-5. Set up code‑signing certificate + auto‑updater via Tauri's built‑in mechanism.
-6. Publish first release → upload .msi → paste URL into `/admin/pos-devices` → Releases tab.
+5. Set up code‑signing certificate (set the 3 secrets above) + auto‑updater
+   via Tauri's built‑in mechanism (set the 2 `TAURI_SIGNING_*` secrets).
+6. Publish first release → upload `.msi` → paste URL into `/admin/pos-devices` → Releases tab.

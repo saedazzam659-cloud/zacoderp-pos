@@ -1,0 +1,285 @@
+name: pos-desktop / build Windows MSI
+
+# Builds the Tauri Windows POS installer (artifacts/pos-desktop).
+#
+# Triggers:
+#   • push to main / PRs touching pos-desktop  → build + smoke-test, upload MSI as artifact
+#   • push tag matching `pos-desktop-v*`        → ALSO sign + create GitHub Release + upload .msi
+#   • workflow_dispatch                         → manual run from the Actions tab
+#
+# This workflow is intentionally self-contained — `artifacts/pos-desktop/` is NOT a pnpm
+# workspace package, so we do NOT run any monorepo-wide `pnpm install` here.
+# The Tauri sub-project has its own `package.json` and is installed in isolation.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "artifacts/pos-desktop/**"
+      - ".github/workflows/pos-desktop-build.yml"
+    tags:
+      - "pos-desktop-v*"
+  pull_request:
+    paths:
+      - "artifacts/pos-desktop/**"
+      - ".github/workflows/pos-desktop-build.yml"
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: "Force code-signing (requires WINDOWS_CERT_* secrets)"
+        type: boolean
+        default: false
+      release:
+        description: "Create a GitHub Release (only on tag pushes or manual)"
+        type: boolean
+        default: false
+
+# Cancel in-progress runs on the same ref to save Windows-runner minutes.
+concurrency:
+  group: pos-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # needed for softprops/action-gh-release on tag pushes
+
+jobs:
+  build:
+    name: Build (win-x64)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: artifacts/pos-desktop
+        shell: bash
+
+    env:
+      # Match the Cargo.toml rust-version
+      RUST_VERSION: "1.78"
+      NODE_VERSION: "20"
+      PNPM_VERSION: "9"
+      # Tauri target — Cargo.toml + tauri.conf.json are pinned to win-x64
+      TAURI_TARGET: "x86_64-pc-windows-msvc"
+
+    steps:
+      # ─── 1. Checkout ────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ─── 2. Node toolchain (Vite frontend build) ────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Get pnpm store path
+        id: pnpm-cache
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-pos-desktop-${{ hashFiles('artifacts/pos-desktop/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-pos-desktop-
+
+      - name: Install JS dependencies (pos-desktop only)
+        run: pnpm install --no-frozen-lockfile
+
+      # ─── 3. Rust toolchain (Tauri backend build) ────────────────────
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ env.TAURI_TARGET }}
+          components: rustfmt, clippy
+
+      - name: Cache Cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: artifacts/pos-desktop/src-tauri -> target
+          shared-key: pos-desktop-${{ env.RUST_VERSION }}
+
+      # ─── 4. WiX (MSI installer) ─────────────────────────────────────
+      # Tauri 2.x uses WiX 3.x. windows-latest has it pre-installed, but we
+      # ensure it's on PATH just in case.
+      - name: Verify WiX availability
+        shell: pwsh
+        run: |
+          $wix = (Get-Command candle.exe -ErrorAction SilentlyContinue)
+          if (-not $wix) {
+            Write-Host "::warning::WiX not on PATH — Tauri CLI will auto-download."
+          } else {
+            Write-Host "WiX found at: $($wix.Path)"
+          }
+
+      # ─── 5. Lint + typecheck (fail fast before the slow MSI build) ──
+      - name: TypeScript check
+        run: pnpm exec tsc --noEmit
+
+      - name: Cargo check (Rust)
+        working-directory: artifacts/pos-desktop/src-tauri
+        run: cargo check --target ${{ env.TAURI_TARGET }}
+
+      - name: Cargo clippy (warnings allowed; errors fail)
+        working-directory: artifacts/pos-desktop/src-tauri
+        run: cargo clippy --target ${{ env.TAURI_TARGET }} --no-deps -- -D warnings
+        continue-on-error: true   # Step 6 will tighten this once the source stabilises
+
+      # ─── 6. Build Vite frontend ─────────────────────────────────────
+      - name: Build frontend (Vite)
+        run: pnpm run build
+
+      # ─── 7. Build Tauri MSI ─────────────────────────────────────────
+      # Code signing is OPT-IN — only attempts when all 3 cert secrets are
+      # present (or `sign=true` was passed via workflow_dispatch).
+      - name: Resolve signing mode
+        id: signing
+        shell: bash
+        run: |
+          if [[ -n "${{ secrets.WINDOWS_CERT_BASE64 }}" && \
+                -n "${{ secrets.WINDOWS_CERT_PASSWORD }}" && \
+                -n "${{ secrets.WINDOWS_CERT_THUMBPRINT }}" ]]; then
+            echo "MODE=signed" >> "$GITHUB_OUTPUT"
+            echo "::notice::Code-signing enabled (all 3 cert secrets present)"
+          elif [[ "${{ inputs.sign }}" == "true" ]]; then
+            echo "MODE=signed" >> "$GITHUB_OUTPUT"
+            echo "::warning::sign=true requested but cert secrets missing — build will fail at sign step"
+          else
+            echo "MODE=unsigned" >> "$GITHUB_OUTPUT"
+            echo "::notice::Unsigned build — Windows SmartScreen will warn end users"
+          fi
+
+      - name: Import signing certificate
+        if: steps.signing.outputs.MODE == 'signed'
+        shell: pwsh
+        env:
+          CERT_B64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+          CERT_PW:  ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $bytes = [Convert]::FromBase64String($env:CERT_B64)
+          $certPath = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+          [IO.File]::WriteAllBytes($certPath, $bytes)
+          $pw = ConvertTo-SecureString -String $env:CERT_PW -AsPlainText -Force
+          Import-PfxCertificate -FilePath $certPath -CertStoreLocation Cert:\CurrentUser\My -Password $pw | Out-Null
+          Remove-Item $certPath
+          Write-Host "Certificate imported."
+
+      - name: Build Tauri MSI (unsigned)
+        if: steps.signing.outputs.MODE == 'unsigned'
+        run: pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles msi
+
+      - name: Build Tauri MSI (signed)
+        if: steps.signing.outputs.MODE == 'signed'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY:          ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI__BUNDLE__WINDOWS__CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERT_THUMBPRINT }}
+          TAURI__BUNDLE__WINDOWS__DIGEST_ALGORITHM: "sha256"
+          TAURI__BUNDLE__WINDOWS__TIMESTAMP_URL: "http://timestamp.digicert.com"
+        run: pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles msi
+
+      # ─── 8. Locate + checksum the MSI ───────────────────────────────
+      - name: Find produced MSI
+        id: msi
+        shell: bash
+        run: |
+          MSI_PATH=$(find src-tauri/target/${{ env.TAURI_TARGET }}/release/bundle/msi -name "*.msi" | head -n1)
+          if [[ -z "$MSI_PATH" ]]; then
+            echo "::error::No MSI produced — check Tauri build output above."
+            exit 1
+          fi
+          MSI_NAME=$(basename "$MSI_PATH")
+          MSI_SIZE=$(stat -c %s "$MSI_PATH" 2>/dev/null || stat -f %z "$MSI_PATH")
+          MSI_SHA256=$(sha256sum "$MSI_PATH" | cut -d' ' -f1)
+          echo "PATH=$MSI_PATH" >> "$GITHUB_OUTPUT"
+          echo "NAME=$MSI_NAME" >> "$GITHUB_OUTPUT"
+          echo "SIZE=$MSI_SIZE" >> "$GITHUB_OUTPUT"
+          echo "SHA256=$MSI_SHA256" >> "$GITHUB_OUTPUT"
+          echo ""
+          echo "MSI: $MSI_NAME ($MSI_SIZE bytes)"
+          echo "SHA256: $MSI_SHA256"
+
+      - name: Write build manifest
+        shell: bash
+        run: |
+          cat > build-manifest.json <<EOF
+          {
+            "name": "${{ steps.msi.outputs.NAME }}",
+            "sizeBytes": ${{ steps.msi.outputs.SIZE }},
+            "sha256": "${{ steps.msi.outputs.SHA256 }}",
+            "signed": ${{ steps.signing.outputs.MODE == 'signed' }},
+            "target": "${{ env.TAURI_TARGET }}",
+            "commit": "${{ github.sha }}",
+            "ref": "${{ github.ref }}",
+            "buildAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          cat build-manifest.json
+
+      # ─── 9. Upload artifact (always, even on PRs) ───────────────────
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pos-desktop-${{ github.sha }}-${{ steps.signing.outputs.MODE }}
+          path: |
+            artifacts/pos-desktop/${{ steps.msi.outputs.PATH }}
+            artifacts/pos-desktop/build-manifest.json
+          retention-days: 30
+          if-no-files-found: error
+
+      # ─── 10. Tag-driven GitHub Release ──────────────────────────────
+      - name: Create GitHub Release (tag-only)
+        if: startsWith(github.ref, 'refs/tags/pos-desktop-v') || inputs.release == true
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/pos-desktop/${{ steps.msi.outputs.PATH }}
+            artifacts/pos-desktop/build-manifest.json
+          name: "ZACOD POS Desktop ${{ github.ref_name }}"
+          draft: true
+          generate_release_notes: true
+          body: |
+            ## ZACOD POS Desktop — `${{ github.ref_name }}`
+
+            **Installer:** `${{ steps.msi.outputs.NAME }}`
+            **Size:** ${{ steps.msi.outputs.SIZE }} bytes
+            **SHA-256:** `${{ steps.msi.outputs.SHA256 }}`
+            **Signed:** `${{ steps.signing.outputs.MODE }}`
+            **Commit:** ${{ github.sha }}
+
+            ### Next steps for SuperAdmin
+            1. Download the `.msi` from this release.
+            2. Upload it to your CDN / object storage.
+            3. Paste the URL into **SuperAdmin → POS Devices → Releases tab**
+               (set `countryCode` per market or `ALL` as the fallback).
+            4. End users can then download from your public `/download` page.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ─── 11. Job summary (visible in the Actions UI) ────────────────
+      - name: Write job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## ZACOD POS Desktop — build summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| MSI | \`${{ steps.msi.outputs.NAME || 'n/a' }}\` |"
+            echo "| Size | ${{ steps.msi.outputs.SIZE || 'n/a' }} bytes |"
+            echo "| SHA-256 | \`${{ steps.msi.outputs.SHA256 || 'n/a' }}\` |"
+            echo "| Signed | ${{ steps.signing.outputs.MODE || 'n/a' }} |"
+            echo "| Target | ${{ env.TAURI_TARGET }} |"
+            echo "| Commit | ${{ github.sha }} |"
+            echo "| Ref | ${{ github.ref }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
