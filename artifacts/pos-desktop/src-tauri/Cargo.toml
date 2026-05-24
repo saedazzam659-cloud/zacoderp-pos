@@ -37,6 +37,8 @@ base64 = "0.22"
 p256 = { version = "0.13", features = ["ecdsa", "pem"] }
 x509-parser = "0.16"
 pem = "3"
+printers = "2"
+serialport = { version = "4", default-features = false }
 
 [profile.release]
 panic = "abort"

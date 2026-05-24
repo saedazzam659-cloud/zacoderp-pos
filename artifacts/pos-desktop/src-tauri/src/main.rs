@@ -6,6 +6,7 @@
 
 mod db;
 mod license;
+mod peripherals;
 mod sync;
 mod zatca;
 
@@ -100,6 +101,12 @@ fn main() {
             clear_device_token,
             zatca::generate_qr,
             zatca::decode_qr,
+            peripherals::list_printers,
+            peripherals::list_serial_ports,
+            peripherals::print_receipt,
+            peripherals::print_raw_serial,
+            peripherals::open_cash_drawer,
+            peripherals::open_cash_drawer_serial,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

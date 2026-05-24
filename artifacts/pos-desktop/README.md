@@ -15,6 +15,9 @@ GitHub‑Actions artifact (`win-x64.msi`).
 - `src-tauri/src/db.rs`               — SQLite (SQLCipher) bootstrap + migrations
 - `src-tauri/src/sync.rs`             — heartbeat + pull + push against cloud API
 - `src-tauri/src/license.rs`          — license activation + fingerprint hashing
+- `src-tauri/src/zatca.rs`            — TLV QR (Phase 1) encoder/decoder + tests
+- `src-tauri/src/peripherals.rs`      — ESC/POS thermal printer + cash drawer (spooler + serial)
+- `src/lib/peripherals.ts`            — TS shim that forwards to Rust peripherals commands
 - `src/main.tsx` / `src/App.tsx`      — Vite + React 18 (shadcn/ui) shell
 - `src/pages/Activation.tsx`          — 6‑step activation wizard
 - `src/pages/PosShell.tsx`            — main POS shell (re‑uses logic from `artifacts/pos`)
