@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createApi, type SyncStatus } from "../lib/api";
 import { TAURI_MODE } from "../lib/tauri-shim";
 import PeripheralsSettings from "./PeripheralsSettings";
+import SalesScreen from "./SalesScreen";
 
 type Props = {
   baseUrl: string;
@@ -30,6 +31,7 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
   const [heartbeatErr, setHeartbeatErr] = useState<string | null>(null); // background polling
   const [busy, setBusy] = useState<string | null>(null);
   const [showPeripherals, setShowPeripherals] = useState(false);
+  const [view, setView] = useState<"sales" | "dashboard">("sales");
 
   // ─── Heartbeat every 30s while shell is mounted ─────────────────────
   // Note: heartbeat failures go into a separate `heartbeatErr` so they don't
@@ -78,11 +80,59 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
           <h1 style={S.title}>ZACOD POS</h1>
           {companyName && <div style={S.company}>{companyName}</div>}
         </div>
-        <div style={S.mode}>
-          {TAURI_MODE === "tauri" ? "🪟 تطبيق أصلي" : "🌐 متصفح (تطوير)"}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button
+            onClick={() => setView("sales")}
+            style={view === "sales" ? S.tabActive : S.tab}
+          >🛒 بيع</button>
+          <button
+            onClick={() => setView("dashboard")}
+            style={view === "dashboard" ? S.tabActive : S.tab}
+          >📊 لوحة التحكم</button>
+          <div style={S.mode}>
+            {TAURI_MODE === "tauri" ? "🪟 أصلي" : "🌐 متصفح"}
+          </div>
         </div>
       </header>
 
+      {showPeripherals && <PeripheralsSettings onClose={() => setShowPeripherals(false)} />}
+
+      {view === "sales" ? (
+        <SalesScreen companyName={companyName} />
+      ) : (
+        <DashboardView
+          deviceId={deviceId}
+          status={status}
+          baseUrl={baseUrl}
+          busy={busy}
+          pulled={pulled}
+          actionErr={actionErr}
+          heartbeatErr={heartbeatErr}
+          onPull={doPull}
+          onShowPeripherals={() => setShowPeripherals(true)}
+          onDeactivate={doDeactivate}
+        />
+      )}
+    </div>
+  );
+}
+
+type DashboardProps = {
+  deviceId: number;
+  status: SyncStatus | null;
+  baseUrl: string;
+  busy: string | null;
+  pulled: { customers: number; items: number } | null;
+  actionErr: string | null;
+  heartbeatErr: string | null;
+  onPull: () => void;
+  onShowPeripherals: () => void;
+  onDeactivate: () => void;
+};
+
+function DashboardView({ deviceId, status, baseUrl, busy, pulled, actionErr, heartbeatErr, onPull, onShowPeripherals, onDeactivate }: DashboardProps) {
+  return (
+    <div style={{ maxWidth: 920, margin: "0 auto", width: "100%" }}>
       <section style={S.card}>
         <h2 style={S.h2}>حالة المزامنة</h2>
         <KV k="معرّف الجهاز" v={String(deviceId || "—")} />
@@ -95,13 +145,13 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
       <section style={S.card}>
         <h2 style={S.h2}>إجراءات</h2>
         <div style={S.btnRow}>
-          <button onClick={doPull} disabled={busy === "pull"} style={S.btnPrimary}>
+          <button onClick={onPull} disabled={busy === "pull"} style={S.btnPrimary}>
             {busy === "pull" ? "جارٍ السحب..." : "سحب البيانات (Pull)"}
           </button>
-          <button onClick={() => setShowPeripherals(true)} style={S.btnSecondary}>
+          <button onClick={onShowPeripherals} style={S.btnSecondary}>
             🖨️ الأجهزة الطرفية
           </button>
-          <button onClick={doDeactivate} disabled={busy === "deactivate"} style={S.btnDanger}>
+          <button onClick={onDeactivate} disabled={busy === "deactivate"} style={S.btnDanger}>
             {busy === "deactivate" ? "جارٍ الإلغاء..." : "إلغاء تفعيل الجهاز"}
           </button>
         </div>
@@ -117,8 +167,6 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
           </div>
         )}
       </section>
-
-      {showPeripherals && <PeripheralsSettings onClose={() => setShowPeripherals(false)} />}
 
       <section style={S.card}>
         <h2 style={S.h2}>الخطوات القادمة (Task #174 Steps 9-12)</h2>
@@ -142,8 +190,10 @@ function KV({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 }
 
 const S = {
-  wrap: { maxWidth: 920, margin: "32px auto", padding: 24, fontFamily: "'Segoe UI', system-ui, sans-serif" } as const,
-  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 } as const,
+  wrap: { minHeight: "100vh", padding: "16px 24px 24px", fontFamily: "'Segoe UI', system-ui, sans-serif" } as const,
+  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } as const,
+  tab: { padding: "8px 14px", background: "#fff", color: "#475569", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" } as const,
+  tabActive: { padding: "8px 14px", background: "#0f172a", color: "#fff", border: "1px solid #0f172a", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" } as const,
   title: { margin: 0, fontSize: 28, color: "#0f172a" } as const,
   company: { fontSize: 14, color: "#64748b", marginTop: 4 } as const,
   mode: { fontSize: 11, padding: "4px 10px", background: "#f1f5f9", borderRadius: 999, color: "#475569" } as const,
