@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createApi, type SyncStatus } from "../lib/api";
 import { TAURI_MODE } from "../lib/tauri-shim";
+import PeripheralsSettings from "./PeripheralsSettings";
 
 type Props = {
   baseUrl: string;
@@ -28,6 +29,7 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
   const [actionErr, setActionErr] = useState<string | null>(null);   // user-initiated (pull/deactivate)
   const [heartbeatErr, setHeartbeatErr] = useState<string | null>(null); // background polling
   const [busy, setBusy] = useState<string | null>(null);
+  const [showPeripherals, setShowPeripherals] = useState(false);
 
   // ─── Heartbeat every 30s while shell is mounted ─────────────────────
   // Note: heartbeat failures go into a separate `heartbeatErr` so they don't
@@ -96,6 +98,9 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
           <button onClick={doPull} disabled={busy === "pull"} style={S.btnPrimary}>
             {busy === "pull" ? "جارٍ السحب..." : "سحب البيانات (Pull)"}
           </button>
+          <button onClick={() => setShowPeripherals(true)} style={S.btnSecondary}>
+            🖨️ الأجهزة الطرفية
+          </button>
           <button onClick={doDeactivate} disabled={busy === "deactivate"} style={S.btnDanger}>
             {busy === "deactivate" ? "جارٍ الإلغاء..." : "إلغاء تفعيل الجهاز"}
           </button>
@@ -112,6 +117,8 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
           </div>
         )}
       </section>
+
+      {showPeripherals && <PeripheralsSettings onClose={() => setShowPeripherals(false)} />}
 
       <section style={S.card}>
         <h2 style={S.h2}>الخطوات القادمة (Task #174 Steps 9-12)</h2>
@@ -145,6 +152,7 @@ const S = {
   btnRow: { display: "flex", gap: 12, flexWrap: "wrap" } as const,
   btnPrimary: { padding: "10px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
   btnDanger: { padding: "10px 20px", background: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
+  btnSecondary: { padding: "10px 20px", background: "#fff", color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
   success: { background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534", padding: 12, borderRadius: 6, marginTop: 12, fontSize: 14 } as const,
   err: { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: 12, borderRadius: 6, marginTop: 12, fontSize: 14 } as const,
 };

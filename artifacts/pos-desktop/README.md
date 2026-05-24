@@ -18,6 +18,8 @@ GitHub‑Actions artifact (`win-x64.msi`).
 - `src-tauri/src/zatca.rs`            — TLV QR (Phase 1) encoder/decoder + tests
 - `src-tauri/src/peripherals.rs`      — ESC/POS thermal printer + cash drawer (spooler + serial)
 - `src/lib/peripherals.ts`            — TS shim that forwards to Rust peripherals commands
+- `src/hooks/useBarcodeScanner.ts`    — global keyboard-wedge barcode scanner listener
+- `src/pages/PeripheralsSettings.tsx` — modal: pick printer/COM, test print, kick drawer, scanner test
 - `src/main.tsx` / `src/App.tsx`      — Vite + React 18 (shadcn/ui) shell
 - `src/pages/Activation.tsx`          — 6‑step activation wizard
 - `src/pages/PosShell.tsx`            — main POS shell (re‑uses logic from `artifacts/pos`)
