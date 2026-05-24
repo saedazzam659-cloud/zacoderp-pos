@@ -3711,8 +3711,33 @@ router.get("/operators/performance", async (req, res) => {
   try {
     const cid = guard(req, res);
     if (!cid) return;
-    const from = typeof req.query.from === "string" ? req.query.from : null;
-    const to = typeof req.query.to === "string" ? req.query.to : null;
+    // Validate date params at the edge — if the frontend ever sends a
+    // malformed value (empty string, partial input mid-typing, locale
+    // string, garbage), reject with 400 BEFORE binding it into the SQL.
+    // Without this guard Postgres throws "invalid input syntax for type
+    // date" inside the COALESCE/`::date` cast and the catch below turns
+    // it into an HTTP 500 with the raw SQL leaked in the error body.
+    const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+    const rawFrom = typeof req.query.from === "string" ? req.query.from.trim() : "";
+    const rawTo = typeof req.query.to === "string" ? req.query.to.trim() : "";
+    const isValidISODate = (s: string) => {
+      if (!ISO_DATE.test(s)) return false;
+      const d = new Date(`${s}T00:00:00Z`);
+      // Round-trip check so JS's overflow normalisation (e.g. "2023-02-29"
+      // → Mar 1) is rejected instead of silently shifted — matches the
+      // validIsoDate helper pattern used in routes/reports.ts.
+      return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+    };
+    if (rawFrom && !isValidISODate(rawFrom)) {
+      res.status(400).json({ error: "تاريخ البداية غير صالح", field: "from" });
+      return;
+    }
+    if (rawTo && !isValidISODate(rawTo)) {
+      res.status(400).json({ error: "تاريخ النهاية غير صالح", field: "to" });
+      return;
+    }
+    const from = rawFrom || null;
+    const to = rawTo || null;
     const branchScope = effectiveBranchCondition(
       req,
       productionOrdersTable.branchId,
@@ -4031,7 +4056,9 @@ router.get("/operators/performance", async (req, res) => {
     });
   } catch (e: any) {
     req.log?.error?.({ err: e }, "operators/performance failed");
-    res.status(500).json({ error: e.message });
+    // Don't leak raw SQL / driver text to the client — the full error is
+    // already in the server log via req.log.error above.
+    res.status(500).json({ error: "تعذّر احتساب تقرير أداء المشغّلين" });
   }
 });
 
