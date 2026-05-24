@@ -154,7 +154,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           `idem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
         setCheckoutKey(key);
       }
-      const saved = await saveOfflineInvoice(payload, qr, undefined, key);
+      const saved = await saveOfflineInvoice(payload, qr ?? undefined, undefined, key!);
       const invNum = saved.invoiceNo;
 
       const body: ReceiptLine[] = [];
