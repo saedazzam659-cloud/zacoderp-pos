@@ -3783,27 +3783,112 @@ router.get("/operators/performance", async (req, res) => {
     if (branchScope.cond) stageConds.push(branchScope.cond);
     stageConds.push(sql`${productionOrderStagesTable.operatorUserId} IS NOT NULL`);
 
-    const stageRows = await db
-      .select({
-        operatorUserId: productionOrderStagesTable.operatorUserId,
-        stagesTotal: sql<number>`COUNT(*)::int`,
-        stagesCompleted: sql<number>`COUNT(*) FILTER (WHERE ${productionOrderStagesTable.status} = 'done')::int`,
-        avgDurationMins: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (${productionOrderStagesTable.completedAt} - ${productionOrderStagesTable.startedAt}))/60.0) FILTER (WHERE ${productionOrderStagesTable.completedAt} IS NOT NULL AND ${productionOrderStagesTable.startedAt} IS NOT NULL),0)::float`,
-        // Round 13 fix — count of stages that actually have a duration sample,
-        // used for pooled (weighted) avgDurationMins across operators and to
-        // distinguish "operator has 0 duration data" from "operator has data
-        // averaging 0" (so we don't bias the company mean either direction).
-        stagesWithDuration: sql<number>`COUNT(*) FILTER (WHERE ${productionOrderStagesTable.completedAt} IS NOT NULL AND ${productionOrderStagesTable.startedAt} IS NOT NULL)::int`,
-        totalOutput: sql<number>`COALESCE(SUM(${productionOrderStagesTable.outputQty}),0)::float`,
-        stageWasteQty: sql<number>`COALESCE(SUM(${productionOrderStagesTable.wasteQty}),0)::float`,
-      })
-      .from(productionOrderStagesTable)
-      .innerJoin(
-        productionOrdersTable,
-        eq(productionOrdersTable.id, productionOrderStagesTable.orderId),
-      )
-      .where(and(...stageConds))
-      .groupBy(productionOrderStagesTable.operatorUserId);
+    // Defensive startup-style assertion: in production we've seen Drizzle
+    // throw "Cannot convert undefined or null to object" deep inside
+    // orderSelectedFields, which only happens when one of the column refs
+    // in the select object is undefined. That points to a stale / wrong
+    // schema export sneaking into the bundle. Surface the actual missing
+    // ref with a clear log line BEFORE Drizzle's generic crash.
+    const _stagesCols: Record<string, unknown> = {
+      operatorUserId: productionOrderStagesTable?.operatorUserId,
+      status: productionOrderStagesTable?.status,
+      completedAt: productionOrderStagesTable?.completedAt,
+      startedAt: productionOrderStagesTable?.startedAt,
+      outputQty: productionOrderStagesTable?.outputQty,
+      wasteQty: productionOrderStagesTable?.wasteQty,
+      orderId: productionOrderStagesTable?.orderId,
+    };
+    const _ordersCols: Record<string, unknown> = {
+      id: productionOrdersTable?.id,
+      companyId: productionOrdersTable?.companyId,
+      branchId: productionOrdersTable?.branchId,
+    };
+    const _wasteCols: Record<string, unknown> = {
+      operatorUserId: productionWasteRecordsTable?.operatorUserId,
+      qty: productionWasteRecordsTable?.qty,
+      costImpact: productionWasteRecordsTable?.costImpact,
+      createdAt: productionWasteRecordsTable?.createdAt,
+      orderId: productionWasteRecordsTable?.orderId,
+    };
+    const _qcCols: Record<string, unknown> = {
+      result: productionQualityChecksTable?.result,
+      checkedAt: productionQualityChecksTable?.checkedAt,
+      orderId: productionQualityChecksTable?.orderId,
+      stageId: productionQualityChecksTable?.stageId,
+      companyId: productionQualityChecksTable?.companyId,
+      id: productionQualityChecksTable?.id,
+    };
+    const _usersCols: Record<string, unknown> = {
+      id: usersTable?.id,
+      nameAr: usersTable?.nameAr,
+      nameEn: usersTable?.nameEn,
+      username: usersTable?.username,
+    };
+    const missingRefs: string[] = [];
+    for (const [tbl, cols] of [
+      ["production_order_stages", _stagesCols],
+      ["production_orders", _ordersCols],
+      ["production_waste_records", _wasteCols],
+      ["production_quality_checks", _qcCols],
+      ["users", _usersCols],
+    ] as const) {
+      for (const [k, v] of Object.entries(cols)) {
+        if (v == null) missingRefs.push(`${tbl}.${k}`);
+      }
+    }
+    if (missingRefs.length > 0) {
+      req.log?.error?.(
+        { missingRefs },
+        "operators/performance: schema column refs are undefined — likely a stale bundle / circular import",
+      );
+      res.status(500).json({
+        error: "تعذّر احتساب التقرير: مخطط البيانات غير مكتمل",
+        missingRefs,
+      });
+      return;
+    }
+
+    const failedSources: string[] = [];
+    let stageRows: Array<{
+      operatorUserId: number | null;
+      stagesTotal: number;
+      stagesCompleted: number;
+      avgDurationMins: number;
+      stagesWithDuration: number;
+      totalOutput: number;
+      stageWasteQty: number;
+    }> = [];
+    try {
+      stageRows = await db
+        .select({
+          operatorUserId: productionOrderStagesTable.operatorUserId,
+          stagesTotal: sql<number>`COUNT(*)::int`,
+          stagesCompleted: sql<number>`COUNT(*) FILTER (WHERE ${productionOrderStagesTable.status} = 'done')::int`,
+          avgDurationMins: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (${productionOrderStagesTable.completedAt} - ${productionOrderStagesTable.startedAt}))/60.0) FILTER (WHERE ${productionOrderStagesTable.completedAt} IS NOT NULL AND ${productionOrderStagesTable.startedAt} IS NOT NULL),0)::float`,
+          // Round 13 fix — count of stages that actually have a duration sample,
+          // used for pooled (weighted) avgDurationMins across operators and to
+          // distinguish "operator has 0 duration data" from "operator has data
+          // averaging 0" (so we don't bias the company mean either direction).
+          stagesWithDuration: sql<number>`COUNT(*) FILTER (WHERE ${productionOrderStagesTable.completedAt} IS NOT NULL AND ${productionOrderStagesTable.startedAt} IS NOT NULL)::int`,
+          totalOutput: sql<number>`COALESCE(SUM(${productionOrderStagesTable.outputQty}),0)::float`,
+          stageWasteQty: sql<number>`COALESCE(SUM(${productionOrderStagesTable.wasteQty}),0)::float`,
+        })
+        .from(productionOrderStagesTable)
+        .innerJoin(
+          productionOrdersTable,
+          eq(productionOrdersTable.id, productionOrderStagesTable.orderId),
+        )
+        .where(and(...stageConds))
+        .groupBy(productionOrderStagesTable.operatorUserId);
+    } catch (e: any) {
+      // Don't fail the whole report when the stages source breaks —
+      // a partial report (waste + qc only) is more useful than a 500.
+      failedSources.push("stages");
+      req.log?.error?.(
+        { err: e, source: "stages" },
+        "operators/performance: stages query failed, continuing with empty stage data",
+      );
+    }
 
     // ── Waste records: events, qty, cost — anchored on createdAt ───────────
     const wasteConds = [eq(productionOrdersTable.companyId, cid)];
@@ -3816,20 +3901,34 @@ router.get("/operators/performance", async (req, res) => {
     if (branchScope.cond) wasteConds.push(branchScope.cond);
     wasteConds.push(sql`${productionWasteRecordsTable.operatorUserId} IS NOT NULL`);
 
-    const wasteRows = await db
-      .select({
-        operatorUserId: productionWasteRecordsTable.operatorUserId,
-        wasteEvents: sql<number>`COUNT(*)::int`,
-        wasteQty: sql<number>`COALESCE(SUM(${productionWasteRecordsTable.qty}),0)::float`,
-        wasteCost: sql<number>`COALESCE(SUM(${productionWasteRecordsTable.costImpact}),0)::float`,
-      })
-      .from(productionWasteRecordsTable)
-      .innerJoin(
-        productionOrdersTable,
-        eq(productionOrdersTable.id, productionWasteRecordsTable.orderId),
-      )
-      .where(and(...wasteConds))
-      .groupBy(productionWasteRecordsTable.operatorUserId);
+    let wasteRows: Array<{
+      operatorUserId: number | null;
+      wasteEvents: number;
+      wasteQty: number;
+      wasteCost: number;
+    }> = [];
+    try {
+      wasteRows = await db
+        .select({
+          operatorUserId: productionWasteRecordsTable.operatorUserId,
+          wasteEvents: sql<number>`COUNT(*)::int`,
+          wasteQty: sql<number>`COALESCE(SUM(${productionWasteRecordsTable.qty}),0)::float`,
+          wasteCost: sql<number>`COALESCE(SUM(${productionWasteRecordsTable.costImpact}),0)::float`,
+        })
+        .from(productionWasteRecordsTable)
+        .innerJoin(
+          productionOrdersTable,
+          eq(productionOrdersTable.id, productionWasteRecordsTable.orderId),
+        )
+        .where(and(...wasteConds))
+        .groupBy(productionWasteRecordsTable.operatorUserId);
+    } catch (e: any) {
+      failedSources.push("waste");
+      req.log?.error?.(
+        { err: e, source: "waste" },
+        "operators/performance: waste query failed, continuing with empty waste data",
+      );
+    }
 
     // ── QC fails attributed to operator via stage.operatorUserId ───────────
     // We join QC → stage (the operator field lives on the stage, not on the
@@ -3845,24 +3944,38 @@ router.get("/operators/performance", async (req, res) => {
     if (branchScope.cond) qcConds.push(branchScope.cond);
     qcConds.push(sql`${productionOrderStagesTable.operatorUserId} IS NOT NULL`);
 
-    const qcRows = await db
-      .select({
-        operatorUserId: productionOrderStagesTable.operatorUserId,
-        qcChecks: sql<number>`COUNT(*)::int`,
-        qcFails: sql<number>`COUNT(*) FILTER (WHERE ${productionQualityChecksTable.result} = 'fail')::int`,
-        qcConditionals: sql<number>`COUNT(*) FILTER (WHERE ${productionQualityChecksTable.result} = 'conditional')::int`,
-      })
-      .from(productionQualityChecksTable)
-      .innerJoin(
-        productionOrderStagesTable,
-        eq(productionOrderStagesTable.id, productionQualityChecksTable.stageId),
-      )
-      .innerJoin(
-        productionOrdersTable,
-        eq(productionOrdersTable.id, productionQualityChecksTable.orderId),
-      )
-      .where(and(...qcConds))
-      .groupBy(productionOrderStagesTable.operatorUserId);
+    let qcRows: Array<{
+      operatorUserId: number | null;
+      qcChecks: number;
+      qcFails: number;
+      qcConditionals: number;
+    }> = [];
+    try {
+      qcRows = await db
+        .select({
+          operatorUserId: productionOrderStagesTable.operatorUserId,
+          qcChecks: sql<number>`COUNT(*)::int`,
+          qcFails: sql<number>`COUNT(*) FILTER (WHERE ${productionQualityChecksTable.result} = 'fail')::int`,
+          qcConditionals: sql<number>`COUNT(*) FILTER (WHERE ${productionQualityChecksTable.result} = 'conditional')::int`,
+        })
+        .from(productionQualityChecksTable)
+        .innerJoin(
+          productionOrderStagesTable,
+          eq(productionOrderStagesTable.id, productionQualityChecksTable.stageId),
+        )
+        .innerJoin(
+          productionOrdersTable,
+          eq(productionOrdersTable.id, productionQualityChecksTable.orderId),
+        )
+        .where(and(...qcConds))
+        .groupBy(productionOrderStagesTable.operatorUserId);
+    } catch (e: any) {
+      failedSources.push("qc");
+      req.log?.error?.(
+        { err: e, source: "qc" },
+        "operators/performance: qc query failed, continuing with empty qc data",
+      );
+    }
 
     // ── Merge in JS keyed by operatorUserId ────────────────────────────────
     type Row = {
@@ -3945,15 +4058,34 @@ router.get("/operators/performance", async (req, res) => {
     }
 
     // ── Resolve operator names in one query ────────────────────────────────
+    // NOTE: usersTable has NO `name` column — only `nameAr`, `nameEn`,
+    // `username`. Selecting `usersTable.name` here makes the field value
+    // `undefined`, which crashes Drizzle's orderSelectedFields with
+    // `TypeError: Cannot convert undefined or null to object`. That was
+    // the actual root cause of the prod-only 500 (local skipped this branch
+    // because ids.length===0 with no operator data).
     const ids = [...map.keys()];
     if (ids.length > 0) {
-      const users = await db
-        .select({ id: usersTable.id, name: usersTable.name })
-        .from(usersTable)
-        .where(inArray(usersTable.id, ids));
-      for (const u of users) {
-        const r = map.get(u.id);
-        if (r) r.operatorName = u.name ?? null;
+      try {
+        const users = await db
+          .select({
+            id: usersTable.id,
+            operatorName: sql<
+              string | null
+            >`COALESCE(${usersTable.nameAr}, ${usersTable.nameEn}, ${usersTable.username})`,
+          })
+          .from(usersTable)
+          .where(inArray(usersTable.id, ids));
+        for (const u of users) {
+          const r = map.get(u.id);
+          if (r) r.operatorName = u.operatorName ?? null;
+        }
+      } catch (e: any) {
+        failedSources.push("users");
+        req.log?.error?.(
+          { err: e, source: "users", idsCount: ids.length },
+          "operators/performance: user-name lookup failed, returning rows without names",
+        );
       }
     }
 
@@ -4053,6 +4185,9 @@ router.get("/operators/performance", async (req, res) => {
       operators,
       totals: includeAggregates ? totals : null,
       companyAvg,
+      ...(failedSources.length > 0
+        ? { partial: true, failedSources }
+        : {}),
     });
   } catch (e: any) {
     req.log?.error?.({ err: e }, "operators/performance failed");
