@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod db;
+mod items;
 mod license;
 mod peripherals;
 mod sync;
@@ -107,6 +108,9 @@ fn main() {
             peripherals::print_raw_serial,
             peripherals::open_cash_drawer,
             peripherals::open_cash_drawer_serial,
+            items::list_items,
+            items::find_item_by_barcode,
+            items::seed_demo_items,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

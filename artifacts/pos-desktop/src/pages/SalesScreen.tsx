@@ -10,57 +10,74 @@
 //   - Receipt mirrors the ZATCA Phase-1 simplified invoice fields
 //   - "Cash" payment opens the drawer; "Card" does not
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { printReceipt, openCashDrawer, type ReceiptLine } from "../lib/peripherals";
 import { generateZatcaQr } from "../lib/zatca";
+import { listItems, findItemByBarcode, seedDemoItems, type LocalItem } from "../lib/items";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 
 const VAT_RATE = 0.15;
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 
-interface Item { id: number; barcode: string; nameAr: string; price: number; }
-interface CartLine { item: Item; qty: number; }
-
-const SAMPLE_ITEMS: Item[] = [
-  { id: 1, barcode: "6281007123456", nameAr: "ماء معدني 500مل", price: 1.5 },
-  { id: 2, barcode: "6281007123457", nameAr: "شيبس صغير",       price: 3.0 },
-  { id: 3, barcode: "6281007123458", nameAr: "علبة عصير",         price: 5.0 },
-  { id: 4, barcode: "6281007123459", nameAr: "بسكويت",            price: 4.5 },
-  { id: 5, barcode: "6281007123460", nameAr: "شوكولاتة",          price: 7.0 },
-  { id: 6, barcode: "6281007123461", nameAr: "لبن طازج 1لتر",   price: 8.5 },
-];
+interface CartLine { item: LocalItem; qty: number; }
 
 type Props = { companyName?: string; vatNumber?: string };
 
 export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003" }: Props) {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [search, setSearch] = useState("");
+  const [items, setItems] = useState<LocalItem[]>([]);
+  const [loadingItems, setLoadingItems] = useState(true);
   const [paying, setPaying] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [lastInvoice, setLastInvoice] = useState<string | null>(null);
 
+  // ─── Catalog loading ─────────────────────────────────────────────────
+  // Seed on mount once (fire-and-forget); the search effect below is the
+  // SINGLE source of truth for what's in `items` — that prevents a slow mount
+  // fetch from overwriting the result of a fast user search (architect-flagged
+  // race condition). A monotonically-increasing request id guards against
+  // out-of-order responses when two search edits land back-to-back.
+  useEffect(() => { void seedDemoItems().catch(() => {}); }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const t = window.setTimeout(async () => {
+      try {
+        const rows = await listItems(search || undefined);
+        if (!cancelled) setItems(rows);
+      } catch (e: any) {
+        if (!cancelled && loadingItems) {
+          setMsg({ kind: "err", text: `تعذّر تحميل الأصناف: ${e?.message ?? e}` });
+        }
+        // keep previous list on transient failure mid-session
+      } finally {
+        if (!cancelled) setLoadingItems(false);
+      }
+    }, search ? 150 : 0); // initial empty-search load fires immediately
+    return () => { cancelled = true; window.clearTimeout(t); };
+  }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useBarcodeScanner({
-    onScan: (code) => {
-      const found = SAMPLE_ITEMS.find((i) => i.barcode === code);
-      if (found) addToCart(found);
-      else setMsg({ kind: "err", text: `لم يُعثر على باركود: ${code}` });
+    onScan: async (code) => {
+      try {
+        const found = await findItemByBarcode(code);
+        if (found) addToCart(found);
+        else setMsg({ kind: "err", text: `لم يُعثر على باركود: ${code}` });
+      } catch (e: any) {
+        setMsg({ kind: "err", text: `خطأ في البحث: ${e?.message ?? e}` });
+      }
     },
   });
 
-  const filtered = useMemo(() => {
-    if (!search.trim()) return SAMPLE_ITEMS;
-    const q = search.toLowerCase();
-    return SAMPLE_ITEMS.filter((i) => i.nameAr.includes(search) || i.barcode.includes(q));
-  }, [search]);
-
   const totals = useMemo(() => {
-    const grandTotal = cart.reduce((sum, l) => sum + l.item.price * l.qty, 0);
+    const grandTotal = cart.reduce((sum, l) => sum + l.item.salePrice * l.qty, 0);
     const subtotal = grandTotal / (1 + VAT_RATE);
     const vat = grandTotal - subtotal;
     return { subtotal, vat, grandTotal };
   }, [cart]);
 
-  function addToCart(item: Item) {
+  function addToCart(item: LocalItem) {
     setMsg(null);
     setCart((prev) => {
       const existing = prev.find((l) => l.item.id === item.id);
@@ -103,7 +120,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
 
       const body: ReceiptLine[] = [];
       for (const l of cart) {
-        const lineTotal = (l.item.price * l.qty).toFixed(2);
+        const lineTotal = (l.item.salePrice * l.qty).toFixed(2);
         body.push({ text: `${l.item.nameAr.padEnd(20, " ")} ×${l.qty}  ${lineTotal}` });
       }
       body.push({ text: "─".repeat(32) });
@@ -157,13 +174,19 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           data-allow-scan="true"
         />
         <div style={S.grid}>
-          {filtered.map((item) => (
-            <button key={item.id} onClick={() => addToCart(item)} style={S.itemCard}>
-              <div style={S.itemName}>{item.nameAr}</div>
-              <div style={S.itemPrice}>{item.price.toFixed(2)} ر.س</div>
-              <div style={S.itemBarcode}>{item.barcode}</div>
-            </button>
-          ))}
+          {loadingItems && items.length === 0 ? (
+            <div style={S.empty}>... جاري تحميل الأصناف</div>
+          ) : items.length === 0 ? (
+            <div style={S.empty}>لا توجد أصناف مطابقة</div>
+          ) : (
+            items.map((item) => (
+              <button key={item.id} onClick={() => addToCart(item)} style={S.itemCard}>
+                <div style={S.itemName}>{item.nameAr}</div>
+                <div style={S.itemPrice}>{item.salePrice.toFixed(2)} ر.س</div>
+                <div style={S.itemBarcode}>{item.barcode ?? ""}</div>
+              </button>
+            ))
+          )}
         </div>
       </div>
 
@@ -179,7 +202,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 14, color: "#0f172a" }}>{l.item.nameAr}</div>
                   <div style={{ fontSize: 12, color: "#64748b" }}>
-                    {l.item.price.toFixed(2)} × {l.qty} = {(l.item.price * l.qty).toFixed(2)}
+                    {l.item.salePrice.toFixed(2)} × {l.qty} = {(l.item.salePrice * l.qty).toFixed(2)}
                   </div>
                 </div>
                 <div style={S.qtyControls}>
