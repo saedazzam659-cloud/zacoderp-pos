@@ -95,8 +95,13 @@ git push origin pos-desktop-v1.0.0
 ### What still needs to be done (Steps 7-12 of Task #174)
 
 1. ~~Add `pos-desktop` to GitHub Actions matrix (`windows-latest` runner).~~ ✅ done
-2. Implement `src-tauri/src/zatca.rs` — local ZATCA Phase 2 UBL 2.1 signing
-   (port logic from `artifacts/api-server/src/lib/zatca`).
+2. Implement `src-tauri/src/zatca.rs` — local ZATCA signing.
+   - ✅ **TLV QR (Phase 1, Annex B)** ported with 5 inline tests, byte-equivalent
+     to `artifacts/api-server/src/lib/zatca-tlv.ts` (verified against Node).
+     Exposed as `invoke("generate_qr", …)` and `invoke("decode_qr", …)`.
+   - ⏳ XAdES signer (Phase 2 tags 6-9) — port from `zatca-xades-signer.ts`
+   - ⏳ UBL 2.1 invoice XML — port from `zatca-xml.ts`
+   - ⏳ CSR generator — port from `zatca-csr.ts`
 3. Wire Activation wizard to cloud endpoints (already typed in `src/lib/api.ts`).
 4. Implement printer/cash‑drawer/barcode‑scanner native bridges via Tauri plugins.
 5. Set up code‑signing certificate (set the 3 secrets above) + auto‑updater

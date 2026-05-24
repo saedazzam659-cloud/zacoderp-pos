@@ -7,6 +7,7 @@
 mod db;
 mod license;
 mod sync;
+mod zatca;
 
 use serde::{Deserialize, Serialize};
 use license::ActivationResponse;
@@ -97,6 +98,8 @@ fn main() {
             save_device_token,
             load_device_token,
             clear_device_token,
+            zatca::generate_qr,
+            zatca::decode_qr,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
