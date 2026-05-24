@@ -10,6 +10,8 @@ import { createApi, type SyncStatus } from "../lib/api";
 import { TAURI_MODE } from "../lib/tauri-shim";
 import PeripheralsSettings from "./PeripheralsSettings";
 import SalesScreen from "./SalesScreen";
+import PendingInvoices from "./PendingInvoices";
+import { countPendingInvoices } from "../lib/invoices";
 
 type Props = {
   baseUrl: string;
@@ -31,7 +33,22 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
   const [heartbeatErr, setHeartbeatErr] = useState<string | null>(null); // background polling
   const [busy, setBusy] = useState<string | null>(null);
   const [showPeripherals, setShowPeripherals] = useState(false);
-  const [view, setView] = useState<"sales" | "dashboard">("sales");
+  const [view, setView] = useState<"sales" | "pending" | "dashboard">("sales");
+  const [pendingCount, setPendingCount] = useState(0);
+
+  // Poll the pending-invoices count every 10s so the badge in the tab bar
+  // stays roughly current after sales / future sync pushes. Errors are
+  // swallowed — the count is decorative, not load-bearing.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try { const n = await countPendingInvoices(); if (!cancelled) setPendingCount(n); }
+      catch { /* ignore */ }
+    };
+    void tick();
+    const id = setInterval(tick, 10_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [view]); // re-poll immediately when user switches tabs
 
   // ─── Heartbeat every 30s while shell is mounted ─────────────────────
   // Note: heartbeat failures go into a separate `heartbeatErr` so they don't
@@ -86,6 +103,18 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
             style={view === "sales" ? S.tabActive : S.tab}
           >🛒 بيع</button>
           <button
+            onClick={() => setView("pending")}
+            style={view === "pending" ? S.tabActive : S.tab}
+            aria-label={`الفواتير المعلّقة، ${pendingCount} فاتورة`}
+          >
+            📋 معلّقة
+            {pendingCount > 0 && (
+              <span style={S.badge} aria-live="polite" aria-atomic="true">
+                {pendingCount}
+              </span>
+            )}
+          </button>
+          <button
             onClick={() => setView("dashboard")}
             style={view === "dashboard" ? S.tabActive : S.tab}
           >📊 لوحة التحكم</button>
@@ -99,6 +128,8 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
 
       {view === "sales" ? (
         <SalesScreen companyName={companyName} />
+      ) : view === "pending" ? (
+        <PendingInvoices companyName={companyName} />
       ) : (
         <DashboardView
           deviceId={deviceId}
@@ -194,6 +225,7 @@ const S = {
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } as const,
   tab: { padding: "8px 14px", background: "#fff", color: "#475569", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" } as const,
   tabActive: { padding: "8px 14px", background: "#0f172a", color: "#fff", border: "1px solid #0f172a", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" } as const,
+  badge: { display: "inline-block", marginInlineStart: 6, padding: "1px 7px", background: "#dc2626", color: "#fff", borderRadius: 999, fontSize: 11, fontWeight: 700, lineHeight: 1.6 } as const,
   title: { margin: 0, fontSize: 28, color: "#0f172a" } as const,
   company: { fontSize: 14, color: "#64748b", marginTop: 4 } as const,
   mode: { fontSize: 11, padding: "4px 10px", background: "#f1f5f9", borderRadius: 999, color: "#475569" } as const,

@@ -133,6 +133,39 @@ pub fn list_pending() -> Result<Vec<PendingInvoice>> {
     Ok(out)
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FullInvoice {
+    pub id: i64,
+    pub local_uuid: String,
+    pub invoice_no: String,
+    pub payload_json: String,
+    pub qr_base64: Option<String>,
+    pub signed_xml: Option<String>,
+    pub created_at: String,
+    pub sync_status: String,
+}
+
+pub fn get(id: i64) -> Result<Option<FullInvoice>> {
+    let conn = db::open()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, local_uuid, invoice_no, payload_json, qr_base64, signed_xml, created_at, sync_status
+         FROM offline_invoices WHERE id = ?1 LIMIT 1",
+    )?;
+    let mut rows = stmt.query_map([id], |r| {
+        Ok(FullInvoice {
+            id: r.get(0)?,
+            local_uuid: r.get(1)?,
+            invoice_no: r.get(2)?,
+            payload_json: r.get(3)?,
+            qr_base64: r.get(4)?,
+            signed_xml: r.get(5)?,
+            created_at: r.get(6)?,
+            sync_status: r.get(7)?,
+        })
+    })?;
+    if let Some(r) = rows.next() { Ok(Some(r?)) } else { Ok(None) }
+}
+
 pub fn count_pending() -> Result<i64> {
     let conn = db::open()?;
     let n: i64 = conn.query_row(
@@ -161,6 +194,11 @@ pub fn save_offline_invoice(
 #[tauri::command]
 pub fn list_pending_invoices() -> Result<Vec<PendingInvoice>, String> {
     list_pending().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_offline_invoice(id: i64) -> Result<Option<FullInvoice>, String> {
+    get(id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

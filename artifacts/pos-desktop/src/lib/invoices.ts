@@ -80,6 +80,44 @@ export async function saveOfflineInvoice(
   return { localUuid: r.local_uuid, invoiceNo: r.invoice_no };
 }
 
+export interface FullInvoice {
+  id: number;
+  localUuid: string;
+  invoiceNo: string;
+  payloadJson: string;
+  qrBase64: string | null;
+  signedXml: string | null;
+  createdAt: string;
+  syncStatus: string;
+}
+
+interface RustFull {
+  id: number;
+  local_uuid: string;
+  invoice_no: string;
+  payload_json: string;
+  qr_base64: string | null;
+  signed_xml: string | null;
+  created_at: string;
+  sync_status: string;
+}
+
+export async function getOfflineInvoice(id: number): Promise<FullInvoice | null> {
+  if (!IS_TAURI) return null;
+  const r = await invoke<RustFull | null>("get_offline_invoice", { id });
+  if (!r) return null;
+  return {
+    id: r.id,
+    localUuid: r.local_uuid,
+    invoiceNo: r.invoice_no,
+    payloadJson: r.payload_json,
+    qrBase64: r.qr_base64,
+    signedXml: r.signed_xml,
+    createdAt: r.created_at,
+    syncStatus: r.sync_status,
+  };
+}
+
 export async function listPendingInvoices(): Promise<PendingInvoice[]> {
   if (!IS_TAURI) return [];
   const rows = await invoke<RustPending[]>("list_pending_invoices");

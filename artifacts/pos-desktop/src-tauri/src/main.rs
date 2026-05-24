@@ -114,6 +114,7 @@ fn main() {
             items::seed_demo_items,
             invoices::save_offline_invoice,
             invoices::list_pending_invoices,
+            invoices::get_offline_invoice,
             invoices::count_pending_invoices,
         ])
         .run(tauri::generate_context!())
