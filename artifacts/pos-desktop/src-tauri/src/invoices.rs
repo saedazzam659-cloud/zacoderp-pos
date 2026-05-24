@@ -109,6 +109,45 @@ pub fn save(
     ))
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PendingInvoiceFull {
+    pub id: i64,
+    pub local_uuid: String,
+    pub invoice_no: String,
+    pub payload_json: String,
+    pub qr_base64: Option<String>,
+    pub signed_xml: Option<String>,
+    pub created_at: String,
+}
+
+/// Read every pending row with the FULL payload so the sync engine can
+/// ship it to the cloud. Split from `list_pending` (UI listing) to
+/// avoid loading multi-KB payloads into the badge poll.
+pub fn list_pending_full() -> Result<Vec<PendingInvoiceFull>> {
+    let conn = db::open()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, local_uuid, invoice_no, payload_json, qr_base64, signed_xml, created_at
+         FROM offline_invoices
+         WHERE sync_status = 'pending'
+         ORDER BY id ASC
+         LIMIT 500",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(PendingInvoiceFull {
+            id: r.get(0)?,
+            local_uuid: r.get(1)?,
+            invoice_no: r.get(2)?,
+            payload_json: r.get(3)?,
+            qr_base64: r.get(4)?,
+            signed_xml: r.get(5)?,
+            created_at: r.get(6)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r?); }
+    Ok(out)
+}
+
 pub fn list_pending() -> Result<Vec<PendingInvoice>> {
     let conn = db::open()?;
     let mut stmt = conn.prepare(

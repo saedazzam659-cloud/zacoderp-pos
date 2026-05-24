@@ -12,6 +12,7 @@ import PeripheralsSettings from "./PeripheralsSettings";
 import SalesScreen from "./SalesScreen";
 import PendingInvoices from "./PendingInvoices";
 import { countPendingInvoices } from "../lib/invoices";
+import { syncPushNow, type PushSummary } from "../lib/sync";
 
 type Props = {
   baseUrl: string;
@@ -35,6 +36,7 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
   const [showPeripherals, setShowPeripherals] = useState(false);
   const [view, setView] = useState<"sales" | "pending" | "dashboard">("sales");
   const [pendingCount, setPendingCount] = useState(0);
+  const [pushSummary, setPushSummary] = useState<PushSummary | null>(null);
 
   // Poll the pending-invoices count every 10s so the badge in the tab bar
   // stays roughly current after sales / future sync pushes. Errors are
@@ -78,6 +80,17 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
         items: r.entities.items?.length ?? 0,
       });
     } catch (e: any) { setActionErr(e?.message ?? "pull failed"); }
+    finally { setBusy(null); }
+  }
+
+  async function doPush() {
+    setBusy("push"); setActionErr(null); setPushSummary(null);
+    try {
+      const r = await syncPushNow(baseUrl, deviceToken);
+      setPushSummary(r);
+      // refresh badge immediately — synced rows leave the pending set
+      try { setPendingCount(await countPendingInvoices()); } catch { /* ignore */ }
+    } catch (e: any) { setActionErr(e?.message ?? "push failed"); }
     finally { setBusy(null); }
   }
 
@@ -140,6 +153,8 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
           actionErr={actionErr}
           heartbeatErr={heartbeatErr}
           onPull={doPull}
+          onPush={doPush}
+          pushSummary={pushSummary}
           onShowPeripherals={() => setShowPeripherals(true)}
           onDeactivate={doDeactivate}
         />
@@ -157,11 +172,13 @@ type DashboardProps = {
   actionErr: string | null;
   heartbeatErr: string | null;
   onPull: () => void;
+  onPush: () => void;
+  pushSummary: PushSummary | null;
   onShowPeripherals: () => void;
   onDeactivate: () => void;
 };
 
-function DashboardView({ deviceId, status, baseUrl, busy, pulled, actionErr, heartbeatErr, onPull, onShowPeripherals, onDeactivate }: DashboardProps) {
+function DashboardView({ deviceId, status, baseUrl, busy, pulled, actionErr, heartbeatErr, onPull, onPush, pushSummary, onShowPeripherals, onDeactivate }: DashboardProps) {
   return (
     <div style={{ maxWidth: 920, margin: "0 auto", width: "100%" }}>
       <section style={S.card}>
@@ -179,6 +196,9 @@ function DashboardView({ deviceId, status, baseUrl, busy, pulled, actionErr, hea
           <button onClick={onPull} disabled={busy === "pull"} style={S.btnPrimary}>
             {busy === "pull" ? "جارٍ السحب..." : "سحب البيانات (Pull)"}
           </button>
+          <button onClick={onPush} disabled={busy === "push"} style={S.btnPrimary}>
+            {busy === "push" ? "جارٍ الرفع..." : "⬆️ رفع الفواتير المعلّقة (Push)"}
+          </button>
           <button onClick={onShowPeripherals} style={S.btnSecondary}>
             🖨️ الأجهزة الطرفية
           </button>
@@ -189,6 +209,16 @@ function DashboardView({ deviceId, status, baseUrl, busy, pulled, actionErr, hea
         {pulled && (
           <div style={S.success}>
             ✅ تم السحب: {pulled.customers} عميل، {pulled.items} صنف
+          </div>
+        )}
+        {pushSummary && (
+          <div style={pushSummary.failed > 0
+            ? { ...S.success, background: "#fffbeb", borderColor: "#fde68a", color: "#92400e" }
+            : S.success}>
+            {pushSummary.attempted === 0
+              ? "ℹ️ لا توجد فواتير معلّقة للرفع."
+              : `✅ تم رفع ${pushSummary.synced} من ${pushSummary.attempted} فاتورة` +
+                (pushSummary.failed > 0 ? ` — ${pushSummary.failed} رُفضت وستُعاد المحاولة` : "")}
           </div>
         )}
         {actionErr && <div style={S.err}>⚠️ {actionErr}</div>}

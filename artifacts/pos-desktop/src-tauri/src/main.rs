@@ -28,9 +28,13 @@ async fn activate_device(req: ActivationRequest) -> Result<ActivationResponse, S
         .map_err(|e| e.to_string())
 }
 
+// `sync::sync_push_now` is the real worker; this thin alias keeps the
+// older JS callsite (`invoke('sync_now')`) working without a churn.
 #[tauri::command]
-async fn sync_now() -> Result<String, String> {
-    sync::run_full_cycle().await.map_err(|e| e.to_string())
+async fn sync_now(server_url: String, device_token: String) -> Result<sync::PushSummary, String> {
+    sync::push_pending_invoices(&server_url, &device_token)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -61,23 +65,38 @@ fn get_os_info() -> String {
     )
 }
 
-// Secure device-token storage. Real impl in Step 8 uses the `keyring` crate
-// (Windows Credential Manager). For the scaffold, these are explicit stubs
-// that always Err so the shim's fallback path is used and the dev knows
-// secure storage is not yet wired.
+// Secure device-token storage via OS keyring (Windows Credential
+// Manager / macOS Keychain / Linux Secret Service). All three commands
+// surface keyring errors as JS-side Err so the shim's localStorage
+// fallback can engage in headless/CI environments.
+const KEYRING_SERVICE: &str = "com.zacoderp.pos";
+const KEYRING_ACCOUNT_TOKEN: &str = "device-token-v1";
+
+fn token_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT_TOKEN).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
-fn save_device_token(_token: String) -> Result<(), String> {
-    Err("save_device_token: not implemented yet (Task #174 Step 8)".into())
+fn save_device_token(token: String) -> Result<(), String> {
+    token_entry()?.set_password(&token).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn load_device_token() -> Result<Option<String>, String> {
-    Err("load_device_token: not implemented yet (Task #174 Step 8)".into())
+    match token_entry()?.get_password() {
+        Ok(t) => Ok(Some(t)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 #[tauri::command]
 fn clear_device_token() -> Result<(), String> {
-    Err("clear_device_token: not implemented yet (Task #174 Step 8)".into())
+    match token_entry()?.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 fn main() {
@@ -116,6 +135,7 @@ fn main() {
             invoices::list_pending_invoices,
             invoices::get_offline_invoice,
             invoices::count_pending_invoices,
+            sync::sync_push_now,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
