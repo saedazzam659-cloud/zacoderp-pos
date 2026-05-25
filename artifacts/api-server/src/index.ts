@@ -358,6 +358,7 @@ async function bootstrap() {
     // configured day-of-month (companies.faAutoDepDay).
     import("./lib/depreciationScheduler.js").then(m => m.startFaDepreciationScheduler?.()).catch(() => {});
     import("./lib/posSessionJanitor.js").then(m => m.startPosSessionAutoCloseScheduler?.()).catch(() => {});
+    import("./lib/githubReleaseSync.js").then(m => m.startGithubReleaseSyncScheduler?.()).catch(() => {});
   });
 }
 

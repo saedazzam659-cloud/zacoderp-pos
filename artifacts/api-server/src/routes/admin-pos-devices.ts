@@ -233,6 +233,17 @@ router.delete("/releases/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
+// Manual "sync now" trigger — mirrors the hourly scheduler one-shot.
+router.post("/releases/sync", async (_req, res) => {
+  try {
+    const { runReleaseSyncOnce } = await import("../lib/githubReleaseSync.js");
+    const summary = await runReleaseSyncOnce();
+    res.json(summary);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "sync failed" });
+  }
+});
+
 // ═════════════════════════════════════════════════════════════════════
 // COMPANY FEATURE FLAG TOGGLE
 // ═════════════════════════════════════════════════════════════════════

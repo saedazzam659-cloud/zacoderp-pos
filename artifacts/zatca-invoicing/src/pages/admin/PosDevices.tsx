@@ -567,11 +567,32 @@ function ReleasesTab({ headers }: { headers: Record<string, string> }) {
     onError: (e: any) => { if (e.message !== "cancelled") toast({ title: "خطأ", description: e.message, variant: "destructive" }); },
   });
 
+  const syncMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API}/api/admin/pos-devices/releases/sync`, { method: "POST", headers });
+      if (!r.ok) throw new Error((await r.json()).error || "فشل المزامنة");
+      return r.json() as Promise<{ inserted?: boolean; alreadySynced?: boolean; version?: string; reason?: string; latestTag?: string | null }>;
+    },
+    onSuccess: (s) => {
+      qc.invalidateQueries({ queryKey: ["download-releases"] });
+      if (s.inserted) toast({ title: "تمت المزامنة", description: `تمت إضافة الإصدار ${s.version} من GitHub` });
+      else if (s.alreadySynced) toast({ title: "محدّث", description: `أحدث إصدار (${s.version}) موجود بالفعل` });
+      else toast({ title: "لا توجد إصدارات جديدة", description: s.reason ?? "لم يتم العثور على إصدار مناسب على GitHub" });
+    },
+    onError: (e: any) => toast({ title: "خطأ في المزامنة", description: e.message, variant: "destructive" }),
+  });
+
   return (
     <Card><CardContent className="p-4 space-y-3">
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-muted-foreground">روابط تنزيل المثبّت لكل دولة. استخدم رمز <code>ALL</code> كرابط احتياطي عام.</p>
-        <Button onClick={openAdd}><Plus className="ml-2 h-4 w-4" /> إضافة إصدار</Button>
+      <div className="flex justify-between items-center gap-2">
+        <p className="text-sm text-muted-foreground">روابط تنزيل المثبّت لكل دولة. استخدم رمز <code>ALL</code> كرابط احتياطي عام. النظام يتزامن تلقائياً مع GitHub كل ساعة.</p>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => syncMut.mutate()} disabled={syncMut.isPending}>
+            <RefreshCw className={`ml-2 h-4 w-4 ${syncMut.isPending ? "animate-spin" : ""}`} />
+            {syncMut.isPending ? "جاري المزامنة…" : "مزامنة من GitHub"}
+          </Button>
+          <Button onClick={openAdd}><Plus className="ml-2 h-4 w-4" /> إضافة إصدار</Button>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
