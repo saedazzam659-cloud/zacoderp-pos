@@ -112,7 +112,7 @@ fn print_via_spooler(printer_name: &str, bytes: &[u8]) -> Result<()> {
         .find(|p| p.name == printer_name || p.system_name == printer_name)
         .ok_or_else(|| anyhow!("printer not found: {}", printer_name))?;
     target
-        .print(bytes, Some("ZACOD POS Receipt"))
+        .print(bytes, printers::PrinterJobOptions::default())
         .map_err(|e| anyhow!("spooler print failed: {:?}", e))?;
     Ok(())
 }

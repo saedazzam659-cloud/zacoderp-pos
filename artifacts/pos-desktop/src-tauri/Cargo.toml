@@ -35,6 +35,9 @@ x509-parser = "0.16"
 pem = "3"
 printers = "2"
 serialport = { version = "4", default-features = false }
+hostname = "0.4"
+dirs = "5"
+machine-uid = "0.5"
 
 [profile.release]
 panic = "abort"
