@@ -38,11 +38,13 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   sales_returns: "sales_module",
   sales_settlements: "sales_module",
   sales_reports: "sales_reports",
+  customer_notes: "sales_module",
   // Purchasing / Suppliers
   suppliers: "purchases_module",
   purchase_invoices: "purchases_module",
   purchase_returns: "purchases_module",
   supplier_settlements: "purchases_module",
+  supplier_notes: "purchases_module",
   // Cash & Banks
   cash_boxes: "cash_module",
   bank_accounts: "cash_module",

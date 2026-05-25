@@ -1,0 +1,2 @@
+- [Atomic claim-and-post in PG](atomic-claim-post.md) — conditional UPDATE alone is NOT enough; the SET must flip the gating column or two concurrent callers both win.
+- [Module gate keys live in two places](module-gate-sync.md) — backend `COMPANY_MODULE_GATE` (permissions.ts) AND frontend group-perms arrays in `Layout.tsx` must both list any new module key, or sidebar/company-toggle silently breaks.

@@ -217,11 +217,36 @@ router.put("/:id", async (req, res) => {
     res.status(400).json({ error: "حدّد حساب ضريبة القيمة المضافة" }); return;
   }
 
+  // Resolve effective values, then re-validate tenant ownership for ANY
+  // party/GL ids that changed. Without this, a caller could overwrite the
+  // row with ids that belong to another tenant and post against them.
+  const newPartyId         = b.partyId         ? Number(b.partyId)         : existing.partyId;
+  const newPartyAccountId  = b.partyAccountId  ? Number(b.partyAccountId)  : existing.partyAccountId;
+  const newContraAccountId = b.contraAccountId ? Number(b.contraAccountId) : existing.contraAccountId;
+  const newVatAccountId    = vatEnabled ? Number(b.vatAccountId) : null;
+
+  const partyTable = existing.partyType === "customer" ? customersTable : suppliersTable;
+  const [partyOk] = await db.select({ id: partyTable.id })
+    .from(partyTable)
+    .where(and(eq(partyTable.id, newPartyId), eq(partyTable.companyId, cid)));
+  if (!partyOk) { res.status(400).json({ error: "الطرف غير موجود" }); return; }
+
+  const accountIds = [newPartyAccountId, newContraAccountId];
+  if (newVatAccountId) accountIds.push(newVatAccountId);
+  const accs = await db.select({ id: accountsTable.id }).from(accountsTable)
+    .where(and(
+      eq(accountsTable.companyId, cid),
+      sql`${accountsTable.id} IN (${sql.join(accountIds.map(i => sql`${i}`), sql`, `)})`,
+    ));
+  if (accs.length !== new Set(accountIds).size) {
+    res.status(400).json({ error: "حسابات محاسبية غير صالحة" }); return;
+  }
+
   await db.update(accountNotesTable).set({
     noteDate:         b.noteDate         ?? existing.noteDate,
-    partyId:          b.partyId          ? Number(b.partyId)          : existing.partyId,
-    partyAccountId:   b.partyAccountId   ? Number(b.partyAccountId)   : existing.partyAccountId,
-    contraAccountId:  b.contraAccountId  ? Number(b.contraAccountId)  : existing.contraAccountId,
+    partyId:          newPartyId,
+    partyAccountId:   newPartyAccountId,
+    contraAccountId:  newContraAccountId,
     amount:           amount.toFixed(4),
     vatEnabled,
     vatRate:          vatRate.toFixed(2),
@@ -245,85 +270,104 @@ router.post("/:id/post", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرف غير صالح" }); return; }
 
-  // Atomic claim: only one caller can flip draft → in-flight.
-  const claim = await db.update(accountNotesTable)
-    .set({ updatedAt: new Date() })
-    .where(and(
-      eq(accountNotesTable.id, id),
-      eq(accountNotesTable.companyId, cid),
-      eq(accountNotesTable.status, "draft"),
-    ))
-    .returning();
-  if (!claim.length) { res.status(400).json({ error: "الإشعار غير موجود أو مُرحَّل مسبقاً" }); return; }
-  const n = claim[0];
-  if (!(await checkModule(req, res, n.partyType as any))) return;
-
-  const writability = await assertWritableForDate(cid, n.noteDate as any);
+  // Pre-checks (need the row before opening the JE transaction).
+  const [pre] = await db.select({ partyType: accountNotesTable.partyType, noteDate: accountNotesTable.noteDate, status: accountNotesTable.status })
+    .from(accountNotesTable)
+    .where(and(eq(accountNotesTable.id, id), eq(accountNotesTable.companyId, cid)));
+  if (!pre) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (pre.status !== "draft") { res.status(400).json({ error: "الإشعار غير موجود أو مُرحَّل مسبقاً" }); return; }
+  if (!(await checkModule(req, res, pre.partyType as any))) return;
+  const writability = await assertWritableForDate(cid, pre.noteDate as any);
   if (!writability.ok) { res.status(423).json({ error: writability.reason }); return; }
 
-  // Resolve party name for the JE description.
-  const partyTable = n.partyType === "customer" ? customersTable : suppliersTable;
-  const [party] = await db.select({ nameAr: partyTable.nameAr })
-    .from(partyTable)
-    .where(and(eq(partyTable.id, n.partyId), eq(partyTable.companyId, cid)));
+  // Truly atomic claim + JE in a single transaction. The claim flips
+  // status draft → posted in the same UPDATE that asserts WHERE status='draft',
+  // so two concurrent callers cannot both pass: PG row-locks the row, the
+  // second caller re-evaluates the WHERE clause on the new tuple version
+  // (status='posted') and the UPDATE matches 0 rows. If anything below
+  // throws, the whole tx rolls back and the note returns to 'draft'.
+  let result: { entryId: number; jeStatus: any };
+  try {
+    result = await db.transaction(async (tx) => {
+      const claim = await tx.update(accountNotesTable)
+        .set({ status: "posted", updatedAt: new Date() })
+        .where(and(
+          eq(accountNotesTable.id, id),
+          eq(accountNotesTable.companyId, cid),
+          eq(accountNotesTable.status, "draft"),
+        ))
+        .returning();
+      if (!claim.length) throw new Error("ALREADY_CLAIMED");
+      const n = claim[0];
 
-  const amount   = Number(n.amount);
-  const vatAmt   = Number(n.vatAmount);
-  const total    = Number(n.totalAmount);
-  const isCredit = n.noteType === "credit";
-  const isCustomer = n.partyType === "customer";
+      const partyTable = n.partyType === "customer" ? customersTable : suppliersTable;
+      const [party] = await tx.select({ nameAr: partyTable.nameAr })
+        .from(partyTable)
+        .where(and(eq(partyTable.id, n.partyId), eq(partyTable.companyId, cid)));
 
-  // Direction matrix (see header comment).
-  //   customer+credit / supplier+debit  →  DR contra+vat / CR party
-  //   customer+debit  / supplier+credit →  DR party / CR contra+vat
-  const partyOnRight = (isCustomer && isCredit) || (!isCustomer && !isCredit);
+      const amount   = Number(n.amount);
+      const vatAmt   = Number(n.vatAmount);
+      const total    = Number(n.totalAmount);
+      const isCredit = n.noteType === "credit";
+      const isCustomer = n.partyType === "customer";
 
-  const noteLabel = isCredit ? "إشعار دائن" : "إشعار مدين";
-  const partyLabel = isCustomer ? "عميل" : "مورد";
-  const desc = `${noteLabel} ${partyLabel} ${n.noteNumber} - ${party?.nameAr ?? `#${n.partyId}`}`;
+      // Direction matrix (see header comment).
+      //   customer+credit / supplier+debit  →  DR contra+vat / CR party
+      //   customer+debit  / supplier+credit →  DR party / CR contra+vat
+      const partyOnRight = (isCustomer && isCredit) || (!isCustomer && !isCredit);
 
-  const lines: any[] = [];
-  if (partyOnRight) {
-    // DR contra(amount) + DR vat(vatAmt) / CR party(total)
-    lines.push({ accountId: n.contraAccountId, debit: amount.toFixed(2), credit: "0.00", description: desc, sortOrder: 0 });
-    if (n.vatEnabled && vatAmt > 0) {
-      lines.push({ accountId: n.vatAccountId!, debit: vatAmt.toFixed(2), credit: "0.00", description: `ضريبة القيمة المضافة - ${n.noteNumber}`, sortOrder: 1 });
+      const noteLabel = isCredit ? "إشعار دائن" : "إشعار مدين";
+      const partyLabel = isCustomer ? "عميل" : "مورد";
+      const desc = `${noteLabel} ${partyLabel} ${n.noteNumber} - ${party?.nameAr ?? `#${n.partyId}`}`;
+
+      const lines: any[] = [];
+      if (partyOnRight) {
+        lines.push({ accountId: n.contraAccountId, debit: amount.toFixed(2), credit: "0.00", description: desc, sortOrder: 0 });
+        if (n.vatEnabled && vatAmt > 0) {
+          lines.push({ accountId: n.vatAccountId!, debit: vatAmt.toFixed(2), credit: "0.00", description: `ضريبة القيمة المضافة - ${n.noteNumber}`, sortOrder: 1 });
+        }
+        lines.push({ accountId: n.partyAccountId, debit: "0.00", credit: total.toFixed(2), description: desc, sortOrder: 2 });
+      } else {
+        lines.push({ accountId: n.partyAccountId, debit: total.toFixed(2), credit: "0.00", description: desc, sortOrder: 0 });
+        lines.push({ accountId: n.contraAccountId, debit: "0.00", credit: amount.toFixed(2), description: desc, sortOrder: 1 });
+        if (n.vatEnabled && vatAmt > 0) {
+          lines.push({ accountId: n.vatAccountId!, debit: "0.00", credit: vatAmt.toFixed(2), description: `ضريبة القيمة المضافة - ${n.noteNumber}`, sortOrder: 2 });
+        }
+      }
+
+      const jeStatus = await resolvePostingStatus(cid, "financial");
+      const [entry] = await tx.insert(journalEntriesTable).values({
+        companyId: cid,
+        docNumber: n.noteNumber,
+        entryDate: n.noteDate as any,
+        currency: "SAR",
+        exchangeRate: "1",
+        description: desc,
+        entryType: `account_note_${n.partyType}_${n.noteType}` as any,
+        status: jeStatus,
+        periodId: writability.period?.id ?? null,
+        ...fullAuditFor(req, jeStatus),
+      }).returning();
+
+      await tx.insert(journalEntryLinesTable).values(
+        lines.map(l => ({ entryId: entry.id, ...l }))
+      );
+
+      await tx.update(accountNotesTable).set({
+        journalEntryId: entry.id,
+        updatedAt: new Date(),
+      }).where(eq(accountNotesTable.id, id));
+
+      return { entryId: entry.id, jeStatus };
+    });
+  } catch (e: any) {
+    if (e?.message === "ALREADY_CLAIMED") {
+      res.status(409).json({ error: "الإشعار غير موجود أو مُرحَّل مسبقاً" }); return;
     }
-    lines.push({ accountId: n.partyAccountId, debit: "0.00", credit: total.toFixed(2), description: desc, sortOrder: 2 });
-  } else {
-    // DR party(total) / CR contra(amount) + CR vat(vatAmt)
-    lines.push({ accountId: n.partyAccountId, debit: total.toFixed(2), credit: "0.00", description: desc, sortOrder: 0 });
-    lines.push({ accountId: n.contraAccountId, debit: "0.00", credit: amount.toFixed(2), description: desc, sortOrder: 1 });
-    if (n.vatEnabled && vatAmt > 0) {
-      lines.push({ accountId: n.vatAccountId!, debit: "0.00", credit: vatAmt.toFixed(2), description: `ضريبة القيمة المضافة - ${n.noteNumber}`, sortOrder: 2 });
-    }
+    throw e;
   }
 
-  const jeStatus = await resolvePostingStatus(cid, "financial");
-  const [entry] = await db.insert(journalEntriesTable).values({
-    companyId: cid,
-    docNumber: n.noteNumber,
-    entryDate: n.noteDate as any,
-    currency: "SAR",
-    exchangeRate: "1",
-    description: desc,
-    entryType: `account_note_${n.partyType}_${n.noteType}` as any,
-    status: jeStatus,
-    periodId: writability.period?.id ?? null,
-    ...fullAuditFor(req, jeStatus),
-  }).returning();
-
-  await db.insert(journalEntryLinesTable).values(
-    lines.map(l => ({ entryId: entry.id, ...l }))
-  );
-
-  await db.update(accountNotesTable).set({
-    status: "posted",
-    journalEntryId: entry.id,
-    updatedAt: new Date(),
-  }).where(eq(accountNotesTable.id, id));
-
-  res.json({ ok: true, journalEntryId: entry.id, journalEntryStatus: jeStatus });
+  res.json({ ok: true, journalEntryId: result.entryId, journalEntryStatus: result.jeStatus });
 });
 
 // ═════════════════════════════════════════════════════════════════

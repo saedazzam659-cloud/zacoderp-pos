@@ -108,9 +108,9 @@ function groupVisible(user: any, moduleKeys: string[]): boolean {
 // Module key sets per sidebar group. Keep in sync with the subNav arrays
 // below — if a permKey is added/removed from a subNav, mirror it here so
 // the parent group hides correctly when no children are accessible.
-const SALES_GROUP_PERMS         = ["customers","sales_invoices","sales_quotations","sales_returns","sales_settlements","sales_reps","sales_reports","zatca_bridge","zatca_report"];
+const SALES_GROUP_PERMS         = ["customers","sales_invoices","sales_quotations","sales_returns","sales_settlements","sales_reps","sales_reports","customer_notes","zatca_bridge","zatca_report"];
 const SALES_REPORTS_PERMS       = ["sales_reports"];
-const PURCHASING_GROUP_PERMS    = ["suppliers","purchase_invoices","purchase_returns","supplier_settlements"];
+const PURCHASING_GROUP_PERMS    = ["suppliers","purchase_invoices","purchase_returns","supplier_settlements","supplier_notes"];
 const PURCHASING_REPORTS_PERMS  = ["suppliers","purchase_invoices","purchase_returns"];
 const CASH_GROUP_PERMS          = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
 const CASH_REPORTS_PERMS        = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
