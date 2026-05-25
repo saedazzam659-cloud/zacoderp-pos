@@ -216,6 +216,33 @@ function LicensesTab({ headers }: { headers: Record<string, string> }) {
     onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
   });
 
+  // Toggle companies.enable_offline_pos for a single company. The desktop
+  // /activate call hard-rejects with 403 when this flag is false, so this
+  // one-click switch sits right next to each license row whose linked
+  // company hasn't been opted in yet.
+  const flagMut = useMutation({
+    mutationFn: async ({ companyId, enable }: { companyId: number; enable: boolean }) => {
+      const r = await fetch(`${API}/api/admin/pos-devices/company/${companyId}/offline-pos-flag`, {
+        method: "PATCH", headers,
+        body: JSON.stringify({ enableOfflinePos: enable }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "فشل تحديث الإعداد");
+    },
+    onSuccess: (_d, v) => {
+      toast({
+        title: v.enable ? "تم تفعيل POS المكتبي للشركة" : "تم تعطيل POS المكتبي للشركة",
+        description: v.enable ? "يمكن الآن تفعيل أي ترخيص مرتبط بهذه الشركة من تطبيق سطح المكتب." : undefined,
+      });
+      qc.invalidateQueries({ queryKey: ["companies-for-pos-licenses"] });
+    },
+    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+  });
+
+  function companyFlagFor(companyId: number | null) {
+    if (!companyId) return null;
+    return companiesQ.data?.find((c) => c.id === companyId)?.enableOfflinePos ?? null;
+  }
+
   function copy(s: string) { navigator.clipboard.writeText(s); toast({ title: "تم النسخ" }); }
   function statusBadge(s: string) {
     const map: Record<string, string> = {
@@ -259,7 +286,32 @@ function LicensesTab({ headers }: { headers: Record<string, string> }) {
                     </button>
                   </div>
                 </td>
-                <td className="p-2">{l.companyName ?? <span className="text-muted-foreground">—</span>}</td>
+                <td className="p-2">
+                  {l.companyName ? (
+                    <div className="flex flex-col gap-1">
+                      <span>{l.companyName}</span>
+                      {companyFlagFor(l.companyId) === false && (
+                        <div className="flex items-center gap-2">
+                          <Badge className="bg-amber-100 text-amber-800 text-[10px]">POS غير مفعّل</Badge>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-2 text-[11px] bg-green-50 hover:bg-green-100 border-green-300 text-green-800"
+                            onClick={() => flagMut.mutate({ companyId: l.companyId!, enable: true })}
+                            disabled={flagMut.isPending}
+                          >
+                            تفعيل الآن
+                          </Button>
+                        </div>
+                      )}
+                      {companyFlagFor(l.companyId) === true && (
+                        <Badge className="bg-green-100 text-green-800 text-[10px]">POS مفعّل ✓</Badge>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </td>
                 <td className="p-2 text-xs">{l.plan}</td>
                 <td className="p-2">{statusBadge(l.status)}</td>
                 <td className="p-2 text-xs">{l.expiresAt ? new Date(l.expiresAt).toLocaleDateString("ar-SA") : "—"}</td>
