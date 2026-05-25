@@ -35,6 +35,9 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
+    "resources": [
+      "openssl-dlls/*.dll"
+    ],
     "publisher": "ZACOD",
     "category": "Business",
     "shortDescription": "ZATCA Phase 2 offline-capable POS",

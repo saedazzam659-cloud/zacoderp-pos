@@ -146,6 +146,37 @@ jobs:
           echo "OPENSSL_STATIC=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Get-ChildItem $openSslDir -Recurse -Filter "libssl*.lib" | Select-Object FullName
 
+      # ─── 3c. Stage OpenSSL runtime DLLs for MSI bundling ─────────────
+      - name: Copy OpenSSL DLLs into src-tauri/openssl-dlls
+        shell: pwsh
+        run: |
+          $dest = "src-tauri\openssl-dlls"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $binCandidates = @(
+            "$env:OPENSSL_DIR\bin",
+            "$env:OPENSSL_DIR"
+          )
+          $found = $false
+          foreach ($dir in $binCandidates) {
+            if (Test-Path $dir) {
+              $dlls = Get-ChildItem $dir -Filter "libcrypto*.dll" -ErrorAction SilentlyContinue
+              $dlls += Get-ChildItem $dir -Filter "libssl*.dll" -ErrorAction SilentlyContinue
+              if ($dlls.Count -gt 0) {
+                foreach ($d in $dlls) {
+                  Copy-Item $d.FullName -Destination $dest -Force
+                  Write-Host "Copied: $($d.Name)"
+                }
+                $found = $true
+                break
+              }
+            }
+          }
+          if (-not $found) {
+            Write-Error "No OpenSSL runtime DLLs found under $env:OPENSSL_DIR"
+            exit 1
+          }
+          Get-ChildItem $dest
+
       # ─── 4. WiX (MSI installer) ─────────────────────────────────────
       # Tauri 2.x uses WiX 3.x. windows-latest has it pre-installed, but we
       # ensure it's on PATH just in case.
