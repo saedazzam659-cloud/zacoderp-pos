@@ -27,6 +27,7 @@ import { countPendingInvoices } from "../lib/invoices";
 import { syncPushNow, pullAndPersist, type PushSummary, type PullSummary } from "../lib/sync";
 import { listParkedCarts } from "../lib/parkedCarts";
 import { flushPendingSessionCloses, countPendingCloses } from "../lib/pendingSessionCloses";
+import { useLatestVersion } from "../lib/updates";
 
 type View = "sales" | "returns" | "pending" | "parked" | "customers" | "items" | "uom" | "dashboard" | "updates";
 
@@ -37,13 +38,14 @@ type Props = {
   cashierContext?: CashierContext | null;
   companyName?: string;
   deviceId: number;
+  expiresAt?: string | null;
   onSignOut: () => void | Promise<void>;
   onLogoutCashier?: () => void | Promise<void>;
 };
 
 export default function PosShell({
   baseUrl, deviceToken, userToken, cashierContext,
-  companyName, deviceId, onSignOut, onLogoutCashier,
+  companyName, deviceId, expiresAt, onSignOut, onLogoutCashier,
 }: Props) {
   const api = useMemo(
     () => createApi({ baseUrl, deviceToken, userToken: userToken ?? null }),
@@ -63,6 +65,8 @@ export default function PosShell({
   const [parkedCount, setParkedCount] = useState(0);
   const [pushSummary, setPushSummary] = useState<PushSummary | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const { latest: latestRelease, isNewer: updateAvailable } = useLatestVersion(baseUrl);
 
   const refreshParkedCount = useCallback(async () => {
     if (!posSessionId) { setParkedCount(0); return; }
@@ -92,7 +96,7 @@ export default function PosShell({
         // from "session abandoned". Without it the server can only fall back to openedAt and
         // would reap any session whose cashier stayed logged in past the stale threshold.
         await api.heartbeat({
-          appVersion: "0.3.2",
+          appVersion: "0.3.3",
           ...(posSessionId ? { posSessionId } : {}),
         });
         const s = await api.status();
@@ -165,7 +169,7 @@ export default function PosShell({
           <div style={S.brandIcon}>zacode</div>
           <div>
             <div style={S.brandName}>ZACOD POS</div>
-            <div style={S.brandTag}>v0.3.2 — desktop</div>
+            <div style={S.brandTag}>v0.3.3 — desktop</div>
           </div>
         </div>
 
@@ -229,6 +233,24 @@ export default function PosShell({
           </div>
         </header>
 
+        {/* New-version notification banner (Task #187).
+            Polls /api/public/download/release every 30 min. Silently hidden
+            offline / when no newer version is published. Dismiss is per-session
+            only — reappears next launch until the user actually updates. */}
+        {updateAvailable && latestRelease && !updateDismissed && (
+          <UpdateBanner
+            version={latestRelease.version}
+            onOpen={() => setView("updates")}
+            onDismiss={() => setUpdateDismissed(true)}
+          />
+        )}
+
+        {/* Subscription-expiry warning banner (Task #185).
+            Shown when the cached expiresAt is within 7 days of "now". Past-due
+            expiries never reach this banner because boot() routes them to the
+            license-expired full-screen block before PosShell ever renders. */}
+        <ExpiryBanner expiresAt={expiresAt ?? null} />
+
         {/* Page content */}
         <main style={S.content}>
           {view === "sales" && <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} />}
@@ -284,6 +306,39 @@ function labelFor(v: View): string {
     dashboard: "لوحة التحكم",
     updates: "التحديثات",
   }[v];
+}
+
+function UpdateBanner({
+  version, onOpen, onDismiss,
+}: { version: string; onOpen: () => void; onDismiss: () => void }) {
+  return (
+    <div style={S.updateBanner}>
+      <span style={{ fontSize: 18 }}>⬇️</span>
+      <span style={{ flex: 1 }}>
+        تتوفّر نسخة جديدة <strong>v{version}</strong> — يُنصح بالتحديث للحصول على آخر الإصلاحات والتحسينات.
+      </span>
+      <button onClick={onOpen} style={S.updateBtn}>تنزيل الآن</button>
+      <button onClick={onDismiss} style={S.updateClose} title="إخفاء حتى إعادة التشغيل">✕</button>
+    </div>
+  );
+}
+
+function ExpiryBanner({ expiresAt }: { expiresAt: string | null }) {
+  if (!expiresAt) return null;
+  const ms = new Date(expiresAt).getTime() - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const days = Math.ceil(ms / 86_400_000);
+  if (days > 7) return null;
+  const dateStr = new Date(expiresAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" });
+  return (
+    <div style={S.warnBanner}>
+      <span style={{ fontSize: 18 }}>⚠️</span>
+      <span>
+        ينتهي اشتراك هذا الجهاز خلال <strong>{days}</strong> {days === 1 ? "يوم" : "أيام"} (بتاريخ {dateStr}) —
+        تواصل مع الدعم الفني للتجديد قبل التوقف.
+      </span>
+    </div>
+  );
 }
 
 function SyncIndicator({ status, heartbeatErr }: { status: SyncStatus | null; heartbeatErr: string | null }) {
@@ -474,6 +529,30 @@ const S = {
     fontSize: 12, fontWeight: 600, fontFamily: "inherit",
   } as const,
 
+  warnBanner: {
+    display: "flex", alignItems: "center", gap: 10,
+    padding: "10px 24px",
+    background: "linear-gradient(90deg, #fef3c7 0%, #fde68a 100%)",
+    color: "#78350f", borderBottom: "1px solid #fcd34d",
+    fontSize: 13, fontWeight: 600, flexShrink: 0,
+  } as const,
+  updateBanner: {
+    display: "flex", alignItems: "center", gap: 12,
+    padding: "10px 24px",
+    background: "linear-gradient(90deg, #dbeafe 0%, #d1fae5 100%)",
+    color: "#0c4a6e", borderBottom: "1px solid #93c5fd",
+    fontSize: 13, fontWeight: 600, flexShrink: 0,
+  } as const,
+  updateBtn: {
+    padding: "6px 14px", background: "#2563eb", color: "#fff",
+    border: "none", borderRadius: 6, cursor: "pointer",
+    fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+  } as const,
+  updateClose: {
+    padding: "4px 10px", background: "transparent", color: "#0c4a6e",
+    border: "1px solid #93c5fd", borderRadius: 6, cursor: "pointer",
+    fontSize: 12, fontFamily: "inherit",
+  } as const,
   content: { flex: 1, overflow: "hidden", minHeight: 0, display: "flex", flexDirection: "column" as const } as const,
   pagePad: { padding: 24, overflowY: "auto" as const, flex: 1 } as const,
 
