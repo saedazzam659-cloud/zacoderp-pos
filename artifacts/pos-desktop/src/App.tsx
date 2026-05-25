@@ -125,8 +125,22 @@ export default function App() {
     if (state.phase !== "signed-in") return;
     const { baseUrl, deviceToken, userToken, cashierContext, companyId, deviceId, companyName } = state;
     const api = createApi({ baseUrl, deviceToken, userToken });
-    // Fire-and-forget the cloud-side cleanup so a slow network can't strand the cashier.
-    try { await api.closePosSession(cashierContext.posSessionId); } catch (e) { console.warn("closePosSession failed (offline?)", e); }
+    // Try the cloud-side close. If the network is down (or the server errors),
+    // queue it into the pending-closes retry queue so PosShell's heartbeat
+    // tick can drain it once connectivity returns. Without this fallback the
+    // session would sit "open" on the cloud forever, blocking the same user
+    // from opening a session on any other terminal next time. The server-side
+    // janitor will eventually auto-close it, but that produces force_closed
+    // with the last-heartbeat timestamp instead of the cashier's actual
+    // logout time — the deferred-close gives us a cleaner record.
+    const closedAt = new Date().toISOString();
+    try {
+      await api.closePosSession(cashierContext.posSessionId);
+    } catch (e) {
+      console.warn("closePosSession failed (offline?) — queued for retry", e);
+      const { enqueuePendingClose } = await import("./lib/pendingSessionCloses");
+      enqueuePendingClose({ posSessionId: cashierContext.posSessionId, closedAt });
+    }
     try { await api.cashierLogout(); } catch (e) { console.warn("cashierLogout failed (offline?)", e); }
     try { await clearSessionParkedCarts(cashierContext.posSessionId); } catch { /* ignore */ }
     await clearUserToken();

@@ -259,6 +259,13 @@ export function createApi(opts: {
     }) => call<PosSession>("POST", "/api/pos-sessions/open", req),
     closePosSession: (id: number, body: { closingCash?: number; notes?: string } = {}) =>
       call<PosSession>("POST", `/api/pos-sessions/${id}/close`, body),
+    // Device-token authed close used by the offline-retry queue. See
+    // pendingSessionCloses.ts for the queue logic and routes/pos-desktop-sync.ts
+    // for the server-side handler. Idempotent on the server (already-closed →
+    // { ok: true, alreadyClosed: true }), so callers can safely drop the
+    // queued op on any 2xx response.
+    deferredClosePosSession: (req: { posSessionId: number; closingCash?: number; notes?: string; closedAt?: string }) =>
+      call<{ ok: true; alreadyClosed?: boolean; session: PosSession }>("POST", "/api/sync/close-pos-session", req),
   };
 }
 

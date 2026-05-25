@@ -26,6 +26,7 @@ import UpdatesScreen from "./UpdatesScreen";
 import { countPendingInvoices } from "../lib/invoices";
 import { syncPushNow, pullAndPersist, type PushSummary, type PullSummary } from "../lib/sync";
 import { listParkedCarts } from "../lib/parkedCarts";
+import { flushPendingSessionCloses, countPendingCloses } from "../lib/pendingSessionCloses";
 
 type View = "sales" | "returns" | "pending" | "parked" | "customers" | "items" | "uom" | "dashboard" | "updates";
 
@@ -86,15 +87,27 @@ export default function PosShell({
   useEffect(() => {
     const tick = async () => {
       try {
-        await api.heartbeat({ appVersion: "0.2.0-dev" });
+        // Send the active session id so the server can bump pos_sessions.last_heartbeat_at —
+        // that's the signal the auto-close janitor uses to tell "cashier still active" apart
+        // from "session abandoned". Without it the server can only fall back to openedAt and
+        // would reap any session whose cashier stayed logged in past the stale threshold.
+        await api.heartbeat({
+          appVersion: "0.2.0-dev",
+          ...(posSessionId ? { posSessionId } : {}),
+        });
         const s = await api.status();
         setStatus(s); setHeartbeatErr(null);
+        // Opportunistic drain of any queued offline-logout closes. Best-effort —
+        // failures stay in the queue and will be retried on the next tick.
+        if (countPendingCloses() > 0) {
+          try { await flushPendingSessionCloses(api); } catch { /* logged inside */ }
+        }
       } catch (e: any) { setHeartbeatErr(e?.message ?? "heartbeat failed"); }
     };
     void tick();
     const id = setInterval(tick, 30_000);
     return () => clearInterval(id);
-  }, [api]);
+  }, [api, posSessionId]);
 
   async function doPull() {
     setBusy("pull"); setActionErr(null);

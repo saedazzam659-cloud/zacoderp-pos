@@ -67,4 +67,15 @@ export const posSessionsTable = pgTable("pos_sessions", {
   device:       text("device"),
   notes:        text("notes"),
   closedNotes:  text("closed_notes"),
+  // Updated by the desktop POS each time it heartbeats while a session is
+  // open. Used by the server-side auto-close fallback to detect sessions
+  // whose cashier app died (network drop, force-quit, crashed machine)
+  // without going through the normal /close endpoint.
+  lastHeartbeatAt: timestamp("last_heartbeat_at"),
+  // Explanation of how the session was closed. NULL on legacy rows;
+  // "cashier_logout" for normal logout, "cashier_logout_deferred" when the
+  // desktop retried after an offline logout, "auto_closed_stale_heartbeat"
+  // when the server-side janitor closed it because no heartbeat arrived
+  // for N minutes, "admin_force_close" when an admin closed it manually.
+  closeReason:  text("close_reason"),
 });

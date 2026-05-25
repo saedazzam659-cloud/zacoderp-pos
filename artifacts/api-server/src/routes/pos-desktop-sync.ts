@@ -9,6 +9,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import {
   posDevicesTable, syncQueueLogTable, customersTable, itemsTable,
+  posSessionsTable, salesInvoicesTable,
 } from "@workspace/db";
 import { eq, and, gt, sql } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -40,20 +41,90 @@ const heartbeatSchema = z.object({
   appVersion: z.string().max(50).optional(),
   battery: z.number().int().min(0).max(100).optional(),
   osInfo: z.string().max(500).optional(),
+  // The currently-open POS session on this device, if any. When supplied we
+  // bump pos_sessions.last_heartbeat_at so the server-side auto-close
+  // janitor can tell apart "cashier still active" from "session abandoned".
+  // The session is matched by id AND company so a forged id from another
+  // tenant can never be touched.
+  posSessionId: z.number().int().positive().optional(),
 });
 router.post("/heartbeat", async (req: DeviceAuthedRequest, res) => {
   const parsed = heartbeatSchema.safeParse(req.body ?? {});
   if (!parsed.success) { res.status(400).json({ error: "bad payload" }); return; }
   const did = req.device!.id;
+  const cid = req.device!.companyId;
+  const now = new Date();
   await db.update(posDevicesTable).set({
-    lastHeartbeatAt: new Date(),
+    lastHeartbeatAt: now,
     lastSeenIp: req.ip ?? null,
     appVersion: parsed.data.appVersion ?? undefined,
     osInfo: parsed.data.osInfo ?? undefined,
-    updatedAt: new Date(),
+    updatedAt: now,
   }).where(eq(posDevicesTable.id, did));
+  if (parsed.data.posSessionId) {
+    await db.update(posSessionsTable).set({ lastHeartbeatAt: now })
+      .where(and(
+        eq(posSessionsTable.id, parsed.data.posSessionId),
+        eq(posSessionsTable.companyId, cid),
+        eq(posSessionsTable.status, "open"),
+      ));
+  }
   await log(req, "heartbeat", null, 0, "ok");
-  res.json({ ok: true, serverTime: new Date().toISOString() });
+  res.json({ ok: true, serverTime: now.toISOString() });
+});
+
+// ─── POST /api/sync/close-pos-session ────────────────────────────────
+// Desktop-token authed counterpart to /api/pos-sessions/:id/close — used
+// by the desktop when the original logout-time call failed (no network)
+// and now needs to be retried from the offline queue. We require the
+// device's own token rather than a cashier JWT because by the time the
+// retry fires the cashier has long since logged out and their token has
+// been wiped. The session is matched by id AND company so cross-tenant
+// closes are impossible. Idempotent: if the session is already closed
+// (e.g. the auto-close janitor got there first) we return the existing
+// row with status "ok" so the desktop can safely drop the queued op.
+const closeSessionSchema = z.object({
+  posSessionId: z.number().int().positive(),
+  closingCash: z.number().optional(),
+  notes: z.string().max(1000).optional(),
+  // The wall-clock time on the desktop when the cashier hit "logout".
+  // Used as the authoritative closedAt so the shift reports reflect when
+  // the cashier actually stopped working, not when the network came back.
+  closedAt: z.string().datetime().optional(),
+});
+router.post("/close-pos-session", async (req: DeviceAuthedRequest, res) => {
+  const parsed = closeSessionSchema.safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: "bad payload", details: parsed.error.issues }); return; }
+  const cid = req.device!.companyId;
+  const [s] = await db.select().from(posSessionsTable)
+    .where(and(eq(posSessionsTable.id, parsed.data.posSessionId), eq(posSessionsTable.companyId, cid)));
+  if (!s) { res.status(404).json({ error: "session not found" }); return; }
+  if (s.status !== "open") {
+    res.json({ ok: true, alreadyClosed: true, session: s });
+    return;
+  }
+  const [{ totalCash } = { totalCash: "0" }] = await db.select({
+    totalCash: sql<string>`COALESCE(SUM(${salesInvoicesTable.totalAmount}), 0)`,
+  }).from(salesInvoicesTable).where(and(
+    eq(salesInvoicesTable.posSessionId, s.id),
+    eq(salesInvoicesTable.companyId, s.companyId),
+    eq(salesInvoicesTable.status, "posted"),
+    eq(salesInvoicesTable.paymentType, "cash"),
+  ));
+  const expected = Number(s.openingCash || 0) + Number(totalCash || 0);
+  const closing = parsed.data.closingCash != null ? Number(parsed.data.closingCash) : expected;
+  const closedAt = parsed.data.closedAt ? new Date(parsed.data.closedAt) : new Date();
+  const [row] = await db.update(posSessionsTable).set({
+    status: "closed",
+    closingCash: String(closing.toFixed(2)),
+    expectedCash: String(expected.toFixed(2)),
+    difference: String((closing - expected).toFixed(2)),
+    closedAt,
+    closedNotes: parsed.data.notes ?? null,
+    closeReason: "cashier_logout_deferred",
+  }).where(eq(posSessionsTable.id, s.id)).returning();
+  await log(req, "close-pos-session", "pos_session", 1, "ok");
+  res.json({ ok: true, session: row });
 });
 
 // ─── POST /api/sync/pull ─────────────────────────────────────────────

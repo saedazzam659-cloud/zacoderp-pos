@@ -1066,6 +1066,13 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "pos_devices_fp_idx",
       sql:   `CREATE INDEX IF NOT EXISTS pos_devices_fp_idx ON pos_devices (company_id, fingerprint_hash)` },
 
+    { label: "pos_sessions add last_heartbeat_at",
+      sql:   `ALTER TABLE pos_sessions ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMP` },
+    { label: "pos_sessions add close_reason",
+      sql:   `ALTER TABLE pos_sessions ADD COLUMN IF NOT EXISTS close_reason TEXT` },
+    { label: "pos_sessions_open_stale_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS pos_sessions_open_stale_idx ON pos_sessions (status, last_heartbeat_at) WHERE status = 'open'` },
+
     { label: "create sync_queue_log table",
       sql:   `CREATE TABLE IF NOT EXISTS sync_queue_log (
         id              SERIAL PRIMARY KEY,

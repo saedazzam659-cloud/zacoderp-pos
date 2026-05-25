@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   Copy, KeyRound, Monitor, RefreshCw, Plus, Trash2, ShieldOff, Calendar,
-  Download, Wifi, WifiOff, Cpu, Globe,
+  Download, Wifi, WifiOff, Cpu, Globe, Clock,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -88,14 +88,16 @@ export default function PosDevices() {
       </div>
 
       <Tabs defaultValue="licenses" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="licenses"><KeyRound className="ml-2 h-4 w-4" /> التراخيص</TabsTrigger>
           <TabsTrigger value="devices"><Monitor className="ml-2 h-4 w-4" /> الأجهزة</TabsTrigger>
+          <TabsTrigger value="sessions"><Clock className="ml-2 h-4 w-4" /> جلسات البيع</TabsTrigger>
           <TabsTrigger value="releases"><Download className="ml-2 h-4 w-4" /> روابط التحميل</TabsTrigger>
           <TabsTrigger value="logs"><Cpu className="ml-2 h-4 w-4" /> سجل المزامنة</TabsTrigger>
         </TabsList>
         <TabsContent value="licenses" className="mt-4"><LicensesTab headers={headers} /></TabsContent>
         <TabsContent value="devices"  className="mt-4"><DevicesTab  headers={headers} /></TabsContent>
+        <TabsContent value="sessions" className="mt-4"><SessionsTab headers={headers} /></TabsContent>
         <TabsContent value="releases" className="mt-4"><ReleasesTab headers={headers} /></TabsContent>
         <TabsContent value="logs"     className="mt-4"><LogsTab     headers={headers} /></TabsContent>
       </Tabs>
@@ -649,6 +651,120 @@ function LogsTab({ headers }: { headers: Record<string, string> }) {
             ))}
             {logsQ.data?.length === 0 && (
               <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">لا توجد سجلات مزامنة بعد.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </CardContent></Card>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SESSIONS TAB — POS sessions, with auto-closed ones highlighted so
+// SuperAdmins can see at a glance which sessions were reaped by the
+// server-side janitor (cashier app died, no heartbeat for N minutes)
+// versus closed cleanly by the cashier.
+// ════════════════════════════════════════════════════════════════════
+type PosSessionRow = {
+  id: number; companyId: number; userId: number; branchId: number | null;
+  status: "open" | "closed" | "force_closed";
+  openingCash: string; closingCash: string | null; expectedCash: string | null; difference: string | null;
+  openedAt: string; closedAt: string | null;
+  lastHeartbeatAt: string | null;
+  closeReason: string | null;
+  closedNotes: string | null;
+  user?: { id: number; username: string; nameAr: string | null } | null;
+  branch?: { id: number; nameAr: string | null } | null;
+  invoiceCount?: number;
+  totalSales?: number;
+};
+
+const CLOSE_REASON_LABEL_AR: Record<string, string> = {
+  cashier_logout: "إغلاق طبيعي",
+  cashier_logout_deferred: "إغلاق مؤجَّل (عاد للاتصال)",
+  auto_closed_stale_heartbeat: "إغلاق تلقائي (انقطاع نبضات)",
+  admin_force_close: "إغلاق إداري قسري",
+};
+
+function SessionsTab({ headers }: { headers: Record<string, string> }) {
+  const [status, setStatus] = useState<string>("");
+  const sessionsQ = useQuery<PosSessionRow[]>({
+    queryKey: ["pos-sessions-admin", status],
+    queryFn: async () => {
+      const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+      const r = await fetch(`${API}/api/pos-sessions${qs}`, { headers });
+      if (!r.ok) throw new Error("فشل تحميل الجلسات");
+      return r.json();
+    },
+    refetchInterval: 30_000,
+  });
+
+  return (
+    <Card><CardContent className="p-4 space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Label className="text-sm">الحالة:</Label>
+        <Select value={status || "all"} onValueChange={(v) => setStatus(v === "all" ? "" : v)}>
+          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">الكل</SelectItem>
+            <SelectItem value="open">مفتوحة</SelectItem>
+            <SelectItem value="closed">مُغلقة</SelectItem>
+            <SelectItem value="force_closed">قسرية / تلقائية</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button variant="outline" size="sm" onClick={() => sessionsQ.refetch()}>
+          <RefreshCw className="ml-1 h-4 w-4" /> تحديث
+        </Button>
+        <div className="ms-auto text-xs text-muted-foreground">
+          الجلسات التي يغلقها النظام تلقائياً تظهر باللون البرتقالي. ينفذ النظام الإغلاق التلقائي عند توقف نبضات الجهاز لأكثر من 30 دقيقة.
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/40">
+            <tr>
+              <th className="p-2 text-right">#</th>
+              <th className="p-2 text-right">المستخدم</th>
+              <th className="p-2 text-right">الفرع</th>
+              <th className="p-2 text-right">الحالة</th>
+              <th className="p-2 text-right">سبب الإغلاق</th>
+              <th className="p-2 text-right">فُتحت</th>
+              <th className="p-2 text-right">آخر نبضة</th>
+              <th className="p-2 text-right">أُغلقت</th>
+              <th className="p-2 text-right">الفرق</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(sessionsQ.data ?? []).map((s) => {
+              const isAuto = s.closeReason === "auto_closed_stale_heartbeat";
+              return (
+                <tr key={s.id} className={`border-t ${isAuto ? "bg-amber-50" : ""}`}>
+                  <td className="p-2">{s.id}</td>
+                  <td className="p-2">{s.user?.nameAr || s.user?.username || `#${s.userId}`}</td>
+                  <td className="p-2">{s.branch?.nameAr ?? "—"}</td>
+                  <td className="p-2">
+                    <Badge className={
+                      s.status === "open" ? "bg-blue-100 text-blue-700"
+                      : s.status === "closed" ? "bg-green-100 text-green-700"
+                      : "bg-amber-100 text-amber-700"
+                    }>
+                      {s.status === "open" ? "مفتوحة" : s.status === "closed" ? "مُغلقة" : "قسرية"}
+                    </Badge>
+                  </td>
+                  <td className="p-2 text-xs">
+                    {s.closeReason
+                      ? (CLOSE_REASON_LABEL_AR[s.closeReason] ?? s.closeReason)
+                      : (s.status === "open" ? "—" : "غير محدد")}
+                  </td>
+                  <td className="p-2 text-xs">{new Date(s.openedAt).toLocaleString("ar-SA")}</td>
+                  <td className="p-2 text-xs">{s.lastHeartbeatAt ? new Date(s.lastHeartbeatAt).toLocaleString("ar-SA") : "—"}</td>
+                  <td className="p-2 text-xs">{s.closedAt ? new Date(s.closedAt).toLocaleString("ar-SA") : "—"}</td>
+                  <td className="p-2 text-xs">{s.difference ?? "—"}</td>
+                </tr>
+              );
+            })}
+            {sessionsQ.data?.length === 0 && (
+              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">لا توجد جلسات بيع.</td></tr>
             )}
           </tbody>
         </table>
