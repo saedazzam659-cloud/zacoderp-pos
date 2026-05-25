@@ -92,7 +92,7 @@ export default function PosShell({
         // from "session abandoned". Without it the server can only fall back to openedAt and
         // would reap any session whose cashier stayed logged in past the stale threshold.
         await api.heartbeat({
-          appVersion: "0.2.0-dev",
+          appVersion: "0.3.1",
           ...(posSessionId ? { posSessionId } : {}),
         });
         const s = await api.status();

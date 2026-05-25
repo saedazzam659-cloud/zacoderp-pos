@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { TAURI_MODE } from "../lib/tauri-shim";
 
-const APP_VERSION = "0.2.0";
+const APP_VERSION = "0.3.1";
 
 type ReleaseInfo = {
   version: string;
