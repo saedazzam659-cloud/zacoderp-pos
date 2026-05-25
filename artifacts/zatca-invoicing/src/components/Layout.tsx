@@ -134,6 +134,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.enterCompany",         href: "/admin/enter-company",      icon: LogIn },
   { nameKey: "nav.registrationRequests", href: "/admin/requests",           icon: Clock },
   { nameKey: "nav.licenses",             href: "/admin/licenses",           icon: KeyRound },
+  { nameKey: "nav.posDevices",           href: "/admin/pos-devices",        icon: Monitor },
   { nameKey: "nav.backupOperations",     href: "/admin/backups",            icon: HardDrive },
   { nameKey: "nav.securityCenter",       href: "/admin/security",           icon: ShieldCheck },
   { nameKey: "nav.superAdminSecurity",   href: "/admin/security-superadmin", icon: ShieldCheck },
