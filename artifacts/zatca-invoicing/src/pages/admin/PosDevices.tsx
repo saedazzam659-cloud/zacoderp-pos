@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   Copy, KeyRound, Monitor, RefreshCw, Plus, Trash2, ShieldOff, Calendar,
-  Download, Wifi, WifiOff, Cpu, Globe, Clock,
+  Download, Wifi, WifiOff, Cpu, Globe, Clock, Pencil,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -511,7 +511,9 @@ function ReleasesTab({ headers }: { headers: Record<string, string> }) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ countryCode: "SA", platform: "win-x64", version: "", downloadUrl: "", releaseNotes: "", isActive: true });
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const emptyForm = { countryCode: "SA", platform: "win-x64", version: "", downloadUrl: "", releaseNotes: "", isActive: true };
+  const [form, setForm] = useState(emptyForm);
 
   const releasesQ = useQuery<Release[]>({
     queryKey: ["download-releases"],
@@ -522,19 +524,38 @@ function ReleasesTab({ headers }: { headers: Record<string, string> }) {
     },
   });
 
-  const addMut = useMutation({
+  const saveMut = useMutation({
     mutationFn: async () => {
-      const r = await fetch(`${API}/api/admin/pos-devices/releases`, { method: "POST", headers, body: JSON.stringify(form) });
-      if (!r.ok) throw new Error((await r.json()).error || "فشل الإضافة");
+      const url = editingId
+        ? `${API}/api/admin/pos-devices/releases/${editingId}`
+        : `${API}/api/admin/pos-devices/releases`;
+      const method = editingId ? "PATCH" : "POST";
+      const r = await fetch(url, { method, headers, body: JSON.stringify(form) });
+      if (!r.ok) throw new Error((await r.json()).error || (editingId ? "فشل التعديل" : "فشل الإضافة"));
     },
     onSuccess: () => {
-      toast({ title: "تمت إضافة الإصدار" });
+      toast({ title: editingId ? "تم تعديل الإصدار" : "تمت إضافة الإصدار" });
       qc.invalidateQueries({ queryKey: ["download-releases"] });
       setShowAdd(false);
-      setForm({ countryCode: "SA", platform: "win-x64", version: "", downloadUrl: "", releaseNotes: "", isActive: true });
+      setEditingId(null);
+      setForm(emptyForm);
     },
     onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
   });
+
+  const openEdit = (r: Release) => {
+    setEditingId(r.id);
+    setForm({
+      countryCode: r.countryCode,
+      platform: r.platform,
+      version: r.version,
+      downloadUrl: r.downloadUrl,
+      releaseNotes: r.releaseNotes ?? "",
+      isActive: r.isActive,
+    });
+    setShowAdd(true);
+  };
+  const openAdd = () => { setEditingId(null); setForm(emptyForm); setShowAdd(true); };
 
   const delMut = useMutation({
     mutationFn: async (id: number) => {
@@ -550,7 +571,7 @@ function ReleasesTab({ headers }: { headers: Record<string, string> }) {
     <Card><CardContent className="p-4 space-y-3">
       <div className="flex justify-between items-center">
         <p className="text-sm text-muted-foreground">روابط تنزيل المثبّت لكل دولة. استخدم رمز <code>ALL</code> كرابط احتياطي عام.</p>
-        <Button onClick={() => setShowAdd(true)}><Plus className="ml-2 h-4 w-4" /> إضافة إصدار</Button>
+        <Button onClick={openAdd}><Plus className="ml-2 h-4 w-4" /> إضافة إصدار</Button>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -574,7 +595,12 @@ function ReleasesTab({ headers }: { headers: Record<string, string> }) {
                 <td className="p-2 text-xs truncate max-w-[300px]"><a href={r.downloadUrl} className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">{r.downloadUrl}</a></td>
                 <td className="p-2">{r.isActive ? <Badge className="bg-green-100 text-green-700">نعم</Badge> : <Badge variant="secondary">لا</Badge>}</td>
                 <td className="p-2 text-xs">{new Date(r.publishedAt).toLocaleDateString("ar-SA")}</td>
-                <td className="p-2"><Button size="sm" variant="destructive" onClick={() => delMut.mutate(r.id)}><Trash2 className="h-3.5 w-3.5" /></Button></td>
+                <td className="p-2">
+                  <div className="flex gap-1 justify-end">
+                    <Button size="sm" variant="outline" onClick={() => openEdit(r)}><Pencil className="h-3.5 w-3.5" /></Button>
+                    <Button size="sm" variant="destructive" onClick={() => delMut.mutate(r.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  </div>
+                </td>
               </tr>
             ))}
             {releasesQ.data?.length === 0 && (
@@ -584,19 +610,23 @@ function ReleasesTab({ headers }: { headers: Record<string, string> }) {
         </table>
       </div>
 
-      <Dialog open={showAdd} onOpenChange={setShowAdd}>
+      <Dialog open={showAdd} onOpenChange={(o) => { setShowAdd(o); if (!o) { setEditingId(null); setForm(emptyForm); } }}>
         <DialogContent dir="rtl">
-          <DialogHeader><DialogTitle>إضافة إصدار جديد</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editingId ? "تعديل الإصدار" : "إضافة إصدار جديد"}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div><Label>رمز الدولة (ISO-2)</Label><Input value={form.countryCode} onChange={(e) => setForm({ ...form, countryCode: e.target.value.toUpperCase() })} placeholder="SA / AE / ALL" /></div>
             <div><Label>المنصة</Label><Input value={form.platform} onChange={(e) => setForm({ ...form, platform: e.target.value })} /></div>
             <div><Label>الإصدار</Label><Input value={form.version} onChange={(e) => setForm({ ...form, version: e.target.value })} placeholder="1.0.0" /></div>
             <div><Label>رابط التنزيل (https)</Label><Input value={form.downloadUrl} onChange={(e) => setForm({ ...form, downloadUrl: e.target.value })} /></div>
             <div><Label>ملاحظات الإصدار</Label><Textarea value={form.releaseNotes} onChange={(e) => setForm({ ...form, releaseNotes: e.target.value })} /></div>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
+              <span>نشط</span>
+            </label>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAdd(false)}>إلغاء</Button>
-            <Button onClick={() => addMut.mutate()} disabled={!form.version || !form.downloadUrl || addMut.isPending}>إضافة</Button>
+            <Button onClick={() => saveMut.mutate()} disabled={!form.version || !form.downloadUrl || saveMut.isPending}>{editingId ? "حفظ التعديلات" : "إضافة"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
