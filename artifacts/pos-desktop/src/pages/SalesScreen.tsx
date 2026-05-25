@@ -157,6 +157,17 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
 
   return (
     <div dir="rtl" style={S.wrap}>
+      <style>{`
+        .cart-scroll::-webkit-scrollbar { width: 10px; }
+        .cart-scroll::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 8px; margin: 4px; }
+        .cart-scroll::-webkit-scrollbar-thumb { background: linear-gradient(180deg,#3b82f6,#2563eb); border-radius: 8px; border: 2px solid #f1f5f9; }
+        .cart-scroll::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg,#2563eb,#1d4ed8); }
+        .cart-scroll { scrollbar-width: thin; scrollbar-color: #2563eb #f1f5f9; }
+        .grid-scroll::-webkit-scrollbar { width: 10px; }
+        .grid-scroll::-webkit-scrollbar-track { background: transparent; }
+        .grid-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+        .grid-scroll::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+      `}</style>
       {/* ─── Items grid (left wide pane) ────────────────────────── */}
       <div style={S.itemsPane}>
         <div style={S.searchRow}>
@@ -171,7 +182,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
         </div>
 
         {/* The ONLY scroll region in the items pane */}
-        <div style={S.gridScroll}>
+        <div className="grid-scroll" style={S.gridScroll}>
           <div style={S.grid}>
             {loadingItems && items.length === 0 ? (
               <div style={S.empty}>... جاري تحميل الأصناف</div>
@@ -205,7 +216,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
         </div>
 
         {/* Scrolling lines region — flex:1 takes all remaining vertical space */}
-        <div style={S.linesScroll}>
+        <div className="cart-scroll" style={S.linesScroll}>
           {cart.length === 0 ? (
             <div style={S.cartEmpty}>
               <div style={{ fontSize: 48, marginBottom: 8 }}>🛍️</div>
