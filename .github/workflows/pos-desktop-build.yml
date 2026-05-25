@@ -114,24 +114,34 @@ jobs:
       # into the MSI. Building OpenSSL from source on Windows needs NASM
       # and Perl; both ship pre-installed on `windows-latest`. We verify
       # them here so a missing tool fails loudly instead of mid-cargo.
-      - name: Verify NASM + Perl (vendored OpenSSL build deps)
+      - name: Install NASM + Strawberry Perl (vendored OpenSSL build deps)
         shell: pwsh
         run: |
+          # NASM
           $nasm = (Get-Command nasm.exe -ErrorAction SilentlyContinue)
           if (-not $nasm) {
             Write-Host "NASM not on PATH, installing via choco..."
             choco install nasm -y --no-progress
-            $env:PATH = "C:\Program Files\NASM;$env:PATH"
             echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           } else {
             Write-Host "NASM found at: $($nasm.Path)"
           }
-          $perl = (Get-Command perl.exe -ErrorAction SilentlyContinue)
-          if (-not $perl) {
-            Write-Error "Perl is required to build vendored OpenSSL but was not found on PATH."
-            exit 1
-          }
-          Write-Host "Perl found at: $($perl.Path)"
+          # Strawberry Perl — the perl that ships pre-installed on
+          # windows-latest is Git-for-Windows' MSYS perl which is missing
+          # core modules (FindBin, File::Compare, etc.) that OpenSSL's
+          # Configure script requires. Force install of full Strawberry
+          # Perl and prepend it to PATH so it wins over the Git Bash perl.
+          Write-Host "Installing Strawberry Perl (required by openssl-sys vendored build)..."
+          choco install strawberryperl -y --no-progress --force
+          # Prepend strawberry perl bins to PATH so it wins over Git Bash perl
+          echo "C:\Strawberry\c\bin"    | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\Strawberry\perl\site\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          # Verify in current step's env too
+          $env:PATH = "C:\Strawberry\c\bin;C:\Strawberry\perl\site\bin;C:\Strawberry\perl\bin;$env:PATH"
+          Write-Host "Perl version check:"
+          perl -v | Select-String "This is perl"
+          Write-Host "Perl which: $((Get-Command perl.exe).Path)"
 
       # ─── 4. WiX (MSI installer) ─────────────────────────────────────
       # Tauri 2.x uses WiX 3.x. windows-latest has it pre-installed, but we
