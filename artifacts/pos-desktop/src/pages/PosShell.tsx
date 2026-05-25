@@ -92,7 +92,7 @@ export default function PosShell({
         // from "session abandoned". Without it the server can only fall back to openedAt and
         // would reap any session whose cashier stayed logged in past the stale threshold.
         await api.heartbeat({
-          appVersion: "0.3.1",
+          appVersion: "0.3.2",
           ...(posSessionId ? { posSessionId } : {}),
         });
         const s = await api.status();
@@ -165,7 +165,7 @@ export default function PosShell({
           <div style={S.brandIcon}>zacode</div>
           <div>
             <div style={S.brandName}>ZACOD POS</div>
-            <div style={S.brandTag}>v0.2 — desktop</div>
+            <div style={S.brandTag}>v0.3.2 — desktop</div>
           </div>
         </div>
 

@@ -25,16 +25,15 @@ export interface ZatcaQrInput {
 
 export async function generateZatcaQr(input: ZatcaQrInput): Promise<string> {
   if (IS_TAURI) {
-    // Rust signature: generate_qr(seller_name, vat_number, invoice_timestamp,
-    //                              invoice_total, vat_amount)
-    // — keys MUST match exactly or Tauri rejects with "missing field" before
-    //   the command body runs.
+    // Tauri 2 expects camelCase keys from JS (auto-converts to snake_case
+    // for the Rust parameter names). Tauri 1 used snake_case on both sides;
+    // this caused the v0.3.1 "missing required key sellerName" regression.
     return invoke<string>("generate_qr", {
-      seller_name: input.sellerName,
-      vat_number: input.vatNumber,
-      invoice_timestamp: input.timestamp,
-      invoice_total: input.invoiceTotal,
-      vat_amount: input.vatTotal,
+      sellerName: input.sellerName,
+      vatNumber: input.vatNumber,
+      invoiceTimestamp: input.timestamp,
+      invoiceTotal: input.invoiceTotal,
+      vatAmount: input.vatTotal,
     });
   }
   // Browser dev fallback — NOT ZATCA-valid, just for UI smoke-testing.
