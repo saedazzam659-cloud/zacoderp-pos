@@ -25,6 +25,8 @@ export const MENU_ITEMS: MenuItem[] = [
   { key: "inventory_mobile",   label: "موبيل المخازن",              section: "المخازن" },
   { key: "inventory_reports",  label: "تقارير المخازن",             section: "المخازن" },
   { key: "sister_companies",   label: "معاملات الشركات الشقيقة",    section: "معاملات الشركات الشقيقة" },
+  { key: "customer_notes",     label: "إشعارات دائنة/مدينة (عملاء)", section: "المبيعات" },
+  { key: "supplier_notes",     label: "إشعارات دائنة/مدينة (موردين)", section: "المشتريات" },
 
   { key: "sales_module",       label: "العملاء والمبيعات",          section: "المبيعات" },
   { key: "sales_reports",      label: "تقارير العملاء والمبيعات",   section: "المبيعات" },

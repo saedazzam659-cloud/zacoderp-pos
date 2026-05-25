@@ -346,6 +346,8 @@ import SalesQuotationForm   from "@/pages/sales/SalesQuotationForm";
 import SalesOrders          from "@/pages/sales/SalesOrders";
 import SalesOrderForm       from "@/pages/sales/SalesOrderForm";
 import SalesReturns         from "@/pages/sales/SalesReturns";
+import AccountNotesList     from "@/pages/account-notes/AccountNotesList";
+import AccountNoteForm      from "@/pages/account-notes/AccountNoteForm";
 import CustomerSettlement   from "@/pages/sales/CustomerSettlement";
 
 import CashBoxes        from "@/pages/cash/CashBoxes";
@@ -876,6 +878,20 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/purchasing/orders/:id"      module="purchase_invoices"     component={PurchaseOrderForm} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/orders"          module="purchase_invoices"     component={PurchaseOrders} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/returns"         module="purchase_returns"      component={PurchaseReturns} />}
+
+            {/* Standalone Supplier Credit/Debit Notes — pure accounting. */}
+            {!isSuperAdmin && <PermRoute path="/purchasing/supplier-credit-notes/new" module="supplier_notes" action="create"
+              component={() => <AccountNoteForm partyType="supplier" noteType="credit" />} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/supplier-credit-notes/:id" module="supplier_notes"
+              component={() => <AccountNoteForm partyType="supplier" noteType="credit" />} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/supplier-credit-notes"     module="supplier_notes"
+              component={() => <AccountNotesList partyType="supplier" noteType="credit" />} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/supplier-debit-notes/new"  module="supplier_notes" action="create"
+              component={() => <AccountNoteForm partyType="supplier" noteType="debit" />} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/supplier-debit-notes/:id"  module="supplier_notes"
+              component={() => <AccountNoteForm partyType="supplier" noteType="debit" />} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/supplier-debit-notes"      module="supplier_notes"
+              component={() => <AccountNotesList partyType="supplier" noteType="debit" />} />}
             {!isSuperAdmin && <PermRoute path="/inventory/goods-receipts"   module="warehouses"            component={GoodsReceipts} />}
             {!isSuperAdmin && <PermRoute path="/inventory/goods-deliveries" module="warehouses"            component={GoodsDeliveries} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/settlements"     module="supplier_settlements"  component={SupplierSettlement} />}
@@ -895,6 +911,20 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/sales/orders/:id"     module="sales_invoices"   component={SalesOrderForm} />}
             {!isSuperAdmin && <PermRoute path="/sales/orders"         module="sales_invoices"   component={SalesOrders} />}
             {!isSuperAdmin && <PermRoute path="/sales/returns"        module="sales_returns"    component={SalesReturns} />}
+
+            {/* Standalone Customer Credit/Debit Notes — pure accounting, NOT linked to invoices. */}
+            {!isSuperAdmin && <PermRoute path="/sales/customer-credit-notes/new" module="customer_notes" action="create"
+              component={() => <AccountNoteForm partyType="customer" noteType="credit" />} />}
+            {!isSuperAdmin && <PermRoute path="/sales/customer-credit-notes/:id" module="customer_notes"
+              component={() => <AccountNoteForm partyType="customer" noteType="credit" />} />}
+            {!isSuperAdmin && <PermRoute path="/sales/customer-credit-notes"     module="customer_notes"
+              component={() => <AccountNotesList partyType="customer" noteType="credit" />} />}
+            {!isSuperAdmin && <PermRoute path="/sales/customer-debit-notes/new"  module="customer_notes" action="create"
+              component={() => <AccountNoteForm partyType="customer" noteType="debit" />} />}
+            {!isSuperAdmin && <PermRoute path="/sales/customer-debit-notes/:id"  module="customer_notes"
+              component={() => <AccountNoteForm partyType="customer" noteType="debit" />} />}
+            {!isSuperAdmin && <PermRoute path="/sales/customer-debit-notes"      module="customer_notes"
+              component={() => <AccountNotesList partyType="customer" noteType="debit" />} />}
 
             {/* Customers & Sales Reports */}
             {!isSuperAdmin && <PermRoute path="/sales/reports/customer-statement" module="sales_reports"  component={CustomerStatement} />}

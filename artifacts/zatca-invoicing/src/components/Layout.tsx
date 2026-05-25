@@ -435,6 +435,8 @@ const purchasingSubNav: NavDef[] = [
   { nameKey: "nav.purchaseOrders",       href: "/purchasing/orders",          icon: ClipboardList, permKey: "purchase_invoices" },
   { nameKey: "nav.purchaseInvoices",     href: "/purchasing/invoices",        icon: ShoppingCart, permKey: "purchase_invoices" },
   { nameKey: "nav.purchaseReturns",      href: "/purchasing/returns",         icon: RotateCcw,    permKey: "purchase_returns" },
+  { nameKey: "nav.supplierCreditNotes",  href: "/purchasing/supplier-credit-notes", icon: FileText, permKey: "supplier_notes" },
+  { nameKey: "nav.supplierDebitNotes",   href: "/purchasing/supplier-debit-notes",  icon: FileText, permKey: "supplier_notes" },
   { nameKey: "nav.supplierSettlements",  href: "/purchasing/settlements",     icon: Banknote,     permKey: "supplier_settlements" },
 ];
 const salesSubNav: NavDef[] = [
@@ -446,6 +448,8 @@ const salesSubNav: NavDef[] = [
   { nameKey: "nav.salesOrders",          href: "/sales/orders",      icon: ClipboardList,   permKey: "sales_invoices" },
   { nameKey: "nav.salesInvoices",        href: "/sales/invoices",    icon: ShoppingBag,     permKey: "sales_invoices" },
   { nameKey: "nav.salesReturns",         href: "/sales/returns",     icon: RotateCcw,       permKey: "sales_returns" },
+  { nameKey: "nav.customerCreditNotes",  href: "/sales/customer-credit-notes", icon: FileText, permKey: "customer_notes" },
+  { nameKey: "nav.customerDebitNotes",   href: "/sales/customer-debit-notes",  icon: FileText, permKey: "customer_notes" },
   { nameKey: "nav.customerSettlements",  href: "/sales/settlements", icon: ArrowDownCircle, permKey: "sales_settlements" },
   // Note: nav.zatcaBridge and nav.zatcaReport were moved out of this group
   // into zatcaGroupSubNav (the "ربط ZATCA" group) per the user's request —

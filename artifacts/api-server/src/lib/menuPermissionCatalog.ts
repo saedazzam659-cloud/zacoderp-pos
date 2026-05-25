@@ -34,6 +34,10 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   "inventory_reports",
   // Sister Companies — locked by default; SuperAdmin enables per tenant.
   "sister_companies",
+  // Standalone Credit/Debit Notes (إشعارات دائنة ومدينة) — pure accounting
+  // adjustments not tied to a specific invoice. One key per party side.
+  "customer_notes",
+  "supplier_notes",
   // ── المبيعات ──
   "sales_module",
   "sales_reports",

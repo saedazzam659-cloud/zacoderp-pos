@@ -104,6 +104,7 @@ import reportInvitationsRouter from "./report-invitations";
 import realtimeRouter from "./realtime";
 import userTrackingRouter from "./userTracking";
 import sisterCompaniesRouter from "./sister-companies";
+import accountNotesRouter from "./account-notes";
 import deviceLicensesRouter from "./device-licenses";
 import posDesktopSyncRouter from "./pos-desktop-sync";
 import adminPosDevicesRouter from "./admin-pos-devices";
@@ -228,5 +229,6 @@ router.use("/accounting-ai", accountingAiRouter);
 router.use("/cobrowse", cobrowseRouter);
 router.use("/print-designer", printDesignerRouter);
 router.use("/sister-companies", sisterCompaniesRouter);
+router.use("/account-notes", accountNotesRouter);
 
 export default router;
