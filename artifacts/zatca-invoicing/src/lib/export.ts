@@ -1518,15 +1518,22 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       }
     }
     @page {
-      /* Top margin = 0 so Chrome/Edge cannot inject their own URL/date
-         strip at the top. Bottom margin reserves space for the FIXED
-         footer so data rows don't overlap it on the last page. */
-      margin: 0 8mm 18mm 8mm;
+      /* Top AND bottom margins = 0 so Chrome/Edge cannot inject their
+         auto headers/footers (the page-URL strip + page-number "1/1"
+         the user marked in the red box). Browsers only paint those in
+         the @page margin area — zero margin = nothing to paint.
+         Side margins kept at 8mm for readability. */
+      margin: 0 8mm 0 8mm;
       size: A4 portrait;
     }
     /* Internal padding gives the header breathing room from the paper
        edge (since @page margin-top is 0). */
     .page-header { padding-top: 12mm; }
+    /* Reserve space for the position:fixed footer at the bottom of
+       every printed page. Since @page margin-bottom is 0 (to suppress
+       Chrome's auto URL/page-number strip), the table itself has to
+       leave room so its last row doesn't slide under the fixed footer. */
+    table.page-frame { margin-bottom: 22mm; }
   </style>
 </head>
 <body>
