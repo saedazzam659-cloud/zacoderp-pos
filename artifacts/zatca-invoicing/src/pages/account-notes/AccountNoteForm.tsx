@@ -199,19 +199,18 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
     <form onSubmit={(e) => submit(e, false)} className="p-6 space-y-4">
       <h1 className="text-xl font-bold flex items-center gap-2"><FileText className="h-5 w-5" /> {TITLES[key]}</h1>
 
-      {/* All textboxes use `md:max-w-[50%]` — half the previous visible
-          width of the cell, per the request to "make all textboxes 50%
-          smaller than what is currently in the notes form (not the
-          screenshot)". Cells themselves stay in the 2-col grid for
-          consistent label alignment. */}
-      <Card><CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-6">
-        <label><span className="text-sm">التاريخ *</span>
-          <Input type="date" value={form.noteDate} className="md:max-w-[50%]"
+      {/* 3-column grid — each field gets a labelled cell, naturally ~1/3
+          screen wide on desktop. البيان/ملاحظات span the full row. The
+          same form drives all 4 إشعارات routes (customer/supplier ×
+          credit/debit), so this layout applies everywhere. */}
+      <Card><CardContent className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4 pt-6">
+        <label className="flex flex-col gap-1"><span className="text-sm font-medium">التاريخ *</span>
+          <Input type="date" value={form.noteDate}
             onChange={e => setForm({ ...form, noteDate: e.target.value })} data-testid="input-date" />
         </label>
 
-        <label><span className="text-sm">{partyLabel} *</span>
-          <select className="md:max-w-[50%] w-full border rounded h-9 px-2 bg-background" value={form.partyId}
+        <label className="flex flex-col gap-1"><span className="text-sm font-medium">{partyLabel} *</span>
+          <select className="w-full border rounded h-9 px-2 bg-background" value={form.partyId}
             onChange={e => setForm({ ...form, partyId: e.target.value, partyAccountId: "" })}
             data-testid="select-party">
             <option value="">اختر…</option>
@@ -220,94 +219,60 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
           </select>
         </label>
 
-        <label><span className="text-sm">الرقم الضريبي للطرف</span>
+        <label className="flex flex-col gap-1"><span className="text-sm font-medium">الرقم الضريبي للطرف</span>
           {/* Auto-derived from the chosen party; read-only display. */}
           <Input value={selectedParty?.vatNumber ?? ""} readOnly disabled
-            className="md:max-w-[50%] bg-muted/40"
+            className="bg-muted/40"
             placeholder="—" data-testid="display-party-vat" />
         </label>
 
-        <label><span className="text-sm">رقم العملية</span>
-          <Input value={form.operationNumber} className="md:max-w-[50%]"
+        <label className="flex flex-col gap-1"><span className="text-sm font-medium">رقم العملية</span>
+          <Input value={form.operationNumber}
             onChange={e => setForm({ ...form, operationNumber: e.target.value })}
             data-testid="input-operation-number" />
         </label>
 
-        <label><span className="text-sm">حساب ذمم {partyLabel} *</span>
-          <div className="md:max-w-[50%]">
-            <AccountCombobox
-              value={form.partyAccountId ? String(form.partyAccountId) : undefined}
-              onValueChange={(v) => setForm({ ...form, partyAccountId: v })}
-              filterTypes={partyAccountFilter as any}
-              placeholder="ابحث عن الحساب…"
-              data-testid="select-party-account"
-            />
-          </div>
+        <label className="flex flex-col gap-1"><span className="text-sm font-medium">حساب ذمم {partyLabel} *</span>
+          <AccountCombobox
+            value={form.partyAccountId ? String(form.partyAccountId) : undefined}
+            onValueChange={(v) => setForm({ ...form, partyAccountId: v })}
+            filterTypes={partyAccountFilter as any}
+            placeholder="ابحث عن الحساب…"
+            data-testid="select-party-account"
+          />
         </label>
 
-        <label><span className="text-sm">الحساب المقابل *</span>
-          <div className="md:max-w-[50%]">
-            <AccountCombobox
-              value={form.contraAccountId ? String(form.contraAccountId) : undefined}
-              onValueChange={(v) => setForm({ ...form, contraAccountId: v })}
-              filterTypes={contraTypeFilter as any}
-              placeholder="ابحث عن الحساب…"
-              data-testid="select-contra-account"
-            />
-          </div>
+        <label className="flex flex-col gap-1"><span className="text-sm font-medium">الحساب المقابل *</span>
+          <AccountCombobox
+            value={form.contraAccountId ? String(form.contraAccountId) : undefined}
+            onValueChange={(v) => setForm({ ...form, contraAccountId: v })}
+            filterTypes={contraTypeFilter as any}
+            placeholder="ابحث عن الحساب…"
+            data-testid="select-contra-account"
+          />
           <span className="text-xs text-muted-foreground">{CONTRA_HINTS[key]}</span>
         </label>
 
-        <label><span className="text-sm">المبلغ (قبل الضريبة) *</span>
-          <Input type="number" min="0" step="0.01" value={form.amount} className="md:max-w-[50%]"
+        <label className="flex flex-col gap-1"><span className="text-sm font-medium">المبلغ (قبل الضريبة) *</span>
+          <Input type="number" min="0" step="0.01" value={form.amount}
             onChange={e => setForm({ ...form, amount: e.target.value })}
             data-testid="input-amount" />
         </label>
 
-        <div className="flex flex-col gap-2">
-          <label className="flex items-center gap-2 mt-6">
-            <Checkbox checked={form.vatEnabled}
-              onCheckedChange={(v) => setForm({ ...form, vatEnabled: !!v })}
-              data-testid="checkbox-vat" />
-            <span className="text-sm">يشمل ضريبة القيمة المضافة</span>
-          </label>
-        </div>
-
-        {form.vatEnabled && (
-          <>
-            <label><span className="text-sm">نسبة الضريبة %</span>
-              <Input type="number" min="0" step="0.01" value={form.vatRate} className="md:max-w-[50%]"
-                onChange={e => setForm({ ...form, vatRate: e.target.value })}
-                data-testid="input-vat-rate" />
-            </label>
-            <label><span className="text-sm">حساب ضريبة القيمة المضافة *</span>
-              <div className="md:max-w-[50%]">
-                <AccountCombobox
-                  value={form.vatAccountId ? String(form.vatAccountId) : undefined}
-                  onValueChange={(v) => setForm({ ...form, vatAccountId: v })}
-                  filterTypes={["liability", "asset"]}
-                  placeholder="ابحث عن حساب الضريبة…"
-                  data-testid="select-vat-account"
-                />
-              </div>
-            </label>
-          </>
-        )}
-
-        <label><span className="text-sm">رقم المرجع</span>
-          <Input value={form.referenceNumber} className="md:max-w-[50%]"
+        <label className="flex flex-col gap-1"><span className="text-sm font-medium">رقم المرجع</span>
+          <Input value={form.referenceNumber}
             onChange={e => setForm({ ...form, referenceNumber: e.target.value })}
             data-testid="input-reference-number" />
         </label>
 
-        <label><span className="text-sm">تاريخ المرجع</span>
-          <Input type="date" value={form.referenceDate} className="md:max-w-[50%]"
+        <label className="flex flex-col gap-1"><span className="text-sm font-medium">تاريخ المرجع</span>
+          <Input type="date" value={form.referenceDate}
             onChange={e => setForm({ ...form, referenceDate: e.target.value })}
             data-testid="input-reference-date" />
         </label>
 
-        <label><span className="text-sm">مركز التكلفة</span>
-          <select className="md:max-w-[50%] w-full border rounded h-9 px-2 bg-background"
+        <label className="flex flex-col gap-1"><span className="text-sm font-medium">مركز التكلفة</span>
+          <select className="w-full border rounded h-9 px-2 bg-background"
             value={form.costCenter}
             onChange={e => setForm({ ...form, costCenter: e.target.value })}
             data-testid="select-cost-center">
@@ -317,8 +282,8 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
           </select>
         </label>
 
-        <label><span className="text-sm">المشروع</span>
-          <select className="md:max-w-[50%] w-full border rounded h-9 px-2 bg-background"
+        <label className="flex flex-col gap-1"><span className="text-sm font-medium">المشروع</span>
+          <select className="w-full border rounded h-9 px-2 bg-background"
             value={form.projectId}
             onChange={e => setForm({ ...form, projectId: e.target.value })}
             data-testid="select-project">
@@ -328,14 +293,40 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
           </select>
         </label>
 
-        <label className="md:col-span-2"><span className="text-sm">البيان</span>
-          <Input value={form.description} className="md:max-w-[50%]"
+        <label className="flex items-center gap-2 mt-2 md:col-start-1">
+          <Checkbox checked={form.vatEnabled}
+            onCheckedChange={(v) => setForm({ ...form, vatEnabled: !!v })}
+            data-testid="checkbox-vat" />
+          <span className="text-sm font-medium">يشمل ضريبة القيمة المضافة</span>
+        </label>
+
+        {form.vatEnabled && (
+          <>
+            <label className="flex flex-col gap-1"><span className="text-sm font-medium">نسبة الضريبة %</span>
+              <Input type="number" min="0" step="0.01" value={form.vatRate}
+                onChange={e => setForm({ ...form, vatRate: e.target.value })}
+                data-testid="input-vat-rate" />
+            </label>
+            <label className="flex flex-col gap-1"><span className="text-sm font-medium">حساب ضريبة القيمة المضافة *</span>
+              <AccountCombobox
+                value={form.vatAccountId ? String(form.vatAccountId) : undefined}
+                onValueChange={(v) => setForm({ ...form, vatAccountId: v })}
+                filterTypes={["liability", "asset"]}
+                placeholder="ابحث عن حساب الضريبة…"
+                data-testid="select-vat-account"
+              />
+            </label>
+          </>
+        )}
+
+        <label className="md:col-span-3 flex flex-col gap-1"><span className="text-sm font-medium">البيان</span>
+          <Input value={form.description}
             onChange={e => setForm({ ...form, description: e.target.value })}
             data-testid="input-description" />
         </label>
 
-        <label className="md:col-span-2"><span className="text-sm">ملاحظات</span>
-          <Input value={form.notes} className="md:max-w-[50%]"
+        <label className="md:col-span-3 flex flex-col gap-1"><span className="text-sm font-medium">ملاحظات</span>
+          <Input value={form.notes}
             onChange={e => setForm({ ...form, notes: e.target.value })}
             data-testid="input-notes" />
         </label>
