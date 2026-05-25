@@ -1943,7 +1943,7 @@ function template14(d: PrintData): string {
           ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
         ${acctCode ? `<div class="row"><b>كود الحساب:</b><span class="mono">${acctCode}</span></div>` : ""}
         ${customer?.phone ? `<div class="row"><b>الهاتف:</b><span class="mono">${customer.phone}</span></div>` : ""}
-        ${bldgNo ? `<div class="row"><b>رقم العنوان:</b><span class="mono">${bldgNo}</span></div>` : ""}
+        ${bldgNo ? `<div class="row"><b>العنوان:</b><span class="mono">${bldgNo}</span></div>` : ""}
       </div>
     </div>`;
 
