@@ -114,7 +114,7 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
       {/* ─── Left navigation rail (RTL = right) ─────────────── */}
       <nav style={S.nav}>
         <div style={S.brand}>
-          <div style={S.brandIcon}>Z</div>
+          <div style={S.brandIcon}>zacode</div>
           <div>
             <div style={S.brandName}>ZACOD POS</div>
             <div style={S.brandTag}>v0.2 — desktop</div>
@@ -326,11 +326,12 @@ const S = {
   } as const,
   brand: { display: "flex", gap: 10, alignItems: "center", padding: "0 8px 20px", borderBottom: "1px solid #334155", marginBottom: 16 } as const,
   brandIcon: {
-    width: 38, height: 38, borderRadius: 10,
+    minWidth: 64, height: 38, padding: "0 10px", borderRadius: 10,
     background: "linear-gradient(135deg, #22d3ee 0%, #2563eb 100%)",
     display: "flex", alignItems: "center", justifyContent: "center",
-    color: "#fff", fontWeight: 800, fontSize: 18,
+    color: "#fff", fontWeight: 800, fontSize: 13, letterSpacing: 0.5,
     boxShadow: "0 4px 12px rgba(34,211,238,.3)",
+    fontFamily: "'Segoe UI', system-ui, sans-serif",
   } as const,
   brandName: { fontSize: 16, fontWeight: 700, color: "#f8fafc" } as const,
   brandTag: { fontSize: 10, color: "#94a3b8", marginTop: 2 } as const,
