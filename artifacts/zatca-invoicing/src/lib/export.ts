@@ -1356,10 +1356,26 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
       letter-spacing: .5px;
       margin-bottom: 3mm;
     }
-    .title-bar .date-range {
-      font-size: 8.5pt; color: #475569;
+    /* Period (من تاريخ / إلى تاريخ) rendered directly under the title in
+       place of the old single-line "from ← to" strip. Two labeled boxes
+       side-by-side for readability, mono numbers, light frame so it
+       reads as the document period at a glance. */
+    .title-bar .period-range {
+      display: inline-flex;
+      gap: 8mm;
+      margin-top: 2mm;
+      padding: 1.5mm 4mm;
+      border: 1px solid #cbd5e1;
+      border-radius: 3mm;
+      background: #f8fafc;
+      font-size: 9pt;
+    }
+    .title-bar .period-range .seg { display: inline-flex; gap: 4px; align-items: baseline; }
+    .title-bar .period-range .lbl { color: #64748b; }
+    .title-bar .period-range .val {
       font-family: 'Courier New', monospace;
-      margin-top: 1mm;
+      color: #0f172a;
+      font-weight: 700;
     }
     .black-rule {
       height: 0;
@@ -1457,45 +1473,50 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
 
     .empty { text-align: center; padding: 18px; color: #94a3b8; }
 
-    /* ── Page footer (REPEATS on every printed page) ─────────────────
-       Print date on the LEFT, username on the RIGHT, with a thin top
-       rule so it reads as a real footer band. */
-    .page-footer {
-      padding: 3mm 2mm 4mm;
-      margin-top: 2mm;
+    /* ── Page footer (FIXED — sits at the BOTTOM of every printed page)
+       ──────────────────────────────────────────────────────────────────
+       Earlier this lived inside <tfoot>, which made it sit immediately
+       below the data table on short reports (mid-page) instead of at
+       the actual page bottom. Switching to position:fixed pins it to
+       the bottom of every printed sheet exactly like the header rides
+       at the top via <thead>. @page margin-bottom reserves the space so
+       table rows can't overlap the footer. */
+    .page-footer-fixed {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 3mm 8mm 6mm;
       border-top: 1px solid #cbd5e1;
+      background: #fff;
       display: flex;
       justify-content: space-between;
       align-items: center;
       font-size: 8.5pt;
       color: #475569;
     }
-    .page-footer .ftr-date { direction: ltr; }
-    .page-footer .ftr-user { font-weight: 600; color: #0f172a; }
+    .page-footer-fixed .ftr-date { direction: ltr; }
+    .page-footer-fixed .ftr-user { font-weight: 600; color: #0f172a; }
 
     @media print {
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .page-header, .party-strip, table.data thead tr,
       table.data tbody tr.opening, table.data tbody tr.totals,
-      table.data tr.even, .page-footer, .black-rule {
+      table.data tr.even, .page-footer-fixed, .black-rule,
+      .title-bar .period-range {
         -webkit-print-color-adjust: exact; print-color-adjust: exact;
       }
     }
     @page {
-      /* TOP & BOTTOM margins = 0 → Chrome/Edge can no longer draw their
-         auto-injected URL/date strip (the red box in the user's screenshot)
-         because there is literally no margin area for it. We compensate by
-         adding internal padding to .page-header and .page-footer so the
-         content still has breathing room from the paper edges. Side
-         margins kept at 8mm for normal print readability. */
-      margin: 0 8mm 0 8mm;
+      /* Top margin = 0 so Chrome/Edge cannot inject their own URL/date
+         strip at the top. Bottom margin reserves space for the FIXED
+         footer so data rows don't overlap it on the last page. */
+      margin: 0 8mm 18mm 8mm;
       size: A4 portrait;
     }
-    /* Internal padding replaces the @page top/bottom margins we zeroed
-       out above. This keeps the visual breathing room without giving the
-       browser space to inject its own header/footer strip. */
+    /* Internal padding gives the header breathing room from the paper
+       edge (since @page margin-top is 0). */
     .page-header { padding-top: 12mm; }
-    .page-footer { padding-bottom: 10mm; }
   </style>
 </head>
 <body>
@@ -1524,15 +1545,24 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
             <div></div>
           </div>
 
-          <!-- "كشف حساب" title pushed down + solid black rule full width -->
+          <!-- "كشف حساب" title pushed down + period range box + solid
+               black rule full width. The old single-line "from ← to"
+               strip was replaced by a labeled period box (من تاريخ /
+               إلى تاريخ) that lives where the deleted strip used to
+               sit. -->
           <div class="title-bar">
             <div class="doc-title">${escape(title)}</div>
-            <div class="date-range">${escape(from)} ← ${escape(to)}${branchName ? ` — ${escape(branchName)}` : ""}</div>
+            <div class="period-range">
+              <span class="seg"><span class="lbl">من تاريخ:</span> <span class="val">${escape(from)}</span></span>
+              <span class="seg"><span class="lbl">إلى تاريخ:</span> <span class="val">${escape(to)}</span></span>
+            </div>
           </div>
           <hr class="black-rule" />
 
           <!-- Customer/supplier strip — sits on the RIGHT under the rule.
-               Each field on its OWN line, stacked vertically (user request). -->
+               Each field on its OWN line, stacked vertically (user request).
+               The duplicate "الفترة" line was removed — period now lives
+               under the title in .period-range. -->
           <div class="party-strip">
             <div class="party-row">
               <span class="lbl">${mode === "supplier" ? "اسم المورد" : "اسم العميل"}:</span>
@@ -1547,13 +1577,10 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
               <span class="lbl">مستوى الحساب:</span>
               ${escape(account.level != null ? String(account.level) : "—")}
             </div>
+            ${branchName ? `
             <div class="party-row">
-              <span class="lbl">الفترة:</span>
-              <span class="mono">${escape(from)}</span>
-              <span class="lbl">←</span>
-              <span class="mono">${escape(to)}</span>
-              ${branchName ? `<span class="lbl">— الفرع:</span> ${escape(branchName)}` : ""}
-            </div>
+              <span class="lbl">الفرع:</span> ${escape(branchName)}
+            </div>` : ""}
           </div>
         </div>
       </td></tr>
@@ -1592,16 +1619,18 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
         </table>
       </td></tr>
     </tbody>
-
-    <tfoot>
-      <tr><td>
-        <div class="page-footer">
-          <div class="ftr-date">تاريخ الطباعة: ${today}</div>
-          ${userName ? `<div class="ftr-user">اسم المستخدم: ${escape(userName)}</div>` : `<div></div>`}
-        </div>
-      </td></tr>
-    </tfoot>
   </table>
+
+  <!-- FIXED page footer — pinned to the bottom of every printed page
+       via position:fixed. The space it occupies is reserved by
+       @page margin-bottom so data rows never overlap it. This replaces
+       the old <tfoot> band that used to sit directly under the table
+       (mid-page on short reports). -->
+  <div class="page-footer-fixed">
+    <div class="ftr-date">تاريخ الطباعة: ${today}</div>
+    ${userName ? `<div class="ftr-user">اسم المستخدم: ${escape(userName)}</div>` : `<div></div>`}
+  </div>
+
   <script>
     ${autoPrint ? `window.onload = function(){ setTimeout(function(){ window.print(); }, 600); };` : ""}
   </script>
