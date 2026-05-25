@@ -1304,7 +1304,17 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     /* Portrait A4 — let the description column flex with available width
        instead of forcing a fixed minimum that would push other columns off
        the page. */
-    tbody td.desc { min-width: 0; }
+    /* Description column ~40% wider than the auto-laid-out default.
+       Giving both the <th> and <td> an explicit percentage width forces
+       the table to allocate roughly that share to الشرح while leaving
+       the numeric/mono columns to take their natural narrow width. */
+    table.data th.desc,
+    table.data td.desc {
+      width: 45%;
+      min-width: 60mm;
+      white-space: normal;
+      word-break: break-word;
+    }
 
     /* ── Page header (REPEATS on every printed page) ───────────────────
        The browser repeats whatever is in <thead> on every printed page
@@ -1599,7 +1609,7 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
               ${v.debit       ? `<th>مدين</th>` : ""}
               ${v.credit      ? `<th>دائن</th>` : ""}
               ${v.balance     ? `<th>الرصيد</th>` : ""}
-              ${v.description ? `<th>الشرح</th>` : ""}
+              ${v.description ? `<th class="desc">الشرح</th>` : ""}
             </tr>
           </thead>
           <tbody>
