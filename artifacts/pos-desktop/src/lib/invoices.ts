@@ -64,12 +64,34 @@ export async function saveOfflineInvoice(
 ): Promise<SavedInvoice> {
   const payloadJson = JSON.stringify(payload);
   if (!IS_TAURI) {
-    devCounter += 1;
-    const ymd = new Date().toISOString().slice(2, 10).replace(/-/g, "");
-    return {
-      localUuid: idempotencyKey ?? `dev-${devCounter}-${Math.random().toString(16).slice(2, 8)}`,
-      invoiceNo: `OFF-${ymd}-DEV${String(devCounter).padStart(3, "0")}`,
-    };
+    // Idempotency in browser: if a row with the same uuid already exists,
+    // return it. Mirrors the Rust path's INSERT-or-fetch semantics.
+    const uuid = idempotencyKey ?? `dev-${++devCounter}-${Math.random().toString(16).slice(2, 8)}`;
+    try {
+      const raw = localStorage.getItem("pos_desktop_invoices_v1");
+      const arr: any[] = raw ? JSON.parse(raw) : [];
+      const prev = arr.find((i) => i.localUuid === uuid);
+      if (prev) return { localUuid: prev.localUuid, invoiceNo: prev.invoiceNo };
+      const id = (arr[arr.length - 1]?.id ?? 0) + 1;
+      const ymd = new Date().toISOString().slice(2, 10).replace(/-/g, "");
+      const isReturn = (payload as any).kind === "return";
+      const prefix = isReturn ? "RET" : "OFF";
+      const seq = arr.filter((i) => (i.invoiceNo as string).startsWith(`${prefix}-${ymd}`)).length + 1;
+      const invoiceNo = `${prefix}-${ymd}-${String(seq).padStart(4, "0")}`;
+      _persistInvoiceInBrowser({
+        id, localUuid: uuid, invoiceNo, payloadJson,
+        qrBase64: qrBase64 ?? null, signedXml: signedXml ?? null,
+        createdAt: new Date().toISOString(), syncStatus: "pending",
+      });
+      return { localUuid: uuid, invoiceNo };
+    } catch {
+      devCounter += 1;
+      const ymd = new Date().toISOString().slice(2, 10).replace(/-/g, "");
+      return {
+        localUuid: uuid,
+        invoiceNo: `OFF-${ymd}-DEV${String(devCounter).padStart(3, "0")}`,
+      };
+    }
   }
   const r = await invoke<RustSaved>("save_offline_invoice", {
     payloadJson,
@@ -132,6 +154,62 @@ export async function listPendingInvoices(): Promise<PendingInvoice[]> {
 }
 
 export async function countPendingInvoices(): Promise<number> {
-  if (!IS_TAURI) return 0;
+  if (!IS_TAURI) {
+    try {
+      const raw = localStorage.getItem("pos_desktop_invoices_v1");
+      const arr: any[] = raw ? JSON.parse(raw) : [];
+      return arr.filter((i) => i.syncStatus === "pending").length;
+    } catch { return 0; }
+  }
   return invoke<number>("count_pending_invoices");
+}
+
+// All invoices (pending + synced + returns). Used by the Returns screen
+// to pick an original sale to refund against.
+export async function listAllInvoices(limit = 100): Promise<PendingInvoice[]> {
+  if (IS_TAURI) {
+    try {
+      const rows = await invoke<RustPending[]>("list_all_invoices", { limit });
+      return rows.map((r) => ({
+        id: r.id,
+        localUuid: r.local_uuid,
+        invoiceNo: r.invoice_no,
+        qrBase64: r.qr_base64,
+        createdAt: r.created_at,
+        syncStatus: r.sync_status,
+      }));
+    } catch { /* fall through */ }
+  }
+  // Browser fallback: mirror invoices written by saveOfflineInvoice.
+  try {
+    const raw = localStorage.getItem("pos_desktop_invoices_v1");
+    const arr: any[] = raw ? JSON.parse(raw) : [];
+    return arr
+      .slice(-limit)
+      .reverse()
+      .map((i) => ({
+        id: i.id,
+        localUuid: i.localUuid,
+        invoiceNo: i.invoiceNo,
+        qrBase64: i.qrBase64 ?? null,
+        createdAt: i.createdAt,
+        syncStatus: i.syncStatus ?? "pending",
+      }));
+  } catch { return []; }
+}
+
+// Browser-mode persistence used by saveOfflineInvoice when running in Vite
+// preview (Tauri-less). Mirrors what Rust would otherwise insert into
+// offline_invoices so the Returns + Pending screens have data to read.
+export function _persistInvoiceInBrowser(rec: {
+  id: number; localUuid: string; invoiceNo: string;
+  payloadJson: string; qrBase64?: string | null;
+  signedXml?: string | null; createdAt: string; syncStatus: string;
+}): void {
+  try {
+    const raw = localStorage.getItem("pos_desktop_invoices_v1");
+    const arr: any[] = raw ? JSON.parse(raw) : [];
+    arr.push(rec);
+    localStorage.setItem("pos_desktop_invoices_v1", JSON.stringify(arr));
+  } catch { /* quota */ }
 }

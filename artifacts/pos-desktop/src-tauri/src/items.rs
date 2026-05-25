@@ -130,3 +130,70 @@ pub fn find_item_by_barcode(barcode: String) -> Result<Option<LocalItem>, String
 pub fn seed_demo_items() -> Result<u64, String> {
     seed_demo_if_empty().map_err(|e| e.to_string())
 }
+
+// ─── Cloud-pull upsert ───────────────────────────────────────────────
+//
+// Called by the JS-side `upsertItemsFromCloud` after a successful
+// /api/sync/pull. Each row is keyed on `cloud_id` (the server's item id);
+// on conflict we update the mutable columns so price/name/barcode changes
+// from the cloud overwrite the local copy.
+//
+// Wrapped in a single transaction so a 200-item batch is one fsync, not 200.
+
+#[derive(Deserialize, Debug)]
+pub struct CloudItem {
+    pub cloud_id: i64,
+    pub code: Option<String>,
+    pub name_ar: String,
+    pub name_en: Option<String>,
+    pub barcode: Option<String>,
+    pub sale_price: f64,
+    pub vat_rate: f64,
+}
+
+#[tauri::command]
+pub fn upsert_items_from_cloud(rows: Vec<CloudItem>) -> Result<u64, String> {
+    upsert_from_cloud(rows).map_err(|e| e.to_string())
+}
+
+fn upsert_from_cloud(rows: Vec<CloudItem>) -> Result<u64> {
+    let mut conn = db::open()?;
+    // Lazy migration: add uom_id column if missing. db.rs is shared
+    // scaffolding we don't edit, and older installs predate the UoM
+    // feature — without this, JS would silently lose uomId on every push.
+    // SQLite has no IF NOT EXISTS for ADD COLUMN, so we sniff PRAGMA first.
+    let has_uom: bool = conn
+        .prepare("PRAGMA table_info(items_local)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(|c| c.ok())
+        .any(|c| c == "uom_id");
+    if !has_uom {
+        conn.execute("ALTER TABLE items_local ADD COLUMN uom_id INTEGER", [])?;
+    }
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    // Make cloud_id the upsert key. The unique index on items_local.cloud_id
+    // already exists via the table definition (UNIQUE in db.rs).
+    let mut stmt = tx.prepare(
+        "INSERT INTO items_local
+           (cloud_id, code, name_ar, name_en, barcode, sale_price, vat_rate, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)
+         ON CONFLICT(cloud_id) DO UPDATE SET
+           code = excluded.code,
+           name_ar = excluded.name_ar,
+           name_en = excluded.name_en,
+           barcode = excluded.barcode,
+           sale_price = excluded.sale_price,
+           vat_rate = excluded.vat_rate,
+           updated_at = CURRENT_TIMESTAMP",
+    )?;
+    let mut count = 0_u64;
+    for r in &rows {
+        stmt.execute(rusqlite::params![
+            r.cloud_id, r.code, r.name_ar, r.name_en, r.barcode, r.sale_price, r.vat_rate,
+        ])?;
+        count += 1;
+    }
+    drop(stmt);
+    tx.commit()?;
+    Ok(count)
+}

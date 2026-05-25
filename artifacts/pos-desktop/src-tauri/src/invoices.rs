@@ -205,6 +205,30 @@ pub fn get(id: i64) -> Result<Option<FullInvoice>> {
     if let Some(r) = rows.next() { Ok(Some(r?)) } else { Ok(None) }
 }
 
+// Full history (pending + synced + returns). Used by the Returns screen
+// to pick an original sale to refund against. Capped at `limit` rows so
+// long-running devices don't pay a 10k-row deserialization cost.
+pub fn list_all(limit: i64) -> Result<Vec<PendingInvoice>> {
+    let conn = db::open()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, local_uuid, invoice_no, qr_base64, created_at, sync_status
+         FROM offline_invoices
+         ORDER BY id DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt.query_map([limit], |r| Ok(PendingInvoice {
+        id: r.get(0)?,
+        local_uuid: r.get(1)?,
+        invoice_no: r.get(2)?,
+        qr_base64: r.get(3)?,
+        created_at: r.get(4)?,
+        sync_status: r.get(5)?,
+    }))?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r?); }
+    Ok(out)
+}
+
 pub fn count_pending() -> Result<i64> {
     let conn = db::open()?;
     let n: i64 = conn.query_row(
@@ -243,4 +267,9 @@ pub fn get_offline_invoice(id: i64) -> Result<Option<FullInvoice>, String> {
 #[tauri::command]
 pub fn count_pending_invoices() -> Result<i64, String> {
     count_pending().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_all_invoices(limit: Option<i64>) -> Result<Vec<PendingInvoice>, String> {
+    list_all(limit.unwrap_or(100)).map_err(|e| e.to_string())
 }

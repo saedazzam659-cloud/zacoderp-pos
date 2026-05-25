@@ -4,6 +4,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod customers;
 mod db;
 mod invoices;
 mod items;
@@ -131,8 +132,13 @@ fn main() {
             items::list_items,
             items::find_item_by_barcode,
             items::seed_demo_items,
+            items::upsert_items_from_cloud,
+            customers::list_customers,
+            customers::upsert_customers_from_cloud,
+            customers::create_customer_local,
             invoices::save_offline_invoice,
             invoices::list_pending_invoices,
+            invoices::list_all_invoices,
             invoices::get_offline_invoice,
             invoices::count_pending_invoices,
             sync::sync_push_now,

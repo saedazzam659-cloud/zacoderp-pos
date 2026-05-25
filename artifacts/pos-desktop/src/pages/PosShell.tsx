@@ -1,9 +1,15 @@
-// Post-activation shell. Currently a status dashboard showing sync state +
-// a "deactivate device" button for clean uninstall.
+// Post-activation shell — Windows-desktop redesign.
 //
-// TODO Step 10 of Task #174: replace with the real POS UI imported from
-// artifacts/pos, swapping its API hooks for the local SQLite layer
-// (src-tauri/src/db.rs) + sync queue (src-tauri/src/sync.rs).
+// New layout:
+//   • Left-side vertical navigation rail (Outlook/Teams/VS Code style)
+//   • Top utility bar with company badge + sync indicator + mode chip
+//   • Main content area that hosts the active page (sales / returns /
+//     customers / items / uom / pending / dashboard)
+//
+// The doPull action now calls pullAndPersist (sync.ts) which writes the
+// fetched customers + items into the local store. This was the missing
+// step that caused "تم السحب: 5 عميل، 184 صنف" to show on the dashboard
+// while the sales screen kept reporting "لا توجد أصناف".
 
 import { useEffect, useMemo, useState } from "react";
 import { createApi, type SyncStatus } from "../lib/api";
@@ -11,8 +17,14 @@ import { TAURI_MODE } from "../lib/tauri-shim";
 import PeripheralsSettings from "./PeripheralsSettings";
 import SalesScreen from "./SalesScreen";
 import PendingInvoices from "./PendingInvoices";
+import ReturnsScreen from "./ReturnsScreen";
+import CustomersAdmin from "./CustomersAdmin";
+import ItemsAdmin from "./ItemsAdmin";
+import UomAdmin from "./UomAdmin";
 import { countPendingInvoices } from "../lib/invoices";
-import { syncPushNow, type PushSummary } from "../lib/sync";
+import { syncPushNow, pullAndPersist, type PushSummary, type PullSummary } from "../lib/sync";
+
+type View = "sales" | "returns" | "pending" | "customers" | "items" | "uom" | "dashboard";
 
 type Props = {
   baseUrl: string;
@@ -23,24 +35,18 @@ type Props = {
 };
 
 export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, onSignOut }: Props) {
-  // useMemo: rebuild the api client only when credentials actually change, so
-  // setInterval's `tick` closure never captures a stale token after a sign-out
-  // + re-activate cycle within the same App instance.
   const api = useMemo(() => createApi({ baseUrl, deviceToken }), [baseUrl, deviceToken]);
 
   const [status, setStatus] = useState<SyncStatus | null>(null);
-  const [pulled, setPulled] = useState<{ customers: number; items: number } | null>(null);
-  const [actionErr, setActionErr] = useState<string | null>(null);   // user-initiated (pull/deactivate)
-  const [heartbeatErr, setHeartbeatErr] = useState<string | null>(null); // background polling
+  const [pulled, setPulled] = useState<PullSummary | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const [heartbeatErr, setHeartbeatErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [showPeripherals, setShowPeripherals] = useState(false);
-  const [view, setView] = useState<"sales" | "pending" | "dashboard">("sales");
+  const [view, setView] = useState<View>("sales");
   const [pendingCount, setPendingCount] = useState(0);
   const [pushSummary, setPushSummary] = useState<PushSummary | null>(null);
 
-  // Poll the pending-invoices count every 10s so the badge in the tab bar
-  // stays roughly current after sales / future sync pushes. Errors are
-  // swallowed — the count is decorative, not load-bearing.
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
@@ -50,21 +56,15 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
     void tick();
     const id = setInterval(tick, 10_000);
     return () => { cancelled = true; clearInterval(id); };
-  }, [view]); // re-poll immediately when user switches tabs
+  }, [view]);
 
-  // ─── Heartbeat every 30s while shell is mounted ─────────────────────
-  // Note: heartbeat failures go into a separate `heartbeatErr` so they don't
-  // wipe a meaningful error from a manual Pull/Deactivate action.
   useEffect(() => {
     const tick = async () => {
       try {
-        await api.heartbeat({ appVersion: "0.1.0-dev" });
+        await api.heartbeat({ appVersion: "0.2.0-dev" });
         const s = await api.status();
-        setStatus(s);
-        setHeartbeatErr(null);
-      } catch (e: any) {
-        setHeartbeatErr(e?.message ?? "heartbeat failed");
-      }
+        setStatus(s); setHeartbeatErr(null);
+      } catch (e: any) { setHeartbeatErr(e?.message ?? "heartbeat failed"); }
     };
     void tick();
     const id = setInterval(tick, 30_000);
@@ -74,11 +74,8 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
   async function doPull() {
     setBusy("pull"); setActionErr(null);
     try {
-      const r = await api.pull({ entities: ["customers", "items", "settings"] });
-      setPulled({
-        customers: r.entities.customers?.length ?? 0,
-        items: r.entities.items?.length ?? 0,
-      });
+      const r = await pullAndPersist(baseUrl, deviceToken);
+      setPulled(r);
     } catch (e: any) { setActionErr(e?.message ?? "pull failed"); }
     finally { setBusy(null); }
   }
@@ -88,7 +85,6 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
     try {
       const r = await syncPushNow(baseUrl, deviceToken);
       setPushSummary(r);
-      // refresh badge immediately — synced rows leave the pending set
       try { setPendingCount(await countPendingInvoices()); } catch { /* ignore */ }
     } catch (e: any) { setActionErr(e?.message ?? "push failed"); }
     finally { setBusy(null); }
@@ -103,62 +99,126 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
     } catch (e: any) { setActionErr(e?.message ?? "deactivate failed"); setBusy(null); }
   }
 
+  const navItems: Array<{ id: View; icon: string; label: string; badge?: number }> = [
+    { id: "sales",     icon: "🛒", label: "بيع" },
+    { id: "returns",   icon: "↩️", label: "مرتجع" },
+    { id: "pending",   icon: "📋", label: "معلّقة", badge: pendingCount > 0 ? pendingCount : undefined },
+    { id: "customers", icon: "👥", label: "العملاء" },
+    { id: "items",     icon: "📦", label: "الأصناف" },
+    { id: "uom",       icon: "📐", label: "وحدات القياس" },
+    { id: "dashboard", icon: "📊", label: "لوحة التحكم" },
+  ];
+
   return (
-    <div dir="rtl" style={S.wrap}>
-      <header style={S.header}>
-        <div>
-          <h1 style={S.title}>ZACOD POS</h1>
-          {companyName && <div style={S.company}>{companyName}</div>}
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button
-            onClick={() => setView("sales")}
-            style={view === "sales" ? S.tabActive : S.tab}
-          >🛒 بيع</button>
-          <button
-            onClick={() => setView("pending")}
-            style={view === "pending" ? S.tabActive : S.tab}
-            aria-label={`الفواتير المعلّقة، ${pendingCount} فاتورة`}
-          >
-            📋 معلّقة
-            {pendingCount > 0 && (
-              <span style={S.badge} aria-live="polite" aria-atomic="true">
-                {pendingCount}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setView("dashboard")}
-            style={view === "dashboard" ? S.tabActive : S.tab}
-          >📊 لوحة التحكم</button>
-          <div style={S.mode}>
-            {TAURI_MODE === "tauri" ? "🪟 أصلي" : "🌐 متصفح"}
+    <div dir="rtl" style={S.shell}>
+      {/* ─── Left navigation rail (RTL = right) ─────────────── */}
+      <nav style={S.nav}>
+        <div style={S.brand}>
+          <div style={S.brandIcon}>Z</div>
+          <div>
+            <div style={S.brandName}>ZACOD POS</div>
+            <div style={S.brandTag}>v0.2 — desktop</div>
           </div>
         </div>
-      </header>
+
+        <div style={S.navList}>
+          {navItems.map((it) => {
+            const active = view === it.id;
+            return (
+              <button
+                key={it.id}
+                onClick={() => setView(it.id)}
+                style={active ? S.navItemActive : S.navItem}
+              >
+                <span style={S.navIcon}>{it.icon}</span>
+                <span style={S.navLabel}>{it.label}</span>
+                {it.badge !== undefined && (
+                  <span style={S.navBadge}>{it.badge}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={S.navFooter}>
+          <button onClick={() => setShowPeripherals(true)} style={S.navUtility}>
+            🖨️ <span>الأجهزة الطرفية</span>
+          </button>
+          <div style={S.modeChip}>
+            {TAURI_MODE === "tauri" ? "🪟 وضع التطبيق الأصلي" : "🌐 وضع المتصفح"}
+          </div>
+        </div>
+      </nav>
+
+      {/* ─── Main column ───────────────────────────────────── */}
+      <div style={S.main}>
+        {/* Top utility bar */}
+        <header style={S.topbar}>
+          <div>
+            {companyName && <div style={S.companyName}>{companyName}</div>}
+            <div style={S.viewTitle}>{labelFor(view)}</div>
+          </div>
+          <div style={S.topRight}>
+            <SyncIndicator status={status} heartbeatErr={heartbeatErr} />
+            <div style={S.deviceChip}>جهاز #{deviceId || "—"}</div>
+          </div>
+        </header>
+
+        {/* Page content */}
+        <main style={S.content}>
+          {view === "sales" && <SalesScreen companyName={companyName} />}
+          {view === "returns" && <ReturnsScreen companyName={companyName} />}
+          {view === "pending" && <div style={S.pagePad}><PendingInvoices companyName={companyName} /></div>}
+          {view === "customers" && <div style={S.pagePad}><CustomersAdmin /></div>}
+          {view === "items" && <div style={S.pagePad}><ItemsAdmin /></div>}
+          {view === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
+          {view === "dashboard" && (
+            <div style={S.pagePad}>
+              <DashboardView
+                deviceId={deviceId}
+                status={status}
+                baseUrl={baseUrl}
+                busy={busy}
+                pulled={pulled}
+                actionErr={actionErr}
+                heartbeatErr={heartbeatErr}
+                onPull={doPull}
+                onPush={doPush}
+                pushSummary={pushSummary}
+                onDeactivate={doDeactivate}
+              />
+            </div>
+          )}
+        </main>
+      </div>
 
       {showPeripherals && <PeripheralsSettings onClose={() => setShowPeripherals(false)} />}
+    </div>
+  );
+}
 
-      {view === "sales" ? (
-        <SalesScreen companyName={companyName} />
-      ) : view === "pending" ? (
-        <PendingInvoices companyName={companyName} />
-      ) : (
-        <DashboardView
-          deviceId={deviceId}
-          status={status}
-          baseUrl={baseUrl}
-          busy={busy}
-          pulled={pulled}
-          actionErr={actionErr}
-          heartbeatErr={heartbeatErr}
-          onPull={doPull}
-          onPush={doPush}
-          pushSummary={pushSummary}
-          onShowPeripherals={() => setShowPeripherals(true)}
-          onDeactivate={doDeactivate}
-        />
-      )}
+function labelFor(v: View): string {
+  return {
+    sales: "نقطة البيع",
+    returns: "مرتجع المبيعات",
+    pending: "الفواتير المعلّقة",
+    customers: "العملاء",
+    items: "الأصناف",
+    uom: "وحدات القياس",
+    dashboard: "لوحة التحكم",
+  }[v];
+}
+
+function SyncIndicator({ status, heartbeatErr }: { status: SyncStatus | null; heartbeatErr: string | null }) {
+  const ok = !heartbeatErr && status?.status === "active";
+  return (
+    <div style={ok ? S.syncOk : S.syncDown} title={status?.lastHeartbeatAt ?? "—"}>
+      <span style={{
+        width: 8, height: 8, borderRadius: 999,
+        background: ok ? "#16a34a" : "#dc2626",
+        boxShadow: `0 0 0 3px ${ok ? "rgba(22,163,74,.2)" : "rgba(220,38,38,.2)"}`,
+      }} />
+      {ok ? "متصل" : "غير متصل"}
     </div>
   );
 }
@@ -168,39 +228,33 @@ type DashboardProps = {
   status: SyncStatus | null;
   baseUrl: string;
   busy: string | null;
-  pulled: { customers: number; items: number } | null;
+  pulled: PullSummary | null;
   actionErr: string | null;
   heartbeatErr: string | null;
   onPull: () => void;
   onPush: () => void;
   pushSummary: PushSummary | null;
-  onShowPeripherals: () => void;
   onDeactivate: () => void;
 };
 
-function DashboardView({ deviceId, status, baseUrl, busy, pulled, actionErr, heartbeatErr, onPull, onPush, pushSummary, onShowPeripherals, onDeactivate }: DashboardProps) {
+function DashboardView({ deviceId, status, baseUrl, busy, pulled, actionErr, heartbeatErr, onPull, onPush, pushSummary, onDeactivate }: DashboardProps) {
   return (
-    <div style={{ maxWidth: 920, margin: "0 auto", width: "100%" }}>
-      <section style={S.card}>
-        <h2 style={S.h2}>حالة المزامنة</h2>
-        <KV k="معرّف الجهاز" v={String(deviceId || "—")} />
-        <KV k="الحالة" v={status?.status ?? "..."} />
-        <KV k="آخر نبضة" v={status?.lastHeartbeatAt ? new Date(status.lastHeartbeatAt).toLocaleString("ar-SA") : "—"} />
-        <KV k="آخر مزامنة" v={status?.lastSyncAt ? new Date(status.lastSyncAt).toLocaleString("ar-SA") : "—"} />
-        <KV k="الخادم" v={baseUrl} mono />
-      </section>
+    <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 16 }}>
+        <Tile icon="🪪" label="معرّف الجهاز" value={String(deviceId || "—")} />
+        <Tile icon="🟢" label="الحالة" value={status?.status ?? "..."} accent={status?.status === "active" ? "#16a34a" : undefined} />
+        <Tile icon="💓" label="آخر نبضة" value={status?.lastHeartbeatAt ? new Date(status.lastHeartbeatAt).toLocaleString("ar-SA") : "—"} small />
+        <Tile icon="🔄" label="آخر مزامنة" value={status?.lastSyncAt ? new Date(status.lastSyncAt).toLocaleString("ar-SA") : "—"} small />
+      </div>
 
       <section style={S.card}>
-        <h2 style={S.h2}>إجراءات</h2>
+        <h2 style={S.h2}>إجراءات المزامنة</h2>
         <div style={S.btnRow}>
           <button onClick={onPull} disabled={busy === "pull"} style={S.btnPrimary}>
-            {busy === "pull" ? "جارٍ السحب..." : "سحب البيانات (Pull)"}
+            {busy === "pull" ? "جارٍ السحب..." : "⬇️ سحب البيانات (Pull)"}
           </button>
           <button onClick={onPush} disabled={busy === "push"} style={S.btnPrimary}>
             {busy === "push" ? "جارٍ الرفع..." : "⬆️ رفع الفواتير المعلّقة (Push)"}
-          </button>
-          <button onClick={onShowPeripherals} style={S.btnSecondary}>
-            🖨️ الأجهزة الطرفية
           </button>
           <button onClick={onDeactivate} disabled={busy === "deactivate"} style={S.btnDanger}>
             {busy === "deactivate" ? "جارٍ الإلغاء..." : "إلغاء تفعيل الجهاز"}
@@ -208,7 +262,7 @@ function DashboardView({ deviceId, status, baseUrl, busy, pulled, actionErr, hea
         </div>
         {pulled && (
           <div style={S.success}>
-            ✅ تم السحب: {pulled.customers} عميل، {pulled.items} صنف
+            ✅ تم السحب والحفظ محلياً: {pulled.customers} عميل، {pulled.items} صنف — الأصناف ستظهر فوراً في شاشة البيع
           </div>
         )}
         {pushSummary && (
@@ -230,41 +284,113 @@ function DashboardView({ deviceId, status, baseUrl, busy, pulled, actionErr, hea
       </section>
 
       <section style={S.card}>
-        <h2 style={S.h2}>الخطوات القادمة (Task #174 Steps 9-12)</h2>
-        <ul style={{ lineHeight: 2, paddingInlineStart: 20, color: "#475569" }}>
-          <li>استبدال هذه الشاشة بواجهة POS الكاملة (Step 10)</li>
-          <li>قاعدة بيانات SQLite محلية + قائمة انتظار المزامنة (Step 9)</li>
-          <li>توقيع ZATCA Phase 2 محلياً (Step 7 — يجري العمل)</li>
-          <li>طابعة + درج النقود + قارئ الباركود (Step 9)</li>
-          <li>التحديث التلقائي + توقيع الشهادة (Steps 11-12)</li>
-        </ul>
+        <h2 style={S.h2}>تفاصيل الاتصال</h2>
+        <KV k="الخادم" v={baseUrl} mono />
+        <KV k="معرّف الجهاز" v={String(deviceId || "—")} />
       </section>
     </div>
   );
 }
 
+function Tile({ icon, label, value, accent, small }: { icon: string; label: string; value: string; accent?: string; small?: boolean }) {
+  return (
+    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 16, boxShadow: "0 1px 3px rgba(0,0,0,.04)" }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
+        <div style={{ fontSize: 22 }}>{icon}</div>
+        <div style={{ fontSize: 12, color: "#64748b" }}>{label}</div>
+      </div>
+      <div style={{ fontSize: small ? 13 : 20, fontWeight: 700, color: accent ?? "#0f172a" }}>{value}</div>
+    </div>
+  );
+}
+
 function KV({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
-  return <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #f1f5f9" }}>
+  return <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #f1f5f9" }}>
     <span style={{ color: "#64748b", fontSize: 13 }}>{k}</span>
     <span style={{ fontFamily: mono ? "ui-monospace, monospace" : undefined, fontSize: mono ? 12 : 14, color: "#0f172a" }}>{v}</span>
   </div>;
 }
 
 const S = {
-  wrap: { minHeight: "100vh", padding: "16px 24px 24px", fontFamily: "'Segoe UI', system-ui, sans-serif" } as const,
-  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } as const,
-  tab: { padding: "8px 14px", background: "#fff", color: "#475569", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" } as const,
-  tabActive: { padding: "8px 14px", background: "#0f172a", color: "#fff", border: "1px solid #0f172a", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" } as const,
-  badge: { display: "inline-block", marginInlineStart: 6, padding: "1px 7px", background: "#dc2626", color: "#fff", borderRadius: 999, fontSize: 11, fontWeight: 700, lineHeight: 1.6 } as const,
-  title: { margin: 0, fontSize: 28, color: "#0f172a" } as const,
-  company: { fontSize: 14, color: "#64748b", marginTop: 4 } as const,
-  mode: { fontSize: 11, padding: "4px 10px", background: "#f1f5f9", borderRadius: 999, color: "#475569" } as const,
+  // Full-viewport row: nav on the right (RTL), main column on the left.
+  shell: { display: "flex", height: "100vh", width: "100vw", fontFamily: "'Segoe UI', system-ui, sans-serif", background: "#eef2f7", overflow: "hidden" } as const,
+
+  // Vertical nav rail
+  nav: {
+    width: 240, flexShrink: 0,
+    background: "linear-gradient(180deg, #0f172a 0%, #1e293b 100%)",
+    color: "#cbd5e1",
+    display: "flex", flexDirection: "column" as const,
+    padding: "20px 12px",
+    boxShadow: "-4px 0 12px rgba(0,0,0,.08)",
+  } as const,
+  brand: { display: "flex", gap: 10, alignItems: "center", padding: "0 8px 20px", borderBottom: "1px solid #334155", marginBottom: 16 } as const,
+  brandIcon: {
+    width: 38, height: 38, borderRadius: 10,
+    background: "linear-gradient(135deg, #22d3ee 0%, #2563eb 100%)",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    color: "#fff", fontWeight: 800, fontSize: 18,
+    boxShadow: "0 4px 12px rgba(34,211,238,.3)",
+  } as const,
+  brandName: { fontSize: 16, fontWeight: 700, color: "#f8fafc" } as const,
+  brandTag: { fontSize: 10, color: "#94a3b8", marginTop: 2 } as const,
+
+  navList: { display: "flex", flexDirection: "column" as const, gap: 4, flex: 1, overflowY: "auto" as const } as const,
+  navItem: {
+    display: "flex", alignItems: "center", gap: 12,
+    padding: "10px 14px", border: "none",
+    background: "transparent", color: "#cbd5e1",
+    borderRadius: 8, cursor: "pointer", fontSize: 14,
+    fontFamily: "inherit", textAlign: "right" as const,
+    transition: "all .12s",
+  } as const,
+  navItemActive: {
+    display: "flex", alignItems: "center", gap: 12,
+    padding: "10px 14px", border: "none",
+    background: "linear-gradient(90deg, rgba(37,99,235,.2) 0%, rgba(37,99,235,.05) 100%)",
+    color: "#fff",
+    borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600,
+    fontFamily: "inherit", textAlign: "right" as const,
+    borderRight: "3px solid #3b82f6",
+  } as const,
+  navIcon: { fontSize: 18, width: 24, textAlign: "center" as const } as const,
+  navLabel: { flex: 1 } as const,
+  navBadge: { padding: "2px 8px", background: "#dc2626", color: "#fff", borderRadius: 999, fontSize: 11, fontWeight: 700 } as const,
+
+  navFooter: { borderTop: "1px solid #334155", paddingTop: 12, display: "flex", flexDirection: "column" as const, gap: 8 } as const,
+  navUtility: {
+    display: "flex", alignItems: "center", gap: 10,
+    padding: "8px 14px", background: "transparent",
+    color: "#94a3b8", border: "1px solid #334155",
+    borderRadius: 8, cursor: "pointer", fontSize: 13, fontFamily: "inherit",
+    textAlign: "right" as const,
+  } as const,
+  modeChip: { fontSize: 10, color: "#64748b", textAlign: "center" as const, padding: "6px", background: "rgba(0,0,0,.2)", borderRadius: 6 } as const,
+
+  // Main column
+  main: { flex: 1, display: "flex", flexDirection: "column" as const, minWidth: 0, minHeight: 0 } as const,
+  topbar: {
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    padding: "14px 24px",
+    background: "#fff", borderBottom: "1px solid #e2e8f0",
+    flexShrink: 0,
+  } as const,
+  companyName: { fontSize: 13, color: "#64748b", fontWeight: 500 } as const,
+  viewTitle: { fontSize: 20, fontWeight: 700, color: "#0f172a", marginTop: 2 } as const,
+  topRight: { display: "flex", gap: 12, alignItems: "center" } as const,
+  syncOk: { display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "#f0fdf4", color: "#166534", border: "1px solid #bbf7d0", borderRadius: 999, fontSize: 12, fontWeight: 600 } as const,
+  syncDown: { display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca", borderRadius: 999, fontSize: 12, fontWeight: 600 } as const,
+  deviceChip: { padding: "6px 12px", background: "#f1f5f9", color: "#475569", borderRadius: 999, fontSize: 12, fontFamily: "ui-monospace, monospace" } as const,
+
+  content: { flex: 1, overflow: "hidden", minHeight: 0, display: "flex", flexDirection: "column" as const } as const,
+  pagePad: { padding: 24, overflowY: "auto" as const, flex: 1 } as const,
+
+  // Dashboard internals
   card: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,.04)" } as const,
-  h2: { margin: "0 0 12px", fontSize: 16, color: "#0f172a" } as const,
-  btnRow: { display: "flex", gap: 12, flexWrap: "wrap" } as const,
-  btnPrimary: { padding: "10px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
-  btnDanger: { padding: "10px 20px", background: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
-  btnSecondary: { padding: "10px 20px", background: "#fff", color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
-  success: { background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534", padding: 12, borderRadius: 6, marginTop: 12, fontSize: 14 } as const,
-  err: { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: 12, borderRadius: 6, marginTop: 12, fontSize: 14 } as const,
+  h2: { margin: "0 0 14px", fontSize: 16, color: "#0f172a" } as const,
+  btnRow: { display: "flex", gap: 12, flexWrap: "wrap" as const } as const,
+  btnPrimary: { padding: "10px 18px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" } as const,
+  btnDanger: { padding: "10px 18px", background: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" } as const,
+  success: { background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534", padding: 12, borderRadius: 8, marginTop: 12, fontSize: 14 } as const,
+  err: { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: 12, borderRadius: 8, marginTop: 12, fontSize: 14 } as const,
 };

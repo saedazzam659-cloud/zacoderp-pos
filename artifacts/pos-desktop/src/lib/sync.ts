@@ -1,16 +1,19 @@
-// Thin shim over the Rust `sync_push_now` Tauri command.
+// Sync helpers — pull (cloud → local) and push (local → cloud).
 //
-// Pushes every offline_invoices row with sync_status='pending' to
-// POST /api/sync/push, then marks the acked rows as synced. Returns a
-// summary the UI can show.
+// pullAndPersist:
+//   Hits POST /api/sync/pull, then writes the returned customers/items
+//   to the local store (SQLite in Tauri, localStorage in browser). Without
+//   this step, the dashboard would happily report "184 items pulled" while
+//   the sales screen stayed empty — which was the original bug.
 //
-// Browser fallback (Vite dev / Replit preview): there is no local
-// SQLite to read from, so this returns a no-op summary so the button
-// still works and the UX doesn't lie about success.
+// syncPushNow:
+//   Pushes pending offline_invoices via the Rust Tauri command. In browser
+//   mode there is no local DB of invoices, so it returns a no-op summary.
 
-const IS_TAURI =
-  typeof window !== "undefined" &&
-  ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
+import { LS_KEYS, lsWrite, IS_TAURI } from "./localStore";
+import { createApi } from "./api";
+import { upsertItemsFromCloud } from "./items";
+import { upsertCustomersFromCloud } from "./customers";
 
 export type PushSummary = {
   attempted: number;
@@ -18,6 +21,30 @@ export type PushSummary = {
   failed: number;
   server_time?: string | null;
 };
+
+export type PullSummary = {
+  customers: number;
+  items: number;
+  serverTime: string | null;
+};
+
+export async function pullAndPersist(
+  baseUrl: string,
+  deviceToken: string,
+): Promise<PullSummary> {
+  const api = createApi({ baseUrl, deviceToken });
+  const r = await api.pull({ entities: ["customers", "items", "settings"] });
+
+  let customers = 0, items = 0;
+  if (r.entities.customers?.length) {
+    customers = await upsertCustomersFromCloud(r.entities.customers);
+  }
+  if (r.entities.items?.length) {
+    items = await upsertItemsFromCloud(r.entities.items);
+  }
+  lsWrite(LS_KEYS.lastPullAt, new Date().toISOString());
+  return { customers, items, serverTime: r.serverTime ?? null };
+}
 
 export async function syncPushNow(
   serverUrl: string,
@@ -32,7 +59,6 @@ export async function syncPushNow(
     serverUrl,
     deviceToken,
   })) as Record<string, unknown>;
-  // Normalize snake_case (Rust serde default) → object the UI consumes.
   return {
     attempted: Number(raw.attempted ?? 0),
     synced: Number(raw.synced ?? 0),
