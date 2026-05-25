@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -138,6 +139,26 @@ function LicensesTab({ headers }: { headers: Record<string, string> }) {
       return r.json();
     },
   });
+
+  // Companies dropdown — populates both the "generate" and "assign" dialogs.
+  // SuperAdmin sees every non-deleted tenant.
+  const companiesQ = useQuery<Array<{ id: number; nameAr: string; nameEn: string | null; enableOfflinePos?: boolean }>>({
+    queryKey: ["companies-for-pos-licenses"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/companies`, { headers });
+      if (!r.ok) throw new Error("فشل تحميل الشركات");
+      return r.json();
+    },
+  });
+  const companyItems = useMemo(
+    () => (companiesQ.data ?? []).map((c) => ({
+      value: String(c.id),
+      label: `${c.nameAr}${c.nameEn ? ` — ${c.nameEn}` : ""} (#${c.id})`,
+      badge: c.enableOfflinePos ? "POS مفعّل" : "POS غير مفعّل",
+      badgeClass: c.enableOfflinePos ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700",
+    })),
+    [companiesQ.data],
+  );
 
   const genMut = useMutation({
     mutationFn: async () => {
@@ -285,7 +306,20 @@ function LicensesTab({ headers }: { headers: Record<string, string> }) {
               </Select>
             </div>
             <div><Label>تاريخ الانتهاء (اختياري)</Label><Input type="date" value={genExpires} onChange={(e) => setGenExpires(e.target.value)} /></div>
-            <div><Label>رقم شركة محدد (اختياري)</Label><Input type="number" value={genCompanyId} onChange={(e) => setGenCompanyId(e.target.value)} placeholder="فارغ = غير مخصص" /></div>
+            <div>
+              <Label>الشركة (اختياري)</Label>
+              <SearchCombobox
+                items={[{ value: "", label: "— غير مخصصة —" }, ...companyItems]}
+                value={genCompanyId}
+                onValueChange={setGenCompanyId}
+                placeholder={companiesQ.isLoading ? "جارٍ التحميل..." : "ابحث باسم الشركة أو رقمها..."}
+                searchPlaceholder="اكتب للبحث..."
+                emptyText="لا توجد شركات مطابقة"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                تخصيص الترخيص لشركة مباشرة يوفّر خطوة "تخصيص" اللاحقة، ويظهر الترخيص بحالة "نشط" فور التوليد.
+              </p>
+            </div>
             <div><Label>ملاحظات</Label><Textarea value={genNotes} onChange={(e) => setGenNotes(e.target.value)} /></div>
           </div>
           <DialogFooter>
@@ -299,7 +333,20 @@ function LicensesTab({ headers }: { headers: Record<string, string> }) {
       <Dialog open={!!assignFor} onOpenChange={(o) => !o && setAssignFor(null)}>
         <DialogContent dir="rtl">
           <DialogHeader><DialogTitle>تخصيص ترخيص لشركة</DialogTitle></DialogHeader>
-          <div><Label>رقم الشركة</Label><Input type="number" value={assignCompanyId} onChange={(e) => setAssignCompanyId(e.target.value)} /></div>
+          <div>
+            <Label>الشركة</Label>
+            <SearchCombobox
+              items={companyItems}
+              value={assignCompanyId}
+              onValueChange={setAssignCompanyId}
+              placeholder={companiesQ.isLoading ? "جارٍ التحميل..." : "ابحث باسم الشركة أو رقمها..."}
+              searchPlaceholder="اكتب للبحث..."
+              emptyText="لا توجد شركات"
+            />
+            <p className="text-xs text-amber-600 mt-2">
+              ⚠️ تأكّد أن خاصية "تفعيل نقاط البيع المكتبية" (enable_offline_pos) مفعّلة في إعدادات الشركة، وإلا سيرفض الجهاز التفعيل برسالة 403.
+            </p>
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAssignFor(null)}>إلغاء</Button>
             <Button onClick={() => assignMut.mutate()} disabled={!assignCompanyId || assignMut.isPending}>تخصيص</Button>
