@@ -13,4 +13,4 @@ Rule: when implementing a "first-caller-wins" claim on a status-gated row, the U
 3. If `returning()` is empty, throw a sentinel (e.g. `Error("ALREADY_CLAIMED")`) — the catch outside the tx maps it to 409.
 4. Do the side-effect work (JE insert, etc.) inside the same tx so a failure rolls the claim back.
 
-Reference implementation: `artifacts/api-server/src/routes/account-notes.ts` — `POST /:id/post`. Verified by `/tmp/conc_test.sh` (5 parallel posts → 1×200, 4×409, exactly one JE).
+Verify the fix by firing 5 parallel POST requests against the same row and asserting exactly one 2xx + N−1 conflict responses and a single side-effect row in the database.
