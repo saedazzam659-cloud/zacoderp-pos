@@ -108,12 +108,21 @@ jobs:
           workspaces: artifacts/pos-desktop/src-tauri -> target
           shared-key: pos-desktop-${{ env.RUST_VERSION }}
 
-      # ─── 3b. NASM (required by vendored OpenSSL build) ──────────────
-      - name: Install NASM (for OpenSSL assembly)
+      # ─── 3b. OpenSSL (pre-built, for SQLCipher bundled feature) ─────
+      - name: Install OpenSSL (pre-built via Chocolatey)
         shell: pwsh
         run: |
-          choco install nasm -y --no-progress
-          echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          choco install openssl --version=3.3.2 -y --no-progress
+          $openSslDir = "C:\Program Files\OpenSSL-Win64"
+          if (-not (Test-Path $openSslDir)) {
+            $openSslDir = "C:\Program Files\OpenSSL"
+          }
+          Write-Host "OPENSSL_DIR=$openSslDir"
+          echo "OPENSSL_DIR=$openSslDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "OPENSSL_LIB_DIR=$openSslDir\lib\VC\x64\MD" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "OPENSSL_INCLUDE_DIR=$openSslDir\include" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "OPENSSL_STATIC=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Get-ChildItem $openSslDir -Recurse -Filter "libssl*.lib" | Select-Object FullName
 
       # ─── 4. WiX (MSI installer) ─────────────────────────────────────
       # Tauri 2.x uses WiX 3.x. windows-latest has it pre-installed, but we
