@@ -37,13 +37,14 @@ type Props = {
   cashierContext?: CashierContext | null;
   companyName?: string;
   deviceId: number;
+  expiresAt?: string | null;
   onSignOut: () => void | Promise<void>;
   onLogoutCashier?: () => void | Promise<void>;
 };
 
 export default function PosShell({
   baseUrl, deviceToken, userToken, cashierContext,
-  companyName, deviceId, onSignOut, onLogoutCashier,
+  companyName, deviceId, expiresAt, onSignOut, onLogoutCashier,
 }: Props) {
   const api = useMemo(
     () => createApi({ baseUrl, deviceToken, userToken: userToken ?? null }),
@@ -92,7 +93,7 @@ export default function PosShell({
         // from "session abandoned". Without it the server can only fall back to openedAt and
         // would reap any session whose cashier stayed logged in past the stale threshold.
         await api.heartbeat({
-          appVersion: "0.3.2",
+          appVersion: "0.3.3",
           ...(posSessionId ? { posSessionId } : {}),
         });
         const s = await api.status();
@@ -165,7 +166,7 @@ export default function PosShell({
           <div style={S.brandIcon}>zacode</div>
           <div>
             <div style={S.brandName}>ZACOD POS</div>
-            <div style={S.brandTag}>v0.3.2 — desktop</div>
+            <div style={S.brandTag}>v0.3.3 — desktop</div>
           </div>
         </div>
 
@@ -229,6 +230,12 @@ export default function PosShell({
           </div>
         </header>
 
+        {/* Subscription-expiry warning banner (Task #185).
+            Shown when the cached expiresAt is within 7 days of "now". Past-due
+            expiries never reach this banner because boot() routes them to the
+            license-expired full-screen block before PosShell ever renders. */}
+        <ExpiryBanner expiresAt={expiresAt ?? null} />
+
         {/* Page content */}
         <main style={S.content}>
           {view === "sales" && <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} />}
@@ -284,6 +291,24 @@ function labelFor(v: View): string {
     dashboard: "لوحة التحكم",
     updates: "التحديثات",
   }[v];
+}
+
+function ExpiryBanner({ expiresAt }: { expiresAt: string | null }) {
+  if (!expiresAt) return null;
+  const ms = new Date(expiresAt).getTime() - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const days = Math.ceil(ms / 86_400_000);
+  if (days > 7) return null;
+  const dateStr = new Date(expiresAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" });
+  return (
+    <div style={S.warnBanner}>
+      <span style={{ fontSize: 18 }}>⚠️</span>
+      <span>
+        ينتهي اشتراك هذا الجهاز خلال <strong>{days}</strong> {days === 1 ? "يوم" : "أيام"} (بتاريخ {dateStr}) —
+        تواصل مع الدعم الفني للتجديد قبل التوقف.
+      </span>
+    </div>
+  );
 }
 
 function SyncIndicator({ status, heartbeatErr }: { status: SyncStatus | null; heartbeatErr: string | null }) {
@@ -474,6 +499,13 @@ const S = {
     fontSize: 12, fontWeight: 600, fontFamily: "inherit",
   } as const,
 
+  warnBanner: {
+    display: "flex", alignItems: "center", gap: 10,
+    padding: "10px 24px",
+    background: "linear-gradient(90deg, #fef3c7 0%, #fde68a 100%)",
+    color: "#78350f", borderBottom: "1px solid #fcd34d",
+    fontSize: 13, fontWeight: 600, flexShrink: 0,
+  } as const,
   content: { flex: 1, overflow: "hidden", minHeight: 0, display: "flex", flexDirection: "column" as const } as const,
   pagePad: { padding: 24, overflowY: "auto" as const, flex: 1 } as const,
 

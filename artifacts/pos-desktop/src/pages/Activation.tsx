@@ -41,6 +41,7 @@ export type ActivatedInfo = {
   deviceId: number;
   companyId: number;
   companyName: string;
+  expiresAt: string | null;
 };
 
 export default function Activation({ onActivated }: { onActivated: (info: ActivatedInfo) => void }) {
@@ -116,6 +117,7 @@ export default function Activation({ onActivated }: { onActivated: (info: Activa
         deviceId: r.deviceId,
         companyId: r.companyId,
         companyName: r.companyName,
+        expiresAt: r.expiresAt,
       });
     } catch (e: any) {
       if (e instanceof ApiError) {

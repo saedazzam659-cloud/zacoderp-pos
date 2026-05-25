@@ -83,51 +83,104 @@ fn user_token_entry() -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT_USER_TOKEN).map_err(|e| e.to_string())
 }
 
+// ─── File-based fallback storage (Task #185) ─────────────────────────
+// On Windows the OS keyring (Credential Manager) can silently fail for
+// unsigned MSI installs or certain group-policy lockdowns. When that
+// happens `load_device_token` would return None on every launch and the
+// app would re-prompt for activation forever. Dual-write the token to a
+// file under %APPDATA%/ZACOD-POS/tokens/<slot> so it survives even when
+// the keyring layer is unavailable. The directory is ACL-restricted to
+// the current user by default (Windows %APPDATA% inherits user-only ACL).
+fn token_file_path(slot: &str) -> Result<std::path::PathBuf, String> {
+    let mut p = dirs::data_dir().ok_or_else(|| "no data dir available".to_string())?;
+    p.push("ZACOD-POS");
+    p.push("tokens");
+    std::fs::create_dir_all(&p).map_err(|e| e.to_string())?;
+    p.push(slot);
+    Ok(p)
+}
+
+fn save_token_file(slot: &str, token: &str) -> Result<(), String> {
+    let p = token_file_path(slot)?;
+    std::fs::write(&p, token).map_err(|e| e.to_string())
+}
+
+fn load_token_file(slot: &str) -> Result<Option<String>, String> {
+    let p = token_file_path(slot)?;
+    if !p.exists() { return Ok(None); }
+    match std::fs::read_to_string(&p) {
+        Ok(t) => {
+            let t = t.trim().to_string();
+            if t.is_empty() { Ok(None) } else { Ok(Some(t)) }
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn clear_token_file(slot: &str) -> Result<(), String> {
+    let p = token_file_path(slot)?;
+    if p.exists() {
+        std::fs::remove_file(&p).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn save_device_token(token: String) -> Result<(), String> {
-    token_entry()?.set_password(&token).map_err(|e| e.to_string())
+    // Best-effort keyring write — never fail the whole call on keyring errors.
+    if let Ok(entry) = token_entry() {
+        let _ = entry.set_password(&token);
+    }
+    // File write IS the source of truth — must succeed.
+    save_token_file(KEYRING_ACCOUNT_TOKEN, &token)
 }
 
 #[tauri::command]
 fn load_device_token() -> Result<Option<String>, String> {
-    match token_entry()?.get_password() {
-        Ok(t) => Ok(Some(t)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(e.to_string()),
+    // Try keyring first (faster + more secure on healthy installs), then
+    // fall back to the file. Returning None only when BOTH miss.
+    if let Ok(entry) = token_entry() {
+        if let Ok(t) = entry.get_password() {
+            return Ok(Some(t));
+        }
+        // Any other keyring error (locked, NoEntry, OS error) → file fallback.
     }
+    load_token_file(KEYRING_ACCOUNT_TOKEN)
 }
 
 #[tauri::command]
 fn clear_device_token() -> Result<(), String> {
-    match token_entry()?.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(e.to_string()),
+    if let Ok(entry) = token_entry() {
+        let _ = entry.delete_credential();
     }
+    clear_token_file(KEYRING_ACCOUNT_TOKEN)
 }
 
-// ─── Cashier user token (Task #175) ──────────────────────────────────
+// ─── Cashier user token (Task #175 + file fallback Task #185) ───────
 #[tauri::command]
 fn save_user_token(token: String) -> Result<(), String> {
-    user_token_entry()?.set_password(&token).map_err(|e| e.to_string())
+    if let Ok(entry) = user_token_entry() {
+        let _ = entry.set_password(&token);
+    }
+    save_token_file(KEYRING_ACCOUNT_USER_TOKEN, &token)
 }
 
 #[tauri::command]
 fn load_user_token() -> Result<Option<String>, String> {
-    match user_token_entry()?.get_password() {
-        Ok(t) => Ok(Some(t)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(e.to_string()),
+    if let Ok(entry) = user_token_entry() {
+        if let Ok(t) = entry.get_password() {
+            return Ok(Some(t));
+        }
     }
+    load_token_file(KEYRING_ACCOUNT_USER_TOKEN)
 }
 
 #[tauri::command]
 fn clear_user_token() -> Result<(), String> {
-    match user_token_entry()?.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(e.to_string()),
+    if let Ok(entry) = user_token_entry() {
+        let _ = entry.delete_credential();
     }
+    clear_token_file(KEYRING_ACCOUNT_USER_TOKEN)
 }
 
 // ─── Parked carts (Task #175) ────────────────────────────────────────

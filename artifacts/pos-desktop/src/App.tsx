@@ -19,7 +19,8 @@ import { useState, useEffect } from "react";
 import Activation from "./pages/Activation";
 import CashierLogin from "./pages/CashierLogin";
 import PosShell from "./pages/PosShell";
-import { createApi } from "./lib/api";
+import LicenseExpired from "./pages/LicenseExpired";
+import { createApi, ApiError } from "./lib/api";
 import {
   loadDeviceToken, clearDeviceToken,
   loadUserToken, clearUserToken,
@@ -32,10 +33,13 @@ import { clearSessionParkedCarts } from "./lib/parkedCarts";
 type BootState =
   | { phase: "checking" }
   | { phase: "needs-activation" }
-  | { phase: "needs-cashier"; baseUrl: string; deviceToken: string; companyId: number; deviceId: number; companyName?: string }
-  | { phase: "signed-in"; baseUrl: string; deviceToken: string; userToken: string; companyId: number; deviceId: number; companyName?: string; cashierContext: CashierContext };
+  | { phase: "license-expired"; baseUrl: string; deviceToken: string; expiresAt: string | null; companyName?: string }
+  | { phase: "needs-cashier"; baseUrl: string; deviceToken: string; companyId: number; deviceId: number; companyName?: string; expiresAt: string | null }
+  | { phase: "signed-in"; baseUrl: string; deviceToken: string; userToken: string; companyId: number; deviceId: number; companyName?: string; cashierContext: CashierContext; expiresAt: string | null };
 
 const DEFAULT_BASE = "https://zacoderp.com";
+const EXPIRES_AT_KEY = "pos_desktop_license_expires_at";
+const COMPANY_NAME_KEY = "pos_desktop_company_name";
 
 export default function App() {
   const [state, setState] = useState<BootState>({ phase: "checking" });
@@ -48,24 +52,57 @@ export default function App() {
     if (!dToken) { setState({ phase: "needs-activation" }); return; }
 
     const baseUrl = localStorage.getItem("pos_desktop_server_url") ?? DEFAULT_BASE;
+    const cachedCompanyName = localStorage.getItem(COMPANY_NAME_KEY) ?? undefined;
+    let cachedExpiresAt = localStorage.getItem(EXPIRES_AT_KEY);
     const api = createApi({ baseUrl, deviceToken: dToken });
 
     let companyId = 0, deviceId = 0;
-    let companyName: string | undefined;
+    let companyName: string | undefined = cachedCompanyName;
+    let expiresAt: string | null = cachedExpiresAt;
+
+    // ── Validate device token + license with the cloud ────────────────
+    // Distinguish 3 outcomes:
+    //   • 200            → token + license OK; refresh cached expiresAt
+    //   • 401            → token rejected (revoked / wiped server-side) → re-activate
+    //   • 403            → license revoked or expired → show expired screen, KEEP token
+    //   • network / 5xx  → continue with cached context (offline tolerance)
     try {
-      const v = await api.safeValidate();
-      if (!v) {
-        // Device token rejected — wipe both layers and re-activate.
+      const v = await api.validate();
+      companyId = v.companyId; deviceId = v.deviceId;
+      expiresAt = v.expiresAt;
+      if (v.expiresAt) localStorage.setItem(EXPIRES_AT_KEY, v.expiresAt);
+      else localStorage.removeItem(EXPIRES_AT_KEY);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        // Token was revoked or device deactivated — wipe and re-activate.
         await clearDeviceToken();
         await clearUserToken();
         clearCashierContext();
+        localStorage.removeItem(EXPIRES_AT_KEY);
         setState({ phase: "needs-activation" });
         return;
       }
-      companyId = v.companyId; deviceId = v.deviceId;
-    } catch (e) {
-      // Network error — keep going (POS desktop's whole point is offline-tolerance).
+      if (e instanceof ApiError && e.status === 403) {
+        // License revoked or expired. Keep the device token — when the
+        // subscription is renewed, "إعادة المحاولة" on the expired screen
+        // re-runs boot() with the same token and gets through.
+        const details = (e.details as { expiresAt?: string } | undefined);
+        const exp = details?.expiresAt ?? cachedExpiresAt ?? null;
+        if (exp) localStorage.setItem(EXPIRES_AT_KEY, exp);
+        setState({ phase: "license-expired", baseUrl, deviceToken: dToken, expiresAt: exp, companyName: cachedCompanyName });
+        return;
+      }
+      // Network error / 5xx — keep going (POS desktop's whole point is offline-tolerance).
       console.warn("Boot validate failed (offline?), continuing with cached context", e);
+    }
+
+    // ── Offline expiry guard ──────────────────────────────────────────
+    // Even when offline, refuse to open the POS if the cached expiry date
+    // is already in the past. Without this guard a customer could cut the
+    // network cable to keep selling forever after the subscription lapsed.
+    if (expiresAt && new Date(expiresAt).getTime() < Date.now()) {
+      setState({ phase: "license-expired", baseUrl, deviceToken: dToken, expiresAt, companyName });
+      return;
     }
 
     // ── Layer 2: cashier token + context ──────────────────────────────
@@ -75,7 +112,7 @@ export default function App() {
       // Defensive: a token without context (or vice versa) is an orphan from
       // an aborted login mid-flow. Wipe BOTH so the next login starts clean.
       if (uToken || ctx) { await clearUserToken(); clearCashierContext(); }
-      setState({ phase: "needs-cashier", baseUrl, deviceToken: dToken, companyId, deviceId, companyName });
+      setState({ phase: "needs-cashier", baseUrl, deviceToken: dToken, companyId, deviceId, companyName, expiresAt });
       return;
     }
 
@@ -94,16 +131,17 @@ export default function App() {
           companyName: me.company?.name ?? ctx.companyName,
         };
         saveCashierContext(refreshed);
-        setState({ phase: "signed-in", baseUrl, deviceToken: dToken, userToken: uToken, companyId, deviceId, companyName: refreshed.companyName, cashierContext: refreshed });
+        if (refreshed.companyName) localStorage.setItem(COMPANY_NAME_KEY, refreshed.companyName);
+        setState({ phase: "signed-in", baseUrl, deviceToken: dToken, userToken: uToken, companyId, deviceId, companyName: refreshed.companyName, cashierContext: refreshed, expiresAt });
         return;
       }
       // me() returned null/401 → token expired; fall through to login.
       await clearUserToken();
       clearCashierContext();
-      setState({ phase: "needs-cashier", baseUrl, deviceToken: dToken, companyId, deviceId, companyName });
+      setState({ phase: "needs-cashier", baseUrl, deviceToken: dToken, companyId, deviceId, companyName, expiresAt });
     } catch {
       // Offline — trust the cached context.
-      setState({ phase: "signed-in", baseUrl, deviceToken: dToken, userToken: uToken, companyId, deviceId, companyName: ctx.companyName, cashierContext: ctx });
+      setState({ phase: "signed-in", baseUrl, deviceToken: dToken, userToken: uToken, companyId, deviceId, companyName: ctx.companyName, cashierContext: ctx, expiresAt });
     }
   }
 
@@ -115,7 +153,17 @@ export default function App() {
     await clearDeviceToken();
     await clearUserToken();
     clearCashierContext();
+    localStorage.removeItem(EXPIRES_AT_KEY);
+    localStorage.removeItem(COMPANY_NAME_KEY);
     setState({ phase: "needs-activation" });
+  }
+
+  // ── Retry from the license-expired screen ────────────────────────────
+  // Just re-runs boot. If the cloud now reports a renewed expiresAt, boot
+  // falls through to needs-cashier; otherwise it lands back on this screen.
+  async function handleRetryLicense() {
+    setState({ phase: "checking" });
+    await boot();
   }
 
   // ── Logout cashier (user-level) ──────────────────────────────────────
@@ -123,7 +171,7 @@ export default function App() {
   // and revoke the user token; falls back gracefully if offline.
   async function handleLogoutCashier() {
     if (state.phase !== "signed-in") return;
-    const { baseUrl, deviceToken, userToken, cashierContext, companyId, deviceId, companyName } = state;
+    const { baseUrl, deviceToken, userToken, cashierContext, companyId, deviceId, companyName, expiresAt } = state;
     const api = createApi({ baseUrl, deviceToken, userToken });
     // Try the cloud-side close. If the network is down (or the server errors),
     // queue it into the pending-closes retry queue so PosShell's heartbeat
@@ -145,7 +193,7 @@ export default function App() {
     try { await clearSessionParkedCarts(cashierContext.posSessionId); } catch { /* ignore */ }
     await clearUserToken();
     clearCashierContext();
-    setState({ phase: "needs-cashier", baseUrl, deviceToken, companyId, deviceId, companyName });
+    setState({ phase: "needs-cashier", baseUrl, deviceToken, companyId, deviceId, companyName, expiresAt });
   }
 
   // ── Render ──────────────────────────────────────────────────────────
@@ -160,11 +208,26 @@ export default function App() {
     );
   }
 
+  if (state.phase === "license-expired") {
+    return (
+      <LicenseExpired
+        expiresAt={state.expiresAt}
+        companyName={state.companyName}
+        onRetry={handleRetryLicense}
+        onDeactivate={handleSignOut}
+      />
+    );
+  }
+
   if (state.phase === "needs-activation") {
     return (
       <Activation
         onActivated={(info) => {
           const baseUrl = localStorage.getItem("pos_desktop_server_url") ?? DEFAULT_BASE;
+          // Cache for offline boot + expiry guard.
+          if (info.expiresAt) localStorage.setItem(EXPIRES_AT_KEY, info.expiresAt);
+          else localStorage.removeItem(EXPIRES_AT_KEY);
+          if (info.companyName) localStorage.setItem(COMPANY_NAME_KEY, info.companyName);
           // After activation, drop into cashier login — NOT straight into the
           // shell — because no human is logged in yet.
           setState({
@@ -173,6 +236,7 @@ export default function App() {
             companyId: info.companyId,
             deviceId: info.deviceId,
             companyName: info.companyName,
+            expiresAt: info.expiresAt ?? null,
           });
         }}
       />
@@ -185,6 +249,7 @@ export default function App() {
         baseUrl={state.baseUrl}
         deviceToken={state.deviceToken}
         onSignedIn={(ctx, userToken) => {
+          if (ctx.companyName) localStorage.setItem(COMPANY_NAME_KEY, ctx.companyName);
           setState({
             phase: "signed-in",
             baseUrl: state.baseUrl,
@@ -194,6 +259,7 @@ export default function App() {
             deviceId: state.deviceId,
             companyName: ctx.companyName ?? state.companyName,
             cashierContext: ctx,
+            expiresAt: state.expiresAt,
           });
         }}
       />
@@ -208,6 +274,7 @@ export default function App() {
       cashierContext={state.cashierContext}
       companyName={state.companyName}
       deviceId={state.deviceId}
+      expiresAt={state.expiresAt}
       onSignOut={handleSignOut}
       onLogoutCashier={handleLogoutCashier}
     />
