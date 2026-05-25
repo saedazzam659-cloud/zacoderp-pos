@@ -108,6 +108,13 @@ jobs:
           workspaces: artifacts/pos-desktop/src-tauri -> target
           shared-key: pos-desktop-${{ env.RUST_VERSION }}
 
+      # ─── 3b. NASM (required by vendored OpenSSL build) ──────────────
+      - name: Install NASM (for OpenSSL assembly)
+        shell: pwsh
+        run: |
+          choco install nasm -y --no-progress
+          echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       # ─── 4. WiX (MSI installer) ─────────────────────────────────────
       # Tauri 2.x uses WiX 3.x. windows-latest has it pre-installed, but we
       # ensure it's on PATH just in case.
