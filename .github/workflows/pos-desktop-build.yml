@@ -159,8 +159,8 @@ jobs:
           $found = $false
           foreach ($dir in $binCandidates) {
             if (Test-Path $dir) {
-              $dlls = Get-ChildItem $dir -Filter "libcrypto*.dll" -ErrorAction SilentlyContinue
-              $dlls += Get-ChildItem $dir -Filter "libssl*.dll" -ErrorAction SilentlyContinue
+              $dlls = @(Get-ChildItem $dir -Filter "libcrypto*.dll" -ErrorAction SilentlyContinue)
+              $dlls += @(Get-ChildItem $dir -Filter "libssl*.dll" -ErrorAction SilentlyContinue)
               if ($dlls.Count -gt 0) {
                 foreach ($d in $dlls) {
                   Copy-Item $d.FullName -Destination $dest -Force
