@@ -21,10 +21,11 @@ import ReturnsScreen from "./ReturnsScreen";
 import CustomersAdmin from "./CustomersAdmin";
 import ItemsAdmin from "./ItemsAdmin";
 import UomAdmin from "./UomAdmin";
+import UpdatesScreen from "./UpdatesScreen";
 import { countPendingInvoices } from "../lib/invoices";
 import { syncPushNow, pullAndPersist, type PushSummary, type PullSummary } from "../lib/sync";
 
-type View = "sales" | "returns" | "pending" | "customers" | "items" | "uom" | "dashboard";
+type View = "sales" | "returns" | "pending" | "customers" | "items" | "uom" | "dashboard" | "updates";
 
 type Props = {
   baseUrl: string;
@@ -107,6 +108,7 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
     { id: "items",     icon: "📦", label: "الأصناف" },
     { id: "uom",       icon: "📐", label: "وحدات القياس" },
     { id: "dashboard", icon: "📊", label: "لوحة التحكم" },
+    { id: "updates",   icon: "🔄", label: "التحديثات" },
   ];
 
   return (
@@ -189,6 +191,11 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
               />
             </div>
           )}
+          {view === "updates" && (
+            <div style={S.pagePad}>
+              <UpdatesScreen baseUrl={baseUrl} />
+            </div>
+          )}
         </main>
       </div>
 
@@ -206,6 +213,7 @@ function labelFor(v: View): string {
     items: "الأصناف",
     uom: "وحدات القياس",
     dashboard: "لوحة التحكم",
+    updates: "التحديثات",
   }[v];
 }
 
