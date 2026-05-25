@@ -53,8 +53,8 @@ jobs:
         shell: bash
 
     env:
-      # Match the Cargo.toml rust-version
-      RUST_VERSION: "1.78"
+      # Use latest stable (needed for edition2024 in transitive deps like toml v1.1.2)
+      RUST_VERSION: "stable"
       NODE_VERSION: "20"
       PNPM_VERSION: "9"
       # Tauri target — Cargo.toml + tauri.conf.json are pinned to win-x64
