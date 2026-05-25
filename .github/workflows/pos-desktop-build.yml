@@ -137,7 +137,7 @@ jobs:
             "$openSslDir\lib\VC",
             "$openSslDir\lib"
           )
-          $libDir = $libCandidates | Where-Object { Test-Path "$_\libssl.lib" -or (Test-Path "$_\libssl_static.lib") } | Select-Object -First 1
+          $libDir = $libCandidates | Where-Object { (Test-Path "$_\libssl.lib") -or (Test-Path "$_\libssl_static.lib") } | Select-Object -First 1
           if (-not $libDir) { $libDir = "$openSslDir\lib\VC\x64\MD" }
           Write-Host "OPENSSL_LIB_DIR=$libDir"
           echo "OPENSSL_DIR=$openSslDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
