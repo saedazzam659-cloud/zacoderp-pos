@@ -285,10 +285,11 @@ const S = {
   // (cart lines). The cart's footer is pinned via flex layout.
   wrap: {
     display: "flex", gap: 16,
-    height: "100%", minHeight: 0,
+    height: "100%", maxHeight: "100%", minHeight: 0,
     padding: 16, background: "#f1f5f9",
     fontFamily: "'Segoe UI', system-ui, sans-serif",
     overflow: "hidden",
+    boxSizing: "border-box" as const,
   } as const,
 
   // Items pane: column with search row on top + scrolling grid below
@@ -296,7 +297,7 @@ const S = {
   searchRow: { display: "flex", gap: 12, alignItems: "center", flexShrink: 0 } as const,
   search: { flex: 1, padding: "12px 16px", fontSize: 15, border: "1px solid #cbd5e1", borderRadius: 10, fontFamily: "inherit", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.04)" } as const,
   countChip: { padding: "8px 14px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 999, fontSize: 13, color: "#475569", fontWeight: 600, whiteSpace: "nowrap" as const } as const,
-  gridScroll: { flex: 1, overflowY: "auto" as const, minHeight: 0 } as const,
+  gridScroll: { flex: 1, overflowY: "auto" as const, overflowX: "hidden" as const, minHeight: 0, maxHeight: "100%" } as const,
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: 12, padding: 4 } as const,
   empty: { gridColumn: "1 / -1", padding: 40, color: "#94a3b8", fontSize: 14, textAlign: "center" as const, border: "1px dashed #cbd5e1", borderRadius: 10, background: "#fff" } as const,
   itemCard: {
@@ -325,7 +326,7 @@ const S = {
   clearBtn: { padding: "4px 10px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", fontSize: 12 } as const,
 
   // THIS is the ONLY scrolling region in the cart — items list
-  linesScroll: { flex: 1, overflowY: "auto" as const, minHeight: 0, padding: "12px 16px" } as const,
+  linesScroll: { flex: 1, overflowY: "auto" as const, overflowX: "hidden" as const, minHeight: 0, maxHeight: "100%", padding: "12px 16px" } as const,
   cartEmpty: { padding: 40, color: "#94a3b8", fontSize: 14, textAlign: "center" as const } as const,
   lines: { display: "flex", flexDirection: "column" as const, gap: 8 } as const,
   line: { display: "flex", gap: 8, padding: 10, background: "#f8fafc", borderRadius: 8, alignItems: "center" } as const,

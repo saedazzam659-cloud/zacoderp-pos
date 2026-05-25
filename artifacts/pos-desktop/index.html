@@ -2,11 +2,43 @@
 <html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ZACOD POS</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>ZACOD POS — نقاط البيع</title>
+
+    <!-- PWA: installable as a desktop / mobile app -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#2563eb" />
+    <meta name="description" content="نظام نقاط البيع المتكامل — يعمل بدون إنترنت" />
+
+    <!-- iOS / Safari PWA hints -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="ZACOD POS" />
+    <link rel="apple-touch-icon" href="icons/icon-256.png" />
+
+    <!-- Windows tile -->
+    <meta name="msapplication-TileColor" content="#2563eb" />
+    <meta name="msapplication-TileImage" content="icons/icon-128.png" />
+
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png" />
+    <link rel="icon" type="image/png" sizes="128x128" href="icons/icon-128.png" />
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Register the service worker after the page is interactive so it
+      // never blocks first paint. Disabled in Tauri (native shell handles
+      // offline natively via SQLite).
+      if ("serviceWorker" in navigator && !window.__TAURI__) {
+        window.addEventListener("load", () => {
+          const base = document.querySelector("base")?.href || location.pathname;
+          const swUrl = new URL("sw.js", base).pathname;
+          navigator.serviceWorker.register(swUrl).catch(() => {
+            /* silent — PWA install still works without active SW */
+          });
+        });
+      }
+    </script>
   </body>
 </html>

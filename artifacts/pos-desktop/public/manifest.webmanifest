@@ -1,0 +1,35 @@
+{
+  "name": "ZACOD POS - نقاط البيع",
+  "short_name": "ZACOD POS",
+  "description": "نظام نقاط البيع المتكامل مع دعم العمل دون اتصال بالإنترنت",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#2563eb",
+  "lang": "ar",
+  "dir": "rtl",
+  "categories": ["business", "productivity", "finance"],
+  "icons": [
+    { "src": "icons/icon-32.png",  "sizes": "32x32",   "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-128.png", "sizes": "128x128", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-256.png", "sizes": "256x256", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "نقطة البيع",
+      "short_name": "بيع",
+      "description": "ابدأ عملية بيع جديدة",
+      "url": "./?view=sales",
+      "icons": [{ "src": "icons/icon-128.png", "sizes": "128x128" }]
+    },
+    {
+      "name": "الفواتير المعلّقة",
+      "short_name": "معلّقة",
+      "description": "عرض الفواتير غير المرسلة",
+      "url": "./?view=pending",
+      "icons": [{ "src": "icons/icon-128.png", "sizes": "128x128" }]
+    }
+  ]
+}
