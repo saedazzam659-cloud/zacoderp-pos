@@ -11,17 +11,25 @@ import { generateZatcaQr } from "../lib/zatca";
 import { listItems, findItemByBarcode, seedDemoItems, type LocalItem } from "../lib/items";
 import { saveOfflineInvoice, type OfflineInvoicePayload } from "../lib/invoices";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
+import {
+  saveParkedCart, listParkedCarts, deleteParkedCart, takeResumeCartId,
+  type ParkedCart,
+} from "../lib/parkedCarts";
 
 const VAT_RATE = 0.15;
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 
 interface CartLine { item: LocalItem; qty: number; }
 
-type Props = { companyName?: string; vatNumber?: string };
+type Props = { companyName?: string; vatNumber?: string; posSessionId?: number };
 
-export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003" }: Props) {
+export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003", posSessionId = 0 }: Props) {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [checkoutKey, setCheckoutKey] = useState<string | null>(null);
+  // When non-null, the current cart in state was resumed from this parked
+  // cart id. Saving (park again) overwrites the same row; completing the
+  // checkout deletes it.
+  const [activeParkedId, setActiveParkedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [items, setItems] = useState<LocalItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
@@ -30,6 +38,66 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
   const [lastInvoice, setLastInvoice] = useState<string | null>(null);
 
   useEffect(() => { void seedDemoItems().catch(() => {}); }, []);
+
+  // ─── Resume handoff from ParkedCarts page ─────────────────────────
+  // ParkedCarts writes the id into sessionStorage and switches view;
+  // we read+consume it on mount and hydrate the cart state.
+  useEffect(() => {
+    const id = takeResumeCartId();
+    if (!id || !posSessionId) return;
+    (async () => {
+      try {
+        const all = await listParkedCarts(posSessionId);
+        const c = all.find(x => x.id === id);
+        if (!c) { setMsg({ kind: "err", text: "تعذّر استئناف السلة (غير موجودة)" }); return; }
+        // Hydrate cart from parked lines. We synthesize a LocalItem for each
+        // line — only the fields the UI/checkout pipeline reads (id, nameAr,
+        // salePrice, vatRate, barcode) are needed downstream.
+        const lines: CartLine[] = c.lines.map(l => ({
+          item: {
+            id: l.itemId, nameAr: l.nameAr, salePrice: l.salePrice,
+            vatRate: l.vatRate, barcode: l.barcode ?? null,
+            code: "", nameEn: null, updatedAt: null,
+          } as unknown as LocalItem,
+          qty: l.qty,
+        }));
+        setCart(lines);
+        setActiveParkedId(c.id);
+        setMsg({ kind: "ok", text: `✅ تم استئناف "${c.label}"` });
+      } catch (e: any) {
+        setMsg({ kind: "err", text: `تعذّر الاستئناف: ${e?.message ?? e}` });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posSessionId]);
+
+  async function parkCart() {
+    if (cart.length === 0) return;
+    if (!posSessionId) {
+      setMsg({ kind: "err", text: "تعليق السلة يتطلب وردية مفتوحة. سجّل دخول من شاشة الكاشير أولاً." });
+      return;
+    }
+    const defaultLabel = activeParkedId
+      ? undefined
+      : `سلة ${new Date().toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" })}`;
+    const label = prompt("اسم السلة (اختياري):", defaultLabel ?? "") ?? defaultLabel;
+    try {
+      const saved = await saveParkedCart({
+        id: activeParkedId ?? undefined,
+        posSessionId,
+        label: label || undefined,
+        lines: cart.map(l => ({
+          itemId: l.item.id, nameAr: l.item.nameAr,
+          salePrice: l.item.salePrice, vatRate: l.item.vatRate,
+          barcode: l.item.barcode ?? null, qty: l.qty,
+        })),
+      });
+      setCart([]); setCheckoutKey(null); setActiveParkedId(null);
+      setMsg({ kind: "ok", text: `📌 تم تعليق "${saved.label}" — افتحها من شاشة "المعلّقة"` });
+    } catch (e: any) {
+      setMsg({ kind: "err", text: `فشل تعليق السلة: ${e?.message ?? e}` });
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -147,8 +215,13 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       if (paymentMethod === "cash") {
         try { await openCashDrawer(printer); } catch { /* ignore */ }
       }
+      // If this cart was resumed from a parked one, remove the parked row
+      // now that it has become a finalized sale.
+      if (activeParkedId) {
+        try { await deleteParkedCart(activeParkedId); } catch { /* non-fatal */ }
+      }
       setLastInvoice(invNum);
-      setCart([]); setCheckoutKey(null);
+      setCart([]); setCheckoutKey(null); setActiveParkedId(null);
       setMsg({ kind: "ok", text: `✅ تم إنهاء البيع — فاتورة ${invNum}` });
     } catch (e: any) {
       setMsg({ kind: "err", text: `فشل إنهاء البيع: ${e?.message ?? e}` });
@@ -207,11 +280,18 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       {/* ─── Cart pane — fixed-width column with sticky bottom ─── */}
       <aside style={S.cartPane}>
         <div style={S.cartHeader}>
-          <h2 style={S.cartTitle}>🛒 السلة</h2>
+          <h2 style={S.cartTitle}>
+            🛒 السلة{activeParkedId && <span style={S.resumedBadge}>مستأنفة</span>}
+          </h2>
           {cart.length > 0 && (
-            <button onClick={() => { setCart([]); setCheckoutKey(null); }} style={S.clearBtn}>
-              مسح
-            </button>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={parkCart} style={S.parkBtn} title="تعليق السلة وحفظها للعودة لاحقاً">
+                📌 تعليق
+              </button>
+              <button onClick={() => { setCart([]); setCheckoutKey(null); setActiveParkedId(null); }} style={S.clearBtn}>
+                مسح
+              </button>
+            </div>
           )}
         </div>
 
@@ -334,7 +414,9 @@ const S = {
   } as const,
   cartHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid #f1f5f9", flexShrink: 0 } as const,
   cartTitle: { margin: 0, fontSize: 18, color: "#0f172a" } as const,
-  clearBtn: { padding: "4px 10px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", fontSize: 12 } as const,
+  clearBtn: { padding: "4px 10px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", fontSize: 12, fontFamily: "inherit" } as const,
+  parkBtn: { padding: "4px 10px", background: "#fffbeb", color: "#92400e", border: "1px solid #fde68a", borderRadius: 6, cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 600 } as const,
+  resumedBadge: { fontSize: 10, padding: "2px 8px", background: "#dbeafe", color: "#1e40af", borderRadius: 999, marginInlineStart: 8, fontWeight: 700, verticalAlign: "middle" } as const,
 
   // THIS is the ONLY scrolling region in the cart — items list
   linesScroll: { flex: 1, overflowY: "auto" as const, overflowX: "hidden" as const, minHeight: 0, maxHeight: "100%", padding: "12px 16px" } as const,

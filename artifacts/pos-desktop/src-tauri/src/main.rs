@@ -72,9 +72,15 @@ fn get_os_info() -> String {
 // fallback can engage in headless/CI environments.
 const KEYRING_SERVICE: &str = "com.zacoderp.pos";
 const KEYRING_ACCOUNT_TOKEN: &str = "device-token-v1";
+// Cashier user token (Task #175) — separate keyring slot from the device
+// token so logging out one cashier never wipes the device binding.
+const KEYRING_ACCOUNT_USER_TOKEN: &str = "user-token-v1";
 
 fn token_entry() -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT_TOKEN).map_err(|e| e.to_string())
+}
+fn user_token_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT_USER_TOKEN).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -100,6 +106,122 @@ fn clear_device_token() -> Result<(), String> {
     }
 }
 
+// ─── Cashier user token (Task #175) ──────────────────────────────────
+#[tauri::command]
+fn save_user_token(token: String) -> Result<(), String> {
+    user_token_entry()?.set_password(&token).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_user_token() -> Result<Option<String>, String> {
+    match user_token_entry()?.get_password() {
+        Ok(t) => Ok(Some(t)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+fn clear_user_token() -> Result<(), String> {
+    match user_token_entry()?.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+// ─── Parked carts (Task #175) ────────────────────────────────────────
+// Scratchpad rows the cashier set aside mid-sale. Scoped to a pos_session_id
+// so logging out / closing the shift purges that cashier's carts.
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParkedCart {
+    pub id: String,
+    pub pos_session_id: i64,
+    pub label: String,
+    pub customer_note: Option<String>,
+    pub lines: serde_json::Value,
+    pub grand_total: f64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[tauri::command]
+fn parked_carts_list(pos_session_id: i64) -> Result<Vec<ParkedCart>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, pos_session_id, label, customer_note, cart_json, grand_total, created_at, updated_at
+         FROM parked_carts WHERE pos_session_id = ?1 ORDER BY updated_at DESC"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([pos_session_id], |r| {
+        let lines_json: String = r.get(4)?;
+        Ok(ParkedCart {
+            id: r.get(0)?,
+            pos_session_id: r.get(1)?,
+            label: r.get(2)?,
+            customer_note: r.get(3)?,
+            lines: serde_json::from_str(&lines_json).unwrap_or(serde_json::json!([])),
+            grand_total: r.get(5)?,
+            created_at: r.get(6)?,
+            updated_at: r.get(7)?,
+        })
+    }).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[derive(Deserialize)]
+struct ParkedCartUpsert {
+    cart: serde_json::Value,
+}
+
+#[tauri::command]
+fn parked_carts_upsert(args: ParkedCartUpsert) -> Result<(), String> {
+    let c = &args.cart;
+    let id = c.get("id").and_then(|v| v.as_str()).ok_or("missing id")?;
+    let sid = c.get("posSessionId").and_then(|v| v.as_i64()).ok_or("missing posSessionId")?;
+    let label = c.get("label").and_then(|v| v.as_str()).unwrap_or("");
+    let note  = c.get("customerNote").and_then(|v| v.as_str());
+    let lines = c.get("lines").cloned().unwrap_or(serde_json::json!([]));
+    let total = c.get("grandTotal").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let created_at = c.get("createdAt").and_then(|v| v.as_str()).unwrap_or("");
+    let updated_at = c.get("updatedAt").and_then(|v| v.as_str()).unwrap_or("");
+
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO parked_carts (id, pos_session_id, label, customer_note, cart_json, grand_total, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(id) DO UPDATE SET
+            label=excluded.label,
+            customer_note=excluded.customer_note,
+            cart_json=excluded.cart_json,
+            grand_total=excluded.grand_total,
+            updated_at=excluded.updated_at",
+        rusqlite::params![
+            id, sid, label, note,
+            serde_json::to_string(&lines).unwrap_or_else(|_| "[]".into()),
+            total, created_at, updated_at,
+        ],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn parked_carts_delete(id: String) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM parked_carts WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn parked_carts_clear_session(pos_session_id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM parked_carts WHERE pos_session_id = ?1", [pos_session_id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn main() {
     env_logger::init();
     tauri::Builder::default()
@@ -121,6 +243,13 @@ fn main() {
             save_device_token,
             load_device_token,
             clear_device_token,
+            save_user_token,
+            load_user_token,
+            clear_user_token,
+            parked_carts_list,
+            parked_carts_upsert,
+            parked_carts_delete,
+            parked_carts_clear_session,
             zatca::generate_qr,
             zatca::decode_qr,
             peripherals::list_printers,

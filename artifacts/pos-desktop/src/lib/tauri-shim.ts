@@ -102,6 +102,67 @@ export async function clearDeviceToken(): Promise<void> {
   localStorage.removeItem(STORE_KEY);
 }
 
+// ─── Cashier user token (Task #175) ─────────────────────────────────
+// Separate slot from the device token. Device identifies the machine and
+// lives forever; user token identifies the human operator and rotates on
+// every login / logout. Stored in the same secure backend (keyring in
+// Tauri, localStorage in browser dev).
+const USER_TOKEN_KEY    = "pos_desktop_user_token";
+const CASHIER_CTX_KEY   = "pos_desktop_cashier_context";
+
+export async function saveUserToken(token: string): Promise<void> {
+  if (IS_TAURI) {
+    try { await invoke("save_user_token", { token }); return; }
+    catch (e) { console.warn("Tauri save_user_token failed, falling back", e); }
+  }
+  localStorage.setItem(USER_TOKEN_KEY, token);
+}
+export async function loadUserToken(): Promise<string | null> {
+  if (IS_TAURI) {
+    try { return await invoke<string | null>("load_user_token"); }
+    catch { /* fall through */ }
+  }
+  return localStorage.getItem(USER_TOKEN_KEY);
+}
+export async function clearUserToken(): Promise<void> {
+  if (IS_TAURI) {
+    try { await invoke("clear_user_token"); return; }
+    catch { /* fall through */ }
+  }
+  localStorage.removeItem(USER_TOKEN_KEY);
+}
+
+// Cashier context = everything the UI needs to render the topbar (who, where,
+// which terminal, which open POS session). Persisted alongside the token so
+// a hard refresh in the middle of a shift restores the same state without an
+// extra round-trip. Cleared on logout.
+export type CashierContext = {
+  userId: number;
+  username: string;
+  nameAr: string | null;
+  companyId: number;
+  companyName: string;
+  branchId: number | null;
+  branchName: string | null;
+  posTerminalId: number | null;
+  posTerminalName: string | null;
+  posSessionId: number;
+  openedAt: string;
+};
+
+export function saveCashierContext(ctx: CashierContext): void {
+  try { localStorage.setItem(CASHIER_CTX_KEY, JSON.stringify(ctx)); } catch { /* quota */ }
+}
+export function loadCashierContext(): CashierContext | null {
+  try {
+    const raw = localStorage.getItem(CASHIER_CTX_KEY);
+    return raw ? JSON.parse(raw) as CashierContext : null;
+  } catch { return null; }
+}
+export function clearCashierContext(): void {
+  try { localStorage.removeItem(CASHIER_CTX_KEY); } catch { /* ignore */ }
+}
+
 // ─── App version (read once at boot) ─────────────────────────────────
 export async function getAppVersion(): Promise<string> {
   if (IS_TAURI) {

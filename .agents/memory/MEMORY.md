@@ -2,3 +2,5 @@
 - [Module gate keys live in two places](module-gate-sync.md) — backend `COMPANY_MODULE_GATE` (permissions.ts) AND frontend group-perms arrays in `Layout.tsx` must both list any new module key, or sidebar/company-toggle silently breaks.
 - [POS Desktop sticky footer](pos-desktop-sticky-footer.md) — cart pane uses a 3-child flex column; only `linesScroll` may scroll, footer must be flex-shrink:0 or payment buttons vanish below the fold.
 - [POS Desktop pull must persist](pos-desktop-pull-must-persist.md) — `/api/sync/pull` response counts ≠ local catalog; always go through `lib/sync.ts → pullAndPersist`, never call `api.pull` directly from a component.
+- [POS Desktop two-layer auth](pos-desktop-two-auth-layers.md) — device token + cashier token live in SEPARATE keyring slots; logging out a cashier must never wipe the device binding.
+- [POS Desktop parked carts](pos-desktop-parked-carts.md) — device-only scratchpad, scoped by pos_session_id; never push to cloud; do not confuse with "الفواتير غير المرفوعة" (offline-sync queue).

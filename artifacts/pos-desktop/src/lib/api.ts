@@ -1,14 +1,18 @@
 // Typed client for the ZACOD cloud APIs consumed by the desktop POS.
-// All endpoints here were validated end-to-end in Task #174 (23/23 passing).
 //
-// Two distinct authentication flows:
-//   1. Public:  /api/public/*           — no auth header
-//   2. Activation: /api/device-licenses/activate — no auth (license key itself is the credential)
-//   3. Device:  everything else         — X-Device-Token header
+// Three distinct authentication flows now coexist:
+//   1. Public:     /api/public/*              — no auth header
+//   2. Activation: /api/device-licenses/activate — no auth (license key IS the credential)
+//   3. Device:     /api/sync/*, /api/device-licenses/{validate,deactivate}
+//                  — `X-Device-Token` header (Task #174)
+//   4. Cashier:    /api/auth/*, /api/pos-*, /api/org/branches
+//                  — `Authorization: Bearer <userToken>` (Task #175)
 //
-// The desktop app obtains the device token from POST /activate and persists it
-// in the OS secure store (see tauri-shim.ts). All subsequent /sync, /validate,
-// /deactivate calls send it as `X-Device-Token`.
+// Activation establishes the device identity (one per machine, signed by SuperAdmin
+// license). Cashier login establishes the operator identity (one per shift, signed
+// by the company's user roster). Both tokens may be present at the same time; the
+// device token never expires until revocation, while the cashier token rotates on
+// every logout/login.
 
 export type ActivateRequest = {
   licenseKey: string;
@@ -90,6 +94,67 @@ export type DownloadRelease = {
   releaseNotes: string | null;
 };
 
+// ─── Cashier auth (Task #175) ───────────────────────────────────────
+export type CashierLoginRequest = {
+  username: string;
+  password: string;
+  companyCode: string;
+};
+
+export type CashierUser = {
+  id: number;
+  username: string;
+  email: string | null;
+  role: string;
+  companyId: number | null;
+  nameAr: string | null;
+  nameEn: string | null;
+  branchIds: number[];
+  viewAllBranches: boolean;
+  company: { id: number; name: string; code: string } | null;
+};
+
+export type CashierLoginResponse = {
+  token: string;
+  sessionId: string;
+  user: CashierUser;
+};
+
+export type Branch = {
+  id: number;
+  code: string;
+  nameAr: string;
+  nameEn: string | null;
+  regionId: number | null;
+  isActive: boolean;
+};
+
+export type PosTerminal = {
+  id: number;
+  code: string;
+  nameAr: string;
+  nameEn: string | null;
+  branchId: number;
+  branchName: string | null;
+  cashBoxId: number | null;
+  cashBoxName: string | null;
+  isActive: boolean;
+  busyUserId: number | null;
+};
+
+export type PosSession = {
+  id: number;
+  companyId: number;
+  userId: number;
+  branchId: number | null;
+  cashBoxId: number | null;
+  posTerminalId: number | null;
+  openingCash: string;
+  status: "open" | "closed" | "force_closed";
+  openedAt: string;
+  closedAt: string | null;
+};
+
 // ─── Error type ──────────────────────────────────────────────────────
 export class ApiError extends Error {
   constructor(
@@ -110,12 +175,16 @@ async function parseError(r: Response): Promise<ApiError> {
 }
 
 // ─── Client factory ──────────────────────────────────────────────────
-// `timeoutMs` defaults to 15s so a hung TCP connection can't leave the UI in
-// a permanent "busy" state (e.g. spinner stuck on "جارٍ التفعيل...").
-export function createApi(opts: { baseUrl: string; deviceToken?: string | null; timeoutMs?: number }) {
+export function createApi(opts: {
+  baseUrl: string;
+  deviceToken?: string | null;
+  userToken?: string | null;
+  timeoutMs?: number;
+}) {
   const base = opts.baseUrl.replace(/\/$/, "");
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (opts.deviceToken) headers["X-Device-Token"] = opts.deviceToken;
+  if (opts.userToken)   headers["Authorization"]  = `Bearer ${opts.userToken}`;
   const timeoutMs = opts.timeoutMs ?? 15_000;
 
   async function call<T>(method: string, path: string, body?: unknown, init?: RequestInit): Promise<T> {
@@ -130,7 +199,9 @@ export function createApi(opts: { baseUrl: string; deviceToken?: string | null; 
         ...init,
       });
       if (!r.ok) throw await parseError(r);
-      return r.json() as Promise<T>;
+      // Some endpoints (DELETE) may return empty bodies; guard against that.
+      const text = await r.text();
+      return (text ? JSON.parse(text) : ({} as any)) as T;
     } catch (e: any) {
       if (e?.name === "AbortError") throw new ApiError(0, "timeout", `انتهت مهلة الاتصال بعد ${timeoutMs / 1000} ثانية`);
       throw e;
@@ -145,11 +216,11 @@ export function createApi(opts: { baseUrl: string; deviceToken?: string | null; 
     publicRelease: (country: string, platform = "win-x64") =>
       call<DownloadRelease>("GET", `/api/public/download/release?country=${encodeURIComponent(country)}&platform=${encodeURIComponent(platform)}`),
 
-    // ── Activation (license key is the credential) ────────────────────
+    // ── Activation ───────────────────────────────────────────────────
     activate: (req: ActivateRequest) =>
       call<ActivateResponse>("POST", "/api/device-licenses/activate", req),
 
-    // ── Device-authenticated (X-Device-Token) ─────────────────────────
+    // ── Device-authenticated ─────────────────────────────────────────
     validate: () => call<ValidateResponse>("POST", "/api/device-licenses/validate", {}),
     deactivate: () => call<{ ok: true; message: string }>("POST", "/api/device-licenses/deactivate", {}),
     heartbeat: (req: HeartbeatRequest = {}) =>
@@ -158,12 +229,36 @@ export function createApi(opts: { baseUrl: string; deviceToken?: string | null; 
     push: (items: PushItem[]) => call<PushResponse>("POST", "/api/sync/push", { items }),
     status: () => call<SyncStatus>("GET", "/api/sync/status"),
 
-    // Convenience for the App boot path:
-    // Returns the device's recent online status or null if the token is invalid/revoked.
     safeValidate: async (): Promise<ValidateResponse | null> => {
       try { return await call<ValidateResponse>("POST", "/api/device-licenses/validate", {}); }
       catch (e) { if (e instanceof ApiError && (e.status === 401 || e.status === 403)) return null; throw e; }
     },
+
+    // ── Cashier-authenticated (Bearer userToken) ─────────────────────
+    cashierLogin: (req: CashierLoginRequest) =>
+      call<CashierLoginResponse>("POST", "/api/auth/login", req),
+    cashierLogout: () =>
+      call<{ ok: true }>("POST", "/api/auth/logout", {}),
+    // /api/auth/me returns the user fields directly at top level (not wrapped).
+    cashierMe: () => call<CashierUser>("GET", "/api/auth/me"),
+
+    listBranches: (onlyUserBranches = true) =>
+      call<Branch[]>("GET", `/api/org/branches?onlyUserBranches=${onlyUserBranches ? 1 : 0}`),
+    listTerminals: (branchId?: number) =>
+      call<PosTerminal[]>("GET", `/api/pos-terminals${branchId ? `?branchId=${branchId}&activeOnly=1` : "?activeOnly=1"}`),
+
+    getCurrentPosSession: () =>
+      call<PosSession | null>("GET", "/api/pos-sessions/current"),
+    openPosSession: (req: {
+      branchId?: number;
+      cashBoxId?: number;
+      openingCash?: number;
+      device?: string;
+      posTerminalId?: number;
+      machineCode?: string;
+    }) => call<PosSession>("POST", "/api/pos-sessions/open", req),
+    closePosSession: (id: number, body: { closingCash?: number; notes?: string } = {}) =>
+      call<PosSession>("POST", `/api/pos-sessions/${id}/close`, body),
   };
 }
 

@@ -75,6 +75,23 @@ pub fn initialize() -> Result<()> {
             synced_at       TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_offline_inv_status ON offline_invoices(sync_status);
+
+        -- Parked carts (Task #175) — in-progress sales the cashier set aside.
+        -- Scoped to a pos_session_id so logging out / closing the shift purges
+        -- the previous cashier's carts (handled by parked_carts_clear_session).
+        -- NEVER pushed to the cloud — the cloud is the source of truth for
+        -- FINALIZED invoices; this table is scratchpad-only.
+        CREATE TABLE IF NOT EXISTS parked_carts (
+            id              TEXT PRIMARY KEY,
+            pos_session_id  INTEGER NOT NULL,
+            label           TEXT NOT NULL,
+            customer_note   TEXT,
+            cart_json       TEXT NOT NULL,
+            grand_total     REAL NOT NULL DEFAULT 0,
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_parked_session ON parked_carts(pos_session_id, updated_at DESC);
         "#,
     )?;
     // Migration: add synced_at column on DBs from earlier builds.

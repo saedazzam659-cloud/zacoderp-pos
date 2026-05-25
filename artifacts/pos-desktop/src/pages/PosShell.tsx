@@ -11,12 +11,13 @@
 // step that caused "تم السحب: 5 عميل، 184 صنف" to show on the dashboard
 // while the sales screen kept reporting "لا توجد أصناف".
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createApi, type SyncStatus } from "../lib/api";
-import { TAURI_MODE } from "../lib/tauri-shim";
+import { TAURI_MODE, type CashierContext } from "../lib/tauri-shim";
 import PeripheralsSettings from "./PeripheralsSettings";
 import SalesScreen from "./SalesScreen";
 import PendingInvoices from "./PendingInvoices";
+import ParkedCarts from "./ParkedCarts";
 import ReturnsScreen from "./ReturnsScreen";
 import CustomersAdmin from "./CustomersAdmin";
 import ItemsAdmin from "./ItemsAdmin";
@@ -24,19 +25,31 @@ import UomAdmin from "./UomAdmin";
 import UpdatesScreen from "./UpdatesScreen";
 import { countPendingInvoices } from "../lib/invoices";
 import { syncPushNow, pullAndPersist, type PushSummary, type PullSummary } from "../lib/sync";
+import { listParkedCarts } from "../lib/parkedCarts";
 
-type View = "sales" | "returns" | "pending" | "customers" | "items" | "uom" | "dashboard" | "updates";
+type View = "sales" | "returns" | "pending" | "parked" | "customers" | "items" | "uom" | "dashboard" | "updates";
 
 type Props = {
   baseUrl: string;
   deviceToken: string;
+  userToken?: string;
+  cashierContext?: CashierContext | null;
   companyName?: string;
   deviceId: number;
   onSignOut: () => void | Promise<void>;
+  onLogoutCashier?: () => void | Promise<void>;
 };
 
-export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, onSignOut }: Props) {
-  const api = useMemo(() => createApi({ baseUrl, deviceToken }), [baseUrl, deviceToken]);
+export default function PosShell({
+  baseUrl, deviceToken, userToken, cashierContext,
+  companyName, deviceId, onSignOut, onLogoutCashier,
+}: Props) {
+  const api = useMemo(
+    () => createApi({ baseUrl, deviceToken, userToken: userToken ?? null }),
+    [baseUrl, deviceToken, userToken],
+  );
+  const posSessionId = cashierContext?.posSessionId ?? 0;
+  const effectiveCompanyName = companyName ?? cashierContext?.companyName;
 
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [pulled, setPulled] = useState<PullSummary | null>(null);
@@ -46,7 +59,18 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
   const [showPeripherals, setShowPeripherals] = useState(false);
   const [view, setView] = useState<View>("sales");
   const [pendingCount, setPendingCount] = useState(0);
+  const [parkedCount, setParkedCount] = useState(0);
   const [pushSummary, setPushSummary] = useState<PushSummary | null>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const refreshParkedCount = useCallback(async () => {
+    if (!posSessionId) { setParkedCount(0); return; }
+    try { setParkedCount((await listParkedCarts(posSessionId)).length); }
+    catch { /* ignore — view itself surfaces errors */ }
+  }, [posSessionId]);
+
+  // Re-count parked carts when switching views (cheap, scoped to session).
+  useEffect(() => { void refreshParkedCount(); }, [view, refreshParkedCount]);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,10 +124,19 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
     } catch (e: any) { setActionErr(e?.message ?? "deactivate failed"); setBusy(null); }
   }
 
+  async function doLogoutCashier() {
+    if (!onLogoutCashier) return;
+    if (!confirm("هل تريد تسجيل خروج الكاشير الحالي وإغلاق الوردية؟")) return;
+    setLoggingOut(true);
+    try { await onLogoutCashier(); }
+    catch (e: any) { setActionErr(e?.message ?? "logout failed"); setLoggingOut(false); }
+  }
+
   const navItems: Array<{ id: View; icon: string; label: string; badge?: number }> = [
     { id: "sales",     icon: "🛒", label: "بيع" },
     { id: "returns",   icon: "↩️", label: "مرتجع" },
-    { id: "pending",   icon: "📋", label: "معلّقة", badge: pendingCount > 0 ? pendingCount : undefined },
+    { id: "parked",    icon: "📌", label: "السلال المعلّقة", badge: parkedCount > 0 ? parkedCount : undefined },
+    { id: "pending",   icon: "📋", label: "الفواتير غير المرفوعة", badge: pendingCount > 0 ? pendingCount : undefined },
     { id: "customers", icon: "👥", label: "العملاء" },
     { id: "items",     icon: "📦", label: "الأصناف" },
     { id: "uom",       icon: "📐", label: "وحدات القياس" },
@@ -157,20 +190,42 @@ export default function PosShell({ baseUrl, deviceToken, companyName, deviceId, 
         {/* Top utility bar */}
         <header style={S.topbar}>
           <div>
-            {companyName && <div style={S.companyName}>{companyName}</div>}
+            {effectiveCompanyName && <div style={S.companyName}>{effectiveCompanyName}</div>}
             <div style={S.viewTitle}>{labelFor(view)}</div>
           </div>
           <div style={S.topRight}>
+            {cashierContext && (
+              <div style={S.cashierChip} title={`جلسة #${cashierContext.posSessionId} — مفتوحة منذ ${new Date(cashierContext.openedAt).toLocaleString("ar-SA")}`}>
+                <span style={S.cashierIcon}>👤</span>
+                <div style={S.cashierInfo}>
+                  <div style={S.cashierName}>{cashierContext.nameAr || cashierContext.username}</div>
+                  <div style={S.cashierMeta}>
+                    {cashierContext.branchName ?? "—"}
+                    {cashierContext.posTerminalName ? ` · ${cashierContext.posTerminalName}` : ""}
+                  </div>
+                </div>
+              </div>
+            )}
             <SyncIndicator status={status} heartbeatErr={heartbeatErr} />
             <div style={S.deviceChip}>جهاز #{deviceId || "—"}</div>
+            {onLogoutCashier && (
+              <button onClick={doLogoutCashier} disabled={loggingOut} style={S.logoutBtn} title="تسجيل خروج الكاشير وإغلاق الوردية">
+                {loggingOut ? "..." : "🚪 خروج"}
+              </button>
+            )}
           </div>
         </header>
 
         {/* Page content */}
         <main style={S.content}>
-          {view === "sales" && <SalesScreen companyName={companyName} />}
-          {view === "returns" && <ReturnsScreen companyName={companyName} />}
-          {view === "pending" && <div style={S.pagePad}><PendingInvoices companyName={companyName} /></div>}
+          {view === "sales" && <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} />}
+          {view === "returns" && <ReturnsScreen companyName={effectiveCompanyName} />}
+          {view === "pending" && <div style={S.pagePad}><PendingInvoices companyName={effectiveCompanyName} /></div>}
+          {view === "parked" && (
+            <div style={S.pagePad}>
+              <ParkedCarts posSessionId={posSessionId} onResume={() => setView("sales")} />
+            </div>
+          )}
           {view === "customers" && <div style={S.pagePad}><CustomersAdmin /></div>}
           {view === "items" && <div style={S.pagePad}><ItemsAdmin /></div>}
           {view === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
@@ -208,7 +263,8 @@ function labelFor(v: View): string {
   return {
     sales: "نقطة البيع",
     returns: "مرتجع المبيعات",
-    pending: "الفواتير المعلّقة",
+    parked: "السلال المعلّقة",
+    pending: "الفواتير غير المرفوعة",
     customers: "العملاء",
     items: "الأصناف",
     uom: "وحدات القياس",
@@ -390,6 +446,20 @@ const S = {
   syncOk: { display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "#f0fdf4", color: "#166534", border: "1px solid #bbf7d0", borderRadius: 999, fontSize: 12, fontWeight: 600 } as const,
   syncDown: { display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca", borderRadius: 999, fontSize: 12, fontWeight: 600 } as const,
   deviceChip: { padding: "6px 12px", background: "#f1f5f9", color: "#475569", borderRadius: 999, fontSize: 12, fontFamily: "ui-monospace, monospace" } as const,
+  cashierChip: {
+    display: "flex", alignItems: "center", gap: 8,
+    padding: "4px 12px 4px 8px", background: "#eff6ff", border: "1px solid #bfdbfe",
+    borderRadius: 999, color: "#1e3a8a", fontSize: 12,
+  } as const,
+  cashierIcon: { fontSize: 16 } as const,
+  cashierInfo: { display: "flex", flexDirection: "column" as const, lineHeight: 1.2 } as const,
+  cashierName: { fontWeight: 700, color: "#0f172a" } as const,
+  cashierMeta: { fontSize: 10, color: "#64748b" } as const,
+  logoutBtn: {
+    padding: "6px 12px", background: "#fff", color: "#dc2626",
+    border: "1px solid #fecaca", borderRadius: 8, cursor: "pointer",
+    fontSize: 12, fontWeight: 600, fontFamily: "inherit",
+  } as const,
 
   content: { flex: 1, overflow: "hidden", minHeight: 0, display: "flex", flexDirection: "column" as const } as const,
   pagePad: { padding: 24, overflowY: "auto" as const, flex: 1 } as const,
