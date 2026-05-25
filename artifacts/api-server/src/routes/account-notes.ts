@@ -31,6 +31,35 @@ import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { contractingProjectsTable } from "@workspace/db";
+
+/**
+ * Resolve & validate a `projectId` belongs to the current company.
+ * Returns `null` when the caller omitted or cleared the field; throws-via-
+ * response (and returns a sentinel `undefined` cast) when ownership fails so
+ * the calling handler aborts after sending 400. We deliberately mirror the
+ * party/account ownership pattern in this file.
+ */
+async function resolveProjectId(
+  raw: any,
+  cid: number,
+  res: import("express").Response,
+): Promise<number | null> {
+  if (raw === null || raw === undefined || raw === "" ) return null;
+  const pid = Number(raw);
+  if (!Number.isInteger(pid) || pid <= 0) {
+    res.status(400).json({ error: "معرّف المشروع غير صالح" });
+    throw new Error("invalid projectId");
+  }
+  const [p] = await db.select({ id: contractingProjectsTable.id })
+    .from(contractingProjectsTable)
+    .where(and(eq(contractingProjectsTable.id, pid), eq(contractingProjectsTable.companyId, cid)));
+  if (!p) {
+    res.status(400).json({ error: "المشروع غير موجود في هذه الشركة" });
+    throw new Error("project not in company");
+  }
+  return pid;
+}
 
 const router = Router();
 router.use(extractAuth);
@@ -184,6 +213,11 @@ router.post("/", async (req, res) => {
     totalAmount: total.toFixed(4),
     description: b.description ?? null,
     notes: b.notes ?? null,
+    operationNumber: b.operationNumber?.toString().trim() || null,
+    referenceNumber: b.referenceNumber?.toString().trim() || null,
+    referenceDate:   b.referenceDate || null,
+    costCenter:      b.costCenter?.toString().trim() || null,
+    projectId:       await resolveProjectId(b.projectId, cid, res),
     status: "draft",
     createdBy: (req as any).authUser?.id ?? null,
   }).returning();
@@ -255,6 +289,11 @@ router.put("/:id", async (req, res) => {
     totalAmount:      total.toFixed(4),
     description:      b.description ?? existing.description,
     notes:            b.notes       ?? existing.notes,
+    operationNumber:  b.operationNumber !== undefined ? (b.operationNumber?.toString().trim() || null) : existing.operationNumber,
+    referenceNumber:  b.referenceNumber !== undefined ? (b.referenceNumber?.toString().trim() || null) : existing.referenceNumber,
+    referenceDate:    b.referenceDate   !== undefined ? (b.referenceDate || null) : existing.referenceDate,
+    costCenter:       b.costCenter      !== undefined ? (b.costCenter?.toString().trim() || null) : existing.costCenter,
+    projectId:        b.projectId       !== undefined ? await resolveProjectId(b.projectId, cid, res) : existing.projectId,
     branchId:         b.branchId    ?? existing.branchId,
     updatedAt:        new Date(),
   }).where(eq(accountNotesTable.id, id));
@@ -320,18 +359,22 @@ router.post("/:id/post", async (req, res) => {
       const partyLabel = isCustomer ? "عميل" : "مورد";
       const desc = `${noteLabel} ${partyLabel} ${n.noteNumber} - ${party?.nameAr ?? `#${n.partyId}`}`;
 
+      // Propagate the header cost-centre code (when set) to every JE line
+      // so cost-centre filtered reports pick the note up. JE-line column is
+      // text-typed by convention — see schema/journalEntries.ts.
+      const cc = n.costCenter || null;
       const lines: any[] = [];
       if (partyOnRight) {
-        lines.push({ accountId: n.contraAccountId, debit: amount.toFixed(2), credit: "0.00", description: desc, sortOrder: 0 });
+        lines.push({ accountId: n.contraAccountId, debit: amount.toFixed(2), credit: "0.00", description: desc, sortOrder: 0, costCenter: cc });
         if (n.vatEnabled && vatAmt > 0) {
-          lines.push({ accountId: n.vatAccountId!, debit: vatAmt.toFixed(2), credit: "0.00", description: `ضريبة القيمة المضافة - ${n.noteNumber}`, sortOrder: 1 });
+          lines.push({ accountId: n.vatAccountId!, debit: vatAmt.toFixed(2), credit: "0.00", description: `ضريبة القيمة المضافة - ${n.noteNumber}`, sortOrder: 1, costCenter: cc });
         }
-        lines.push({ accountId: n.partyAccountId, debit: "0.00", credit: total.toFixed(2), description: desc, sortOrder: 2 });
+        lines.push({ accountId: n.partyAccountId, debit: "0.00", credit: total.toFixed(2), description: desc, sortOrder: 2, costCenter: cc });
       } else {
-        lines.push({ accountId: n.partyAccountId, debit: total.toFixed(2), credit: "0.00", description: desc, sortOrder: 0 });
-        lines.push({ accountId: n.contraAccountId, debit: "0.00", credit: amount.toFixed(2), description: desc, sortOrder: 1 });
+        lines.push({ accountId: n.partyAccountId, debit: total.toFixed(2), credit: "0.00", description: desc, sortOrder: 0, costCenter: cc });
+        lines.push({ accountId: n.contraAccountId, debit: "0.00", credit: amount.toFixed(2), description: desc, sortOrder: 1, costCenter: cc });
         if (n.vatEnabled && vatAmt > 0) {
-          lines.push({ accountId: n.vatAccountId!, debit: "0.00", credit: vatAmt.toFixed(2), description: `ضريبة القيمة المضافة - ${n.noteNumber}`, sortOrder: 2 });
+          lines.push({ accountId: n.vatAccountId!, debit: "0.00", credit: vatAmt.toFixed(2), description: `ضريبة القيمة المضافة - ${n.noteNumber}`, sortOrder: 2, costCenter: cc });
         }
       }
 

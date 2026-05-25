@@ -45,6 +45,11 @@ export interface AccountNote {
   totalAmount: string;
   description: string | null;
   notes: string | null;
+  operationNumber: string | null;
+  referenceNumber: string | null;
+  referenceDate:   string | null;
+  costCenter:      string | null;
+  projectId:       number | null;
   status: AccountNoteStatus;
   journalEntryId: number | null;
 }

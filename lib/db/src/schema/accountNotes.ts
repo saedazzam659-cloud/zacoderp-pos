@@ -48,6 +48,17 @@ export const accountNotesTable = pgTable("account_notes", {
   totalAmount:      numeric("total_amount",{ precision: 18, scale: 4 }).notNull().default("0"),
   description:      text("description"),
   notes:            text("notes"),
+  // ── Optional metadata fields (added to mirror the voucher form) ─────
+  // operationNumber: free-text reference to an internal operation/ticket
+  // referenceNumber + referenceDate: external document being noted
+  // costCenter:      stores the cost-centre CODE (matches JE line convention)
+  // projectId:       soft-ref to `contracting_projects.id` (no hard FK,
+  //                  same pattern as `partyId` above)
+  operationNumber:  text("operation_number"),
+  referenceNumber:  text("reference_number"),
+  referenceDate:    date("reference_date"),
+  costCenter:       text("cost_center"),
+  projectId:        integer("project_id"),
   status:           accountNoteStatusEnum("status").notNull().default("draft"),
   journalEntryId:   integer("journal_entry_id"),
   createdAt:        timestamp("created_at").defaultNow().notNull(),
