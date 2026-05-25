@@ -108,74 +108,30 @@ jobs:
           workspaces: artifacts/pos-desktop/src-tauri -> target
           shared-key: pos-desktop-${{ env.RUST_VERSION }}
 
-      # ─── 3b. OpenSSL (use runner's pre-installed copy, for SQLCipher) ─
-      - name: Configure OpenSSL environment
+      # ─── 3b. SQLCipher build prerequisites (vendored OpenSSL) ────────
+      # rusqlite's `bundled-sqlcipher-vendored-openssl` feature statically
+      # links OpenSSL into the binary — no runtime DLLs need to be bundled
+      # into the MSI. Building OpenSSL from source on Windows needs NASM
+      # and Perl; both ship pre-installed on `windows-latest`. We verify
+      # them here so a missing tool fails loudly instead of mid-cargo.
+      - name: Verify NASM + Perl (vendored OpenSSL build deps)
         shell: pwsh
         run: |
-          # windows-latest runners already have OpenSSL pre-installed.
-          # Locate it, install via choco only if missing.
-          $candidates = @(
-            "C:\Program Files\OpenSSL-Win64",
-            "C:\Program Files\OpenSSL",
-            "C:\OpenSSL-Win64"
-          )
-          $openSslDir = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $openSslDir) {
-            Write-Host "OpenSSL not found, installing via choco..."
-            choco install openssl -y --no-progress --ignore-checksums
-            $openSslDir = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          $nasm = (Get-Command nasm.exe -ErrorAction SilentlyContinue)
+          if (-not $nasm) {
+            Write-Host "NASM not on PATH, installing via choco..."
+            choco install nasm -y --no-progress
+            $env:PATH = "C:\Program Files\NASM;$env:PATH"
+            echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          } else {
+            Write-Host "NASM found at: $($nasm.Path)"
           }
-          if (-not $openSslDir) {
-            Write-Error "OpenSSL still not found after install attempt"
+          $perl = (Get-Command perl.exe -ErrorAction SilentlyContinue)
+          if (-not $perl) {
+            Write-Error "Perl is required to build vendored OpenSSL but was not found on PATH."
             exit 1
           }
-          Write-Host "Using OpenSSL at: $openSslDir"
-          # Find the lib dir that actually contains libssl.lib
-          $libCandidates = @(
-            "$openSslDir\lib\VC\x64\MD",
-            "$openSslDir\lib\VC\x64\MT",
-            "$openSslDir\lib\VC",
-            "$openSslDir\lib"
-          )
-          $libDir = $libCandidates | Where-Object { (Test-Path "$_\libssl.lib") -or (Test-Path "$_\libssl_static.lib") } | Select-Object -First 1
-          if (-not $libDir) { $libDir = "$openSslDir\lib\VC\x64\MD" }
-          Write-Host "OPENSSL_LIB_DIR=$libDir"
-          echo "OPENSSL_DIR=$openSslDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "OPENSSL_LIB_DIR=$libDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "OPENSSL_INCLUDE_DIR=$openSslDir\include" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "OPENSSL_STATIC=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Get-ChildItem $openSslDir -Recurse -Filter "libssl*.lib" | Select-Object FullName
-
-      # ─── 3c. Stage OpenSSL runtime DLLs for MSI bundling ─────────────
-      - name: Copy OpenSSL DLLs into src-tauri/openssl-dlls
-        shell: pwsh
-        run: |
-          $dest = "src-tauri\openssl-dlls"
-          New-Item -ItemType Directory -Force -Path $dest | Out-Null
-          $binCandidates = @(
-            "$env:OPENSSL_DIR\bin",
-            "$env:OPENSSL_DIR"
-          )
-          $found = $false
-          foreach ($dir in $binCandidates) {
-            if (Test-Path $dir) {
-              $dlls = @(Get-ChildItem $dir -Filter "libcrypto*.dll" -ErrorAction SilentlyContinue)
-              $dlls += @(Get-ChildItem $dir -Filter "libssl*.dll" -ErrorAction SilentlyContinue)
-              if ($dlls.Count -gt 0) {
-                foreach ($d in $dlls) {
-                  Copy-Item $d.FullName -Destination $dest -Force
-                  Write-Host "Copied: $($d.Name)"
-                }
-                $found = $true
-                break
-              }
-            }
-          }
-          if (-not $found) {
-            Write-Error "No OpenSSL runtime DLLs found under $env:OPENSSL_DIR"
-            exit 1
-          }
-          Get-ChildItem $dest
+          Write-Host "Perl found at: $($perl.Path)"
 
       # ─── 4. WiX (MSI installer) ─────────────────────────────────────
       # Tauri 2.x uses WiX 3.x. windows-latest has it pre-installed, but we
