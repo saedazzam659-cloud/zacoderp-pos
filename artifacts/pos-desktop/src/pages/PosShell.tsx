@@ -25,14 +25,16 @@ import ItemsAdmin from "./ItemsAdmin";
 import UomAdmin from "./UomAdmin";
 import UpdatesScreen from "./UpdatesScreen";
 import StandaloneUsersAdmin from "./StandaloneUsersAdmin";
+import ExpiryReport from "./ExpiryReport";
 import { countPendingInvoices } from "../lib/invoices";
+import { getVertical, type Vertical } from "../lib/standalone";
 import { syncPushNow, pullAndPersist, type PushSummary, type PullSummary } from "../lib/sync";
 import { listParkedCarts } from "../lib/parkedCarts";
 import { flushPendingSessionCloses, countPendingCloses } from "../lib/pendingSessionCloses";
 import { useLatestVersion } from "../lib/updates";
 import type { OfflineLicensePayload, LocalSession } from "../lib/standalone";
 
-type View = "sales" | "returns" | "pending" | "parked" | "daily" | "customers" | "items" | "uom" | "dashboard" | "updates" | "users";
+type View = "sales" | "returns" | "pending" | "parked" | "daily" | "customers" | "items" | "uom" | "dashboard" | "updates" | "users" | "expiry";
 
 type Props = {
   baseUrl: string;
@@ -83,6 +85,11 @@ export default function PosShell({
   const [loggingOut, setLoggingOut] = useState(false);
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const { latest: latestRelease, isNewer: updateAvailable } = useLatestVersion(baseUrl);
+  // Vertical preset (Task #200) — drives pharmacy-only nav (تقرير الصلاحية).
+  // Read once on mount; switching verticals requires a re-launch.
+  const [vertical, setVerticalState] = useState<Vertical>("general");
+  useEffect(() => { void getVertical().then((v) => v && setVerticalState(v)); }, []);
+  const isPharmacy = vertical === "pharmacy";
 
   const refreshParkedCount = useCallback(async () => {
     if (!posSessionId) { setParkedCount(0); return; }
@@ -110,7 +117,7 @@ export default function PosShell({
     const tick = async () => {
       try {
         await api.heartbeat({
-          appVersion: "0.4.0",
+          appVersion: "0.5.0",
           ...(posSessionId ? { posSessionId } : {}),
         });
         const s = await api.status();
@@ -179,6 +186,7 @@ export default function PosShell({
     { id: "customers", icon: "👥", label: "العملاء" },
     { id: "items",     icon: "📦", label: "الأصناف" },
     { id: "uom",       icon: "📐", label: "وحدات القياس" },
+    ...(isPharmacy ? [{ id: "expiry" as View, icon: "⏳", label: "تقرير الصلاحية" }] : []),
     ...(standaloneSession?.role === "admin"
       ? [{ id: "users" as View, icon: "🔐", label: "المستخدمون" }]
       : []),
@@ -191,6 +199,7 @@ export default function PosShell({
     { id: "customers", icon: "👥", label: "العملاء" },
     { id: "items",     icon: "📦", label: "الأصناف" },
     { id: "uom",       icon: "📐", label: "وحدات القياس" },
+    ...(isPharmacy ? [{ id: "expiry" as View, icon: "⏳", label: "تقرير الصلاحية" }] : []),
     { id: "dashboard", icon: "📊", label: "لوحة التحكم" },
     { id: "updates",   icon: "🔄", label: "التحديثات" },
   ];
@@ -203,7 +212,7 @@ export default function PosShell({
           <div style={S.brandIcon}>zacode</div>
           <div>
             <div style={S.brandName}>ZACOD POS</div>
-            <div style={S.brandTag}>v0.4.0 — {standalone ? "standalone" : "desktop"}</div>
+            <div style={S.brandTag}>v0.5.0 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
           </div>
         </div>
 
@@ -311,6 +320,7 @@ export default function PosShell({
           {view === "customers" && <div style={S.pagePad}><CustomersAdmin /></div>}
           {view === "items" && <div style={S.pagePad}><ItemsAdmin /></div>}
           {view === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
+          {view === "expiry" && isPharmacy && <div style={S.pagePad}><ExpiryReport /></div>}
           {!standalone && view === "dashboard" && (
             <div style={S.pagePad}>
               <DashboardView
@@ -344,6 +354,7 @@ function labelFor(v: View): string {
     customers: "العملاء",
     items: "الأصناف",
     uom: "وحدات القياس",
+    expiry: "تقرير الصلاحية",
     dashboard: "لوحة التحكم",
     updates: "التحديثات",
     users: "المستخدمون المحليون",

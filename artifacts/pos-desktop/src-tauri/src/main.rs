@@ -316,6 +316,9 @@ fn main() {
             items::find_item_by_barcode,
             items::seed_demo_items,
             items::upsert_items_from_cloud,
+            items::list_expiring_items,
+            items::insert_local_item,
+            items::update_local_item_extended,
             customers::list_customers,
             customers::upsert_customers_from_cloud,
             customers::create_customer_local,
@@ -338,6 +341,8 @@ fn main() {
             standalone::standalone_delete_user,
             standalone::standalone_change_password,
             standalone::standalone_wipe_all,
+            standalone::standalone_get_setting,
+            standalone::standalone_set_setting,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

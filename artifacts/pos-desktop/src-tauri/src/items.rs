@@ -23,9 +23,24 @@ pub struct LocalItem {
     pub barcode: Option<String>,
     pub sale_price: f64,
     pub vat_rate: f64,
+    // Pharmacy vertical (Task #200) — all nullable, present only when the
+    // store's vertical is "pharmacy". Generic catalog rows leave these NULL.
+    pub active_ingredient: Option<String>,
+    pub dosage_form: Option<String>,
+    pub strength: Option<String>,
+    pub manufacturer: Option<String>,
+    pub requires_prescription: Option<bool>,
+    pub controlled: Option<bool>,
+    pub expiry_date: Option<String>, // ISO date 'YYYY-MM-DD'
+    pub batch_no: Option<String>,
 }
 
-const MAX_ROWS: i64 = 500;
+const MAX_ROWS: i64 = 2000;
+
+const SELECT_COLS: &str =
+    "id, cloud_id, code, name_ar, name_en, barcode, sale_price, vat_rate, \
+     active_ingredient, dosage_form, strength, manufacturer, requires_prescription, \
+     controlled, expiry_date, batch_no";
 
 fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalItem> {
     Ok(LocalItem {
@@ -37,18 +52,58 @@ fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalItem> {
         barcode: row.get(5)?,
         sale_price: row.get(6)?,
         vat_rate: row.get(7)?,
+        active_ingredient: row.get(8).ok().flatten(),
+        dosage_form: row.get(9).ok().flatten(),
+        strength: row.get(10).ok().flatten(),
+        manufacturer: row.get(11).ok().flatten(),
+        requires_prescription: row.get::<_, Option<i64>>(12).ok().flatten().map(|v| v != 0),
+        controlled: row.get::<_, Option<i64>>(13).ok().flatten().map(|v| v != 0),
+        expiry_date: row.get(14).ok().flatten(),
+        batch_no: row.get(15).ok().flatten(),
     })
+}
+
+/// Lazy migration: ensure all the Task #200 + #199 columns exist on
+/// `items_local`. `db.rs` is shared scaffolding we don't edit, so we
+/// PRAGMA-sniff and ALTER as needed on every open. SQLite ALTER ADD COLUMN
+/// is idempotent only via this sniff (there's no IF NOT EXISTS form).
+fn ensure_schema(conn: &rusqlite::Connection) -> Result<()> {
+    let existing: std::collections::HashSet<String> = conn
+        .prepare("PRAGMA table_info(items_local)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(|c| c.ok())
+        .collect();
+    let want: &[(&str, &str)] = &[
+        ("uom_id", "INTEGER"),
+        ("active_ingredient", "TEXT"),
+        ("dosage_form", "TEXT"),
+        ("strength", "TEXT"),
+        ("manufacturer", "TEXT"),
+        ("requires_prescription", "INTEGER"),
+        ("controlled", "INTEGER"),
+        ("expiry_date", "TEXT"),
+        ("batch_no", "TEXT"),
+    ];
+    for (col, ty) in want {
+        if !existing.contains(*col) {
+            conn.execute(&format!("ALTER TABLE items_local ADD COLUMN {col} {ty}"), [])?;
+        }
+    }
+    Ok(())
 }
 
 pub fn list(search: Option<&str>) -> Result<Vec<LocalItem>> {
     let conn = db::open()?;
-    let sql = "SELECT id, cloud_id, code, name_ar, name_en, barcode, sale_price, vat_rate
-               FROM items_local
-               WHERE (?1 IS NULL OR name_ar LIKE ?2 OR barcode LIKE ?2 OR code LIKE ?2)
-               ORDER BY name_ar
-               LIMIT ?3";
+    ensure_schema(&conn)?;
+    let sql = format!(
+        "SELECT {SELECT_COLS} FROM items_local
+         WHERE (?1 IS NULL OR name_ar LIKE ?2 OR barcode LIKE ?2 OR code LIKE ?2
+                OR active_ingredient LIKE ?2)
+         ORDER BY name_ar
+         LIMIT ?3"
+    );
     let pattern = search.map(|s| format!("%{}%", s));
-    let mut stmt = conn.prepare(sql)?;
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(
         rusqlite::params![search, pattern, MAX_ROWS],
         row_to_item,
@@ -60,12 +115,30 @@ pub fn list(search: Option<&str>) -> Result<Vec<LocalItem>> {
 
 pub fn find_by_barcode(barcode: &str) -> Result<Option<LocalItem>> {
     let conn = db::open()?;
-    let mut stmt = conn.prepare(
-        "SELECT id, cloud_id, code, name_ar, name_en, barcode, sale_price, vat_rate
-         FROM items_local WHERE barcode = ?1 LIMIT 1",
-    )?;
+    ensure_schema(&conn)?;
+    let sql = format!("SELECT {SELECT_COLS} FROM items_local WHERE barcode = ?1 LIMIT 1");
+    let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query_map([barcode], row_to_item)?;
     if let Some(r) = rows.next() { Ok(Some(r?)) } else { Ok(None) }
+}
+
+/// Items whose expiry_date is non-NULL and within the next `within_days`
+/// days (or already expired, when `within_days >= 0`). Sorted soonest-first.
+pub fn list_expiring(within_days: i64) -> Result<Vec<LocalItem>> {
+    let conn = db::open()?;
+    ensure_schema(&conn)?;
+    let sql = format!(
+        "SELECT {SELECT_COLS} FROM items_local
+         WHERE expiry_date IS NOT NULL
+           AND julianday(expiry_date) - julianday('now') <= ?1
+         ORDER BY expiry_date ASC
+         LIMIT ?2"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params![within_days, MAX_ROWS], row_to_item)?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r?); }
+    Ok(out)
 }
 
 pub fn seed_demo_if_empty() -> Result<u64> {
@@ -131,6 +204,82 @@ pub fn seed_demo_items() -> Result<u64, String> {
     seed_demo_if_empty().map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn list_expiring_items(within_days: i64) -> Result<Vec<LocalItem>, String> {
+    list_expiring(within_days).map_err(|e| e.to_string())
+}
+
+/// Insert a pharmacy / extended-metadata item directly into SQLite. Used by
+/// the EDA catalog import (and any future bulk seed) — does NOT enqueue a
+/// cloud push since in standalone mode there is no cloud, and in cloud mode
+/// the seed is a one-time local-only operation.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub fn insert_local_item(
+    code: Option<String>,
+    name_ar: String,
+    name_en: Option<String>,
+    barcode: Option<String>,
+    sale_price: f64,
+    vat_rate: f64,
+    active_ingredient: Option<String>,
+    dosage_form: Option<String>,
+    strength: Option<String>,
+    manufacturer: Option<String>,
+    requires_prescription: Option<bool>,
+    expiry_date: Option<String>,
+    batch_no: Option<String>,
+) -> Result<i64, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    ensure_schema(&conn).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO items_local
+           (code, name_ar, name_en, barcode, sale_price, vat_rate,
+            active_ingredient, dosage_form, strength, manufacturer,
+            requires_prescription, expiry_date, batch_no, updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,CURRENT_TIMESTAMP)",
+        rusqlite::params![
+            code, name_ar, name_en, barcode, sale_price, vat_rate,
+            active_ingredient, dosage_form, strength, manufacturer,
+            requires_prescription.map(|b| if b { 1_i64 } else { 0_i64 }),
+            expiry_date, batch_no,
+        ],
+    ).map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Update the pharmacy-extended fields on an existing row. Used by the
+/// items admin form when the operator edits expiry/batch info.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub fn update_local_item_extended(
+    id: i64,
+    active_ingredient: Option<String>,
+    dosage_form: Option<String>,
+    strength: Option<String>,
+    manufacturer: Option<String>,
+    requires_prescription: Option<bool>,
+    expiry_date: Option<String>,
+    batch_no: Option<String>,
+) -> Result<u64, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    ensure_schema(&conn).map_err(|e| e.to_string())?;
+    let n = conn.execute(
+        "UPDATE items_local SET
+           active_ingredient = ?1, dosage_form = ?2, strength = ?3,
+           manufacturer = ?4, requires_prescription = ?5,
+           expiry_date = ?6, batch_no = ?7,
+           updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?8",
+        rusqlite::params![
+            active_ingredient, dosage_form, strength, manufacturer,
+            requires_prescription.map(|b| if b { 1_i64 } else { 0_i64 }),
+            expiry_date, batch_no, id,
+        ],
+    ).map_err(|e| e.to_string())?;
+    Ok(n as u64)
+}
+
 // ─── Cloud-pull upsert ───────────────────────────────────────────────
 //
 // Called by the JS-side `upsertItemsFromCloud` after a successful
@@ -158,18 +307,7 @@ pub fn upsert_items_from_cloud(rows: Vec<CloudItem>) -> Result<u64, String> {
 
 fn upsert_from_cloud(rows: Vec<CloudItem>) -> Result<u64> {
     let mut conn = db::open()?;
-    // Lazy migration: add uom_id column if missing. db.rs is shared
-    // scaffolding we don't edit, and older installs predate the UoM
-    // feature — without this, JS would silently lose uomId on every push.
-    // SQLite has no IF NOT EXISTS for ADD COLUMN, so we sniff PRAGMA first.
-    let has_uom: bool = conn
-        .prepare("PRAGMA table_info(items_local)")?
-        .query_map([], |r| r.get::<_, String>(1))?
-        .filter_map(|c| c.ok())
-        .any(|c| c == "uom_id");
-    if !has_uom {
-        conn.execute("ALTER TABLE items_local ADD COLUMN uom_id INTEGER", [])?;
-    }
+    ensure_schema(&conn)?;
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     // Make cloud_id the upsert key. The unique index on items_local.cloud_id
     // already exists via the table definition (UNIQUE in db.rs).

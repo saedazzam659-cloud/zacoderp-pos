@@ -1,0 +1,527 @@
+﻿code,nameAr,nameEn,barcode,salePrice,vatRate,activeIngredient,dosageForm,strength,manufacturer,requiresPrescription
+DRG-5000,Panadol 500mg أقراص,Panadol 500mg Tablet,6220701000015,20.50,14,Paracetamol,Tablet,500mg,GSK,0
+DRG-5001,Panadol Extra 500mg أقراص,Panadol Extra 500mg Tablet,6220701000022,23.50,14,Paracetamol + Caffeine,Tablet,500mg,GSK,0
+DRG-5002,Panadol Cold & Flu 500mg أقراص,Panadol Cold & Flu 500mg Tablet,6220701000039,35.00,14,Paracetamol + Pseudoephedrine,Tablet,500mg,GSK,0
+DRG-5003,Panadol Night 500mg أقراص,Panadol Night 500mg Tablet,6220701000046,38.00,14,Paracetamol + Diphenhydramine,Tablet,500mg,GSK,0
+DRG-5004,Panadol Joint 665mg أقراص,Panadol Joint 665mg Tablet,6220701000053,42.00,14,Paracetamol,Tablet,665mg,GSK,0
+DRG-5005,Panadol Children Syrup 120mg/5ml شراب,Panadol Children Syrup 120mg/5ml Syrup,6220701000060,22.50,14,Paracetamol,Syrup,120mg/5ml,GSK,0
+DRG-5006,Panadol Baby Drops 100mg/ml نقط,Panadol Baby Drops 100mg/ml Drops,6220701000077,25.50,14,Paracetamol,Drops,100mg/ml,GSK,0
+DRG-5007,Paramol 500mg أقراص,Paramol 500mg Tablet,6220702000083,13.00,14,Paracetamol,Tablet,500mg,SEDICO,0
+DRG-5008,Paramol Suppository 125mg لبوس,Paramol Suppository 125mg Suppository,6220702000090,16.00,14,Paracetamol,Suppository,125mg,SEDICO,0
+DRG-5009,Cetal 500mg أقراص,Cetal 500mg Tablet,6220703000105,11.50,14,Paracetamol,Tablet,500mg,EVA Pharma,0
+DRG-5010,Cetal Extra 500mg أقراص,Cetal Extra 500mg Tablet,6220703000112,14.50,14,Paracetamol + Caffeine,Tablet,500mg,EVA Pharma,0
+DRG-5011,Cetal Plus 500mg أقراص,Cetal Plus 500mg Tablet,6220703000129,30.00,14,Paracetamol + Codeine,Tablet,500mg,EVA Pharma,1
+DRG-5012,Adol 500mg أقراص,Adol 500mg Tablet,6220704000135,13.00,14,Paracetamol,Tablet,500mg,Julphar,0
+DRG-5013,Adol Cold 500mg أقراص,Adol Cold 500mg Tablet,6220704000142,24.50,14,Paracetamol + Phenylephrine,Tablet,500mg,Julphar,0
+DRG-5014,Adol Extra 500mg أقراص,Adol Extra 500mg Tablet,6220704000159,17.50,14,Paracetamol + Caffeine,Tablet,500mg,Julphar,0
+DRG-5015,Brufen 400mg أقراص,Brufen 400mg Tablet,6220705000165,35.00,14,Ibuprofen,Tablet,400mg,Abbott,0
+DRG-5016,Brufen 600mg أقراص,Brufen 600mg Tablet,6220705000172,42.00,14,Ibuprofen,Tablet,600mg,Abbott,0
+DRG-5017,Brufen Syrup 100mg/5ml شراب,Brufen Syrup 100mg/5ml Syrup,6220705000189,35.00,14,Ibuprofen,Syrup,100mg/5ml,Abbott,0
+DRG-5018,Brufen Forte 200mg/5ml شراب,Brufen Forte 200mg/5ml Syrup,6220705000196,48.50,14,Ibuprofen,Syrup,200mg/5ml,Abbott,0
+DRG-5019,Brufen Gel 5% جل,Brufen Gel 5% Gel,6220705000202,52.50,14,Ibuprofen,Gel,5%,Abbott,0
+DRG-5020,Nurofen 400mg أقراص,Nurofen 400mg Tablet,6220706000218,39.00,14,Ibuprofen,Tablet,400mg,Reckitt,0
+DRG-5021,Nurofen Cold & Flu 200mg أقراص,Nurofen Cold & Flu 200mg Tablet,6220706000225,43.00,14,Ibuprofen + Pseudoephedrine,Tablet,200mg,Reckitt,0
+DRG-5022,Nurofen for Children 100mg/5ml شراب,Nurofen for Children 100mg/5ml Syrup,6220706000232,43.50,14,Ibuprofen,Syrup,100mg/5ml,Reckitt,0
+DRG-5023,Voltaren 50mg أقراص,Voltaren 50mg Tablet,6220707000248,43.50,14,Diclofenac Sodium,Tablet,50mg,Novartis,1
+DRG-5024,Voltaren 75mg أقراص,Voltaren 75mg Tablet,6220707000255,57.00,14,Diclofenac Sodium,Tablet,75mg,Novartis,1
+DRG-5025,Voltaren SR 100mg SR أقراص,Voltaren SR 100mg SR Tablet,6220707000262,67.00,14,Diclofenac Sodium,Tablet,100mg SR,Novartis,1
+DRG-5026,Voltaren Emulgel 1% جل,Voltaren Emulgel 1% Gel,6220707000279,87.50,14,Diclofenac,Gel,1%,Novartis,0
+DRG-5027,Voltaren Emulgel Forte 2% جل,Voltaren Emulgel Forte 2% Gel,6220707000286,114.50,14,Diclofenac,Gel,2%,Novartis,0
+DRG-5028,Voltaren Suppository 50mg لبوس,Voltaren Suppository 50mg Suppository,6220707000293,41.00,14,Diclofenac,Suppository,50mg,Novartis,1
+DRG-5029,Voltaren Suppository 100mg لبوس,Voltaren Suppository 100mg Suppository,6220707000309,58.00,14,Diclofenac,Suppository,100mg,Novartis,1
+DRG-5030,Voltaren Ampoule 75mg/3ml أمبول,Voltaren Ampoule 75mg/3ml Ampoule,6220707000316,29.00,14,Diclofenac,Ampoule,75mg/3ml,Novartis,1
+DRG-5031,Cataflam 25mg أقراص,Cataflam 25mg Tablet,6220708000322,28.50,14,Diclofenac Potassium,Tablet,25mg,Novartis,1
+DRG-5032,Cataflam 50mg أقراص,Cataflam 50mg Tablet,6220708000339,39.50,14,Diclofenac Potassium,Tablet,50mg,Novartis,1
+DRG-5033,Catafast 50mg أكياس,Catafast 50mg Sachet,6220708000346,59.00,14,Diclofenac Potassium,Sachet,50mg,Novartis,1
+DRG-5034,Olfen 140mg Patch,Olfen 140mg Patch,6220709000352,93.00,14,Diclofenac,Patch,140mg,Mepha,0
+DRG-5035,Mobic 7.5mg أقراص,Mobic 7.5mg Tablet,6220710000365,63.50,14,Meloxicam,Tablet,7.5mg,BI,1
+DRG-5036,Mobic 15mg أقراص,Mobic 15mg Tablet,6220710000372,83.50,14,Meloxicam,Tablet,15mg,BI,1
+DRG-5037,Celebrex 100mg كبسولات,Celebrex 100mg Capsule,6220711000388,127.00,14,Celecoxib,Capsule,100mg,Pfizer,1
+DRG-5038,Celebrex 200mg كبسولات,Celebrex 200mg Capsule,6220711000395,194.00,14,Celecoxib,Capsule,200mg,Pfizer,1
+DRG-5039,Arcoxia 60mg أقراص,Arcoxia 60mg Tablet,6220712000400,157.50,14,Etoricoxib,Tablet,60mg,MSD,1
+DRG-5040,Arcoxia 90mg أقراص,Arcoxia 90mg Tablet,6220712000417,194.50,14,Etoricoxib,Tablet,90mg,MSD,1
+DRG-5041,Arcoxia 120mg أقراص,Arcoxia 120mg Tablet,6220712000424,248.00,14,Etoricoxib,Tablet,120mg,MSD,1
+DRG-5042,Ketolgan 10mg أقراص,Ketolgan 10mg Tablet,6220713000430,35.00,14,Ketorolac,Tablet,10mg,Amoun,1
+DRG-5043,Ketolgan Ampoule 30mg/ml أمبول,Ketolgan Ampoule 30mg/ml Ampoule,6220713000447,42.00,14,Ketorolac,Ampoule,30mg/ml,Amoun,1
+DRG-5044,Solpadeine 500mg أقراص,Solpadeine 500mg Tablet,6220701000459,55.50,14,Paracetamol + Codeine,Tablet,500mg,GSK,1
+DRG-5045,Spasmofree 10mg أقراص,Spasmofree 10mg Tablet,6220703000464,19.50,14,Hyoscine,Tablet,10mg,EVA Pharma,0
+DRG-5046,Buscopan 10mg أقراص,Buscopan 10mg Tablet,6220714000477,39.00,14,Hyoscine Butylbromide,Tablet,10mg,Sanofi,0
+DRG-5047,Buscopan Plus 500mg أقراص,Buscopan Plus 500mg Tablet,6220714000484,43.00,14,Hyoscine + Paracetamol,Tablet,500mg,Sanofi,0
+DRG-5048,Buscopan Ampoule 20mg/ml أمبول,Buscopan Ampoule 20mg/ml Ampoule,6220714000491,33.50,14,Hyoscine,Ampoule,20mg/ml,Sanofi,1
+DRG-5049,Spasmocure 10mg أقراص,Spasmocure 10mg Tablet,6220715000506,16.50,14,Hyoscine,Tablet,10mg,Marcyrl,0
+DRG-5050,Aspirin 325mg أقراص,Aspirin 325mg Tablet,6220716000512,24.00,14,Acetylsalicylic Acid,Tablet,325mg,Bayer,0
+DRG-5051,Aspirin Cardio 81mg أقراص,Aspirin Cardio 81mg Tablet,6220716000529,27.00,14,Acetylsalicylic Acid,Tablet,81mg,Bayer,0
+DRG-5052,Aspocid 75mg أقراص,Aspocid 75mg Tablet,6220717000535,17.50,14,Acetylsalicylic Acid,Tablet,75mg,CID,0
+DRG-5053,Augmentin 625mg أقراص,Augmentin 625mg Tablet,6220701000541,94.50,14,Amoxicillin + Clavulanic Acid,Tablet,625mg,GSK,1
+DRG-5054,Augmentin 1g أقراص,Augmentin 1g Tablet,6220701000558,128.00,14,Amoxicillin + Clavulanic Acid,Tablet,1g,GSK,1
+DRG-5055,Augmentin 156mg/5ml معلق,Augmentin 156mg/5ml Suspension,6220701000565,58.00,14,Amoxicillin + Clavulanic Acid,Suspension,156mg/5ml,GSK,1
+DRG-5056,Augmentin 228mg/5ml معلق,Augmentin 228mg/5ml Suspension,6220701000572,72.00,14,Amoxicillin + Clavulanic Acid,Suspension,228mg/5ml,GSK,1
+DRG-5057,Augmentin 312mg/5ml معلق,Augmentin 312mg/5ml Suspension,6220701000589,88.50,14,Amoxicillin + Clavulanic Acid,Suspension,312mg/5ml,GSK,1
+DRG-5058,Augmentin 457mg/5ml معلق,Augmentin 457mg/5ml Suspension,6220701000596,112.50,14,Amoxicillin + Clavulanic Acid,Suspension,457mg/5ml,GSK,1
+DRG-5059,Hibiotic 625mg أقراص,Hibiotic 625mg Tablet,6220703000600,76.00,14,Amoxicillin + Clavulanic Acid,Tablet,625mg,EVA Pharma,1
+DRG-5060,Hibiotic 312mg/5ml معلق,Hibiotic 312mg/5ml Suspension,6220703000617,60.00,14,Amoxicillin + Clavulanic Acid,Suspension,312mg/5ml,EVA Pharma,1
+DRG-5061,Curam 625mg أقراص,Curam 625mg Tablet,6220718000626,83.50,14,Amoxicillin + Clavulanic Acid,Tablet,625mg,Sandoz,1
+DRG-5062,Curam 457mg/5ml معلق,Curam 457mg/5ml Suspension,6220718000633,96.50,14,Amoxicillin + Clavulanic Acid,Suspension,457mg/5ml,Sandoz,1
+DRG-5063,Megamox 625mg أقراص,Megamox 625mg Tablet,6220719000649,70.00,14,Amoxicillin + Clavulanic Acid,Tablet,625mg,Hikma,1
+DRG-5064,Megamox 457mg/5ml معلق,Megamox 457mg/5ml Suspension,6220719000656,94.00,14,Amoxicillin + Clavulanic Acid,Suspension,457mg/5ml,Hikma,1
+DRG-5065,Amoxil 500mg كبسولات,Amoxil 500mg Capsule,6220701000664,60.50,14,Amoxicillin,Capsule,500mg,GSK,1
+DRG-5066,Amoxil 250mg/5ml معلق,Amoxil 250mg/5ml Suspension,6220701000671,31.50,14,Amoxicillin,Suspension,250mg/5ml,GSK,1
+DRG-5067,E-Mox 500mg كبسولات,E-Mox 500mg Capsule,6220720000683,31.00,14,Amoxicillin,Capsule,500mg,EIPICO,1
+DRG-5068,E-Mox 250mg/5ml معلق,E-Mox 250mg/5ml Suspension,6220720000690,18.00,14,Amoxicillin,Suspension,250mg/5ml,EIPICO,1
+DRG-5069,Flumox 500mg كبسولات,Flumox 500mg Capsule,6220720000706,52.00,14,Amoxicillin + Flucloxacillin,Capsule,500mg,EIPICO,1
+DRG-5070,Flumox 250mg/5ml معلق,Flumox 250mg/5ml Suspension,6220720000713,45.50,14,Amoxicillin + Flucloxacillin,Suspension,250mg/5ml,EIPICO,1
+DRG-5071,Klacid 500mg أقراص,Klacid 500mg Tablet,6220705000721,152.50,14,Clarithromycin,Tablet,500mg,Abbott,1
+DRG-5072,Klacid 250mg أقراص,Klacid 250mg Tablet,6220705000738,96.00,14,Clarithromycin,Tablet,250mg,Abbott,1
+DRG-5073,Klacid 125mg/5ml معلق,Klacid 125mg/5ml Suspension,6220705000745,86.00,14,Clarithromycin,Suspension,125mg/5ml,Abbott,1
+DRG-5074,Klaricid 500mg أقراص,Klaricid 500mg Tablet,6220705000752,166.50,14,Clarithromycin,Tablet,500mg,Abbott,1
+DRG-5075,Macrol 500mg أقراص,Macrol 500mg Tablet,6220703000761,93.50,14,Clarithromycin,Tablet,500mg,EVA Pharma,1
+DRG-5076,Zithromax 250mg كبسولات,Zithromax 250mg Capsule,6220711000777,127.00,14,Azithromycin,Capsule,250mg,Pfizer,1
+DRG-5077,Zithromax 500mg أقراص,Zithromax 500mg Tablet,6220711000784,154.00,14,Azithromycin,Tablet,500mg,Pfizer,1
+DRG-5078,Zithromax 200mg/5ml معلق,Zithromax 200mg/5ml Suspension,6220711000791,97.50,14,Azithromycin,Suspension,200mg/5ml,Pfizer,1
+DRG-5079,Aziwok 250mg كبسولات,Aziwok 250mg Capsule,6220721000804,61.50,14,Azithromycin,Capsule,250mg,Sigma,1
+DRG-5080,Aziwok 500mg أقراص,Aziwok 500mg Tablet,6220721000811,91.00,14,Azithromycin,Tablet,500mg,Sigma,1
+DRG-5081,Azithro 500mg أقراص,Azithro 500mg Tablet,6220703000822,55.00,14,Azithromycin,Tablet,500mg,EVA Pharma,1
+DRG-5082,Azimax 500mg كبسولات,Azimax 500mg Capsule,6220701000831,95.00,14,Azithromycin,Capsule,500mg,GSK,1
+DRG-5083,Cipro 500mg أقراص,Cipro 500mg Tablet,6220716000840,88.50,14,Ciprofloxacin,Tablet,500mg,Bayer,1
+DRG-5084,Cipro 750mg أقراص,Cipro 750mg Tablet,6220716000857,122.50,14,Ciprofloxacin,Tablet,750mg,Bayer,1
+DRG-5085,Ciprocin 500mg أقراص,Ciprocin 500mg Tablet,6220720000867,39.00,14,Ciprofloxacin,Tablet,500mg,EIPICO,1
+DRG-5086,Ciprodar 500mg أقراص,Ciprodar 500mg Tablet,6220722000872,43.00,14,Ciprofloxacin,Tablet,500mg,Riyadh Pharma,1
+DRG-5087,Tavanic 500mg أقراص,Tavanic 500mg Tablet,6220714000880,196.50,14,Levofloxacin,Tablet,500mg,Sanofi,1
+DRG-5088,Tavanic 750mg أقراص,Tavanic 750mg Tablet,6220714000897,263.50,14,Levofloxacin,Tablet,750mg,Sanofi,1
+DRG-5089,Avalox 400mg أقراص,Avalox 400mg Tablet,6220716000901,227.00,14,Moxifloxacin,Tablet,400mg,Bayer,1
+DRG-5090,Rocephin 1g فيال,Rocephin 1g Vial,6220723000918,94.00,14,Ceftriaxone,Vial,1g,Roche,1
+DRG-5091,Cefotax 1g فيال,Cefotax 1g Vial,6220720000928,47.50,14,Cefotaxime,Vial,1g,EIPICO,1
+DRG-5092,Suprax 400mg أقراص,Suprax 400mg Tablet,6220714000934,154.50,14,Cefixime,Tablet,400mg,Sanofi,1
+DRG-5093,Suprax 100mg/5ml معلق,Suprax 100mg/5ml Suspension,6220714000941,118.00,14,Cefixime,Suspension,100mg/5ml,Sanofi,1
+DRG-5094,Cefix 400mg كبسولات,Cefix 400mg Capsule,6220703000952,88.00,14,Cefixime,Capsule,400mg,EVA Pharma,1
+DRG-5095,Cefix 100mg/5ml معلق,Cefix 100mg/5ml Suspension,6220703000969,62.00,14,Cefixime,Suspension,100mg/5ml,EVA Pharma,1
+DRG-5096,Ospexin 500mg كبسولات,Ospexin 500mg Capsule,6220724000979,58.50,14,Cephalexin,Capsule,500mg,Biochemie,1
+DRG-5097,Keflex 500mg كبسولات,Keflex 500mg Capsule,6220725000985,92.50,14,Cephalexin,Capsule,500mg,Lilly,1
+DRG-5098,Velosef 500mg كبسولات,Velosef 500mg Capsule,6220726000991,63.00,14,Cephradine,Capsule,500mg,BMS,1
+DRG-5099,Velosef 250mg/5ml معلق,Velosef 250mg/5ml Suspension,6220726001004,46.00,14,Cephradine,Suspension,250mg/5ml,BMS,1
+DRG-5100,Duricef 500mg كبسولات,Duricef 500mg Capsule,6220726001011,83.50,14,Cefadroxil,Capsule,500mg,BMS,1
+DRG-5101,Duricef 250mg/5ml معلق,Duricef 250mg/5ml Suspension,6220726001028,56.50,14,Cefadroxil,Suspension,250mg/5ml,BMS,1
+DRG-5102,Zinnat 500mg أقراص,Zinnat 500mg Tablet,6220701001036,197.00,14,Cefuroxime,Tablet,500mg,GSK,1
+DRG-5103,Zinnat 125mg/5ml معلق,Zinnat 125mg/5ml Suspension,6220701001043,124.00,14,Cefuroxime,Suspension,125mg/5ml,GSK,1
+DRG-5104,Flagyl 500mg أقراص,Flagyl 500mg Tablet,6220714001054,24.50,14,Metronidazole,Tablet,500mg,Sanofi,1
+DRG-5105,Flagyl 125mg/5ml معلق,Flagyl 125mg/5ml Suspension,6220714001061,17.50,14,Metronidazole,Suspension,125mg/5ml,Sanofi,1
+DRG-5106,Amrizole 500mg أقراص,Amrizole 500mg Tablet,6220713001079,15.00,14,Metronidazole,Tablet,500mg,Amoun,1
+DRG-5107,Doxycin 100mg كبسولات,Doxycin 100mg Capsule,6220720001086,32.00,14,Doxycycline,Capsule,100mg,EIPICO,1
+DRG-5108,Vibramycin 100mg كبسولات,Vibramycin 100mg Capsule,6220711001095,55.00,14,Doxycycline,Capsule,100mg,Pfizer,1
+DRG-5109,Tetracycline 250mg كبسولات,Tetracycline 250mg Capsule,6220720001109,18.50,14,Tetracycline,Capsule,250mg,EIPICO,1
+DRG-5110,Bactrim 960mg أقراص,Bactrim 960mg Tablet,6220723001113,42.50,14,Sulfamethoxazole + Trimethoprim,Tablet,960mg,Roche,1
+DRG-5111,Bactrim 240mg/5ml معلق,Bactrim 240mg/5ml Suspension,6220723001120,39.00,14,Sulfamethoxazole + Trimethoprim,Suspension,240mg/5ml,Roche,1
+DRG-5112,Septrin 960mg أقراص,Septrin 960mg Tablet,6220701001135,36.00,14,Sulfamethoxazole + Trimethoprim,Tablet,960mg,GSK,1
+DRG-5113,Vancocin 500mg فيال,Vancocin 500mg Vial,6220725001142,286.50,14,Vancomycin,Vial,500mg,Lilly,1
+DRG-5114,Tienam 500mg فيال,Tienam 500mg Vial,6220712001155,453.50,14,Imipenem + Cilastatin,Vial,500mg,MSD,1
+DRG-5115,Meronem 1g فيال,Meronem 1g Vial,6220727001164,627.00,14,Meropenem,Vial,1g,AstraZeneca,1
+DRG-5116,Unasyn 750mg فيال,Unasyn 750mg Vial,6220711001170,124.00,14,Ampicillin + Sulbactam,Vial,750mg,Pfizer,1
+DRG-5117,Comtrex 500mg أقراص,Comtrex 500mg Tablet,6220726001189,47.50,14,Paracetamol + Phenylephrine + Chlorpheniramine,Tablet,500mg,BMS,0
+DRG-5118,Coldfree 500mg أقراص,Coldfree 500mg Tablet,6220703001195,21.50,14,Paracetamol + Phenylephrine,Tablet,500mg,EVA Pharma,0
+DRG-5119,Flu-Out 500mg أقراص,Flu-Out 500mg Tablet,6220702001202,31.00,14,Paracetamol + Phenylephrine,Tablet,500mg,SEDICO,0
+DRG-5120,Theraflu 500mg أكياس,Theraflu 500mg Sachet,6220701001210,12.00,14,Paracetamol + Phenylephrine + Pheniramine,Sachet,500mg,GSK,0
+DRG-5121,Coldcalm 500mg أقراص,Coldcalm 500mg Tablet,6220720001222,15.00,14,Paracetamol,Tablet,500mg,EIPICO,0
+DRG-5122,Decongestyl 60mg أقراص,Decongestyl 60mg Tablet,6220715001237,22.50,14,Pseudoephedrine + Triprolidine,Tablet,60mg,Marcyrl,0
+DRG-5123,Histop 10mg أقراص,Histop 10mg Tablet,6220703001249,15.50,14,Loratadine,Tablet,10mg,EVA Pharma,0
+DRG-5124,Claritine 10mg أقراص,Claritine 10mg Tablet,6220716001250,39.00,14,Loratadine,Tablet,10mg,Bayer,0
+DRG-5125,Claritine 5mg/5ml شراب,Claritine 5mg/5ml Syrup,6220716001267,43.00,14,Loratadine,Syrup,5mg/5ml,Bayer,0
+DRG-5126,Allerfast 10mg أقراص,Allerfast 10mg Tablet,6220728001279,17.50,14,Loratadine,Tablet,10mg,Pharco,0
+DRG-5127,Loratin 10mg أقراص,Loratin 10mg Tablet,6220720001284,12.50,14,Loratadine,Tablet,10mg,EIPICO,0
+DRG-5128,Zyrtec 10mg أقراص,Zyrtec 10mg Tablet,6220729001292,44.00,14,Cetirizine,Tablet,10mg,UCB,0
+DRG-5129,Zyrtec 10mg/ml نقط,Zyrtec 10mg/ml Drops,6220729001308,51.00,14,Cetirizine,Drops,10mg/ml,UCB,0
+DRG-5130,Alerid 10mg أقراص,Alerid 10mg Tablet,6220703001317,18.50,14,Cetirizine,Tablet,10mg,EVA Pharma,0
+DRG-5131,Sinarest 500mg أقراص,Sinarest 500mg Tablet,6220720001321,27.50,14,Paracetamol + Phenylephrine + Chlorpheniramine,Tablet,500mg,EIPICO,0
+DRG-5132,Rhinathiol 5% شراب,Rhinathiol 5% Syrup,6220714001337,48.00,14,Carbocisteine,Syrup,5%,Sanofi,0
+DRG-5133,Mucosol 200mg أكياس,Mucosol 200mg Sachet,6220715001343,38.00,14,Acetylcysteine,Sachet,200mg,Marcyrl,0
+DRG-5134,Mucotec 600mg أكياس,Mucotec 600mg Sachet,6220728001354,52.00,14,Acetylcysteine,Sachet,600mg,Pharco,0
+DRG-5135,Mucophyllin 100mg/5ml شراب,Mucophyllin 100mg/5ml Syrup,6220715001367,32.50,14,Acetylcysteine,Syrup,100mg/5ml,Marcyrl,0
+DRG-5136,Brovix 4mg/5ml شراب,Brovix 4mg/5ml Syrup,6220703001379,19.50,14,Bromhexine,Syrup,4mg/5ml,EVA Pharma,0
+DRG-5137,Bisolvon 8mg أقراص,Bisolvon 8mg Tablet,6220710001386,29.00,14,Bromhexine,Tablet,8mg,BI,0
+DRG-5138,Bisolvon 4mg/5ml شراب,Bisolvon 4mg/5ml Syrup,6220710001393,33.00,14,Bromhexine,Syrup,4mg/5ml,BI,0
+DRG-5139,Tussiflex 15mg/5ml شراب,Tussiflex 15mg/5ml Syrup,6220720001406,33.50,14,Dextromethorphan,Syrup,15mg/5ml,EIPICO,0
+DRG-5140,Notussil 15mg/5ml شراب,Notussil 15mg/5ml Syrup,6220703001416,26.50,14,Dextromethorphan,Syrup,15mg/5ml,EVA Pharma,0
+DRG-5141,Codilar 10mg/5ml شراب,Codilar 10mg/5ml Syrup,6220720001420,47.00,14,Codeine + Promethazine,Syrup,10mg/5ml,EIPICO,1
+DRG-5142,Toplexil 1.65mg/5ml شراب,Toplexil 1.65mg/5ml Syrup,6220714001436,57.00,14,Oxomemazine,Syrup,1.65mg/5ml,Sanofi,0
+DRG-5143,Salinol 2mg/5ml شراب,Salinol 2mg/5ml Syrup,6220703001447,34.50,14,Salbutamol,Syrup,2mg/5ml,EVA Pharma,0
+DRG-5144,Ventolin 100mcg/dose بخاخ,Ventolin 100mcg/dose Inhaler,6220701001456,94.50,14,Salbutamol,Inhaler,100mcg/dose,GSK,0
+DRG-5145,Ventolin 2mg/5ml شراب,Ventolin 2mg/5ml Syrup,6220701001463,48.00,14,Salbutamol,Syrup,2mg/5ml,GSK,0
+DRG-5146,Ventolin 4mg أقراص,Ventolin 4mg Tablet,6220701001470,32.00,14,Salbutamol,Tablet,4mg,GSK,0
+DRG-5147,Symbicort 160/4.5mcg بخاخ,Symbicort 160/4.5mcg Inhaler,6220727001485,352.00,14,Budesonide + Formoterol,Inhaler,160/4.5mcg,AstraZeneca,1
+DRG-5148,Foster 100/6mcg بخاخ,Foster 100/6mcg Inhaler,6220730001496,285.50,14,Beclomethasone + Formoterol,Inhaler,100/6mcg,Chiesi,1
+DRG-5149,Seretide 25/125mcg بخاخ,Seretide 25/125mcg Inhaler,6220701001500,322.50,14,Salmeterol + Fluticasone,Inhaler,25/125mcg,GSK,1
+DRG-5150,Seretide Diskus 50/250mcg بخاخ,Seretide Diskus 50/250mcg Inhaler,6220701001517,386.00,14,Salmeterol + Fluticasone,Inhaler,50/250mcg,GSK,1
+DRG-5151,Singulair 10mg أقراص,Singulair 10mg Tablet,6220712001520,153.00,14,Montelukast,Tablet,10mg,MSD,1
+DRG-5152,Singulair 5mg chew أقراص,Singulair 5mg chew Tablet,6220712001537,126.50,14,Montelukast,Tablet,5mg chew,MSD,1
+DRG-5153,Singulair 4mg أكياس,Singulair 4mg Sachet,6220712001544,113.50,14,Montelukast,Sachet,4mg,MSD,1
+DRG-5154,Romilast 10mg أقراص,Romilast 10mg Tablet,6220703001553,67.00,14,Montelukast,Tablet,10mg,EVA Pharma,1
+DRG-5155,Nexium 40mg كبسولات,Nexium 40mg Capsule,6220727001560,194.00,14,Esomeprazole,Capsule,40mg,AstraZeneca,1
+DRG-5156,Nexium 20mg كبسولات,Nexium 20mg Capsule,6220727001577,157.50,14,Esomeprazole,Capsule,20mg,AstraZeneca,1
+DRG-5157,Nexium Sachet 10mg أكياس,Nexium Sachet 10mg Sachet,6220727001584,124.50,14,Esomeprazole,Sachet,10mg,AstraZeneca,1
+DRG-5158,Controloc 40mg أقراص,Controloc 40mg Tablet,6220731001594,128.00,14,Pantoprazole,Tablet,40mg,Takeda,1
+DRG-5159,Controloc 20mg أقراص,Controloc 20mg Tablet,6220731001600,88.00,14,Pantoprazole,Tablet,20mg,Takeda,1
+DRG-5160,Pantazol 40mg أقراص,Pantazol 40mg Tablet,6220703001614,42.00,14,Pantoprazole,Tablet,40mg,EVA Pharma,1
+DRG-5161,Pantoloc 40mg أقراص,Pantoloc 40mg Tablet,6220714001627,95.50,14,Pantoprazole,Tablet,40mg,Sanofi,1
+DRG-5162,Losec 20mg كبسولات,Losec 20mg Capsule,6220727001638,92.50,14,Omeprazole,Capsule,20mg,AstraZeneca,1
+DRG-5163,Losec 40mg كبسولات,Losec 40mg Capsule,6220727001645,156.00,14,Omeprazole,Capsule,40mg,AstraZeneca,1
+DRG-5164,Gastrazole 20mg كبسولات,Gastrazole 20mg Capsule,6220720001659,20.00,14,Omeprazole,Capsule,20mg,EIPICO,1
+DRG-5165,Omepak 20mg كبسولات,Omepak 20mg Capsule,6220703001669,19.50,14,Omeprazole,Capsule,20mg,EVA Pharma,1
+DRG-5166,Pariet 20mg أقراص,Pariet 20mg Tablet,6220732001678,223.50,14,Rabeprazole,Tablet,20mg,Eisai,1
+DRG-5167,Rani 150mg أقراص,Rani 150mg Tablet,6220703001683,14.00,14,Ranitidine,Tablet,150mg,EVA Pharma,0
+DRG-5168,Zantac 150mg أقراص,Zantac 150mg Tablet,6220701001692,37.00,14,Ranitidine,Tablet,150mg,GSK,0
+DRG-5169,Famo 40mg أقراص,Famo 40mg Tablet,6220728001705,24.50,14,Famotidine,Tablet,40mg,Pharco,0
+DRG-5170,Maalox 500ml معلق,Maalox 500ml Suspension,6220714001719,44.50,14,Aluminium Hydroxide + Magnesium,Suspension,500ml,Sanofi,0
+DRG-5171,Maalox 400mg أقراص,Maalox 400mg Tablet,6220714001726,35.00,14,Aluminium Hydroxide + Magnesium,Tablet,400mg,Sanofi,0
+DRG-5172,Mucogel 500ml معلق,Mucogel 500ml Suspension,6220703001737,25.00,14,Aluminium + Magnesium,Suspension,500ml,EVA Pharma,0
+DRG-5173,Gaviscon 500ml معلق,Gaviscon 500ml Suspension,6220706001741,72.00,14,Sodium Alginate,Suspension,500ml,Reckitt,0
+DRG-5174,Gaviscon 500mg أقراص,Gaviscon 500mg Tablet,6220706001758,58.50,14,Sodium Alginate,Tablet,500mg,Reckitt,0
+DRG-5175,Gaviscon Double 500ml معلق,Gaviscon Double 500ml Suspension,6220706001765,92.50,14,Sodium Alginate,Suspension,500ml,Reckitt,0
+DRG-5176,Antodine 40mg أقراص,Antodine 40mg Tablet,6220720001772,19.00,14,Famotidine,Tablet,40mg,EIPICO,0
+DRG-5177,Motilium 10mg أقراص,Motilium 10mg Tablet,6220733001783,46.00,14,Domperidone,Tablet,10mg,J&J,0
+DRG-5178,Motilium 5mg/5ml معلق,Motilium 5mg/5ml Suspension,6220733001790,56.50,14,Domperidone,Suspension,5mg/5ml,J&J,0
+DRG-5179,Motinorm 10mg أقراص,Motinorm 10mg Tablet,6220703001805,20.50,14,Domperidone,Tablet,10mg,EVA Pharma,0
+DRG-5180,Primperan 10mg أقراص,Primperan 10mg Tablet,6220714001818,20.00,14,Metoclopramide,Tablet,10mg,Sanofi,0
+DRG-5181,Primperan 5mg/5ml شراب,Primperan 5mg/5ml Syrup,6220714001825,21.00,14,Metoclopramide,Syrup,5mg/5ml,Sanofi,0
+DRG-5182,Primperan Ampoule 10mg/2ml أمبول,Primperan Ampoule 10mg/2ml Ampoule,6220714001832,14.50,14,Metoclopramide,Ampoule,10mg/2ml,Sanofi,0
+DRG-5183,Spasmonil 40mg أقراص,Spasmonil 40mg Tablet,6220713001840,15.50,14,Drotaverine,Tablet,40mg,Amoun,0
+DRG-5184,No-Spa 40mg أقراص,No-Spa 40mg Tablet,6220714001856,35.00,14,Drotaverine,Tablet,40mg,Sanofi,0
+DRG-5185,Duspatalin 135mg أقراص,Duspatalin 135mg Tablet,6220705001865,75.00,14,Mebeverine,Tablet,135mg,Abbott,0
+DRG-5186,Duspatalin Retard 200mg كبسولات,Duspatalin Retard 200mg Capsule,6220705001872,92.00,14,Mebeverine,Capsule,200mg,Abbott,0
+DRG-5187,Colofac 135mg أقراص,Colofac 135mg Tablet,6220705001889,88.50,14,Mebeverine,Tablet,135mg,Abbott,0
+DRG-5188,Imodium 2mg كبسولات,Imodium 2mg Capsule,6220733001899,35.50,14,Loperamide,Capsule,2mg,J&J,0
+DRG-5189,Antinal 200mg كبسولات,Antinal 200mg Capsule,6220720001901,29.00,14,Nifuroxazide,Capsule,200mg,EIPICO,0
+DRG-5190,Antinal 220mg/5ml معلق,Antinal 220mg/5ml Suspension,6220720001918,36.00,14,Nifuroxazide,Suspension,220mg/5ml,EIPICO,0
+DRG-5191,Streptoquin combo أقراص,Streptoquin combo Tablet,6220720001925,26.50,14,Streptomycin + Sulfa,Tablet,combo,EIPICO,0
+DRG-5192,Smecta 3g أكياس,Smecta 3g Sachet,6220734001935,16.50,14,Diosmectite,Sachet,3g,Ipsen,0
+DRG-5193,Lacteol 340mg أكياس,Lacteol 340mg Sachet,6220735001941,27.00,14,Lactobacillus,Sachet,340mg,Adare,0
+DRG-5194,Lacteol 340mg كبسولات,Lacteol 340mg Capsule,6220735001958,21.00,14,Lactobacillus,Capsule,340mg,Adare,0
+DRG-5195,Hyoscine 10mg أقراص,Hyoscine 10mg Tablet,6220720001963,16.50,14,Hyoscine,Tablet,10mg,EIPICO,0
+DRG-5196,Bilaxoral 5mg أقراص,Bilaxoral 5mg Tablet,6220720001970,11.50,14,Bisacodyl,Tablet,5mg,EIPICO,0
+DRG-5197,Dulcolax 5mg أقراص,Dulcolax 5mg Tablet,6220710001980,35.00,14,Bisacodyl,Tablet,5mg,BI,0
+DRG-5198,Dulcolax 10mg لبوس,Dulcolax 10mg Suppository,6220710001997,28.00,14,Bisacodyl,Suppository,10mg,BI,0
+DRG-5199,Lactulose 3.35g/5ml شراب,Lactulose 3.35g/5ml Syrup,6220703002000,42.00,14,Lactulose,Syrup,3.35g/5ml,EVA Pharma,0
+DRG-5200,Duphalac 670mg/ml شراب,Duphalac 670mg/ml Syrup,6220705002015,75.50,14,Lactulose,Syrup,670mg/ml,Abbott,0
+DRG-5201,Microlax 5ml Enema,Microlax 5ml Enema,6220733002025,19.50,14,Sodium Citrate,Enema,5ml,J&J,0
+DRG-5202,Ursofalk 250mg كبسولات,Ursofalk 250mg Capsule,6220736002039,196.00,14,Ursodeoxycholic Acid,Capsule,250mg,Falk,1
+DRG-5203,Ursofalk 500mg أقراص,Ursofalk 500mg Tablet,6220736002046,283.00,14,Ursodeoxycholic Acid,Tablet,500mg,Falk,1
+DRG-5204,Concor 5mg أقراص,Concor 5mg Tablet,6220737002052,86.50,14,Bisoprolol,Tablet,5mg,Merck,1
+DRG-5205,Concor 10mg أقراص,Concor 10mg Tablet,6220737002069,123.50,14,Bisoprolol,Tablet,10mg,Merck,1
+DRG-5206,Concor 2.5mg أقراص,Concor 2.5mg Tablet,6220737002076,60.00,14,Bisoprolol,Tablet,2.5mg,Merck,1
+DRG-5207,Concor Cor 2.5mg أقراص,Concor Cor 2.5mg Tablet,6220737002083,64.00,14,Bisoprolol,Tablet,2.5mg,Merck,1
+DRG-5208,Bisocard 5mg أقراص,Bisocard 5mg Tablet,6220728002092,44.50,14,Bisoprolol,Tablet,5mg,Pharco,1
+DRG-5209,Tenormin 50mg أقراص,Tenormin 50mg Tablet,6220727002109,57.50,14,Atenolol,Tablet,50mg,AstraZeneca,1
+DRG-5210,Tenormin 100mg أقراص,Tenormin 100mg Tablet,6220727002116,91.00,14,Atenolol,Tablet,100mg,AstraZeneca,1
+DRG-5211,Inderal 40mg أقراص,Inderal 40mg Tablet,6220727002123,42.00,14,Propranolol,Tablet,40mg,AstraZeneca,1
+DRG-5212,Carvid 6.25mg أقراص,Carvid 6.25mg Tablet,6220703002130,35.00,14,Carvedilol,Tablet,6.25mg,EVA Pharma,1
+DRG-5213,Carvid 25mg أقراص,Carvid 25mg Tablet,6220703002147,68.50,14,Carvedilol,Tablet,25mg,EVA Pharma,1
+DRG-5214,Nebilet 5mg أقراص,Nebilet 5mg Tablet,6220738002150,122.50,14,Nebivolol,Tablet,5mg,Berlin-Chemie,1
+DRG-5215,Norvasc 5mg أقراص,Norvasc 5mg Tablet,6220711002160,76.00,14,Amlodipine,Tablet,5mg,Pfizer,1
+DRG-5216,Norvasc 10mg أقراص,Norvasc 10mg Tablet,6220711002177,113.00,14,Amlodipine,Tablet,10mg,Pfizer,1
+DRG-5217,Amlor 5mg أقراص,Amlor 5mg Tablet,6220711002184,59.50,14,Amlodipine,Tablet,5mg,Pfizer,1
+DRG-5218,Myodura 5mg أقراص,Myodura 5mg Tablet,6220703002192,20.50,14,Amlodipine,Tablet,5mg,EVA Pharma,1
+DRG-5219,Capoten 25mg أقراص,Capoten 25mg Tablet,6220726002209,40.00,14,Captopril,Tablet,25mg,BMS,1
+DRG-5220,Capoten 50mg أقراص,Capoten 50mg Tablet,6220726002216,57.00,14,Captopril,Tablet,50mg,BMS,1
+DRG-5221,Renitec 5mg أقراص,Renitec 5mg Tablet,6220712002220,57.50,14,Enalapril,Tablet,5mg,MSD,1
+DRG-5222,Renitec 20mg أقراص,Renitec 20mg Tablet,6220712002237,94.50,14,Enalapril,Tablet,20mg,MSD,1
+DRG-5223,Triatec 5mg أقراص,Triatec 5mg Tablet,6220714002242,91.00,14,Ramipril,Tablet,5mg,Sanofi,1
+DRG-5224,Triatec 10mg أقراص,Triatec 10mg Tablet,6220714002259,125.00,14,Ramipril,Tablet,10mg,Sanofi,1
+DRG-5225,Cozaar 50mg أقراص,Cozaar 50mg Tablet,6220712002268,122.00,14,Losartan,Tablet,50mg,MSD,1
+DRG-5226,Cozaar 100mg أقراص,Cozaar 100mg Tablet,6220712002275,195.50,14,Losartan,Tablet,100mg,MSD,1
+DRG-5227,Losar 50mg أقراص,Losar 50mg Tablet,6220703002284,42.50,14,Losartan,Tablet,50mg,EVA Pharma,1
+DRG-5228,Diovan 80mg أقراص,Diovan 80mg Tablet,6220707002297,156.00,14,Valsartan,Tablet,80mg,Novartis,1
+DRG-5229,Diovan 160mg أقراص,Diovan 160mg Tablet,6220707002303,223.00,14,Valsartan,Tablet,160mg,Novartis,1
+DRG-5230,Co-Diovan 80/12.5mg أقراص,Co-Diovan 80/12.5mg Tablet,6220707002310,196.50,14,Valsartan + HCT,Tablet,80/12.5mg,Novartis,1
+DRG-5231,Aprovel 150mg أقراص,Aprovel 150mg Tablet,6220714002327,153.50,14,Irbesartan,Tablet,150mg,Sanofi,1
+DRG-5232,Aprovel 300mg أقراص,Aprovel 300mg Tablet,6220714002334,227.00,14,Irbesartan,Tablet,300mg,Sanofi,1
+DRG-5233,CoAprovel 150/12.5mg أقراص,CoAprovel 150/12.5mg Tablet,6220714002341,194.00,14,Irbesartan + HCT,Tablet,150/12.5mg,Sanofi,1
+DRG-5234,Micardis 40mg أقراص,Micardis 40mg Tablet,6220710002352,197.50,14,Telmisartan,Tablet,40mg,BI,1
+DRG-5235,Micardis 80mg أقراص,Micardis 80mg Tablet,6220710002369,284.50,14,Telmisartan,Tablet,80mg,BI,1
+DRG-5236,MicardisPlus 40/12.5mg أقراص,MicardisPlus 40/12.5mg Tablet,6220710002376,228.00,14,Telmisartan + HCT,Tablet,40/12.5mg,BI,1
+DRG-5237,Lasix 40mg أقراص,Lasix 40mg Tablet,6220714002389,22.00,14,Furosemide,Tablet,40mg,Sanofi,1
+DRG-5238,Lasix Ampoule 20mg/2ml أمبول,Lasix Ampoule 20mg/2ml Ampoule,6220714002396,15.00,14,Furosemide,Ampoule,20mg/2ml,Sanofi,1
+DRG-5239,Aldactone 25mg أقراص,Aldactone 25mg Tablet,6220711002405,38.50,14,Spironolactone,Tablet,25mg,Pfizer,1
+DRG-5240,Aldactone 100mg أقراص,Aldactone 100mg Tablet,6220711002412,82.50,14,Spironolactone,Tablet,100mg,Pfizer,1
+DRG-5241,Hydrazide 25/37.5mg كبسولات,Hydrazide 25/37.5mg Capsule,6220701002422,46.00,14,HCT + Triamterene,Capsule,25/37.5mg,GSK,1
+DRG-5242,Lipitor 10mg أقراص,Lipitor 10mg Tablet,6220711002436,93.00,14,Atorvastatin,Tablet,10mg,Pfizer,1
+DRG-5243,Lipitor 20mg أقراص,Lipitor 20mg Tablet,6220711002443,156.50,14,Atorvastatin,Tablet,20mg,Pfizer,1
+DRG-5244,Lipitor 40mg أقراص,Lipitor 40mg Tablet,6220711002450,223.50,14,Atorvastatin,Tablet,40mg,Pfizer,1
+DRG-5245,Lipitor 80mg أقراص,Lipitor 80mg Tablet,6220711002467,327.00,14,Atorvastatin,Tablet,80mg,Pfizer,1
+DRG-5246,Ator 20mg أقراص,Ator 20mg Tablet,6220703002475,44.00,14,Atorvastatin,Tablet,20mg,EVA Pharma,1
+DRG-5247,Crestor 10mg أقراص,Crestor 10mg Tablet,6220727002482,157.50,14,Rosuvastatin,Tablet,10mg,AstraZeneca,1
+DRG-5248,Crestor 20mg أقراص,Crestor 20mg Tablet,6220727002499,244.50,14,Rosuvastatin,Tablet,20mg,AstraZeneca,1
+DRG-5249,Rosuvast 10mg أقراص,Rosuvast 10mg Tablet,6220703002505,58.00,14,Rosuvastatin,Tablet,10mg,EVA Pharma,1
+DRG-5250,Zocor 20mg أقراص,Zocor 20mg Tablet,6220712002510,85.00,14,Simvastatin,Tablet,20mg,MSD,1
+DRG-5251,Zocor 40mg أقراص,Zocor 40mg Tablet,6220712002527,122.00,14,Simvastatin,Tablet,40mg,MSD,1
+DRG-5252,Plavix 75mg أقراص,Plavix 75mg Tablet,6220714002532,225.50,14,Clopidogrel,Tablet,75mg,Sanofi,1
+DRG-5253,Clopex 75mg أقراص,Clopex 75mg Tablet,6220728002542,92.50,14,Clopidogrel,Tablet,75mg,Pharco,1
+DRG-5254,Brilinta 90mg أقراص,Brilinta 90mg Tablet,6220727002550,456.00,14,Ticagrelor,Tablet,90mg,AstraZeneca,1
+DRG-5255,Xarelto 20mg أقراص,Xarelto 20mg Tablet,6220716002561,553.00,14,Rivaroxaban,Tablet,20mg,Bayer,1
+DRG-5256,Xarelto 15mg أقراص,Xarelto 15mg Tablet,6220716002578,486.50,14,Rivaroxaban,Tablet,15mg,Bayer,1
+DRG-5257,Eliquis 5mg أقراص,Eliquis 5mg Tablet,6220711002580,623.50,14,Apixaban,Tablet,5mg,Pfizer,1
+DRG-5258,Marevan 5mg أقراص,Marevan 5mg Tablet,6220715002593,34.00,14,Warfarin,Tablet,5mg,Marcyrl,1
+DRG-5259,Marevan 3mg أقراص,Marevan 3mg Tablet,6220715002609,27.00,14,Warfarin,Tablet,3mg,Marcyrl,1
+DRG-5260,Glucophage 500mg أقراص,Glucophage 500mg Tablet,6220737002618,34.50,14,Metformin,Tablet,500mg,Merck,1
+DRG-5261,Glucophage 850mg أقراص,Glucophage 850mg Tablet,6220737002625,44.50,14,Metformin,Tablet,850mg,Merck,1
+DRG-5262,Glucophage 1000mg أقراص,Glucophage 1000mg Tablet,6220737002632,58.00,14,Metformin,Tablet,1000mg,Merck,1
+DRG-5263,Glucophage XR 500mg XR أقراص,Glucophage XR 500mg XR Tablet,6220737002649,58.00,14,Metformin,Tablet,500mg XR,Merck,1
+DRG-5264,Glucophage XR 1000mg XR أقراص,Glucophage XR 1000mg XR Tablet,6220737002656,82.00,14,Metformin,Tablet,1000mg XR,Merck,1
+DRG-5265,Metfor 500mg أقراص,Metfor 500mg Tablet,6220703002666,12.50,14,Metformin,Tablet,500mg,EVA Pharma,1
+DRG-5266,Cidophage 500mg أقراص,Cidophage 500mg Tablet,6220717002676,12.50,14,Metformin,Tablet,500mg,CID,1
+DRG-5267,Diaformin 850mg أقراص,Diaformin 850mg Tablet,6220702002681,23.00,14,Metformin,Tablet,850mg,SEDICO,1
+DRG-5268,Amaryl 2mg أقراص,Amaryl 2mg Tablet,6220714002693,93.00,14,Glimepiride,Tablet,2mg,Sanofi,1
+DRG-5269,Amaryl 3mg أقراص,Amaryl 3mg Tablet,6220714002709,126.50,14,Glimepiride,Tablet,3mg,Sanofi,1
+DRG-5270,Amaryl 4mg أقراص,Amaryl 4mg Tablet,6220714002716,153.50,14,Glimepiride,Tablet,4mg,Sanofi,1
+DRG-5271,Glimy 2mg أقراص,Glimy 2mg Tablet,6220703002727,34.00,14,Glimepiride,Tablet,2mg,EVA Pharma,1
+DRG-5272,Diamicron MR 30mg أقراص,Diamicron MR 30mg Tablet,6220739002739,74.00,14,Gliclazide,Tablet,30mg,Servier,1
+DRG-5273,Diamicron MR 60mg أقراص,Diamicron MR 60mg Tablet,6220739002746,127.50,14,Gliclazide,Tablet,60mg,Servier,1
+DRG-5274,Janumet 50/1000mg أقراص,Janumet 50/1000mg Tablet,6220712002756,324.50,14,Sitagliptin + Metformin,Tablet,50/1000mg,MSD,1
+DRG-5275,Januvia 100mg أقراص,Januvia 100mg Tablet,6220712002763,288.00,14,Sitagliptin,Tablet,100mg,MSD,1
+DRG-5276,Galvus 50mg أقراص,Galvus 50mg Tablet,6220707002778,225.00,14,Vildagliptin,Tablet,50mg,Novartis,1
+DRG-5277,Galvus Met 50/1000mg أقراص,Galvus Met 50/1000mg Tablet,6220707002785,282.00,14,Vildagliptin + Metformin,Tablet,50/1000mg,Novartis,1
+DRG-5278,Forxiga 10mg أقراص,Forxiga 10mg Tablet,6220727002796,455.50,14,Dapagliflozin,Tablet,10mg,AstraZeneca,1
+DRG-5279,Jardiance 10mg أقراص,Jardiance 10mg Tablet,6220710002802,522.50,14,Empagliflozin,Tablet,10mg,BI,1
+DRG-5280,Jardiance 25mg أقراص,Jardiance 25mg Tablet,6220710002819,626.00,14,Empagliflozin,Tablet,25mg,BI,1
+DRG-5281,Trulicity 1.5mg حقن,Trulicity 1.5mg Injection,6220725002828,1848.00,14,Dulaglutide,Injection,1.5mg,Lilly,1
+DRG-5282,Lantus 100IU/ml فيال,Lantus 100IU/ml Vial,6220714002839,286.50,14,Insulin Glargine,Vial,100IU/ml,Sanofi,1
+DRG-5283,Lantus SoloStar 3ml pen حقن,Lantus SoloStar 3ml pen Injection,6220714002846,323.50,14,Insulin Glargine,Injection,3ml pen,Sanofi,1
+DRG-5284,Mixtard 30 100IU/ml فيال,Mixtard 30 100IU/ml Vial,6220740002858,197.00,14,Insulin Mix,Vial,100IU/ml,Novo Nordisk,1
+DRG-5285,Mixtard 30 3ml pen حقن,Mixtard 30 3ml pen Injection,6220740002865,224.00,14,Insulin Mix,Injection,3ml pen,Novo Nordisk,1
+DRG-5286,NovoRapid 3ml pen حقن,NovoRapid 3ml pen Injection,6220740002872,287.50,14,Insulin Aspart,Injection,3ml pen,Novo Nordisk,1
+DRG-5287,Humalog 3ml pen حقن,Humalog 3ml pen Injection,6220725002880,294.50,14,Insulin Lispro,Injection,3ml pen,Lilly,1
+DRG-5288,Tresiba 3ml pen حقن,Tresiba 3ml pen Injection,6220740002896,628.00,14,Insulin Degludec,Injection,3ml pen,Novo Nordisk,1
+DRG-5289,Centrum adult أقراص,Centrum adult Tablet,6220711002900,225.00,14,Multivitamins,Tablet,adult,Pfizer,0
+DRG-5290,Centrum Silver 50+ أقراص,Centrum Silver 50+ Tablet,6220711002917,272.00,14,Multivitamins,Tablet,50+,Pfizer,0
+DRG-5291,Centrum Women women أقراص,Centrum Women women Tablet,6220711002924,245.50,14,Multivitamins,Tablet,women,Pfizer,0
+DRG-5292,Vitacid 500mg أقراص,Vitacid 500mg Tablet,6220703002932,29.50,14,Vitamin C,Tablet,500mg,EVA Pharma,0
+DRG-5293,Vitacid 1000mg أقراص,Vitacid 1000mg Tablet,6220703002949,49.00,14,Vitamin C,Tablet,1000mg,EVA Pharma,0
+DRG-5294,Vitamin C 1000 1000mg Effervescent,Vitamin C 1000 1000mg Effervescent,6220716002950,43.00,14,Vitamin C,Effervescent,1000mg,Bayer,0
+DRG-5295,Redoxon 1000mg Effervescent,Redoxon 1000mg Effervescent,6220716002967,86.50,14,Vitamin C + Zinc,Effervescent,1000mg,Bayer,0
+DRG-5296,Cevarol 500mg أقراص,Cevarol 500mg Tablet,6220720002977,20.50,14,Vitamin C,Tablet,500mg,EIPICO,0
+DRG-5297,Devarol 2800IU/ml نقط,Devarol 2800IU/ml Drops,6220702002988,47.00,14,Vitamin D3,Drops,2800IU/ml,SEDICO,0
+DRG-5298,Vidrop 2800IU/ml نقط,Vidrop 2800IU/ml Drops,6220720002991,37.00,14,Vitamin D,Drops,2800IU/ml,EIPICO,0
+DRG-5299,Ostocare 100ml شراب,Ostocare 100ml Syrup,6220741003007,57.50,14,Vitamin D + Calcium,Syrup,100ml,Mepaco,0
+DRG-5300,Bone Care 600mg/400IU أقراص,Bone Care 600mg/400IU Tablet,6220703003014,44.50,14,Calcium + Vit D,Tablet,600mg/400IU,EVA Pharma,0
+DRG-5301,Calcium Sandoz 500mg Effervescent,Calcium Sandoz 500mg Effervescent,6220718003023,65.00,14,Calcium,Effervescent,500mg,Sandoz,0
+DRG-5302,Cal-Mag combo أقراص,Cal-Mag combo Tablet,6220703003038,38.00,14,Calcium + Magnesium,Tablet,combo,EVA Pharma,0
+DRG-5303,Magnesium 400mg أقراص,Magnesium 400mg Tablet,6220702003046,42.00,14,Magnesium Oxide,Tablet,400mg,SEDICO,0
+DRG-5304,Magnesium B6 combo أقراص,Magnesium B6 combo Tablet,6220714003058,85.50,14,Magnesium + B6,Tablet,combo,Sanofi,0
+DRG-5305,Folic Acid 5mg أقراص,Folic Acid 5mg Tablet,6220720003066,9.50,14,Folic Acid,Tablet,5mg,EIPICO,0
+DRG-5306,Folicar 5mg أقراص,Folicar 5mg Tablet,6220702003077,11.00,14,Folic Acid,Tablet,5mg,SEDICO,0
+DRG-5307,Iron Folic combo أقراص,Iron Folic combo Tablet,6220703003083,26.00,14,Iron + Folic Acid,Tablet,combo,EVA Pharma,0
+DRG-5308,Ferrofol combo كبسولات,Ferrofol combo Capsule,6220702003091,46.50,14,Iron + Folic Acid,Capsule,combo,SEDICO,0
+DRG-5309,Hemojet 50mg/5ml شراب,Hemojet 50mg/5ml Syrup,6220702003107,56.50,14,Iron Polymaltose,Syrup,50mg/5ml,SEDICO,0
+DRG-5310,Ferose 125mg/5ml شراب,Ferose 125mg/5ml Syrup,6220720003110,37.00,14,Ferrous Sulfate,Syrup,125mg/5ml,EIPICO,0
+DRG-5311,B-Complex combo أقراص,B-Complex combo Tablet,6220720003127,17.00,14,B Vitamins,Tablet,combo,EIPICO,0
+DRG-5312,Neurobion combo أقراص,Neurobion combo Tablet,6220737003134,97.50,14,B1+B6+B12,Tablet,combo,Merck,0
+DRG-5313,Neurobion combo أمبول,Neurobion combo Ampoule,6220737003141,31.50,14,B1+B6+B12,Ampoule,combo,Merck,0
+DRG-5314,Tribvit combo أمبول,Tribvit combo Ampoule,6220703003151,21.00,14,B1+B6+B12,Ampoule,combo,EVA Pharma,0
+DRG-5315,Depakine 200mg/5ml شراب,Depakine 200mg/5ml Syrup,6220714003164,55.00,14,Valproate,Syrup,200mg/5ml,Sanofi,1
+DRG-5316,Magdolax 7g أكياس,Magdolax 7g Sachet,6220703003175,19.00,14,Magnesium,Sachet,7g,EVA Pharma,0
+DRG-5317,Zinc 50mg أقراص,Zinc 50mg Tablet,6220702003183,32.50,14,Zinc Sulfate,Tablet,50mg,SEDICO,0
+DRG-5318,Zincoral 20mg/5ml شراب,Zincoral 20mg/5ml Syrup,6220720003196,25.50,14,Zinc,Syrup,20mg/5ml,EIPICO,0
+DRG-5319,Royal Jelly 500mg كبسولات,Royal Jelly 500mg Capsule,6220703003205,126.00,14,Royal Jelly,Capsule,500mg,EVA Pharma,0
+DRG-5320,Omega 3 1000mg كبسولات,Omega 3 1000mg Capsule,6220728003211,123.00,14,Fish Oil,Capsule,1000mg,Pharco,0
+DRG-5321,SeaCod 500mg كبسولات,SeaCod 500mg Capsule,6220728003228,96.50,14,Cod Liver Oil,Capsule,500mg,Pharco,0
+DRG-5322,Imuviton 120ml شراب,Imuviton 120ml Syrup,6220703003236,43.50,14,Multivitamin,Syrup,120ml,EVA Pharma,0
+DRG-5323,Pharmaton combo كبسولات,Pharmaton combo Capsule,6220714003249,197.00,14,Multivit + Ginseng,Capsule,combo,Sanofi,0
+DRG-5324,Supradyn combo أقراص,Supradyn combo Tablet,6220716003254,154.00,14,Multivit + Minerals,Tablet,combo,Bayer,0
+DRG-5325,Geriatric Pharmaton combo كبسولات,Geriatric Pharmaton combo Capsule,6220714003263,227.50,14,Multivit Adult,Capsule,combo,Sanofi,0
+DRG-5326,Vitamin E 400IU كبسولات,Vitamin E 400IU Capsule,6220702003275,54.50,14,Tocopherol,Capsule,400IU,SEDICO,0
+DRG-5327,Vitamin A 25000IU كبسولات,Vitamin A 25000IU Capsule,6220702003282,48.00,14,Retinol,Capsule,25000IU,SEDICO,0
+DRG-5328,Fucidin 2% كريم,Fucidin 2% Cream,6220742003297,75.00,14,Fusidic Acid,Cream,2%,Leo,0
+DRG-5329,Fucidin 2% مرهم,Fucidin 2% Ointment,6220742003303,79.00,14,Fusidic Acid,Ointment,2%,Leo,0
+DRG-5330,Fucicort combo كريم,Fucicort combo Cream,6220742003310,125.50,14,Fusidic Acid + Betamethasone,Cream,combo,Leo,1
+DRG-5331,Betaderm 0.1% كريم,Betaderm 0.1% Cream,6220703003328,29.50,14,Betamethasone,Cream,0.1%,EVA Pharma,1
+DRG-5332,Diprosone 0.05% كريم,Diprosone 0.05% Cream,6220712003333,89.00,14,Betamethasone,Cream,0.05%,MSD,1
+DRG-5333,Diprosalic combo مرهم,Diprosalic combo Ointment,6220712003340,123.00,14,Betamethasone + Salicylic,Ointment,combo,MSD,1
+DRG-5334,Locoid 0.1% كريم,Locoid 0.1% Cream,6220742003358,96.50,14,Hydrocortisone,Cream,0.1%,LEO,1
+DRG-5335,Hytone 1% كريم,Hytone 1% Cream,6220703003366,20.50,14,Hydrocortisone,Cream,1%,EVA Pharma,0
+DRG-5336,Elocon 0.1% كريم,Elocon 0.1% Cream,6220712003371,127.00,14,Mometasone,Cream,0.1%,MSD,1
+DRG-5337,Advantan 0.1% كريم,Advantan 0.1% Cream,6220742003389,94.00,14,Methylprednisolone,Cream,0.1%,LEO,1
+DRG-5338,Daktarin 2% كريم,Daktarin 2% Cream,6220733003398,67.50,14,Miconazole,Cream,2%,J&J,0
+DRG-5339,Daktarin Oral 2% جل,Daktarin Oral 2% Gel,6220733003404,87.50,14,Miconazole,Gel,2%,J&J,0
+DRG-5340,Canesten 1% كريم,Canesten 1% Cream,6220716003414,61.00,14,Clotrimazole,Cream,1%,Bayer,0
+DRG-5341,Mycoten 1% كريم,Mycoten 1% Cream,6220728003426,32.00,14,Clotrimazole,Cream,1%,Pharco,0
+DRG-5342,Lamisil 1% كريم,Lamisil 1% Cream,6220707003430,92.00,14,Terbinafine,Cream,1%,Novartis,0
+DRG-5343,Lamisil 250mg أقراص,Lamisil 250mg Tablet,6220707003447,195.50,14,Terbinafine,Tablet,250mg,Novartis,1
+DRG-5344,Zovirax 5% كريم,Zovirax 5% Cream,6220701003450,79.50,14,Acyclovir,Cream,5%,GSK,0
+DRG-5345,Zovirax 400mg أقراص,Zovirax 400mg Tablet,6220701003467,96.00,14,Acyclovir,Tablet,400mg,GSK,1
+DRG-5346,Acyclovir 400mg أقراص,Acyclovir 400mg Tablet,6220703003472,36.00,14,Acyclovir,Tablet,400mg,EVA Pharma,1
+DRG-5347,Quadriderm 15g كريم,Quadriderm 15g Cream,6220712003487,76.50,14,Combo,Cream,15g,MSD,0
+DRG-5348,Madecassol 1% مرهم,Madecassol 1% Ointment,6220716003490,93.50,14,Centella,Ointment,1%,Bayer,0
+DRG-5349,Mebo 40g مرهم,Mebo 40g Ointment,6220704003501,127.00,14,Honey Burn,Ointment,40g,Julphar,0
+DRG-5350,Dermovate 0.05% كريم,Dermovate 0.05% Cream,6220701003511,84.00,14,Clobetasol,Cream,0.05%,GSK,1
+DRG-5351,Dermovate 0.05% مرهم,Dermovate 0.05% Ointment,6220701003528,97.50,14,Clobetasol,Ointment,0.05%,GSK,1
+DRG-5352,Calamine 100ml لوشن,Calamine 100ml Lotion,6220715003538,17.50,14,Calamine,Lotion,100ml,Marcyrl,0
+DRG-5353,Pruriderm 100ml لوشن,Pruriderm 100ml Lotion,6220720003547,35.00,14,Combo,Lotion,100ml,EIPICO,0
+DRG-5354,Retin-A 0.025% كريم,Retin-A 0.025% Cream,6220733003558,75.00,14,Tretinoin,Cream,0.025%,J&J,1
+DRG-5355,Retin-A 0.05% كريم,Retin-A 0.05% Cream,6220733003565,92.00,14,Tretinoin,Cream,0.05%,J&J,1
+DRG-5356,Acretin 0.025% كريم,Acretin 0.025% Cream,6220703003571,32.50,14,Tretinoin,Cream,0.025%,EVA Pharma,1
+DRG-5357,Differin 0.1% جل,Differin 0.1% Gel,6220743003586,122.50,14,Adapalene,Gel,0.1%,Galderma,1
+DRG-5358,Epiduo 0.1% جل,Epiduo 0.1% Gel,6220743003593,196.00,14,Adapalene + Benzoyl Peroxide,Gel,0.1%,Galderma,1
+DRG-5359,Roaccutane 20mg كبسولات,Roaccutane 20mg Capsule,6220723003605,283.00,14,Isotretinoin,Capsule,20mg,Roche,1
+DRG-5360,Roaccutane 10mg كبسولات,Roaccutane 10mg Capsule,6220723003612,196.50,14,Isotretinoin,Capsule,10mg,Roche,1
+DRG-5361,Aknetrent 20mg كبسولات,Aknetrent 20mg Capsule,6220703003625,123.50,14,Isotretinoin,Capsule,20mg,EVA Pharma,1
+DRG-5362,Eucerin various كريم,Eucerin various Cream,6220744003639,157.00,14,Skincare,Cream,various,Beiersdorf,0
+DRG-5363,Eucerin Lotion 250ml لوشن,Eucerin Lotion 250ml Lotion,6220744003646,194.00,14,Skincare,Lotion,250ml,Beiersdorf,0
+DRG-5364,Cetaphil 250ml Cleanser,Cetaphil 250ml Cleanser,6220743003654,227.50,14,Skincare,Cleanser,250ml,Galderma,0
+DRG-5365,CeraVe 340g كريم,CeraVe 340g Cream,6220745003669,284.50,14,Skincare,Cream,340g,LOreal,0
+DRG-5366,Bepanthen 5% كريم,Bepanthen 5% Cream,6220716003674,98.00,14,Dexpanthenol,Cream,5%,Bayer,0
+DRG-5367,Bepanthen 5% مرهم,Bepanthen 5% Ointment,6220716003681,105.00,14,Dexpanthenol,Ointment,5%,Bayer,0
+DRG-5368,Hyalgan various كريم,Hyalgan various Cream,6220715003699,122.00,14,Hyaluronic Acid,Cream,various,Marcyrl,0
+DRG-5369,Lacrigel 30g جل,Lacrigel 30g Gel,6220715003705,58.50,14,Hyaluronic Acid,Gel,30g,Marcyrl,0
+DRG-5370,Tobradex 5ml قطرة عين,Tobradex 5ml Eye Drops,6220707003713,82.50,14,Tobramycin + Dexamethasone,Eye Drops,5ml,Novartis,1
+DRG-5371,Tobrex 5ml قطرة عين,Tobrex 5ml Eye Drops,6220707003720,56.00,14,Tobramycin,Eye Drops,5ml,Novartis,1
+DRG-5372,Tobrex 3.5g مرهم,Tobrex 3.5g Ointment,6220707003737,60.00,14,Tobramycin,Ointment,3.5g,Novartis,1
+DRG-5373,Vigamox 5ml قطرة عين,Vigamox 5ml Eye Drops,6220707003744,126.50,14,Moxifloxacin,Eye Drops,5ml,Novartis,1
+DRG-5374,Ciloxan 5ml قطرة عين,Ciloxan 5ml Eye Drops,6220707003751,93.50,14,Ciprofloxacin,Eye Drops,5ml,Novartis,1
+DRG-5375,Ciloxan 3.5g مرهم,Ciloxan 3.5g Ointment,6220707003768,100.00,14,Ciprofloxacin,Ointment,3.5g,Novartis,1
+DRG-5376,Maxitrol 5ml قطرة عين,Maxitrol 5ml Eye Drops,6220707003775,94.00,14,Combo,Eye Drops,5ml,Novartis,1
+DRG-5377,Garamycin 5ml قطرة عين,Garamycin 5ml Eye Drops,6220712003784,47.50,14,Gentamicin,Eye Drops,5ml,MSD,1
+DRG-5378,Cromohexal 10ml قطرة عين,Cromohexal 10ml Eye Drops,6220746003798,64.50,14,Cromoglicate,Eye Drops,10ml,Hexal,0
+DRG-5379,Patanol 5ml قطرة عين,Patanol 5ml Eye Drops,6220707003805,158.00,14,Olopatadine,Eye Drops,5ml,Novartis,1
+DRG-5380,Lumigan 3ml قطرة عين,Lumigan 3ml Eye Drops,6220747003810,285.00,14,Bimatoprost,Eye Drops,3ml,Allergan,1
+DRG-5381,Xalatan 2.5ml قطرة عين,Xalatan 2.5ml Eye Drops,6220711003822,222.00,14,Latanoprost,Eye Drops,2.5ml,Pfizer,1
+DRG-5382,Cosopt 5ml قطرة عين,Cosopt 5ml Eye Drops,6220712003838,195.50,14,Dorzolamide + Timolol,Eye Drops,5ml,MSD,1
+DRG-5383,Trusopt 5ml قطرة عين,Trusopt 5ml Eye Drops,6220712003845,152.50,14,Dorzolamide,Eye Drops,5ml,MSD,1
+DRG-5384,Timolol 5ml قطرة عين,Timolol 5ml Eye Drops,6220703003854,46.00,14,Timolol,Eye Drops,5ml,EVA Pharma,1
+DRG-5385,Artelac 10ml قطرة عين,Artelac 10ml Eye Drops,6220748003864,93.00,14,Hypromellose,Eye Drops,10ml,Bausch,0
+DRG-5386,Tears Naturale 15ml قطرة عين,Tears Naturale 15ml Eye Drops,6220707003874,76.50,14,Artificial Tears,Eye Drops,15ml,Novartis,0
+DRG-5387,Refresh 15ml قطرة عين,Refresh 15ml Eye Drops,6220747003889,123.50,14,Carmellose,Eye Drops,15ml,Allergan,0
+DRG-5388,Otal 5ml قطرة أذن,Otal 5ml Ear Drops,6220703003892,47.00,14,Ofloxacin,Ear Drops,5ml,EVA Pharma,1
+DRG-5389,Otomize 5ml قطرة أذن,Otomize 5ml Ear Drops,6220715003903,54.00,14,Combo,Ear Drops,5ml,Marcyrl,0
+DRG-5390,Otocaine 5ml قطرة أذن,Otocaine 5ml Ear Drops,6220728003914,44.50,14,Lidocaine + Phenazone,Ear Drops,5ml,Pharco,0
+DRG-5391,Otrivin 10ml بخاخ أنف,Otrivin 10ml Nasal Spray,6220707003928,54.50,14,Xylometazoline,Nasal Spray,10ml,Novartis,0
+DRG-5392,Otrivin 10ml نقط,Otrivin 10ml Drops,6220707003935,51.00,14,Xylometazoline,Drops,10ml,Novartis,0
+DRG-5393,Otrivin Baby 15ml بخاخ أنف,Otrivin Baby 15ml Nasal Spray,6220707003942,65.00,14,Sodium Chloride,Nasal Spray,15ml,Novartis,0
+DRG-5394,Nasonex 140 doses بخاخ أنف,Nasonex 140 doses Nasal Spray,6220712003951,192.00,14,Mometasone,Nasal Spray,140 doses,MSD,1
+DRG-5395,Avamys 120 doses بخاخ أنف,Avamys 120 doses Nasal Spray,6220701003962,225.50,14,Fluticasone,Nasal Spray,120 doses,GSK,1
+DRG-5396,Flixonase 120 doses بخاخ أنف,Flixonase 120 doses Nasal Spray,6220701003979,192.50,14,Fluticasone,Nasal Spray,120 doses,GSK,1
+DRG-5397,Rinostop 100ml بخاخ أنف,Rinostop 100ml Nasal Spray,6220703003984,46.00,14,Sea Water,Nasal Spray,100ml,EVA Pharma,0
+DRG-5398,Sterimar 100ml بخاخ أنف,Sterimar 100ml Nasal Spray,6220749003993,93.00,14,Sea Water,Nasal Spray,100ml,Lab Fumouze,0
+DRG-5399,Strepfen 8.75mg Lozenge,Strepfen 8.75mg Lozenge,6220706004001,46.50,14,Flurbiprofen,Lozenge,8.75mg,Reckitt,0
+DRG-5400,Strepsils various Lozenge,Strepsils various Lozenge,6220706004018,30.50,14,Combo,Lozenge,various,Reckitt,0
+DRG-5401,Tantum Verde 30ml Spray,Tantum Verde 30ml Spray,6220750004026,77.00,14,Benzydamine,Spray,30ml,Angelini,0
+DRG-5402,Tantum Verde 120ml Mouthwash,Tantum Verde 120ml Mouthwash,6220750004033,84.00,14,Benzydamine,Mouthwash,120ml,Angelini,0
+DRG-5403,Bonjela 15g جل,Bonjela 15g Gel,6220706004049,57.50,14,Choline Salicylate,Gel,15g,Reckitt,0
+DRG-5404,Saline 500ml محلول,Saline 500ml Solution,6220720004056,11.50,14,Sodium Chloride 0.9%,Solution,500ml,EIPICO,0
+DRG-5405,Saline 1000ml محلول,Saline 1000ml Solution,6220720004063,21.00,14,Sodium Chloride 0.9%,Solution,1000ml,EIPICO,0
+DRG-5406,Dextrose 500ml محلول,Dextrose 500ml Solution,6220720004070,14.00,14,Dextrose 5%,Solution,500ml,EIPICO,0
+DRG-5407,Dextrose 1000ml محلول,Dextrose 1000ml Solution,6220720004087,19.00,14,Dextrose 5%,Solution,1000ml,EIPICO,0
+DRG-5408,Ringer 500ml محلول,Ringer 500ml Solution,6220720004094,18.50,14,Ringer Lactate,Solution,500ml,EIPICO,0
+DRG-5409,Glucose Saline 500ml محلول,Glucose Saline 500ml Solution,6220720004100,13.50,14,Combo,Solution,500ml,EIPICO,0
+DRG-5410,ORS 27.5g أكياس,ORS 27.5g Sachet,6220703004110,9.00,14,ORS,Sachet,27.5g,EVA Pharma,0
+DRG-5411,Rehydran 27.5g أكياس,Rehydran 27.5g Sachet,6220720004124,4.00,14,ORS,Sachet,27.5g,EIPICO,0
+DRG-5412,Saccarina 50mg أقراص,Saccarina 50mg Tablet,6220702004135,23.50,14,Saccharin,Tablet,50mg,SEDICO,0
+DRG-5413,Glycerin adult لبوس,Glycerin adult Suppository,6220715004146,10.50,14,Glycerin,Suppository,adult,Marcyrl,0
+DRG-5414,Glycerin infant لبوس,Glycerin infant Suppository,6220715004153,12.00,14,Glycerin,Suppository,infant,Marcyrl,0
+DRG-5415,Alcohol 500ml محلول,Alcohol 500ml Solution,6220720004162,17.00,14,Ethanol 70%,Solution,500ml,EIPICO,0
+DRG-5416,Betadine 125ml محلول,Betadine 125ml Solution,6220751004179,47.50,14,Povidone Iodine,Solution,125ml,Mundipharma,0
+DRG-5417,Betadine 30g مرهم,Betadine 30g Ointment,6220751004186,54.50,14,Povidone Iodine,Ointment,30g,Mundipharma,0
+DRG-5418,Betadine 125ml Gargle,Betadine 125ml Gargle,6220751004193,61.00,14,Povidone Iodine,Gargle,125ml,Mundipharma,0
+DRG-5419,Pharbetadine 125ml محلول,Pharbetadine 125ml Solution,6220728004201,22.00,14,Povidone Iodine,Solution,125ml,Pharco,0
+DRG-5420,Cidamex 250mg أقراص,Cidamex 250mg Tablet,6220717004212,32.00,14,Acetazolamide,Tablet,250mg,CID,1
+DRG-5421,Hydrogen Peroxide 100ml محلول,Hydrogen Peroxide 100ml Solution,6220720004223,8.50,14,H2O2 6%,Solution,100ml,EIPICO,0
+DRG-5422,Vaseline 100g مرهم,Vaseline 100g Ointment,6220720004230,15.50,14,Petroleum Jelly,Ointment,100g,EIPICO,0
+DRG-5423,Castor Oil 60ml محلول,Castor Oil 60ml Solution,6220720004247,13.00,14,Castor Oil,Solution,60ml,EIPICO,0
+DRG-5424,Paraffin 60ml محلول,Paraffin 60ml Solution,6220720004254,13.00,14,Paraffin,Solution,60ml,EIPICO,0
+DRG-5425,Augmentin G 625mg أقراص,Augmentin G 625mg Tablet,6220703004264,39.50,14,Amoxicillin + Clavulanic Acid,Tablet,625mg,EVA Generics,1
+DRG-5426,Augmentin G 156mg/5ml معلق,Augmentin G 156mg/5ml Suspension,6220702004272,21.70,14,Amoxicillin + Clavulanic Acid,Suspension,156mg/5ml,SEDICO,1
+DRG-5427,Augmentin G 312mg/5ml معلق,Augmentin G 312mg/5ml Suspension,6220728004287,37.20,14,Amoxicillin + Clavulanic Acid,Suspension,312mg/5ml,Pharco,1
+DRG-5428,Hibiotic G 625mg أقراص,Hibiotic G 625mg Tablet,6220717004298,29.00,14,Amoxicillin + Clavulanic Acid,Tablet,625mg,CID,1
+DRG-5429,Curam G 625mg أقراص,Curam G 625mg Tablet,6220719004302,35.30,14,Amoxicillin + Clavulanic Acid,Tablet,625mg,Hikma,1
+DRG-5430,Megamox G 625mg أقراص,Megamox G 625mg Tablet,6220720004315,26.70,14,Amoxicillin + Clavulanic Acid,Tablet,625mg,EIPICO,1
+DRG-5431,Amoxil G 500mg كبسولات,Amoxil G 500mg Capsule,6220713004322,26.20,14,Amoxicillin,Capsule,500mg,Amoun,1
+DRG-5432,E-Mox G 500mg كبسولات,E-Mox G 500mg Capsule,6220715004337,11.20,14,Amoxicillin,Capsule,500mg,Marcyrl,1
+DRG-5433,Flumox G 500mg كبسولات,Flumox G 500mg Capsule,6220721004345,19.00,14,Amoxicillin + Flucloxacillin,Capsule,500mg,Sigma,1
+DRG-5434,Klacid G 500mg أقراص,Klacid G 500mg Tablet,6220703004356,62.50,14,Clarithromycin,Tablet,500mg,EVA Generics,1
+DRG-5435,Klacid G 125mg/5ml معلق,Klacid G 125mg/5ml Suspension,6220702004364,32.70,14,Clarithromycin,Suspension,125mg/5ml,SEDICO,1
+DRG-5436,Macrol G 500mg أقراص,Macrol G 500mg Tablet,6220728004379,39.00,14,Clarithromycin,Tablet,500mg,Pharco,1
+DRG-5437,Zithromax G 500mg أقراص,Zithromax G 500mg Tablet,6220717004380,60.00,14,Azithromycin,Tablet,500mg,CID,1
+DRG-5438,Aziwok G 250mg كبسولات,Aziwok G 250mg Capsule,6220719004395,26.30,14,Azithromycin,Capsule,250mg,Hikma,1
+DRG-5439,Azithro G 500mg أقراص,Azithro G 500mg Tablet,6220720004407,20.50,14,Azithromycin,Tablet,500mg,EIPICO,1
+DRG-5440,Cipro G 500mg أقراص,Cipro G 500mg Tablet,6220713004414,37.20,14,Ciprofloxacin,Tablet,500mg,Amoun,1
+DRG-5441,Ciprocin G 500mg أقراص,Ciprocin G 500mg Tablet,6220715004429,14.20,14,Ciprofloxacin,Tablet,500mg,Marcyrl,1
+DRG-5442,Tavanic G 500mg أقراص,Tavanic G 500mg Tablet,6220721004437,80.50,14,Levofloxacin,Tablet,500mg,Sigma,1
+DRG-5443,Avalox G 400mg أقراص,Avalox G 400mg Tablet,6220703004448,89.50,14,Moxifloxacin,Tablet,400mg,EVA Generics,1
+DRG-5444,Cefotax G 1g فيال,Cefotax G 1g Vial,6220702004456,21.00,14,Cefotaxime,Vial,1g,SEDICO,1
+DRG-5445,Suprax G 100mg/5ml معلق,Suprax G 100mg/5ml Suspension,6220728004461,46.00,14,Cefixime,Suspension,100mg/5ml,Pharco,1
+DRG-5446,Cefix G 100mg/5ml معلق,Cefix G 100mg/5ml Suspension,6220717004472,23.00,14,Cefixime,Suspension,100mg/5ml,CID,1
+DRG-5447,Keflex G 500mg كبسولات,Keflex G 500mg Capsule,6220719004487,38.50,14,Cephalexin,Capsule,500mg,Hikma,1
+DRG-5448,Velosef G 250mg/5ml معلق,Velosef G 250mg/5ml Suspension,6220720004490,16.70,14,Cephradine,Suspension,250mg/5ml,EIPICO,1
+DRG-5449,Duricef G 250mg/5ml معلق,Duricef G 250mg/5ml Suspension,6220713004506,24.20,14,Cefadroxil,Suspension,250mg/5ml,Amoun,1
+DRG-5450,Zinnat G 125mg/5ml معلق,Zinnat G 125mg/5ml Suspension,6220715004511,48.00,14,Cefuroxime,Suspension,125mg/5ml,Marcyrl,1
+DRG-5451,Flagyl G 125mg/5ml معلق,Flagyl G 125mg/5ml Suspension,6220721004529,8.70,14,Metronidazole,Suspension,125mg/5ml,Sigma,1
+DRG-5452,Doxycin G 100mg كبسولات,Doxycin G 100mg Capsule,6220703004530,11.30,14,Doxycycline,Capsule,100mg,EVA Generics,1
+DRG-5453,Tetracycline G 250mg كبسولات,Tetracycline G 250mg Capsule,6220702004548,9.20,14,Tetracycline,Capsule,250mg,SEDICO,1
+DRG-5454,Bactrim G 240mg/5ml معلق,Bactrim G 240mg/5ml Suspension,6220728004553,14.20,14,Sulfamethoxazole + Trimethoprim,Suspension,240mg/5ml,Pharco,1
+DRG-5455,Vancocin G 500mg فيال,Vancocin G 500mg Vial,6220717004564,116.50,14,Vancomycin,Vial,500mg,CID,1
+DRG-5456,Meronem G 1g فيال,Meronem G 1g Vial,6220719004579,249.50,14,Meropenem,Vial,1g,Hikma,1
+DRG-5457,Panadol G 500mg أقراص,Panadol G 500mg Tablet,6220720004582,10.20,14,Paracetamol,Tablet,500mg,EIPICO,0
+DRG-5458,Panadol Cold & Flu G 500mg أقراص,Panadol Cold & Flu G 500mg Tablet,6220713004599,12.80,14,Paracetamol + Pseudoephedrine,Tablet,500mg,Amoun,0
+DRG-5459,Panadol Joint G 665mg أقراص,Panadol Joint G 665mg Tablet,6220715004603,15.00,14,Paracetamol,Tablet,665mg,Marcyrl,0
+DRG-5460,Panadol Baby Drops G 100mg/ml نقط,Panadol Baby Drops G 100mg/ml Drops,6220721004611,11.70,14,Paracetamol,Drops,100mg/ml,Sigma,0
+DRG-5461,Paramol Suppository G 125mg لبوس,Paramol Suppository G 125mg Suppository,6220703004622,4.70,14,Paracetamol,Suppository,125mg,EVA Generics,0
+DRG-5462,Cetal Extra G 500mg أقراص,Cetal Extra G 500mg Tablet,6220702004630,7.40,14,Paracetamol + Caffeine,Tablet,500mg,SEDICO,0
+DRG-5463,Adol G 500mg أقراص,Adol G 500mg Tablet,6220728004645,3.60,14,Paracetamol,Tablet,500mg,Pharco,0
+DRG-5464,Adol Extra G 500mg أقراص,Adol Extra G 500mg Tablet,6220717004656,8.70,14,Paracetamol + Caffeine,Tablet,500mg,CID,0
+DRG-5465,Brufen G 600mg أقراص,Brufen G 600mg Tablet,6220719004661,15.30,14,Ibuprofen,Tablet,600mg,Hikma,0
+DRG-5466,Brufen Forte G 200mg/5ml شراب,Brufen Forte G 200mg/5ml Syrup,6220720004674,21.20,14,Ibuprofen,Syrup,200mg/5ml,EIPICO,0
+DRG-5467,Nurofen G 400mg أقراص,Nurofen G 400mg Tablet,6220713004681,14.20,14,Ibuprofen,Tablet,400mg,Amoun,0
+DRG-5468,Nurofen for Children G 100mg/5ml شراب,Nurofen for Children G 100mg/5ml Syrup,6220715004696,19.30,14,Ibuprofen,Syrup,100mg/5ml,Marcyrl,0
+DRG-5469,Voltaren G 75mg أقراص,Voltaren G 75mg Tablet,6220721004703,21.50,14,Diclofenac Sodium,Tablet,75mg,Sigma,1
+DRG-5470,Voltaren Emulgel G 1% جل,Voltaren Emulgel G 1% Gel,6220703004714,37.00,14,Diclofenac,Gel,1%,EVA Generics,0
+DRG-5471,Voltaren Suppository G 50mg لبوس,Voltaren Suppository G 50mg Suppository,6220702004722,15.20,14,Diclofenac,Suppository,50mg,SEDICO,1
+DRG-5472,Voltaren Ampoule G 75mg/3ml أمبول,Voltaren Ampoule G 75mg/3ml Ampoule,6220728004737,9.80,14,Diclofenac,Ampoule,75mg/3ml,Pharco,1
+DRG-5473,Cataflam G 50mg أقراص,Cataflam G 50mg Tablet,6220717004748,17.30,14,Diclofenac Potassium,Tablet,50mg,CID,1
+DRG-5474,Olfen G 140mg Patch,Olfen G 140mg Patch,6220719004753,35.50,14,Diclofenac,Patch,140mg,Hikma,0
+DRG-5475,Mobic G 15mg أقراص,Mobic G 15mg Tablet,6220720004766,35.00,14,Meloxicam,Tablet,15mg,EIPICO,1
+DRG-5476,Celebrex G 200mg كبسولات,Celebrex G 200mg Capsule,6220713004773,76.00,14,Celecoxib,Capsule,200mg,Amoun,1
+DRG-5477,Arcoxia G 90mg أقراص,Arcoxia G 90mg Tablet,6220715004788,79.50,14,Etoricoxib,Tablet,90mg,Marcyrl,1
+DRG-5478,Ketolgan G 10mg أقراص,Ketolgan G 10mg Tablet,6220721004796,12.50,14,Ketorolac,Tablet,10mg,Sigma,1
+DRG-5479,Solpadeine G 500mg أقراص,Solpadeine G 500mg Tablet,6220703004806,24.00,14,Paracetamol + Codeine,Tablet,500mg,EVA Generics,1
+DRG-5480,Buscopan G 10mg أقراص,Buscopan G 10mg Tablet,6220702004814,14.20,14,Hyoscine Butylbromide,Tablet,10mg,SEDICO,0
+DRG-5481,Buscopan Ampoule G 20mg/ml أمبول,Buscopan Ampoule G 20mg/ml Ampoule,6220728004829,15.30,14,Hyoscine,Ampoule,20mg/ml,Pharco,1
+DRG-5482,Aspirin G 325mg أقراص,Aspirin G 325mg Tablet,6220717004830,8.30,14,Acetylsalicylic Acid,Tablet,325mg,CID,0
+DRG-5483,Aspocid G 75mg أقراص,Aspocid G 75mg Tablet,6220719004845,9.00,14,Acetylsalicylic Acid,Tablet,75mg,Hikma,0
+DRG-5484,Concor G 10mg أقراص,Concor G 10mg Tablet,6220720004858,50.00,14,Bisoprolol,Tablet,10mg,EIPICO,1
+DRG-5485,Concor Cor G 2.5mg أقراص,Concor Cor G 2.5mg Tablet,6220713004865,23.00,14,Bisoprolol,Tablet,2.5mg,Amoun,1
+DRG-5486,Tenormin G 50mg أقراص,Tenormin G 50mg Tablet,6220715004870,23.70,14,Atenolol,Tablet,50mg,Marcyrl,1
+DRG-5487,Inderal G 40mg أقراص,Inderal G 40mg Tablet,6220721004888,14.30,14,Propranolol,Tablet,40mg,Sigma,1
+DRG-5488,Carvid G 25mg أقراص,Carvid G 25mg Tablet,6220703004899,28.20,14,Carvedilol,Tablet,25mg,EVA Generics,1
+DRG-5489,Norvasc G 5mg أقراص,Norvasc G 5mg Tablet,6220702004906,28.00,14,Amlodipine,Tablet,5mg,SEDICO,1
+DRG-5490,Amlor G 5mg أقراص,Amlor G 5mg Tablet,6220728004911,24.70,14,Amlodipine,Tablet,5mg,Pharco,1
+DRG-5491,Capoten G 25mg أقراص,Capoten G 25mg Tablet,6220717004922,13.70,14,Captopril,Tablet,25mg,CID,1
+DRG-5492,Renitec G 5mg أقراص,Renitec G 5mg Tablet,6220719004937,24.00,14,Enalapril,Tablet,5mg,Hikma,1
+DRG-5493,Triatec G 5mg أقراص,Triatec G 5mg Tablet,6220720004940,34.20,14,Ramipril,Tablet,5mg,EIPICO,1
+DRG-5494,Cozaar G 50mg أقراص,Cozaar G 50mg Tablet,6220713004957,52.50,14,Losartan,Tablet,50mg,Amoun,1
+DRG-5495,Losar G 50mg أقراص,Losar G 50mg Tablet,6220715004962,17.50,14,Losartan,Tablet,50mg,Marcyrl,1
+DRG-5496,Diovan G 160mg أقراص,Diovan G 160mg Tablet,6220721004970,93.00,14,Valsartan,Tablet,160mg,Sigma,1
+DRG-5497,Aprovel G 150mg أقراص,Aprovel G 150mg Tablet,6220703004981,62.00,14,Irbesartan,Tablet,150mg,EVA Generics,1
+DRG-5498,CoAprovel G 150/12.5mg أقراص,CoAprovel G 150/12.5mg Tablet,6220702004999,75.00,14,Irbesartan + HCT,Tablet,150/12.5mg,SEDICO,1
+DRG-5499,Micardis G 80mg أقراص,Micardis G 80mg Tablet,6220728005000,114.50,14,Telmisartan,Tablet,80mg,Pharco,1
+DRG-5500,Lasix G 40mg أقراص,Lasix G 40mg Tablet,6220717005011,6.30,14,Furosemide,Tablet,40mg,CID,1
+DRG-5501,Aldactone G 25mg أقراص,Aldactone G 25mg Tablet,6220719005026,16.20,14,Spironolactone,Tablet,25mg,Hikma,1
+DRG-5502,Hydrazide G 25/37.5mg كبسولات,Hydrazide G 25/37.5mg Capsule,6220720005039,16.00,14,HCT + Triamterene,Capsule,25/37.5mg,EIPICO,1
+DRG-5503,Lipitor G 20mg أقراص,Lipitor G 20mg Tablet,6220713005046,63.50,14,Atorvastatin,Tablet,20mg,Amoun,1
+DRG-5504,Lipitor G 80mg أقراص,Lipitor G 80mg Tablet,6220715005051,128.50,14,Atorvastatin,Tablet,80mg,Marcyrl,1
+DRG-5505,Crestor G 10mg أقراص,Crestor G 10mg Tablet,6220721005069,64.00,14,Rosuvastatin,Tablet,10mg,Sigma,1
+DRG-5506,Rosuvast G 10mg أقراص,Rosuvast G 10mg Tablet,6220703005070,21.00,14,Rosuvastatin,Tablet,10mg,EVA Generics,1
+DRG-5507,Zocor G 40mg أقراص,Zocor G 40mg Tablet,6220702005088,52.50,14,Simvastatin,Tablet,40mg,SEDICO,1
+DRG-5508,Clopex G 75mg أقراص,Clopex G 75mg Tablet,6220728005093,37.50,14,Clopidogrel,Tablet,75mg,Pharco,1
+DRG-5509,Xarelto G 20mg أقراص,Xarelto G 20mg Tablet,6220717005103,225.00,14,Rivaroxaban,Tablet,20mg,CID,1
+DRG-5510,Eliquis G 5mg أقراص,Eliquis G 5mg Tablet,6220719005118,250.00,14,Apixaban,Tablet,5mg,Hikma,1
+DRG-5511,Marevan G 3mg أقراص,Marevan G 3mg Tablet,6220720005121,8.20,14,Warfarin,Tablet,3mg,EIPICO,1
+DRG-5512,Glucophage G 850mg أقراص,Glucophage G 850mg Tablet,6220713005138,18.50,14,Metformin,Tablet,850mg,Amoun,1
+DRG-5513,Glucophage XR G 500mg XR أقراص,Glucophage XR G 500mg XR Tablet,6220715005143,20.70,14,Metformin,Tablet,500mg XR,Marcyrl,1
+DRG-5514,Metfor G 500mg أقراص,Metfor G 500mg Tablet,6220721005151,5.80,14,Metformin,Tablet,500mg,Sigma,1
+DRG-5515,Diaformin G 850mg أقراص,Diaformin G 850mg Tablet,6220703005162,6.80,14,Metformin,Tablet,850mg,EVA Generics,1
+DRG-5516,Amaryl G 3mg أقراص,Amaryl G 3mg Tablet,6220702005170,51.50,14,Glimepiride,Tablet,3mg,SEDICO,1
+DRG-5517,Glimy G 2mg أقراص,Glimy G 2mg Tablet,6220728005185,11.30,14,Glimepiride,Tablet,2mg,Pharco,1
+DRG-5518,Diamicron MR G 60mg أقراص,Diamicron MR G 60mg Tablet,6220717005196,52.00,14,Gliclazide,Tablet,60mg,CID,1
+DRG-5519,Januvia G 100mg أقراص,Januvia G 100mg Tablet,6220719005200,113.00,14,Sitagliptin,Tablet,100mg,Hikma,1
+DRG-5520,Galvus Met G 50/1000mg أقراص,Galvus Met G 50/1000mg Tablet,6220720005213,116.50,14,Vildagliptin + Metformin,Tablet,50/1000mg,EIPICO,1
+DRG-5521,Jardiance G 10mg أقراص,Jardiance G 10mg Tablet,6220713005220,209.50,14,Empagliflozin,Tablet,10mg,Amoun,1
+DRG-5522,Trulicity G 1.5mg حقن,Trulicity G 1.5mg Injection,6220715005235,743.00,14,Dulaglutide,Injection,1.5mg,Marcyrl,1
+DRG-5523,Lantus SoloStar G 3ml pen حقن,Lantus SoloStar G 3ml pen Injection,6220721005243,130.00,14,Insulin Glargine,Injection,3ml pen,Sigma,1
+DRG-5524,Mixtard 30 G 3ml pen حقن,Mixtard 30 G 3ml pen Injection,6220703005254,87.00,14,Insulin Mix,Injection,3ml pen,EVA Generics,1
+DRG-5525,Humalog G 3ml pen حقن,Humalog G 3ml pen Injection,6220702005262,118.50,14,Insulin Lispro,Injection,3ml pen,SEDICO,1

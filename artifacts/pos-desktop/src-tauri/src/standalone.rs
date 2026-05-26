@@ -14,6 +14,25 @@ use serde::{Deserialize, Serialize};
 const SESSION_KEY: &str = "standalone_session";
 const MODE_KEY: &str = "app_mode";
 
+// ── Generic app_settings get/set (Task #200) ─────────────────────────
+// Used by both cloud and standalone modes to persist UI preferences like
+// the selected vertical (grocery/pharmacy/general). Keys are prefixed
+// "ui_" by callers so they cannot collide with internal mode/session keys.
+#[tauri::command]
+pub fn standalone_get_setting(key: String) -> Result<Option<String>, String> {
+    if key == MODE_KEY || key == SESSION_KEY {
+        return Err("reserved key".to_string());
+    }
+    settings_get(&key).map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn standalone_set_setting(key: String, value: String) -> Result<(), String> {
+    if key == MODE_KEY || key == SESSION_KEY {
+        return Err("reserved key".to_string());
+    }
+    settings_set(&key, &value).map_err(|e| e.to_string())
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct LocalUser {
     pub id: String,

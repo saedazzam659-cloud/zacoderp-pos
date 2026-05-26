@@ -3,10 +3,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  listItems, createItem, updateItem, deleteItem,
+  listItems, createItem, updateItem, deleteItem, bulkImportLocalItems, updateItemExtended,
   type LocalItem, type CreateItemInput,
 } from "../lib/items";
 import { listUom, getDefaultUom } from "../lib/uom";
+import { getVertical, type Vertical } from "../lib/standalone";
 
 export default function ItemsAdmin() {
   const [rows, setRows] = useState<LocalItem[]>([]);
@@ -16,6 +17,66 @@ export default function ItemsAdmin() {
   const [showForm, setShowForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [vertical, setVertical] = useState<Vertical>("general");
+  const [importingEda, setImportingEda] = useState(false);
+  useEffect(() => { void getVertical().then((v) => v && setVertical(v)); }, []);
+  const isPharmacy = vertical === "pharmacy";
+
+  /**
+   * Pharmacy-only: fetch the bundled EDA catalog (public/catalogs/eda_pharmacy_2026.csv)
+   * and bulk-insert via insert_local_item. Dedups by barcode so re-running
+   * the import is safe. ~500 rows so progress feedback is a single toast.
+   */
+  async function importEdaCatalog() {
+    if (!confirm("سيتم استيراد كتالوج الأدوية المصري (EDA) — حوالي 500 صنف. متابعة؟")) return;
+    setImportingEda(true);
+    try {
+      const baseUrl = (import.meta as any).env?.BASE_URL ?? "/";
+      const res = await fetch(`${baseUrl}catalogs/eda_pharmacy_2026.csv`);
+      if (!res.ok) throw new Error(`فشل تحميل الكتالوج (${res.status})`);
+      const text = await res.text();
+      const grid = parseCsv(text);
+      if (grid.length < 2) throw new Error("الكتالوج فارغ");
+      const header = grid[0].map((h) => h.trim().toLowerCase());
+      const idx = (n: string) => header.indexOf(n);
+      const cols = {
+        code: idx("code"), ar: idx("namear"), en: idx("nameen"),
+        bc: idx("barcode"), price: idx("saleprice"), vat: idx("vatrate"),
+        ai: idx("activeingredient"), dform: idx("dosageform"),
+        str: idx("strength"), mfr: idx("manufacturer"),
+        rx: idx("requiresprescription"),
+      };
+      const rows: CreateItemInput[] = [];
+      for (let r = 1; r < grid.length; r++) {
+        const row = grid[r];
+        if (row.every((c) => !c.trim())) continue;
+        const get = (i: number) => (i >= 0 ? (row[i] ?? "").trim() : "");
+        const nameAr = get(cols.ar);
+        const price = Number(get(cols.price));
+        if (!nameAr || !Number.isFinite(price) || price <= 0) continue;
+        rows.push({
+          code: get(cols.code) || null,
+          nameAr,
+          nameEn: get(cols.en) || null,
+          barcode: get(cols.bc) || null,
+          salePrice: price,
+          vatRate: Number(get(cols.vat)) || 14,
+          activeIngredient: get(cols.ai) || null,
+          dosageForm: get(cols.dform) || null,
+          strength: get(cols.str) || null,
+          manufacturer: get(cols.mfr) || null,
+          requiresPrescription: get(cols.rx).toLowerCase() === "true",
+        });
+      }
+      const { inserted, skippedDup } = await bulkImportLocalItems(rows, { dedupBy: "barcode" });
+      setToast({ kind: "ok", text: `تم استيراد ${inserted} دواء${skippedDup ? ` — تم تجاهل ${skippedDup} مكرر` : ""}` });
+      await refresh();
+    } catch (e: any) {
+      setToast({ kind: "err", text: e?.message ?? "فشل استيراد كتالوج EDA" });
+    } finally {
+      setImportingEda(false);
+    }
+  }
 
   async function refresh() {
     setLoading(true);
@@ -38,6 +99,11 @@ export default function ItemsAdmin() {
           <div style={S.sub}>إدارة قائمة الأصناف وأسعار البيع — السحب من السحابة يُحدّث القائمة تلقائيًا</div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
+          {isPharmacy && (
+            <button onClick={importEdaCatalog} disabled={importingEda} style={S.btnEda}>
+              {importingEda ? "... جاري الاستيراد" : "💊 استيراد كتالوج EDA"}
+            </button>
+          )}
           <button onClick={() => setShowImport(true)} style={S.btnImport}>
             📥 استيراد من CSV
           </button>
@@ -98,6 +164,7 @@ export default function ItemsAdmin() {
       {showForm && (
         <ItemForm
           initial={editing}
+          isPharmacy={isPharmacy}
           onClose={() => setShowForm(false)}
           onSaved={async (msg) => { setShowForm(false); setToast({ kind: "ok", text: msg }); await refresh(); }}
         />
@@ -371,8 +438,9 @@ function ImportCsvModal({
   );
 }
 
-function ItemForm({ initial, onClose, onSaved }: {
+function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
   initial: LocalItem | null;
+  isPharmacy: boolean;
   onClose: () => void;
   onSaved: (msg: string) => void;
 }) {
@@ -383,8 +451,16 @@ function ItemForm({ initial, onClose, onSaved }: {
     nameEn: initial?.nameEn ?? "",
     barcode: initial?.barcode ?? "",
     salePrice: initial?.salePrice ?? 0,
-    vatRate: initial?.vatRate ?? 15,
+    vatRate: initial?.vatRate ?? (isPharmacy ? 14 : 15),
     uomId: initial?.uomId ?? getDefaultUom()?.id ?? null,
+    // Pharmacy extension — only sent on submit when isPharmacy is true.
+    activeIngredient: initial?.activeIngredient ?? "",
+    dosageForm: initial?.dosageForm ?? "",
+    strength: initial?.strength ?? "",
+    manufacturer: initial?.manufacturer ?? "",
+    requiresPrescription: initial?.requiresPrescription ?? false,
+    expiryDate: initial?.expiryDate ?? "",
+    batchNo: initial?.batchNo ?? "",
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -395,8 +471,28 @@ function ItemForm({ initial, onClose, onSaved }: {
     if (form.vatRate < 0 || form.vatRate > 100) { setErr("نسبة الضريبة بين 0 و 100"); return; }
     setSaving(true); setErr(null);
     try {
-      if (initial) { await updateItem(initial.id, form); onSaved("تم تحديث الصنف"); }
-      else { await createItem(form); onSaved("تم إضافة الصنف"); }
+      let id: number;
+      if (initial) {
+        await updateItem(initial.id, form);
+        id = initial.id;
+      } else {
+        const created = await createItem(form);
+        id = created.id;
+      }
+      // Pharmacy extended fields go straight to SQLite via the dedicated
+      // Tauri command — required for rows that have no LS overlay row.
+      if (isPharmacy) {
+        await updateItemExtended(id, {
+          activeIngredient: form.activeIngredient || null,
+          dosageForm: form.dosageForm || null,
+          strength: form.strength || null,
+          manufacturer: form.manufacturer || null,
+          requiresPrescription: form.requiresPrescription ?? null,
+          expiryDate: form.expiryDate || null,
+          batchNo: form.batchNo || null,
+        });
+      }
+      onSaved(initial ? "تم تحديث الصنف" : "تم إضافة الصنف");
     } catch (e: any) { setErr(e?.message ?? "فشل الحفظ"); }
     finally { setSaving(false); }
   }
@@ -435,6 +531,42 @@ function ItemForm({ initial, onClose, onSaved }: {
             </select>
           </Field>
         </div>
+
+        {isPharmacy && (
+          <>
+            <div style={{ marginTop: 16, marginBottom: 8, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#86198f" }}>
+              💊 بيانات الدواء (صيدلية)
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="المادة الفعّالة">
+                <input value={form.activeIngredient ?? ""} onChange={(e) => setForm({ ...form, activeIngredient: e.target.value })} style={S.input} placeholder="Paracetamol" />
+              </Field>
+              <Field label="الشركة المصنّعة">
+                <input value={form.manufacturer ?? ""} onChange={(e) => setForm({ ...form, manufacturer: e.target.value })} style={S.input} />
+              </Field>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="الشكل الصيدلي">
+                <input value={form.dosageForm ?? ""} onChange={(e) => setForm({ ...form, dosageForm: e.target.value })} style={S.input} placeholder="أقراص / شراب / كبسولات" />
+              </Field>
+              <Field label="التركيز">
+                <input value={form.strength ?? ""} onChange={(e) => setForm({ ...form, strength: e.target.value })} style={S.input} placeholder="500 ملجم" />
+              </Field>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="تاريخ الصلاحية">
+                <input type="date" value={form.expiryDate ?? ""} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} style={S.input} />
+              </Field>
+              <Field label="رقم التشغيلة">
+                <input value={form.batchNo ?? ""} onChange={(e) => setForm({ ...form, batchNo: e.target.value })} style={S.input} />
+              </Field>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 13, color: "#475569" }}>
+              <input type="checkbox" checked={!!form.requiresPrescription} onChange={(e) => setForm({ ...form, requiresPrescription: e.target.checked })} />
+              يتطلّب وصفة طبية (روشتة)
+            </label>
+          </>
+        )}
 
         {err && <div style={S.err}>{err}</div>}
 
@@ -475,6 +607,7 @@ const S = {
   badgeLocal: { display: "inline-block", padding: "2px 8px", background: "#fefce8", color: "#854d0e", border: "1px solid #fef9c3", borderRadius: 999, fontSize: 11 } as const,
   btnPrimary: { padding: "10px 18px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
   btnImport: { padding: "10px 18px", background: "#fff", color: "#0f766e", border: "1px solid #5eead4", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
+  btnEda: { padding: "10px 18px", background: "#fdf4ff", color: "#86198f", border: "1px solid #f0abfc", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
   btnGhost: { padding: "10px 18px", background: "#fff", color: "#475569", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
   btnEdit: { padding: "6px 12px", background: "#f1f5f9", color: "#0f172a", border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", fontSize: 12, marginInlineEnd: 6 } as const,
   btnDel: { padding: "6px 12px", background: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer", fontSize: 12 } as const,

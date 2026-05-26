@@ -23,6 +23,7 @@ import CashierLogin from "./pages/CashierLogin";
 import PosShell from "./pages/PosShell";
 import LicenseExpired from "./pages/LicenseExpired";
 import FirstRunWizard from "./pages/FirstRunWizard";
+import VerticalSelector from "./pages/VerticalSelector";
 import StandaloneActivation from "./pages/StandaloneActivation";
 import StandaloneLogin from "./pages/StandaloneLogin";
 import { createApi, ApiError } from "./lib/api";
@@ -37,6 +38,7 @@ import { clearSessionParkedCarts } from "./lib/parkedCarts";
 import {
   getAppMode, setAppMode, loadLicense, loadLocalSession,
   clearLocalSession, verifyLicenseFile, wipeStandalone,
+  getVertical,
   type AppMode, type OfflineLicensePayload, type LocalSession,
 } from "./lib/standalone";
 import { getFingerprint } from "./lib/tauri-shim";
@@ -44,6 +46,7 @@ import { getFingerprint } from "./lib/tauri-shim";
 type BootState =
   | { phase: "checking" }
   | { phase: "needs-mode" }
+  | { phase: "needs-vertical" }
   // Cloud paths
   | { phase: "needs-activation" }
   | { phase: "license-expired"; baseUrl: string; deviceToken: string; expiresAt: string | null; companyName?: string }
@@ -67,6 +70,11 @@ export default function App() {
     // ── First-run mode selection ──────────────────────────────────────
     const mode = await getAppMode();
     if (!mode) { setState({ phase: "needs-mode" }); return; }
+    // ── Vertical preset (Task #200) — applies to BOTH cloud + standalone.
+    // We block boot here so first-launch users land on the catalog flavor
+    // that matches their business. Returning users skip this branch.
+    const vertical = await getVertical();
+    if (!vertical) { setState({ phase: "needs-vertical" }); return; }
     if (mode === "standalone") return bootStandalone();
     return bootCloud();
   }
@@ -254,6 +262,12 @@ export default function App() {
         setState({ phase: "checking" });
         await boot();
       })();
+    }} />;
+  }
+
+  if (state.phase === "needs-vertical") {
+    return <VerticalSelector onChosen={() => {
+      void (async () => { setState({ phase: "checking" }); await boot(); })();
     }} />;
   }
 

@@ -25,6 +25,17 @@ export interface LocalItem {
   updatedAt?: string;
   /** Soft-delete tombstone (overlay). When true, listItems filters this row out. */
   deleted?: boolean;
+  // Pharmacy vertical (Task #200) — populated when the store's vertical is
+  // "pharmacy". Mapped from snake_case Rust columns by fromRust().
+  activeIngredient?: string | null;
+  dosageForm?: string | null;
+  strength?: string | null;
+  manufacturer?: string | null;
+  requiresPrescription?: boolean | null;
+  controlled?: boolean | null;
+  /** ISO date 'YYYY-MM-DD'. Drives the expiry badges + report. */
+  expiryDate?: string | null;
+  batchNo?: string | null;
 }
 
 interface RustItem {
@@ -36,6 +47,14 @@ interface RustItem {
   barcode: string | null;
   sale_price: number;
   vat_rate: number;
+  active_ingredient?: string | null;
+  dosage_form?: string | null;
+  strength?: string | null;
+  manufacturer?: string | null;
+  requires_prescription?: boolean | null;
+  controlled?: boolean | null;
+  expiry_date?: string | null;
+  batch_no?: string | null;
 }
 
 function fromRust(r: RustItem): LocalItem {
@@ -48,6 +67,14 @@ function fromRust(r: RustItem): LocalItem {
     barcode: r.barcode,
     salePrice: r.sale_price,
     vatRate: r.vat_rate,
+    activeIngredient: r.active_ingredient ?? null,
+    dosageForm: r.dosage_form ?? null,
+    strength: r.strength ?? null,
+    manufacturer: r.manufacturer ?? null,
+    requiresPrescription: r.requires_prescription ?? null,
+    controlled: r.controlled ?? null,
+    expiryDate: r.expiry_date ?? null,
+    batchNo: r.batch_no ?? null,
   };
 }
 
@@ -225,6 +252,15 @@ export interface CreateItemInput {
   salePrice: number;
   vatRate: number;
   uomId?: number | null;
+  // Pharmacy extension (Task #200) — always optional. Generic-vertical
+  // catalogs simply leave them undefined.
+  activeIngredient?: string | null;
+  dosageForm?: string | null;
+  strength?: string | null;
+  manufacturer?: string | null;
+  requiresPrescription?: boolean | null;
+  expiryDate?: string | null;
+  batchNo?: string | null;
 }
 
 export async function createItem(input: CreateItemInput): Promise<LocalItem> {
@@ -240,6 +276,13 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
     salePrice: input.salePrice,
     vatRate: input.vatRate,
     uomId: input.uomId ?? null,
+    activeIngredient: input.activeIngredient ?? null,
+    dosageForm: input.dosageForm ?? null,
+    strength: input.strength ?? null,
+    manufacturer: input.manufacturer ?? null,
+    requiresPrescription: input.requiresPrescription ?? null,
+    expiryDate: input.expiryDate ?? null,
+    batchNo: input.batchNo ?? null,
     updatedAt: new Date().toISOString(),
   };
   all.push(row);
@@ -251,6 +294,138 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
     payload: { localId: id, ...input },
   });
   return row;
+}
+
+/**
+ * Bulk-import a pre-validated catalog (Task #200 EDA pharmacy import).
+ * In Tauri we write straight to SQLite via `insert_local_item` (one fsync
+ * per row but no push-queue noise — these are seed rows, not user creations).
+ * Browser fallback uses localStorage (same dedup contract as createItem).
+ *
+ * Returns { inserted, skippedDup } so the UI can show a meaningful toast.
+ */
+export async function bulkImportLocalItems(
+  rows: CreateItemInput[],
+  opts: { dedupBy?: "barcode" | "code" | "none" } = {},
+): Promise<{ inserted: number; skippedDup: number }> {
+  const dedupBy = opts.dedupBy ?? "barcode";
+  // Build the "already exists" sets from the merged catalog so we dedup
+  // against both SQLite-pulled and locally-created rows.
+  const existing = await listItems();
+  const seenBc = new Set(existing.map((r) => r.barcode).filter((b): b is string => !!b));
+  const seenCode = new Set(existing.map((r) => r.code).filter((c): c is string => !!c));
+  let inserted = 0;
+  let skippedDup = 0;
+  if (IS_TAURI) {
+    for (const r of rows) {
+      if (dedupBy === "barcode" && r.barcode && seenBc.has(r.barcode)) { skippedDup++; continue; }
+      if (dedupBy === "code" && r.code && seenCode.has(r.code)) { skippedDup++; continue; }
+      try {
+        await tauriInvoke<number>("insert_local_item", {
+          code: r.code ?? null,
+          name_ar: r.nameAr,
+          name_en: r.nameEn ?? null,
+          barcode: r.barcode ?? null,
+          sale_price: r.salePrice,
+          vat_rate: r.vatRate,
+          active_ingredient: r.activeIngredient ?? null,
+          dosage_form: r.dosageForm ?? null,
+          strength: r.strength ?? null,
+          manufacturer: r.manufacturer ?? null,
+          requires_prescription: r.requiresPrescription ?? null,
+          expiry_date: r.expiryDate ?? null,
+          batch_no: r.batchNo ?? null,
+        });
+        inserted++;
+        if (r.barcode) seenBc.add(r.barcode);
+        if (r.code) seenCode.add(r.code);
+      } catch { /* skip on row-level failure (e.g. UNIQUE conflict) */ }
+    }
+    return { inserted, skippedDup };
+  }
+  // Browser fallback — write via createItem (LS only).
+  for (const r of rows) {
+    if (dedupBy === "barcode" && r.barcode && seenBc.has(r.barcode)) { skippedDup++; continue; }
+    if (dedupBy === "code" && r.code && seenCode.has(r.code)) { skippedDup++; continue; }
+    try {
+      await createItem(r);
+      inserted++;
+      if (r.barcode) seenBc.add(r.barcode);
+      if (r.code) seenCode.add(r.code);
+    } catch { /* skip */ }
+  }
+  return { inserted, skippedDup };
+}
+
+/**
+ * Items whose `expiryDate` is non-null and within `withinDays` days of today
+ * (or already expired when the difference is ≤ 0). Sorted soonest-first.
+ * Backed by `list_expiring_items` on Tauri; computes client-side otherwise.
+ */
+export async function listExpiringItems(withinDays = 90): Promise<LocalItem[]> {
+  if (IS_TAURI) {
+    try {
+      const rows = await tauriInvoke<RustItem[]>("list_expiring_items", { within_days: withinDays });
+      return rows.map(fromRust);
+    } catch { /* fall through */ }
+  }
+  const all = await listItems();
+  const now = Date.now();
+  const horizon = now + withinDays * 86_400_000;
+  return all
+    .filter((i) => !!i.expiryDate)
+    .filter((i) => {
+      const t = new Date(i.expiryDate!).getTime();
+      return Number.isFinite(t) && t <= horizon;
+    })
+    .sort((a, b) => (a.expiryDate ?? "").localeCompare(b.expiryDate ?? ""));
+}
+
+/**
+ * Persist pharmacy-extended fields on a row (Task #200). In Tauri this hits
+ * SQLite directly so SQLite-backed rows (EDA imports, cloud pulls) get the
+ * update — without this, edits to those fields would land in the LS overlay
+ * and silently vanish on the next listItems (see memory pos-desktop-overlay-pattern).
+ * Browser fallback is a no-op since the regular updateItem() already wrote
+ * the LS overlay for us.
+ */
+export async function updateItemExtended(
+  id: number,
+  fields: {
+    activeIngredient?: string | null;
+    dosageForm?: string | null;
+    strength?: string | null;
+    manufacturer?: string | null;
+    requiresPrescription?: boolean | null;
+    expiryDate?: string | null;
+    batchNo?: string | null;
+  },
+): Promise<void> {
+  if (!IS_TAURI) return;
+  try {
+    await tauriInvoke("update_local_item_extended", {
+      id,
+      active_ingredient: fields.activeIngredient ?? null,
+      dosage_form: fields.dosageForm ?? null,
+      strength: fields.strength ?? null,
+      manufacturer: fields.manufacturer ?? null,
+      requires_prescription: fields.requiresPrescription ?? null,
+      expiry_date: fields.expiryDate ?? null,
+      batch_no: fields.batchNo ?? null,
+    });
+  } catch (e) {
+    // Surface as a thrown error so the form can show it; pharma fields are
+    // user-visible and silent failure here would be very confusing.
+    throw new Error(`فشل حفظ بيانات الدواء: ${e}`);
+  }
+}
+
+/** Days until expiry for an item, or null if no expiry date. Negative = already expired. */
+export function daysUntilExpiry(it: { expiryDate?: string | null }): number | null {
+  if (!it.expiryDate) return null;
+  const t = new Date(it.expiryDate).getTime();
+  if (!Number.isFinite(t)) return null;
+  return Math.floor((t - Date.now()) / 86_400_000);
 }
 
 export async function updateItem(id: number, patch: Partial<CreateItemInput>): Promise<LocalItem | null> {

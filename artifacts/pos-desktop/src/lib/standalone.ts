@@ -156,6 +156,31 @@ function stripStored(u: StoredUser): LocalUser {
   return rest;
 }
 
+// ─── Vertical preset (Task #200) ─────────────────────────────────────
+// Three presets that switch UI flavor: catalog labels, optional fields,
+// per-vertical reports. "general" is the no-op fallback for new businesses.
+export type Vertical = "general" | "grocery" | "pharmacy";
+const LS_VERTICAL = "pos_desktop_vertical";
+const SETTING_VERTICAL = "ui_vertical";
+
+export async function getVertical(): Promise<Vertical | null> {
+  if (hasTauri()) {
+    try {
+      const v = await invoke<string | null>("standalone_get_setting", { key: SETTING_VERTICAL });
+      return v === "general" || v === "grocery" || v === "pharmacy" ? v : null;
+    } catch { return null; }
+  }
+  const v = localStorage.getItem(LS_VERTICAL);
+  return v === "general" || v === "grocery" || v === "pharmacy" ? v : null;
+}
+export async function setVertical(v: Vertical): Promise<void> {
+  if (hasTauri()) {
+    try { await invoke("standalone_set_setting", { key: SETTING_VERTICAL, value: v }); return; }
+    catch { /* fall through */ }
+  }
+  localStorage.setItem(LS_VERTICAL, v);
+}
+
 // ─── Mode ────────────────────────────────────────────────────────────
 export async function getAppMode(): Promise<AppMode | null> {
   if (hasTauri()) {
