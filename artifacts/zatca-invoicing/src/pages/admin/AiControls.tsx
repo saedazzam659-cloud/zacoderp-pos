@@ -111,6 +111,55 @@ export default function AiControls() {
     refetchInterval: 60_000,
   });
 
+  // Step 2 — monthly cost estimate per company. The catalog carries
+  // `usdPerCall` for each feature; the server multiplies it by the
+  // allowed-call count over the last N days and sorts companies by
+  // spend desc. UI exposes a 7/30/90-day toggle + per-row "disable
+  // paid" shortcut.
+  const [costDays, setCostDays] = useState<7 | 30 | 90>(30);
+  const costQ = useQuery<{
+    days: number;
+    grandTotalUsd: number;
+    grandTotalCalls: number;
+    companies: Array<{
+      companyId: number | null;
+      companyName: string;
+      totalCalls: number;
+      paidCalls: number;
+      estimatedUsd: number;
+      byFeature: Array<{ featureKey: string; calls: number; usd: number; tier: "free"|"paid" }>;
+    }>;
+  }>({
+    queryKey: ["ai-controls", "cost-by-company", costDays],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/ai-controls/cost-by-company?days=${costDays}`, { credentials: "include" });
+      if (!r.ok) throw new Error("failed to load cost estimate");
+      return r.json();
+    },
+    refetchInterval: 60_000,
+  });
+
+  const disablePaidForCompanyMut = useMutation({
+    mutationFn: async (targetCompanyId: number) => {
+      const r = await fetch(`${API}/api/admin/ai-controls/disable-paid`, {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: JSON.stringify({
+          companyId: targetCompanyId,
+          note: `إيقاف المدفوعة من لوحة التكلفة بواسطة ${user?.email || "SA"}`,
+        }),
+      });
+      if (!r.ok) throw new Error("failed");
+      return r.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تم", description: "أوقفنا الميزات المدفوعة لهذه الشركة." });
+      qc.invalidateQueries({ queryKey: ["ai-controls"] });
+    },
+    onError: (e: any) => toast({ title: "فشل", description: e?.message, variant: "destructive" }),
+  });
+
   // Hydrate the draft for the active context from the server response, but
   // only when that context is NOT dirty — never clobber in-progress edits.
   useEffect(() => {
@@ -388,6 +437,115 @@ export default function AiControls() {
           جميع ميزات الذكاء الاصطناعي مُوقفة حالياً لهذه الشركة.
         </div>
       )}
+
+      {/* ─── Step 2: per-company cost estimate ─── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <DollarSign className="h-4 w-4 text-amber-600" />
+                تقدير تكلفة الذكاء الاصطناعي لكل شركة
+              </CardTitle>
+              <CardDescription>
+                مبني على استدعاءات AI المسموح بها × متوسط تكلفة الميزة. تقدير تقريبي — الفاتورة الفعلية من المزوّد (Gemini / OpenAI).
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-1 text-xs">
+                <Button size="sm" variant={costDays === 7  ? "default" : "outline"} className="h-7 px-2 text-xs" onClick={() => setCostDays(7)}>7 أيام</Button>
+                <Button size="sm" variant={costDays === 30 ? "default" : "outline"} className="h-7 px-2 text-xs" onClick={() => setCostDays(30)}>30 يوم</Button>
+                <Button size="sm" variant={costDays === 90 ? "default" : "outline"} className="h-7 px-2 text-xs" onClick={() => setCostDays(90)}>90 يوم</Button>
+              </div>
+              <div className="text-end">
+                <div className="text-[10px] text-muted-foreground">الإجمالي التقديري</div>
+                <div className="text-lg font-bold text-amber-700">
+                  ${costQ.data?.grandTotalUsd?.toFixed(4) ?? "0.0000"}
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  {(costQ.data?.grandTotalCalls ?? 0).toLocaleString("en")} استدعاء
+                </div>
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {costQ.isLoading ? (
+            <div className="p-8 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" /></div>
+          ) : (costQ.data?.companies ?? []).length === 0 ? (
+            <p className="p-6 text-center text-xs text-muted-foreground italic">
+              لا توجد استدعاءات AI مسجّلة خلال آخر {costDays} يوم — لا توجد تكلفة تقديرية.
+            </p>
+          ) : (
+            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40 sticky top-0">
+                  <tr className="text-xs text-muted-foreground">
+                    <th className="text-start p-3">الشركة</th>
+                    <th className="text-center p-3 w-28">استدعاءات</th>
+                    <th className="text-center p-3 w-28">مدفوعة</th>
+                    <th className="text-center p-3 w-32">التكلفة (USD)</th>
+                    <th className="text-center p-3 w-28">إجراء</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(costQ.data?.companies ?? []).map(c => {
+                    const isTop = c.estimatedUsd === costQ.data?.companies[0]?.estimatedUsd && c.estimatedUsd > 0;
+                    return (
+                      <tr key={c.companyId ?? "none"} className="border-t hover:bg-muted/20">
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <Building2 className="h-4 w-4 text-muted-foreground" />
+                            <span className="font-medium">{c.companyName}</span>
+                            {c.companyId != null && <span className="text-[10px] text-muted-foreground">#{c.companyId}</span>}
+                            {isTop && <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[9px] hover:bg-amber-100">الأعلى</Badge>}
+                          </div>
+                          {c.byFeature.length > 0 && (
+                            <div className="text-[10px] text-muted-foreground mt-1 truncate" title={c.byFeature.map(f => `${f.featureKey}: $${f.usd.toFixed(4)}`).join(" • ")}>
+                              {c.byFeature.slice(0, 3).map(f => f.featureKey).join(" • ")}
+                              {c.byFeature.length > 3 && ` +${c.byFeature.length - 3}`}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3 text-center font-mono text-xs">{c.totalCalls.toLocaleString("en")}</td>
+                        <td className="p-3 text-center font-mono text-xs">
+                          {c.paidCalls.toLocaleString("en")}
+                          {c.totalCalls > 0 && (
+                            <div className="text-[9px] text-muted-foreground">
+                              {Math.round((c.paidCalls / c.totalCalls) * 100)}%
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className={`font-mono font-bold ${c.estimatedUsd > 1 ? "text-red-600" : c.estimatedUsd > 0.1 ? "text-amber-700" : "text-muted-foreground"}`}>
+                            ${c.estimatedUsd.toFixed(4)}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">
+                          {c.companyId != null && c.paidCalls > 0 && (
+                            <Button
+                              size="sm" variant="outline"
+                              className="h-7 px-2 text-[10px] border-amber-500 text-amber-700 hover:bg-amber-50"
+                              disabled={disablePaidForCompanyMut.isPending}
+                              onClick={() => {
+                                if (confirm(`إيقاف الميزات المدفوعة لشركة "${c.companyName}"؟`)) {
+                                  disablePaidForCompanyMut.mutate(c.companyId!);
+                                }
+                              }}
+                            >
+                              <DollarSign className="h-3 w-3 me-1" /> إيقاف المدفوعة
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
         {/* ─── Settings table ─── */}

@@ -75,27 +75,32 @@ export type NewAiUsageLogRow        = typeof aiUsageLogTable.$inferInsert;
 // Hybrid features (e.g. accounting_ai_ask uses a local IFRS/ZATCA
 // library first, then falls back to Gemini) are classified as `paid`
 // because the fallback DOES cost money — SuperAdmin must opt-in.
+// `usdPerCall` is a rough average cost-per-allowed-call used for the
+// monthly-spend estimator in the SuperAdmin dashboard. Free-tier
+// features = 0. Long-form OpenAI generations (SEO articles) are the
+// most expensive. Short Gemini Flash calls are pennies. These are
+// ROUGH estimates — actual billing comes from the provider invoice.
 export const AI_FEATURE_CATALOG = [
-  { key: "accounting_ai_ask",     labelAr: "مستشار المعايير المحاسبية (سؤال وجواب)",     defaultDaily: 100, tier: "paid" },
-  { key: "seo_article_gen",       labelAr: "توليد مقالات SEO (مدفوع — OpenAI)",          defaultDaily: 10,  tier: "paid" },
-  { key: "seo_suggestions",       labelAr: "اقتراحات عناوين SEO",                          defaultDaily: 50,  tier: "paid" },
-  { key: "report_analyzer",       labelAr: "محلل التقارير المالية بالذكاء الاصطناعي",      defaultDaily: 50,  tier: "paid" },
-  { key: "chat_assistant",        labelAr: "المساعد العام داخل الشاشات",                   defaultDaily: 200, tier: "paid" },
-  { key: "voice_actions",         labelAr: "أوامر صوتية للذكاء الاصطناعي",                 defaultDaily: 100, tier: "paid" },
-  { key: "product_descriptions",  labelAr: "توليد أوصاف المنتجات",                          defaultDaily: 50,  tier: "paid" },
-  { key: "crm_ai",                labelAr: "تحليلات CRM",                                   defaultDaily: 50,  tier: "paid" },
-  { key: "support_ai",            labelAr: "مساعد الدعم الفني",                            defaultDaily: 50,  tier: "paid" },
-  { key: "online_store_ai",       labelAr: "تحليلات المتجر الإلكتروني",                    defaultDaily: 50,  tier: "paid" },
-  { key: "pos_ai",                labelAr: "تحليلات نقاط البيع",                            defaultDaily: 50,  tier: "paid" },
-  { key: "manufacturing_ai",      labelAr: "مساعد التصنيع",                                 defaultDaily: 50,  tier: "paid" },
-  { key: "hr_ai",                 labelAr: "تحليلات الموارد البشرية",                       defaultDaily: 50,  tier: "paid" },
-  { key: "fixed_assets_ai",       labelAr: "تحليلات الأصول الثابتة",                        defaultDaily: 50,  tier: "paid" },
-  { key: "contracting_ai",        labelAr: "تحليلات المقاولات",                             defaultDaily: 50,  tier: "paid" },
-  { key: "hotel_ai",              labelAr: "تحليلات الفنادق",                               defaultDaily: 50,  tier: "paid" },
-  { key: "hospital_ai",           labelAr: "تحليلات المستشفيات",                            defaultDaily: 50,  tier: "paid" },
-  { key: "tax_entry_ai",          labelAr: "إدخال القيد الضريبي بالذكاء الاصطناعي",         defaultDaily: 100, tier: "paid" },
-  { key: "account_suggestions",   labelAr: "اقتراح الحسابات (تحويلات/تسويات/مقبوضات/مدفوعات)", defaultDaily: 200, tier: "free" },
-  { key: "data_import_ai",        labelAr: "تحليل وتعيين أعمدة الاستيراد",                  defaultDaily: 100, tier: "paid" },
+  { key: "accounting_ai_ask",     labelAr: "مستشار المعايير المحاسبية (سؤال وجواب)",     defaultDaily: 100, tier: "paid", usdPerCall: 0.0003 },
+  { key: "seo_article_gen",       labelAr: "توليد مقالات SEO (مدفوع — OpenAI)",          defaultDaily: 10,  tier: "paid", usdPerCall: 0.0080 },
+  { key: "seo_suggestions",       labelAr: "اقتراحات عناوين SEO",                          defaultDaily: 50,  tier: "paid", usdPerCall: 0.0002 },
+  { key: "report_analyzer",       labelAr: "محلل التقارير المالية بالذكاء الاصطناعي",      defaultDaily: 50,  tier: "paid", usdPerCall: 0.0005 },
+  { key: "chat_assistant",        labelAr: "المساعد العام داخل الشاشات",                   defaultDaily: 200, tier: "paid", usdPerCall: 0.0002 },
+  { key: "voice_actions",         labelAr: "أوامر صوتية للذكاء الاصطناعي",                 defaultDaily: 100, tier: "paid", usdPerCall: 0.0003 },
+  { key: "product_descriptions",  labelAr: "توليد أوصاف المنتجات",                          defaultDaily: 50,  tier: "paid", usdPerCall: 0.0010 },
+  { key: "crm_ai",                labelAr: "تحليلات CRM",                                   defaultDaily: 50,  tier: "paid", usdPerCall: 0.0004 },
+  { key: "support_ai",            labelAr: "مساعد الدعم الفني",                            defaultDaily: 50,  tier: "paid", usdPerCall: 0.0003 },
+  { key: "online_store_ai",       labelAr: "تحليلات المتجر الإلكتروني",                    defaultDaily: 50,  tier: "paid", usdPerCall: 0.0004 },
+  { key: "pos_ai",                labelAr: "تحليلات نقاط البيع",                            defaultDaily: 50,  tier: "paid", usdPerCall: 0.0004 },
+  { key: "manufacturing_ai",      labelAr: "مساعد التصنيع",                                 defaultDaily: 50,  tier: "paid", usdPerCall: 0.0004 },
+  { key: "hr_ai",                 labelAr: "تحليلات الموارد البشرية",                       defaultDaily: 50,  tier: "paid", usdPerCall: 0.0004 },
+  { key: "fixed_assets_ai",       labelAr: "تحليلات الأصول الثابتة",                        defaultDaily: 50,  tier: "paid", usdPerCall: 0.0004 },
+  { key: "contracting_ai",        labelAr: "تحليلات المقاولات",                             defaultDaily: 50,  tier: "paid", usdPerCall: 0.0004 },
+  { key: "hotel_ai",              labelAr: "تحليلات الفنادق",                               defaultDaily: 50,  tier: "paid", usdPerCall: 0.0004 },
+  { key: "hospital_ai",           labelAr: "تحليلات المستشفيات",                            defaultDaily: 50,  tier: "paid", usdPerCall: 0.0004 },
+  { key: "tax_entry_ai",          labelAr: "إدخال القيد الضريبي بالذكاء الاصطناعي",         defaultDaily: 100, tier: "paid", usdPerCall: 0.0003 },
+  { key: "account_suggestions",   labelAr: "اقتراح الحسابات (تحويلات/تسويات/مقبوضات/مدفوعات)", defaultDaily: 200, tier: "free", usdPerCall: 0 },
+  { key: "data_import_ai",        labelAr: "تحليل وتعيين أعمدة الاستيراد",                  defaultDaily: 100, tier: "paid", usdPerCall: 0.0005 },
 ] as const;
 
 export type AiFeatureTier = "free" | "paid";
