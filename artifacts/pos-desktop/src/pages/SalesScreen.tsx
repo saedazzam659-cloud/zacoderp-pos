@@ -35,10 +35,19 @@ const VAT_RATE = 0.15;
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 
 interface CartLine {
+  /** Stable per-line id so weighed items added multiple times for the same
+   * catalog row stay independently editable/removable. Round-3 review fix:
+   * keying by `item.id` collapsed duplicate-barcode weighings into one
+   * React node and made +/-/× mutate every matching line at once. */
+  lineId: string;
   item: LocalItem;
   qty: number;
   /** Task #201: when true, qty is in kilograms and the line was priced per-kg. */
   weighed?: boolean;
+}
+
+function newLineId(): string {
+  return (crypto as any).randomUUID?.() ?? `ln_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
 type Props = { companyName?: string; vatNumber?: string; posSessionId?: number; cashierName?: string };
@@ -82,6 +91,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
         // line — only the fields the UI/checkout pipeline reads (id, nameAr,
         // salePrice, vatRate, barcode) are needed downstream.
         const lines: CartLine[] = c.lines.map(l => ({
+          lineId: newLineId(),
           item: {
             id: l.itemId, nameAr: l.nameAr, salePrice: l.salePrice,
             vatRate: l.vatRate, barcode: l.barcode ?? null,
@@ -188,7 +198,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
     }
     if (weightKg <= 0) return;
     const synth: LocalItem = { ...item, salePrice: item.pricePerKg };
-    setCart((prev) => [...prev, { item: synth, qty: weightKg, weighed: true }]);
+    setCart((prev) => [...prev, { lineId: newLineId(), item: synth, qty: weightKg, weighed: true }]);
     setMsg({ kind: "ok", text: `⚖️ ${item.nameAr} — ${weightKg.toFixed(3)} كجم` });
   }
 
@@ -249,19 +259,22 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       }
     }
     setCart((prev) => {
-      const existing = prev.find((l) => l.item.id === item.id);
-      if (existing) return prev.map((l) => l.item.id === item.id ? { ...l, qty: l.qty + 1 } : l);
-      return [...prev, { item, qty: 1 }];
+      // Non-weighed lines still collapse to a single line per catalog row —
+      // tapping the same product twice should bump qty, not spawn duplicates.
+      // Weighed lines bypass this branch entirely (see pushWeighedLine).
+      const existing = prev.find((l) => l.item.id === item.id && !l.weighed);
+      if (existing) return prev.map((l) => l.lineId === existing.lineId ? { ...l, qty: l.qty + 1 } : l);
+      return [...prev, { lineId: newLineId(), item, qty: 1 }];
     });
   }
-  function changeQty(itemId: number, delta: number) {
+  function changeQty(lineId: string, delta: number) {
     setCart((prev) => prev
-      .map((l) => l.item.id === itemId ? { ...l, qty: l.qty + delta } : l)
+      .map((l) => l.lineId === lineId ? { ...l, qty: l.qty + delta } : l)
       .filter((l) => l.qty > 0));
   }
-  function removeLine(itemId: number) {
+  function removeLine(lineId: string) {
     setCart((prev) => {
-      const next = prev.filter((l) => l.item.id !== itemId);
+      const next = prev.filter((l) => l.lineId !== lineId);
       if (next.length === 0) setCheckoutKey(null);
       return next;
     });
@@ -494,7 +507,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           ) : (
             <div style={S.lines}>
               {cart.map((l) => (
-                <div key={l.item.id} style={S.line}>
+                <div key={l.lineId} style={S.line}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14, color: "#0f172a", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.item.nameAr}</div>
                     <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
@@ -502,10 +515,23 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
                     </div>
                   </div>
                   <div style={S.qtyControls}>
-                    <button onClick={() => changeQty(l.item.id, -1)} style={S.qtyBtn}>−</button>
-                    <span style={{ minWidth: 28, textAlign: "center", fontWeight: 600 }}>{l.qty}</span>
-                    <button onClick={() => changeQty(l.item.id, +1)} style={S.qtyBtn}>+</button>
-                    <button onClick={() => removeLine(l.item.id)} style={{ ...S.qtyBtn, color: "#dc2626", borderColor: "#fecaca", marginInlineStart: 6 }}>×</button>
+                    {l.weighed ? (
+                      // Task #201 round-3 fix: weighed lines are immutable
+                      // after capture — qty *is* the measured weight in kg,
+                      // so ±1 would corrupt it. Show the kg readout (locked)
+                      // and only allow remove. To re-weigh, delete and add
+                      // the item again.
+                      <span style={{ minWidth: 80, textAlign: "center", fontWeight: 600, color: "#1d4ed8" }}>
+                        ⚖️ {l.qty.toFixed(3)} كجم
+                      </span>
+                    ) : (
+                      <>
+                        <button onClick={() => changeQty(l.lineId, -1)} style={S.qtyBtn}>−</button>
+                        <span style={{ minWidth: 28, textAlign: "center", fontWeight: 600 }}>{l.qty}</span>
+                        <button onClick={() => changeQty(l.lineId, +1)} style={S.qtyBtn}>+</button>
+                      </>
+                    )}
+                    <button onClick={() => removeLine(l.lineId)} style={{ ...S.qtyBtn, color: "#dc2626", borderColor: "#fecaca", marginInlineStart: 6 }}>×</button>
                   </div>
                 </div>
               ))}

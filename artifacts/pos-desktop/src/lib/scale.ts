@@ -25,6 +25,11 @@ export type ScaleParity = "none" | "odd" | "even";
 export type ScaleDataBits = 5 | 6 | 7 | 8;
 
 export interface EmbeddedBarcodeProfile {
+  /** Master switch for the embedded-weight barcode path. When false,
+   * `parseEmbeddedWeightBarcode` returns null regardless of the barcode
+   * shape, so scans always go through the normal item lookup. Round-3
+   * review fix — settings now expose an explicit on/off toggle. */
+  enabled: boolean;
   /** Two-digit "weight item" prefix (commonly 20 or 22). */
   prefix: string;
   /** PLU length in digits (typically 5). */
@@ -54,7 +59,7 @@ export const DEFAULT_SCALE_CONFIG: ScaleConfig = {
   protocol: "generic_ascii",
   parity: "none",
   dataBits: 8,
-  embedded: { prefix: "20", pluLen: 5, weightLen: 5, weightDecimals: 3 },
+  embedded: { enabled: true, prefix: "20", pluLen: 5, weightLen: 5, weightDecimals: 3 },
 };
 
 const LS_KEY = "pos_desktop_scale_cfg_v1";
@@ -126,6 +131,7 @@ export function parseEmbeddedWeightBarcode(
   code: string,
   profile: EmbeddedBarcodeProfile = getScaleConfig().embedded,
 ): { plu: string; weightKg: number } | null {
+  if (!profile.enabled) return null;
   if (!code || !/^[0-9]+$/.test(code)) return null;
   const need = profile.prefix.length + profile.pluLen + profile.weightLen + 1; // +CD
   if (code.length !== need) return null;

@@ -121,6 +121,11 @@ export default function ScaleSettings() {
 
       <section style={S.card}>
         <h3 style={S.h3}>باركود الميزان (PLU + الوزن مدمج)</h3>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 14, color: "#0f172a", fontWeight: 600 }}>
+          <input type="checkbox" checked={cfg.embedded.enabled}
+            onChange={(e) => patchEmbedded("enabled", e.target.checked)} />
+          تفعيل قراءة الوزن من الباركود
+        </label>
         <p style={S.sub}>
           يقوم ميزان الديلي/الخضار بطباعة باركود EAN-13 يبدأ بـ <strong>{cfg.embedded.prefix || "20/22"}</strong>،
           ثم رقم PLU، ثم رقم الوزن. عند مسحه ستفتح السلة الصنف المطابق وتضع الوزن كميةً.
