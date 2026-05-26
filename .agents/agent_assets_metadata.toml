@@ -251,3 +251,9 @@ id = "PFNQ1SseEJwVmT7Hn2AZv"
 uri = "file://attached_assets/grocery_items_egypt.csv"
 type = "table"
 title = "كتالوج البقالة المصري (624 صنف، باركود 622)"
+
+[[outputs]]
+id = "mQANst8X0WDiUgvDgzQMT"
+uri = "file://attached_assets/grocery_items_egypt.xlsx"
+type = "table"
+title = "كتالوج البقالة المصري (Excel، 624 صنف)"
