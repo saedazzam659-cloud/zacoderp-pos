@@ -62,7 +62,10 @@ export default function PosShell({
   // In standalone mode there is no pos_sessions row — use a synthetic session id
   // (1) so parked-carts scope still works (single virtual session per machine).
   const posSessionId = standalone ? 1 : (cashierContext?.posSessionId ?? 0);
-  const effectiveCompanyName = companyName ?? cashierContext?.companyName ?? standaloneLicense?.customerName;
+  // Standalone topbar must NOT show any company/customer identity (per spec).
+  const effectiveCompanyName = standalone
+    ? undefined
+    : (companyName ?? cashierContext?.companyName);
   const effectiveCashierName = standalone
     ? (standaloneSession?.displayName ?? standaloneSession?.username)
     : (cashierContext?.nameAr || cashierContext?.username);

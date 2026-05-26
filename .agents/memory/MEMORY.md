@@ -8,4 +8,4 @@
 - [Zod datetime strict rejects +00:00](zod-datetime-offset.md) — chrono `to_rfc3339()` emits offset form, never `Z`; any zod schema validating a Rust-produced timestamp MUST use `{offset:true}` or it 400s.
 - [POS Desktop daily Z-report data source](pos-desktop-daily-report.md) — read local SQLite, not cloud `/api/reports/*`; offline shift-close must work without internet.
 - [POS Desktop LS overlay for catalog edits](pos-desktop-overlay-pattern.md) — cloud-pulled items/customers need LS overlay + tombstones at read time; without it `updateItem`/`deleteItem` silently no-op on SQLite-backed rows.
-- [POS Desktop standalone mode](pos-desktop-standalone-mode.md) — cloud and standalone are two completely separate boot trees; every cloud effect in PosShell must guard `if (standalone) return;` or the timer crashes.
+- [POS Desktop standalone mode](pos-desktop-standalone-mode.md) — cloud and standalone are two separate boot trees; every cloud effect must guard `if (standalone) return;` and the mode-switch wipe must iterate ALL `pos_desktop_*` LS keys.

@@ -78,8 +78,16 @@ export async function verifyLicenseFile(file: SignedLicenseFile): Promise<{ ok: 
   if (file?.alg !== "ed25519" || !file?.payloadB64 || !file?.signature || !file?.publicKey) {
     return { ok: false, error: "ملف ترخيص غير صالح (تنسيق غير مدعوم)" };
   }
-  // Pin check: in production, the bundled key must match the file's key.
-  if (PINNED_PUBKEY_B64 && file.publicKey !== PINNED_PUBKEY_B64) {
+  // Production builds MUST be pinned to a build-time public key. Failing
+  // closed here prevents the misconfiguration where a missing build env
+  // var silently lets attacker-signed licenses verify against their own
+  // embedded key. Dev/preview builds (vite serve) are exempt so the
+  // unsigned flow can still be exercised locally.
+  if (!PINNED_PUBKEY_B64) {
+    if (import.meta.env.PROD) {
+      return { ok: false, error: "هذه النسخة من التطبيق غير مُهيّأة (مفتاح الترخيص العام مفقود في البناء)" };
+    }
+  } else if (file.publicKey !== PINNED_PUBKEY_B64) {
     return { ok: false, error: "هذا الترخيص لم يُوقَّع بمفتاح هذه النسخة من التطبيق" };
   }
   try {
