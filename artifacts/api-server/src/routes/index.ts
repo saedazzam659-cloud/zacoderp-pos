@@ -108,6 +108,7 @@ import accountNotesRouter from "./account-notes";
 import deviceLicensesRouter from "./device-licenses";
 import posDesktopSyncRouter from "./pos-desktop-sync";
 import adminPosDevicesRouter from "./admin-pos-devices";
+import adminOfflineLicensesRouter from "./admin-offline-licenses";
 import publicDownloadRouter from "./public-download";
 
 const router: IRouter = Router();
@@ -205,6 +206,7 @@ router.use("/public/download", publicDownloadRouter);
 router.use("/device-licenses", deviceLicensesRouter);
 router.use("/sync", posDesktopSyncRouter);
 router.use("/admin/pos-devices", adminPosDevicesRouter);
+router.use("/admin/offline-licenses", adminOfflineLicensesRouter);
 router.use(zatcaRouter);
 router.use("/contracting", contractingRouter);
 router.use("/contracting-ai", contractingAiRouter);

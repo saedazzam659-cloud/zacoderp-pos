@@ -1,25 +1,30 @@
 // Root component for the Tauri desktop POS.
 //
-// Boot flow (4 phases — Task #175 added the cashier-login layer):
-//   1. checking          — load device token + (if present) cashier token
-//   2. needs-activation  — device not yet bound to a company → Activation wizard
-//   3. needs-cashier     — device OK but no logged-in cashier → CashierLogin
-//   4. signed-in         — full PosShell with cashier context + posSessionId
+// Boot flow now has TWO modes (Task #199):
 //
-// Two auth layers ride together on every cloud call from PosShell:
-//   * X-Device-Token  — pins the request to the physical terminal
-//   * Authorization   — Bearer <userToken>, identifies the human cashier
+//   CLOUD MODE (original — Task #174/#175):
+//     1. checking          — load device token + (if present) cashier token
+//     2. needs-activation  — device not yet bound → Activation wizard
+//     3. needs-cashier     — device OK but no cashier → CashierLogin
+//     4. signed-in         — full PosShell with cloud cashierContext
 //
-// Server URL is persisted in localStorage during activation (`pos_desktop_server_url`)
-// so subsequent boots know which cloud to talk to. The cashier token lives in
-// the keyring (or localStorage fallback) so a hard refresh mid-shift restores
-// the same context without re-typing the password.
+//   STANDALONE MODE (Task #199):
+//     1. checking
+//     2. needs-standalone-license  — no signed license file → StandaloneActivation
+//     3. needs-standalone-login    — license OK but no session → StandaloneLogin
+//     4. standalone-signed-in      — PosShell rendered with standalone=true
+//
+// First-time launch shows FirstRunWizard which writes the chosen mode to
+// localStorage; later boots skip straight into the matching path.
 
 import { useState, useEffect } from "react";
 import Activation from "./pages/Activation";
 import CashierLogin from "./pages/CashierLogin";
 import PosShell from "./pages/PosShell";
 import LicenseExpired from "./pages/LicenseExpired";
+import FirstRunWizard from "./pages/FirstRunWizard";
+import StandaloneActivation from "./pages/StandaloneActivation";
+import StandaloneLogin from "./pages/StandaloneLogin";
 import { createApi, ApiError } from "./lib/api";
 import {
   loadDeviceToken, clearDeviceToken,
@@ -29,13 +34,24 @@ import {
   TAURI_MODE,
 } from "./lib/tauri-shim";
 import { clearSessionParkedCarts } from "./lib/parkedCarts";
+import {
+  getAppMode, setAppMode, loadLicense, loadLocalSession,
+  clearLocalSession, verifyLicenseFile, wipeStandalone,
+  type AppMode, type OfflineLicensePayload, type LocalSession,
+} from "./lib/standalone";
 
 type BootState =
   | { phase: "checking" }
+  | { phase: "needs-mode" }
+  // Cloud paths
   | { phase: "needs-activation" }
   | { phase: "license-expired"; baseUrl: string; deviceToken: string; expiresAt: string | null; companyName?: string }
   | { phase: "needs-cashier"; baseUrl: string; deviceToken: string; companyId: number; deviceId: number; companyName?: string; expiresAt: string | null }
-  | { phase: "signed-in"; baseUrl: string; deviceToken: string; userToken: string; companyId: number; deviceId: number; companyName?: string; cashierContext: CashierContext; expiresAt: string | null };
+  | { phase: "signed-in"; baseUrl: string; deviceToken: string; userToken: string; companyId: number; deviceId: number; companyName?: string; cashierContext: CashierContext; expiresAt: string | null }
+  // Standalone paths
+  | { phase: "needs-standalone-license" }
+  | { phase: "needs-standalone-login"; license: OfflineLicensePayload }
+  | { phase: "standalone-signed-in"; license: OfflineLicensePayload; session: LocalSession };
 
 const DEFAULT_BASE = "https://zacoderp.com";
 const EXPIRES_AT_KEY = "pos_desktop_license_expires_at";
@@ -47,6 +63,31 @@ export default function App() {
   useEffect(() => { void boot(); }, []);
 
   async function boot() {
+    // ── First-run mode selection ──────────────────────────────────────
+    const mode = getAppMode();
+    if (!mode) { setState({ phase: "needs-mode" }); return; }
+    if (mode === "standalone") return bootStandalone();
+    return bootCloud();
+  }
+
+  async function bootStandalone() {
+    // Layer 1: signed license file
+    const file = loadLicense();
+    if (!file) { setState({ phase: "needs-standalone-license" }); return; }
+    const r = await verifyLicenseFile(file);
+    if (!r.ok) {
+      // Tampered or expired — force re-activation but keep mode = standalone.
+      console.warn("standalone license invalid:", r.error);
+      setState({ phase: "needs-standalone-license" });
+      return;
+    }
+    // Layer 2: local user session
+    const session = loadLocalSession();
+    if (!session) { setState({ phase: "needs-standalone-login", license: r.payload }); return; }
+    setState({ phase: "standalone-signed-in", license: r.payload, session });
+  }
+
+  async function bootCloud() {
     // ── Layer 1: device token ─────────────────────────────────────────
     const dToken = await loadDeviceToken();
     if (!dToken) { setState({ phase: "needs-activation" }); return; }
@@ -60,12 +101,6 @@ export default function App() {
     let companyName: string | undefined = cachedCompanyName;
     let expiresAt: string | null = cachedExpiresAt;
 
-    // ── Validate device token + license with the cloud ────────────────
-    // Distinguish 3 outcomes:
-    //   • 200            → token + license OK; refresh cached expiresAt
-    //   • 401            → token rejected (revoked / wiped server-side) → re-activate
-    //   • 403            → license revoked or expired → show expired screen, KEEP token
-    //   • network / 5xx  → continue with cached context (offline tolerance)
     try {
       const v = await api.validate();
       companyId = v.companyId; deviceId = v.deviceId;
@@ -74,7 +109,6 @@ export default function App() {
       else localStorage.removeItem(EXPIRES_AT_KEY);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
-        // Token was revoked or device deactivated — wipe and re-activate.
         await clearDeviceToken();
         await clearUserToken();
         clearCashierContext();
@@ -83,47 +117,32 @@ export default function App() {
         return;
       }
       if (e instanceof ApiError && e.status === 403) {
-        // License revoked or expired. Keep the device token — when the
-        // subscription is renewed, "إعادة المحاولة" on the expired screen
-        // re-runs boot() with the same token and gets through.
         const details = (e.details as { expiresAt?: string } | undefined);
         const exp = details?.expiresAt ?? cachedExpiresAt ?? null;
         if (exp) localStorage.setItem(EXPIRES_AT_KEY, exp);
         setState({ phase: "license-expired", baseUrl, deviceToken: dToken, expiresAt: exp, companyName: cachedCompanyName });
         return;
       }
-      // Network error / 5xx — keep going (POS desktop's whole point is offline-tolerance).
       console.warn("Boot validate failed (offline?), continuing with cached context", e);
     }
 
-    // ── Offline expiry guard ──────────────────────────────────────────
-    // Even when offline, refuse to open the POS if the cached expiry date
-    // is already in the past. Without this guard a customer could cut the
-    // network cable to keep selling forever after the subscription lapsed.
     if (expiresAt && new Date(expiresAt).getTime() < Date.now()) {
       setState({ phase: "license-expired", baseUrl, deviceToken: dToken, expiresAt, companyName });
       return;
     }
 
-    // ── Layer 2: cashier token + context ──────────────────────────────
     const uToken = await loadUserToken();
     const ctx = loadCashierContext();
     if (!uToken || !ctx) {
-      // Defensive: a token without context (or vice versa) is an orphan from
-      // an aborted login mid-flow. Wipe BOTH so the next login starts clean.
       if (uToken || ctx) { await clearUserToken(); clearCashierContext(); }
       setState({ phase: "needs-cashier", baseUrl, deviceToken: dToken, companyId, deviceId, companyName, expiresAt });
       return;
     }
 
-    // Re-validate the user token if the server is reachable. We do NOT block
-    // boot if the server is offline — the cached context is good enough to
-    // keep ringing sales until the network is back.
     try {
       const apiBoth = createApi({ baseUrl, deviceToken: dToken, userToken: uToken });
       const me = await apiBoth.cashierMe();
       if (me) {
-        // Refresh names in case the cashier was renamed on the cloud since last login.
         const refreshed: CashierContext = {
           ...ctx,
           username: me.username,
@@ -135,18 +154,15 @@ export default function App() {
         setState({ phase: "signed-in", baseUrl, deviceToken: dToken, userToken: uToken, companyId, deviceId, companyName: refreshed.companyName, cashierContext: refreshed, expiresAt });
         return;
       }
-      // me() returned null/401 → token expired; fall through to login.
       await clearUserToken();
       clearCashierContext();
       setState({ phase: "needs-cashier", baseUrl, deviceToken: dToken, companyId, deviceId, companyName, expiresAt });
     } catch {
-      // Offline — trust the cached context.
       setState({ phase: "signed-in", baseUrl, deviceToken: dToken, userToken: uToken, companyId, deviceId, companyName: ctx.companyName, cashierContext: ctx, expiresAt });
     }
   }
 
-  // ── Sign out (device-level) ──────────────────────────────────────────
-  // Wipes BOTH layers since the device is no longer bound to the company.
+  // ── Cloud sign-out (device-level) ───────────────────────────────────
   async function handleSignOut() {
     const sid = loadCashierContext()?.posSessionId;
     if (sid) { try { await clearSessionParkedCarts(sid); } catch { /* ignore */ } }
@@ -158,29 +174,15 @@ export default function App() {
     setState({ phase: "needs-activation" });
   }
 
-  // ── Retry from the license-expired screen ────────────────────────────
-  // Just re-runs boot. If the cloud now reports a renewed expiresAt, boot
-  // falls through to needs-cashier; otherwise it lands back on this screen.
   async function handleRetryLicense() {
     setState({ phase: "checking" });
     await boot();
   }
 
-  // ── Logout cashier (user-level) ──────────────────────────────────────
-  // Keeps the device activated. Tries to close the POS session on the cloud
-  // and revoke the user token; falls back gracefully if offline.
   async function handleLogoutCashier() {
     if (state.phase !== "signed-in") return;
     const { baseUrl, deviceToken, userToken, cashierContext, companyId, deviceId, companyName, expiresAt } = state;
     const api = createApi({ baseUrl, deviceToken, userToken });
-    // Try the cloud-side close. If the network is down (or the server errors),
-    // queue it into the pending-closes retry queue so PosShell's heartbeat
-    // tick can drain it once connectivity returns. Without this fallback the
-    // session would sit "open" on the cloud forever, blocking the same user
-    // from opening a session on any other terminal next time. The server-side
-    // janitor will eventually auto-close it, but that produces force_closed
-    // with the last-heartbeat timestamp instead of the cashier's actual
-    // logout time — the deferred-close gives us a cleaner record.
     const closedAt = new Date().toISOString();
     try {
       await api.closePosSession(cashierContext.posSessionId);
@@ -196,6 +198,19 @@ export default function App() {
     setState({ phase: "needs-cashier", baseUrl, deviceToken, companyId, deviceId, companyName, expiresAt });
   }
 
+  // ── Standalone logout / wipe ────────────────────────────────────────
+  function handleStandaloneLogout() {
+    if (state.phase !== "standalone-signed-in") return;
+    clearLocalSession();
+    setState({ phase: "needs-standalone-login", license: state.license });
+  }
+
+  function handleStandaloneFullReset() {
+    if (!confirm("سيؤدي هذا إلى حذف كل بيانات الوضع المستقل (الترخيص، المستخدمين، الجلسة) والعودة لاختيار الوضع. متأكد؟")) return;
+    wipeStandalone();
+    setState({ phase: "needs-mode" });
+  }
+
   // ── Render ──────────────────────────────────────────────────────────
   if (state.phase === "checking") {
     return (
@@ -208,6 +223,49 @@ export default function App() {
     );
   }
 
+  if (state.phase === "needs-mode") {
+    return <FirstRunWizard onChosen={(m: AppMode) => { setAppMode(m); setState({ phase: "checking" }); void boot(); }} />;
+  }
+
+  // ── Standalone branch ─────────────────────────────────────────────
+  if (state.phase === "needs-standalone-license") {
+    return (
+      <StandaloneActivation
+        onDone={(payload) => {
+          const session = loadLocalSession();
+          if (session) setState({ phase: "standalone-signed-in", license: payload, session });
+          else setState({ phase: "needs-standalone-login", license: payload });
+        }}
+        onCancel={() => { wipeStandalone(); setState({ phase: "needs-mode" }); }}
+      />
+    );
+  }
+  if (state.phase === "needs-standalone-login") {
+    return (
+      <StandaloneLogin
+        customerName={state.license.customerName}
+        onSignedIn={(s) => setState({ phase: "standalone-signed-in", license: state.license, session: s })}
+      />
+    );
+  }
+  if (state.phase === "standalone-signed-in") {
+    return (
+      <PosShell
+        baseUrl=""
+        deviceToken=""
+        standalone
+        standaloneLicense={state.license}
+        standaloneSession={state.session}
+        deviceId={0}
+        expiresAt={state.license.expiresAt}
+        companyName={state.license.customerName}
+        onSignOut={handleStandaloneFullReset}
+        onLogoutCashier={handleStandaloneLogout}
+      />
+    );
+  }
+
+  // ── Cloud branch ──────────────────────────────────────────────────
   if (state.phase === "license-expired") {
     return (
       <LicenseExpired
@@ -224,12 +282,9 @@ export default function App() {
       <Activation
         onActivated={(info) => {
           const baseUrl = localStorage.getItem("pos_desktop_server_url") ?? DEFAULT_BASE;
-          // Cache for offline boot + expiry guard.
           if (info.expiresAt) localStorage.setItem(EXPIRES_AT_KEY, info.expiresAt);
           else localStorage.removeItem(EXPIRES_AT_KEY);
           if (info.companyName) localStorage.setItem(COMPANY_NAME_KEY, info.companyName);
-          // After activation, drop into cashier login — NOT straight into the
-          // shell — because no human is logged in yet.
           setState({
             phase: "needs-cashier", baseUrl,
             deviceToken: info.deviceToken,

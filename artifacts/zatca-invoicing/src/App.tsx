@@ -20,6 +20,7 @@ import OrphanStockCleanup from "@/pages/admin/OrphanStockCleanup";
 import InvoiceFieldPolicies from "@/pages/admin/InvoiceFieldPolicies";
 import EnterCompany from "@/pages/admin/EnterCompany";
 import PosDevices from "@/pages/admin/PosDevices";
+import OfflineLicenses from "@/pages/admin/OfflineLicenses";
 import Download from "@/pages/Download";
 import DatabaseStats from "@/pages/admin/DatabaseStats";
 import AICompanyFix from "@/pages/admin/AICompanyFix";
@@ -582,6 +583,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/industries" component={Industries} />}
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
             {isSuperAdmin && <Route path="/admin/pos-devices" component={PosDevices} />}
+            {isSuperAdmin && <Route path="/admin/offline-licenses" component={OfflineLicenses} />}
             {isSuperAdmin && <Route path="/admin/security-superadmin" component={SuperAdminSecurity} />}
             {isSuperAdmin && <Route path="/admin/security" component={SecurityCenter} />}
             <Route path="/integrations/gateway" component={IntegrationGateway} />

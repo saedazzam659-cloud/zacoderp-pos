@@ -24,13 +24,15 @@ import CustomersAdmin from "./CustomersAdmin";
 import ItemsAdmin from "./ItemsAdmin";
 import UomAdmin from "./UomAdmin";
 import UpdatesScreen from "./UpdatesScreen";
+import StandaloneUsersAdmin from "./StandaloneUsersAdmin";
 import { countPendingInvoices } from "../lib/invoices";
 import { syncPushNow, pullAndPersist, type PushSummary, type PullSummary } from "../lib/sync";
 import { listParkedCarts } from "../lib/parkedCarts";
 import { flushPendingSessionCloses, countPendingCloses } from "../lib/pendingSessionCloses";
 import { useLatestVersion } from "../lib/updates";
+import type { OfflineLicensePayload, LocalSession } from "../lib/standalone";
 
-type View = "sales" | "returns" | "pending" | "parked" | "daily" | "customers" | "items" | "uom" | "dashboard" | "updates";
+type View = "sales" | "returns" | "pending" | "parked" | "daily" | "customers" | "items" | "uom" | "dashboard" | "updates" | "users";
 
 type Props = {
   baseUrl: string;
@@ -42,18 +44,28 @@ type Props = {
   expiresAt?: string | null;
   onSignOut: () => void | Promise<void>;
   onLogoutCashier?: () => void | Promise<void>;
+  /** Task #199: when true, render in standalone (no-cloud) mode. */
+  standalone?: boolean;
+  standaloneLicense?: OfflineLicensePayload;
+  standaloneSession?: LocalSession;
 };
 
 export default function PosShell({
   baseUrl, deviceToken, userToken, cashierContext,
   companyName, deviceId, expiresAt, onSignOut, onLogoutCashier,
+  standalone = false, standaloneLicense, standaloneSession,
 }: Props) {
   const api = useMemo(
-    () => createApi({ baseUrl, deviceToken, userToken: userToken ?? null }),
-    [baseUrl, deviceToken, userToken],
+    () => standalone ? null : createApi({ baseUrl, deviceToken, userToken: userToken ?? null }),
+    [baseUrl, deviceToken, userToken, standalone],
   );
-  const posSessionId = cashierContext?.posSessionId ?? 0;
-  const effectiveCompanyName = companyName ?? cashierContext?.companyName;
+  // In standalone mode there is no pos_sessions row — use a synthetic session id
+  // (1) so parked-carts scope still works (single virtual session per machine).
+  const posSessionId = standalone ? 1 : (cashierContext?.posSessionId ?? 0);
+  const effectiveCompanyName = companyName ?? cashierContext?.companyName ?? standaloneLicense?.customerName;
+  const effectiveCashierName = standalone
+    ? (standaloneSession?.displayName ?? standaloneSession?.username)
+    : (cashierContext?.nameAr || cashierContext?.username);
 
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [pulled, setPulled] = useState<PullSummary | null>(null);
@@ -79,6 +91,7 @@ export default function PosShell({
   useEffect(() => { void refreshParkedCount(); }, [view, refreshParkedCount]);
 
   useEffect(() => {
+    if (standalone) return; // No cloud "pending invoices" queue in standalone mode.
     let cancelled = false;
     const tick = async () => {
       try { const n = await countPendingInvoices(); if (!cancelled) setPendingCount(n); }
@@ -87,23 +100,18 @@ export default function PosShell({
     void tick();
     const id = setInterval(tick, 10_000);
     return () => { cancelled = true; clearInterval(id); };
-  }, [view]);
+  }, [view, standalone]);
 
   useEffect(() => {
+    if (standalone || !api) return; // Standalone never talks to the cloud.
     const tick = async () => {
       try {
-        // Send the active session id so the server can bump pos_sessions.last_heartbeat_at —
-        // that's the signal the auto-close janitor uses to tell "cashier still active" apart
-        // from "session abandoned". Without it the server can only fall back to openedAt and
-        // would reap any session whose cashier stayed logged in past the stale threshold.
         await api.heartbeat({
-          appVersion: "0.3.3",
+          appVersion: "0.4.0",
           ...(posSessionId ? { posSessionId } : {}),
         });
         const s = await api.status();
         setStatus(s); setHeartbeatErr(null);
-        // Opportunistic drain of any queued offline-logout closes. Best-effort —
-        // failures stay in the queue and will be retried on the next tick.
         if (countPendingCloses() > 0) {
           try { await flushPendingSessionCloses(api); } catch { /* logged inside */ }
         }
@@ -112,9 +120,10 @@ export default function PosShell({
     void tick();
     const id = setInterval(tick, 30_000);
     return () => clearInterval(id);
-  }, [api, posSessionId]);
+  }, [api, posSessionId, standalone]);
 
   async function doPull() {
+    if (standalone) return;
     setBusy("pull"); setActionErr(null);
     try {
       const r = await pullAndPersist(baseUrl, deviceToken);
@@ -124,6 +133,7 @@ export default function PosShell({
   }
 
   async function doPush() {
+    if (standalone) return;
     setBusy("push"); setActionErr(null); setPushSummary(null);
     try {
       const r = await syncPushNow(baseUrl, deviceToken);
@@ -134,6 +144,11 @@ export default function PosShell({
   }
 
   async function doDeactivate() {
+    if (standalone || !api) {
+      // In standalone mode "deactivate" means "wipe everything and pick mode again".
+      await onSignOut();
+      return;
+    }
     if (!confirm("هل أنت متأكد من إلغاء تفعيل هذا الجهاز؟ ستحتاج لمفتاح ترخيص جديد لإعادة التفعيل.")) return;
     setBusy("deactivate"); setActionErr(null);
     try {
@@ -150,7 +165,21 @@ export default function PosShell({
     catch (e: any) { setActionErr(e?.message ?? "logout failed"); setLoggingOut(false); }
   }
 
-  const navItems: Array<{ id: View; icon: string; label: string; badge?: number }> = [
+  // Cloud-only nav entries hidden in standalone mode:
+  //   • pending (cloud upload queue), dashboard (sync controls), updates (cloud release feed)
+  // Standalone gains: users (local user admin, admin role only).
+  const navItems: Array<{ id: View; icon: string; label: string; badge?: number }> = standalone ? [
+    { id: "sales",     icon: "🛒", label: "بيع" },
+    { id: "returns",   icon: "↩️", label: "مرتجع" },
+    { id: "parked",    icon: "📌", label: "السلال المعلّقة", badge: parkedCount > 0 ? parkedCount : undefined },
+    { id: "daily",     icon: "📊", label: "تقرير اليومية" },
+    { id: "customers", icon: "👥", label: "العملاء" },
+    { id: "items",     icon: "📦", label: "الأصناف" },
+    { id: "uom",       icon: "📐", label: "وحدات القياس" },
+    ...(standaloneSession?.role === "admin"
+      ? [{ id: "users" as View, icon: "🔐", label: "المستخدمون" }]
+      : []),
+  ] : [
     { id: "sales",     icon: "🛒", label: "بيع" },
     { id: "returns",   icon: "↩️", label: "مرتجع" },
     { id: "parked",    icon: "📌", label: "السلال المعلّقة", badge: parkedCount > 0 ? parkedCount : undefined },
@@ -171,7 +200,7 @@ export default function PosShell({
           <div style={S.brandIcon}>zacode</div>
           <div>
             <div style={S.brandName}>ZACOD POS</div>
-            <div style={S.brandTag}>v0.3.3 — desktop</div>
+            <div style={S.brandTag}>v0.4.0 — {standalone ? "standalone" : "desktop"}</div>
           </div>
         </div>
 
@@ -213,7 +242,7 @@ export default function PosShell({
             <div style={S.viewTitle}>{labelFor(view)}</div>
           </div>
           <div style={S.topRight}>
-            {cashierContext && (
+            {cashierContext && !standalone && (
               <div style={S.cashierChip} title={`جلسة #${cashierContext.posSessionId} — مفتوحة منذ ${new Date(cashierContext.openedAt).toLocaleString("ar-SA")}`}>
                 <span style={S.cashierIcon}>👤</span>
                 <div style={S.cashierInfo}>
@@ -225,21 +254,31 @@ export default function PosShell({
                 </div>
               </div>
             )}
-            <SyncIndicator status={status} heartbeatErr={heartbeatErr} />
-            <div style={S.deviceChip}>جهاز #{deviceId || "—"}</div>
+            {standalone && standaloneSession && (
+              <div style={S.cashierChip} title={`مستخدم محلي — دخل في ${new Date(standaloneSession.signedInAt).toLocaleString("ar-SA")}`}>
+                <span style={S.cashierIcon}>👤</span>
+                <div style={S.cashierInfo}>
+                  <div style={S.cashierName}>{standaloneSession.displayName || standaloneSession.username}</div>
+                  <div style={S.cashierMeta}>
+                    {standaloneSession.role === "admin" ? "مسؤول" : "كاشير"} · مستقل
+                  </div>
+                </div>
+              </div>
+            )}
+            {!standalone && <SyncIndicator status={status} heartbeatErr={heartbeatErr} />}
+            {!standalone && <div style={S.deviceChip}>جهاز #{deviceId || "—"}</div>}
+            {standalone && <div style={S.deviceChip} title={standaloneLicense?.licenseKey}>🔐 ترخيص مستقل</div>}
             {onLogoutCashier && (
-              <button onClick={doLogoutCashier} disabled={loggingOut} style={S.logoutBtn} title="تسجيل خروج الكاشير وإغلاق الوردية">
+              <button onClick={doLogoutCashier} disabled={loggingOut} style={S.logoutBtn}
+                      title={standalone ? "تسجيل خروج المستخدم" : "تسجيل خروج الكاشير وإغلاق الوردية"}>
                 {loggingOut ? "..." : "🚪 خروج"}
               </button>
             )}
           </div>
         </header>
 
-        {/* New-version notification banner (Task #187).
-            Polls /api/public/download/release every 30 min. Silently hidden
-            offline / when no newer version is published. Dismiss is per-session
-            only — reappears next launch until the user actually updates. */}
-        {updateAvailable && latestRelease && !updateDismissed && (
+        {/* New-version notification banner (Task #187). Cloud-only. */}
+        {!standalone && updateAvailable && latestRelease && !updateDismissed && (
           <UpdateBanner
             version={latestRelease.version}
             onOpen={() => setView("updates")}
@@ -247,17 +286,15 @@ export default function PosShell({
           />
         )}
 
-        {/* Subscription-expiry warning banner (Task #185).
-            Shown when the cached expiresAt is within 7 days of "now". Past-due
-            expiries never reach this banner because boot() routes them to the
-            license-expired full-screen block before PosShell ever renders. */}
+        {/* Subscription-expiry warning banner (Task #185) — also used in
+            standalone mode when the license has an expiresAt. */}
         <ExpiryBanner expiresAt={expiresAt ?? null} />
 
         {/* Page content */}
         <main style={S.content}>
-          {view === "sales" && <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={cashierContext?.nameAr || cashierContext?.username} />}
-          {view === "returns" && <div style={S.pagePad}><ReturnsScreen companyName={effectiveCompanyName} cashierName={cashierContext?.nameAr || cashierContext?.username} /></div>}
-          {view === "pending" && <div style={S.pagePad}><PendingInvoices companyName={effectiveCompanyName} /></div>}
+          {view === "sales" && <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={effectiveCashierName} />}
+          {view === "returns" && <div style={S.pagePad}><ReturnsScreen companyName={effectiveCompanyName} cashierName={effectiveCashierName} /></div>}
+          {!standalone && view === "pending" && <div style={S.pagePad}><PendingInvoices companyName={effectiveCompanyName} /></div>}
           {view === "parked" && (
             <div style={S.pagePad}>
               <ParkedCarts posSessionId={posSessionId} onResume={() => setView("sales")} />
@@ -265,36 +302,26 @@ export default function PosShell({
           )}
           {view === "daily" && (
             <div style={S.pagePad}>
-              <DailyReportPage
-                companyName={effectiveCompanyName}
-                cashierName={cashierContext?.nameAr || cashierContext?.username}
-              />
+              <DailyReportPage companyName={effectiveCompanyName} cashierName={effectiveCashierName} />
             </div>
           )}
           {view === "customers" && <div style={S.pagePad}><CustomersAdmin /></div>}
           {view === "items" && <div style={S.pagePad}><ItemsAdmin /></div>}
           {view === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
-          {view === "dashboard" && (
+          {!standalone && view === "dashboard" && (
             <div style={S.pagePad}>
               <DashboardView
-                deviceId={deviceId}
-                status={status}
-                baseUrl={baseUrl}
-                busy={busy}
-                pulled={pulled}
-                actionErr={actionErr}
-                heartbeatErr={heartbeatErr}
-                onPull={doPull}
-                onPush={doPush}
-                pushSummary={pushSummary}
-                onDeactivate={doDeactivate}
+                deviceId={deviceId} status={status} baseUrl={baseUrl} busy={busy} pulled={pulled}
+                actionErr={actionErr} heartbeatErr={heartbeatErr}
+                onPull={doPull} onPush={doPush} pushSummary={pushSummary} onDeactivate={doDeactivate}
               />
             </div>
           )}
-          {view === "updates" && (
-            <div style={S.pagePad}>
-              <UpdatesScreen baseUrl={baseUrl} />
-            </div>
+          {!standalone && view === "updates" && (
+            <div style={S.pagePad}><UpdatesScreen baseUrl={baseUrl} /></div>
+          )}
+          {standalone && view === "users" && standaloneSession && (
+            <StandaloneUsersAdmin session={standaloneSession} maxUsers={standaloneLicense?.maxUsers ?? 1} />
           )}
         </main>
       </div>
@@ -316,6 +343,7 @@ function labelFor(v: View): string {
     uom: "وحدات القياس",
     dashboard: "لوحة التحكم",
     updates: "التحديثات",
+    users: "المستخدمون المحليون",
   }[v];
 }
 

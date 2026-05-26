@@ -461,6 +461,7 @@
     "enterCompany": "الدخول إلى شركة",
     "licenses": "ترخيص النسخة",
     "posDevices": "أجهزة POS المكتبية",
+    "offlineLicenses": "تراخيص POS Standalone",
     "backupOperations": "مركز عمليات النسخ الاحتياطي",
     "securityCenter": "مركز الأمان المركزي",
     "superAdminSecurity": "أمان السوبر أدمن",

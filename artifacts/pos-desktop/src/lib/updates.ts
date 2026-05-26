@@ -56,6 +56,10 @@ export function useLatestVersion(baseUrl: string): {
   const [latest, setLatest] = useState<ReleaseInfo | null>(null);
 
   useEffect(() => {
+    // Standalone mode must NEVER touch the network — abort entirely.
+    if (!baseUrl || localStorage.getItem("pos_desktop_app_mode") === "standalone") {
+      return;
+    }
     let cancelled = false;
     const country = (localStorage.getItem("pos_desktop_country") || "SA").toUpperCase();
 

@@ -97,8 +97,44 @@ export const downloadReleasesTable = pgTable("download_releases", {
   countryPlatformIdx: index("download_releases_country_platform_idx").on(t.countryCode, t.platform, t.isActive),
 }));
 
+// ─── Standalone (offline-only) licenses — Task #199 ──────────────────
+// These are NOT tied to a cloud company. SuperAdmin generates a key
+// + a signed JSON file (Ed25519). The customer drops the file into
+// the desktop app and runs 100% offline — no /api/sync, no heartbeat,
+// no acting-company. Anti-piracy = Ed25519 signature verified against
+// a public key bundled into every desktop build.
+export const offlineLicensesTable = pgTable("offline_licenses", {
+  id: serial("id").primaryKey(),
+  licenseKey: text("license_key").notNull(),       // human-readable, printed on the file
+  customerName: text("customer_name").notNull(),   // shown in the app's topbar (Arabic)
+  vertical: text("vertical").notNull().default("retail"), // retail | pharmacy | restaurant | grocery
+  plan: text("plan").notNull().default("standalone_pos"),
+  maxUsers: integer("max_users").notNull().default(5),
+  // Hardware-binding fingerprint hash (SHA-256 of the device fingerprint string).
+  // NULLABLE: when null, the license is "unbound" and the FIRST device that
+  // activates it captures itself into the signed file (re-issued on demand).
+  // When set, the desktop app MUST match the same fingerprint at boot.
+  fingerprintHash: text("fingerprint_hash"),
+  issuedAt: timestamp("issued_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at"),
+  revokedAt: timestamp("revoked_at"),
+  status: text("status").notNull().default("active"), // active | revoked | expired
+  notes: text("notes"),
+  // The Ed25519-signed JSON payload last issued for this license (base64).
+  // We store it so SuperAdmin can re-download without re-signing.
+  signedFileJson: text("signed_file_json"),
+  publicKeyFingerprint: text("public_key_fingerprint"), // SHA-256 of pubkey at sign time
+  createdByUserId: integer("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  keyUniq: uniqueIndex("offline_licenses_key_uniq").on(t.licenseKey),
+  statusIdx: index("offline_licenses_status_idx").on(t.status),
+}));
+
 export type DeviceLicense = typeof deviceLicensesTable.$inferSelect;
 export type PosDevice = typeof posDevicesTable.$inferSelect;
 export type SyncQueueLog = typeof syncQueueLogTable.$inferSelect;
 export type DeviceInvoiceRange = typeof deviceInvoiceRangesTable.$inferSelect;
 export type DownloadRelease = typeof downloadReleasesTable.$inferSelect;
+export type OfflineLicense = typeof offlineLicensesTable.$inferSelect;

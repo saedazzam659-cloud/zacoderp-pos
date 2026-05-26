@@ -461,6 +461,7 @@
     "enterCompany": "Enter a Company",
     "licenses": "License",
     "posDevices": "POS Desktop Devices",
+    "offlineLicenses": "POS Standalone Licenses",
     "backupOperations": "Backup Operations",
     "securityCenter": "Security Center",
     "superAdminSecurity": "SuperAdmin Security",
