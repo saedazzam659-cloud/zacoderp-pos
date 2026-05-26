@@ -3,7 +3,7 @@ name: POS Desktop standalone-mode boot branching
 description: Why the standalone path must never touch cloud helpers, and the trap to avoid when adding new shell features.
 ---
 
-# POS Desktop has TWO completely separate boot trees (cloud / standalone)
+# Standalone POS Desktop has TWO completely separate boot trees (cloud / standalone)
 
 When standalone mode is active, the App.tsx state machine never enters
 the cloud phases (`needs-activation` / `needs-cashier` / `signed-in`)

@@ -74,6 +74,16 @@ pub fn standalone_set_mode(mode: String) -> Result<(), String> {
     if mode != "cloud" && mode != "standalone" {
         return Err(format!("invalid mode '{mode}'"));
     }
+    // Mode is write-once. Switching modes requires standalone_wipe_all first
+    // (which clears MODE_KEY along with everything else). Without this guard
+    // a malicious caller could flip "cloud → standalone" mid-session and
+    // hide cloud-mode data inside a standalone-looking shell.
+    if let Some(existing) = settings_get(MODE_KEY).map_err(|e| e.to_string())? {
+        if existing == mode { return Ok(()); }
+        return Err(format!(
+            "وضع التطبيق مثبّت مسبقاً على '{existing}'. للتبديل يجب تنفيذ مسح كامل من شاشة الإعدادات."
+        ));
+    }
     settings_set(MODE_KEY, &mode).map_err(|e| e.to_string())
 }
 

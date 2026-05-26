@@ -39,6 +39,7 @@ import {
   clearLocalSession, verifyLicenseFile, wipeStandalone,
   type AppMode, type OfflineLicensePayload, type LocalSession,
 } from "./lib/standalone";
+import { getFingerprint } from "./lib/tauri-shim";
 
 type BootState =
   | { phase: "checking" }
@@ -80,6 +81,29 @@ export default function App() {
       console.warn("standalone license invalid:", r.error);
       setState({ phase: "needs-standalone-license" });
       return;
+    }
+    // Layer 1b: hardware binding — re-check on EVERY boot (not just activation).
+    // Without this, a bound pos.db + license copied to another machine would
+    // continue to boot. Mismatch clears the local session and forces the user
+    // back to the activation screen with a sticky error.
+    if (r.payload.fingerprintHash) {
+      try {
+        const fp = await getFingerprint();
+        const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(fp) as BufferSource);
+        const hex = Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+        if (hex !== r.payload.fingerprintHash) {
+          console.warn("standalone license fingerprint mismatch — refusing boot");
+          await clearLocalSession();
+          setState({ phase: "needs-standalone-license" });
+          return;
+        }
+      } catch (e) {
+        // Fingerprint backend itself failed — fail closed for bound licenses.
+        console.warn("standalone fingerprint check failed:", e);
+        await clearLocalSession();
+        setState({ phase: "needs-standalone-license" });
+        return;
+      }
     }
     // Layer 2: local user session
     const session = await loadLocalSession();
