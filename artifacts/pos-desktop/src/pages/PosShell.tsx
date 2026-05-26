@@ -19,6 +19,7 @@ import SalesScreen from "./SalesScreen";
 import PendingInvoices from "./PendingInvoices";
 import ParkedCarts from "./ParkedCarts";
 import ReturnsScreen from "./ReturnsScreen";
+import DailyReportPage from "./DailyReport";
 import CustomersAdmin from "./CustomersAdmin";
 import ItemsAdmin from "./ItemsAdmin";
 import UomAdmin from "./UomAdmin";
@@ -29,7 +30,7 @@ import { listParkedCarts } from "../lib/parkedCarts";
 import { flushPendingSessionCloses, countPendingCloses } from "../lib/pendingSessionCloses";
 import { useLatestVersion } from "../lib/updates";
 
-type View = "sales" | "returns" | "pending" | "parked" | "customers" | "items" | "uom" | "dashboard" | "updates";
+type View = "sales" | "returns" | "pending" | "parked" | "daily" | "customers" | "items" | "uom" | "dashboard" | "updates";
 
 type Props = {
   baseUrl: string;
@@ -154,6 +155,7 @@ export default function PosShell({
     { id: "returns",   icon: "↩️", label: "مرتجع" },
     { id: "parked",    icon: "📌", label: "السلال المعلّقة", badge: parkedCount > 0 ? parkedCount : undefined },
     { id: "pending",   icon: "📋", label: "الفواتير غير المرفوعة", badge: pendingCount > 0 ? pendingCount : undefined },
+    { id: "daily",     icon: "📊", label: "تقرير اليومية" },
     { id: "customers", icon: "👥", label: "العملاء" },
     { id: "items",     icon: "📦", label: "الأصناف" },
     { id: "uom",       icon: "📐", label: "وحدات القياس" },
@@ -261,6 +263,14 @@ export default function PosShell({
               <ParkedCarts posSessionId={posSessionId} onResume={() => setView("sales")} />
             </div>
           )}
+          {view === "daily" && (
+            <div style={S.pagePad}>
+              <DailyReportPage
+                companyName={effectiveCompanyName}
+                cashierName={cashierContext?.nameAr || cashierContext?.username}
+              />
+            </div>
+          )}
           {view === "customers" && <div style={S.pagePad}><CustomersAdmin /></div>}
           {view === "items" && <div style={S.pagePad}><ItemsAdmin /></div>}
           {view === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
@@ -300,6 +310,7 @@ function labelFor(v: View): string {
     returns: "مرتجع المبيعات",
     parked: "السلال المعلّقة",
     pending: "الفواتير غير المرفوعة",
+    daily: "تقرير اليومية",
     customers: "العملاء",
     items: "الأصناف",
     uom: "وحدات القياس",

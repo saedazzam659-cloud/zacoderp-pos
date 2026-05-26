@@ -273,3 +273,53 @@ pub fn count_pending_invoices() -> Result<i64, String> {
 pub fn list_all_invoices(limit: Option<i64>) -> Result<Vec<PendingInvoice>, String> {
     list_all(limit.unwrap_or(100)).map_err(|e| e.to_string())
 }
+
+// ─── Daily Z-Report support ──────────────────────────────────────────
+// Returns full rows (incl. payload_json) for a calendar day, so the
+// frontend can aggregate sales + returns + payment-mix + top items
+// without paying a round-trip per invoice. Day boundary is taken from
+// the `created_at` timestamp (UTC text as stored by SQLite — the UI
+// displays in local time, but offline shifts rarely cross the UTC
+// midnight in practice; if needed later we can switch to a session-id
+// scope which is more semantically correct for a Z-report).
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DailyInvoiceRow {
+    pub id: i64,
+    pub local_uuid: String,
+    pub invoice_no: String,
+    pub payload_json: String,
+    pub sync_status: String,
+    pub created_at: String,
+}
+
+pub fn list_for_range(start_utc: &str, end_utc: &str) -> Result<Vec<DailyInvoiceRow>> {
+    let conn = db::open()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, local_uuid, invoice_no, payload_json, sync_status, created_at
+         FROM offline_invoices
+         WHERE created_at >= ?1 AND created_at < ?2
+         ORDER BY created_at ASC, id ASC",
+    )?;
+    let rows = stmt.query_map([start_utc, end_utc], |r| Ok(DailyInvoiceRow {
+        id: r.get(0)?,
+        local_uuid: r.get(1)?,
+        invoice_no: r.get(2)?,
+        payload_json: r.get(3)?,
+        sync_status: r.get(4)?,
+        created_at: r.get(5)?,
+    }))?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r?); }
+    Ok(out)
+}
+
+// Frontend passes UTC ISO timestamps derived from the user's local-day
+// boundaries, so an evening shift in UTC+3 doesn't bleed into the next
+// UTC calendar day. SQLite text comparison works lexicographically on
+// ISO-8601 strings, which is order-preserving when both endpoints share
+// the same format ("YYYY-MM-DD HH:MM:SS" as written by CURRENT_TIMESTAMP).
+#[tauri::command]
+pub fn daily_report_invoices(start_utc: String, end_utc: String) -> Result<Vec<DailyInvoiceRow>, String> {
+    list_for_range(&start_utc, &end_utc).map_err(|e| e.to_string())
+}

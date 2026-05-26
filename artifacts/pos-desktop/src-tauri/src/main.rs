@@ -321,6 +321,7 @@ fn main() {
             invoices::save_offline_invoice,
             invoices::list_pending_invoices,
             invoices::list_all_invoices,
+            invoices::daily_report_invoices,
             invoices::get_offline_invoice,
             invoices::count_pending_invoices,
             sync::sync_push_now,
