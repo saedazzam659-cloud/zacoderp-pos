@@ -629,10 +629,29 @@ function WeightCaptureModal({
     } finally { setBusy(false); }
   }
 
-  // Auto-poll once on mount when a port is configured; the cashier can
-  // re-trigger with the button. We avoid setInterval to keep things
-  // simple and to prevent overlapping port-open attempts on slow scales.
-  useEffect(() => { if (hasPort) void poll(); /* eslint-disable-next-line */ }, []);
+  // Live polling: re-read every 800 ms while the modal is open. We
+  // guard against overlapping reads with a `busy` ref so a slow scale
+  // doesn't queue up multiple port-open attempts. The interval is
+  // cleared on unmount, on manual entry (typing overrides the live
+  // reading anyway), and when no port is configured.
+  useEffect(() => {
+    if (!hasPort) return;
+    let cancelled = false;
+    let inflight = false;
+    const tick = async () => {
+      if (cancelled || inflight) return;
+      inflight = true;
+      try {
+        const kg = await readWeightOnce();
+        if (!cancelled) { setReading(kg); setErr(null); }
+      } catch (e: any) {
+        if (!cancelled) setErr(e?.message ?? "فشل قراءة الميزان");
+      } finally { inflight = false; }
+    };
+    void tick();
+    const id = window.setInterval(() => { void tick(); }, 800);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [hasPort]);
 
   const live = reading;
   const typed = parseFloat(manual);

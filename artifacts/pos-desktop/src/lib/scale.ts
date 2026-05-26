@@ -84,12 +84,16 @@ export async function readWeightOnce(): Promise<number> {
     // the modal falls back to manual entry.
     throw new Error("قراءة الميزان متاحة فقط داخل تطبيق الويندوز");
   }
-  const kg = await tauriInvoke<number>("read_weight_once", {
-    port: cfg.port,
-    baud: cfg.baud,
-    protocol: cfg.protocol,
-  });
-  return kg;
+  // Rust returns Option<Weight> with { valueKg, stable, raw } (serde
+  // rename_all = "camelCase"). null = no frame captured within the
+  // 1.5s window — surface as a clear error so the modal can fall back
+  // to manual entry without a silent "0.000 kg" reading.
+  const w = await tauriInvoke<{ valueKg: number; stable: boolean; raw: string } | null>(
+    "read_weight_once",
+    { port: cfg.port, baud: cfg.baud, protocol: cfg.protocol },
+  );
+  if (!w) throw new Error("لم يصل وزن من الميزان خلال المهلة");
+  return w.valueKg;
 }
 
 /** Enumerate serial ports visible to the OS. Empty array on browser preview. */

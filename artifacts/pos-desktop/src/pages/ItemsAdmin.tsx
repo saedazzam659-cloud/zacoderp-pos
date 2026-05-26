@@ -699,6 +699,30 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
           </Field>
         </div>
 
+        {/* Scale (Task #201) — applies to all verticals. */}
+        <div style={{ marginTop: 16, marginBottom: 8, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#1d4ed8" }}>
+          ⚖️ بيانات الميزان
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13, color: "#475569" }}>
+          <input type="checkbox" checked={!!form.isWeighed}
+                 onChange={(e) => setForm({ ...form, isWeighed: e.target.checked })} />
+          صنف يُباع بالوزن (يفتح نافذة وزن عند الإضافة، أو يُقرأ من باركود الميزان)
+        </label>
+        {form.isWeighed && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="السعر للكيلو (ر.س / كجم) *">
+              <input type="number" step="0.01" min="0" value={form.pricePerKg ?? 0}
+                     onChange={(e) => setForm({ ...form, pricePerKg: Number(e.target.value) })}
+                     style={S.input} />
+            </Field>
+            <Field label="رقم PLU (للميزان)">
+              <input value={form.plu ?? ""} maxLength={6}
+                     onChange={(e) => setForm({ ...form, plu: e.target.value.replace(/\D/g, "") })}
+                     style={S.input} placeholder="مثلاً: 12345" />
+            </Field>
+          </div>
+        )}
+
         {isPharmacy && (
           <>
             <div style={{ marginTop: 16, marginBottom: 8, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#86198f" }} key="pharma-header">

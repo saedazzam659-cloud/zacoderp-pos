@@ -25,7 +25,7 @@ use std::io::Read;
 use std::time::{Duration, Instant};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum ScaleProtocol {
     Cas,
     Bizerba,
