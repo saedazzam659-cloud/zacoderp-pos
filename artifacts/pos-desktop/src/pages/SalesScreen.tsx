@@ -21,9 +21,9 @@ const LS_PRINTER = "pos_desktop_peripherals_printer";
 
 interface CartLine { item: LocalItem; qty: number; }
 
-type Props = { companyName?: string; vatNumber?: string; posSessionId?: number };
+type Props = { companyName?: string; vatNumber?: string; posSessionId?: number; cashierName?: string };
 
-export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003", posSessionId = 0 }: Props) {
+export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003", posSessionId = 0, cashierName }: Props) {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [checkoutKey, setCheckoutKey] = useState<string | null>(null);
   // When non-null, the current cart in state was resumed from this parked
@@ -206,6 +206,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           { text: `الرقم الضريبي: ${vatNumber}`, center: true },
           { text: `فاتورة #${invNum}`, center: true },
           { text: new Date(ts).toLocaleString("ar-SA"), center: true },
+          ...(cashierName ? [{ text: `الكاشير: ${cashierName}`, center: true }] : []),
         ],
         body,
         footer: [{ text: "شكراً لزيارتكم", center: true }],
@@ -281,7 +282,13 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       <aside style={S.cartPane}>
         <div style={S.cartHeader}>
           <h2 style={S.cartTitle}>
-            🛒 السلة{activeParkedId && <span style={S.resumedBadge}>مستأنفة</span>}
+            🛒 السلة
+            {cart.length > 0 && (
+              <span style={S.cartCountBadge}>
+                {cart.length} {cart.length === 1 ? "صنف" : "أصناف"} · {cart.reduce((s, l) => s + l.qty, 0)} قطعة
+              </span>
+            )}
+            {activeParkedId && <span style={S.resumedBadge}>مستأنفة</span>}
           </h2>
           {cart.length > 0 && (
             <div style={{ display: "flex", gap: 6 }}>
@@ -417,6 +424,7 @@ const S = {
   clearBtn: { padding: "4px 10px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", fontSize: 12, fontFamily: "inherit" } as const,
   parkBtn: { padding: "4px 10px", background: "#fffbeb", color: "#92400e", border: "1px solid #fde68a", borderRadius: 6, cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 600 } as const,
   resumedBadge: { fontSize: 10, padding: "2px 8px", background: "#dbeafe", color: "#1e40af", borderRadius: 999, marginInlineStart: 8, fontWeight: 700, verticalAlign: "middle" } as const,
+  cartCountBadge: { fontSize: 11, padding: "2px 8px", background: "#f1f5f9", color: "#475569", borderRadius: 999, marginInlineStart: 8, fontWeight: 600, verticalAlign: "middle" } as const,
 
   // THIS is the ONLY scrolling region in the cart — items list
   linesScroll: { flex: 1, overflowY: "auto" as const, overflowX: "hidden" as const, minHeight: 0, maxHeight: "100%", padding: "12px 16px" } as const,

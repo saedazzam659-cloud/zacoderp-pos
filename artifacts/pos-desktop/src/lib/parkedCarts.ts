@@ -55,18 +55,34 @@ export function lineFromItem(item: LocalItem, qty: number): ParkedCartLine {
 }
 
 // ─── List (session-scoped) ──────────────────────────────────────────
+// MERGE strategy (defensive): we always read BOTH SQLite AND localStorage
+// and union by id. Previous behavior was Tauri-OR-localStorage which silently
+// lost carts whenever the Tauri save succeeded but the Tauri list call later
+// rejected (e.g. arg-rename mismatch, schema drift in an upgraded install).
+// SQLite is treated as authoritative on conflicts (more recent updatedAt
+// wins inside the merge).
 export async function listParkedCarts(posSessionId: number): Promise<ParkedCart[]> {
+  const fromTauri: ParkedCart[] = [];
   if (IS_TAURI) {
     try {
-      return await tauriInvoke<ParkedCart[]>("parked_carts_list", { posSessionId });
+      const rows = await tauriInvoke<ParkedCart[]>("parked_carts_list", { posSessionId });
+      fromTauri.push(...rows);
     } catch (e) {
-      console.warn("[parkedCarts] Tauri list failed, falling back to localStorage", e);
+      console.warn("[parkedCarts] Tauri list failed, using localStorage mirror only", e);
     }
   }
-  const all = lsRead<ParkedCart[]>(LS_KEY, []);
-  return all
-    .filter(c => c.posSessionId === posSessionId)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const fromLs = lsRead<ParkedCart[]>(LS_KEY, [])
+    .filter(c => c.posSessionId === posSessionId);
+
+  // Merge by id; whichever side has the more recent updatedAt wins.
+  const byId = new Map<string, ParkedCart>();
+  for (const c of [...fromTauri, ...fromLs]) {
+    const prev = byId.get(c.id);
+    if (!prev || c.updatedAt.localeCompare(prev.updatedAt) > 0) {
+      byId.set(c.id, c);
+    }
+  }
+  return Array.from(byId.values()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 // ─── Save (upsert) ──────────────────────────────────────────────────
@@ -90,13 +106,12 @@ export async function saveParkedCart(input: {
     updatedAt: now,
   };
 
+  // Always mirror to localStorage — even when Tauri succeeds — so that a
+  // later list-side rejection (arg mismatch, schema drift) doesn't make the
+  // cart vanish from the user's view. listParkedCarts() unions both stores.
   if (IS_TAURI) {
-    try {
-      await tauriInvoke("parked_carts_upsert", { cart });
-      return cart;
-    } catch (e) {
-      console.warn("[parkedCarts] Tauri upsert failed, falling back", e);
-    }
+    try { await tauriInvoke("parked_carts_upsert", { cart }); }
+    catch (e) { console.warn("[parkedCarts] Tauri upsert failed, relying on localStorage mirror", e); }
   }
   const all = lsRead<ParkedCart[]>(LS_KEY, []);
   const existingIdx = all.findIndex(c => c.id === cart.id);
@@ -111,20 +126,24 @@ export async function saveParkedCart(input: {
 }
 
 // ─── Delete (one) ───────────────────────────────────────────────────
+// Since save mirrors to BOTH SQLite and localStorage, delete must do the
+// same — otherwise a row deleted from SQLite would resurface from the LS
+// mirror on the next merge-read ("ghost carts").
 export async function deleteParkedCart(id: string): Promise<void> {
   if (IS_TAURI) {
-    try { await tauriInvoke("parked_carts_delete", { id }); return; }
-    catch (e) { console.warn("[parkedCarts] Tauri delete failed, falling back", e); }
+    try { await tauriInvoke("parked_carts_delete", { id }); }
+    catch (e) { console.warn("[parkedCarts] Tauri delete failed, clearing LS mirror only", e); }
   }
   const all = lsRead<ParkedCart[]>(LS_KEY, []);
   lsWrite(LS_KEY, all.filter(c => c.id !== id));
 }
 
 // ─── Clear all carts for a session (called on logout / session close) ─
+// Same mirror-cleanup rationale as deleteParkedCart.
 export async function clearSessionParkedCarts(posSessionId: number): Promise<void> {
   if (IS_TAURI) {
-    try { await tauriInvoke("parked_carts_clear_session", { posSessionId }); return; }
-    catch (e) { console.warn("[parkedCarts] Tauri clear failed, falling back", e); }
+    try { await tauriInvoke("parked_carts_clear_session", { posSessionId }); }
+    catch (e) { console.warn("[parkedCarts] Tauri clear failed, clearing LS mirror only", e); }
   }
   const all = lsRead<ParkedCart[]>(LS_KEY, []);
   lsWrite(LS_KEY, all.filter(c => c.posSessionId !== posSessionId));

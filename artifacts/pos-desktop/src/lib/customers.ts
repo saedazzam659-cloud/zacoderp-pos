@@ -39,18 +39,26 @@ function fromRust(r: RustCustomer): LocalCustomer {
 }
 
 export async function listCustomers(search?: string): Promise<LocalCustomer[]> {
+  // MERGE strategy (mirrors items.ts): read both SQLite and localStorage.
+  // updateCustomer/deleteCustomer write to localStorage only, so the merged
+  // view is what makes those edits visible after the change.
+  const fromTauri: LocalCustomer[] = [];
   if (IS_TAURI) {
     try {
       const rows = await tauriInvoke<RustCustomer[]>("list_customers", { search: search ?? null });
-      return rows.map(fromRust);
-    } catch {
-      // fall through to localStorage cache
-    }
+      fromTauri.push(...rows.map(fromRust));
+    } catch { /* fall through */ }
   }
-  const all = lsRead<LocalCustomer[]>(LS_KEYS.customers, []);
-  if (!search) return all;
+  const fromLs = lsRead<LocalCustomer[]>(LS_KEYS.customers, []);
+  const tauriCloudIds = new Set(fromTauri.map((c) => c.cloudId).filter((v): v is number => !!v));
+  const merged: LocalCustomer[] = [...fromTauri];
+  for (const lsRow of fromLs) {
+    if (lsRow.cloudId && tauriCloudIds.has(lsRow.cloudId)) continue;
+    merged.push(lsRow);
+  }
+  if (!search) return merged;
   const q = search.toLowerCase();
-  return all.filter((c) =>
+  return merged.filter((c) =>
     c.nameAr.includes(search) ||
     (c.nameEn ?? "").toLowerCase().includes(q) ||
     (c.phone ?? "").includes(search) ||

@@ -65,16 +65,35 @@ function readLocal(): LocalItem[] {
 }
 
 export async function listItems(search?: string): Promise<LocalItem[]> {
-  // 1) Tauri native
+  // MERGE strategy: read BOTH SQLite (Tauri) and localStorage and union them.
+  // Previous behavior was Tauri-OR-localStorage which silently hid
+  // locally-created items because createItem only writes to localStorage
+  // (there is no SQLite write command yet) while listItems preferred SQLite —
+  // so the user added a row and it never appeared. Dedup keys:
+  //   • Tauri rows are keyed by `id` (SQLite rowid)
+  //   • LocalStorage rows that have a cloudId match a Tauri row via cloud_id
+  //   • LocalStorage rows without cloudId are always-additive (locally-created)
+  const fromTauri: LocalItem[] = [];
   if (IS_TAURI) {
     try {
       const rows = await tauriInvoke<RustItem[]>("list_items", { search: search ?? null });
-      if (rows.length > 0) return rows.map(fromRust);
-    } catch { /* fall through */ }
+      fromTauri.push(...rows.map(fromRust));
+    } catch { /* fall through to localStorage-only */ }
   }
-  // 2) localStorage cache (populated by upsertItemsFromCloud OR createItem)
-  let all = readLocal();
-  // 3) If still empty AND no search, fall back to demo so the screen isn't blank
+  const fromLs = readLocal();
+
+  // Build the merged set: Tauri rows first (authoritative), then add
+  // locally-created LS rows (no cloudId) that don't collide with a Tauri row's
+  // cloud_id, plus any LS row with a cloudId not already in Tauri.
+  const tauriCloudIds = new Set(fromTauri.map((i) => i.cloudId).filter((v): v is number => !!v));
+  const merged: LocalItem[] = [...fromTauri];
+  for (const lsRow of fromLs) {
+    if (lsRow.cloudId && tauriCloudIds.has(lsRow.cloudId)) continue; // already represented by Tauri
+    merged.push(lsRow);
+  }
+
+  // If still empty AND no search, fall back to demo so the screen isn't blank
+  let all = merged;
   if (all.length === 0 && !search) all = DEV_DEMO;
   if (!search) return all;
   const q = search.toLowerCase();

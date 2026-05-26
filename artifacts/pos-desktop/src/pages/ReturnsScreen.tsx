@@ -16,9 +16,9 @@ import { generateZatcaQr } from "../lib/zatca";
 const VAT_RATE = 0.15;
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 
-type Props = { companyName?: string; vatNumber?: string };
+type Props = { companyName?: string; vatNumber?: string; cashierName?: string };
 
-export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003" }: Props) {
+export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003", cashierName }: Props) {
   const [invoices, setInvoices] = useState<PendingInvoice[]>([]);
   const [search, setSearch] = useState("");
   const [picked, setPicked] = useState<{ inv: PendingInvoice; payload: OfflineInvoicePayload } | null>(null);
@@ -27,12 +27,50 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [lastReturn, setLastReturn] = useState<string | null>(null);
+  // Set of original-invoice numbers that already have at least one credit
+  // note. Used to disable the إرجاع button and block double-returns.
+  const [returnedInvoiceNos, setReturnedInvoiceNos] = useState<Set<string>>(new Set());
 
   useEffect(() => { void refresh(); }, []);
 
   async function refresh() {
-    try { setInvoices(await listAllInvoices(100)); }
-    catch { /* ignore */ }
+    try {
+      const list = await listAllInvoices(100);
+      setInvoices(list);
+      setReturnedInvoiceNos(await computeReturnedSet(list));
+    } catch { /* ignore */ }
+  }
+
+  // Build the "already returned" set by scanning EVERY invoice's payload and
+  // matching on payload.kind === "return". We can't rely on the invoiceNo
+  // prefix because the Rust-backed saver assigns "OFF-…" to all invoices
+  // (returns included); only the browser fallback uses "RET-". Reading
+  // payloads is O(N) over `listAllInvoices(100)`, which is fine — and we
+  // pre-load the LS array once instead of re-parsing per row.
+  async function computeReturnedSet(list: PendingInvoice[]): Promise<Set<string>> {
+    const returned = new Set<string>();
+    let lsCache: any[] | null = null;
+    const lsGet = (id: number): string | undefined => {
+      if (!lsCache) {
+        try {
+          const raw = localStorage.getItem("pos_desktop_invoices_v1");
+          lsCache = raw ? JSON.parse(raw) : [];
+        } catch { lsCache = []; }
+      }
+      return lsCache!.find((i) => i.id === id)?.payloadJson;
+    };
+    for (const inv of list) {
+      try {
+        const full = await getOfflineInvoice(inv.id);
+        const payloadJson = full?.payloadJson ?? lsGet(inv.id);
+        if (!payloadJson) continue;
+        const p = JSON.parse(payloadJson) as any;
+        if (p?.kind === "return" && typeof p.refOf === "string") {
+          returned.add(p.refOf);
+        }
+      } catch { /* skip unreadable payloads */ }
+    }
+    return returned;
   }
 
   const filtered = useMemo(() => {
@@ -44,6 +82,17 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
 
   async function pick(inv: PendingInvoice) {
     setToast(null);
+    // Guard #1: never let a credit note get a credit note.
+    if (inv.invoiceNo.startsWith("RET-")) {
+      setToast({ kind: "err", text: "لا يمكن إرجاع فاتورة مرتجع" });
+      return;
+    }
+    // Guard #2: one credit note per original invoice — re-check at click time
+    // in case another tab/operation created one since the last refresh.
+    if (returnedInvoiceNos.has(inv.invoiceNo)) {
+      setToast({ kind: "err", text: `سبق إرجاع الفاتورة ${inv.invoiceNo} — غير مسموح بمرتجع آخر عليها` });
+      return;
+    }
     try {
       const full = await getOfflineInvoice(inv.id);
       // In browser-fallback there's no getOfflineInvoice — pull payload from localStorage
@@ -86,6 +135,18 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
 
     setBusy(true); setToast(null);
     try {
+      // Submit-side re-check: another return for this invoice may have been
+      // created between pick() and submit (different tab, resumed session,
+      // race). Re-scan ground truth before persisting to avoid double credit
+      // notes. The button-disable in the list is UI-only and bypassable.
+      const freshList = await listAllInvoices(100);
+      const freshReturned = await computeReturnedSet(freshList);
+      if (freshReturned.has(picked.inv.invoiceNo)) {
+        setToast({ kind: "err", text: `سبق إرجاع الفاتورة ${picked.inv.invoiceNo} — لا يمكن إنشاء مرتجع آخر` });
+        setReturnedInvoiceNos(freshReturned);
+        setBusy(false);
+        return;
+      }
       const ts = new Date().toISOString();
       const qr = await generateZatcaQr({
         sellerName: companyName,
@@ -139,6 +200,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
           { text: `*** إشعار دائن — مرتجع ***`, bold: true, center: true },
           { text: `رقم: ${saved.invoiceNo}`, center: true },
           { text: new Date(ts).toLocaleString("ar-SA"), center: true },
+          ...(cashierName ? [{ text: `الكاشير: ${cashierName}`, center: true }] : []),
         ],
         body,
         footer: [{ text: "شكراً لزيارتكم", center: true }],
@@ -189,23 +251,32 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
                 <th style={S.thRight}>إجراء</th>
               </tr></thead>
               <tbody>
-                {filtered.map((inv) => (
-                  <tr key={inv.id} style={S.tr}>
-                    <td style={S.tdMono}>{inv.invoiceNo}</td>
-                    <td style={S.td}>{new Date(inv.createdAt).toLocaleString("ar-SA")}</td>
-                    <td style={S.td}>
-                      <span style={inv.invoiceNo.startsWith("RET-") ? S.badgeRet : S.badgeOk}>
-                        {inv.invoiceNo.startsWith("RET-") ? "مرتجع" : inv.syncStatus}
-                      </span>
-                    </td>
-                    <td style={S.tdRight}>
-                      <button onClick={() => pick(inv)} style={S.btnPrimary}
-                        disabled={inv.invoiceNo.startsWith("RET-")}>
-                        ↩️ إرجاع
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map((inv) => {
+                  const isReturn = inv.invoiceNo.startsWith("RET-");
+                  const alreadyReturned = returnedInvoiceNos.has(inv.invoiceNo);
+                  const blocked = isReturn || alreadyReturned;
+                  return (
+                    <tr key={inv.id} style={S.tr}>
+                      <td style={S.tdMono}>{inv.invoiceNo}</td>
+                      <td style={S.td}>{new Date(inv.createdAt).toLocaleString("ar-SA")}</td>
+                      <td style={S.td}>
+                        <span style={isReturn ? S.badgeRet : alreadyReturned ? S.badgeRet : S.badgeOk}>
+                          {isReturn ? "مرتجع" : alreadyReturned ? "تم إرجاعها" : inv.syncStatus}
+                        </span>
+                      </td>
+                      <td style={S.tdRight}>
+                        <button
+                          onClick={() => pick(inv)}
+                          style={blocked ? { ...S.btnPrimary, opacity: 0.45, cursor: "not-allowed" } : S.btnPrimary}
+                          disabled={blocked}
+                          title={alreadyReturned ? "سبق إرجاع هذه الفاتورة — مرتجع واحد فقط مسموح" : isReturn ? "لا يمكن إرجاع فاتورة مرتجع" : "إرجاع"}
+                        >
+                          ↩️ إرجاع
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
