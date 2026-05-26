@@ -27,7 +27,7 @@ import { assertWritableForDate } from "../lib/periodGuard.js";
 
 // ─── Journal entry helper (mirrors purchasing.ts) ────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null; costCenter?: string | null };
-async function createJournalEntry(opts: {
+export async function createJournalEntry(opts: {
   companyId: number;
   branchId?: number | null;
   date: string;
