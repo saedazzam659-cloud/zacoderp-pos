@@ -256,7 +256,7 @@ export default function PosShell({
         {/* Page content */}
         <main style={S.content}>
           {view === "sales" && <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={cashierContext?.nameAr || cashierContext?.username} />}
-          {view === "returns" && <ReturnsScreen companyName={effectiveCompanyName} cashierName={cashierContext?.nameAr || cashierContext?.username} />}
+          {view === "returns" && <div style={S.pagePad}><ReturnsScreen companyName={effectiveCompanyName} cashierName={cashierContext?.nameAr || cashierContext?.username} /></div>}
           {view === "pending" && <div style={S.pagePad}><PendingInvoices companyName={effectiveCompanyName} /></div>}
           {view === "parked" && (
             <div style={S.pagePad}>
