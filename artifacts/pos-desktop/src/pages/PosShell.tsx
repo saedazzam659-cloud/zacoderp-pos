@@ -27,6 +27,7 @@ import { countPendingInvoices } from "../lib/invoices";
 import { syncPushNow, pullAndPersist, type PushSummary, type PullSummary } from "../lib/sync";
 import { listParkedCarts } from "../lib/parkedCarts";
 import { flushPendingSessionCloses, countPendingCloses } from "../lib/pendingSessionCloses";
+import { useLatestVersion } from "../lib/updates";
 
 type View = "sales" | "returns" | "pending" | "parked" | "customers" | "items" | "uom" | "dashboard" | "updates";
 
@@ -64,6 +65,8 @@ export default function PosShell({
   const [parkedCount, setParkedCount] = useState(0);
   const [pushSummary, setPushSummary] = useState<PushSummary | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const { latest: latestRelease, isNewer: updateAvailable } = useLatestVersion(baseUrl);
 
   const refreshParkedCount = useCallback(async () => {
     if (!posSessionId) { setParkedCount(0); return; }
@@ -230,6 +233,18 @@ export default function PosShell({
           </div>
         </header>
 
+        {/* New-version notification banner (Task #187).
+            Polls /api/public/download/release every 30 min. Silently hidden
+            offline / when no newer version is published. Dismiss is per-session
+            only — reappears next launch until the user actually updates. */}
+        {updateAvailable && latestRelease && !updateDismissed && (
+          <UpdateBanner
+            version={latestRelease.version}
+            onOpen={() => setView("updates")}
+            onDismiss={() => setUpdateDismissed(true)}
+          />
+        )}
+
         {/* Subscription-expiry warning banner (Task #185).
             Shown when the cached expiresAt is within 7 days of "now". Past-due
             expiries never reach this banner because boot() routes them to the
@@ -238,8 +253,8 @@ export default function PosShell({
 
         {/* Page content */}
         <main style={S.content}>
-          {view === "sales" && <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} />}
-          {view === "returns" && <ReturnsScreen companyName={effectiveCompanyName} />}
+          {view === "sales" && <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={cashierContext?.nameAr || cashierContext?.username} />}
+          {view === "returns" && <ReturnsScreen companyName={effectiveCompanyName} cashierName={cashierContext?.nameAr || cashierContext?.username} />}
           {view === "pending" && <div style={S.pagePad}><PendingInvoices companyName={effectiveCompanyName} /></div>}
           {view === "parked" && (
             <div style={S.pagePad}>
@@ -291,6 +306,21 @@ function labelFor(v: View): string {
     dashboard: "لوحة التحكم",
     updates: "التحديثات",
   }[v];
+}
+
+function UpdateBanner({
+  version, onOpen, onDismiss,
+}: { version: string; onOpen: () => void; onDismiss: () => void }) {
+  return (
+    <div style={S.updateBanner}>
+      <span style={{ fontSize: 18 }}>⬇️</span>
+      <span style={{ flex: 1 }}>
+        تتوفّر نسخة جديدة <strong>v{version}</strong> — يُنصح بالتحديث للحصول على آخر الإصلاحات والتحسينات.
+      </span>
+      <button onClick={onOpen} style={S.updateBtn}>تنزيل الآن</button>
+      <button onClick={onDismiss} style={S.updateClose} title="إخفاء حتى إعادة التشغيل">✕</button>
+    </div>
+  );
 }
 
 function ExpiryBanner({ expiresAt }: { expiresAt: string | null }) {
@@ -505,6 +535,23 @@ const S = {
     background: "linear-gradient(90deg, #fef3c7 0%, #fde68a 100%)",
     color: "#78350f", borderBottom: "1px solid #fcd34d",
     fontSize: 13, fontWeight: 600, flexShrink: 0,
+  } as const,
+  updateBanner: {
+    display: "flex", alignItems: "center", gap: 12,
+    padding: "10px 24px",
+    background: "linear-gradient(90deg, #dbeafe 0%, #d1fae5 100%)",
+    color: "#0c4a6e", borderBottom: "1px solid #93c5fd",
+    fontSize: 13, fontWeight: 600, flexShrink: 0,
+  } as const,
+  updateBtn: {
+    padding: "6px 14px", background: "#2563eb", color: "#fff",
+    border: "none", borderRadius: 6, cursor: "pointer",
+    fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+  } as const,
+  updateClose: {
+    padding: "4px 10px", background: "transparent", color: "#0c4a6e",
+    border: "1px solid #93c5fd", borderRadius: 6, cursor: "pointer",
+    fontSize: 12, fontFamily: "inherit",
   } as const,
   content: { flex: 1, overflow: "hidden", minHeight: 0, display: "flex", flexDirection: "column" as const } as const,
   pagePad: { padding: 24, overflowY: "auto" as const, flex: 1 } as const,

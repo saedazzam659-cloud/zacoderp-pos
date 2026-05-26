@@ -205,7 +205,10 @@ const pushSchema = z.object({
     entityType: z.string().min(1),
     operation: z.enum(["create", "update", "delete"]),
     payload: z.record(z.string(), z.unknown()),
-    occurredAt: z.string().datetime().optional(),
+    // Accept any RFC3339 timestamp — chrono's to_rfc3339() in the Rust
+    // pusher emits "+00:00" offsets, not the "Z" suffix that zod's default
+    // .datetime() requires. {offset:true} lets both forms pass validation.
+    occurredAt: z.string().datetime({ offset: true }).optional(),
   })).max(500),
 });
 router.post("/push", async (req: DeviceAuthedRequest, res) => {

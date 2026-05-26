@@ -14,6 +14,8 @@ export interface LocalCustomer {
   vatNumber?: string | null;
   createdAt?: string;
   updatedAt?: string;
+  /** Soft-delete tombstone (overlay). When true, listCustomers filters this row out. */
+  deleted?: boolean;
 }
 
 interface RustCustomer {
@@ -39,20 +41,48 @@ function fromRust(r: RustCustomer): LocalCustomer {
 }
 
 export async function listCustomers(search?: string): Promise<LocalCustomer[]> {
+  // MERGE strategy (mirrors items.ts): read both SQLite and localStorage.
+  // updateCustomer/deleteCustomer write to localStorage only, so the merged
+  // view is what makes those edits visible after the change.
+  const fromTauri: LocalCustomer[] = [];
   if (IS_TAURI) {
     try {
       const rows = await tauriInvoke<RustCustomer[]>("list_customers", { search: search ?? null });
-      return rows.map(fromRust);
-    } catch {
-      // fall through to localStorage cache
+      fromTauri.push(...rows.map(fromRust));
+    } catch { /* fall through */ }
+  }
+  const fromLs = lsRead<LocalCustomer[]>(LS_KEYS.customers, []);
+  // OVERLAY: LS rows that match a Tauri row (by id OR cloudId) SUPERSEDE
+  // the Tauri version — this is how updateCustomer/deleteCustomer can
+  // mutate cloud-pulled rows without Rust write commands.
+  const lsById = new Map<number, LocalCustomer>();
+  const lsByCloud = new Map<number, LocalCustomer>();
+  for (const r of fromLs) {
+    lsById.set(r.id, r);
+    if (r.cloudId) lsByCloud.set(r.cloudId, r);
+  }
+  const usedLs = new Set<number>();
+  const merged: LocalCustomer[] = [];
+  for (const t of fromTauri) {
+    const overlay = lsById.get(t.id) ?? (t.cloudId ? lsByCloud.get(t.cloudId) : undefined);
+    if (overlay) {
+      merged.push(overlay);
+      usedLs.add(overlay.id);
+    } else {
+      merged.push(t);
     }
   }
-  const all = lsRead<LocalCustomer[]>(LS_KEYS.customers, []);
-  if (!search) return all;
-  const q = search.toLowerCase();
-  return all.filter((c) =>
+  for (const r of fromLs) {
+    if (usedLs.has(r.id)) continue;
+    merged.push(r);
+  }
+  // Filter tombstones (deleted rows the user removed locally).
+  const visible = merged.filter((c) => !c.deleted);
+  if (!search) return visible;
+  const q2 = search.toLowerCase();
+  return visible.filter((c) =>
     c.nameAr.includes(search) ||
-    (c.nameEn ?? "").toLowerCase().includes(q) ||
+    (c.nameEn ?? "").toLowerCase().includes(q2) ||
     (c.phone ?? "").includes(search) ||
     (c.vatNumber ?? "").includes(search),
   );
@@ -178,30 +208,57 @@ function createInLocalStorage(input: CreateCustomerInput, now: string): LocalCus
 export async function updateCustomer(id: number, patch: CreateCustomerInput): Promise<LocalCustomer | null> {
   const all = lsRead<LocalCustomer[]>(LS_KEYS.customers, []);
   const idx = all.findIndex((c) => c.id === id);
-  if (idx < 0) return null;
-  all[idx] = { ...all[idx], ...patch, updatedAt: new Date().toISOString() };
+  let updated: LocalCustomer;
+  if (idx >= 0) {
+    updated = { ...all[idx], ...patch, updatedAt: new Date().toISOString() };
+    all[idx] = updated;
+  } else {
+    // Row originates from SQLite — write a full overlay to LS so the
+    // edit becomes visible and the next update can find it.
+    const merged = await listCustomers();
+    const base = merged.find((c) => c.id === id);
+    if (!base) return null;
+    updated = { ...base, ...patch, updatedAt: new Date().toISOString() };
+    all.push(updated);
+  }
   lsWrite(LS_KEYS.customers, all);
   enqueuePush({
     clientId: `cust-upd-${id}-${Date.now()}`,
     entityType: "customer",
     operation: "update",
-    payload: { localId: id, cloudId: all[idx].cloudId, ...patch },
+    payload: { localId: id, cloudId: updated.cloudId, ...patch },
   });
-  return all[idx];
+  return updated;
 }
 
 export async function deleteCustomer(id: number): Promise<void> {
+  // Tombstone strategy — same as deleteItem. Cloud-backed rows get a
+  // `deleted:true` overlay so the merged listCustomers hides them even
+  // when SQLite still has the original; pure-local rows are dropped.
   const all = lsRead<LocalCustomer[]>(LS_KEYS.customers, []);
-  const target = all.find((c) => c.id === id);
-  lsWrite(LS_KEYS.customers, all.filter((c) => c.id !== id));
-  if (target) {
-    enqueuePush({
-      clientId: `cust-del-${id}-${Date.now()}`,
-      entityType: "customer",
-      operation: "delete",
-      payload: { localId: id, cloudId: target.cloudId },
-    });
+  const idx = all.findIndex((c) => c.id === id);
+  let cloudId: number | null = null;
+  if (idx >= 0) {
+    cloudId = all[idx].cloudId ?? null;
+    if (cloudId) {
+      all[idx] = { ...all[idx], deleted: true, updatedAt: new Date().toISOString() };
+    } else {
+      all.splice(idx, 1);
+    }
+  } else {
+    const merged = await listCustomers();
+    const base = merged.find((c) => c.id === id);
+    if (!base) return;
+    cloudId = base.cloudId ?? null;
+    all.push({ ...base, deleted: true, updatedAt: new Date().toISOString() });
   }
+  lsWrite(LS_KEYS.customers, all);
+  enqueuePush({
+    clientId: `cust-del-${id}-${Date.now()}`,
+    entityType: "customer",
+    operation: "delete",
+    payload: { localId: id, cloudId },
+  });
 }
 
 export async function countCustomers(): Promise<number> {

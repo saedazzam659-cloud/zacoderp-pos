@@ -79,6 +79,7 @@ router.get("/settings", requireSuperAdmin, async (req, res) => {
       return {
         featureKey:    f.key,
         labelAr:       f.labelAr,
+        tier:          f.tier,
         catalogDaily:  f.defaultDaily,
         isEnabled:     eff?.is_enabled ?? true,
         dailyLimit:    eff?.daily_limit ?? f.defaultDaily,
@@ -174,6 +175,43 @@ router.post("/disable-all", requireSuperAdmin, async (req, res) => {
   }
 });
 
+// ─── POST /disable-paid ───────────────────────────────────────────────────
+// Bulk-disable only the catalog entries flagged `tier: "paid"` (LLM
+// callers like Gemini / OpenAI). Free / rule-based features keep
+// working. `companyId: null` = update system defaults so every tenant
+// without explicit overrides starts with paid features OFF.
+const disablePaidSchema = z.object({
+  companyId: z.number().int().positive().nullable(),
+  note:      z.string().max(500).optional(),
+});
+router.post("/disable-paid", requireSuperAdmin, async (req, res) => {
+  const parsed = disablePaidSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "invalid body" }); return; }
+  const { companyId, note } = parsed.data;
+  const updatedBy = (req as any).authUser?.id ?? null;
+  const paidFeatures = AI_FEATURE_CATALOG.filter(f => f.tier === "paid");
+  try {
+    for (const f of paidFeatures) {
+      if (companyId == null) {
+        await db.execute(sql`DELETE FROM ai_feature_settings WHERE company_id IS NULL AND feature_key = ${f.key}`);
+        await db.execute(sql`
+          INSERT INTO ai_feature_settings (company_id, feature_key, is_enabled, daily_limit, note, updated_by)
+          VALUES (NULL, ${f.key}, FALSE, 0, ${note ?? "إيقاف افتراضي للميزات المدفوعة على مستوى النظام"}, ${updatedBy})
+        `);
+      } else {
+        await db.execute(sql`DELETE FROM ai_feature_settings WHERE company_id = ${companyId} AND feature_key = ${f.key}`);
+        await db.execute(sql`
+          INSERT INTO ai_feature_settings (company_id, feature_key, is_enabled, daily_limit, note, updated_by)
+          VALUES (${companyId}, ${f.key}, FALSE, 0, ${note ?? "إيقاف الميزات المدفوعة من شاشة المشرف العام"}, ${updatedBy})
+        `);
+      }
+    }
+    res.json({ ok: true, count: paidFeatures.length, scope: companyId == null ? "system" : "company" });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "failed" });
+  }
+});
+
 // ─── POST /enable-all ─────────────────────────────────────────────────────
 // Reverse of disable-all: removes all company-specific overrides, so the
 // company falls back to system defaults.
@@ -258,6 +296,91 @@ router.get("/companies", requireSuperAdmin, async (_req, res) => {
     res.json({ companies: (r.rows ?? []).map((c: any) => ({
       id: c.id, nameAr: c.name_ar, nameEn: c.name_en,
     })) });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "failed" });
+  }
+});
+
+// ─── GET /cost-by-company ─────────────────────────────────────────────────
+// Aggregate `ai_usage_log` (status='allowed' only) over the past N days
+// and multiply each feature's call count by its `usdPerCall` estimate
+// from the catalog. Returns one row per company sorted by spend DESC so
+// the SuperAdmin can see at a glance which tenants drive the AI bill.
+router.get("/cost-by-company", requireSuperAdmin, async (req, res) => {
+  // Guard against non-numeric ?days=abc which would otherwise become NaN
+  // and produce an Invalid Date, crashing toISOString() with a 500.
+  const daysRaw = Number(req.query.days ?? 30);
+  const days = Number.isFinite(daysRaw) ? Math.max(1, Math.min(90, daysRaw)) : 30;
+  const since = new Date(Date.now() - days * 86400 * 1000);
+  try {
+    const usage: any = await db.execute(sql`
+      SELECT l.company_id, l.feature_key, COUNT(*) AS calls,
+             COALESCE(c.name_ar, c.name_en, CONCAT('شركة #', l.company_id::text)) AS company_name,
+             c.name_en AS name_en
+        FROM ai_usage_log l
+        LEFT JOIN companies c ON c.id = l.company_id
+       WHERE l.status = 'allowed'
+         AND l.created_at >= ${since.toISOString()}
+    GROUP BY l.company_id, l.feature_key, c.name_ar, c.name_en
+    `);
+
+    const priceMap = new Map<string, number>(
+      AI_FEATURE_CATALOG.map(f => [f.key, f.usdPerCall as number]),
+    );
+    const tierMap = new Map<string, "free" | "paid">(
+      AI_FEATURE_CATALOG.map(f => [f.key, f.tier as "free" | "paid"]),
+    );
+
+    const byCompany = new Map<number | null, {
+      companyId: number | null;
+      companyName: string;
+      nameEn: string | null;
+      totalCalls: number;
+      paidCalls: number;
+      estimatedUsd: number;
+      byFeature: Array<{ featureKey: string; calls: number; usd: number; tier: "free"|"paid" }>;
+    }>();
+
+    for (const row of (usage.rows ?? [])) {
+      const cid = row.company_id == null ? null : Number(row.company_id);
+      const calls = Number(row.calls || 0);
+      const price = priceMap.get(row.feature_key) ?? 0;
+      const tier = tierMap.get(row.feature_key) ?? "paid";
+      const usd = calls * price;
+
+      let agg = byCompany.get(cid);
+      if (!agg) {
+        agg = {
+          companyId:   cid,
+          companyName: row.company_name || (cid == null ? "بدون شركة (نظام)" : `شركة #${cid}`),
+          nameEn:      row.name_en ?? null,
+          totalCalls:  0,
+          paidCalls:   0,
+          estimatedUsd: 0,
+          byFeature:   [],
+        };
+        byCompany.set(cid, agg);
+      }
+      agg.totalCalls += calls;
+      if (tier === "paid") agg.paidCalls += calls;
+      agg.estimatedUsd += usd;
+      agg.byFeature.push({ featureKey: row.feature_key, calls, usd, tier });
+    }
+
+    const companies = Array.from(byCompany.values())
+      .map(c => ({
+        ...c,
+        estimatedUsd: Number(c.estimatedUsd.toFixed(4)),
+        byFeature: c.byFeature.sort((a, b) => b.usd - a.usd),
+      }))
+      .sort((a, b) => b.estimatedUsd - a.estimatedUsd);
+
+    const grandTotalUsd = Number(
+      companies.reduce((s, c) => s + c.estimatedUsd, 0).toFixed(4),
+    );
+    const grandTotalCalls = companies.reduce((s, c) => s + c.totalCalls, 0);
+
+    res.json({ days, companies, grandTotalUsd, grandTotalCalls });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "failed" });
   }

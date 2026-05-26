@@ -29,7 +29,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Brain, Save, Loader2, ShieldOff, ShieldCheck, AlertTriangle, Activity,
-  Globe, Building2, Sparkles,
+  Globe, Building2, Sparkles, DollarSign, Filter,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -37,6 +37,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 type Setting = {
   featureKey:   string;
   labelAr:      string;
+  tier:         "free" | "paid";
   catalogDaily: number;
   isEnabled:    boolean;
   dailyLimit:   number | null;
@@ -60,6 +61,9 @@ export default function AiControls() {
   // overwrite them on a background refetch.
   const [draftsByCtx, setDraftsByCtx] = useState<Record<string, Record<string, Setting>>>({});
   const [dirtyCtx, setDirtyCtx] = useState<Set<string>>(new Set());
+  // UI filter: when "paid", hide free/rule-based features so the SA can
+  // focus on the rows that actually cost money.
+  const [tierFilter, setTierFilter] = useState<"all" | "paid" | "free">("all");
   const ctxKey = companyId == null ? "__system__" : String(companyId);
   const draft = draftsByCtx[ctxKey] ?? {};
 
@@ -105,6 +109,55 @@ export default function AiControls() {
       return r.json();
     },
     refetchInterval: 60_000,
+  });
+
+  // Step 2 — monthly cost estimate per company. The catalog carries
+  // `usdPerCall` for each feature; the server multiplies it by the
+  // allowed-call count over the last N days and sorts companies by
+  // spend desc. UI exposes a 7/30/90-day toggle + per-row "disable
+  // paid" shortcut.
+  const [costDays, setCostDays] = useState<7 | 30 | 90>(30);
+  const costQ = useQuery<{
+    days: number;
+    grandTotalUsd: number;
+    grandTotalCalls: number;
+    companies: Array<{
+      companyId: number | null;
+      companyName: string;
+      totalCalls: number;
+      paidCalls: number;
+      estimatedUsd: number;
+      byFeature: Array<{ featureKey: string; calls: number; usd: number; tier: "free"|"paid" }>;
+    }>;
+  }>({
+    queryKey: ["ai-controls", "cost-by-company", costDays],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/ai-controls/cost-by-company?days=${costDays}`, { credentials: "include" });
+      if (!r.ok) throw new Error("failed to load cost estimate");
+      return r.json();
+    },
+    refetchInterval: 60_000,
+  });
+
+  const disablePaidForCompanyMut = useMutation({
+    mutationFn: async (targetCompanyId: number) => {
+      const r = await fetch(`${API}/api/admin/ai-controls/disable-paid`, {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: JSON.stringify({
+          companyId: targetCompanyId,
+          note: `إيقاف المدفوعة من لوحة التكلفة بواسطة ${user?.email || "SA"}`,
+        }),
+      });
+      if (!r.ok) throw new Error("failed");
+      return r.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تم", description: "أوقفنا الميزات المدفوعة لهذه الشركة." });
+      qc.invalidateQueries({ queryKey: ["ai-controls"] });
+    },
+    onError: (e: any) => toast({ title: "فشل", description: e?.message, variant: "destructive" }),
   });
 
   // Hydrate the draft for the active context from the server response, but
@@ -174,6 +227,33 @@ export default function AiControls() {
     },
   });
 
+  const disablePaidMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API}/api/admin/ai-controls/disable-paid`, {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: JSON.stringify({
+          companyId,
+          note: `إيقاف الميزات المدفوعة بواسطة ${user?.email || "SA"}`,
+        }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "failed");
+      return r.json();
+    },
+    onSuccess: (d: any) => {
+      toast({
+        title: "تم إيقاف الميزات المدفوعة",
+        description: companyId == null
+          ? `أصبحت ${d.count} ميزة مدفوعة موقوفة افتراضياً للنظام. الميزات المجانية لم تتأثر.`
+          : `أوقفنا ${d.count} ميزة مدفوعة لهذه الشركة. الميزات المجانية (مكتبة المعرفة) لا تزال تعمل.`,
+      });
+      setDirtyCtx(s => { const n = new Set(s); n.delete(ctxKey); return n; });
+      qc.invalidateQueries({ queryKey: ["ai-controls"] });
+    },
+    onError: (e: any) => toast({ title: "فشل", description: e?.message, variant: "destructive" }),
+  });
+
   const restoreMut = useMutation({
     mutationFn: async () => {
       if (companyId == null) throw new Error("اختر شركة محددة أولاً");
@@ -212,6 +292,11 @@ export default function AiControls() {
   }
 
   const allDisabled = Object.values(draft).every(s => !s.isEnabled);
+  const paidCount = Object.values(draft).filter(s => s.tier === "paid").length;
+  const paidEnabledCount = Object.values(draft).filter(s => s.tier === "paid" && s.isEnabled).length;
+  const visibleSettings = Object.values(draft).filter(s =>
+    tierFilter === "all" ? true : s.tier === tierFilter,
+  );
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-[1400px] mx-auto">
@@ -258,6 +343,35 @@ export default function AiControls() {
           </Select>
 
           <div className="flex-1" />
+
+          {/* Disable paid only — available in BOTH system & per-company contexts */}
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={disablePaidMut.isPending || paidEnabledCount === 0}
+                className="border-amber-500 text-amber-700 hover:bg-amber-50"
+              >
+                <DollarSign className="h-4 w-4 me-1" />
+                إيقاف المدفوعة فقط ({paidEnabledCount}/{paidCount})
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>إيقاف الميزات المدفوعة فقط</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {companyId == null
+                    ? "سيتم إيقاف كل ميزات الذكاء الاصطناعي التي تستدعي خدمات مدفوعة (Gemini / OpenAI) كافتراضي للنظام كله. الشركات الجديدة ستبدأ بدون أي تكلفة عليك. الميزات المجانية (مكتبة المعرفة المحلية، اقتراحات الحسابات) ستظل تعمل بشكل طبيعي."
+                    : "سيتم إيقاف كل ميزات الذكاء الاصطناعي المدفوعة لهذه الشركة فقط. المساعد المحاسبي سيستخدم مكتبة المعرفة المحلية (IFRS / GAAP / ZATCA) مجاناً، واقتراحات الحسابات ستظل تعمل."}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                <AlertDialogAction onClick={() => disablePaidMut.mutate()}>تأكيد</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
 
           {companyId != null && (
             <>
@@ -324,17 +438,145 @@ export default function AiControls() {
         </div>
       )}
 
+      {/* ─── Step 2: per-company cost estimate ─── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <DollarSign className="h-4 w-4 text-amber-600" />
+                تقدير تكلفة الذكاء الاصطناعي لكل شركة
+              </CardTitle>
+              <CardDescription>
+                مبني على استدعاءات AI المسموح بها × متوسط تكلفة الميزة. تقدير تقريبي — الفاتورة الفعلية من المزوّد (Gemini / OpenAI).
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-1 text-xs">
+                <Button size="sm" variant={costDays === 7  ? "default" : "outline"} className="h-7 px-2 text-xs" onClick={() => setCostDays(7)}>7 أيام</Button>
+                <Button size="sm" variant={costDays === 30 ? "default" : "outline"} className="h-7 px-2 text-xs" onClick={() => setCostDays(30)}>30 يوم</Button>
+                <Button size="sm" variant={costDays === 90 ? "default" : "outline"} className="h-7 px-2 text-xs" onClick={() => setCostDays(90)}>90 يوم</Button>
+              </div>
+              <div className="text-end">
+                <div className="text-[10px] text-muted-foreground">الإجمالي التقديري</div>
+                <div className="text-lg font-bold text-amber-700">
+                  ${costQ.data?.grandTotalUsd?.toFixed(4) ?? "0.0000"}
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  {(costQ.data?.grandTotalCalls ?? 0).toLocaleString("en")} استدعاء
+                </div>
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {costQ.isLoading ? (
+            <div className="p-8 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" /></div>
+          ) : (costQ.data?.companies ?? []).length === 0 ? (
+            <p className="p-6 text-center text-xs text-muted-foreground italic">
+              لا توجد استدعاءات AI مسجّلة خلال آخر {costDays} يوم — لا توجد تكلفة تقديرية.
+            </p>
+          ) : (
+            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40 sticky top-0">
+                  <tr className="text-xs text-muted-foreground">
+                    <th className="text-start p-3">الشركة</th>
+                    <th className="text-center p-3 w-28">استدعاءات</th>
+                    <th className="text-center p-3 w-28">مدفوعة</th>
+                    <th className="text-center p-3 w-32">التكلفة (USD)</th>
+                    <th className="text-center p-3 w-28">إجراء</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(costQ.data?.companies ?? []).map(c => {
+                    const isTop = c.estimatedUsd === costQ.data?.companies[0]?.estimatedUsd && c.estimatedUsd > 0;
+                    return (
+                      <tr key={c.companyId ?? "none"} className="border-t hover:bg-muted/20">
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <Building2 className="h-4 w-4 text-muted-foreground" />
+                            <span className="font-medium">{c.companyName}</span>
+                            {c.companyId != null && <span className="text-[10px] text-muted-foreground">#{c.companyId}</span>}
+                            {isTop && <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[9px] hover:bg-amber-100">الأعلى</Badge>}
+                          </div>
+                          {c.byFeature.length > 0 && (
+                            <div className="text-[10px] text-muted-foreground mt-1 truncate" title={c.byFeature.map(f => `${f.featureKey}: $${f.usd.toFixed(4)}`).join(" • ")}>
+                              {c.byFeature.slice(0, 3).map(f => f.featureKey).join(" • ")}
+                              {c.byFeature.length > 3 && ` +${c.byFeature.length - 3}`}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3 text-center font-mono text-xs">{c.totalCalls.toLocaleString("en")}</td>
+                        <td className="p-3 text-center font-mono text-xs">
+                          {c.paidCalls.toLocaleString("en")}
+                          {c.totalCalls > 0 && (
+                            <div className="text-[9px] text-muted-foreground">
+                              {Math.round((c.paidCalls / c.totalCalls) * 100)}%
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className={`font-mono font-bold ${c.estimatedUsd > 1 ? "text-red-600" : c.estimatedUsd > 0.1 ? "text-amber-700" : "text-muted-foreground"}`}>
+                            ${c.estimatedUsd.toFixed(4)}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">
+                          {c.companyId != null && c.paidCalls > 0 && (
+                            <Button
+                              size="sm" variant="outline"
+                              className="h-7 px-2 text-[10px] border-amber-500 text-amber-700 hover:bg-amber-50"
+                              disabled={disablePaidForCompanyMut.isPending}
+                              onClick={() => {
+                                if (confirm(`إيقاف الميزات المدفوعة لشركة "${c.companyName}"؟`)) {
+                                  disablePaidForCompanyMut.mutate(c.companyId!);
+                                }
+                              }}
+                            >
+                              <DollarSign className="h-3 w-3 me-1" /> إيقاف المدفوعة
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
         {/* ─── Settings table ─── */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-fuchsia-600" />
-              ميزات الذكاء الاصطناعي
-            </CardTitle>
-            <CardDescription>
-              ضع الحد بصفر = إيقاف فعلي. اتركه فارغاً = بلا حد. الافتراضي مطبّق من النظام عند غياب التخصيص.
-            </CardDescription>
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-fuchsia-600" />
+                  ميزات الذكاء الاصطناعي
+                </CardTitle>
+                <CardDescription>
+                  ضع الحد بصفر = إيقاف فعلي. اتركه فارغاً = بلا حد. الافتراضي مطبّق من النظام عند غياب التخصيص.
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-1 text-xs">
+                <Filter className="h-3.5 w-3.5 text-muted-foreground me-1" />
+                <Button
+                  size="sm" variant={tierFilter === "all"  ? "default" : "outline"}
+                  className="h-7 px-2 text-xs" onClick={() => setTierFilter("all")}
+                >الكل ({Object.values(draft).length})</Button>
+                <Button
+                  size="sm" variant={tierFilter === "paid" ? "default" : "outline"}
+                  className="h-7 px-2 text-xs" onClick={() => setTierFilter("paid")}
+                >💰 مدفوعة ({paidCount})</Button>
+                <Button
+                  size="sm" variant={tierFilter === "free" ? "default" : "outline"}
+                  className="h-7 px-2 text-xs" onClick={() => setTierFilter("free")}
+                >🟢 مجانية ({Object.values(draft).length - paidCount})</Button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             {settingsQ.isLoading ? (
@@ -347,6 +589,7 @@ export default function AiControls() {
                   <thead className="bg-muted/40">
                     <tr className="text-xs text-muted-foreground">
                       <th className="text-start p-3">الميزة</th>
+                      <th className="text-center p-3 w-20">التصنيف</th>
                       <th className="text-center p-3 w-20">الحالة</th>
                       <th className="text-center p-3 w-28">الحد اليومي</th>
                       <th className="text-center p-3 w-28">الحد الشهري</th>
@@ -355,7 +598,14 @@ export default function AiControls() {
                     </tr>
                   </thead>
                   <tbody>
-                    {Object.values(draft).map(s => {
+                    {visibleSettings.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="p-8 text-center text-xs text-muted-foreground italic">
+                          لا توجد ميزات مطابقة للفلتر الحالي.
+                        </td>
+                      </tr>
+                    )}
+                    {visibleSettings.map(s => {
                       const usedToday = usageMap.today[s.featureKey] || 0;
                       const overDaily = s.dailyLimit != null && usedToday >= s.dailyLimit;
                       return (
@@ -363,6 +613,17 @@ export default function AiControls() {
                           <td className="p-3">
                             <div className="font-medium">{s.labelAr}</div>
                             <code className="text-[10px] text-muted-foreground">{s.featureKey}</code>
+                          </td>
+                          <td className="p-3 text-center">
+                            {s.tier === "paid" ? (
+                              <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px] hover:bg-amber-100">
+                                💰 مدفوعة
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px] hover:bg-emerald-100">
+                                🟢 مجانية
+                              </Badge>
+                            )}
                           </td>
                           <td className="p-3 text-center">
                             <Switch
