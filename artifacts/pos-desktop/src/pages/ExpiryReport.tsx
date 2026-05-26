@@ -60,18 +60,20 @@ export default function ExpiryReport({ onJumpToItems }: Props = {}) {
     return () => { cancelled = true; };
   }, [horizon]);
 
+  // Spec thresholds: < 30 days = critical (red), 30..< 90 = warning (yellow).
+  // Expired items fall inside critical and are tagged separately for clarity.
   const buckets = useMemo(() => {
     const expired: LocalItem[] = [];
-    const urgent: LocalItem[] = [];
-    const soon: LocalItem[] = [];
+    const critical: LocalItem[] = [];
+    const warning: LocalItem[] = [];
     for (const r of rows) {
       const d = daysUntilExpiry(r);
       if (d === null) continue;
-      if (d < 0) expired.push(r);
-      else if (d <= 30) urgent.push(r);
-      else soon.push(r);
+      if (d < 0) { expired.push(r); critical.push(r); }
+      else if (d < 30) critical.push(r);
+      else if (d < 90) warning.push(r);
     }
-    return { expired, urgent, soon };
+    return { expired, critical, warning };
   }, [rows]);
 
   return (
@@ -94,8 +96,8 @@ export default function ExpiryReport({ onJumpToItems }: Props = {}) {
 
       <div style={S.summary}>
         <Card label="منتهية الصلاحية" count={buckets.expired.length} color="#dc2626" bg="#fef2f2" />
-        <Card label="عاجل (≤ 30 يوم)" count={buckets.urgent.length} color="#ea580c" bg="#fff7ed" />
-        <Card label={`قريب (31–${horizon} يوم)`} count={buckets.soon.length} color="#ca8a04" bg="#fefce8" />
+        <Card label="حرج (< 30 يوم)" count={buckets.critical.length} color="#dc2626" bg="#fef2f2" />
+        <Card label={`تحذير (30 – < 90 يوم)`} count={buckets.warning.length} color="#ca8a04" bg="#fefce8" />
       </div>
 
       {err && <div style={S.err}>{err}</div>}
@@ -118,15 +120,15 @@ export default function ExpiryReport({ onJumpToItems }: Props = {}) {
           <tbody>
             {rows.map((it) => {
               const d = daysUntilExpiry(it);
-              const sev = d === null ? "" : d < 0 ? "expired" : d <= 30 ? "urgent" : "soon";
+              const sev = d === null ? "" : d < 0 ? "expired" : d < 30 ? "critical" : "warning";
               const handleJump = () => {
                 sessionStorage.setItem("pos_desktop_items_jump_edit_id", String(it.id));
                 onJumpToItems?.();
               };
               return (
                 <tr key={it.id} style={{ ...S.tr, cursor: onJumpToItems ? "pointer" : "default" }} onClick={onJumpToItems ? handleJump : undefined} title={onJumpToItems ? "افتح في شاشة الأصناف للتعديل" : undefined}>
-                  <td style={S.td}><span style={sev === "expired" ? S.badgeExp : sev === "urgent" ? S.badgeUrg : S.badgeSoon}>
-                    {sev === "expired" ? "منتهية" : sev === "urgent" ? "عاجل" : "قريب"}
+                  <td style={S.td}><span style={sev === "expired" ? S.badgeExp : sev === "critical" ? S.badgeExp : S.badgeSoon}>
+                    {sev === "expired" ? "منتهية" : sev === "critical" ? "حرج" : "تحذير"}
                   </span></td>
                   <td style={S.tdMono}>{it.expiryDate ?? "—"}</td>
                   <td style={S.tdMono}>{d === null ? "—" : d < 0 ? `${Math.abs(d)}- ` : d}</td>

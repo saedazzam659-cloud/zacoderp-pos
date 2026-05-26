@@ -254,6 +254,36 @@ export async function createLocalUser(input: {
   lsSaveUsers([...users, u]);
   return stripStored(u);
 }
+/**
+ * Verify supervisor (admin) credentials WITHOUT mutating the active cashier
+ * session. Used by the pharmacy expired-sale override in SalesScreen so the
+ * cashier remains signed in after authorization. Browser-preview fallback
+ * mirrors the Tauri command using the same PBKDF2 hash store.
+ *
+ * Returns false on any negative outcome (no such user, wrong password,
+ * non-admin role) without leaking which one failed.
+ */
+export async function verifyAdminCredentials(username: string, password: string): Promise<boolean> {
+  const uname = username.trim().toLowerCase();
+  if (!uname || !password) return false;
+  if (hasTauri()) {
+    try { return await invoke<boolean>("standalone_verify_admin", { username: uname, password }); }
+    catch { return false; }
+  }
+  // Browser-preview fallback — PBKDF2 verify against LS user store.
+  try {
+    const users = lsLoadUsers();
+    const u = users.find((x) => x.username === uname);
+    if (!u || u.role !== "admin") return false;
+    const candidate = await pbkdf2(password, b64ToBytes(u.saltB64));
+    const stored = b64ToBytes(u.hashB64);
+    if (candidate.length !== stored.length) return false;
+    let diff = 0;
+    for (let i = 0; i < candidate.length; i++) diff |= candidate[i] ^ stored[i];
+    return diff === 0;
+  } catch { return false; }
+}
+
 export async function authLocalUser(username: string, password: string): Promise<LocalSession> {
   if (hasTauri()) {
     return await invoke<LocalSession>("standalone_auth_user", { username, password });

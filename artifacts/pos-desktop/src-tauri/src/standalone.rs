@@ -200,6 +200,25 @@ pub fn standalone_auth_user(username: String, password: String) -> Result<LocalS
     Ok(session)
 }
 
+/// Verify an admin's credentials WITHOUT touching the active session — used
+/// by the pharmacy-vertical expired-medicine sale override flow so the
+/// cashier remains signed in after the supervisor authorizes the bypass.
+/// Returns Ok(true) only when the row exists, password matches, and role
+/// is "admin". Any other case returns Ok(false) with a generic error so we
+/// don't leak username existence.
+#[tauri::command]
+pub fn standalone_verify_admin(username: String, password: String) -> Result<bool, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let row = conn.query_row(
+        "SELECT role, password_hash FROM local_users WHERE username = ?1",
+        params![username.trim().to_lowercase()],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+    );
+    let (role, ph) = match row { Ok(t) => t, Err(_) => return Ok(false) };
+    if role != "admin" { return Ok(false); }
+    Ok(verify(&password, &ph).unwrap_or(false))
+}
+
 #[tauri::command]
 pub fn standalone_load_session() -> Result<Option<LocalSession>, String> {
     let raw = settings_get(SESSION_KEY).map_err(|e| e.to_string())?;

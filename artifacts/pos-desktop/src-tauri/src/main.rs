@@ -336,6 +336,7 @@ fn main() {
             standalone::standalone_list_users,
             standalone::standalone_create_user,
             standalone::standalone_auth_user,
+            standalone::standalone_verify_admin,
             standalone::standalone_load_session,
             standalone::standalone_clear_session,
             standalone::standalone_delete_user,

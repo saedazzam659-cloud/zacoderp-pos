@@ -50,8 +50,8 @@ export default function ItemsAdmin() {
    *   - "top"    : the most affordable / commonly-dispensed ~150 rows
    *   - "otc"    : items where requiresPrescription is false (OTC only)
    */
-  async function importEdaCatalog(preset: "all" | "top" | "otc") {
-    const label = preset === "all" ? "الكامل" : preset === "top" ? "الأكثر مبيعًا" : "اللي بدون روشتة";
+  async function importEdaCatalog(preset: "all" | "top" | "otc" | "category", category?: string) {
+    const label = preset === "all" ? "الكامل" : preset === "top" ? "الأكثر مبيعًا" : preset === "otc" ? "اللي بدون روشتة" : `فئة ${category}`;
     if (!confirm(`سيتم استيراد كتالوج EDA — ${label}. متابعة؟`)) return;
     setImportingEda(true);
     try {
@@ -98,6 +98,9 @@ export default function ItemsAdmin() {
         rows = [...rows].sort((a, b) => a.salePrice - b.salePrice).slice(0, 150);
       } else if (preset === "otc") {
         rows = rows.filter((r) => !r.requiresPrescription);
+      } else if (preset === "category") {
+        if (!category) throw new Error("لم يتم تحديد الفئة");
+        rows = rows.filter((r) => (r.dosageForm ?? "").toLowerCase() === category.toLowerCase());
       }
       const { inserted, skippedDup } = await bulkImportLocalItems(rows, { dedupBy: "barcode" });
       setToast({ kind: "ok", text: `تم استيراد ${inserted} دواء${skippedDup ? ` — تم تجاهل ${skippedDup} مكرر` : ""}` });
@@ -203,25 +206,11 @@ export default function ItemsAdmin() {
       )}
 
       {showEda && (
-        <div style={S.modalBg} onClick={() => !importingEda && setShowEda(false)}>
-          <div style={{ ...S.modal, maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ marginTop: 0, color: "#86198f" }}>💊 استيراد كتالوج EDA</h3>
-            <p style={{ fontSize: 13, color: "#475569" }}>اختر النطاق المناسب — التكرارات هتتجاهل تلقائيًا حسب الباركود.</p>
-            <div style={{ display: "grid", gap: 10 }}>
-              <button disabled={importingEda} onClick={() => void importEdaCatalog("all")} style={S.btnPrimary}>
-                📦 كل الأدوية (~500 صنف)
-              </button>
-              <button disabled={importingEda} onClick={() => void importEdaCatalog("top")} style={S.btnEda}>
-                ⭐ الأكثر مبيعًا (~150 صنف بأسعار اقتصادية)
-              </button>
-              <button disabled={importingEda} onClick={() => void importEdaCatalog("otc")} style={S.btnEda}>
-                💊 بدون روشتة فقط (OTC)
-              </button>
-              <button disabled={importingEda} onClick={() => setShowEda(false)} style={S.btnGhost}>إلغاء</button>
-            </div>
-            {importingEda && <div style={{ marginTop: 12, fontSize: 13, color: "#64748b", textAlign: "center" }}>... جاري الاستيراد، لا تغلق النافذة</div>}
-          </div>
-        </div>
+        <EdaImportModal
+          importing={importingEda}
+          onClose={() => setShowEda(false)}
+          onImport={(preset, category) => void importEdaCatalog(preset, category)}
+        />
       )}
 
       {showImport && (
@@ -278,6 +267,112 @@ function parseCsv(text: string): string[][] {
   }
   if (cell !== "" || row.length) { row.push(cell); out.push(row); }
   return out;
+}
+
+/**
+ * EDA catalog import modal — 4 presets:
+ *   - all      : every row in the bundled CSV
+ *   - top      : the 150 cheapest rows (proxy for fast-movers)
+ *   - otc      : rows where requiresPrescription is false
+ *   - category : filter by dosageForm. Distinct values are loaded from the
+ *                bundled CSV on demand so the picker stays in sync with the
+ *                catalog file without hard-coding categories here.
+ */
+function EdaImportModal({
+  importing, onClose, onImport,
+}: {
+  importing: boolean;
+  onClose: () => void;
+  onImport: (preset: "all" | "top" | "otc" | "category", category?: string) => void;
+}) {
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [categories, setCategories] = useState<{ name: string; count: number }[] | null>(null);
+  const [catErr, setCatErr] = useState<string | null>(null);
+  const [loadingCats, setLoadingCats] = useState(false);
+
+  async function loadCategories() {
+    setLoadingCats(true); setCatErr(null);
+    try {
+      const baseUrl = (import.meta as any).env?.BASE_URL ?? "/";
+      const res = await fetch(`${baseUrl}catalogs/eda_pharmacy_2026.csv`);
+      if (!res.ok) throw new Error(`فشل تحميل الكتالوج (${res.status})`);
+      const text = await res.text();
+      const grid = parseCsv(text);
+      if (grid.length < 2) throw new Error("الكتالوج فاضي");
+      const header = grid[0].map((h) => h.trim().toLowerCase());
+      const iDf = header.indexOf("dosageform");
+      if (iDf < 0) throw new Error("عمود dosageForm غير موجود في الكتالوج");
+      const counts = new Map<string, number>();
+      for (let i = 1; i < grid.length; i++) {
+        const v = (grid[i][iDf] ?? "").trim();
+        if (!v) continue;
+        counts.set(v, (counts.get(v) ?? 0) + 1);
+      }
+      const arr = Array.from(counts.entries())
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count);
+      setCategories(arr);
+      setShowCategoryPicker(true);
+    } catch (e) {
+      setCatErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingCats(false);
+    }
+  }
+
+  return (
+    <div style={S.modalBg} onClick={() => !importing && onClose()}>
+      <div style={{ ...S.modal, maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
+        <h3 style={{ marginTop: 0, color: "#86198f" }}>💊 استيراد كتالوج EDA</h3>
+        {!showCategoryPicker ? (
+          <>
+            <p style={{ fontSize: 13, color: "#475569" }}>اختر النطاق المناسب — التكرارات هتتجاهل تلقائيًا حسب الباركود.</p>
+            <div style={{ display: "grid", gap: 10 }}>
+              <button disabled={importing} onClick={() => onImport("all")} style={S.btnPrimary}>
+                📦 كل الأدوية (~500 صنف)
+              </button>
+              <button disabled={importing} onClick={() => onImport("top")} style={S.btnEda}>
+                ⭐ الأكثر مبيعًا (~150 صنف بأسعار اقتصادية)
+              </button>
+              <button disabled={importing} onClick={() => onImport("otc")} style={S.btnEda}>
+                💊 بدون روشتة فقط (OTC)
+              </button>
+              <button disabled={importing || loadingCats} onClick={() => void loadCategories()} style={S.btnEda}>
+                {loadingCats ? "... جاري قراءة الفئات" : "🏷️ حسب الفئة (شكل الجرعة)"}
+              </button>
+              {catErr && <div style={{ color: "#dc2626", fontSize: 12 }}>{catErr}</div>}
+              <button disabled={importing} onClick={onClose} style={S.btnGhost}>إلغاء</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p style={{ fontSize: 13, color: "#475569" }}>اختر الفئة المراد استيرادها — الرقم بين قوسين عدد الأصناف.</p>
+            <div style={{ display: "grid", gap: 6, maxHeight: 360, overflowY: "auto", padding: 4 }}>
+              {(categories ?? []).map((c) => (
+                <button
+                  key={c.name}
+                  disabled={importing}
+                  onClick={() => onImport("category", c.name)}
+                  style={{ ...S.btnEda, textAlign: "start", display: "flex", justifyContent: "space-between" }}
+                >
+                  <span>{c.name}</span>
+                  <span style={{ color: "#64748b", fontWeight: 400 }}>({c.count})</span>
+                </button>
+              ))}
+              {categories?.length === 0 && (
+                <div style={{ color: "#64748b", fontSize: 13, textAlign: "center" }}>لا توجد فئات معرّفة في الكتالوج</div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button disabled={importing} onClick={() => setShowCategoryPicker(false)} style={{ ...S.btnGhost, flex: 1 }}>← رجوع</button>
+              <button disabled={importing} onClick={onClose} style={{ ...S.btnGhost, flex: 1 }}>إلغاء</button>
+            </div>
+          </>
+        )}
+        {importing && <div style={{ marginTop: 12, fontSize: 13, color: "#64748b", textAlign: "center" }}>... جاري الاستيراد، لا تغلق النافذة</div>}
+      </div>
+    </div>
+  );
 }
 
 function ImportCsvModal({

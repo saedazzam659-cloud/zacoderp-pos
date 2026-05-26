@@ -9,7 +9,19 @@ import { useEffect, useMemo, useState } from "react";
 import { printReceipt, openCashDrawer, type ReceiptLine } from "../lib/peripherals";
 import { generateZatcaQr } from "../lib/zatca";
 import { listItems, findItemByBarcode, seedDemoItems, daysUntilExpiry, type LocalItem } from "../lib/items";
-import { getVertical, type Vertical } from "../lib/standalone";
+import { getVertical, verifyAdminCredentials, type Vertical } from "../lib/standalone";
+
+const LS_OVERRIDE_LOG = "pos_desktop_pharmacy_overrides_v1";
+type OverrideLog = { ts: string; itemId: number; itemName: string; expiryDate: string | null; daysPastExpiry: number; supervisor: string; cashier: string | null };
+function appendOverrideLog(entry: OverrideLog) {
+  try {
+    const raw = localStorage.getItem(LS_OVERRIDE_LOG);
+    const arr: OverrideLog[] = raw ? JSON.parse(raw) : [];
+    arr.push(entry);
+    // Keep last 500 to avoid unbounded growth.
+    localStorage.setItem(LS_OVERRIDE_LOG, JSON.stringify(arr.slice(-500)));
+  } catch { /* non-fatal */ }
+}
 import { listCustomers, createCustomer, type LocalCustomer } from "../lib/customers";
 import { saveOfflineInvoice, type OfflineInvoicePayload } from "../lib/invoices";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
@@ -143,23 +155,43 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
   }, [cart]);
 
   /**
-   * Pharmacy-only safety net: refuse to sell expired medicines. The
-   * supervisor-override button below the error toast prompts for the
-   * "OVERRIDE" passphrase (no real admin auth offline — full RBAC override
-   * lands when the cashier-layer reaches standalone). Generic / grocery
-   * verticals bypass the check entirely.
+   * Pharmacy-only safety net: refuse to sell expired medicines. Override
+   * requires real admin credentials (verifyAdminCredentials → bcrypt in
+   * standalone, PBKDF2 in browser preview) and is audit-logged to
+   * `pos_desktop_pharmacy_overrides_v1` in localStorage. The cashier's
+   * session is NOT touched by the supervisor auth.
+   *
+   * Cloud-mode caveat: there is no local admin user store when running
+   * against the cloud (no local_users table populated), so verification
+   * will always fail and expired items become unsellable on cloud devices.
+   * Cloud-mode supervisor override is tracked as a follow-up.
    */
-  function addToCart(item: LocalItem) {
+  async function addToCart(item: LocalItem) {
     setMsg(null);
     if (isPharmacy) {
       const d = daysUntilExpiry(item);
       if (d !== null && d < 0) {
-        const override = window.prompt(`❌ هذا الصنف منتهي الصلاحية بتاريخ ${item.expiryDate} (مر عليه ${Math.abs(d)} يوم).\nاكتب "OVERRIDE" للسماح بالبيع تحت مسؤولية المشرف، أو اتركها فارغة للإلغاء:`);
-        if (override?.trim().toUpperCase() !== "OVERRIDE") {
+        const username = window.prompt(`❌ ${item.nameAr} منتهي الصلاحية بتاريخ ${item.expiryDate} (مر عليه ${Math.abs(d)} يوم).\n\nلتجاوز الحظر يجب أن يعتمد المشرف عملية البيع.\nاسم مستخدم المشرف:`);
+        if (!username || !username.trim()) {
           setMsg({ kind: "err", text: `❌ ${item.nameAr} — منتهي الصلاحية، لا يمكن بيعه` });
           return;
         }
-        setMsg({ kind: "ok", text: `⚠️ تم تجاوز تحذير الصلاحية لـ ${item.nameAr} (مسؤولية المشرف)` });
+        const password = window.prompt(`كلمة مرور المشرف ${username}:`);
+        if (!password) {
+          setMsg({ kind: "err", text: `❌ تم إلغاء التجاوز — ${item.nameAr} لن يُباع` });
+          return;
+        }
+        const ok = await verifyAdminCredentials(username, password);
+        if (!ok) {
+          setMsg({ kind: "err", text: `❌ اعتماد المشرف فشل — ${item.nameAr} منتهي الصلاحية ولا يمكن بيعه` });
+          return;
+        }
+        appendOverrideLog({
+          ts: new Date().toISOString(), itemId: item.id, itemName: item.nameAr,
+          expiryDate: item.expiryDate ?? null, daysPastExpiry: Math.abs(d),
+          supervisor: username.trim(), cashier: cashierName ?? null,
+        });
+        setMsg({ kind: "ok", text: `⚠️ تم اعتماد التجاوز من المشرف ${username} — ${item.nameAr}` });
       }
     }
     setCart((prev) => {
@@ -310,19 +342,22 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
             ) : (
               items.map((item) => {
                 const d = isPharmacy ? daysUntilExpiry(item) : null;
-                const sev: "expired" | "urgent" | "soon" | null =
-                  d === null ? null : d < 0 ? "expired" : d <= 30 ? "urgent" : d <= 90 ? "soon" : null;
+                // Per spec: < 30 days = RED, 30..< 90 days = YELLOW. Expired
+                // items fall into the < 30 bucket (red) and are additionally
+                // blocked in addToCart with supervisor-override gate.
+                const sev: "red" | "yellow" | null =
+                  d === null ? null : d < 30 ? "red" : d < 90 ? "yellow" : null;
                 return (
-                  <button key={item.id} onClick={() => addToCart(item)} style={S.itemCard}>
+                  <button key={item.id} onClick={() => { void addToCart(item); }} style={S.itemCard}>
                     {sev && (
                       <div style={{
                         position: "absolute" as const, top: 4, insetInlineStart: 4,
                         padding: "2px 6px", borderRadius: 4, fontSize: 10, fontWeight: 700,
-                        background: sev === "expired" ? "#fef2f2" : sev === "urgent" ? "#fff7ed" : "#fefce8",
-                        color: sev === "expired" ? "#dc2626" : sev === "urgent" ? "#ea580c" : "#ca8a04",
-                        border: `1px solid ${sev === "expired" ? "#fecaca" : sev === "urgent" ? "#fed7aa" : "#fef08a"}`,
+                        background: sev === "red" ? "#fef2f2" : "#fefce8",
+                        color: sev === "red" ? "#dc2626" : "#ca8a04",
+                        border: `1px solid ${sev === "red" ? "#fecaca" : "#fef08a"}`,
                       }}>
-                        {sev === "expired" ? "❌ منتهي" : sev === "urgent" ? `⚠️ ${d}ي` : `🕒 ${d}ي`}
+                        {(d as number) < 0 ? "❌ منتهي" : `${sev === "red" ? "⚠️" : "🕒"} ${d}ي`}
                       </div>
                     )}
                     <div style={S.itemName}>{item.nameAr}</div>
