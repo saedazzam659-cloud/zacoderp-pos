@@ -227,6 +227,7 @@ pub fn insert_local_item(
     strength: Option<String>,
     manufacturer: Option<String>,
     requires_prescription: Option<bool>,
+    controlled: Option<bool>,
     expiry_date: Option<String>,
     batch_no: Option<String>,
 ) -> Result<i64, String> {
@@ -236,12 +237,13 @@ pub fn insert_local_item(
         "INSERT INTO items_local
            (code, name_ar, name_en, barcode, sale_price, vat_rate,
             active_ingredient, dosage_form, strength, manufacturer,
-            requires_prescription, expiry_date, batch_no, updated_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,CURRENT_TIMESTAMP)",
+            requires_prescription, controlled, expiry_date, batch_no, updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,CURRENT_TIMESTAMP)",
         rusqlite::params![
             code, name_ar, name_en, barcode, sale_price, vat_rate,
             active_ingredient, dosage_form, strength, manufacturer,
             requires_prescription.map(|b| if b { 1_i64 } else { 0_i64 }),
+            controlled.map(|b| if b { 1_i64 } else { 0_i64 }),
             expiry_date, batch_no,
         ],
     ).map_err(|e| e.to_string())?;
@@ -259,6 +261,7 @@ pub fn update_local_item_extended(
     strength: Option<String>,
     manufacturer: Option<String>,
     requires_prescription: Option<bool>,
+    controlled: Option<bool>,
     expiry_date: Option<String>,
     batch_no: Option<String>,
 ) -> Result<u64, String> {
@@ -267,13 +270,14 @@ pub fn update_local_item_extended(
     let n = conn.execute(
         "UPDATE items_local SET
            active_ingredient = ?1, dosage_form = ?2, strength = ?3,
-           manufacturer = ?4, requires_prescription = ?5,
-           expiry_date = ?6, batch_no = ?7,
+           manufacturer = ?4, requires_prescription = ?5, controlled = ?6,
+           expiry_date = ?7, batch_no = ?8,
            updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?8",
+         WHERE id = ?9",
         rusqlite::params![
             active_ingredient, dosage_form, strength, manufacturer,
             requires_prescription.map(|b| if b { 1_i64 } else { 0_i64 }),
+            controlled.map(|b| if b { 1_i64 } else { 0_i64 }),
             expiry_date, batch_no, id,
         ],
     ).map_err(|e| e.to_string())?;

@@ -15,9 +15,30 @@
 import { useEffect, useMemo, useState } from "react";
 import { listExpiringItems, daysUntilExpiry, type LocalItem } from "../lib/items";
 
+type Props = { onJumpToItems?: () => void };
+
+function exportCsv(rows: LocalItem[]) {
+  const esc = (v: any) => {
+    const s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const headers = ["nameAr", "nameEn", "barcode", "expiryDate", "daysLeft", "batchNo", "activeIngredient", "dosageForm", "strength", "manufacturer", "salePrice"];
+  const lines = [headers.join(",")];
+  for (const r of rows) {
+    lines.push([r.nameAr, r.nameEn, r.barcode, r.expiryDate, daysUntilExpiry(r), r.batchNo, r.activeIngredient, r.dosageForm, r.strength, r.manufacturer, r.salePrice].map(esc).join(","));
+  }
+  const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `expiry-report-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 const HORIZONS = [30, 60, 90, 180, 365];
 
-export default function ExpiryReport() {
+export default function ExpiryReport({ onJumpToItems }: Props = {}) {
   const [horizon, setHorizon] = useState<number>(90);
   const [rows, setRows] = useState<LocalItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,6 +82,9 @@ export default function ExpiryReport() {
           <div style={S.sub}>أصناف ستنتهي صلاحيتها خلال {horizon} يومًا — مرتبة من الأقرب انتهاءً</div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button disabled={rows.length === 0} onClick={() => exportCsv(rows)} style={S.exportBtn} title="تصدير الجدول كملف CSV">
+            ⬇️ تصدير CSV
+          </button>
           <span style={{ fontSize: 13, color: "#475569" }}>الأفق الزمني:</span>
           <select value={horizon} onChange={(e) => setHorizon(Number(e.target.value))} style={S.select}>
             {HORIZONS.map((h) => <option key={h} value={h}>{h} يوم</option>)}
@@ -95,8 +119,12 @@ export default function ExpiryReport() {
             {rows.map((it) => {
               const d = daysUntilExpiry(it);
               const sev = d === null ? "" : d < 0 ? "expired" : d <= 30 ? "urgent" : "soon";
+              const handleJump = () => {
+                sessionStorage.setItem("pos_desktop_items_jump_edit_id", String(it.id));
+                onJumpToItems?.();
+              };
               return (
-                <tr key={it.id} style={S.tr}>
+                <tr key={it.id} style={{ ...S.tr, cursor: onJumpToItems ? "pointer" : "default" }} onClick={onJumpToItems ? handleJump : undefined} title={onJumpToItems ? "افتح في شاشة الأصناف للتعديل" : undefined}>
                   <td style={S.td}><span style={sev === "expired" ? S.badgeExp : sev === "urgent" ? S.badgeUrg : S.badgeSoon}>
                     {sev === "expired" ? "منتهية" : sev === "urgent" ? "عاجل" : "قريب"}
                   </span></td>
@@ -135,6 +163,7 @@ const S = {
   h2: { margin: 0, fontSize: 22, color: "#0f172a" } as const,
   sub: { fontSize: 13, color: "#64748b", marginTop: 4 } as const,
   select: { padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 13, fontFamily: "inherit", background: "#fff" } as const,
+  exportBtn: { padding: "8px 14px", background: "#0f766e", color: "#fff", border: "none", borderRadius: 6, fontSize: 13, fontFamily: "inherit", cursor: "pointer", fontWeight: 600 } as const,
   summary: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 } as const,
   empty: { padding: 40, textAlign: "center" as const, color: "#94a3b8", background: "#fff", border: "1px dashed #e2e8f0", borderRadius: 8 } as const,
   err: { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 } as const,

@@ -259,6 +259,7 @@ export interface CreateItemInput {
   strength?: string | null;
   manufacturer?: string | null;
   requiresPrescription?: boolean | null;
+  controlled?: boolean | null;
   expiryDate?: string | null;
   batchNo?: string | null;
 }
@@ -281,6 +282,7 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
     strength: input.strength ?? null,
     manufacturer: input.manufacturer ?? null,
     requiresPrescription: input.requiresPrescription ?? null,
+    controlled: input.controlled ?? null,
     expiryDate: input.expiryDate ?? null,
     batchNo: input.batchNo ?? null,
     updatedAt: new Date().toISOString(),
@@ -333,6 +335,7 @@ export async function bulkImportLocalItems(
           strength: r.strength ?? null,
           manufacturer: r.manufacturer ?? null,
           requires_prescription: r.requiresPrescription ?? null,
+          controlled: r.controlled ?? null,
           expiry_date: r.expiryDate ?? null,
           batch_no: r.batchNo ?? null,
         });
@@ -397,11 +400,22 @@ export async function updateItemExtended(
     strength?: string | null;
     manufacturer?: string | null;
     requiresPrescription?: boolean | null;
+    controlled?: boolean | null;
     expiryDate?: string | null;
     batchNo?: string | null;
   },
 ): Promise<void> {
-  if (!IS_TAURI) return;
+  if (!IS_TAURI) {
+    // Browser-preview persistence (dev mode). Patch the LS row so edits don't
+    // silently disappear when the operator is testing the form without Tauri.
+    const all = readLocal();
+    const idx = all.findIndex((r) => r.id === id);
+    if (idx >= 0) {
+      all[idx] = { ...all[idx], ...fields, updatedAt: new Date().toISOString() };
+      lsWrite(LS_KEYS.items, all);
+    }
+    return;
+  }
   try {
     await tauriInvoke("update_local_item_extended", {
       id,
@@ -410,6 +424,7 @@ export async function updateItemExtended(
       strength: fields.strength ?? null,
       manufacturer: fields.manufacturer ?? null,
       requires_prescription: fields.requiresPrescription ?? null,
+      controlled: fields.controlled ?? null,
       expiry_date: fields.expiryDate ?? null,
       batch_no: fields.batchNo ?? null,
     });

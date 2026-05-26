@@ -8,7 +8,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { printReceipt, openCashDrawer, type ReceiptLine } from "../lib/peripherals";
 import { generateZatcaQr } from "../lib/zatca";
-import { listItems, findItemByBarcode, seedDemoItems, type LocalItem } from "../lib/items";
+import { listItems, findItemByBarcode, seedDemoItems, daysUntilExpiry, type LocalItem } from "../lib/items";
+import { getVertical, type Vertical } from "../lib/standalone";
 import { listCustomers, createCustomer, type LocalCustomer } from "../lib/customers";
 import { saveOfflineInvoice, type OfflineInvoicePayload } from "../lib/invoices";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
@@ -40,6 +41,9 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
   const [customer, setCustomer] = useState<LocalCustomer | null>(null);
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
   const [paidStr, setPaidStr] = useState("");
+  const [vertical, setVertical] = useState<Vertical>("general");
+  useEffect(() => { void getVertical().then((v) => v && setVertical(v)); }, []);
+  const isPharmacy = vertical === "pharmacy";
 
   useEffect(() => { void seedDemoItems().catch(() => {}); }, []);
 
@@ -138,8 +142,26 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
     return { subtotal, vat: grandTotal - subtotal, grandTotal };
   }, [cart]);
 
+  /**
+   * Pharmacy-only safety net: refuse to sell expired medicines. The
+   * supervisor-override button below the error toast prompts for the
+   * "OVERRIDE" passphrase (no real admin auth offline — full RBAC override
+   * lands when the cashier-layer reaches standalone). Generic / grocery
+   * verticals bypass the check entirely.
+   */
   function addToCart(item: LocalItem) {
     setMsg(null);
+    if (isPharmacy) {
+      const d = daysUntilExpiry(item);
+      if (d !== null && d < 0) {
+        const override = window.prompt(`❌ هذا الصنف منتهي الصلاحية بتاريخ ${item.expiryDate} (مر عليه ${Math.abs(d)} يوم).\nاكتب "OVERRIDE" للسماح بالبيع تحت مسؤولية المشرف، أو اتركها فارغة للإلغاء:`);
+        if (override?.trim().toUpperCase() !== "OVERRIDE") {
+          setMsg({ kind: "err", text: `❌ ${item.nameAr} — منتهي الصلاحية، لا يمكن بيعه` });
+          return;
+        }
+        setMsg({ kind: "ok", text: `⚠️ تم تجاوز تحذير الصلاحية لـ ${item.nameAr} (مسؤولية المشرف)` });
+      }
+    }
     setCart((prev) => {
       const existing = prev.find((l) => l.item.id === item.id);
       if (existing) return prev.map((l) => l.item.id === item.id ? { ...l, qty: l.qty + 1 } : l);
@@ -286,13 +308,29 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
                 <div style={{ fontSize: 13 }}>اسحب من السحابة (لوحة التحكم → Pull) أو أضف صنف يدوياً من شاشة "أصناف"</div>
               </div>
             ) : (
-              items.map((item) => (
-                <button key={item.id} onClick={() => addToCart(item)} style={S.itemCard}>
-                  <div style={S.itemName}>{item.nameAr}</div>
-                  <div style={S.itemPrice}>{item.salePrice.toFixed(2)} <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 400 }}>ر.س</span></div>
-                  {item.barcode && <div style={S.itemBarcode}>{item.barcode}</div>}
-                </button>
-              ))
+              items.map((item) => {
+                const d = isPharmacy ? daysUntilExpiry(item) : null;
+                const sev: "expired" | "urgent" | "soon" | null =
+                  d === null ? null : d < 0 ? "expired" : d <= 30 ? "urgent" : d <= 90 ? "soon" : null;
+                return (
+                  <button key={item.id} onClick={() => addToCart(item)} style={S.itemCard}>
+                    {sev && (
+                      <div style={{
+                        position: "absolute" as const, top: 4, insetInlineStart: 4,
+                        padding: "2px 6px", borderRadius: 4, fontSize: 10, fontWeight: 700,
+                        background: sev === "expired" ? "#fef2f2" : sev === "urgent" ? "#fff7ed" : "#fefce8",
+                        color: sev === "expired" ? "#dc2626" : sev === "urgent" ? "#ea580c" : "#ca8a04",
+                        border: `1px solid ${sev === "expired" ? "#fecaca" : sev === "urgent" ? "#fed7aa" : "#fef08a"}`,
+                      }}>
+                        {sev === "expired" ? "❌ منتهي" : sev === "urgent" ? `⚠️ ${d}ي` : `🕒 ${d}ي`}
+                      </div>
+                    )}
+                    <div style={S.itemName}>{item.nameAr}</div>
+                    <div style={S.itemPrice}>{item.salePrice.toFixed(2)} <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 400 }}>ر.س</span></div>
+                    {item.barcode && <div style={S.itemBarcode}>{item.barcode}</div>}
+                  </button>
+                );
+              })
             )}
           </div>
         </div>

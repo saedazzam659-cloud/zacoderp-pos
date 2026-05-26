@@ -320,7 +320,7 @@ export default function PosShell({
           {view === "customers" && <div style={S.pagePad}><CustomersAdmin /></div>}
           {view === "items" && <div style={S.pagePad}><ItemsAdmin /></div>}
           {view === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
-          {view === "expiry" && isPharmacy && <div style={S.pagePad}><ExpiryReport /></div>}
+          {view === "expiry" && isPharmacy && <div style={S.pagePad}><ExpiryReport onJumpToItems={() => setView("items")} /></div>}
           {!standalone && view === "dashboard" && (
             <div style={S.pagePad}>
               <DashboardView

@@ -18,17 +18,41 @@ export default function ItemsAdmin() {
   const [showImport, setShowImport] = useState(false);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [vertical, setVertical] = useState<Vertical>("general");
+  const [showEda, setShowEda] = useState(false);
   const [importingEda, setImportingEda] = useState(false);
   useEffect(() => { void getVertical().then((v) => v && setVertical(v)); }, []);
   const isPharmacy = vertical === "pharmacy";
 
+  // Click-to-edit from ExpiryReport — that page writes the item id into
+  // sessionStorage and switches view; we read+consume it on mount so the
+  // operator lands directly on the edit modal for the row they tapped.
+  useEffect(() => {
+    const id = sessionStorage.getItem("pos_desktop_items_jump_edit_id");
+    if (!id) return;
+    sessionStorage.removeItem("pos_desktop_items_jump_edit_id");
+    const numId = Number(id);
+    if (!Number.isFinite(numId)) return;
+    void (async () => {
+      const all = await listItems();
+      const row = all.find((r) => r.id === numId);
+      if (row) { setEditing(row); setShowForm(true); }
+    })();
+  }, []);
+
   /**
-   * Pharmacy-only: fetch the bundled EDA catalog (public/catalogs/eda_pharmacy_2026.csv)
-   * and bulk-insert via insert_local_item. Dedups by barcode so re-running
-   * the import is safe. ~500 rows so progress feedback is a single toast.
+   * Pharmacy-only: fetch the bundled EDA catalog (public/catalogs/eda_pharmacy_2026.csv),
+   * apply the chosen preset filter, then bulk-insert via insert_local_item.
+   * Dedups by barcode so re-running any preset is safe.
+   *
+   * Presets (the bundled catalog has ~500 rows — a larger curated EDA dump
+   * is a follow-up; "top sellers" approximates by lowest price under 50 EGP):
+   *   - "all"    : every row
+   *   - "top"    : the most affordable / commonly-dispensed ~150 rows
+   *   - "otc"    : items where requiresPrescription is false (OTC only)
    */
-  async function importEdaCatalog() {
-    if (!confirm("سيتم استيراد كتالوج الأدوية المصري (EDA) — حوالي 500 صنف. متابعة؟")) return;
+  async function importEdaCatalog(preset: "all" | "top" | "otc") {
+    const label = preset === "all" ? "الكامل" : preset === "top" ? "الأكثر مبيعًا" : "اللي بدون روشتة";
+    if (!confirm(`سيتم استيراد كتالوج EDA — ${label}. متابعة؟`)) return;
     setImportingEda(true);
     try {
       const baseUrl = (import.meta as any).env?.BASE_URL ?? "/";
@@ -46,7 +70,9 @@ export default function ItemsAdmin() {
         str: idx("strength"), mfr: idx("manufacturer"),
         rx: idx("requiresprescription"),
       };
-      const rows: CreateItemInput[] = [];
+      // CSV stores boolean as "0"/"1"; also accept "true"/"yes" for robustness.
+      const truthy = (s: string) => { const v = s.trim().toLowerCase(); return v === "1" || v === "true" || v === "yes" || v === "y"; };
+      let rows: CreateItemInput[] = [];
       for (let r = 1; r < grid.length; r++) {
         const row = grid[r];
         if (row.every((c) => !c.trim())) continue;
@@ -65,11 +91,17 @@ export default function ItemsAdmin() {
           dosageForm: get(cols.dform) || null,
           strength: get(cols.str) || null,
           manufacturer: get(cols.mfr) || null,
-          requiresPrescription: get(cols.rx).toLowerCase() === "true",
+          requiresPrescription: truthy(get(cols.rx)),
         });
+      }
+      if (preset === "top") {
+        rows = [...rows].sort((a, b) => a.salePrice - b.salePrice).slice(0, 150);
+      } else if (preset === "otc") {
+        rows = rows.filter((r) => !r.requiresPrescription);
       }
       const { inserted, skippedDup } = await bulkImportLocalItems(rows, { dedupBy: "barcode" });
       setToast({ kind: "ok", text: `تم استيراد ${inserted} دواء${skippedDup ? ` — تم تجاهل ${skippedDup} مكرر` : ""}` });
+      setShowEda(false);
       await refresh();
     } catch (e: any) {
       setToast({ kind: "err", text: e?.message ?? "فشل استيراد كتالوج EDA" });
@@ -100,7 +132,7 @@ export default function ItemsAdmin() {
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           {isPharmacy && (
-            <button onClick={importEdaCatalog} disabled={importingEda} style={S.btnEda}>
+            <button onClick={() => setShowEda(true)} disabled={importingEda} style={S.btnEda}>
               {importingEda ? "... جاري الاستيراد" : "💊 استيراد كتالوج EDA"}
             </button>
           )}
@@ -168,6 +200,28 @@ export default function ItemsAdmin() {
           onClose={() => setShowForm(false)}
           onSaved={async (msg) => { setShowForm(false); setToast({ kind: "ok", text: msg }); await refresh(); }}
         />
+      )}
+
+      {showEda && (
+        <div style={S.modalBg} onClick={() => !importingEda && setShowEda(false)}>
+          <div style={{ ...S.modal, maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0, color: "#86198f" }}>💊 استيراد كتالوج EDA</h3>
+            <p style={{ fontSize: 13, color: "#475569" }}>اختر النطاق المناسب — التكرارات هتتجاهل تلقائيًا حسب الباركود.</p>
+            <div style={{ display: "grid", gap: 10 }}>
+              <button disabled={importingEda} onClick={() => void importEdaCatalog("all")} style={S.btnPrimary}>
+                📦 كل الأدوية (~500 صنف)
+              </button>
+              <button disabled={importingEda} onClick={() => void importEdaCatalog("top")} style={S.btnEda}>
+                ⭐ الأكثر مبيعًا (~150 صنف بأسعار اقتصادية)
+              </button>
+              <button disabled={importingEda} onClick={() => void importEdaCatalog("otc")} style={S.btnEda}>
+                💊 بدون روشتة فقط (OTC)
+              </button>
+              <button disabled={importingEda} onClick={() => setShowEda(false)} style={S.btnGhost}>إلغاء</button>
+            </div>
+            {importingEda && <div style={{ marginTop: 12, fontSize: 13, color: "#64748b", textAlign: "center" }}>... جاري الاستيراد، لا تغلق النافذة</div>}
+          </div>
+        </div>
       )}
 
       {showImport && (
@@ -459,6 +513,7 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
     strength: initial?.strength ?? "",
     manufacturer: initial?.manufacturer ?? "",
     requiresPrescription: initial?.requiresPrescription ?? false,
+    controlled: initial?.controlled ?? false,
     expiryDate: initial?.expiryDate ?? "",
     batchNo: initial?.batchNo ?? "",
   });
@@ -469,6 +524,11 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
     if (!form.nameAr.trim()) { setErr("الاسم بالعربية مطلوب"); return; }
     if (form.salePrice <= 0) { setErr("السعر يجب أن يكون أكبر من صفر"); return; }
     if (form.vatRate < 0 || form.vatRate > 100) { setErr("نسبة الضريبة بين 0 و 100"); return; }
+    if (isPharmacy) {
+      if (!(form.activeIngredient ?? "").trim()) { setErr("المادة الفعّالة مطلوبة في وضع الصيدلية"); return; }
+      if (!(form.dosageForm ?? "").trim()) { setErr("الشكل الصيدلي مطلوب في وضع الصيدلية"); return; }
+      if (!(form.strength ?? "").trim()) { setErr("التركيز مطلوب في وضع الصيدلية"); return; }
+    }
     setSaving(true); setErr(null);
     try {
       let id: number;
@@ -488,6 +548,7 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
           strength: form.strength || null,
           manufacturer: form.manufacturer || null,
           requiresPrescription: form.requiresPrescription ?? null,
+          controlled: form.controlled ?? null,
           expiryDate: form.expiryDate || null,
           batchNo: form.batchNo || null,
         });
@@ -561,9 +622,13 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
                 <input value={form.batchNo ?? ""} onChange={(e) => setForm({ ...form, batchNo: e.target.value })} style={S.input} />
               </Field>
             </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 13, color: "#475569" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13, color: "#475569" }}>
               <input type="checkbox" checked={!!form.requiresPrescription} onChange={(e) => setForm({ ...form, requiresPrescription: e.target.checked })} />
               يتطلّب وصفة طبية (روشتة)
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 13, color: "#dc2626", fontWeight: 600 }}>
+              <input type="checkbox" checked={!!form.controlled} onChange={(e) => setForm({ ...form, controlled: e.target.checked })} />
+              ⚠️ دواء مخدّر / خاضع للرقابة (controlled substance)
             </label>
           </>
         )}
