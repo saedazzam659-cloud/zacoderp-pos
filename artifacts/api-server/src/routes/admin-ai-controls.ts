@@ -79,6 +79,7 @@ router.get("/settings", requireSuperAdmin, async (req, res) => {
       return {
         featureKey:    f.key,
         labelAr:       f.labelAr,
+        tier:          f.tier,
         catalogDaily:  f.defaultDaily,
         isEnabled:     eff?.is_enabled ?? true,
         dailyLimit:    eff?.daily_limit ?? f.defaultDaily,
@@ -169,6 +170,43 @@ router.post("/disable-all", requireSuperAdmin, async (req, res) => {
       `);
     }
     res.json({ ok: true, count: AI_FEATURE_CATALOG.length });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "failed" });
+  }
+});
+
+// ─── POST /disable-paid ───────────────────────────────────────────────────
+// Bulk-disable only the catalog entries flagged `tier: "paid"` (LLM
+// callers like Gemini / OpenAI). Free / rule-based features keep
+// working. `companyId: null` = update system defaults so every tenant
+// without explicit overrides starts with paid features OFF.
+const disablePaidSchema = z.object({
+  companyId: z.number().int().positive().nullable(),
+  note:      z.string().max(500).optional(),
+});
+router.post("/disable-paid", requireSuperAdmin, async (req, res) => {
+  const parsed = disablePaidSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "invalid body" }); return; }
+  const { companyId, note } = parsed.data;
+  const updatedBy = (req as any).authUser?.id ?? null;
+  const paidFeatures = AI_FEATURE_CATALOG.filter(f => f.tier === "paid");
+  try {
+    for (const f of paidFeatures) {
+      if (companyId == null) {
+        await db.execute(sql`DELETE FROM ai_feature_settings WHERE company_id IS NULL AND feature_key = ${f.key}`);
+        await db.execute(sql`
+          INSERT INTO ai_feature_settings (company_id, feature_key, is_enabled, daily_limit, note, updated_by)
+          VALUES (NULL, ${f.key}, FALSE, 0, ${note ?? "إيقاف افتراضي للميزات المدفوعة على مستوى النظام"}, ${updatedBy})
+        `);
+      } else {
+        await db.execute(sql`DELETE FROM ai_feature_settings WHERE company_id = ${companyId} AND feature_key = ${f.key}`);
+        await db.execute(sql`
+          INSERT INTO ai_feature_settings (company_id, feature_key, is_enabled, daily_limit, note, updated_by)
+          VALUES (${companyId}, ${f.key}, FALSE, 0, ${note ?? "إيقاف الميزات المدفوعة من شاشة المشرف العام"}, ${updatedBy})
+        `);
+      }
+    }
+    res.json({ ok: true, count: paidFeatures.length, scope: companyId == null ? "system" : "company" });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "failed" });
   }

@@ -29,7 +29,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Brain, Save, Loader2, ShieldOff, ShieldCheck, AlertTriangle, Activity,
-  Globe, Building2, Sparkles,
+  Globe, Building2, Sparkles, DollarSign, Filter,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -37,6 +37,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 type Setting = {
   featureKey:   string;
   labelAr:      string;
+  tier:         "free" | "paid";
   catalogDaily: number;
   isEnabled:    boolean;
   dailyLimit:   number | null;
@@ -60,6 +61,9 @@ export default function AiControls() {
   // overwrite them on a background refetch.
   const [draftsByCtx, setDraftsByCtx] = useState<Record<string, Record<string, Setting>>>({});
   const [dirtyCtx, setDirtyCtx] = useState<Set<string>>(new Set());
+  // UI filter: when "paid", hide free/rule-based features so the SA can
+  // focus on the rows that actually cost money.
+  const [tierFilter, setTierFilter] = useState<"all" | "paid" | "free">("all");
   const ctxKey = companyId == null ? "__system__" : String(companyId);
   const draft = draftsByCtx[ctxKey] ?? {};
 
@@ -174,6 +178,33 @@ export default function AiControls() {
     },
   });
 
+  const disablePaidMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API}/api/admin/ai-controls/disable-paid`, {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: JSON.stringify({
+          companyId,
+          note: `إيقاف الميزات المدفوعة بواسطة ${user?.email || "SA"}`,
+        }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "failed");
+      return r.json();
+    },
+    onSuccess: (d: any) => {
+      toast({
+        title: "تم إيقاف الميزات المدفوعة",
+        description: companyId == null
+          ? `أصبحت ${d.count} ميزة مدفوعة موقوفة افتراضياً للنظام. الميزات المجانية لم تتأثر.`
+          : `أوقفنا ${d.count} ميزة مدفوعة لهذه الشركة. الميزات المجانية (مكتبة المعرفة) لا تزال تعمل.`,
+      });
+      setDirtyCtx(s => { const n = new Set(s); n.delete(ctxKey); return n; });
+      qc.invalidateQueries({ queryKey: ["ai-controls"] });
+    },
+    onError: (e: any) => toast({ title: "فشل", description: e?.message, variant: "destructive" }),
+  });
+
   const restoreMut = useMutation({
     mutationFn: async () => {
       if (companyId == null) throw new Error("اختر شركة محددة أولاً");
@@ -212,6 +243,11 @@ export default function AiControls() {
   }
 
   const allDisabled = Object.values(draft).every(s => !s.isEnabled);
+  const paidCount = Object.values(draft).filter(s => s.tier === "paid").length;
+  const paidEnabledCount = Object.values(draft).filter(s => s.tier === "paid" && s.isEnabled).length;
+  const visibleSettings = Object.values(draft).filter(s =>
+    tierFilter === "all" ? true : s.tier === tierFilter,
+  );
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-[1400px] mx-auto">
@@ -258,6 +294,35 @@ export default function AiControls() {
           </Select>
 
           <div className="flex-1" />
+
+          {/* Disable paid only — available in BOTH system & per-company contexts */}
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={disablePaidMut.isPending || paidEnabledCount === 0}
+                className="border-amber-500 text-amber-700 hover:bg-amber-50"
+              >
+                <DollarSign className="h-4 w-4 me-1" />
+                إيقاف المدفوعة فقط ({paidEnabledCount}/{paidCount})
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>إيقاف الميزات المدفوعة فقط</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {companyId == null
+                    ? "سيتم إيقاف كل ميزات الذكاء الاصطناعي التي تستدعي خدمات مدفوعة (Gemini / OpenAI) كافتراضي للنظام كله. الشركات الجديدة ستبدأ بدون أي تكلفة عليك. الميزات المجانية (مكتبة المعرفة المحلية، اقتراحات الحسابات) ستظل تعمل بشكل طبيعي."
+                    : "سيتم إيقاف كل ميزات الذكاء الاصطناعي المدفوعة لهذه الشركة فقط. المساعد المحاسبي سيستخدم مكتبة المعرفة المحلية (IFRS / GAAP / ZATCA) مجاناً، واقتراحات الحسابات ستظل تعمل."}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                <AlertDialogAction onClick={() => disablePaidMut.mutate()}>تأكيد</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
 
           {companyId != null && (
             <>
@@ -328,13 +393,32 @@ export default function AiControls() {
         {/* ─── Settings table ─── */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-fuchsia-600" />
-              ميزات الذكاء الاصطناعي
-            </CardTitle>
-            <CardDescription>
-              ضع الحد بصفر = إيقاف فعلي. اتركه فارغاً = بلا حد. الافتراضي مطبّق من النظام عند غياب التخصيص.
-            </CardDescription>
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-fuchsia-600" />
+                  ميزات الذكاء الاصطناعي
+                </CardTitle>
+                <CardDescription>
+                  ضع الحد بصفر = إيقاف فعلي. اتركه فارغاً = بلا حد. الافتراضي مطبّق من النظام عند غياب التخصيص.
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-1 text-xs">
+                <Filter className="h-3.5 w-3.5 text-muted-foreground me-1" />
+                <Button
+                  size="sm" variant={tierFilter === "all"  ? "default" : "outline"}
+                  className="h-7 px-2 text-xs" onClick={() => setTierFilter("all")}
+                >الكل ({Object.values(draft).length})</Button>
+                <Button
+                  size="sm" variant={tierFilter === "paid" ? "default" : "outline"}
+                  className="h-7 px-2 text-xs" onClick={() => setTierFilter("paid")}
+                >💰 مدفوعة ({paidCount})</Button>
+                <Button
+                  size="sm" variant={tierFilter === "free" ? "default" : "outline"}
+                  className="h-7 px-2 text-xs" onClick={() => setTierFilter("free")}
+                >🟢 مجانية ({Object.values(draft).length - paidCount})</Button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             {settingsQ.isLoading ? (
@@ -347,6 +431,7 @@ export default function AiControls() {
                   <thead className="bg-muted/40">
                     <tr className="text-xs text-muted-foreground">
                       <th className="text-start p-3">الميزة</th>
+                      <th className="text-center p-3 w-20">التصنيف</th>
                       <th className="text-center p-3 w-20">الحالة</th>
                       <th className="text-center p-3 w-28">الحد اليومي</th>
                       <th className="text-center p-3 w-28">الحد الشهري</th>
@@ -355,7 +440,14 @@ export default function AiControls() {
                     </tr>
                   </thead>
                   <tbody>
-                    {Object.values(draft).map(s => {
+                    {visibleSettings.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="p-8 text-center text-xs text-muted-foreground italic">
+                          لا توجد ميزات مطابقة للفلتر الحالي.
+                        </td>
+                      </tr>
+                    )}
+                    {visibleSettings.map(s => {
                       const usedToday = usageMap.today[s.featureKey] || 0;
                       const overDaily = s.dailyLimit != null && usedToday >= s.dailyLimit;
                       return (
@@ -363,6 +455,17 @@ export default function AiControls() {
                           <td className="p-3">
                             <div className="font-medium">{s.labelAr}</div>
                             <code className="text-[10px] text-muted-foreground">{s.featureKey}</code>
+                          </td>
+                          <td className="p-3 text-center">
+                            {s.tier === "paid" ? (
+                              <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px] hover:bg-amber-100">
+                                💰 مدفوعة
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px] hover:bg-emerald-100">
+                                🟢 مجانية
+                              </Badge>
+                            )}
                           </td>
                           <td className="p-3 text-center">
                             <Switch
