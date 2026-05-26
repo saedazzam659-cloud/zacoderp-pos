@@ -63,11 +63,23 @@ export default function LicenseExpired({ expiresAt, companyName, onRetry, onDeac
         )}
 
         <div style={S.help}>
-          <div style={S.helpTitle}>📞 الدعم الفني</div>
+          <div style={S.helpTitle}>📞 الدعم الفني — م/ كرم عزام</div>
           <div style={S.helpText}>
             تواصل مع فريق الدعم الفني لتجديد الاشتراك. بعد التجديد، اضغط
             "إعادة المحاولة" أدناه ليعود الجهاز للعمل مباشرة بدون الحاجة
             لإعادة التفعيل.
+          </div>
+          <div style={S.contactBlock}>
+            <div style={S.contactRow}>
+              <span style={S.contactLabel}>من داخل مصر:</span>
+              <a href="tel:01000903159" style={S.contactLink}>📞 01000903159</a>
+              <a href="https://wa.me/201000903159" target="_blank" rel="noreferrer" style={S.contactLinkWa}>💬 واتساب</a>
+            </div>
+            <div style={S.contactRow}>
+              <span style={S.contactLabel}>من خارج مصر:</span>
+              <a href="tel:+201000903159" style={S.contactLink} dir="ltr">📞 00201000903159</a>
+              <a href="https://wa.me/201000903159" target="_blank" rel="noreferrer" style={S.contactLinkWa}>💬 واتساب</a>
+            </div>
           </div>
         </div>
 
@@ -136,6 +148,25 @@ const S = {
   } as const,
   helpTitle: { fontSize: 14, fontWeight: 700, color: "#0f172a", marginBottom: 6 } as const,
   helpText: { fontSize: 13, color: "#475569", lineHeight: 1.6 } as const,
+  contactBlock: {
+    marginTop: 12, paddingTop: 12, borderTop: "1px dashed #e2e8f0",
+    display: "flex", flexDirection: "column" as const, gap: 8,
+  } as const,
+  contactRow: {
+    display: "flex", flexWrap: "wrap" as const, alignItems: "center", gap: 10,
+    fontSize: 13,
+  } as const,
+  contactLabel: { color: "#64748b", fontWeight: 600, minWidth: 90 } as const,
+  contactLink: {
+    color: "#1d4ed8", textDecoration: "none", fontWeight: 700,
+    background: "#eff6ff", padding: "4px 10px", borderRadius: 6,
+    border: "1px solid #bfdbfe",
+  } as const,
+  contactLinkWa: {
+    color: "#15803d", textDecoration: "none", fontWeight: 700,
+    background: "#f0fdf4", padding: "4px 10px", borderRadius: 6,
+    border: "1px solid #bbf7d0",
+  } as const,
   actions: { display: "flex", flexDirection: "column" as const, gap: 10 } as const,
   btnPrimary: {
     padding: "12px 24px", background: "#2563eb", color: "#fff",

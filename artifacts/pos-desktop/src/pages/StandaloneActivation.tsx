@@ -168,7 +168,7 @@ export default function StandaloneActivation({ onDone, onCancel }: {
           </div>
         )}
 
-        {err && <div style={S.err}>⚠️ {err}</div>}
+        {err && <div style={{ ...S.err, whiteSpace: "pre-wrap" }}>⚠️ {err}</div>}
       </div>
     </div>
   );

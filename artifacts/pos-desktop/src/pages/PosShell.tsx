@@ -391,9 +391,21 @@ function ExpiryBanner({ expiresAt }: { expiresAt: string | null }) {
   return (
     <div style={S.warnBanner}>
       <span style={{ fontSize: 18 }}>⚠️</span>
-      <span>
+      <span style={{ flex: 1 }}>
         ينتهي اشتراك هذا الجهاز خلال <strong>{days}</strong> {days === 1 ? "يوم" : "أيام"} (بتاريخ {dateStr}) —
-        تواصل مع الدعم الفني للتجديد قبل التوقف.
+        للتجديد تواصل مع م/ كرم عزام:&nbsp;
+        <a href="tel:01000903159" style={{ color: "#0c4a6e", fontWeight: 700, textDecoration: "underline" }}>
+          01000903159
+        </a>
+        &nbsp;(داخل مصر) /&nbsp;
+        <a href="tel:+201000903159" style={{ color: "#0c4a6e", fontWeight: 700, textDecoration: "underline" }} dir="ltr">
+          00201000903159
+        </a>
+        &nbsp;(خارج مصر) —&nbsp;
+        <a href="https://wa.me/201000903159" target="_blank" rel="noreferrer"
+           style={{ color: "#15803d", fontWeight: 700, textDecoration: "underline" }}>
+          واتساب 💬
+        </a>
       </span>
     </div>
   );

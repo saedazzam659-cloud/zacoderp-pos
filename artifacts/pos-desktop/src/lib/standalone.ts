@@ -112,7 +112,12 @@ export async function verifyLicenseFile(file: SignedLicenseFile): Promise<{ ok: 
     return { ok: false, error: "العرض غير مطابق للمحتوى الموقّع — الملف معدّل" };
   }
   if (payload.expiresAt && new Date(payload.expiresAt).getTime() < Date.now()) {
-    return { ok: false, error: `الترخيص منتهي (انتهى في ${new Date(payload.expiresAt).toLocaleDateString("ar-SA")})` };
+    return {
+      ok: false,
+      error:
+        `الترخيص منتهي (انتهى في ${new Date(payload.expiresAt).toLocaleDateString("ar-SA")}).\n` +
+        `للتجديد تواصل مع م/ كرم عزام — داخل مصر: 01000903159 — خارج مصر: 00201000903159 — واتساب: https://wa.me/201000903159`,
+    };
   }
   return { ok: true, payload };
 }
