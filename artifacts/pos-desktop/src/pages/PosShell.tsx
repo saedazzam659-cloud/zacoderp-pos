@@ -26,6 +26,7 @@ import UomAdmin from "./UomAdmin";
 import UpdatesScreen from "./UpdatesScreen";
 import StandaloneUsersAdmin from "./StandaloneUsersAdmin";
 import ExpiryReport from "./ExpiryReport";
+import ScaleSettings from "./ScaleSettings";
 import { countPendingInvoices } from "../lib/invoices";
 import { getVertical, type Vertical } from "../lib/standalone";
 import { syncPushNow, pullAndPersist, type PushSummary, type PullSummary } from "../lib/sync";
@@ -34,7 +35,7 @@ import { flushPendingSessionCloses, countPendingCloses } from "../lib/pendingSes
 import { useLatestVersion } from "../lib/updates";
 import type { OfflineLicensePayload, LocalSession } from "../lib/standalone";
 
-type View = "sales" | "returns" | "pending" | "parked" | "daily" | "customers" | "items" | "uom" | "dashboard" | "updates" | "users" | "expiry";
+type View = "sales" | "returns" | "pending" | "parked" | "daily" | "customers" | "items" | "uom" | "dashboard" | "updates" | "users" | "expiry" | "scale";
 
 type Props = {
   baseUrl: string;
@@ -117,7 +118,7 @@ export default function PosShell({
     const tick = async () => {
       try {
         await api.heartbeat({
-          appVersion: "0.5.0",
+          appVersion: "0.6.0",
           ...(posSessionId ? { posSessionId } : {}),
         });
         const s = await api.status();
@@ -186,6 +187,7 @@ export default function PosShell({
     { id: "customers", icon: "👥", label: "العملاء" },
     { id: "items",     icon: "📦", label: "الأصناف" },
     { id: "uom",       icon: "📐", label: "وحدات القياس" },
+    { id: "scale",     icon: "⚖️", label: "الميزان" },
     ...(isPharmacy ? [{ id: "expiry" as View, icon: "⏳", label: "تقرير الصلاحية" }] : []),
     ...(standaloneSession?.role === "admin"
       ? [{ id: "users" as View, icon: "🔐", label: "المستخدمون" }]
@@ -199,6 +201,7 @@ export default function PosShell({
     { id: "customers", icon: "👥", label: "العملاء" },
     { id: "items",     icon: "📦", label: "الأصناف" },
     { id: "uom",       icon: "📐", label: "وحدات القياس" },
+    { id: "scale",     icon: "⚖️", label: "الميزان" },
     ...(isPharmacy ? [{ id: "expiry" as View, icon: "⏳", label: "تقرير الصلاحية" }] : []),
     { id: "dashboard", icon: "📊", label: "لوحة التحكم" },
     { id: "updates",   icon: "🔄", label: "التحديثات" },
@@ -212,7 +215,7 @@ export default function PosShell({
           <div style={S.brandIcon}>zacode</div>
           <div>
             <div style={S.brandName}>ZACOD POS</div>
-            <div style={S.brandTag}>v0.5.0 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
+            <div style={S.brandTag}>v0.6.0 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
           </div>
         </div>
 
@@ -320,6 +323,7 @@ export default function PosShell({
           {view === "customers" && <div style={S.pagePad}><CustomersAdmin /></div>}
           {view === "items" && <div style={S.pagePad}><ItemsAdmin /></div>}
           {view === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
+          {view === "scale" && <div style={S.pagePad}><ScaleSettings /></div>}
           {view === "expiry" && isPharmacy && <div style={S.pagePad}><ExpiryReport onJumpToItems={() => setView("items")} /></div>}
           {!standalone && view === "dashboard" && (
             <div style={S.pagePad}>
@@ -355,6 +359,7 @@ function labelFor(v: View): string {
     items: "الأصناف",
     uom: "وحدات القياس",
     expiry: "تقرير الصلاحية",
+    scale: "إعدادات الميزان",
     dashboard: "لوحة التحكم",
     updates: "التحديثات",
     users: "المستخدمون المحليون",

@@ -33,6 +33,11 @@ pub struct LocalItem {
     pub controlled: Option<bool>,
     pub expiry_date: Option<String>, // ISO date 'YYYY-MM-DD'
     pub batch_no: Option<String>,
+    // Scale (Task #201) — weighed items charged per-kg, optional 4–5 digit
+    // PLU used by both manual look-up and embedded-weight barcode resolution.
+    pub is_weighed: Option<bool>,
+    pub price_per_kg: Option<f64>,
+    pub plu: Option<String>,
 }
 
 const MAX_ROWS: i64 = 2000;
@@ -40,7 +45,7 @@ const MAX_ROWS: i64 = 2000;
 const SELECT_COLS: &str =
     "id, cloud_id, code, name_ar, name_en, barcode, sale_price, vat_rate, \
      active_ingredient, dosage_form, strength, manufacturer, requires_prescription, \
-     controlled, expiry_date, batch_no";
+     controlled, expiry_date, batch_no, is_weighed, price_per_kg, plu";
 
 fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalItem> {
     Ok(LocalItem {
@@ -60,6 +65,9 @@ fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalItem> {
         controlled: row.get::<_, Option<i64>>(13).ok().flatten().map(|v| v != 0),
         expiry_date: row.get(14).ok().flatten(),
         batch_no: row.get(15).ok().flatten(),
+        is_weighed: row.get::<_, Option<i64>>(16).ok().flatten().map(|v| v != 0),
+        price_per_kg: row.get(17).ok().flatten(),
+        plu: row.get(18).ok().flatten(),
     })
 }
 
@@ -83,6 +91,10 @@ fn ensure_schema(conn: &rusqlite::Connection) -> Result<()> {
         ("controlled", "INTEGER"),
         ("expiry_date", "TEXT"),
         ("batch_no", "TEXT"),
+        // Scale (Task #201)
+        ("is_weighed", "INTEGER"),
+        ("price_per_kg", "REAL"),
+        ("plu", "TEXT"),
     ];
     for (col, ty) in want {
         if !existing.contains(*col) {
@@ -230,6 +242,10 @@ pub fn insert_local_item(
     controlled: Option<bool>,
     expiry_date: Option<String>,
     batch_no: Option<String>,
+    // Scale (Task #201) — all optional; default to non-weighed when unset.
+    is_weighed: Option<bool>,
+    price_per_kg: Option<f64>,
+    plu: Option<String>,
 ) -> Result<i64, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     ensure_schema(&conn).map_err(|e| e.to_string())?;
@@ -237,17 +253,61 @@ pub fn insert_local_item(
         "INSERT INTO items_local
            (code, name_ar, name_en, barcode, sale_price, vat_rate,
             active_ingredient, dosage_form, strength, manufacturer,
-            requires_prescription, controlled, expiry_date, batch_no, updated_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,CURRENT_TIMESTAMP)",
+            requires_prescription, controlled, expiry_date, batch_no,
+            is_weighed, price_per_kg, plu, updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,CURRENT_TIMESTAMP)",
         rusqlite::params![
             code, name_ar, name_en, barcode, sale_price, vat_rate,
             active_ingredient, dosage_form, strength, manufacturer,
             requires_prescription.map(|b| if b { 1_i64 } else { 0_i64 }),
             controlled.map(|b| if b { 1_i64 } else { 0_i64 }),
             expiry_date, batch_no,
+            is_weighed.map(|b| if b { 1_i64 } else { 0_i64 }),
+            price_per_kg, plu,
         ],
     ).map_err(|e| e.to_string())?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Update the Task-#201 weighed fields on an existing row. Mirrors
+/// `update_local_item_extended` for the pharmacy block — needed because
+/// cloud-pulled / EDA-imported rows have no LS overlay to absorb the
+/// edit (see memory `pos-desktop-overlay-pattern`).
+#[tauri::command]
+pub fn update_local_item_weighed(
+    id: i64,
+    is_weighed: Option<bool>,
+    price_per_kg: Option<f64>,
+    plu: Option<String>,
+) -> Result<u64, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    ensure_schema(&conn).map_err(|e| e.to_string())?;
+    let n = conn.execute(
+        "UPDATE items_local SET
+           is_weighed = ?1, price_per_kg = ?2, plu = ?3,
+           updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?4",
+        rusqlite::params![
+            is_weighed.map(|b| if b { 1_i64 } else { 0_i64 }),
+            price_per_kg, plu, id,
+        ],
+    ).map_err(|e| e.to_string())?;
+    Ok(n as u64)
+}
+
+/// Resolve a PLU (4–5 digit code printed on the scale-station label and
+/// also embedded in barcode-scale stickers) to its catalog row. Used by
+/// the embedded-weight barcode path on SalesScreen.
+#[tauri::command]
+pub fn find_item_by_plu(plu: String) -> Result<Option<LocalItem>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    ensure_schema(&conn).map_err(|e| e.to_string())?;
+    let sql = format!(
+        "SELECT {SELECT_COLS} FROM items_local WHERE plu = ?1 LIMIT 1"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let row = stmt.query_row([plu], row_to_item).ok();
+    Ok(row)
 }
 
 /// Update the pharmacy-extended fields on an existing row. Used by the

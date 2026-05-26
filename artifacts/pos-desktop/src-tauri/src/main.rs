@@ -10,6 +10,7 @@ mod invoices;
 mod items;
 mod license;
 mod peripherals;
+mod scale;
 mod standalone;
 mod sync;
 mod zatca;
@@ -319,6 +320,10 @@ fn main() {
             items::list_expiring_items,
             items::insert_local_item,
             items::update_local_item_extended,
+            items::update_local_item_weighed,
+            items::find_item_by_plu,
+            scale::list_scale_ports,
+            scale::read_weight_once,
             customers::list_customers,
             customers::upsert_customers_from_cloud,
             customers::create_customer_local,

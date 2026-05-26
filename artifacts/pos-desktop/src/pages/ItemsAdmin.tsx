@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  listItems, createItem, updateItem, deleteItem, bulkImportLocalItems, updateItemExtended,
+  listItems, createItem, updateItem, deleteItem, bulkImportLocalItems, updateItemExtended, updateItemWeighed,
   type LocalItem, type CreateItemInput,
 } from "../lib/items";
 import { listUom, getDefaultUom } from "../lib/uom";
@@ -611,6 +611,10 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
     controlled: initial?.controlled ?? false,
     expiryDate: initial?.expiryDate ?? "",
     batchNo: initial?.batchNo ?? "",
+    // Scale (Task #201)
+    isWeighed: initial?.isWeighed ?? false,
+    pricePerKg: initial?.pricePerKg ?? 0,
+    plu: initial?.plu ?? "",
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -636,6 +640,13 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
       }
       // Pharmacy extended fields go straight to SQLite via the dedicated
       // Tauri command — required for rows that have no LS overlay row.
+      // Scale (Task #201) — persist weighed fields straight to SQLite for the
+      // same overlay-pattern reason as the pharmacy block.
+      await updateItemWeighed(id, {
+        isWeighed: !!form.isWeighed,
+        pricePerKg: form.isWeighed ? (form.pricePerKg ?? null) : null,
+        plu: (form.plu ?? "").trim() || null,
+      });
       if (isPharmacy) {
         await updateItemExtended(id, {
           activeIngredient: form.activeIngredient || null,
@@ -690,7 +701,7 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
 
         {isPharmacy && (
           <>
-            <div style={{ marginTop: 16, marginBottom: 8, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#86198f" }}>
+            <div style={{ marginTop: 16, marginBottom: 8, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#86198f" }} key="pharma-header">
               💊 بيانات الدواء (صيدلية)
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

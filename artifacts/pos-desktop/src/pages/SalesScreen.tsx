@@ -8,7 +8,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { printReceipt, openCashDrawer, type ReceiptLine } from "../lib/peripherals";
 import { generateZatcaQr } from "../lib/zatca";
-import { listItems, findItemByBarcode, seedDemoItems, daysUntilExpiry, type LocalItem } from "../lib/items";
+import { listItems, findItemByBarcode, seedDemoItems, daysUntilExpiry, findItemByPlu, type LocalItem } from "../lib/items";
+import { parseEmbeddedWeightBarcode, readWeightOnce, getScaleConfig } from "../lib/scale";
 import { getVertical, verifyAdminCredentials, type Vertical } from "../lib/standalone";
 
 const LS_OVERRIDE_LOG = "pos_desktop_pharmacy_overrides_v1";
@@ -33,7 +34,12 @@ import {
 const VAT_RATE = 0.15;
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 
-interface CartLine { item: LocalItem; qty: number; }
+interface CartLine {
+  item: LocalItem;
+  qty: number;
+  /** Task #201: when true, qty is in kilograms and the line was priced per-kg. */
+  weighed?: boolean;
+}
 
 type Props = { companyName?: string; vatNumber?: string; posSessionId?: number; cashierName?: string };
 
@@ -53,6 +59,8 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
   const [customer, setCustomer] = useState<LocalCustomer | null>(null);
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
   const [paidStr, setPaidStr] = useState("");
+  // Task #201 — weight-capture modal state. Holds the item awaiting a weight.
+  const [weighItem, setWeighItem] = useState<LocalItem | null>(null);
   const [vertical, setVertical] = useState<Vertical>("general");
   useEffect(() => { void getVertical().then((v) => v && setVertical(v)); }, []);
   const isPharmacy = vertical === "pharmacy";
@@ -138,7 +146,26 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
 
   useBarcodeScanner({
     onScan: async (code) => {
+      // Ignore scans while a blocking modal owns the screen — otherwise the
+      // cashier's pending weight entry / customer pick would silently lose
+      // focus or get overwritten by an unrelated background cart mutation.
+      if (weighItem || showCustomerPicker || paying) return;
       try {
+        // Task #201: a barcode-printing scale prints EAN-13 stickers that
+        // encode prefix + PLU + weight. Try that first; if it matches AND
+        // we can resolve the PLU to a catalog row, push the line with
+        // qty=weight_kg and unitPrice=pricePerKg — no modal needed.
+        const wb = parseEmbeddedWeightBarcode(code);
+        if (wb) {
+          const found = await findItemByPlu(wb.plu);
+          if (found) {
+            pushWeighedLine(found, wb.weightKg);
+            return;
+          }
+          // PLU unknown → fall through to the regular barcode lookup
+          // (some POSes also ship plain-EAN catalogs that happen to match
+          // the weight-prefix range).
+        }
         const found = await findItemByBarcode(code);
         if (found) addToCart(found);
         else setMsg({ kind: "err", text: `لم يُعثر على باركود: ${code}` });
@@ -147,6 +174,23 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       }
     },
   });
+
+  /**
+   * Push a weighed line directly (qty = kg, unitPrice = pricePerKg) with
+   * no modal — used by the embedded-weight barcode path. We synthesize a
+   * LocalItem whose `salePrice = pricePerKg` so the totals math stays the
+   * same (line subtotal = salePrice × qty).
+   */
+  function pushWeighedLine(item: LocalItem, weightKg: number) {
+    if (!item.pricePerKg || item.pricePerKg <= 0) {
+      setMsg({ kind: "err", text: `الصنف "${item.nameAr}" لا يحتوي على سعر للكيلو` });
+      return;
+    }
+    if (weightKg <= 0) return;
+    const synth: LocalItem = { ...item, salePrice: item.pricePerKg };
+    setCart((prev) => [...prev, { item: synth, qty: weightKg, weighed: true }]);
+    setMsg({ kind: "ok", text: `⚖️ ${item.nameAr} — ${weightKg.toFixed(3)} كجم` });
+  }
 
   const totals = useMemo(() => {
     const grandTotal = cart.reduce((sum, l) => sum + l.item.salePrice * l.qty, 0);
@@ -168,6 +212,16 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
    */
   async function addToCart(item: LocalItem) {
     setMsg(null);
+    // Task #201: weighed items go through the WeightCaptureModal instead
+    // of being pushed at qty=1.
+    if (item.isWeighed) {
+      if (!item.pricePerKg || item.pricePerKg <= 0) {
+        setMsg({ kind: "err", text: `الصنف "${item.nameAr}" مفعّل كموزون لكن لا يحتوي على سعر للكيلو` });
+        return;
+      }
+      setWeighItem(item);
+      return;
+    }
     if (isPharmacy) {
       const d = daysUntilExpiry(item);
       if (d !== null && d < 0) {
@@ -235,7 +289,8 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
         vat: Number(totals.vat.toFixed(2)),
         grandTotal: Number(totals.grandTotal.toFixed(2)),
         lines: cart.map((l) => ({
-          itemId: l.item.id, nameAr: l.item.nameAr,
+          itemId: l.item.id,
+          nameAr: l.weighed ? `${l.item.nameAr} (${l.qty.toFixed(3)} كجم)` : l.item.nameAr,
           qty: l.qty, unitPrice: l.item.salePrice, vatRate: l.item.vatRate,
         })),
       };
@@ -250,7 +305,14 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
 
       const body: ReceiptLine[] = [];
       for (const l of cart) {
-        body.push({ text: `${l.item.nameAr.padEnd(20, " ")} ×${l.qty}  ${(l.item.salePrice * l.qty).toFixed(2)}` });
+        if (l.weighed) {
+          // Task #201 receipt format for weighed lines: name on one line,
+          // weight × price = total on the next (matches market practice).
+          body.push({ text: l.item.nameAr });
+          body.push({ text: `  ${l.qty.toFixed(3)} كجم × ${l.item.salePrice.toFixed(2)} = ${(l.item.salePrice * l.qty).toFixed(2)}` });
+        } else {
+          body.push({ text: `${l.item.nameAr.padEnd(20, " ")} ×${l.qty}  ${(l.item.salePrice * l.qty).toFixed(2)}` });
+        }
       }
       body.push({ text: "─".repeat(32) });
       body.push({ text: `المجموع قبل الضريبة:  ${totals.subtotal.toFixed(2)}` });
@@ -524,6 +586,112 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           onClose={() => setShowCustomerPicker(false)}
         />
       )}
+
+      {weighItem && (
+        <WeightCaptureModal
+          item={weighItem}
+          onCancel={() => setWeighItem(null)}
+          onConfirm={(kg) => {
+            pushWeighedLine(weighItem, kg);
+            setWeighItem(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Weight capture modal (Task #201) ───────────────────────────────
+// Opens whenever a cashier picks a weighed item by tap/click. Polls
+// the live scale every 700 ms via lib/scale.ts; the cashier can also
+// type the weight by hand for the (common) case where the scale is
+// disconnected or the operator weighed the item on a back-room scale.
+function WeightCaptureModal({
+  item, onConfirm, onCancel,
+}: {
+  item: LocalItem;
+  onConfirm: (kg: number) => void;
+  onCancel: () => void;
+}) {
+  const [reading, setReading] = useState<number | null>(null);
+  const [manual, setManual] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const hasPort = !!getScaleConfig().port;
+
+  async function poll() {
+    setBusy(true); setErr(null);
+    try {
+      const kg = await readWeightOnce();
+      setReading(kg);
+    } catch (e: any) {
+      setErr(e?.message ?? "فشل قراءة الميزان");
+    } finally { setBusy(false); }
+  }
+
+  // Auto-poll once on mount when a port is configured; the cashier can
+  // re-trigger with the button. We avoid setInterval to keep things
+  // simple and to prevent overlapping port-open attempts on slow scales.
+  useEffect(() => { if (hasPort) void poll(); /* eslint-disable-next-line */ }, []);
+
+  const live = reading;
+  const typed = parseFloat(manual);
+  const kg = Number.isFinite(typed) && typed > 0 ? typed : (live ?? 0);
+  const subtotal = kg * (item.pricePerKg ?? 0);
+
+  function confirm() {
+    if (kg <= 0) { setErr("الوزن يجب أن يكون أكبر من صفر"); return; }
+    onConfirm(kg);
+  }
+
+  return (
+    <div style={S.modalOverlay} onClick={onCancel}>
+      <div dir="rtl" style={{ ...S.modalCard, maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>
+          ⚖️ {item.nameAr}
+        </div>
+        <div style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>
+          السعر: {(item.pricePerKg ?? 0).toFixed(2)} ر.س / كجم
+        </div>
+
+        {hasPort ? (
+          <div style={{ background: "#f1f5f9", border: "1px solid #cbd5e1", borderRadius: 10, padding: 16, textAlign: "center", marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: "#64748b" }}>القراءة من الميزان</div>
+            <div style={{ fontSize: 36, fontWeight: 700, color: live !== null ? "#166534" : "#94a3b8" }}>
+              {live !== null ? live.toFixed(3) : "—"} <span style={{ fontSize: 18 }}>كجم</span>
+            </div>
+            <button onClick={() => void poll()} disabled={busy} style={{ ...S.modalSaveBtn, marginTop: 8, background: "#475569" }}>
+              {busy ? "..." : "🔄 إعادة القراءة"}
+            </button>
+          </div>
+        ) : (
+          <div style={{ ...S.msgErr, marginBottom: 12 }}>
+            لم يتم تكوين منفذ الميزان. أدخل الوزن يدوياً، أو افتح ‹الميزان› من لوحة التحكم لتفعيل القراءة الحيّة.
+          </div>
+        )}
+
+        <label style={{ display: "block", marginBottom: 12 }}>
+          <div style={{ fontSize: 13, color: "#475569", marginBottom: 4 }}>وزن يدوي (كجم) — يُلغي قراءة الميزان</div>
+          <input type="number" step="0.001" min="0" value={manual}
+                 onChange={(e) => setManual(e.target.value)} autoFocus
+                 placeholder={live !== null ? live.toFixed(3) : "0.000"}
+                 style={{ width: "100%", padding: "12px 14px", fontSize: 18, border: "1px solid #cbd5e1", borderRadius: 8, fontFamily: "inherit", textAlign: "center", boxSizing: "border-box" }} />
+        </label>
+
+        <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 12px", background: "#fefce8", border: "1px solid #fde047", borderRadius: 8, marginBottom: 12 }}>
+          <span style={{ color: "#854d0e" }}>المجموع</span>
+          <strong style={{ color: "#854d0e", fontSize: 18 }}>{subtotal.toFixed(2)} ر.س</strong>
+        </div>
+
+        {err && <div style={S.msgErr}>{err}</div>}
+
+        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+          <button onClick={confirm} disabled={kg <= 0} style={{ ...S.modalSaveBtn, opacity: kg <= 0 ? 0.5 : 1 }}>
+            ✅ إضافة للسلة
+          </button>
+          <button onClick={onCancel} style={S.modalBackBtn}>إلغاء</button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -36,6 +36,11 @@ export interface LocalItem {
   /** ISO date 'YYYY-MM-DD'. Drives the expiry badges + report. */
   expiryDate?: string | null;
   batchNo?: string | null;
+  // Scale (Task #201) — weighed items charged per-kg at sale time.
+  isWeighed?: boolean | null;
+  pricePerKg?: number | null;
+  /** 4–5 digit PLU. Matches the digits embedded in scale-printed barcodes. */
+  plu?: string | null;
 }
 
 interface RustItem {
@@ -55,6 +60,9 @@ interface RustItem {
   controlled?: boolean | null;
   expiry_date?: string | null;
   batch_no?: string | null;
+  is_weighed?: boolean | null;
+  price_per_kg?: number | null;
+  plu?: string | null;
 }
 
 function fromRust(r: RustItem): LocalItem {
@@ -75,6 +83,9 @@ function fromRust(r: RustItem): LocalItem {
     controlled: r.controlled ?? null,
     expiryDate: r.expiry_date ?? null,
     batchNo: r.batch_no ?? null,
+    isWeighed: r.is_weighed ?? null,
+    pricePerKg: r.price_per_kg ?? null,
+    plu: r.plu ?? null,
   };
 }
 
@@ -262,6 +273,10 @@ export interface CreateItemInput {
   controlled?: boolean | null;
   expiryDate?: string | null;
   batchNo?: string | null;
+  // Scale (Task #201)
+  isWeighed?: boolean | null;
+  pricePerKg?: number | null;
+  plu?: string | null;
 }
 
 export async function createItem(input: CreateItemInput): Promise<LocalItem> {
@@ -285,6 +300,9 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
     controlled: input.controlled ?? null,
     expiryDate: input.expiryDate ?? null,
     batchNo: input.batchNo ?? null,
+    isWeighed: input.isWeighed ?? null,
+    pricePerKg: input.pricePerKg ?? null,
+    plu: input.plu ?? null,
     updatedAt: new Date().toISOString(),
   };
   all.push(row);
@@ -338,6 +356,9 @@ export async function bulkImportLocalItems(
           controlled: r.controlled ?? null,
           expiry_date: r.expiryDate ?? null,
           batch_no: r.batchNo ?? null,
+          is_weighed: r.isWeighed ?? null,
+          price_per_kg: r.pricePerKg ?? null,
+          plu: r.plu ?? null,
         });
         inserted++;
         if (r.barcode) seenBc.add(r.barcode);
@@ -433,6 +454,52 @@ export async function updateItemExtended(
     // user-visible and silent failure here would be very confusing.
     throw new Error(`فشل حفظ بيانات الدواء: ${e}`);
   }
+}
+
+/**
+ * Persist Task-#201 weighed fields on a row. Same overlay-pattern reasoning
+ * as `updateItemExtended` — cloud-pulled / EDA-imported rows have no LS
+ * overlay row, so the dedicated Tauri command writes straight to SQLite.
+ */
+export async function updateItemWeighed(
+  id: number,
+  fields: { isWeighed?: boolean | null; pricePerKg?: number | null; plu?: string | null },
+): Promise<void> {
+  if (!IS_TAURI) {
+    const all = readLocal();
+    const idx = all.findIndex((r) => r.id === id);
+    if (idx >= 0) {
+      all[idx] = { ...all[idx], ...fields, updatedAt: new Date().toISOString() };
+      lsWrite(LS_KEYS.items, all);
+    }
+    return;
+  }
+  try {
+    await tauriInvoke("update_local_item_weighed", {
+      id,
+      is_weighed: fields.isWeighed ?? null,
+      price_per_kg: fields.pricePerKg ?? null,
+      plu: fields.plu ?? null,
+    });
+  } catch (e) {
+    throw new Error(`فشل حفظ بيانات الميزان: ${e}`);
+  }
+}
+
+/**
+ * Resolve a PLU (4–5 digit code) to its catalog row. Used by the
+ * embedded-weight barcode path on SalesScreen. Browser fallback scans
+ * the merged catalog client-side.
+ */
+export async function findItemByPlu(plu: string): Promise<LocalItem | null> {
+  if (IS_TAURI) {
+    try {
+      const r = await tauriInvoke<RustItem | null>("find_item_by_plu", { plu });
+      if (r) return fromRust(r);
+    } catch { /* fall through */ }
+  }
+  const all = await listItems();
+  return all.find((i) => (i.plu ?? "") === plu) ?? null;
 }
 
 /** Days until expiry for an item, or null if no expiry date. Negative = already expired. */
