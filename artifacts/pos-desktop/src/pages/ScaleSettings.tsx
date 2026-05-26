@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import {
   getScaleConfig, setScaleConfig, listScalePorts, readWeightOnce,
   DEFAULT_SCALE_CONFIG, type ScaleConfig, type ScaleProtocol,
+  type ScaleParity, type ScaleDataBits,
 } from "../lib/scale";
 
 export default function ScaleSettings() {
@@ -83,6 +84,20 @@ export default function ScaleSettings() {
             <select value={cfg.baud} onChange={(e) => patch("baud", Number(e.target.value))} style={S.input}>
               {[1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200].map((b) =>
                 <option key={b} value={b}>{b}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div style={S.row2}>
+          <Field label="Parity (التماثل)">
+            <select value={cfg.parity} onChange={(e) => patch("parity", e.target.value as ScaleParity)} style={S.input}>
+              <option value="none">None (لا يوجد)</option>
+              <option value="odd">Odd (فردي)</option>
+              <option value="even">Even (زوجي)</option>
+            </select>
+          </Field>
+          <Field label="Data bits (خانات البيانات)">
+            <select value={cfg.dataBits} onChange={(e) => patch("dataBits", Number(e.target.value) as ScaleDataBits)} style={S.input}>
+              {[5, 6, 7, 8].map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
           </Field>
         </div>

@@ -21,6 +21,8 @@
 import { IS_TAURI, tauriInvoke } from "./localStore";
 
 export type ScaleProtocol = "cas" | "bizerba" | "generic_ascii";
+export type ScaleParity = "none" | "odd" | "even";
+export type ScaleDataBits = 5 | 6 | 7 | 8;
 
 export interface EmbeddedBarcodeProfile {
   /** Two-digit "weight item" prefix (commonly 20 or 22). */
@@ -39,6 +41,10 @@ export interface ScaleConfig {
   /** Baud rate (9600 is by far the most common). */
   baud: number;
   protocol: ScaleProtocol;
+  /** Parity bit. Most scales use "none"; CAS DS-series ships "even". */
+  parity: ScaleParity;
+  /** Data bits per frame. Always 8 unless the scale documentation says otherwise. */
+  dataBits: ScaleDataBits;
   embedded: EmbeddedBarcodeProfile;
 }
 
@@ -46,6 +52,8 @@ export const DEFAULT_SCALE_CONFIG: ScaleConfig = {
   port: "",
   baud: 9600,
   protocol: "generic_ascii",
+  parity: "none",
+  dataBits: 8,
   embedded: { prefix: "20", pluLen: 5, weightLen: 5, weightDecimals: 3 },
 };
 
@@ -90,7 +98,8 @@ export async function readWeightOnce(): Promise<number> {
   // to manual entry without a silent "0.000 kg" reading.
   const w = await tauriInvoke<{ valueKg: number; stable: boolean; raw: string } | null>(
     "read_weight_once",
-    { port: cfg.port, baud: cfg.baud, protocol: cfg.protocol },
+    { port: cfg.port, baud: cfg.baud, protocol: cfg.protocol,
+      parity: cfg.parity, data_bits: cfg.dataBits },
   );
   if (!w) throw new Error("لم يصل وزن من الميزان خلال المهلة");
   return w.valueKg;

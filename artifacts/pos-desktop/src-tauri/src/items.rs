@@ -101,6 +101,16 @@ fn ensure_schema(conn: &rusqlite::Connection) -> Result<()> {
             conn.execute(&format!("ALTER TABLE items_local ADD COLUMN {col} {ty}"), [])?;
         }
     }
+    // PLU uniqueness (Task #201 review round 3). A partial unique index
+    // means duplicate PLUs raise a clear SQLITE_CONSTRAINT at write time
+    // instead of letting `find_item_by_plu` silently resolve to whichever
+    // row the planner returned first. NULL plus are exempt so generic
+    // (non-weighed) catalog rows aren't accidentally roped in.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS items_local_plu_unique \
+         ON items_local(plu) WHERE plu IS NOT NULL AND plu <> ''",
+        [],
+    )?;
     Ok(())
 }
 
@@ -291,7 +301,13 @@ pub fn update_local_item_weighed(
             is_weighed.map(|b| if b { 1_i64 } else { 0_i64 }),
             price_per_kg, plu, id,
         ],
-    ).map_err(|e| e.to_string())?;
+    ).map_err(|e| {
+        // Surface duplicate PLU as a clear Arabic error the form can show.
+        let s = e.to_string();
+        if s.contains("items_local_plu_unique") || s.contains("UNIQUE constraint failed") {
+            "رقم PLU مستخدم في صنف آخر — يجب أن يكون فريداً".to_string()
+        } else { s }
+    })?;
     Ok(n as u64)
 }
 

@@ -621,7 +621,14 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
 
   async function submit() {
     if (!form.nameAr.trim()) { setErr("الاسم بالعربية مطلوب"); return; }
-    if (form.salePrice <= 0) { setErr("السعر يجب أن يكون أكبر من صفر"); return; }
+    // Task #201: weighed items are priced per-kg, not per-unit, so the
+    // "sale price" field is meaningless and validation must switch over
+    // to pricePerKg.
+    if (form.isWeighed) {
+      if (!form.pricePerKg || form.pricePerKg <= 0) { setErr("السعر للكيلو يجب أن يكون أكبر من صفر"); return; }
+    } else {
+      if (form.salePrice <= 0) { setErr("السعر يجب أن يكون أكبر من صفر"); return; }
+    }
     if (form.vatRate < 0 || form.vatRate > 100) { setErr("نسبة الضريبة بين 0 و 100"); return; }
     if (isPharmacy) {
       if (!(form.activeIngredient ?? "").trim()) { setErr("المادة الفعّالة مطلوبة في وضع الصيدلية"); return; }
@@ -686,8 +693,11 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-          <Field label="سعر البيع *">
-            <input type="number" step="0.01" min="0" value={form.salePrice} onChange={(e) => setForm({ ...form, salePrice: Number(e.target.value) })} style={S.input} />
+          <Field label={form.isWeighed ? "سعر البيع (يُستبدل بـ السعر/كجم)" : "سعر البيع *"}>
+            <input type="number" step="0.01" min="0" value={form.salePrice}
+                   disabled={!!form.isWeighed}
+                   onChange={(e) => setForm({ ...form, salePrice: Number(e.target.value) })}
+                   style={{ ...S.input, opacity: form.isWeighed ? 0.5 : 1 }} />
           </Field>
           <Field label="نسبة الضريبة %">
             <input type="number" step="0.5" min="0" max="100" value={form.vatRate} onChange={(e) => setForm({ ...form, vatRate: Number(e.target.value) })} style={S.input} />

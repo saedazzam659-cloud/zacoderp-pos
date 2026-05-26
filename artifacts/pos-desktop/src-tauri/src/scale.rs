@@ -32,6 +32,34 @@ pub enum ScaleProtocol {
     GenericAscii,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Parity {
+    #[default]
+    None,
+    Odd,
+    Even,
+}
+
+impl Parity {
+    fn to_serial(self) -> serialport::Parity {
+        match self {
+            Parity::None => serialport::Parity::None,
+            Parity::Odd => serialport::Parity::Odd,
+            Parity::Even => serialport::Parity::Even,
+        }
+    }
+}
+
+fn data_bits_from_u8(n: u8) -> serialport::DataBits {
+    match n {
+        5 => serialport::DataBits::Five,
+        6 => serialport::DataBits::Six,
+        7 => serialport::DataBits::Seven,
+        _ => serialport::DataBits::Eight,
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Weight {
@@ -195,13 +223,28 @@ pub fn read_weight_once(
     port: String,
     baud: u32,
     protocol: ScaleProtocol,
+    // Optional framing fields (Task #201 code-review round 3). When the UI
+    // omits them we fall back to 8/N/1 — the default for every scale we've
+    // tested. They are wired through as `Option` so older builds stay
+    // compatible.
+    parity: Option<Parity>,
+    data_bits: Option<u8>,
 ) -> Result<Option<Weight>, String> {
-    read_once(&port, baud, protocol).map_err(|e| e.to_string())
+    read_once(&port, baud, protocol, parity.unwrap_or_default(), data_bits.unwrap_or(8))
+        .map_err(|e| e.to_string())
 }
 
-fn read_once(port: &str, baud: u32, protocol: ScaleProtocol) -> Result<Option<Weight>> {
+fn read_once(
+    port: &str,
+    baud: u32,
+    protocol: ScaleProtocol,
+    parity: Parity,
+    data_bits: u8,
+) -> Result<Option<Weight>> {
     let mut handle = serialport::new(port, baud)
         .timeout(Duration::from_millis(200))
+        .parity(parity.to_serial())
+        .data_bits(data_bits_from_u8(data_bits))
         .open()
         .map_err(|e| anyhow!("فشل فتح المنفذ {}: {}", port, e))?;
 

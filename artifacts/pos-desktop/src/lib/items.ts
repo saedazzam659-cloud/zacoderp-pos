@@ -481,8 +481,13 @@ export async function updateItemWeighed(
       price_per_kg: fields.pricePerKg ?? null,
       plu: fields.plu ?? null,
     });
-  } catch (e) {
-    throw new Error(`فشل حفظ بيانات الميزان: ${e}`);
+  } catch (e: any) {
+    // The Rust side already translates the SQLITE UNIQUE constraint
+    // into an Arabic message — bubble that through unchanged when we
+    // detect it, otherwise wrap in the generic header.
+    const msg = e?.message ?? String(e);
+    if (msg.includes("PLU")) throw new Error(msg);
+    throw new Error(`فشل حفظ بيانات الميزان: ${msg}`);
   }
 }
 
