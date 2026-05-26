@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { printReceipt, openCashDrawer, type ReceiptLine } from "../lib/peripherals";
 import { generateZatcaQr } from "../lib/zatca";
 import { listItems, findItemByBarcode, seedDemoItems, type LocalItem } from "../lib/items";
+import { listCustomers, createCustomer, type LocalCustomer } from "../lib/customers";
 import { saveOfflineInvoice, type OfflineInvoicePayload } from "../lib/invoices";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import {
@@ -36,6 +37,9 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
   const [paying, setPaying] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [lastInvoice, setLastInvoice] = useState<string | null>(null);
+  const [customer, setCustomer] = useState<LocalCustomer | null>(null);
+  const [showCustomerPicker, setShowCustomerPicker] = useState(false);
+  const [paidStr, setPaidStr] = useState("");
 
   useEffect(() => { void seedDemoItems().catch(() => {}); }, []);
 
@@ -172,6 +176,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       });
       const payload: OfflineInvoicePayload = {
         vatNumber, paymentMethod, timestamp: ts,
+        customerName: customer?.nameAr,
         subtotal: Number(totals.subtotal.toFixed(2)),
         vat: Number(totals.vat.toFixed(2)),
         grandTotal: Number(totals.grandTotal.toFixed(2)),
@@ -198,6 +203,20 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       body.push({ text: `ضريبة القيمة المضافة: ${totals.vat.toFixed(2)}` });
       body.push({ text: `الإجمالي:             ${totals.grandTotal.toFixed(2)}`, bold: true });
       body.push({ text: `طريقة الدفع: ${paymentMethod === "cash" ? "نقداً" : "بطاقة"}` });
+      const paidNum = parseFloat(paidStr) || 0;
+      if (paymentMethod === "cash" && paidNum > 0) {
+        body.push({ text: `المبلغ المدفوع:       ${paidNum.toFixed(2)}` });
+        const change = paidNum - totals.grandTotal;
+        if (change >= 0) {
+          body.push({ text: `الباقي للعميل:        ${change.toFixed(2)}`, bold: true });
+        }
+      }
+      if (customer) {
+        body.push({ text: "─".repeat(32) });
+        body.push({ text: `العميل: ${customer.nameAr}` });
+        if (customer.phone) body.push({ text: `الجوال: ${customer.phone}` });
+        if (customer.vatNumber) body.push({ text: `الرقم الضريبي: ${customer.vatNumber}` });
+      }
 
       await printReceipt({
         printerName: printer,
@@ -223,6 +242,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       }
       setLastInvoice(invNum);
       setCart([]); setCheckoutKey(null); setActiveParkedId(null);
+      setCustomer(null); setPaidStr("");
       setMsg({ kind: "ok", text: `✅ تم إنهاء البيع — فاتورة ${invNum}` });
     } catch (e: any) {
       setMsg({ kind: "err", text: `فشل إنهاء البيع: ${e?.message ?? e}` });
@@ -302,6 +322,32 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           )}
         </div>
 
+        {/* Customer chip — click to pick/change customer for invoice */}
+        <div style={S.customerBar}>
+          {customer ? (
+            <div style={S.customerChip}>
+              <span style={{ fontSize: 18 }}>👤</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={S.customerName}>{customer.nameAr}</div>
+                {(customer.phone || customer.vatNumber) && (
+                  <div style={S.customerMeta}>
+                    {customer.phone || ""}{customer.phone && customer.vatNumber ? " · " : ""}{customer.vatNumber || ""}
+                  </div>
+                )}
+              </div>
+              <button onClick={() => setShowCustomerPicker(true)} style={S.customerEditBtn} title="تغيير العميل">✏️</button>
+              <button onClick={() => setCustomer(null)} style={S.customerRemoveBtn} title="إزالة العميل">×</button>
+            </div>
+          ) : (
+            <button onClick={() => setShowCustomerPicker(true)} style={S.customerAddBtn}>
+              <span style={{ fontSize: 18 }}>👤</span>
+              <span>إضافة عميل للفاتورة</span>
+              <span style={{ flex: 1 }} />
+              <span style={{ fontSize: 18, color: "#3b82f6" }}>+</span>
+            </button>
+          )}
+        </div>
+
         {/* Scrolling lines region — flex:1 takes all remaining vertical space */}
         <div className="cart-scroll" style={S.linesScroll}>
           {cart.length === 0 ? (
@@ -340,6 +386,47 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
             <Row k="الإجمالي" v={totals.grandTotal.toFixed(2)} big />
           </div>
 
+          {/* Paid amount + change calculator */}
+          {cart.length > 0 && (() => {
+            const paidNum = parseFloat(paidStr) || 0;
+            const change = paidNum - totals.grandTotal;
+            const hasPaid = paidStr.trim() !== "" && paidNum > 0;
+            const enough = paidNum >= totals.grandTotal;
+            return (
+              <div style={S.paidBox}>
+                <div style={S.paidRow}>
+                  <label style={S.paidLabel}>💵 المبلغ المدفوع</label>
+                  <input
+                    type="number" inputMode="decimal" step="0.01" min="0"
+                    placeholder="0.00"
+                    value={paidStr}
+                    onChange={(e) => setPaidStr(e.target.value)}
+                    style={S.paidInput}
+                  />
+                </div>
+                {hasPaid && (
+                  <div style={enough ? S.changeRowOk : S.changeRowShort}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>
+                      {enough ? "💰 الباقي للعميل" : "⚠️ المتبقي على العميل"}
+                    </span>
+                    <span style={S.changeAmount}>
+                      {Math.abs(change).toFixed(2)} <span style={{ fontSize: 11, fontWeight: 400 }}>ر.س</span>
+                    </span>
+                  </div>
+                )}
+                {hasPaid && (
+                  <div style={S.paidQuick}>
+                    {[totals.grandTotal, 50, 100, 200, 500].filter((v, i, a) => a.indexOf(v) === i).map((v) => (
+                      <button key={v} onClick={() => setPaidStr(v.toFixed(2))} style={S.quickBtn}>
+                        {v.toFixed(0)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           <div style={S.payRow}>
             <button onClick={() => checkout("cash")} disabled={paying || cart.length === 0} style={S.payCash}>
               {paying ? "..." : "💵 نقداً"}
@@ -357,6 +444,124 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           )}
         </div>
       </aside>
+
+      {showCustomerPicker && (
+        <CustomerPicker
+          onSelect={(c) => { setCustomer(c); setShowCustomerPicker(false); }}
+          onClose={() => setShowCustomerPicker(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Customer picker modal ─────────────────────────────────────────
+function CustomerPicker({ onSelect, onClose }: { onSelect: (c: LocalCustomer) => void; onClose: () => void }) {
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState<LocalCustomer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showNew, setShowNew] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [newVat, setNewVat] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const t = window.setTimeout(async () => {
+      try {
+        const r = await listCustomers(q || undefined);
+        if (!cancelled) setRows(r);
+      } catch { /* ignore */ } finally { if (!cancelled) setLoading(false); }
+    }, q ? 150 : 0);
+    return () => { cancelled = true; window.clearTimeout(t); };
+  }, [q]);
+
+  async function handleCreate() {
+    if (!newName.trim()) { setErr("اسم العميل مطلوب"); return; }
+    setSaving(true); setErr(null);
+    try {
+      const c = await createCustomer({
+        nameAr: newName.trim(),
+        phone: newPhone.trim() || null,
+        vatNumber: newVat.trim() || null,
+      });
+      onSelect(c);
+    } catch (e: any) {
+      setErr(`تعذّر الإنشاء: ${e?.message ?? e}`);
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div style={S.modalOverlay} onClick={onClose}>
+      <div dir="rtl" style={S.modalCard} onClick={(e) => e.stopPropagation()}>
+        <div style={S.modalHeader}>
+          <h3 style={{ margin: 0, fontSize: 18, color: "#0f172a" }}>
+            {showNew ? "👤 عميل جديد" : "👥 اختر العميل"}
+          </h3>
+          <button onClick={onClose} style={S.modalCloseBtn}>×</button>
+        </div>
+
+        {!showNew ? (
+          <>
+            <input
+              autoFocus placeholder="🔍 بحث بالاسم، الجوال، أو الرقم الضريبي..."
+              value={q} onChange={(e) => setQ(e.target.value)}
+              style={S.modalSearch}
+            />
+            <div style={S.modalList}>
+              {loading ? (
+                <div style={S.modalEmpty}>... جاري التحميل</div>
+              ) : rows.length === 0 ? (
+                <div style={S.modalEmpty}>
+                  <div style={{ fontSize: 32, marginBottom: 8 }}>🤷‍♂️</div>
+                  <div>لا يوجد عميل مطابق</div>
+                </div>
+              ) : (
+                rows.map((c) => (
+                  <button key={c.id} onClick={() => onSelect(c)} style={S.customerRow}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={S.customerRowName}>{c.nameAr}</div>
+                      {(c.phone || c.vatNumber) && (
+                        <div style={S.customerRowMeta}>
+                          {c.phone ? `📱 ${c.phone}` : ""}{c.phone && c.vatNumber ? "  ·  " : ""}{c.vatNumber ? `🧾 ${c.vatNumber}` : ""}
+                        </div>
+                      )}
+                    </div>
+                    <span style={{ color: "#3b82f6", fontSize: 14, fontWeight: 600 }}>اختيار ←</span>
+                  </button>
+                ))
+              )}
+            </div>
+            <button onClick={() => setShowNew(true)} style={S.modalNewBtn}>
+              <span style={{ fontSize: 18 }}>＋</span> إضافة عميل جديد
+            </button>
+          </>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <label style={S.modalFieldLabel}>اسم العميل *</label>
+              <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} style={S.modalField} />
+            </div>
+            <div>
+              <label style={S.modalFieldLabel}>رقم الجوال</label>
+              <input value={newPhone} onChange={(e) => setNewPhone(e.target.value)} style={S.modalField} placeholder="05XXXXXXXX" />
+            </div>
+            <div>
+              <label style={S.modalFieldLabel}>الرقم الضريبي (اختياري)</label>
+              <input value={newVat} onChange={(e) => setNewVat(e.target.value)} style={S.modalField} placeholder="3xxxxxxxxxxxxx3" />
+            </div>
+            {err && <div style={S.msgErr}>{err}</div>}
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <button onClick={handleCreate} disabled={saving} style={{ ...S.modalSaveBtn, opacity: saving ? 0.6 : 1 }}>
+                {saving ? "..." : "💾 حفظ واختيار"}
+              </button>
+              <button onClick={() => setShowNew(false)} style={S.modalBackBtn}>← رجوع</button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -443,4 +648,93 @@ const S = {
   msgOk: { background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534", padding: 10, borderRadius: 6, fontSize: 12, marginTop: 10 } as const,
   msgErr: { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: 10, borderRadius: 6, fontSize: 12, marginTop: 10 } as const,
   lastInv: { fontSize: 11, color: "#94a3b8", textAlign: "center" as const, marginTop: 10 } as const,
+
+  // Customer bar (between cartHeader and linesScroll)
+  customerBar: { padding: "8px 16px 0", flexShrink: 0 } as const,
+  customerAddBtn: {
+    display: "flex", alignItems: "center", gap: 8, width: "100%",
+    padding: "10px 14px", background: "linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)",
+    border: "1px dashed #93c5fd", borderRadius: 10, color: "#1e40af",
+    cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit",
+  } as const,
+  customerChip: {
+    display: "flex", alignItems: "center", gap: 10,
+    padding: "10px 12px", background: "linear-gradient(180deg, #f0fdf4 0%, #dcfce7 100%)",
+    border: "1px solid #86efac", borderRadius: 10,
+  } as const,
+  customerName: { fontSize: 14, fontWeight: 700, color: "#14532d", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const } as const,
+  customerMeta: { fontSize: 11, color: "#166534", marginTop: 2, fontFamily: "ui-monospace, monospace" } as const,
+  customerEditBtn: { background: "transparent", border: "none", cursor: "pointer", fontSize: 14, padding: 4 } as const,
+  customerRemoveBtn: { background: "#fff", border: "1px solid #fecaca", color: "#dc2626", width: 24, height: 24, borderRadius: "50%", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 0, fontWeight: 700 } as const,
+
+  // Paid amount + change box
+  paidBox: {
+    background: "linear-gradient(180deg, #fefce8 0%, #fef9c3 100%)",
+    border: "1px solid #fde047", borderRadius: 10,
+    padding: 10, marginBottom: 10,
+  } as const,
+  paidRow: { display: "flex", alignItems: "center", gap: 8 } as const,
+  paidLabel: { fontSize: 13, fontWeight: 700, color: "#854d0e", whiteSpace: "nowrap" as const } as const,
+  paidInput: {
+    flex: 1, padding: "10px 12px", fontSize: 16, fontWeight: 700,
+    border: "1px solid #fde047", borderRadius: 8, fontFamily: "ui-monospace, monospace",
+    textAlign: "left" as const, background: "#fff", color: "#0f172a", boxSizing: "border-box" as const,
+    minWidth: 0,
+  } as const,
+  changeRowOk: {
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    marginTop: 8, padding: "8px 12px",
+    background: "#dcfce7", border: "1px solid #86efac", borderRadius: 8, color: "#14532d",
+  } as const,
+  changeRowShort: {
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    marginTop: 8, padding: "8px 12px",
+    background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 8, color: "#991b1b",
+  } as const,
+  changeAmount: { fontSize: 20, fontWeight: 800, fontFamily: "ui-monospace, monospace" } as const,
+  paidQuick: { display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap" as const } as const,
+  quickBtn: {
+    flex: 1, minWidth: 50, padding: "6px 8px", background: "#fff",
+    border: "1px solid #fde047", borderRadius: 6, cursor: "pointer",
+    fontSize: 12, fontWeight: 700, fontFamily: "ui-monospace, monospace", color: "#854d0e",
+  } as const,
+
+  // Customer picker modal
+  modalOverlay: {
+    position: "fixed" as const, inset: 0, background: "rgba(15,23,42,.55)",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    zIndex: 1000, padding: 16, backdropFilter: "blur(2px)",
+  } as const,
+  modalCard: {
+    background: "#fff", borderRadius: 14, width: "100%", maxWidth: 480,
+    maxHeight: "85vh", display: "flex", flexDirection: "column" as const,
+    boxShadow: "0 20px 60px rgba(0,0,0,.3)", overflow: "hidden",
+    fontFamily: "'Segoe UI', system-ui, sans-serif",
+  } as const,
+  modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid #f1f5f9" } as const,
+  modalCloseBtn: { background: "transparent", border: "none", fontSize: 24, color: "#64748b", cursor: "pointer", padding: 4, lineHeight: 1 } as const,
+  modalSearch: { margin: 16, padding: "10px 14px", fontSize: 14, border: "1px solid #cbd5e1", borderRadius: 8, fontFamily: "inherit" } as const,
+  modalList: { flex: 1, overflowY: "auto" as const, padding: "0 16px", display: "flex", flexDirection: "column" as const, gap: 6 } as const,
+  modalEmpty: { padding: 32, textAlign: "center" as const, color: "#94a3b8", fontSize: 13 } as const,
+  customerRow: {
+    display: "flex", alignItems: "center", gap: 8, padding: "12px 14px",
+    background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10,
+    cursor: "pointer", textAlign: "right" as const, fontFamily: "inherit", width: "100%",
+  } as const,
+  customerRowName: { fontSize: 14, fontWeight: 700, color: "#0f172a" } as const,
+  customerRowMeta: { fontSize: 11, color: "#64748b", marginTop: 2, fontFamily: "ui-monospace, monospace" } as const,
+  modalNewBtn: {
+    margin: 16, padding: "12px 16px", background: "linear-gradient(180deg, #3b82f6 0%, #2563eb 100%)",
+    color: "#fff", border: "none", borderRadius: 10, cursor: "pointer",
+    fontSize: 14, fontWeight: 700, fontFamily: "inherit", display: "flex",
+    alignItems: "center", justifyContent: "center", gap: 6,
+  } as const,
+  modalFieldLabel: { display: "block", fontSize: 12, color: "#475569", marginBottom: 4, fontWeight: 600 } as const,
+  modalField: { width: "100%", padding: "10px 12px", fontSize: 14, border: "1px solid #cbd5e1", borderRadius: 8, fontFamily: "inherit", boxSizing: "border-box" as const } as const,
+  modalSaveBtn: { flex: 1, padding: "12px 16px", background: "linear-gradient(180deg, #16a34a 0%, #15803d 100%)", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: "inherit" } as const,
+  modalBackBtn: { padding: "12px 16px", background: "#fff", color: "#475569", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 13, fontFamily: "inherit" } as const,
 };
+
+// Wrapper around the modal body to fix padding when in "new customer" mode
+const _modalNewWrap = { padding: 16 };
+void _modalNewWrap;
