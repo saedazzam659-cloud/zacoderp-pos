@@ -5,3 +5,5 @@
 - [POS Desktop two-layer auth](pos-desktop-two-auth-layers.md) — device token + cashier token live in SEPARATE keyring slots; logging out a cashier must never wipe the device binding.
 - [POS Desktop parked carts](pos-desktop-parked-carts.md) — device-only scratchpad, scoped by pos_session_id; never push to cloud; do not confuse with "الفواتير غير المرفوعة" (offline-sync queue).
 - [Avoid openssl-sys vendored on Windows CI](windows-openssl-trap.md) — rusqlite `bundled-sqlcipher-vendored-openssl` needs Perl+NASM build OpenSSL from source on windows-latest; flaky even with Strawberry Perl. Use plain `bundled` (no SQLCipher) unless encryption is a hard requirement.
+- [Zod datetime strict rejects +00:00](zod-datetime-offset.md) — chrono `to_rfc3339()` emits offset form, never `Z`; any zod schema validating a Rust-produced timestamp MUST use `{offset:true}` or it 400s.
+- [POS Desktop LS overlay for catalog edits](pos-desktop-overlay-pattern.md) — cloud-pulled items/customers need LS overlay + tombstones at read time; without it `updateItem`/`deleteItem` silently no-op on SQLite-backed rows.

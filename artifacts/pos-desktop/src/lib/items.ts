@@ -23,6 +23,8 @@ export interface LocalItem {
   vatRate: number;
   uomId?: number | null;
   updatedAt?: string;
+  /** Soft-delete tombstone (overlay). When true, listItems filters this row out. */
+  deleted?: boolean;
 }
 
 interface RustItem {
@@ -82,18 +84,38 @@ export async function listItems(search?: string): Promise<LocalItem[]> {
   }
   const fromLs = readLocal();
 
-  // Build the merged set: Tauri rows first (authoritative), then add
-  // locally-created LS rows (no cloudId) that don't collide with a Tauri row's
-  // cloud_id, plus any LS row with a cloudId not already in Tauri.
-  const tauriCloudIds = new Set(fromTauri.map((i) => i.cloudId).filter((v): v is number => !!v));
-  const merged: LocalItem[] = [...fromTauri];
-  for (const lsRow of fromLs) {
-    if (lsRow.cloudId && tauriCloudIds.has(lsRow.cloudId)) continue; // already represented by Tauri
-    merged.push(lsRow);
+  // OVERLAY strategy: LS rows that match a Tauri row (by id OR cloudId)
+  // SUPERSEDE the Tauri version — this is how updateItem/deleteItem can
+  // mutate cloud-pulled rows without Rust write commands. Pure-Tauri rows
+  // (no LS overlay) pass through unchanged; pure-LS rows (no SQLite peer)
+  // are additive (locally-created).
+  const lsById = new Map<number, LocalItem>();
+  const lsByCloud = new Map<number, LocalItem>();
+  for (const r of fromLs) {
+    lsById.set(r.id, r);
+    if (r.cloudId) lsByCloud.set(r.cloudId, r);
+  }
+  const usedLs = new Set<number>();
+  const merged: LocalItem[] = [];
+  for (const t of fromTauri) {
+    const overlay = lsById.get(t.id) ?? (t.cloudId ? lsByCloud.get(t.cloudId) : undefined);
+    if (overlay) {
+      merged.push(overlay);
+      usedLs.add(overlay.id);
+    } else {
+      merged.push(t);
+    }
+  }
+  for (const r of fromLs) {
+    if (usedLs.has(r.id)) continue;
+    merged.push(r);
   }
 
+  // Hide tombstones (deleted overlays).
+  const visible = merged.filter((i) => !i.deleted);
+
   // If still empty AND no search, fall back to demo so the screen isn't blank
-  let all = merged;
+  let all = visible;
   if (all.length === 0 && !search) all = DEV_DEMO;
   if (!search) return all;
   const q = search.toLowerCase();
@@ -234,30 +256,61 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
 export async function updateItem(id: number, patch: Partial<CreateItemInput>): Promise<LocalItem | null> {
   const all = readLocal();
   const idx = all.findIndex((i) => i.id === id);
-  if (idx < 0) return null;
-  all[idx] = { ...all[idx], ...patch, updatedAt: new Date().toISOString() };
+  let updated: LocalItem;
+  if (idx >= 0) {
+    updated = { ...all[idx], ...patch, updatedAt: new Date().toISOString() };
+    all[idx] = updated;
+  } else {
+    // Row originates from SQLite (no LS peer yet) — fetch the current
+    // state from the merged list and write a full overlay to LS so the
+    // edit becomes visible and the next update can find it.
+    const merged = await listItems();
+    const base = merged.find((i) => i.id === id);
+    if (!base) return null;
+    updated = { ...base, ...patch, updatedAt: new Date().toISOString() };
+    all.push(updated);
+  }
   lsWrite(LS_KEYS.items, all);
   enqueuePush({
     clientId: `item-upd-${id}-${Date.now()}`,
     entityType: "item",
     operation: "update",
-    payload: { localId: id, cloudId: all[idx].cloudId, ...patch },
+    payload: { localId: id, cloudId: updated.cloudId, ...patch },
   });
-  return all[idx];
+  return updated;
 }
 
 export async function deleteItem(id: number): Promise<void> {
+  // Tombstone strategy: write a soft-deleted overlay row so the merged
+  // listItems hides it even when SQLite still has the original. The
+  // overlay carries `deleted:true` and listItems filters it out.
   const all = readLocal();
-  const target = all.find((i) => i.id === id);
-  lsWrite(LS_KEYS.items, all.filter((i) => i.id !== id));
-  if (target) {
-    enqueuePush({
-      clientId: `item-del-${id}-${Date.now()}`,
-      entityType: "item",
-      operation: "delete",
-      payload: { localId: id, cloudId: target.cloudId },
-    });
+  const idx = all.findIndex((i) => i.id === id);
+  let cloudId: number | null = null;
+  if (idx >= 0) {
+    cloudId = all[idx].cloudId ?? null;
+    if (cloudId) {
+      // Cloud-backed row: keep a tombstone so the merged list hides it.
+      all[idx] = { ...all[idx], deleted: true, updatedAt: new Date().toISOString() };
+    } else {
+      // Pure local row: drop it outright (nothing on the server to delete).
+      all.splice(idx, 1);
+    }
+  } else {
+    // Row lives in SQLite only — create a tombstone overlay.
+    const merged = await listItems();
+    const base = merged.find((i) => i.id === id);
+    if (!base) return;
+    cloudId = base.cloudId ?? null;
+    all.push({ ...base, deleted: true, updatedAt: new Date().toISOString() });
   }
+  lsWrite(LS_KEYS.items, all);
+  enqueuePush({
+    clientId: `item-del-${id}-${Date.now()}`,
+    entityType: "item",
+    operation: "delete",
+    payload: { localId: id, cloudId },
+  });
 }
 
 export async function countItems(): Promise<number> {
