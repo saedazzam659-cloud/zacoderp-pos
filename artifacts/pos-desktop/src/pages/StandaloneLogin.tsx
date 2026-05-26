@@ -9,18 +9,25 @@
 // No cloud calls. Auth is PBKDF2-SHA256 (100k iters) against locally stored
 // per-user salt+hash in localStorage.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { authLocalUser, type LocalSession, listLocalUsers } from "../lib/standalone";
 
 export default function StandaloneLogin({ onSignedIn, customerName }: {
   onSignedIn: (s: LocalSession) => void;
   customerName: string;
 }) {
-  const usernames = listLocalUsers().map((u) => u.username);
-  const [username, setUsername] = useState(usernames[0] ?? "");
+  const [usernames, setUsernames] = useState<string[]>([]);
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    void listLocalUsers().then((users) => {
+      const names = users.map((u) => u.username);
+      setUsernames(names);
+      setUsername((cur) => cur || names[0] || "");
+    });
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

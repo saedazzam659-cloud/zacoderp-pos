@@ -10,6 +10,7 @@ mod invoices;
 mod items;
 mod license;
 mod peripherals;
+mod standalone;
 mod sync;
 mod zatca;
 
@@ -325,6 +326,18 @@ fn main() {
             invoices::get_offline_invoice,
             invoices::count_pending_invoices,
             sync::sync_push_now,
+            standalone::standalone_get_mode,
+            standalone::standalone_set_mode,
+            standalone::standalone_load_license,
+            standalone::standalone_save_license,
+            standalone::standalone_list_users,
+            standalone::standalone_create_user,
+            standalone::standalone_auth_user,
+            standalone::standalone_load_session,
+            standalone::standalone_clear_session,
+            standalone::standalone_delete_user,
+            standalone::standalone_change_password,
+            standalone::standalone_wipe_all,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

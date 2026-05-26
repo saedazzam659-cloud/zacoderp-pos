@@ -64,7 +64,7 @@ export default function App() {
 
   async function boot() {
     // ── First-run mode selection ──────────────────────────────────────
-    const mode = getAppMode();
+    const mode = await getAppMode();
     if (!mode) { setState({ phase: "needs-mode" }); return; }
     if (mode === "standalone") return bootStandalone();
     return bootCloud();
@@ -72,7 +72,7 @@ export default function App() {
 
   async function bootStandalone() {
     // Layer 1: signed license file
-    const file = loadLicense();
+    const file = await loadLicense();
     if (!file) { setState({ phase: "needs-standalone-license" }); return; }
     const r = await verifyLicenseFile(file);
     if (!r.ok) {
@@ -82,7 +82,7 @@ export default function App() {
       return;
     }
     // Layer 2: local user session
-    const session = loadLocalSession();
+    const session = await loadLocalSession();
     if (!session) { setState({ phase: "needs-standalone-login", license: r.payload }); return; }
     setState({ phase: "standalone-signed-in", license: r.payload, session });
   }
@@ -199,15 +199,15 @@ export default function App() {
   }
 
   // ── Standalone logout / wipe ────────────────────────────────────────
-  function handleStandaloneLogout() {
+  async function handleStandaloneLogout() {
     if (state.phase !== "standalone-signed-in") return;
-    clearLocalSession();
+    await clearLocalSession();
     setState({ phase: "needs-standalone-login", license: state.license });
   }
 
-  function handleStandaloneFullReset() {
+  async function handleStandaloneFullReset() {
     if (!confirm("سيؤدي هذا إلى حذف كل بيانات الوضع المستقل (الترخيص، المستخدمين، الجلسة) والعودة لاختيار الوضع. متأكد؟")) return;
-    wipeStandalone();
+    await wipeStandalone();
     setState({ phase: "needs-mode" });
   }
 
@@ -224,7 +224,13 @@ export default function App() {
   }
 
   if (state.phase === "needs-mode") {
-    return <FirstRunWizard onChosen={(m: AppMode) => { setAppMode(m); setState({ phase: "checking" }); void boot(); }} />;
+    return <FirstRunWizard onChosen={(m: AppMode) => {
+      void (async () => {
+        await setAppMode(m);
+        setState({ phase: "checking" });
+        await boot();
+      })();
+    }} />;
   }
 
   // ── Standalone branch ─────────────────────────────────────────────
@@ -232,11 +238,13 @@ export default function App() {
     return (
       <StandaloneActivation
         onDone={(payload) => {
-          const session = loadLocalSession();
-          if (session) setState({ phase: "standalone-signed-in", license: payload, session });
-          else setState({ phase: "needs-standalone-login", license: payload });
+          void (async () => {
+            const session = await loadLocalSession();
+            if (session) setState({ phase: "standalone-signed-in", license: payload, session });
+            else setState({ phase: "needs-standalone-login", license: payload });
+          })();
         }}
-        onCancel={() => { wipeStandalone(); setState({ phase: "needs-mode" }); }}
+        onCancel={() => { void (async () => { await wipeStandalone(); setState({ phase: "needs-mode" }); })(); }}
       />
     );
   }

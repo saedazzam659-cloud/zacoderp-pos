@@ -11,8 +11,8 @@
 import { setAppMode, type AppMode } from "../lib/standalone";
 
 export default function FirstRunWizard({ onChosen }: { onChosen: (m: AppMode) => void }) {
-  function pick(m: AppMode) {
-    setAppMode(m);
+  async function pick(m: AppMode) {
+    await setAppMode(m);
     onChosen(m);
   }
   return (
@@ -27,7 +27,7 @@ export default function FirstRunWizard({ onChosen }: { onChosen: (m: AppMode) =>
         </div>
 
         <div style={S.grid}>
-          <button onClick={() => pick("cloud")} style={S.option}>
+          <button onClick={() => void pick("cloud")} style={S.option}>
             <div style={S.optionIcon}>☁️</div>
             <div style={S.optionTitle}>وضع السحابة</div>
             <div style={S.optionDesc}>
@@ -43,7 +43,7 @@ export default function FirstRunWizard({ onChosen }: { onChosen: (m: AppMode) =>
             <div style={S.cta}>اختيار الوضع السحابي ←</div>
           </button>
 
-          <button onClick={() => pick("standalone")} style={{ ...S.option, borderColor: "#fbbf24", background: "#fffbeb" }}>
+          <button onClick={() => void pick("standalone")} style={{ ...S.option, borderColor: "#fbbf24", background: "#fffbeb" }}>
             <div style={S.optionIcon}>🖥️</div>
             <div style={S.optionTitle}>وضع مستقل (بدون سحابة)</div>
             <div style={S.optionDesc}>

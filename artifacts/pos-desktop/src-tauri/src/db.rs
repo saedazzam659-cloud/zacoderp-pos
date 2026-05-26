@@ -83,6 +83,29 @@ pub fn initialize() -> Result<()> {
             updated_at      TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_parked_session ON parked_carts(pos_session_id, updated_at DESC);
+
+        -- Standalone install mode (Task #199): three tables that replace
+        -- the localStorage-based standalone store. SQLCipher is deferred
+        -- (see windows-openssl-trap memory) — for now we rely on the
+        -- %APPDATA% ACLs that already protect pos.db.
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS local_license (
+            id          INTEGER PRIMARY KEY CHECK (id = 1),
+            file_json   TEXT NOT NULL,
+            installed_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS local_users (
+            id            TEXT PRIMARY KEY,
+            username      TEXT NOT NULL UNIQUE,
+            display_name  TEXT NOT NULL,
+            role          TEXT NOT NULL CHECK (role IN ('admin','cashier')),
+            password_hash TEXT NOT NULL,
+            created_at    TEXT NOT NULL,
+            last_login_at TEXT
+        );
         "#,
     )?;
     let _ = conn.execute("ALTER TABLE offline_invoices ADD COLUMN synced_at TEXT", []);

@@ -3,23 +3,24 @@
 // Lists, adds, removes, and resets password for local users. Only visible
 // to users with role="admin". Lives inside PosShell as the "users" view.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   listLocalUsers, createLocalUser, deleteLocalUser, changeLocalPassword,
   type LocalUser, type LocalUserRole, type LocalSession,
 } from "../lib/standalone";
 
 export default function StandaloneUsersAdmin({ session, maxUsers }: { session: LocalSession; maxUsers: number }) {
-  const [users, setUsers] = useState<LocalUser[]>(listLocalUsers());
+  const [users, setUsers] = useState<LocalUser[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [resetTarget, setResetTarget] = useState<LocalUser | null>(null);
   const isAdmin = session.role === "admin";
 
+  async function refresh() { setUsers(await listLocalUsers()); }
+  useEffect(() => { void refresh(); }, []);
+
   if (!isAdmin) {
     return <div style={{ padding: 24, color: "#dc2626" }}>هذه الشاشة متاحة لمستخدمي الإدارة فقط.</div>;
   }
-
-  function refresh() { setUsers(listLocalUsers()); }
 
   async function remove(u: LocalUser) {
     if (u.username === session.username) { alert("لا يمكنك حذف المستخدم الذي سجّلت الدخول به."); return; }
@@ -27,7 +28,7 @@ export default function StandaloneUsersAdmin({ session, maxUsers }: { session: L
       alert("يجب أن يبقى مسؤول واحد على الأقل."); return;
     }
     if (!confirm(`حذف المستخدم ${u.username}؟`)) return;
-    await deleteLocalUser(u.id); refresh();
+    await deleteLocalUser(u.id); await refresh();
   }
 
   return (
@@ -73,11 +74,11 @@ export default function StandaloneUsersAdmin({ session, maxUsers }: { session: L
       {showCreate && (
         <CreateUserModal
           onCancel={() => setShowCreate(false)}
-          onCreated={() => { setShowCreate(false); refresh(); }}
+          onCreated={() => { setShowCreate(false); void refresh(); }}
         />
       )}
       {resetTarget && (
-        <ResetPasswordModal user={resetTarget} onCancel={() => setResetTarget(null)} onDone={() => { setResetTarget(null); refresh(); }} />
+        <ResetPasswordModal user={resetTarget} onCancel={() => setResetTarget(null)} onDone={() => { setResetTarget(null); void refresh(); }} />
       )}
     </div>
   );

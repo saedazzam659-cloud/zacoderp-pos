@@ -8,7 +8,7 @@
 //
 // No network calls. Whole flow runs offline.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   verifyLicenseFile, saveLicense, type SignedLicenseFile, type OfflineLicensePayload,
   createLocalUser, countLocalUsers, DEV_PUBKEY_UNPINNED,
@@ -26,7 +26,10 @@ export default function StandaloneActivation({ onDone, onCancel }: {
   const [payload, setPayload] = useState<OfflineLicensePayload | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [fingerprint, setFingerprint] = useState<string>("");
-  const needsAdmin = countLocalUsers() === 0;
+  // Default to true (i.e. assume admin needed) until the async count resolves —
+  // this matches the safer "always require admin on first activation" behaviour.
+  const [needsAdmin, setNeedsAdmin] = useState<boolean>(true);
+  useEffect(() => { void countLocalUsers().then((n) => setNeedsAdmin(n === 0)); }, []);
 
   // Admin-create form
   const [a, setA] = useState({ username: "admin", displayName: "المسؤول", password: "", password2: "" });
@@ -65,9 +68,9 @@ export default function StandaloneActivation({ onDone, onCancel }: {
     const f = e.dataTransfer.files?.[0]; if (f) void handleFile(f);
   }
 
-  function activate() {
+  async function activate() {
     if (!file || !payload) return;
-    saveLicense(file);
+    await saveLicense(file);
     if (needsAdmin) setPhase("admin-create");
     else { setPhase("done"); onDone(payload); }
   }
@@ -135,7 +138,7 @@ export default function StandaloneActivation({ onDone, onCancel }: {
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
               <button onClick={() => { setPhase("intro"); setFile(null); setPayload(null); }} style={S.btnSecondary}>اختيار ملف آخر</button>
-              <button onClick={activate} style={S.btnPrimary}>
+              <button onClick={() => void activate()} style={S.btnPrimary}>
                 {needsAdmin ? "متابعة → إنشاء مستخدم مسؤول" : "تفعيل وتسجيل دخول"}
               </button>
             </div>
