@@ -245,3 +245,9 @@ id = "skLkJhOsM_JmlCrMu7P0F"
 uri = "file://attached_assets/قيود_متكررة_110202.txt"
 type = "text"
 title = "قيود حساب 110202 - المبالغ المتكررة"
+
+[[outputs]]
+id = "PFNQ1SseEJwVmT7Hn2AZv"
+uri = "file://attached_assets/grocery_items_egypt.csv"
+type = "table"
+title = "كتالوج البقالة المصري (624 صنف، باركود 622)"

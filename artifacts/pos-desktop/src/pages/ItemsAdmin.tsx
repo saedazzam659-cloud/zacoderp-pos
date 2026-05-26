@@ -1,7 +1,7 @@
 // Items admin — list + add + edit + delete.
 // Uses lib/items.ts + lib/uom.ts.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   listItems, createItem, updateItem, deleteItem,
   type LocalItem, type CreateItemInput,
@@ -14,6 +14,7 @@ export default function ItemsAdmin() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<LocalItem | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   async function refresh() {
@@ -36,9 +37,14 @@ export default function ItemsAdmin() {
           <h2 style={S.h2}>الأصناف ({rows.length})</h2>
           <div style={S.sub}>إدارة قائمة الأصناف وأسعار البيع — السحب من السحابة يُحدّث القائمة تلقائيًا</div>
         </div>
-        <button onClick={() => { setEditing(null); setShowForm(true); }} style={S.btnPrimary}>
-          + صنف جديد
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setShowImport(true)} style={S.btnImport}>
+            📥 استيراد من CSV
+          </button>
+          <button onClick={() => { setEditing(null); setShowForm(true); }} style={S.btnPrimary}>
+            + صنف جديد
+          </button>
+        </div>
       </div>
 
       <input
@@ -96,6 +102,271 @@ export default function ItemsAdmin() {
           onSaved={async (msg) => { setShowForm(false); setToast({ kind: "ok", text: msg }); await refresh(); }}
         />
       )}
+
+      {showImport && (
+        <ImportCsvModal
+          existingBarcodes={new Set(rows.map((r) => r.barcode).filter((b): b is string => !!b))}
+          existingCodes={new Set(rows.map((r) => r.code).filter((c): c is string => !!c))}
+          onClose={() => setShowImport(false)}
+          onDone={async (msg) => { setShowImport(false); setToast({ kind: "ok", text: msg }); await refresh(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── CSV Import ────────────────────────────────────────────────────
+type ParsedRow = {
+  rowNum: number;
+  code: string;
+  nameAr: string;
+  nameEn: string;
+  barcode: string;
+  salePrice: number;
+  vatRate: number;
+  error?: string;
+};
+
+/** Tiny CSV parser: handles UTF-8 BOM, quoted cells, escaped quotes, \r\n. */
+function parseCsv(text: string): string[][] {
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  const out: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let i = 0;
+  let inQ = false;
+  while (i < text.length) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { cell += '"'; i += 2; continue; }
+        inQ = false; i++; continue;
+      }
+      cell += c; i++; continue;
+    }
+    if (c === '"') { inQ = true; i++; continue; }
+    if (c === ',') { row.push(cell); cell = ""; i++; continue; }
+    if (c === '\n' || c === '\r') {
+      row.push(cell); cell = "";
+      if (row.length > 1 || row[0] !== "") out.push(row);
+      row = [];
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      i++; continue;
+    }
+    cell += c; i++;
+  }
+  if (cell !== "" || row.length) { row.push(cell); out.push(row); }
+  return out;
+}
+
+function ImportCsvModal({
+  existingBarcodes, existingCodes, onClose, onDone,
+}: {
+  existingBarcodes: Set<string>;
+  existingCodes: Set<string>;
+  onClose: () => void;
+  onDone: (msg: string) => Promise<void> | void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [fileName, setFileName] = useState<string>("");
+  const [parsed, setParsed] = useState<ParsedRow[] | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [defaultVat, setDefaultVat] = useState<number>(15);
+  const [skipDupes, setSkipDupes] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  async function onFile(f: File) {
+    setError(null); setParsed(null); setFileName(f.name);
+    try {
+      const text = await f.text();
+      const grid = parseCsv(text);
+      if (grid.length < 2) { setError("الملف فاضي أو ما فيش صفوف بيانات"); return; }
+      const header = grid[0].map((h) => h.trim().toLowerCase());
+      const idx = (name: string) => header.indexOf(name);
+      const iCode = idx("code");
+      const iAr = idx("namear");
+      const iEn = idx("nameen");
+      const iBc = idx("barcode");
+      const iPr = idx("saleprice");
+      const iVat = idx("vatrate");
+      if (iAr < 0 || iPr < 0) {
+        setError("الأعمدة المطلوبة: nameAr و salePrice على الأقل (الترويسة الأولى).");
+        return;
+      }
+      const out: ParsedRow[] = [];
+      for (let r = 1; r < grid.length; r++) {
+        const row = grid[r];
+        if (row.every((c) => !c.trim())) continue;
+        const get = (i: number) => (i >= 0 && row[i] !== undefined ? row[i].trim() : "");
+        const nameAr = get(iAr);
+        const priceStr = get(iPr);
+        const price = Number(priceStr);
+        const vatStr = get(iVat);
+        const vat = vatStr === "" ? defaultVat : Number(vatStr);
+        const parsedRow: ParsedRow = {
+          rowNum: r + 1,
+          code: get(iCode),
+          nameAr,
+          nameEn: get(iEn),
+          barcode: get(iBc),
+          salePrice: price,
+          vatRate: vat,
+        };
+        if (!nameAr) parsedRow.error = "الاسم بالعربية فاضي";
+        else if (!Number.isFinite(price) || price <= 0) parsedRow.error = "السعر غير صالح";
+        else if (!Number.isFinite(vat) || vat < 0 || vat > 100) parsedRow.error = "الضريبة غير صالحة";
+        out.push(parsedRow);
+      }
+      setParsed(out);
+    } catch (e: any) {
+      setError(e?.message ?? "تعذّر قراءة الملف");
+    }
+  }
+
+  async function doImport() {
+    if (!parsed) return;
+    setImporting(true); setError(null);
+    const valid = parsed.filter((r) => !r.error);
+    const toCreate: ParsedRow[] = [];
+    const skippedDup: ParsedRow[] = [];
+    const seenBc = new Set<string>();
+    const seenCode = new Set<string>();
+    for (const r of valid) {
+      if (skipDupes) {
+        if (r.barcode && (existingBarcodes.has(r.barcode) || seenBc.has(r.barcode))) {
+          skippedDup.push(r); continue;
+        }
+        if (r.code && (existingCodes.has(r.code) || seenCode.has(r.code))) {
+          skippedDup.push(r); continue;
+        }
+      }
+      if (r.barcode) seenBc.add(r.barcode);
+      if (r.code) seenCode.add(r.code);
+      toCreate.push(r);
+    }
+    setProgress({ done: 0, total: toCreate.length });
+    let created = 0;
+    let failed = 0;
+    for (let i = 0; i < toCreate.length; i++) {
+      const r = toCreate[i];
+      try {
+        const input: CreateItemInput = {
+          code: r.code || null,
+          nameAr: r.nameAr,
+          nameEn: r.nameEn || null,
+          barcode: r.barcode || null,
+          salePrice: r.salePrice,
+          vatRate: r.vatRate,
+        };
+        await createItem(input);
+        created++;
+      } catch {
+        failed++;
+      }
+      if (i % 25 === 0 || i === toCreate.length - 1) {
+        setProgress({ done: i + 1, total: toCreate.length });
+        await new Promise((res) => setTimeout(res, 0));
+      }
+    }
+    setImporting(false);
+    const parts = [`تم استيراد ${created} صنف`];
+    if (skippedDup.length) parts.push(`تم تجاهل ${skippedDup.length} مكرر`);
+    if (failed) parts.push(`فشل ${failed}`);
+    await onDone(parts.join(" — "));
+  }
+
+  const validCount = parsed?.filter((r) => !r.error).length ?? 0;
+  const errorCount = parsed?.filter((r) => r.error).length ?? 0;
+  const previewBad = parsed?.filter((r) => r.error).slice(0, 5) ?? [];
+
+  return (
+    <div style={S.modalBg} onClick={onClose}>
+      <div style={{ ...S.modal, maxWidth: 720 }} onClick={(e) => e.stopPropagation()}>
+        <h3 style={S.modalTitle}>📥 استيراد أصناف من ملف CSV</h3>
+
+        <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 12, fontSize: 13, color: "#475569", marginBottom: 12, lineHeight: 1.7 }}>
+          <strong>الأعمدة المطلوبة:</strong> <code>code, nameAr, nameEn, barcode, salePrice, vatRate</code>
+          <br />
+          <strong>إلزامي:</strong> nameAr + salePrice. <strong>اختياري:</strong> الباقي.
+          <br />
+          الترميز: UTF-8 (مدعوم BOM للفتح من Excel).
+        </div>
+
+        {!parsed && (
+          <>
+            <button onClick={() => fileRef.current?.click()} style={{ ...S.btnPrimary, width: "100%", padding: "16px" }}>
+              اختر ملف CSV...
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv,text/csv"
+              style={{ display: "none" }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) void onFile(f); }}
+            />
+          </>
+        )}
+
+        {fileName && <div style={{ fontSize: 13, color: "#64748b", marginTop: 8 }}>📄 {fileName}</div>}
+        {error && <div style={S.err}>{error}</div>}
+
+        {parsed && !importing && (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, margin: "12px 0" }}>
+              <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: 12, borderRadius: 8 }}>
+                <div style={{ fontSize: 12, color: "#166534" }}>صالح للاستيراد</div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: "#166534" }}>{validCount}</div>
+              </div>
+              <div style={{ background: errorCount ? "#fef2f2" : "#f8fafc", border: `1px solid ${errorCount ? "#fecaca" : "#e2e8f0"}`, padding: 12, borderRadius: 8 }}>
+                <div style={{ fontSize: 12, color: errorCount ? "#991b1b" : "#64748b" }}>صفوف بها أخطاء</div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: errorCount ? "#991b1b" : "#64748b" }}>{errorCount}</div>
+              </div>
+            </div>
+
+            {previewBad.length > 0 && (
+              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: 10, marginBottom: 12, fontSize: 12, color: "#991b1b" }}>
+                <strong>أمثلة على الأخطاء:</strong>
+                {previewBad.map((r) => (
+                  <div key={r.rowNum}>صف {r.rowNum}: {r.error}</div>
+                ))}
+              </div>
+            )}
+
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 13 }}>
+              <input type="checkbox" checked={skipDupes} onChange={(e) => setSkipDupes(e.target.checked)} />
+              تجاهل الأصناف المكررة (نفس الباركود أو الكود)
+            </label>
+
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, fontSize: 13 }}>
+              <span>الضريبة الافتراضية لو الخانة فاضية:</span>
+              <input type="number" min={0} max={100} step={1} value={defaultVat} onChange={(e) => setDefaultVat(Number(e.target.value))} style={{ ...S.input, width: 80 }} />
+              <span>%</span>
+            </div>
+
+            <div style={S.btnRow}>
+              <button onClick={doImport} disabled={validCount === 0} style={S.btnPrimary}>
+                ✅ استيراد {validCount} صنف
+              </button>
+              <button onClick={() => { setParsed(null); setFileName(""); }} style={S.btnGhost}>
+                اختيار ملف آخر
+              </button>
+              <button onClick={onClose} style={S.btnGhost}>إلغاء</button>
+            </div>
+          </>
+        )}
+
+        {importing && progress && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 14, marginBottom: 8 }}>
+              جاري الاستيراد... {progress.done} / {progress.total}
+            </div>
+            <div style={{ background: "#e2e8f0", borderRadius: 999, overflow: "hidden", height: 10 }}>
+              <div style={{ background: "#2563eb", height: "100%", width: `${(progress.done / Math.max(1, progress.total)) * 100}%`, transition: "width .15s" }} />
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -203,6 +474,7 @@ const S = {
   badgeCloud: { display: "inline-block", padding: "2px 8px", background: "#eff6ff", color: "#1d4ed8", border: "1px solid #dbeafe", borderRadius: 999, fontSize: 11 } as const,
   badgeLocal: { display: "inline-block", padding: "2px 8px", background: "#fefce8", color: "#854d0e", border: "1px solid #fef9c3", borderRadius: 999, fontSize: 11 } as const,
   btnPrimary: { padding: "10px 18px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
+  btnImport: { padding: "10px 18px", background: "#fff", color: "#0f766e", border: "1px solid #5eead4", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
   btnGhost: { padding: "10px 18px", background: "#fff", color: "#475569", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
   btnEdit: { padding: "6px 12px", background: "#f1f5f9", color: "#0f172a", border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", fontSize: 12, marginInlineEnd: 6 } as const,
   btnDel: { padding: "6px 12px", background: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer", fontSize: 12 } as const,
