@@ -193,6 +193,11 @@ export default function PosShell({
       ? [{ id: "users" as View, icon: "🔐", label: "المستخدمون" }]
       : []),
     { id: "dashboard", icon: "⚙️", label: "لوحة التحكم" },
+    // Updates entry — even standalone users want to install newer app
+    // versions (the device usually has occasional internet for this).
+    // The Updates screen itself gracefully handles offline by showing
+    // an error and a manual-download link.
+    { id: "updates",   icon: "🔄", label: "التحديثات" },
   ] : [
     { id: "sales",     icon: "🛒", label: "بيع" },
     { id: "returns",   icon: "↩️", label: "مرتجع" },
@@ -216,7 +221,7 @@ export default function PosShell({
           <div style={S.brandIcon}>zacode</div>
           <div>
             <div style={S.brandName}>ZACOD POS</div>
-            <div style={S.brandTag}>v0.7.7 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
+            <div style={S.brandTag}>v0.7.8 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
           </div>
         </div>
 
@@ -352,7 +357,7 @@ export default function PosShell({
               />
             </div>
           )}
-          {!standalone && view === "updates" && (
+          {view === "updates" && (
             <div style={S.pagePad}><UpdatesScreen baseUrl={baseUrl} /></div>
           )}
           {standalone && view === "users" && standaloneSession && (
@@ -407,16 +412,40 @@ function ExpiryBanner({ expiresAt, compact = false }: { expiresAt: string | null
   if (days > 7) return null;
   const dateStr = new Date(expiresAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" });
   if (compact) {
-    // Compact pill that sits INSIDE the topbar. Whatsapp is the primary CTA;
-    // phone numbers are exposed via `title` to keep the bar one line.
-    const tooltip = `ينتهي بتاريخ ${dateStr} — كرم عزام: 01000903159 (داخل مصر) / 00201000903159 (خارج مصر)`;
+    // Compact-but-rich pill inside the topbar. Shows the full picture
+    // in one glance: countdown (color-coded by urgency) + exact date
+    // + direct WhatsApp/phone shortcuts. Stays a single line at ~720p.
+    const urgent = days <= 3;
+    const pillStyle = urgent ? S.warnPillUrgent : S.warnPill;
     return (
-      <div style={S.warnPill} title={tooltip}>
-        <span style={{ fontSize: 14 }}>⚠️</span>
-        <span>ينتهي اشتراك الجهاز خلال <strong>{days}</strong> {days === 1 ? "يوم" : "أيام"}</span>
-        <a href="https://wa.me/201000903159" target="_blank" rel="noreferrer"
-           style={{ color: "#15803d", fontWeight: 700, textDecoration: "underline", whiteSpace: "nowrap" }}>
-          تواصل 💬
+      <div style={pillStyle}>
+        <span style={{ fontSize: 14 }}>{urgent ? "🔴" : "⚠️"}</span>
+        <span style={S.pillSegMain}>
+          ينتهي خلال{" "}
+          <strong style={{ fontSize: 13, color: urgent ? "#991b1b" : "#78350f" }}>
+            {days}
+          </strong>{" "}
+          {days === 1 ? "يوم" : "أيام"}
+        </span>
+        <span style={S.pillDivider}>·</span>
+        <span style={S.pillSegDate} title="تاريخ انتهاء الاشتراك">📅 {dateStr}</span>
+        <span style={S.pillDivider}>·</span>
+        <span style={S.pillSegContact}>للتجديد — م/ كرم عزام</span>
+        <a
+          href="https://wa.me/201000903159"
+          target="_blank"
+          rel="noreferrer"
+          style={S.pillWhatsapp}
+          title="فتح واتساب — 00201000903159"
+        >
+          💬 واتساب
+        </a>
+        <a
+          href="tel:01000903159"
+          style={S.pillPhone}
+          title="01000903159 داخل مصر · 00201000903159 خارج مصر"
+        >
+          📞 اتصال
         </a>
       </div>
     );
@@ -703,7 +732,35 @@ const S = {
     background: "linear-gradient(90deg, #fef3c7 0%, #fde68a 100%)",
     color: "#78350f", border: "1px solid #fcd34d", borderRadius: 999,
     fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" as const,
-    maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis",
+    maxWidth: "100%", overflow: "hidden",
+    boxShadow: "0 1px 4px rgba(251,191,36,0.25)",
+  } as const,
+  warnPillUrgent: {
+    display: "inline-flex", alignItems: "center", gap: 8,
+    padding: "6px 14px",
+    background: "linear-gradient(90deg, #fee2e2 0%, #fecaca 100%)",
+    color: "#7f1d1d", border: "1px solid #fca5a5", borderRadius: 999,
+    fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" as const,
+    maxWidth: "100%", overflow: "hidden",
+    boxShadow: "0 1px 6px rgba(220,38,38,0.25)",
+  } as const,
+  pillSegMain: { display: "inline-flex", gap: 3, alignItems: "center" } as const,
+  pillSegDate: { fontSize: 11.5, opacity: 0.92 } as const,
+  pillSegContact: { fontSize: 11.5, opacity: 0.85 } as const,
+  pillDivider: { opacity: 0.4, fontSize: 11 } as const,
+  pillWhatsapp: {
+    display: "inline-flex", alignItems: "center", gap: 3,
+    padding: "3px 10px", background: "#16a34a", color: "#fff",
+    borderRadius: 999, fontSize: 11.5, fontWeight: 700,
+    textDecoration: "none", whiteSpace: "nowrap" as const,
+    boxShadow: "0 1px 3px rgba(22,163,74,0.4)",
+  } as const,
+  pillPhone: {
+    display: "inline-flex", alignItems: "center", gap: 3,
+    padding: "3px 10px", background: "#fff", color: "#0f172a",
+    border: "1px solid #cbd5e1", borderRadius: 999,
+    fontSize: 11.5, fontWeight: 700,
+    textDecoration: "none", whiteSpace: "nowrap" as const,
   } as const,
   updateBanner: {
     display: "flex", alignItems: "center", gap: 12,
