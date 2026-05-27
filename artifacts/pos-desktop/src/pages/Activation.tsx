@@ -19,6 +19,7 @@ import {
   getFingerprint, getDeviceName, getOsInfo, getAppVersion,
   saveDeviceToken, TAURI_MODE,
 } from "../lib/tauri-shim";
+import { setAppMode } from "../lib/standalone";
 
 type Country = { code: string; name: string };
 
@@ -159,8 +160,21 @@ export default function Activation({ onActivated }: { onActivated: (info: Activa
     <div dir="rtl" style={S.wrap}>
       <header style={S.header}>
         <h1 style={S.title}>{STEP_TITLES[step]}</h1>
-        <div style={S.mode}>
-          {TAURI_MODE === "tauri" ? "🪟 وضع التطبيق الأصلي" : "🌐 وضع المتصفح (تطوير)"}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button
+            onClick={async () => {
+              if (!confirm("هل تريد العودة لاختيار طريقة التشغيل (سحابي / مستقل)؟")) return;
+              await setAppMode(null as never);
+              location.reload();
+            }}
+            style={{ padding: "6px 12px", fontSize: 13, background: "#fff", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", color: "#475569" }}
+            title="العودة لاختيار طريقة التشغيل"
+          >
+            ← تغيير الوضع
+          </button>
+          <div style={S.mode}>
+            {TAURI_MODE === "tauri" ? "🪟 وضع التطبيق الأصلي" : "🌐 وضع المتصفح (تطوير)"}
+          </div>
         </div>
       </header>
 
