@@ -170,14 +170,7 @@ jobs:
         continue-on-error: true   # Step 6 will tighten this once the source stabilises
 
       # ─── 6. Build Vite frontend ─────────────────────────────────────
-      # IMPORTANT: VITE_OFFLINE_LICENSE_PUBLIC_KEY_B64 must be set as a repo
-      # secret. Without it, standalone-license verification falls back to
-      # "accept any signature" (dev mode) and the app shows a fail-closed
-      # banner. The matching private key lives on the API server in the
-      # OFFLINE_LICENSE_PRIVATE_KEY_PEM env secret.
       - name: Build frontend (Vite)
-        env:
-          VITE_OFFLINE_LICENSE_PUBLIC_KEY_B64: ${{ secrets.OFFLINE_LICENSE_PUBLIC_KEY_B64 }}
         run: pnpm run build
 
       # ─── 7. Build Tauri MSI ─────────────────────────────────────────
