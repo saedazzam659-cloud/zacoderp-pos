@@ -60,16 +60,18 @@ export function useLatestVersion(baseUrl: string): {
   const [latest, setLatest] = useState<ReleaseInfo | null>(null);
 
   useEffect(() => {
-    // Standalone mode must NEVER touch the network — abort entirely.
+    // Standalone mode: the heartbeat banner must NEVER auto-poll over
+    // the network without explicit user action. Updates page is opt-in.
     if (!baseUrl || localStorage.getItem("pos_desktop_app_mode") === "standalone") {
       return;
     }
     let cancelled = false;
     const country = (localStorage.getItem("pos_desktop_country") || "SA").toUpperCase();
+    const base = baseUrl.replace(/\/+$/, "");
 
     const check = async () => {
       try {
-        const url = `${baseUrl}/api/public/download/release?country=${encodeURIComponent(country)}&platform=win-x64`;
+        const url = `${base}/api/public/download/release?country=${encodeURIComponent(country)}&platform=win-x64`;
         const r = await fetch(url, { method: "GET" });
         if (!r.ok) return; // 404 / 5xx → silently skip
         const data = (await r.json()) as ReleaseInfo;

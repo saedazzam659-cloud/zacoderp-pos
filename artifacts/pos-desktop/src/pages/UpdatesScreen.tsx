@@ -20,6 +20,24 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 const APP_VERSION = __APP_VERSION__;
 
+// Public update server. In standalone mode the app has NO `baseUrl`
+// (no cloud tenant), so update checks would otherwise hit a relative
+// path — under Tauri that resolves to the bundled SPA and returns
+// index.html, breaking `JSON.parse` with "Unexpected token '<'".
+// Override at build time with `VITE_UPDATE_SERVER_URL` if the public
+// download host ever moves.
+const PUBLIC_UPDATE_SERVER =
+  ((import.meta.env.VITE_UPDATE_SERVER_URL ?? "") as string).trim()
+  || "https://zacoderp.com";
+
+function resolveUpdateBase(baseUrl: string): string {
+  const b = (baseUrl || "").trim();
+  if (!b) return PUBLIC_UPDATE_SERVER;
+  // Tauri/file/asset origins can't serve the API — fall back to public.
+  if (/^(tauri|file|asset):/i.test(b)) return PUBLIC_UPDATE_SERVER;
+  return b.replace(/\/+$/, "");
+}
+
 type ReleaseInfo = {
   version: string;
   downloadUrl: string;
@@ -80,11 +98,20 @@ export default function UpdatesScreen({ baseUrl }: Props) {
   async function check() {
     setLoading(true); setError(null);
     try {
-      const url = `${baseUrl}/api/public/download/release?country=${encodeURIComponent(country)}&platform=win-x64`;
+      const base = resolveUpdateBase(baseUrl);
+      const url = `${base}/api/public/download/release?country=${encodeURIComponent(country)}&platform=win-x64`;
       const r = await fetch(url, { method: "GET" });
       if (r.status === 404) { setRelease(null); setLoading(false); return; }
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const data = await r.json();
+      if (!r.ok) throw new Error(`HTTP ${r.status} من ${base}`);
+      // Defensive parse: some hosts (incl. SPA fallbacks) return HTML
+      // with a 200 status. Detect that explicitly so the user sees a
+      // helpful message instead of "Unexpected token '<'".
+      const text = await r.text();
+      const trimmed = text.trimStart();
+      if (trimmed.startsWith("<")) {
+        throw new Error(`خادم التحديثات أرجع صفحة HTML بدلاً من JSON (${base}) — تحقق من عنوان الخادم`);
+      }
+      const data = JSON.parse(text);
       setRelease(data);
     } catch (e: any) {
       setError(e?.message ?? "تعذّر الاتصال بخادم التحديثات");
