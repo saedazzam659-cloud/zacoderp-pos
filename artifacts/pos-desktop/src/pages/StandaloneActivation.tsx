@@ -87,7 +87,7 @@ export default function StandaloneActivation({ onDone, onCancel }: {
       setPhase("done");
       if (payload) onDone(payload);
     } catch (e: any) {
-      setErr(e?.message ?? "فشل إنشاء المستخدم");
+      setErr(typeof e === "string" ? e : (e?.message ?? "فشل إنشاء المستخدم"));
     } finally { setBusy(false); }
   }
 

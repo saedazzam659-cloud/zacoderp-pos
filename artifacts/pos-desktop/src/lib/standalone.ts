@@ -219,7 +219,7 @@ export async function setAppMode(m: AppMode): Promise<void> {
 // ─── License ─────────────────────────────────────────────────────────
 export async function saveLicense(file: SignedLicenseFile): Promise<void> {
   if (hasTauri()) {
-    try { await invoke("standalone_save_license", { file_json: JSON.stringify(file) }); return; } catch { /* fall through */ }
+    try { await invoke("standalone_save_license", { fileJson: JSON.stringify(file) }); return; } catch { /* fall through */ }
   }
   localStorage.setItem(LS_LICENSE, JSON.stringify(file));
 }
@@ -255,7 +255,7 @@ export async function createLocalUser(input: {
   const displayName = input.displayName.trim() || username;
   if (hasTauri()) {
     return await invoke<LocalUser>("standalone_create_user", {
-      id: uuid(), username, display_name: displayName,
+      id: uuid(), username, displayName,
       password: input.password, role: input.role,
     });
   }
@@ -356,7 +356,7 @@ export async function deleteLocalUser(id: string): Promise<void> {
 export async function changeLocalPassword(id: string, newPassword: string): Promise<void> {
   if (newPassword.length < 4) throw new Error("كلمة المرور قصيرة جداً");
   if (hasTauri()) {
-    await invoke("standalone_change_password", { id, new_password: newPassword });
+    await invoke("standalone_change_password", { id, newPassword });
     return;
   }
   const users = lsLoadUsers();
