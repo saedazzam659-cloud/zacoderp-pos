@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
-import { Download, KeyRound, ShieldOff, Trash2, Copy, RefreshCw, Plus } from "lucide-react";
+import { Download, KeyRound, ShieldOff, Trash2, Copy, RefreshCw, Plus, Pencil, Search } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -67,6 +67,60 @@ export default function OfflineLicenses() {
     customerName: "", vertical: "retail", plan: "standalone_pos",
     maxUsers: 5, fingerprint: "", expiresAt: "", notes: "",
   });
+
+  // Search / filter — used to narrow long lists by license key or customer name.
+  const [search, setSearch] = useState("");
+
+  // Edit dialog state — SuperAdmin uses this mainly to extend / renew the expiry.
+  const [editing, setEditing] = useState<OfflineLicense | null>(null);
+  const [editForm, setEditForm] = useState({
+    customerName: "", vertical: "retail", maxUsers: 5, expiresAt: "", notes: "",
+  });
+  function openEdit(lic: OfflineLicense) {
+    setEditing(lic);
+    setEditForm({
+      customerName: lic.customerName,
+      vertical: lic.vertical,
+      maxUsers: lic.maxUsers,
+      expiresAt: lic.expiresAt ? new Date(lic.expiresAt).toISOString().slice(0, 10) : "",
+      notes: lic.notes ?? "",
+    });
+  }
+  const edit = useMutation({
+    mutationFn: async () => {
+      if (!editing) return;
+      const body: any = {
+        customerName: editForm.customerName,
+        vertical: editForm.vertical,
+        maxUsers: Number(editForm.maxUsers),
+        notes: editForm.notes,
+        // empty string clears expiry (permanent license)
+        expiresAt: editForm.expiresAt ? new Date(editForm.expiresAt).toISOString() : "",
+      };
+      const r = await fetch(`${API}/api/admin/offline-licenses/${editing.id}`, {
+        method: "PATCH", headers, body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error((await r.json()).error ?? "فشل التعديل");
+      return r.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تم تحديث الترخيص", description: "تم إعادة توقيع الملف بأحدث القيم. حمّله من جديد وسلّمه للعميل." });
+      qc.invalidateQueries({ queryKey: ["offline-licenses"] });
+      qc.invalidateQueries({ queryKey: ["offline-licenses-stats"] });
+      setEditing(null);
+    },
+    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+  });
+
+  // ⏩ quick-extend helpers — bumps the expiry forward N days from
+  // either the current expiry (if still in the future) or from today.
+  function bumpExpiry(days: number) {
+    const base = editForm.expiresAt && new Date(editForm.expiresAt).getTime() > Date.now()
+      ? new Date(editForm.expiresAt)
+      : new Date();
+    base.setDate(base.getDate() + days);
+    setEditForm({ ...editForm, expiresAt: base.toISOString().slice(0, 10) });
+  }
 
   const create = useMutation({
     mutationFn: async () => {
@@ -145,13 +199,22 @@ export default function OfflineLicenses() {
             إصدار ملفات ترخيص موقّعة رقمياً (Ed25519) لتشغيل تطبيق POS Desktop في وضع مستقل بدون أي ربط سحابي.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <Button variant="outline" onClick={() => qc.invalidateQueries()}>
             <RefreshCw className="ml-2 h-4 w-4" /> تحديث
           </Button>
           <Button onClick={() => setShowCreate(true)}>
             <Plus className="ml-2 h-4 w-4" /> ترخيص جديد
           </Button>
+          <div className="relative">
+            <Search className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="بحث برقم الترخيص أو اسم العميل…"
+              className="w-72 pr-8"
+            />
+          </div>
         </div>
       </div>
 
@@ -202,8 +265,22 @@ export default function OfflineLicenses() {
               لا توجد تراخيص بعد. اضغط "ترخيص جديد" لإصدار أول ترخيص.
             </div>
           )}
+          {(() => {
+            const q = search.trim().toLowerCase();
+            const filtered = q
+              ? (listQ.data ?? []).filter((l) =>
+                  l.licenseKey.toLowerCase().includes(q) ||
+                  l.customerName.toLowerCase().includes(q) ||
+                  (l.notes ?? "").toLowerCase().includes(q))
+              : (listQ.data ?? []);
+            return (
           <div className="space-y-2">
-            {listQ.data?.map((lic) => (
+            {q && (
+              <div className="text-xs text-muted-foreground mb-2">
+                {filtered.length} نتيجة من أصل {listQ.data?.length ?? 0}
+              </div>
+            )}
+            {filtered.map((lic) => (
               <div key={lic.id} className="border rounded-lg p-4 flex items-center justify-between hover:bg-slate-50">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
@@ -221,6 +298,10 @@ export default function OfflineLicenses() {
                   </div>
                 </div>
                 <div className="flex gap-1">
+                  <Button size="sm" variant="outline" onClick={() => openEdit(lic)}
+                          disabled={lic.status === "revoked"} title="تعديل / تجديد المدة">
+                    <Pencil className="h-4 w-4 text-blue-600" />
+                  </Button>
                   <Button size="sm" variant="outline" onClick={() => redownload(lic.id, lic.licenseKey)}
                           disabled={lic.status === "revoked"} title="تنزيل ملف الترخيص الموقّع">
                     <Download className="h-4 w-4" />
@@ -239,6 +320,8 @@ export default function OfflineLicenses() {
               </div>
             ))}
           </div>
+            );
+          })()}
         </CardContent>
       </Card>
 
@@ -295,6 +378,75 @@ export default function OfflineLicenses() {
             <Button variant="outline" onClick={() => setShowCreate(false)}>إلغاء</Button>
             <Button onClick={() => create.mutate()} disabled={!form.customerName.trim() || create.isPending}>
               {create.isPending ? "جارٍ الإنشاء…" : "إنشاء وتنزيل الملف"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit / Renew dialog — main use case: extend expiry. Also lets
+          SuperAdmin fix the customer name, change the vertical, or raise
+          maxUsers. Backend re-signs the file so the next download
+          delivers the updated, freshly-signed copy to the customer. */}
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent dir="rtl" className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>تعديل / تجديد الترخيص</DialogTitle>
+            <DialogDescription>
+              {editing && (<>
+                مفتاح: <code className="font-mono text-xs">{editing.licenseKey}</code> · العميل: <b>{editing.customerName}</b>
+              </>)}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>اسم العميل</Label>
+              <Input value={editForm.customerName} onChange={(e) => setEditForm({ ...editForm, customerName: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>المجال</Label>
+                <Select value={editForm.vertical} onValueChange={(v) => setEditForm({ ...editForm, vertical: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="retail">تجزئة عامة</SelectItem>
+                    <SelectItem value="grocery">بقالة / سوبرماركت</SelectItem>
+                    <SelectItem value="pharmacy">صيدلية</SelectItem>
+                    <SelectItem value="restaurant">مطعم</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>الحد الأقصى للمستخدمين</Label>
+                <Input type="number" min={1} max={100} value={editForm.maxUsers}
+                  onChange={(e) => setEditForm({ ...editForm, maxUsers: Number(e.target.value) })} />
+              </div>
+            </div>
+            <div>
+              <Label>تاريخ الانتهاء</Label>
+              <Input type="date" value={editForm.expiresAt}
+                onChange={(e) => setEditForm({ ...editForm, expiresAt: e.target.value })} />
+              <div className="flex gap-2 mt-2 flex-wrap">
+                <Button type="button" size="sm" variant="secondary" onClick={() => bumpExpiry(30)}>+30 يوم</Button>
+                <Button type="button" size="sm" variant="secondary" onClick={() => bumpExpiry(90)}>+3 شهور</Button>
+                <Button type="button" size="sm" variant="secondary" onClick={() => bumpExpiry(180)}>+6 شهور</Button>
+                <Button type="button" size="sm" variant="secondary" onClick={() => bumpExpiry(365)}>+سنة</Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setEditForm({ ...editForm, expiresAt: "" })}>
+                  بدون انتهاء (دائم)
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                الأزرار تضيف من تاريخ الانتهاء الحالي (إن لم يكن منتهياً)، وإلا من اليوم.
+              </p>
+            </div>
+            <div>
+              <Label>ملاحظات</Label>
+              <Textarea rows={2} value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(null)}>إلغاء</Button>
+            <Button onClick={() => edit.mutate()} disabled={!editForm.customerName.trim() || edit.isPending}>
+              {edit.isPending ? "جارٍ الحفظ…" : "حفظ وإعادة التوقيع"}
             </Button>
           </DialogFooter>
         </DialogContent>

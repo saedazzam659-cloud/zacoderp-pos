@@ -116,6 +116,79 @@ router.get("/:id/file", async (req, res) => {
   res.send(JSON.stringify(signed, null, 2));
 });
 
+// ─── PATCH /api/admin/offline-licenses/:id ───────────────────────────
+// SuperAdmin edit — primarily for extending / renewing the expiry date,
+// but also lets you correct customer name, raise maxUsers, etc. When ANY
+// signed field changes (expiresAt, customerName, vertical, plan,
+// maxUsers, fingerprintHash, notes) we re-sign with the current keypair
+// and overwrite `signedFileJson` so the next download hands the customer
+// the updated, freshly-signed file.
+const editSchema = z.object({
+  customerName: z.string().min(1).max(200).optional(),
+  vertical: z.enum(["retail", "pharmacy", "restaurant", "grocery"]).optional(),
+  plan: z.string().min(1).max(50).optional(),
+  maxUsers: z.number().int().min(1).max(100).optional(),
+  fingerprint: z.string().min(8).nullable().optional(),
+  // accept "" / null to clear the expiry (make it permanent)
+  expiresAt: z.union([z.string().datetime({ offset: true }), z.literal(""), z.null()]).optional(),
+  notes: z.string().max(1000).nullable().optional(),
+});
+router.patch("/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "bad id" }); return; }
+  const parsed = editSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "bad payload", details: parsed.error.issues }); return; }
+  const [existing] = await db.select().from(offlineLicensesTable).where(eq(offlineLicensesTable.id, id));
+  if (!existing) { res.status(404).json({ error: "not found" }); return; }
+  if (existing.status === "revoked") { res.status(409).json({ error: "cannot edit a revoked license" }); return; }
+
+  const merged = {
+    customerName: parsed.data.customerName ?? existing.customerName,
+    vertical: parsed.data.vertical ?? existing.vertical,
+    plan: parsed.data.plan ?? existing.plan,
+    maxUsers: parsed.data.maxUsers ?? existing.maxUsers,
+    fingerprintHash:
+      parsed.data.fingerprint === undefined ? existing.fingerprintHash
+      : parsed.data.fingerprint === null ? null
+      : hashFingerprint(parsed.data.fingerprint),
+    expiresAt:
+      parsed.data.expiresAt === undefined ? existing.expiresAt
+      : parsed.data.expiresAt === "" || parsed.data.expiresAt === null ? null
+      : new Date(parsed.data.expiresAt),
+    notes: parsed.data.notes === undefined ? existing.notes : parsed.data.notes,
+  };
+
+  const signed = signOfflineLicense({
+    licenseKey: existing.licenseKey,
+    customerName: merged.customerName,
+    vertical: merged.vertical,
+    plan: merged.plan,
+    maxUsers: merged.maxUsers,
+    fingerprintHash: merged.fingerprintHash,
+    issuedAt: existing.issuedAt.toISOString(),
+    expiresAt: merged.expiresAt ? merged.expiresAt.toISOString() : null,
+    notes: merged.notes ?? undefined,
+  });
+
+  const [updated] = await db.update(offlineLicensesTable).set({
+    customerName: merged.customerName,
+    vertical: merged.vertical,
+    plan: merged.plan,
+    maxUsers: merged.maxUsers,
+    fingerprintHash: merged.fingerprintHash,
+    expiresAt: merged.expiresAt,
+    notes: merged.notes,
+    // If we were previously "expired" and the new expiry is in the future
+    // (or null = permanent), flip back to "active".
+    status: (merged.expiresAt === null || merged.expiresAt.getTime() > Date.now()) ? "active" : existing.status,
+    signedFileJson: JSON.stringify(signed),
+    publicKeyFingerprint: signed.publicKeyFingerprint,
+    updatedAt: new Date(),
+  }).where(eq(offlineLicensesTable.id, id)).returning();
+
+  res.json({ ok: true, license: updated, signedFile: signed });
+});
+
 // ─── POST /api/admin/offline-licenses/:id/revoke ────────────────────
 router.post("/:id/revoke", async (req, res) => {
   const id = Number(req.params.id);
