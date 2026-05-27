@@ -68,7 +68,14 @@ export type LocalSession = {
 };
 
 // ─── License verification (pure crypto, mode-agnostic) ───────────────
-const PINNED_PUBKEY_B64: string = (import.meta.env.VITE_OFFLINE_LICENSE_PUBLIC_KEY_B64 ?? "") as string;
+// Ed25519 public key for offline license verification.
+// Safe to commit: this is the PUBLIC key — the matching private key
+// lives only in the server's OFFLINE_LICENSE_PRIVATE_KEY_PEM secret.
+// Env var still wins so we can rotate without a code change.
+const HARDCODED_PUBKEY_B64 = "DiK15tbTP9t837JvtXwx/cFDzPVjKl45ds8FHb/gC+A=";
+const PINNED_PUBKEY_B64: string =
+  ((import.meta.env.VITE_OFFLINE_LICENSE_PUBLIC_KEY_B64 ?? "") as string).trim()
+  || HARDCODED_PUBKEY_B64;
 export const DEV_PUBKEY_UNPINNED = !PINNED_PUBKEY_B64;
 // Visible debug badge: first 12 + last 4 chars of the pinned pubkey (or "EMPTY").
 // Used by StandaloneActivation to prove which build is running on the device.
