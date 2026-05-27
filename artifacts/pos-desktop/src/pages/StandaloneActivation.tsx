@@ -11,7 +11,7 @@
 import { useEffect, useState } from "react";
 import {
   verifyLicenseFile, saveLicense, type SignedLicenseFile, type OfflineLicensePayload,
-  createLocalUser, countLocalUsers, DEV_PUBKEY_UNPINNED,
+  createLocalUser, countLocalUsers, DEV_PUBKEY_UNPINNED, PINNED_PUBKEY_FINGERPRINT,
 } from "../lib/standalone";
 import { getFingerprint } from "../lib/tauri-shim";
 
@@ -98,6 +98,9 @@ export default function StandaloneActivation({ onDone, onCancel }: {
           <h1 style={S.title}>تفعيل الوضع المستقل</h1>
           <button onClick={onCancel} style={S.linkBtn}>← العودة لاختيار الوضع</button>
         </header>
+        <div style={{ fontSize: 11, color: PINNED_PUBKEY_FINGERPRINT === "EMPTY" ? "#dc2626" : "#16a34a", fontFamily: "monospace", padding: "4px 8px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4, marginBottom: 12, direction: "ltr", textAlign: "left" }}>
+          build v{__APP_VERSION__} · pinned pubkey: {PINNED_PUBKEY_FINGERPRINT}
+        </div>
 
         {DEV_PUBKEY_UNPINNED && (
           <div style={S.warn}>

@@ -70,6 +70,11 @@ export type LocalSession = {
 // ─── License verification (pure crypto, mode-agnostic) ───────────────
 const PINNED_PUBKEY_B64: string = (import.meta.env.VITE_OFFLINE_LICENSE_PUBLIC_KEY_B64 ?? "") as string;
 export const DEV_PUBKEY_UNPINNED = !PINNED_PUBKEY_B64;
+// Visible debug badge: first 12 + last 4 chars of the pinned pubkey (or "EMPTY").
+// Used by StandaloneActivation to prove which build is running on the device.
+export const PINNED_PUBKEY_FINGERPRINT: string = PINNED_PUBKEY_B64
+  ? `${PINNED_PUBKEY_B64.slice(0, 12)}…${PINNED_PUBKEY_B64.slice(-4)} (${PINNED_PUBKEY_B64.length} chars)`
+  : "EMPTY";
 
 function b64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
