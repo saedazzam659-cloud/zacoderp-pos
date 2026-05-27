@@ -1,20 +1,24 @@
-// UpdatesScreen — in-app updater.
+// UpdatesScreen — in-app updater with Microsoft-style progress bar.
 //
-// Calls GET /api/public/download/release?country=XX&platform=win-x64
-// to find the latest published MSI, compares with the bundled app
-// version, and offers a "Download & install" button.
+// Flow:
+//   1. GET /api/public/download/release?country=XX&platform=win-x64
+//      → finds the latest published MSI for the user's country.
+//   2. Compares with __APP_VERSION__ (injected from package.json at
+//      build time). If newer, shows the "تنزيل وتثبيت" button.
+//   3. Clicking the button calls the Rust command
+//      `download_and_install_update` which streams the MSI to %TEMP%,
+//      emits `updater://progress` events (we render a progress bar),
+//      verifies the SHA-256, then spawns `msiexec /passive` and exits
+//      the app so Windows can replace the binaries.
 //
-// Behaviour:
-//   • In Tauri mode: TODO — invoke('install_update') once the Rust
-//     side wires Tauri Updater into main.rs. For now we open the
-//     download URL in the system browser via `window.open`.
-//   • In browser mode: opens the MSI URL directly so the user can
-//     download it manually (or visit /download landing page).
+// In browser mode we fall back to opening the MSI URL in a new tab
+// since there's no Tauri runtime to launch msiexec.
 
-import { useEffect, useMemo, useState } from "react";
-import { TAURI_MODE } from "../lib/tauri-shim";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { TAURI_MODE, invoke } from "../lib/tauri-shim";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-const APP_VERSION = "0.3.3";
+const APP_VERSION = __APP_VERSION__;
 
 type ReleaseInfo = {
   version: string;
@@ -55,6 +59,8 @@ function formatDate(iso: string): string {
 
 type Props = { baseUrl: string };
 
+type Phase = "idle" | "downloading" | "verifying" | "launching" | "done" | "error";
+
 export default function UpdatesScreen({ baseUrl }: Props) {
   const country = useMemo(() => {
     return localStorage.getItem("pos_desktop_country") || "SA";
@@ -63,7 +69,13 @@ export default function UpdatesScreen({ baseUrl }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [release, setRelease] = useState<ReleaseInfo | null>(null);
-  const [downloading, setDownloading] = useState(false);
+
+  // Update flow state
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [progress, setProgress] = useState({ downloaded: 0, total: 0, percent: 0 });
+  const [installError, setInstallError] = useState<string | null>(null);
+  const unlistenRef = useRef<UnlistenFn | null>(null);
+  const exitUnlistenRef = useRef<UnlistenFn | null>(null);
 
   async function check() {
     setLoading(true); setError(null);
@@ -81,21 +93,59 @@ export default function UpdatesScreen({ baseUrl }: Props) {
 
   useEffect(() => { void check(); }, [country, baseUrl]);
 
+  // Detach event listeners on unmount.
+  useEffect(() => {
+    return () => {
+      unlistenRef.current?.();
+      exitUnlistenRef.current?.();
+    };
+  }, []);
+
   const hasUpdate = release && compareVersions(release.version, APP_VERSION) > 0;
   const isUpToDate = release && !hasUpdate;
 
-  async function startDownload() {
+  async function startInstall() {
     if (!release) return;
-    setDownloading(true);
-    try {
-      // Open the MSI URL in a new tab / system browser.
-      // Future: in TAURI_MODE, call invoke("install_update", { url }) once
-      // Tauri Updater plugin is wired into the Rust side.
+    setInstallError(null);
+
+    // Browser mode → fall back to opening the URL.
+    if (!TAURI_MODE) {
       window.open(release.downloadUrl, "_blank", "noopener,noreferrer");
-    } finally {
-      setTimeout(() => setDownloading(false), 1500);
+      return;
+    }
+
+    setPhase("downloading");
+    setProgress({ downloaded: 0, total: release.fileSizeBytes ?? 0, percent: 0 });
+
+    // Subscribe to progress + exit-imminent events. Both unlisten functions
+    // are stored in refs so we can detach on unmount.
+    try {
+      unlistenRef.current = await listen<{ downloaded: number; total: number; percent: number }>(
+        "updater://progress",
+        (e) => setProgress(e.payload),
+      );
+      exitUnlistenRef.current = await listen("updater://exiting", () => setPhase("launching"));
+    } catch (e: any) {
+      setInstallError(`فشل ربط أحداث التحديث: ${e?.message ?? e}`);
+    }
+
+    try {
+      await invoke("download_and_install_update", {
+        url: release.downloadUrl,
+        expectedSha256: release.checksumSha256 ?? null,
+        version: release.version,
+      });
+      // If we reach here without the app exiting, the installer has been
+      // spawned and we're moments away from process.exit(0).
+      setPhase("launching");
+    } catch (e: any) {
+      const msg = typeof e === "string" ? e : (e?.message ?? String(e));
+      setInstallError(msg);
+      setPhase("error");
     }
   }
+
+  const installing = phase === "downloading" || phase === "verifying" || phase === "launching";
 
   return (
     <div dir="rtl" style={S.wrap}>
@@ -104,7 +154,7 @@ export default function UpdatesScreen({ baseUrl }: Props) {
           <h1 style={S.title}>التحديثات</h1>
           <p style={S.subtitle}>تحقّق من توفّر إصدار جديد من البرنامج وثبّته بضغطة واحدة</p>
         </div>
-        <button style={S.refreshBtn} onClick={check} disabled={loading}>
+        <button style={S.refreshBtn} onClick={check} disabled={loading || installing}>
           {loading ? "⏳ جارٍ التحقق…" : "🔄 إعادة الفحص"}
         </button>
       </header>
@@ -129,7 +179,6 @@ export default function UpdatesScreen({ baseUrl }: Props) {
         </div>
       </section>
 
-      {/* ── Error state ─────────────────────────────────────── */}
       {error && (
         <div style={S.errorBox}>
           ⚠️ {error}
@@ -137,7 +186,6 @@ export default function UpdatesScreen({ baseUrl }: Props) {
         </div>
       )}
 
-      {/* ── No release configured ───────────────────────────── */}
       {!loading && !error && !release && (
         <div style={S.emptyBox}>
           <div style={S.emptyIcon}>📭</div>
@@ -148,7 +196,6 @@ export default function UpdatesScreen({ baseUrl }: Props) {
         </div>
       )}
 
-      {/* ── Release info + actions ──────────────────────────── */}
       {release && (
         <section style={S.releaseCard}>
           <div style={S.releaseHeader}>
@@ -185,29 +232,77 @@ export default function UpdatesScreen({ baseUrl }: Props) {
             </div>
           </div>
 
-          {hasUpdate ? (
-            <button style={S.installBtn} onClick={startDownload} disabled={downloading}>
-              {downloading ? "⏳ جارٍ فتح صفحة التنزيل…" : `⬇️ تنزيل وتثبيت الإصدار v${release.version}`}
+          {/* ── Install action / progress UI ──────────────── */}
+          {hasUpdate && phase === "idle" && (
+            <button style={S.installBtn} onClick={startInstall}>
+              ⬇️ تنزيل وتثبيت الإصدار v{release.version}
             </button>
-          ) : isUpToDate ? (
+          )}
+
+          {installing && (
+            <div style={S.progressWrap}>
+              <div style={S.progressLabel}>
+                <span>
+                  {phase === "launching"
+                    ? "🚀 جارٍ تشغيل المثبّت…"
+                    : `⬇️ جارٍ التنزيل… ${progress.percent}%`}
+                </span>
+                <span style={S.progressBytes}>
+                  {formatSize(progress.downloaded)} / {formatSize(progress.total || release.fileSizeBytes)}
+                </span>
+              </div>
+              <div style={S.progressTrack}>
+                <div
+                  style={{
+                    ...S.progressFill,
+                    width: `${Math.max(2, progress.percent)}%`,
+                    background:
+                      phase === "launching"
+                        ? "linear-gradient(90deg, #16a34a, #15803d)"
+                        : "linear-gradient(90deg, #2563eb, #1d4ed8)",
+                  }}
+                />
+              </div>
+              {phase === "launching" && (
+                <div style={S.launchingHint}>
+                  سيُغلق التطبيق تلقائياً ليتمّ التثبيت. افتحه من جديد بعد انتهاء معالج Windows.
+                </div>
+              )}
+            </div>
+          )}
+
+          {phase === "error" && installError && (
+            <div style={S.errorBox}>
+              ⚠️ فشل التحديث: {installError}
+              <div style={{ marginTop: 10 }}>
+                <button style={S.retryBtn} onClick={() => { setPhase("idle"); setInstallError(null); }}>
+                  🔁 إعادة المحاولة
+                </button>
+                <a href={release.downloadUrl} target="_blank" rel="noreferrer" style={S.manualLink}>
+                  تنزيل يدوي
+                </a>
+              </div>
+            </div>
+          )}
+
+          {isUpToDate && phase === "idle" && (
             <div style={S.upToDateBox}>
               ✅ أنت تستخدم آخر إصدار متاح
             </div>
-          ) : null}
+          )}
 
           <div style={S.installSteps}>
-            <div style={S.installStepsTitle}>خطوات التثبيت بعد التنزيل:</div>
+            <div style={S.installStepsTitle}>ماذا يحدث بعد الضغط على زر التحديث:</div>
             <ol style={S.installList}>
-              <li>أغلق التطبيق الحالي تماماً</li>
-              <li>افتح ملف <code>.msi</code> الذي تم تنزيله</li>
-              <li>اتبع معالج التثبيت (سيتم استبدال الإصدار القديم تلقائياً)</li>
-              <li>افتح التطبيق — بياناتك المحلية ستبقى كما هي</li>
+              <li>يبدأ التنزيل داخل البرنامج مع شريط تقدّم مباشر</li>
+              <li>يتم التحقّق من سلامة الملف (SHA-256)</li>
+              <li>يُغلق التطبيق ويبدأ معالج Windows في تثبيت الإصدار الجديد</li>
+              <li>افتح التطبيق من جديد — بياناتك المحلية محفوظة</li>
             </ol>
           </div>
         </section>
       )}
 
-      {/* ── Footer note ─────────────────────────────────────── */}
       <div style={S.footerNote}>
         💡 التحديثات تجلب الميزات الجديدة وإصلاحات الأخطاء. بياناتك المخزَّنة محلياً (الفواتير،
         العملاء، الأصناف) محفوظة ولا تتأثر بالتحديث.
@@ -296,6 +391,32 @@ const S = {
     color: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer",
     boxShadow: "0 4px 12px rgba(37,99,235,0.3)",
   } as React.CSSProperties,
+  progressWrap: {
+    padding: 16, background: "#fff", border: "1px solid #bfdbfe",
+    borderRadius: 10, marginTop: 4,
+  } as React.CSSProperties,
+  progressLabel: {
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    fontSize: 14, fontWeight: 600, color: "#1e3a8a", marginBottom: 10,
+  } as React.CSSProperties,
+  progressBytes: { fontSize: 12, color: "#64748b", fontFamily: "ui-monospace, monospace" } as React.CSSProperties,
+  progressTrack: {
+    width: "100%", height: 14, background: "#e2e8f0", borderRadius: 999, overflow: "hidden",
+  } as React.CSSProperties,
+  progressFill: {
+    height: "100%", borderRadius: 999, transition: "width 200ms ease-out",
+    background: "linear-gradient(90deg, #2563eb, #1d4ed8)",
+  } as React.CSSProperties,
+  launchingHint: {
+    marginTop: 12, padding: 10, background: "#f0fdf4", border: "1px solid #bbf7d0",
+    color: "#166534", borderRadius: 8, fontSize: 13, fontWeight: 600,
+  } as React.CSSProperties,
+  retryBtn: {
+    padding: "8px 16px", background: "#fff", color: "#991b1b",
+    border: "1px solid #fecaca", borderRadius: 8, cursor: "pointer",
+    fontSize: 13, fontWeight: 600, marginInlineEnd: 12,
+  } as React.CSSProperties,
+  manualLink: { color: "#2563eb", fontWeight: 600, fontSize: 13, textDecoration: "underline" } as React.CSSProperties,
   upToDateBox: {
     background: "#dcfce7", color: "#166534", padding: 14, borderRadius: 10,
     textAlign: "center" as const, fontSize: 15, fontWeight: 600,

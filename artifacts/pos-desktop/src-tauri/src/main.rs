@@ -13,6 +13,7 @@ mod peripherals;
 mod scale;
 mod standalone;
 mod sync;
+mod updater;
 mod zatca;
 
 use serde::{Deserialize, Serialize};
@@ -349,6 +350,7 @@ fn main() {
             standalone::standalone_wipe_all,
             standalone::standalone_get_setting,
             standalone::standalone_set_setting,
+            updater::download_and_install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

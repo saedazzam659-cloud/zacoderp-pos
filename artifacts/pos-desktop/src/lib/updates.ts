@@ -8,7 +8,11 @@
 
 import { useEffect, useState } from "react";
 
-export const APP_VERSION = "0.3.3";
+// APP_VERSION is injected at build time from package.json via the
+// `__APP_VERSION__` define in vite.config.ts. Hard-coding it here is a
+// trap — the value goes stale on every release and the "update available"
+// banner ends up firing even on the latest build.
+export const APP_VERSION = __APP_VERSION__;
 
 const POLL_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 

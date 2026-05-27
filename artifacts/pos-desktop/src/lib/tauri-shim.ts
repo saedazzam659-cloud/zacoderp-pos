@@ -21,7 +21,7 @@ const IS_TAURI =
 
 // ─── invoke() loader (dynamic — avoids breaking the Vite browser build) ──
 let _invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null = null;
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (!_invoke) {
     // Dynamic import keeps @tauri-apps/api out of the browser-only bundle
     // when running on Vite dev server (where Tauri context doesn't exist).

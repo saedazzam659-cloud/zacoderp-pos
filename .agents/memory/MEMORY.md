@@ -9,3 +9,4 @@
 - [POS Desktop daily Z-report data source](pos-desktop-daily-report.md) — read local SQLite, not cloud `/api/reports/*`; offline shift-close must work without internet.
 - [POS Desktop LS overlay for catalog edits](pos-desktop-overlay-pattern.md) — cloud-pulled items/customers need LS overlay + tombstones at read time; without it `updateItem`/`deleteItem` silently no-op on SQLite-backed rows.
 - [POS Desktop standalone mode](pos-desktop-standalone-mode.md) — cloud and standalone are two separate boot trees; every cloud effect must guard `if (standalone) return;` and the mode-switch wipe must iterate ALL `pos_desktop_*` LS keys.
+- [POS Desktop APP_VERSION define](pos-desktop-app-version-define.md) — always read `__APP_VERSION__` (vite define from package.json); hardcoded version literals go stale and fire false "update available" banners.
