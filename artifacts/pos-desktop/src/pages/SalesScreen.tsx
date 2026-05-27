@@ -906,7 +906,7 @@ const S = {
 
   // Cart pane: fixed width column, content scrolls in middle, footer pinned bottom
   cartPane: {
-    width: 380, background: "#fff", border: "1px solid #e2e8f0",
+    width: 440, background: "#fff", border: "1px solid #e2e8f0",
     borderRadius: 12, display: "flex", flexDirection: "column" as const,
     minHeight: 0,
     boxShadow: "0 4px 16px rgba(0,0,0,.06)",
@@ -920,7 +920,8 @@ const S = {
   cartCountBadge: { fontSize: 11, padding: "2px 8px", background: "#f1f5f9", color: "#475569", borderRadius: 999, marginInlineStart: 8, fontWeight: 600, verticalAlign: "middle" } as const,
 
   // THIS is the ONLY scrolling region in the cart — items list
-  linesScroll: { flex: 1, overflowY: "auto" as const, overflowX: "hidden" as const, minHeight: 0, maxHeight: "100%", padding: "12px 16px" } as const,
+  // minHeight ≈ 10 lines visible (each line ≈ 60px incl. gap+padding) before scrolling kicks in.
+  linesScroll: { flex: 1, overflowY: "auto" as const, overflowX: "hidden" as const, minHeight: 600, maxHeight: "100%", padding: "12px 16px" } as const,
   cartEmpty: { padding: 40, color: "#94a3b8", fontSize: 14, textAlign: "center" as const } as const,
   lines: { display: "flex", flexDirection: "column" as const, gap: 8 } as const,
   line: { display: "flex", gap: 8, padding: 10, background: "#f8fafc", borderRadius: 8, alignItems: "center" } as const,
