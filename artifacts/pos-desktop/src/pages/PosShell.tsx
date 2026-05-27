@@ -192,6 +192,7 @@ export default function PosShell({
     ...(standaloneSession?.role === "admin"
       ? [{ id: "users" as View, icon: "🔐", label: "المستخدمون" }]
       : []),
+    { id: "dashboard", icon: "⚙️", label: "لوحة التحكم" },
   ] : [
     { id: "sales",     icon: "🛒", label: "بيع" },
     { id: "returns",   icon: "↩️", label: "مرتجع" },
@@ -215,7 +216,7 @@ export default function PosShell({
           <div style={S.brandIcon}>zacode</div>
           <div>
             <div style={S.brandName}>ZACOD POS</div>
-            <div style={S.brandTag}>v0.6.0 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
+            <div style={S.brandTag}>v0.7.2 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
           </div>
         </div>
 
@@ -331,6 +332,18 @@ export default function PosShell({
                 deviceId={deviceId} status={status} baseUrl={baseUrl} busy={busy} pulled={pulled}
                 actionErr={actionErr} heartbeatErr={heartbeatErr}
                 onPull={doPull} onPush={doPush} pushSummary={pushSummary} onDeactivate={doDeactivate}
+              />
+            </div>
+          )}
+          {standalone && view === "dashboard" && (
+            <div style={S.pagePad}>
+              <StandaloneDashboardView
+                license={standaloneLicense}
+                session={standaloneSession}
+                onOpenPeripherals={() => setShowPeripherals(true)}
+                onOpenScale={() => setView("scale")}
+                onOpenUsers={() => setView("users")}
+                onWipe={onSignOut}
               />
             </div>
           )}
@@ -490,6 +503,63 @@ function DashboardView({ deviceId, status, baseUrl, busy, pulled, actionErr, hea
         <KV k="الخادم" v={baseUrl} mono />
         <KV k="معرّف الجهاز" v={String(deviceId || "—")} />
       </section>
+    </div>
+  );
+}
+
+function StandaloneDashboardView({
+  license, session, onOpenPeripherals, onOpenScale, onOpenUsers, onWipe,
+}: {
+  license?: OfflineLicensePayload;
+  session?: LocalSession;
+  onOpenPeripherals: () => void;
+  onOpenScale: () => void;
+  onOpenUsers: () => void;
+  onWipe: () => void | Promise<void>;
+}) {
+  const isAdmin = session?.role === "admin";
+  async function confirmWipe() {
+    if (!confirm("⚠️ سيتم مسح كل البيانات المحلية (الترخيص، المستخدمون، الفواتير المحفوظة). متأكد؟")) return;
+    await onWipe();
+  }
+  return (
+    <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%" }}>
+      <section style={S.card}>
+        <h2 style={S.h2}>الإعدادات السريعة</h2>
+        <div style={S.btnRow}>
+          <button onClick={onOpenPeripherals} style={S.btnPrimary}>🖨️ الأجهزة الطرفية (الطابعة)</button>
+          <button onClick={onOpenScale} style={S.btnPrimary}>⚖️ إعدادات الميزان</button>
+          {isAdmin && (
+            <button onClick={onOpenUsers} style={S.btnPrimary}>🔐 المستخدمون</button>
+          )}
+        </div>
+      </section>
+
+      {license && (
+        <section style={S.card}>
+          <h2 style={S.h2}>معلومات الترخيص</h2>
+          <KV k="مفتاح الترخيص" v={license.licenseKey} mono />
+          <KV k="العميل" v={license.customerName ?? "—"} />
+          <KV k="المجال" v={license.vertical === "pharmacy" ? "صيدلية" : license.vertical === "grocery" ? "بقالة/سوبرماركت" : "عام"} />
+          <KV k="الخطة" v={license.plan ?? "—"} />
+          <KV k="الحد الأقصى للمستخدمين" v={String(license.maxUsers ?? "—")} />
+          {license.expiresAt && (
+            <KV k="ينتهي في" v={new Date(license.expiresAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" })} />
+          )}
+        </section>
+      )}
+
+      {isAdmin && (
+        <section style={S.card}>
+          <h2 style={S.h2}>منطقة الخطر</h2>
+          <p style={{ color: "#64748b", fontSize: 13, marginBottom: 12 }}>
+            مسح كل البيانات المحلية يعيد التطبيق لشاشة اختيار الوضع الأولى. لا يمكن التراجع.
+          </p>
+          <div style={S.btnRow}>
+            <button onClick={confirmWipe} style={S.btnDanger}>🗑️ مسح كل البيانات وإعادة التعيين</button>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

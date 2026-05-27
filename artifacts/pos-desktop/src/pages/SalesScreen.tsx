@@ -282,11 +282,11 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
 
   async function checkout(paymentMethod: "cash" | "card") {
     if (cart.length === 0) return;
+    // Printer is OPTIONAL — if not configured, the sale is still recorded
+    // (and a non-blocking warning is shown so the cashier can set it up later
+    // from "لوحة التحكم → الأجهزة الطرفية"). This unblocks day-1 usage on
+    // machines that haven't paired a thermal printer yet.
     const printer = localStorage.getItem(LS_PRINTER);
-    if (!printer) {
-      setMsg({ kind: "err", text: "لم يتم تكوين طابعة. افتح ‹الأجهزة الطرفية› من لوحة التحكم أولاً." });
-      return;
-    }
     setPaying(true); setMsg(null);
     try {
       const ts = new Date().toISOString();
@@ -347,22 +347,24 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
         if (customer.vatNumber) body.push({ text: `الرقم الضريبي: ${customer.vatNumber}` });
       }
 
-      await printReceipt({
-        printerName: printer,
-        header: [
-          { text: companyName, bold: true, center: true },
-          { text: `الرقم الضريبي: ${vatNumber}`, center: true },
-          { text: `فاتورة #${invNum}`, center: true },
-          { text: new Date(ts).toLocaleString("ar-SA"), center: true },
-          ...(cashierName ? [{ text: `الكاشير: ${cashierName}`, center: true }] : []),
-        ],
-        body,
-        footer: [{ text: "شكراً لزيارتكم", center: true }],
-        qrData: qr, cut: true,
-        openDrawer: paymentMethod === "cash",
-      });
-      if (paymentMethod === "cash") {
-        try { await openCashDrawer(printer); } catch { /* ignore */ }
+      if (printer) {
+        await printReceipt({
+          printerName: printer,
+          header: [
+            { text: companyName, bold: true, center: true },
+            { text: `الرقم الضريبي: ${vatNumber}`, center: true },
+            { text: `فاتورة #${invNum}`, center: true },
+            { text: new Date(ts).toLocaleString("ar-SA"), center: true },
+            ...(cashierName ? [{ text: `الكاشير: ${cashierName}`, center: true }] : []),
+          ],
+          body,
+          footer: [{ text: "شكراً لزيارتكم", center: true }],
+          qrData: qr, cut: true,
+          openDrawer: paymentMethod === "cash",
+        });
+        if (paymentMethod === "cash") {
+          try { await openCashDrawer(printer); } catch { /* ignore */ }
+        }
       }
       // If this cart was resumed from a parked one, remove the parked row
       // now that it has become a finalized sale.
@@ -448,29 +450,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
 
       {/* ─── Cart pane — fixed-width column with sticky bottom ─── */}
       <aside style={S.cartPane}>
-        <div style={S.cartHeader}>
-          <h2 style={S.cartTitle}>
-            🛒 السلة
-            {cart.length > 0 && (
-              <span style={S.cartCountBadge}>
-                {cart.length} {cart.length === 1 ? "صنف" : "أصناف"} · {cart.reduce((s, l) => s + l.qty, 0)} قطعة
-              </span>
-            )}
-            {activeParkedId && <span style={S.resumedBadge}>مستأنفة</span>}
-          </h2>
-          {cart.length > 0 && (
-            <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={parkCart} style={S.parkBtn} title="تعليق السلة وحفظها للعودة لاحقاً">
-                📌 تعليق
-              </button>
-              <button onClick={() => { setCart([]); setCheckoutKey(null); setActiveParkedId(null); }} style={S.clearBtn}>
-                مسح
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Customer chip — click to pick/change customer for invoice */}
+        {/* Customer chip — moved ABOVE cart header per UX request. */}
         <div style={S.customerBar}>
           {customer ? (
             <div style={S.customerChip}>
@@ -493,6 +473,28 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
               <span style={{ flex: 1 }} />
               <span style={{ fontSize: 18, color: "#3b82f6" }}>+</span>
             </button>
+          )}
+        </div>
+
+        <div style={S.cartHeader}>
+          <h2 style={S.cartTitle}>
+            🛒 السلة
+            {cart.length > 0 && (
+              <span style={S.cartCountBadge}>
+                {cart.length} {cart.length === 1 ? "صنف" : "أصناف"} · {cart.reduce((s, l) => s + l.qty, 0)} قطعة
+              </span>
+            )}
+            {activeParkedId && <span style={S.resumedBadge}>مستأنفة</span>}
+          </h2>
+          {cart.length > 0 && (
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={parkCart} style={S.parkBtn} title="تعليق السلة وحفظها للعودة لاحقاً">
+                📌 تعليق
+              </button>
+              <button onClick={() => { setCart([]); setCheckoutKey(null); setActiveParkedId(null); }} style={S.clearBtn}>
+                مسح
+              </button>
+            </div>
           )}
         </div>
 
