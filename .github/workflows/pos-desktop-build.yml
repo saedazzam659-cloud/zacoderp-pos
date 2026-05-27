@@ -175,10 +175,33 @@ jobs:
       # verify .zacolic.json license files offline (no cloud trust path).
       # Without it, StandaloneActivation shows the "غير مهيّأة" warning and
       # refuses any license file.
+      - name: Verify offline-license public key secret is present
+        shell: bash
+        env:
+          KEY: ${{ secrets.OFFLINE_LICENSE_PUBLIC_KEY_B64 }}
+        run: |
+          if [[ -z "$KEY" ]]; then
+            echo "::error::OFFLINE_LICENSE_PUBLIC_KEY_B64 GitHub repository secret is empty or not set."
+            echo "::error::Add it at: https://github.com/${{ github.repository }}/settings/secrets/actions"
+            exit 1
+          fi
+          echo "Key length : ${#KEY} chars"
+          echo "Key prefix : ${KEY:0:24}..."
+          echo "Key suffix : ...${KEY: -8}"
+
       - name: Build frontend (Vite)
         env:
           VITE_OFFLINE_LICENSE_PUBLIC_KEY_B64: ${{ secrets.OFFLINE_LICENSE_PUBLIC_KEY_B64 }}
-        run: pnpm run build
+        run: |
+          echo "VITE_OFFLINE_LICENSE_PUBLIC_KEY_B64 length: ${#VITE_OFFLINE_LICENSE_PUBLIC_KEY_B64}"
+          pnpm run build
+          # Sanity-check: the pinned key MUST appear verbatim in the built bundle.
+          if grep -rq "$VITE_OFFLINE_LICENSE_PUBLIC_KEY_B64" dist/ ; then
+            echo "✅ Public key found in built bundle (dist/)"
+          else
+            echo "::error::Public key NOT found in built bundle — Vite did not inline it."
+            exit 1
+          fi
 
       # ─── 7. Build Tauri MSI ─────────────────────────────────────────
       # Code signing is OPT-IN — only attempts when all 3 cert secrets are
