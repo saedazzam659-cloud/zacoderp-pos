@@ -77,6 +77,51 @@ const PINNED_PUBKEY_B64: string =
   ((import.meta.env.VITE_OFFLINE_LICENSE_PUBLIC_KEY_B64 ?? "") as string).trim()
   || HARDCODED_PUBKEY_B64;
 export const DEV_PUBKEY_UNPINNED = !PINNED_PUBKEY_B64;
+
+// Trust-on-first-use override. When the SuperAdmin server rotates
+// its offline-license signing key, the hardcoded pubkey above no
+// longer matches and every fresh install fails to activate. To
+// recover without rebuilding the MSI, the desktop fetches the
+// server's CURRENT public key from a public read-only endpoint
+// (publishes only the pubkey — never the private key) and accepts
+// it ONLY IF the embedded license file's signature actually
+// verifies against that fetched key. That proves the server holds
+// the matching private key. We then persist the accepted key to
+// localStorage so subsequent loads on the same machine work fully
+// offline. Public update server is the same one used by Updates.
+const LS_TRUSTED_PUBKEY = "pos_desktop_trusted_license_pubkey";
+const PUBLIC_KEY_FETCH_URL =
+  ((import.meta.env.VITE_UPDATE_SERVER_URL ?? "") as string).trim().replace(/\/+$/, "")
+  + "/api/public/download/offline-license-public-key";
+const FALLBACK_PUBLIC_KEY_URL = "https://zacoderp.com/api/public/download/offline-license-public-key";
+
+function getTrustedPubkey(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(LS_TRUSTED_PUBKEY);
+}
+function setTrustedPubkey(b64: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(LS_TRUSTED_PUBKEY, b64);
+}
+async function fetchServerPubkey(): Promise<string | null> {
+  const urls = [
+    PUBLIC_KEY_FETCH_URL.startsWith("/api") ? null : PUBLIC_KEY_FETCH_URL,
+    FALLBACK_PUBLIC_KEY_URL,
+  ].filter(Boolean) as string[];
+  for (const u of urls) {
+    try {
+      const r = await fetch(u, { method: "GET" });
+      if (!r.ok) continue;
+      const text = await r.text();
+      if (text.trimStart().startsWith("<")) continue; // SPA fallback
+      const data = JSON.parse(text) as { publicKeyB64?: string };
+      if (data?.publicKeyB64 && /^[A-Za-z0-9+/=]{40,}$/.test(data.publicKeyB64)) {
+        return data.publicKeyB64;
+      }
+    } catch { /* try next */ }
+  }
+  return null;
+}
 // Visible debug badge: first 12 + last 4 chars of the pinned pubkey (or "EMPTY").
 // Used by StandaloneActivation to prove which build is running on the device.
 export const PINNED_PUBKEY_FINGERPRINT: string = PINNED_PUBKEY_B64
@@ -97,12 +142,34 @@ export async function verifyLicenseFile(file: SignedLicenseFile): Promise<{ ok: 
   if (file?.alg !== "ed25519" || !file?.payloadB64 || !file?.signature || !file?.publicKey) {
     return { ok: false, error: "ملف ترخيص غير صالح (تنسيق غير مدعوم)" };
   }
-  if (!PINNED_PUBKEY_B64) {
-    if (import.meta.env.PROD) {
-      return { ok: false, error: "هذه النسخة من التطبيق غير مُهيّأة (مفتاح الترخيص العام مفقود في البناء)" };
+  // Build the set of accepted pubkeys for THIS verification:
+  //   1) the build-time pinned key (hardcoded / VITE override)
+  //   2) any previously TOFU-accepted key cached in localStorage
+  //   3) the server's CURRENT key, fetched on-demand if (1) and (2)
+  //      don't match the embedded `file.publicKey`. We only trust it
+  //      AFTER the signature has cryptographically verified against
+  //      it — that proves the server holds the matching private key.
+  const accepted = new Set<string>();
+  if (PINNED_PUBKEY_B64) accepted.add(PINNED_PUBKEY_B64);
+  const trusted = getTrustedPubkey();
+  if (trusted) accepted.add(trusted);
+
+  let matched = accepted.has(file.publicKey);
+  let tofuFromServer = false;
+  if (!matched) {
+    const serverKey = await fetchServerPubkey();
+    if (serverKey && serverKey === file.publicKey) {
+      matched = true;
+      tofuFromServer = true;
     }
-  } else if (file.publicKey !== PINNED_PUBKEY_B64) {
-    return { ok: false, error: "هذا الترخيص لم يُوقَّع بمفتاح هذه النسخة من التطبيق" };
+  }
+  if (!matched) {
+    return {
+      ok: false,
+      error:
+        "هذا الترخيص لم يُوقَّع بمفتاح هذه النسخة من التطبيق، ولم نتمكن من التحقق من خادم zacoderp.com. " +
+        "تأكد من اتصالك بالإنترنت أو راجع مزود الخدمة.",
+    };
   }
   try {
     const ok = await ed.verifyAsync(
@@ -114,6 +181,10 @@ export async function verifyLicenseFile(file: SignedLicenseFile): Promise<{ ok: 
   } catch (e: any) {
     return { ok: false, error: `خطأ تحقق: ${e?.message ?? "غير معروف"}` };
   }
+  // Crypto passed. If we got here via the on-demand server fetch,
+  // persist the accepted key so the next activation on the same
+  // machine works fully offline.
+  if (tofuFromServer) setTrustedPubkey(file.publicKey);
   let payload: OfflineLicensePayload;
   try {
     payload = JSON.parse(new TextDecoder().decode(b64ToBytes(file.payloadB64)));

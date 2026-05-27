@@ -1,0 +1,6 @@
+{
+  "_warning": "DEV-ONLY auto-generated Ed25519 keypair for Standalone POS license signing. Production must set OFFLINE_LICENSE_PRIVATE_KEY_PEM env secret instead. Do NOT commit this file. The matching public key must be bundled in pos-desktop builds.",
+  "privateKeyPem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIMBpVpOXVU+LbdNjt22WmWm/fs3bSRWKL1UAad48WTa6\n-----END PRIVATE KEY-----\n",
+  "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAXMq2uhl3qvZkvbFt+BPIPTQLTx3Tr4m6ZdtN21pq3dk=\n-----END PUBLIC KEY-----\n",
+  "generatedAt": "2026-05-27T20:36:26.453Z"
+}
