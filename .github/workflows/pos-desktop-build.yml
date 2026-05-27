@@ -170,7 +170,14 @@ jobs:
         continue-on-error: true   # Step 6 will tighten this once the source stabilises
 
       # ─── 6. Build Vite frontend ─────────────────────────────────────
+      # VITE_OFFLINE_LICENSE_PUBLIC_KEY_B64 must be injected at build time —
+      # standalone mode pins this Ed25519 public key into the bundle to
+      # verify .zacolic.json license files offline (no cloud trust path).
+      # Without it, StandaloneActivation shows the "غير مهيّأة" warning and
+      # refuses any license file.
       - name: Build frontend (Vite)
+        env:
+          VITE_OFFLINE_LICENSE_PUBLIC_KEY_B64: ${{ secrets.OFFLINE_LICENSE_PUBLIC_KEY_B64 }}
         run: pnpm run build
 
       # ─── 7. Build Tauri MSI ─────────────────────────────────────────
