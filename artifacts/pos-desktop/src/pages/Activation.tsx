@@ -19,7 +19,7 @@ import {
   getFingerprint, getDeviceName, getOsInfo, getAppVersion,
   saveDeviceToken, TAURI_MODE,
 } from "../lib/tauri-shim";
-import { setAppMode } from "../lib/standalone";
+import { wipeStandalone } from "../lib/standalone";
 
 type Country = { code: string; name: string };
 
@@ -163,12 +163,12 @@ export default function Activation({ onActivated }: { onActivated: (info: Activa
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button
             onClick={async () => {
-              if (!confirm("هل تريد العودة لاختيار طريقة التشغيل (سحابي / مستقل)؟")) return;
-              await setAppMode(null as never);
+              if (!confirm("⚠️ تغيير وضع التطبيق سيؤدي إلى مسح كل البيانات المحلية على هذا الجهاز (السلال المعلّقة، الفواتير غير المرفوعة، ذاكرة الكتالوج). الترخيص السحابي على السيرفر لن يتأثر. هل أنت متأكد؟")) return;
+              await wipeStandalone();
               location.reload();
             }}
             style={{ padding: "6px 12px", fontSize: 13, background: "#fff", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", color: "#475569" }}
-            title="العودة لاختيار طريقة التشغيل"
+            title="مسح بيانات الجهاز والعودة لاختيار طريقة التشغيل"
           >
             ← تغيير الوضع
           </button>
