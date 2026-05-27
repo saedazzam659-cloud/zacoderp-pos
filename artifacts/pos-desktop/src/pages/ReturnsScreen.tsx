@@ -23,7 +23,8 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
   const [search, setSearch] = useState("");
   const [picked, setPicked] = useState<{ inv: PendingInvoice; payload: OfflineInvoicePayload } | null>(null);
   const [lines, setLines] = useState<Array<{ nameAr: string; unitPrice: number; vatRate: number; qty: number; refundQty: number }>>([]);
-  const [reason, setReason] = useState("");
+  const DEFAULT_RETURN_REASON = "إرجاع من العميل";
+  const [reason, setReason] = useState(DEFAULT_RETURN_REASON);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [lastReturn, setLastReturn] = useState<string | null>(null);
@@ -129,9 +130,13 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
     if (!picked) return;
     const refundLines = lines.filter((l) => l.refundQty > 0);
     if (refundLines.length === 0) { setToast({ kind: "err", text: "حدد كمية على الأقل لإرجاعها" }); return; }
-    if (!reason.trim()) { setToast({ kind: "err", text: "سبب الإرجاع مطلوب" }); return; }
+    // Reason defaults to DEFAULT_RETURN_REASON on mount; only block if user
+    // explicitly cleared it.
+    const finalReason = reason.trim() || DEFAULT_RETURN_REASON;
+    // Printer is OPTIONAL — record the return either way. We try to print
+    // only if a printer is configured; failure to print does not roll back
+    // the saved return.
     const printer = localStorage.getItem(LS_PRINTER);
-    if (!printer) { setToast({ kind: "err", text: "لم يتم تكوين طابعة" }); return; }
 
     setBusy(true); setToast(null);
     try {
@@ -158,7 +163,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
       const payload: OfflineInvoicePayload & { kind: "return"; refOf: string; reason: string } = {
         kind: "return",
         refOf: picked.inv.invoiceNo,
-        reason,
+        reason: finalReason,
         paymentMethod: picked.payload.paymentMethod,
         timestamp: ts,
         subtotal: -Number(totals.sub.toFixed(2)),
@@ -177,7 +182,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
         .map((l) => `${l.nameAr.replace(/[|:]/g, "_")}:${l.refundQty}@${l.unitPrice}`)
         .sort()
         .join("|");
-      const reasonKey = reason.trim().slice(0, 32).replace(/\s+/g, "_");
+      const reasonKey = finalReason.slice(0, 32).replace(/\s+/g, "_");
       const key = `ret-${picked.inv.id}-${reasonKey}-${shape}`;
       const saved = await saveOfflineInvoice(payload, qr ?? undefined, undefined, key);
 
@@ -189,29 +194,40 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
       body.push({ text: `إجمالي المرتجع قبل الضريبة:  ${totals.sub.toFixed(2)}` });
       body.push({ text: `الضريبة المسترجعة:           ${totals.vat.toFixed(2)}` });
       body.push({ text: `الإجمالي المسترجع:            ${totals.grand.toFixed(2)}`, bold: true });
-      body.push({ text: `السبب: ${reason}` });
+      body.push({ text: `السبب: ${finalReason}` });
       body.push({ text: `فاتورة أصلية: ${picked.inv.invoiceNo}` });
 
-      await printReceipt({
-        printerName: printer,
-        header: [
-          { text: companyName, bold: true, center: true },
-          { text: `الرقم الضريبي: ${vatNumber}`, center: true },
-          { text: `*** إشعار دائن — مرتجع ***`, bold: true, center: true },
-          { text: `رقم: ${saved.invoiceNo}`, center: true },
-          { text: new Date(ts).toLocaleString("ar-SA"), center: true },
-          ...(cashierName ? [{ text: `الكاشير: ${cashierName}`, center: true }] : []),
-        ],
-        body,
-        footer: [{ text: "شكراً لزيارتكم", center: true }],
-        qrData: qr,
-        cut: true,
-        openDrawer: payload.paymentMethod === "cash",
-      });
+      // Print only when a printer is configured. Any print error is logged
+      // to the toast but does NOT undo the saved return.
+      let printWarn: string | null = null;
+      if (printer) {
+        try {
+          await printReceipt({
+            printerName: printer,
+            header: [
+              { text: companyName, bold: true, center: true },
+              { text: `الرقم الضريبي: ${vatNumber}`, center: true },
+              { text: `*** إشعار دائن — مرتجع ***`, bold: true, center: true },
+              { text: `رقم: ${saved.invoiceNo}`, center: true },
+              { text: new Date(ts).toLocaleString("ar-SA"), center: true },
+              ...(cashierName ? [{ text: `الكاشير: ${cashierName}`, center: true }] : []),
+            ],
+            body,
+            footer: [{ text: "شكراً لزيارتكم", center: true }],
+            qrData: qr,
+            cut: true,
+            openDrawer: payload.paymentMethod === "cash",
+          });
+        } catch (pe: any) {
+          printWarn = `(تعذرت الطباعة: ${pe?.message ?? pe})`;
+        }
+      } else {
+        printWarn = "(لا توجد طابعة مهيأة — تم الحفظ بدون طباعة)";
+      }
 
       setLastReturn(saved.invoiceNo);
-      setPicked(null); setLines([]); setReason("");
-      setToast({ kind: "ok", text: `✅ تم تسجيل المرتجع — ${saved.invoiceNo}` });
+      setPicked(null); setLines([]); setReason(DEFAULT_RETURN_REASON);
+      setToast({ kind: "ok", text: `✅ تم تسجيل المرتجع — ${saved.invoiceNo}${printWarn ? " " + printWarn : ""}` });
       await refresh();
     } catch (e: any) {
       setToast({ kind: "err", text: `فشل المرتجع: ${e?.message ?? e}` });
@@ -366,7 +382,9 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
             </div>
 
             <label style={{ display: "block", marginTop: 8 }}>
-              <div style={{ fontSize: 13, color: "#475569", marginBottom: 4, fontWeight: 600 }}>سبب الإرجاع *</div>
+              <div style={{ fontSize: 13, color: "#475569", marginBottom: 4, fontWeight: 600 }}>
+                سبب الإرجاع <span style={{ fontWeight: 400, color: "#94a3b8" }}>(يمكن تعديله)</span>
+              </div>
               <input value={reason} onChange={(e) => setReason(e.target.value)}
                 placeholder="مثلاً: عيب في المنتج، طلب العميل..." style={S.search} />
             </label>
