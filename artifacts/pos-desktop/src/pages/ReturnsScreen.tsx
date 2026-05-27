@@ -12,8 +12,8 @@ import { useEffect, useMemo, useState } from "react";
 import { listAllInvoices, getOfflineInvoice, saveOfflineInvoice, type PendingInvoice, type OfflineInvoicePayload } from "../lib/invoices";
 import { printReceipt, type ReceiptLine } from "../lib/peripherals";
 import { generateZatcaQr } from "../lib/zatca";
+import { useTaxSettings, computeTotals } from "../lib/taxSettings";
 
-const VAT_RATE = 0.15;
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 
 type Props = { companyName?: string; vatNumber?: string; cashierName?: string };
@@ -120,11 +120,12 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
     }
   }
 
+  const { rate: vatRatePct, mode: taxMode } = useTaxSettings();
   const totals = useMemo(() => {
-    const grand = lines.reduce((s, l) => s + l.unitPrice * l.refundQty, 0);
-    const sub = grand / (1 + VAT_RATE);
-    return { sub, vat: grand - sub, grand };
-  }, [lines]);
+    const raw = lines.reduce((s, l) => s + l.unitPrice * l.refundQty, 0);
+    const t = computeTotals(raw, vatRatePct, taxMode);
+    return { sub: t.subtotal, vat: t.vat, grand: t.grandTotal };
+  }, [lines, vatRatePct, taxMode]);
 
   async function submitReturn() {
     if (!picked) return;
@@ -377,7 +378,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
           <div style={S.pinnedFooter}>
             <div style={S.totals}>
               <Row k="إجمالي قبل الضريبة" v={totals.sub.toFixed(2)} />
-              <Row k="ضريبة 15%" v={totals.vat.toFixed(2)} />
+              <Row k={`ضريبة ${vatRatePct}%${taxMode === "inclusive" ? " (شاملة)" : ""}`} v={totals.vat.toFixed(2)} />
               <Row k="إجمالي المرتجع" v={totals.grand.toFixed(2)} big />
             </div>
 

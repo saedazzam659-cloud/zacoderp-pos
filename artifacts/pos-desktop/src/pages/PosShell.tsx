@@ -26,6 +26,7 @@ import UomAdmin from "./UomAdmin";
 import UpdatesScreen from "./UpdatesScreen";
 import StandaloneUsersAdmin from "./StandaloneUsersAdmin";
 import ExpiryReport from "./ExpiryReport";
+import { useTaxSettings, defaultRateForCountry } from "../lib/taxSettings";
 import ScaleSettings from "./ScaleSettings";
 import { countPendingInvoices } from "../lib/invoices";
 import { getVertical, type Vertical } from "../lib/standalone";
@@ -221,7 +222,7 @@ export default function PosShell({
           <div style={S.brandIcon}>zacode</div>
           <div>
             <div style={S.brandName}>ZACOD POS</div>
-            <div style={S.brandTag}>v0.7.8 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
+            <div style={S.brandTag}>v0.7.9 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
           </div>
         </div>
 
@@ -584,6 +585,8 @@ function StandaloneDashboardView({
         </div>
       </section>
 
+      {isAdmin && <TaxSettingsCard />}
+
       {license && (
         <section style={S.card}>
           <h2 style={S.h2}>معلومات الترخيص</h2>
@@ -622,6 +625,124 @@ function Tile({ icon, label, value, accent, small }: { icon: string; label: stri
       </div>
       <div style={{ fontSize: small ? 13 : 20, fontWeight: 700, color: accent ?? "#0f172a" }}>{value}</div>
     </div>
+  );
+}
+
+/**
+ * Tax settings — VAT rate (%) + price-includes-tax toggle.
+ *
+ * Hidden for non-admins. Persisted by `lib/taxSettings.ts` to localStorage
+ * (and mirrored to SQLite via standalone_set_setting in Tauri builds).
+ * Sales/Returns screens subscribe to the change event so the cart label
+ * and totals update without a refresh.
+ *
+ * The default rate is derived from the country chosen during activation
+ * (e.g. SA→15, EG→14, AE→5). Admin can override at any time and reset
+ * to country default with one click.
+ */
+function TaxSettingsCard() {
+  const { rate, mode, country, setRate, setMode, resetToCountryDefault } = useTaxSettings();
+  const [draft, setDraft] = useState<string>(String(rate));
+  const [saved, setSaved] = useState<"" | "ok">("");
+  useEffect(() => { setDraft(String(rate)); }, [rate]);
+
+  function flash() { setSaved("ok"); setTimeout(() => setSaved(""), 1500); }
+
+  function commitRate() {
+    const n = Number(draft);
+    if (!Number.isFinite(n) || n < 0 || n > 100) { setDraft(String(rate)); return; }
+    setRate(n);
+    flash();
+  }
+
+  const defaultForCountry = defaultRateForCountry(country);
+
+  return (
+    <section style={S.card}>
+      <h2 style={S.h2}>إعدادات الضريبة</h2>
+      <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>
+        تتحكم هنا في نسبة ضريبة القيمة المضافة وفي طريقة احتسابها على الفواتير.
+        التغيير ينعكس فوراً على شاشة البيع والمرتجعات بدون الحاجة لإعادة تشغيل التطبيق.
+      </p>
+
+      {/* Mode toggle */}
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14 }}>طريقة احتساب الضريبة</div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <ModeChip
+            active={mode === "inclusive"}
+            onClick={() => { setMode("inclusive"); flash(); }}
+            title="السعر شامل الضريبة"
+            sub="سعر الصنف يحتوي على الضريبة (يُفصل عند الطباعة)"
+            example="مثال: سعر 115 = (100 صافي + 15 ضريبة)"
+          />
+          <ModeChip
+            active={mode === "exclusive"}
+            onClick={() => { setMode("exclusive"); flash(); }}
+            title="السعر بدون الضريبة"
+            sub="تُضاف الضريبة فوق سعر الصنف في الإجمالي"
+            example="مثال: سعر 100 + 15 ضريبة = 115"
+          />
+        </div>
+      </div>
+
+      {/* Rate editor */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14 }}>نسبة الضريبة (%)</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input
+            type="number" step="0.5" min={0} max={100}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commitRate}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+            style={{ width: 110, padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 16, fontWeight: 700, textAlign: "center" }}
+          />
+          <span style={{ fontSize: 18, fontWeight: 700, color: "#0f172a" }}>%</span>
+          <button
+            type="button"
+            onClick={resetToCountryDefault}
+            style={{ padding: "8px 14px", background: "#f1f5f9", color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+            title={`الدولة المختارة: ${country} — الافتراضي ${defaultForCountry}%`}
+          >
+            🔄 إعادة لافتراضي الدولة ({country} = {defaultForCountry}%)
+          </button>
+          {saved === "ok" && (
+            <span style={{ color: "#16a34a", fontSize: 13, fontWeight: 600 }}>✓ تم الحفظ</span>
+          )}
+        </div>
+        <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
+          المثال الحالي: على فاتورة بقيمة <strong>100 ر.س</strong>{" "}
+          {mode === "inclusive"
+            ? <>(شاملة) → ضريبة <strong>{(100 - 100/(1+Number(draft)/100)).toFixed(2)}</strong>، صافي <strong>{(100/(1+Number(draft)/100)).toFixed(2)}</strong></>
+            : <>(غير شاملة) → ضريبة <strong>{(100 * Number(draft)/100).toFixed(2)}</strong>، الإجمالي <strong>{(100 * (1+Number(draft)/100)).toFixed(2)}</strong></>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ModeChip({ active, onClick, title, sub, example }: { active: boolean; onClick: () => void; title: string; sub: string; example: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        flex: "1 1 280px", textAlign: "right" as const, padding: 14,
+        background: active ? "linear-gradient(135deg, #dbeafe, #eff6ff)" : "#f8fafc",
+        border: `2px solid ${active ? "#2563eb" : "#e2e8f0"}`,
+        borderRadius: 10, cursor: "pointer", fontFamily: "inherit",
+        boxShadow: active ? "0 2px 8px rgba(37,99,235,0.15)" : "none",
+        transition: "all .15s",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 16 }}>{active ? "🟢" : "⚪"}</span>
+        <span style={{ fontWeight: 700, fontSize: 14, color: active ? "#1e40af" : "#0f172a" }}>{title}</span>
+      </div>
+      <div style={{ fontSize: 12, color: "#475569", marginBottom: 4 }}>{sub}</div>
+      <div style={{ fontSize: 11, color: "#64748b" }}>{example}</div>
+    </button>
   );
 }
 

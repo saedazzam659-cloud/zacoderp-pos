@@ -30,8 +30,7 @@ import {
   saveParkedCart, listParkedCarts, deleteParkedCart, takeResumeCartId,
   type ParkedCart,
 } from "../lib/parkedCarts";
-
-const VAT_RATE = 0.15;
+import { useTaxSettings, computeTotals } from "../lib/taxSettings";
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 
 interface CartLine {
@@ -202,11 +201,16 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
     setMsg({ kind: "ok", text: `⚖️ ${item.nameAr} — ${weightKg.toFixed(3)} كجم` });
   }
 
+  // Tax settings: rate (percent) + mode (inclusive vs exclusive) are
+  // configurable per device from the Control Panel. The label below the
+  // cart shows the live rate, and `computeTotals` switches the math:
+  //   inclusive → salePrice is gross (subtotal = gross / (1+r))
+  //   exclusive → salePrice is net   (grandTotal = net * (1+r))
+  const { rate: vatRatePct, mode: taxMode } = useTaxSettings();
   const totals = useMemo(() => {
-    const grandTotal = cart.reduce((sum, l) => sum + l.item.salePrice * l.qty, 0);
-    const subtotal = grandTotal / (1 + VAT_RATE);
-    return { subtotal, vat: grandTotal - subtotal, grandTotal };
-  }, [cart]);
+    const raw = cart.reduce((sum, l) => sum + l.item.salePrice * l.qty, 0);
+    return computeTotals(raw, vatRatePct, taxMode);
+  }, [cart, vatRatePct, taxMode]);
 
   /**
    * Pharmacy-only safety net: refuse to sell expired medicines. Override
@@ -545,7 +549,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
         <div style={S.footer}>
           <div style={S.totals}>
             <Row k="قبل الضريبة" v={totals.subtotal.toFixed(2)} />
-            <Row k="ضريبة 15%" v={totals.vat.toFixed(2)} />
+            <Row k={`ضريبة ${vatRatePct}%${taxMode === "inclusive" ? " (شاملة)" : ""}`} v={totals.vat.toFixed(2)} />
             <Row k="الإجمالي" v={totals.grandTotal.toFixed(2)} big />
           </div>
 
