@@ -216,7 +216,7 @@ export default function PosShell({
           <div style={S.brandIcon}>zacode</div>
           <div>
             <div style={S.brandName}>ZACOD POS</div>
-            <div style={S.brandTag}>v0.7.5 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
+            <div style={S.brandTag}>v0.7.6 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
           </div>
         </div>
 
@@ -253,9 +253,15 @@ export default function PosShell({
       <div style={S.main}>
         {/* Top utility bar */}
         <header style={S.topbar}>
-          <div>
+          <div style={{ flexShrink: 0 }}>
             {effectiveCompanyName && <div style={S.companyName}>{effectiveCompanyName}</div>}
             <div style={S.viewTitle}>{labelFor(view)}</div>
+          </div>
+          {/* Expiry banner — moved into the topbar (was a full-width strip
+              below). Lives in the empty space between left title and right
+              chips, so it no longer steals a row from the cart pane. */}
+          <div style={{ flex: 1, display: "flex", justifyContent: "center", padding: "0 16px", minWidth: 0 }}>
+            <ExpiryBanner expiresAt={expiresAt ?? null} compact />
           </div>
           <div style={S.topRight}>
             {cashierContext && !standalone && (
@@ -302,9 +308,8 @@ export default function PosShell({
           />
         )}
 
-        {/* Subscription-expiry warning banner (Task #185) — also used in
-            standalone mode when the license has an expiresAt. */}
-        <ExpiryBanner expiresAt={expiresAt ?? null} />
+        {/* Subscription-expiry warning is now rendered inline inside the
+            topbar above (compact pill). No separate row here. */}
 
         {/* Page content */}
         <main style={S.content}>
@@ -394,13 +399,28 @@ function UpdateBanner({
   );
 }
 
-function ExpiryBanner({ expiresAt }: { expiresAt: string | null }) {
+function ExpiryBanner({ expiresAt, compact = false }: { expiresAt: string | null; compact?: boolean }) {
   if (!expiresAt) return null;
   const ms = new Date(expiresAt).getTime() - Date.now();
   if (!Number.isFinite(ms) || ms <= 0) return null;
   const days = Math.ceil(ms / 86_400_000);
   if (days > 7) return null;
   const dateStr = new Date(expiresAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" });
+  if (compact) {
+    // Compact pill that sits INSIDE the topbar. Whatsapp is the primary CTA;
+    // phone numbers are exposed via `title` to keep the bar one line.
+    const tooltip = `ينتهي بتاريخ ${dateStr} — كرم عزام: 01000903159 (داخل مصر) / 00201000903159 (خارج مصر)`;
+    return (
+      <div style={S.warnPill} title={tooltip}>
+        <span style={{ fontSize: 14 }}>⚠️</span>
+        <span>ينتهي اشتراك الجهاز خلال <strong>{days}</strong> {days === 1 ? "يوم" : "أيام"}</span>
+        <a href="https://wa.me/201000903159" target="_blank" rel="noreferrer"
+           style={{ color: "#15803d", fontWeight: 700, textDecoration: "underline", whiteSpace: "nowrap" }}>
+          تواصل 💬
+        </a>
+      </div>
+    );
+  }
   return (
     <div style={S.warnBanner}>
       <span style={{ fontSize: 18 }}>⚠️</span>
@@ -675,6 +695,15 @@ const S = {
     background: "linear-gradient(90deg, #fef3c7 0%, #fde68a 100%)",
     color: "#78350f", borderBottom: "1px solid #fcd34d",
     fontSize: 13, fontWeight: 600, flexShrink: 0,
+  } as const,
+  // Compact pill version of the expiry banner — fits inside the topbar.
+  warnPill: {
+    display: "inline-flex", alignItems: "center", gap: 8,
+    padding: "6px 14px",
+    background: "linear-gradient(90deg, #fef3c7 0%, #fde68a 100%)",
+    color: "#78350f", border: "1px solid #fcd34d", borderRadius: 999,
+    fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" as const,
+    maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis",
   } as const,
   updateBanner: {
     display: "flex", alignItems: "center", gap: 12,

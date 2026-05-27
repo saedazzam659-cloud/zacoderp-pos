@@ -912,7 +912,7 @@ const S = {
     boxShadow: "0 4px 16px rgba(0,0,0,.06)",
     overflow: "hidden",
   } as const,
-  cartHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid #f1f5f9", flexShrink: 0 } as const,
+  cartHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", borderBottom: "1px solid #f1f5f9", flexShrink: 0 } as const,
   cartTitle: { margin: 0, fontSize: 18, color: "#0f172a" } as const,
   clearBtn: { padding: "4px 10px", background: "#fff", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", fontSize: 12, fontFamily: "inherit" } as const,
   parkBtn: { padding: "4px 10px", background: "#fffbeb", color: "#92400e", border: "1px solid #fde68a", borderRadius: 6, cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 600 } as const,
@@ -928,23 +928,25 @@ const S = {
   qtyControls: { display: "flex", alignItems: "center", gap: 4, flexShrink: 0 } as const,
   qtyBtn: { width: 28, height: 28, border: "1px solid #cbd5e1", background: "#fff", borderRadius: 6, cursor: "pointer", fontSize: 16, lineHeight: 1, fontFamily: "inherit" } as const,
 
-  // STICKY FOOTER — flex-shrink:0 keeps it pinned, never scrolls
-  footer: { padding: 16, borderTop: "1px solid #f1f5f9", background: "#fff", flexShrink: 0 } as const,
-  totals: { padding: "0 4px 12px" } as const,
+  // STICKY FOOTER — flex-shrink:0 keeps it pinned, never scrolls.
+  // Compacted (v0.7.6): smaller padding here + on totals + on pay buttons
+  // gives ~50px back to the items list so 6+ rows fit on a 720p display.
+  footer: { padding: "10px 12px", borderTop: "1px solid #f1f5f9", background: "#fff", flexShrink: 0 } as const,
+  totals: { padding: "0 4px 8px" } as const,
   payRow: { display: "flex", gap: 8 } as const,
-  payCash: { flex: 1, padding: "16px 12px", background: "linear-gradient(180deg, #16a34a 0%, #15803d 100%)", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontSize: 16, fontWeight: 700, fontFamily: "inherit", boxShadow: "0 2px 6px rgba(22,163,74,.3)" } as const,
-  payCard: { flex: 1, padding: "16px 12px", background: "linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%)", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontSize: 16, fontWeight: 700, fontFamily: "inherit", boxShadow: "0 2px 6px rgba(37,99,235,.3)" } as const,
+  payCash: { flex: 1, padding: "12px 10px", background: "linear-gradient(180deg, #16a34a 0%, #15803d 100%)", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontSize: 15, fontWeight: 700, fontFamily: "inherit", boxShadow: "0 2px 6px rgba(22,163,74,.3)" } as const,
+  payCard: { flex: 1, padding: "12px 10px", background: "linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%)", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontSize: 15, fontWeight: 700, fontFamily: "inherit", boxShadow: "0 2px 6px rgba(37,99,235,.3)" } as const,
   msgOk: { background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534", padding: 10, borderRadius: 6, fontSize: 12, marginTop: 10 } as const,
   msgErr: { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: 10, borderRadius: 6, fontSize: 12, marginTop: 10 } as const,
   lastInv: { fontSize: 11, color: "#94a3b8", textAlign: "center" as const, marginTop: 10 } as const,
 
-  // Customer bar (between cartHeader and linesScroll)
-  customerBar: { padding: "8px 16px 0", flexShrink: 0 } as const,
+  // Customer bar (above cartHeader). Compacted (v0.7.6) — was eating ~70px.
+  customerBar: { padding: "6px 12px 0", flexShrink: 0 } as const,
   customerAddBtn: {
     display: "flex", alignItems: "center", gap: 8, width: "100%",
-    padding: "10px 14px", background: "linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)",
-    border: "1px dashed #93c5fd", borderRadius: 10, color: "#1e40af",
-    cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit",
+    padding: "6px 12px", background: "linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)",
+    border: "1px dashed #93c5fd", borderRadius: 8, color: "#1e40af",
+    cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "inherit",
   } as const,
   customerChip: {
     display: "flex", alignItems: "center", gap: 10,
