@@ -1,0 +1,62 @@
+[33m75b636aa[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31mgitsafe-backup/main[m[33m)[m Add image file to project assets
+[33m4a61f116[m Add new screenshot for asset tracking
+[33m99667890[m Update asset files to improve user experience
+[33m395c1467[m Add screenshot for troubleshooting GitHub integration issues
+[33m818130e0[m Add screenshot for troubleshooting workflow permissions
+[33m84e22330[m Add screenshot to asset files
+[33m86a0393b[m Update build process to pass license key to frontend
+[33mdf981241[m[33m ([m[1;33mtag: [m[1;33mpos-desktop-v0.6.2[m[33m)[m Add a screenshot to the assets folder
+[33md872ac61[m pos-desktop: bump to v0.6.2
+[33m0d92861c[m Published your App
+[33m5dc62e8d[m Add screenshot to illustrate setup process
+[33m0e84d40c[m Add screenshot of license key information
+[33m5166cdeb[m Update screenshots to show the latest application version
+[33m8a405756[m Add public key to desktop application builds
+[33md1f0920a[m Published your App
+[33m298600e4[m pos-desktop: surface support contact (م/ كرم عزام) on license expiry
+[33mf47ecbd6[m Task #201 — POS Desktop scale integration (v0.6.0)
+[33m58355f11[m Task #201 — POS Desktop scale integration (v0.6.0)
+[33m6f7d5c22[m Task #201 — POS Desktop scale integration (v0.6.0)
+[33m16ab4131[m Task #201 — POS Desktop scale integration (v0.6.0)
+[33m63a6829b[m Task #200: POS Desktop pharmacy vertical preset + EDA catalog (v0.5.0)
+[33m952a33b5[m Task #200: POS Desktop pharmacy vertical preset + EDA catalog (v0.5.0)
+[33m52fc6089[m Task #200: POS Desktop pharmacy vertical preset + EDA catalog (v0.5.0)
+[33m40bd45c0[m POS Desktop standalone mode (v0.4.0): SQLite+bcrypt + hardware-binding enforcement
+[33m88d03a7d[m POS Desktop standalone mode (v0.4.0): migrate from localStorage+PBKDF2 to SQLite+bcrypt
+[33m17f5fe6c[m Improve standalone mode to prevent license forgery and hide company name
+[33m8c9ab9dd[m Task #199: POS Desktop standalone install mode (v0.4.0)
+[33mabeb7fa7[m Transitioned from Plan to Build mode
+[33m5a7c5ff6[m[33m ([m[1;33mtag: [m[1;33mpos-desktop-v0.3.12[m[33m)[m Add an Excel export option for the product catalog
+[33me24d1b2a[m Add CSV import functionality for grocery items
+[33m2c50b98a[m[33m ([m[1;33mtag: [m[1;33mpos-desktop-v0.3.11[m[33m)[m Add customer selection and payment tracking to sales screen
+[33ma22e9464[m Add screenshot of release asset attachment
+[33m89e1bd92[m Update the application to include a new screenshot for the ice feature
+[33me08f036d[m Add a screenshot to the assets folder
+[33m95866113[m Improve returns screen layout for better scrolling and usability
+[33me5d8cacf[m[33m ([m[1;33mtag: [m[1;33mpos-desktop-v0.3.10[m[33m)[m Update application version to 0.3.10
+[33m1dbb3524[m Align returns screen layout with daily report's internal scrolling
+[33ma5c76a68[m Improve the returns screen layout and resolve merge conflicts
+[33m10295505[m Add screenshot of error message during git push
+[33m663b9706[m Published your App
+[33mff5f1144[m[33m ([m[1;33mtag: [m[1;33mpos-desktop-v0.3.9[m[33m)[m Update application version for desktop POS software
+[33m6dc05521[m Add a daily sales and returns report to the point-of-sale system
+[33m93841b6e[m POS desktop /api/sync/push: replay offline invoices into cloud books
+[33m1f0ed8eb[m Update screenshots to reflect latest changes and improvements
+[33m518877e0[m Improve the layout of the refund screen for better usability
+[33mbf48e772[m Adjust layout to ensure refund details are always visible
+[33m3319047a[m Improve the display of returned items and update the application version
+[33m3f5cdff7[m Update download links for the latest software version
+[33m1ca98ebc[m Published your App
+[33m6ffcba68[m chore(pos-desktop): publish tag pos-desktop-v0.3.6 to GitHub
+[33m55a03916[m feat(pos-desktop): internal scroll + polished refund card UI (v0.3.6)
+[33m9281a41b[m fix(pos-desktop+api): push pending invoices + edit/delete catalog rows (v0.3.5)
+[33m31bcf9a2[m Published your App
+[33m93306659[m Add new screenshot for application interface
+[33me3887281[m[33m ([m[1;33mtag: [m[1;33mpos-desktop-v0.3.4[m[33m)[m Fix issue with detecting returns in the application
+[33m7291e9bf[m Improve data synchronization and fix critical issues across POS functionalities
+[33m97b0d29c[m Published your App
+[33mda483eae[m AI Controls Step 2: per-company monthly cost estimator
+[33mac0a05de[m AI Controls: paid/free tier classification + bulk disable-paid
+[33m0ccb0273[m Add controls to manage AI features for individual companies
+[33me3617231[m Add screenshots for billing and POS device release information
+[33m7302e702[m Update application to version 0.3.3 and improve license management
