@@ -6,7 +6,7 @@ import {
 import { listItems } from "../lib/items";
 import type { LocalItem } from "../lib/items";
 import {
-  Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
+  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
@@ -21,10 +21,22 @@ export default function StockTransfersAdmin() {
     <Page
       title="التحويل بين المخازن"
       subtitle={`${rows.length} تحويل`}
-      right={<button onClick={() => setShowForm(true)} style={btnPrimary}>+ تحويل جديد</button>}
+      right={
+        <button onClick={() => setShowForm(true)} disabled={showForm}
+          style={{ ...btnPrimary, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>
+          + تحويل جديد
+        </button>
+      }
     >
+      {showForm && (
+        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+          <div style={{ padding: 16 }}>
+            <TransferForm onCancel={() => setShowForm(false)} onDone={() => { setShowForm(false); void refresh(); }} />
+          </div>
+        </Card>
+      )}
       <Card>
-        {rows.length === 0 ? <Empty text="لا توجد تحويلات بعد" /> : (
+        {rows.length === 0 && !showForm ? <Empty text="لا توجد تحويلات بعد" /> : (
           <Table>
             <thead><tr>
               <Th>الرقم</Th><Th>التاريخ</Th>
@@ -46,7 +58,6 @@ export default function StockTransfersAdmin() {
           </Table>
         )}
       </Card>
-      {showForm && <TransferForm onCancel={() => setShowForm(false)} onDone={() => { setShowForm(false); void refresh(); }} />}
     </Page>
   );
 }
@@ -98,7 +109,8 @@ function TransferForm({ onCancel, onDone }: { onCancel: () => void; onDone: () =
   }
 
   return (
-    <Modal title="تحويل بين المخازن" onCancel={onCancel} wide>
+    <div>
+      <h3 style={{ marginTop: 0 }}>تحويل بين المخازن</h3>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
         <Field label="التاريخ"><input type="date" value={trDate} onChange={(e) => setTrDate(e.target.value)} style={input} /></Field>
         <Field label="من مخزن">
@@ -169,6 +181,6 @@ function TransferForm({ onCancel, onDone }: { onCancel: () => void; onDone: () =
         <button onClick={onCancel} style={btnSecondary} type="button">إلغاء</button>
         <button onClick={save} disabled={busy} style={btnPrimary} type="button">{busy ? "..." : "حفظ وترحيل"}</button>
       </Actions>
-    </Modal>
+    </div>
   );
 }

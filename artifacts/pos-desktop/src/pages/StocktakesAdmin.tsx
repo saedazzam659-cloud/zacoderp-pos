@@ -7,7 +7,7 @@ import {
 import { listItems } from "../lib/items";
 import type { LocalItem } from "../lib/items";
 import {
-  Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
+  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
@@ -31,10 +31,22 @@ export default function StocktakesAdmin() {
     <Page
       title="جرد المخازن"
       subtitle={`${rows.length} جرد`}
-      right={<button onClick={() => setShowForm(true)} style={btnPrimary}>+ جرد جديد</button>}
+      right={
+        <button onClick={() => setShowForm(true)} disabled={showForm}
+          style={{ ...btnPrimary, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>
+          + جرد جديد
+        </button>
+      }
     >
+      {showForm && (
+        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+          <div style={{ padding: 16 }}>
+            <StocktakeForm onCancel={() => setShowForm(false)} onDone={() => { setShowForm(false); void refresh(); }} />
+          </div>
+        </Card>
+      )}
       <Card>
-        {rows.length === 0 ? <Empty text="لا توجد عمليات جرد بعد" /> : (
+        {rows.length === 0 && !showForm ? <Empty text="لا توجد عمليات جرد بعد" /> : (
           <Table>
             <thead><tr>
               <Th>الرقم</Th><Th>التاريخ</Th><Th>المخزن</Th>
@@ -56,7 +68,8 @@ export default function StocktakesAdmin() {
                   <Td mono>{s.adjustment_id ? `ADJ #${s.adjustment_id}` : "—"}</Td>
                   <Td>
                     {s.status === "draft" && (
-                      <button onClick={() => post(s)} disabled={posting === s.id} style={btnLink}>
+                      <button onClick={() => post(s)} disabled={posting === s.id || showForm}
+                        style={{ ...btnLink, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>
                         {posting === s.id ? "..." : "ترحيل"}
                       </button>
                     )}
@@ -67,7 +80,6 @@ export default function StocktakesAdmin() {
           </Table>
         )}
       </Card>
-      {showForm && <StocktakeForm onCancel={() => setShowForm(false)} onDone={() => { setShowForm(false); void refresh(); }} />}
     </Page>
   );
 }
@@ -137,7 +149,8 @@ function StocktakeForm({ onCancel, onDone }: { onCancel: () => void; onDone: () 
   }
 
   return (
-    <Modal title="جرد مخزن جديد" onCancel={onCancel} wide>
+    <div>
+      <h3 style={{ marginTop: 0 }}>جرد مخزن جديد</h3>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 10 }}>
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label="المخزن">
@@ -198,6 +211,6 @@ function StocktakeForm({ onCancel, onDone }: { onCancel: () => void; onDone: () 
         <button onClick={onCancel} style={btnSecondary} type="button">إلغاء</button>
         <button onClick={save} disabled={busy} style={btnPrimary} type="button">{busy ? "..." : "حفظ كمسودة"}</button>
       </Actions>
-    </Modal>
+    </div>
   );
 }

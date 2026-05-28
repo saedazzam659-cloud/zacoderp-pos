@@ -1,4 +1,4 @@
-// Customers admin — list + add + edit + delete.
+// Customers admin — list + add + edit + delete (inline editing in grid).
 // Read/write via lib/customers.ts; cloud sync is best-effort via pushQueue.
 
 import { useEffect, useState } from "react";
@@ -7,12 +7,20 @@ import {
   type LocalCustomer, type CreateCustomerInput,
 } from "../lib/customers";
 
+const emptyInput: CreateCustomerInput = { nameAr: "", nameEn: "", phone: "", vatNumber: "" };
+
+type EditState =
+  | { mode: "new"; data: CreateCustomerInput }
+  | { mode: "edit"; id: number; data: CreateCustomerInput }
+  | null;
+
 export default function CustomersAdmin() {
   const [rows, setRows] = useState<LocalCustomer[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState<LocalCustomer | null>(null);
-  const [showForm, setShowForm] = useState(false);
+  const [edit, setEdit] = useState<EditState>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   async function refresh() {
@@ -21,6 +29,39 @@ export default function CustomersAdmin() {
     finally { setLoading(false); }
   }
   useEffect(() => { void refresh(); /* eslint-disable-next-line */ }, [search]);
+
+  function startNew() { setErr(null); setEdit({ mode: "new", data: { ...emptyInput } }); }
+  function startEdit(c: LocalCustomer) {
+    setErr(null);
+    setEdit({ mode: "edit", id: c.id, data: {
+      nameAr: c.nameAr, nameEn: c.nameEn ?? "", phone: c.phone ?? "", vatNumber: c.vatNumber ?? "",
+    } });
+  }
+  function cancel() { setEdit(null); setErr(null); }
+  function setField<K extends keyof CreateCustomerInput>(k: K, v: CreateCustomerInput[K]) {
+    if (!edit) return; setEdit({ ...edit, data: { ...edit.data, [k]: v } });
+  }
+
+  async function save() {
+    if (!edit) return;
+    const f = edit.data;
+    if (!f.nameAr.trim()) { setErr("الاسم بالعربية مطلوب"); return; }
+    if (f.vatNumber && !/^3\d{13}3$/.test(f.vatNumber)) {
+      setErr("الرقم الضريبي يجب أن يكون 15 رقم يبدأ وينتهي بـ3"); return;
+    }
+    setBusy(true); setErr(null);
+    try {
+      if (edit.mode === "new") {
+        await createCustomer(f);
+        setToast({ kind: "ok", text: "تم إضافة العميل" });
+      } else {
+        await updateCustomer(edit.id, f);
+        setToast({ kind: "ok", text: "تم تحديث العميل" });
+      }
+      setEdit(null); await refresh();
+    } catch (e: any) { setErr(e?.message ?? "فشل الحفظ"); }
+    finally { setBusy(false); }
+  }
 
   async function handleDelete(c: LocalCustomer) {
     if (!confirm(`حذف العميل «${c.nameAr}»؟`)) return;
@@ -35,7 +76,8 @@ export default function CustomersAdmin() {
           <h2 style={S.h2}>العملاء ({rows.length})</h2>
           <div style={S.sub}>إدارة قائمة العملاء — يُزامن تلقائيًا مع السحابة عند الاتصال</div>
         </div>
-        <button onClick={() => { setEditing(null); setShowForm(true); }} style={S.btnPrimary}>
+        <button onClick={startNew} disabled={!!edit}
+          style={{ ...S.btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>
           + عميل جديد
         </button>
       </div>
@@ -50,7 +92,7 @@ export default function CustomersAdmin() {
       {toast && <div style={toast.kind === "ok" ? S.ok : S.err}>{toast.text}</div>}
 
       {loading ? <div style={S.empty}>... جاري التحميل</div>
-      : rows.length === 0 ? <div style={S.empty}>لا يوجد عملاء بعد — أضف أول عميل</div>
+      : rows.length === 0 && !edit ? <div style={S.empty}>لا يوجد عملاء بعد — أضف أول عميل</div>
       : (
         <table style={S.table}>
           <thead><tr>
@@ -61,107 +103,70 @@ export default function CustomersAdmin() {
             <th style={S.thRight}>إجراء</th>
           </tr></thead>
           <tbody>
+            {edit?.mode === "new" && (
+              <EditRow data={edit.data} setField={setField} onSave={save} onCancel={cancel} busy={busy} err={err} isNew />
+            )}
             {rows.map((c) => (
-              <tr key={c.id} style={S.tr}>
-                <td style={S.td}>
-                  <div style={{ fontWeight: 600 }}>{c.nameAr}</div>
-                  {c.nameEn && <div style={S.muted}>{c.nameEn}</div>}
-                </td>
-                <td style={S.td}>{c.phone ?? "—"}</td>
-                <td style={S.tdMono}>{c.vatNumber ?? "—"}</td>
-                <td style={S.td}>
-                  <span style={c.cloudId ? S.badgeCloud : S.badgeLocal}>
-                    {c.cloudId ? `☁️ سحابة #${c.cloudId}` : "📱 محلي"}
-                  </span>
-                </td>
-                <td style={S.tdRight}>
-                  <button onClick={() => { setEditing(c); setShowForm(true); }} style={S.btnEdit}>تعديل</button>
-                  <button onClick={() => handleDelete(c)} style={S.btnDel}>حذف</button>
-                </td>
-              </tr>
+              edit?.mode === "edit" && edit.id === c.id ? (
+                <EditRow key={c.id} data={edit.data} setField={setField} onSave={save} onCancel={cancel} busy={busy} err={err} cloudId={c.cloudId} />
+              ) : (
+                <tr key={c.id} style={{ ...S.tr, opacity: edit ? 0.6 : 1 }}>
+                  <td style={S.td}>
+                    <div style={{ fontWeight: 600 }}>{c.nameAr}</div>
+                    {c.nameEn && <div style={S.muted}>{c.nameEn}</div>}
+                  </td>
+                  <td style={S.td}>{c.phone ?? "—"}</td>
+                  <td style={S.tdMono}>{c.vatNumber ?? "—"}</td>
+                  <td style={S.td}>
+                    <span style={c.cloudId ? S.badgeCloud : S.badgeLocal}>
+                      {c.cloudId ? `☁️ سحابة #${c.cloudId}` : "📱 محلي"}
+                    </span>
+                  </td>
+                  <td style={S.tdRight}>
+                    <button onClick={() => startEdit(c)} disabled={!!edit} style={S.btnEdit}>تعديل</button>
+                    <button onClick={() => handleDelete(c)} disabled={!!edit} style={S.btnDel}>حذف</button>
+                  </td>
+                </tr>
+              )
             ))}
           </tbody>
         </table>
       )}
-
-      {showForm && (
-        <CustomerForm
-          initial={editing}
-          onClose={() => setShowForm(false)}
-          onSaved={async (msg) => { setShowForm(false); setToast({ kind: "ok", text: msg }); await refresh(); }}
-        />
-      )}
     </div>
   );
 }
 
-function CustomerForm({ initial, onClose, onSaved }: {
-  initial: LocalCustomer | null;
-  onClose: () => void;
-  onSaved: (msg: string) => void;
+function EditRow({ data, setField, onSave, onCancel, busy, err, isNew, cloudId }: {
+  data: CreateCustomerInput;
+  setField: <K extends keyof CreateCustomerInput>(k: K, v: CreateCustomerInput[K]) => void;
+  onSave: () => void; onCancel: () => void;
+  busy: boolean; err: string | null; isNew?: boolean; cloudId?: number | null;
 }) {
-  const [form, setForm] = useState<CreateCustomerInput>({
-    nameAr: initial?.nameAr ?? "",
-    nameEn: initial?.nameEn ?? "",
-    phone: initial?.phone ?? "",
-    vatNumber: initial?.vatNumber ?? "",
-  });
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  async function submit() {
-    if (!form.nameAr.trim()) { setErr("الاسم بالعربية مطلوب"); return; }
-    if (form.vatNumber && !/^3\d{13}3$/.test(form.vatNumber)) {
-      setErr("الرقم الضريبي يجب أن يكون 15 رقم يبدأ وينتهي بـ3"); return;
-    }
-    setSaving(true); setErr(null);
-    try {
-      if (initial) {
-        await updateCustomer(initial.id, form);
-        onSaved("تم تحديث العميل");
-      } else {
-        await createCustomer(form);
-        onSaved("تم إضافة العميل");
-      }
-    } catch (e: any) { setErr(e?.message ?? "فشل الحفظ"); }
-    finally { setSaving(false); }
-  }
-
+  const ci: React.CSSProperties = { ...S.input, padding: "6px 8px", fontSize: 13, marginBottom: 0 };
   return (
-    <div style={S.modalBg} onClick={onClose}>
-      <div style={S.modal} onClick={(e) => e.stopPropagation()}>
-        <h3 style={S.modalTitle}>{initial ? "تعديل عميل" : "عميل جديد"}</h3>
-        <Field label="الاسم بالعربية *">
-          <input value={form.nameAr} onChange={(e) => setForm({ ...form, nameAr: e.target.value })} style={S.input} autoFocus />
-        </Field>
-        <Field label="الاسم بالإنجليزية">
-          <input value={form.nameEn ?? ""} onChange={(e) => setForm({ ...form, nameEn: e.target.value })} style={S.input} />
-        </Field>
-        <Field label="الهاتف">
-          <input value={form.phone ?? ""} onChange={(e) => setForm({ ...form, phone: e.target.value })} style={S.input} placeholder="05xxxxxxxx" />
-        </Field>
-        <Field label="الرقم الضريبي (15 رقم)">
-          <input value={form.vatNumber ?? ""} onChange={(e) => setForm({ ...form, vatNumber: e.target.value })} style={S.input} placeholder="3xxxxxxxxxxxxx3" />
-        </Field>
-
-        {err && <div style={S.err}>{err}</div>}
-
-        <div style={S.btnRow}>
-          <button onClick={submit} disabled={saving} style={S.btnPrimary}>
-            {saving ? "..." : initial ? "💾 حفظ التعديلات" : "✅ إضافة"}
-          </button>
-          <button onClick={onClose} style={S.btnGhost}>إلغاء</button>
-        </div>
-      </div>
-    </div>
+    <>
+      <tr style={{ ...S.tr, background: isNew ? "#f0fdf4" : "#eff6ff" }}>
+        <td style={S.td}>
+          <input autoFocus value={data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={ci} placeholder="الاسم بالعربية *" />
+          <input value={data.nameEn ?? ""} onChange={(e) => setField("nameEn", e.target.value)} style={{ ...ci, marginTop: 4 }} placeholder="الاسم بالإنجليزية" />
+        </td>
+        <td style={S.td}><input value={data.phone ?? ""} onChange={(e) => setField("phone", e.target.value)} style={ci} placeholder="05xxxxxxxx" /></td>
+        <td style={S.td}><input value={data.vatNumber ?? ""} onChange={(e) => setField("vatNumber", e.target.value)} style={{ ...ci, fontFamily: "ui-monospace, monospace" }} placeholder="3xxxxxxxxxxxxx3" /></td>
+        <td style={S.td}>
+          <span style={cloudId ? S.badgeCloud : S.badgeLocal}>
+            {cloudId ? `☁️ سحابة #${cloudId}` : "📱 محلي"}
+          </span>
+        </td>
+        <td style={S.tdRight}>
+          <button onClick={onSave} disabled={busy} style={S.btnSaveSm}>{busy ? "..." : "حفظ"}</button>
+          <button onClick={onCancel} disabled={busy} style={S.btnCancelSm}>إلغاء</button>
+        </td>
+      </tr>
+      {err && (
+        <tr><td colSpan={5} style={{ ...S.td, background: "#fef2f2", color: "#991b1b" }}>⚠️ {err}</td></tr>
+      )}
+    </>
   );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label style={{ display: "block", marginBottom: 12 }}>
-    <div style={{ fontSize: 13, color: "#475569", marginBottom: 4 }}>{label}</div>
-    {children}
-  </label>;
 }
 
 const S = {
@@ -175,21 +180,18 @@ const S = {
   th: { textAlign: "right" as const, padding: "12px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: 13, color: "#475569", fontWeight: 600 } as const,
   thRight: { textAlign: "left" as const, padding: "12px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: 13, color: "#475569", fontWeight: 600 } as const,
   tr: { borderBottom: "1px solid #f1f5f9" } as const,
-  td: { padding: "12px 14px", fontSize: 14, color: "#0f172a" } as const,
-  tdMono: { padding: "12px 14px", fontSize: 13, color: "#0f172a", fontFamily: "ui-monospace, monospace" } as const,
-  tdRight: { padding: "12px 14px", textAlign: "left" as const } as const,
+  td: { padding: "10px 14px", fontSize: 14, color: "#0f172a" } as const,
+  tdMono: { padding: "10px 14px", fontSize: 13, color: "#0f172a", fontFamily: "ui-monospace, monospace" } as const,
+  tdRight: { padding: "10px 14px", textAlign: "left" as const } as const,
   muted: { fontSize: 12, color: "#94a3b8", marginTop: 2 } as const,
   badgeCloud: { display: "inline-block", padding: "2px 8px", background: "#eff6ff", color: "#1d4ed8", border: "1px solid #dbeafe", borderRadius: 999, fontSize: 11 } as const,
   badgeLocal: { display: "inline-block", padding: "2px 8px", background: "#fefce8", color: "#854d0e", border: "1px solid #fef9c3", borderRadius: 999, fontSize: 11 } as const,
   btnPrimary: { padding: "10px 18px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
-  btnGhost: { padding: "10px 18px", background: "#fff", color: "#475569", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
   btnEdit: { padding: "6px 12px", background: "#f1f5f9", color: "#0f172a", border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", fontSize: 12, marginInlineEnd: 6 } as const,
   btnDel: { padding: "6px 12px", background: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer", fontSize: 12 } as const,
-  btnRow: { display: "flex", gap: 8, marginTop: 16 } as const,
+  btnSaveSm: { padding: "5px 12px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, marginInlineEnd: 6 } as const,
+  btnCancelSm: { padding: "5px 12px", background: "#f1f5f9", color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontSize: 12 } as const,
   ok: { background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 } as const,
   err: { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 } as const,
-  modalBg: { position: "fixed" as const, inset: 0, background: "rgba(15,23,42,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 } as const,
-  modal: { background: "#fff", borderRadius: 12, padding: 24, maxWidth: 480, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,.25)" } as const,
-  modalTitle: { margin: "0 0 16px", fontSize: 18, color: "#0f172a" } as const,
   input: { width: "100%", padding: "10px 12px", fontSize: 14, border: "1px solid #cbd5e1", borderRadius: 6, fontFamily: "inherit", boxSizing: "border-box" as const } as const,
 };

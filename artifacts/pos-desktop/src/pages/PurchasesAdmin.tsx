@@ -5,15 +5,15 @@ import {
 } from "../lib/accounting";
 import { listItems, type LocalItem } from "../lib/items";
 import {
-  Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
+  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
 export default function PurchasesAdmin() {
   const [rows, setRows] = useState<Purchase[]>([]);
-  const [view, setView] = useState<Purchase | null>(null);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedDetail, setExpandedDetail] = useState<Purchase | null>(null);
   const [creating, setCreating] = useState(false);
-  // Pre-load form deps once.
   const [deps, setDeps] = useState<{ suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[] } | null>(null);
 
   async function refresh() { setRows(await listPurchases()); }
@@ -25,16 +25,33 @@ export default function PurchasesAdmin() {
     })();
   }, []);
 
-  async function openView(id: number) { setView(await getPurchase(id)); }
+  async function toggleView(id: number) {
+    if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); return; }
+    setExpandedId(id); setExpandedDetail(null);
+    const fetched = await getPurchase(id);
+    setExpandedId((cur) => { if (cur === id) setExpandedDetail(fetched); return cur; });
+  }
 
   return (
     <Page
       title="فواتير الشراء"
       subtitle={`${rows.length} فاتورة — يتم ترحيل قيد المحاسبة تلقائياً عند الحفظ`}
-      right={<button onClick={() => setCreating(true)} style={btnPrimary} disabled={!deps}>+ فاتورة شراء</button>}
+      right={
+        <button onClick={() => setCreating(true)} disabled={!deps || creating}
+          style={{ ...btnPrimary, opacity: (!deps || creating) ? 0.5 : 1, cursor: (!deps || creating) ? "not-allowed" : "pointer" }}>
+          + فاتورة شراء
+        </button>
+      }
     >
+      {creating && deps && (
+        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+          <div style={{ padding: 16 }}>
+            <CreateForm deps={deps} onCancel={() => setCreating(false)} onDone={() => { setCreating(false); void refresh(); }} />
+          </div>
+        </Card>
+      )}
       <Card>
-        {rows.length === 0 ? <Empty text="لا توجد فواتير شراء" /> : (
+        {rows.length === 0 && !creating ? <Empty text="لا توجد فواتير شراء" /> : (
           <Table>
             <thead><tr>
               <Th>رقم الفاتورة</Th><Th>التاريخ</Th><Th>المورد</Th><Th>طريقة الدفع</Th>
@@ -43,26 +60,42 @@ export default function PurchasesAdmin() {
             </tr></thead>
             <tbody>
               {rows.map((p) => (
-                <tr key={p.id}>
-                  <Td mono>{p.invoiceNo}</Td>
-                  <Td>{p.invoiceDate}</Td>
-                  <Td>{p.supplierName}</Td>
-                  <Td><PayBadge m={p.paymentMethod} /></Td>
-                  <Td num>{fmt(p.subtotal)}</Td>
-                  <Td num>{fmt(p.vatTotal)}</Td>
-                  <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
-                  <Td><button onClick={() => void openView(p.id)} style={btnLink}>عرض</button></Td>
-                </tr>
+                <React.Fragment key={p.id}>
+                  <tr>
+                    <Td mono>{p.invoiceNo}</Td>
+                    <Td>{p.invoiceDate}</Td>
+                    <Td>{p.supplierName}</Td>
+                    <Td><PayBadge m={p.paymentMethod} /></Td>
+                    <Td num>{fmt(p.subtotal)}</Td>
+                    <Td num>{fmt(p.vatTotal)}</Td>
+                    <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
+                    <Td>
+                      <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
+                        style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                        {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
+                      </button>
+                    </Td>
+                  </tr>
+                  {expandedId === p.id && (
+                    <tr style={{ background: "#f8fafc" }}>
+                      <Td colSpan={8 as any}>
+                        {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>... جاري التحميل</div> : (
+                          <PurchaseDetail p={expandedDetail} />
+                        )}
+                      </Td>
+                    </tr>
+                  )}
+                </React.Fragment>
               ))}
             </tbody>
           </Table>
         )}
       </Card>
-      {view && <ViewModal p={view} onClose={() => setView(null)} />}
-      {creating && deps && <CreateForm deps={deps} onCancel={() => setCreating(false)} onDone={() => { setCreating(false); void refresh(); }} />}
     </Page>
   );
 }
+
+import React from "react";
 
 function PayBadge({ m }: { m: PaymentMethod }) {
   const map = { credit: { l: "آجل", c: "#9a3412" }, cash: { l: "نقدي", c: "#15803d" }, bank: { l: "بنك", c: "#1e40af" } } as const;
@@ -70,10 +103,9 @@ function PayBadge({ m }: { m: PaymentMethod }) {
   return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{x.l}</span>;
 }
 
-function ViewModal({ p, onClose }: { p: Purchase; onClose: () => void }) {
+function PurchaseDetail({ p }: { p: Purchase }) {
   return (
-    <Modal title={`فاتورة شراء ${p.invoiceNo}`} onCancel={onClose} wide>
-      <div style={{ marginBottom: 12, color: "#64748b" }}>{p.invoiceDate} — {p.supplierName}</div>
+    <div style={{ padding: 12 }}>
       <Table>
         <thead><tr><Th>الصنف</Th><Th style={{ textAlign: "left" }}>الكمية</Th><Th style={{ textAlign: "left" }}>سعر الوحدة</Th><Th style={{ textAlign: "left" }}>الضريبة %</Th><Th style={{ textAlign: "left" }}>الإجمالي</Th></tr></thead>
         <tbody>
@@ -82,15 +114,14 @@ function ViewModal({ p, onClose }: { p: Purchase; onClose: () => void }) {
               <Td>{l.itemName}</Td><Td num>{l.qty}</Td><Td num>{fmt(l.unitCost)}</Td><Td num>{l.vatRate}</Td><Td num>{fmt(l.lineTotal)}</Td>
             </tr>
           ))}
-          <tr style={{ background: "#f8fafc", fontWeight: 700 }}>
+          <tr style={{ background: "#fff", fontWeight: 700 }}>
             <Td colSpan={4 as any}>الإجمالي قبل الضريبة</Td><Td num>{fmt(p.subtotal)}</Td>
           </tr>
-          <tr style={{ background: "#f8fafc" }}><Td colSpan={4 as any}>ضريبة القيمة المضافة</Td><Td num>{fmt(p.vatTotal)}</Td></tr>
+          <tr style={{ background: "#fff" }}><Td colSpan={4 as any}>ضريبة القيمة المضافة</Td><Td num>{fmt(p.vatTotal)}</Td></tr>
           <tr style={{ background: "#f1f5f9", fontWeight: 800, fontSize: 16 }}><Td colSpan={4 as any}>الإجمالي النهائي</Td><Td num>{fmt(p.grandTotal)}</Td></tr>
         </tbody>
       </Table>
-      <Actions><button onClick={onClose} style={btnSecondary}>إغلاق</button></Actions>
-    </Modal>
+    </div>
   );
 }
 
@@ -145,7 +176,8 @@ function CreateForm({ deps, onCancel, onDone }: {
   }
 
   return (
-    <Modal title="فاتورة شراء جديدة" onCancel={onCancel} wide>
+    <div>
+      <h3 style={{ marginTop: 0 }}>فاتورة شراء جديدة</h3>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 200px 200px", gap: 10 }}>
         <Field label="المورد *">
           <SearchCombobox
@@ -230,16 +262,16 @@ function CreateForm({ deps, onCancel, onDone }: {
           <tr style={{ background: "#f1f5f9", fontWeight: 800, fontSize: 15 }}><Td colSpan={4 as any}>الإجمالي</Td><Td num>{fmt(grand)}</Td><Td></Td></tr>
         </tbody>
       </Table>
-      <button onClick={addLine} style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
+      <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
 
       <Field label="ملاحظات" style={{ marginTop: 12 }}>
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} />
       </Field>
       <ErrorMsg text={err} />
       <Actions>
-        <button onClick={onCancel} style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy} style={btnPrimary}>{busy ? "..." : "حفظ وترحيل"}</button>
+        <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
+        <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : "حفظ وترحيل"}</button>
       </Actions>
-    </Modal>
+    </div>
   );
 }

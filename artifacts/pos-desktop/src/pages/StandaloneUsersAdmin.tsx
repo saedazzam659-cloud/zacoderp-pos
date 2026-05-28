@@ -1,7 +1,4 @@
-// Local users administration (standalone mode) — Task #199.
-//
-// Lists, adds, removes, and resets password for local users. Only visible
-// to users with role="admin". Lives inside PosShell as the "users" view.
+// Local users administration (standalone mode) — inline editing variant.
 
 import { useEffect, useState } from "react";
 import {
@@ -10,10 +7,16 @@ import {
 } from "../lib/standalone";
 import { SearchCombobox } from "./_adminUi";
 
+type EditState =
+  | { mode: "new"; data: { username: string; displayName: string; password: string; role: LocalUserRole } }
+  | { mode: "reset"; userId: LocalUser["id"]; password: string }
+  | null;
+
 export default function StandaloneUsersAdmin({ session, maxUsers }: { session: LocalSession; maxUsers: number }) {
   const [users, setUsers] = useState<LocalUser[]>([]);
-  const [showCreate, setShowCreate] = useState(false);
-  const [resetTarget, setResetTarget] = useState<LocalUser | null>(null);
+  const [edit, setEdit] = useState<EditState>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const isAdmin = session.role === "admin";
 
   async function refresh() { setUsers(await listLocalUsers()); }
@@ -21,6 +24,34 @@ export default function StandaloneUsersAdmin({ session, maxUsers }: { session: L
 
   if (!isAdmin) {
     return <div style={{ padding: 24, color: "#dc2626" }}>هذه الشاشة متاحة لمستخدمي الإدارة فقط.</div>;
+  }
+
+  function startNew() {
+    setErr(null);
+    setEdit({ mode: "new", data: { username: "", displayName: "", password: "", role: "cashier" } });
+  }
+  function startReset(u: LocalUser) {
+    setErr(null);
+    setEdit({ mode: "reset", userId: u.id, password: "" });
+  }
+  function cancel() { setEdit(null); setErr(null); }
+
+  async function save() {
+    if (!edit) return;
+    setBusy(true); setErr(null);
+    try {
+      if (edit.mode === "new") {
+        const d = edit.data;
+        if (!d.username || !d.password) { setErr("اسم المستخدم وكلمة المرور مطلوبان"); setBusy(false); return; }
+        await createLocalUser(d);
+      } else {
+        if (!edit.password) { setErr("كلمة المرور مطلوبة"); setBusy(false); return; }
+        await changeLocalPassword(edit.userId, edit.password);
+      }
+      setEdit(null);
+      await refresh();
+    } catch (e: any) { setErr(e?.message ?? "فشل"); }
+    finally { setBusy(false); }
   }
 
   async function remove(u: LocalUser) {
@@ -41,7 +72,9 @@ export default function StandaloneUsersAdmin({ session, maxUsers }: { session: L
             {users.length} من أصل {maxUsers} مسموح به في الترخيص
           </div>
         </div>
-        <button onClick={() => setShowCreate(true)} disabled={users.length >= maxUsers} style={btnPrimary}>
+        <button onClick={startNew}
+          disabled={users.length >= maxUsers || !!edit}
+          style={{ ...btnPrimary, opacity: (users.length >= maxUsers || edit) ? 0.5 : 1, cursor: (users.length >= maxUsers || edit) ? "not-allowed" : "pointer" }}>
           + إضافة مستخدم
         </button>
       </div>
@@ -51,118 +84,102 @@ export default function StandaloneUsersAdmin({ session, maxUsers }: { session: L
           <thead style={{ background: "#f8fafc" }}>
             <tr>
               <Th>اسم المستخدم</Th><Th>الاسم</Th><Th>الدور</Th>
-              <Th>آخر دخول</Th><Th style={{ width: 180 }}>إجراءات</Th>
+              <Th>آخر دخول</Th><Th style={{ width: 220 }}>إجراءات</Th>
             </tr>
           </thead>
           <tbody>
+            {edit?.mode === "new" && (
+              <NewUserRow data={edit.data} setData={(d) => setEdit({ ...edit, data: d })} onSave={save} onCancel={cancel} busy={busy} err={err} />
+            )}
             {users.map((u) => (
-              <tr key={u.id} style={{ borderTop: "1px solid #f1f5f9" }}>
-                <Td mono>{u.username}{u.username === session.username && <span style={{ marginRight: 6, fontSize: 11, color: "#2563eb" }}>(أنت)</span>}</Td>
-                <Td>{u.displayName}</Td>
-                <Td><RoleBadge role={u.role} /></Td>
-                <Td>{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString("ar-SA") : "—"}</Td>
-                <Td>
-                  <button onClick={() => setResetTarget(u)} style={btnLink}>تغيير كلمة المرور</button>
-                  {" · "}
-                  <button onClick={() => remove(u)} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
-                </Td>
-              </tr>
+              edit?.mode === "reset" && edit.userId === u.id ? (
+                <ResetRow key={u.id} user={u} password={edit.password} setPassword={(p) => setEdit({ ...edit, password: p })}
+                  onSave={save} onCancel={cancel} busy={busy} err={err} isSelf={u.username === session.username} />
+              ) : (
+                <tr key={u.id} style={{ borderTop: "1px solid #f1f5f9", opacity: edit ? 0.6 : 1 }}>
+                  <Td mono>{u.username}{u.username === session.username && <span style={{ marginRight: 6, fontSize: 11, color: "#2563eb" }}>(أنت)</span>}</Td>
+                  <Td>{u.displayName}</Td>
+                  <Td><RoleBadge role={u.role} /></Td>
+                  <Td>{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString("ar-SA") : "—"}</Td>
+                  <Td>
+                    <button onClick={() => startReset(u)} disabled={!!edit} style={btnLink}>تغيير كلمة المرور</button>
+                    {" · "}
+                    <button onClick={() => remove(u)} disabled={!!edit} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
+                  </Td>
+                </tr>
+              )
             ))}
           </tbody>
         </table>
       </div>
-
-      {showCreate && (
-        <CreateUserModal
-          onCancel={() => setShowCreate(false)}
-          onCreated={() => { setShowCreate(false); void refresh(); }}
-        />
-      )}
-      {resetTarget && (
-        <ResetPasswordModal user={resetTarget} onCancel={() => setResetTarget(null)} onDone={() => { setResetTarget(null); void refresh(); }} />
-      )}
     </div>
   );
 }
 
-function CreateUserModal({ onCancel, onCreated }: { onCancel: () => void; onCreated: () => void }) {
-  const [u, setU] = useState({ username: "", displayName: "", password: "", role: "cashier" as LocalUserRole });
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  async function save() {
-    setBusy(true); setErr(null);
-    try { await createLocalUser(u); onCreated(); }
-    catch (e: any) { setErr(e?.message ?? "فشل الإنشاء"); }
-    finally { setBusy(false); }
-  }
+function NewUserRow({ data, setData, onSave, onCancel, busy, err }: {
+  data: { username: string; displayName: string; password: string; role: LocalUserRole };
+  setData: (d: { username: string; displayName: string; password: string; role: LocalUserRole }) => void;
+  onSave: () => void; onCancel: () => void; busy: boolean; err: string | null;
+}) {
+  const ci: React.CSSProperties = { ...input, padding: "6px 8px", fontSize: 13 };
   return (
-    <Modal title="إضافة مستخدم محلي" onCancel={onCancel}>
-      <Field label="اسم المستخدم"><input value={u.username} onChange={(e) => setU({ ...u, username: e.target.value })} style={input} /></Field>
-      <Field label="الاسم الكامل"><input value={u.displayName} onChange={(e) => setU({ ...u, displayName: e.target.value })} style={input} /></Field>
-      <Field label="الدور">
-        <SearchCombobox
-          value={u.role}
-          onChange={(v) => setU({ ...u, role: v as LocalUserRole })}
-          options={[
-            { value: "cashier", label: "كاشير" },
-            { value: "admin", label: "مسؤول" },
-          ]}
-          style={input}
-        />
-      </Field>
-      <Field label="كلمة المرور"><input type="password" value={u.password} onChange={(e) => setU({ ...u, password: e.target.value })} style={input} /></Field>
-      {err && <div style={errStyle}>⚠️ {err}</div>}
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-        <button onClick={onCancel} style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy || !u.username || !u.password} style={btnPrimary}>حفظ</button>
-      </div>
-    </Modal>
+    <>
+      <tr style={{ borderTop: "1px solid #f1f5f9", background: "#f0fdf4" }}>
+        <Td>
+          <input autoFocus value={data.username} onChange={(e) => setData({ ...data, username: e.target.value })} style={ci} placeholder="اسم المستخدم *" />
+          <input type="password" value={data.password} onChange={(e) => setData({ ...data, password: e.target.value })} style={{ ...ci, marginTop: 4 }} placeholder="كلمة المرور *" />
+        </Td>
+        <Td><input value={data.displayName} onChange={(e) => setData({ ...data, displayName: e.target.value })} style={ci} placeholder="الاسم الكامل" /></Td>
+        <Td>
+          <SearchCombobox
+            value={data.role}
+            onChange={(v) => setData({ ...data, role: v as LocalUserRole })}
+            options={[{ value: "cashier", label: "كاشير" }, { value: "admin", label: "مسؤول" }]}
+            style={ci}
+          />
+        </Td>
+        <Td>—</Td>
+        <Td>
+          <button onClick={onSave} disabled={busy} style={btnSavSm}>{busy ? "..." : "حفظ"}</button>
+          {" "}
+          <button onClick={onCancel} disabled={busy} style={btnSecondary}>إلغاء</button>
+        </Td>
+      </tr>
+      {err && <tr><td colSpan={5} style={{ padding: 10, background: "#fef2f2", color: "#991b1b", fontSize: 13 }}>⚠️ {err}</td></tr>}
+    </>
   );
 }
 
-function ResetPasswordModal({ user, onCancel, onDone }: { user: LocalUser; onCancel: () => void; onDone: () => void }) {
-  const [pw, setPw] = useState("");
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  async function save() {
-    setBusy(true); setErr(null);
-    try { await changeLocalPassword(user.id, pw); onDone(); }
-    catch (e: any) { setErr(e?.message ?? "فشل"); }
-    finally { setBusy(false); }
-  }
+function ResetRow({ user, password, setPassword, onSave, onCancel, busy, err, isSelf }: {
+  user: LocalUser; password: string; setPassword: (p: string) => void;
+  onSave: () => void; onCancel: () => void; busy: boolean; err: string | null; isSelf: boolean;
+}) {
+  const ci: React.CSSProperties = { ...input, padding: "6px 8px", fontSize: 13 };
   return (
-    <Modal title={`تغيير كلمة مرور ${user.username}`} onCancel={onCancel}>
-      <Field label="كلمة المرور الجديدة"><input type="password" value={pw} onChange={(e) => setPw(e.target.value)} style={input} autoFocus /></Field>
-      {err && <div style={errStyle}>⚠️ {err}</div>}
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-        <button onClick={onCancel} style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy || !pw} style={btnPrimary}>حفظ</button>
-      </div>
-    </Modal>
+    <>
+      <tr style={{ borderTop: "1px solid #f1f5f9", background: "#eff6ff" }}>
+        <Td mono>{user.username}{isSelf && <span style={{ marginRight: 6, fontSize: 11, color: "#2563eb" }}>(أنت)</span>}</Td>
+        <Td>{user.displayName}</Td>
+        <Td><RoleBadge role={user.role} /></Td>
+        <Td colSpan={1}>
+          <input type="password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} style={ci} placeholder="كلمة المرور الجديدة *" />
+        </Td>
+        <Td>
+          <button onClick={onSave} disabled={busy} style={btnSavSm}>{busy ? "..." : "حفظ"}</button>
+          {" "}
+          <button onClick={onCancel} disabled={busy} style={btnSecondary}>إلغاء</button>
+        </Td>
+      </tr>
+      {err && <tr><td colSpan={5} style={{ padding: 10, background: "#fef2f2", color: "#991b1b", fontSize: 13 }}>⚠️ {err}</td></tr>}
+    </>
   );
 }
 
-function Modal({ title, children, onCancel }: { title: string; children: React.ReactNode; onCancel: () => void }) {
-  return (
-    <div dir="rtl" onClick={onCancel} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 12, padding: 24, width: 420, maxWidth: "92vw" }}>
-        <h3 style={{ marginTop: 0 }}>{title}</h3>
-        {children}
-      </div>
-    </div>
-  );
-}
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label style={{ display: "block", marginBottom: 10 }}>
-    <div style={{ marginBottom: 4, fontSize: 13, fontWeight: 600 }}>{label}</div>
-    {children}
-  </label>;
-}
 function Th({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return <th style={{ textAlign: "right" as const, padding: "10px 14px", fontSize: 12, color: "#64748b", fontWeight: 600, ...style }}>{children}</th>;
 }
-function Td({ children, mono }: { children: React.ReactNode; mono?: boolean }) {
-  return <td style={{ padding: "10px 14px", fontSize: 14, fontFamily: mono ? "ui-monospace, monospace" : undefined }}>{children}</td>;
+function Td({ children, mono, colSpan }: { children: React.ReactNode; mono?: boolean; colSpan?: number }) {
+  return <td colSpan={colSpan} style={{ padding: "10px 14px", fontSize: 14, fontFamily: mono ? "ui-monospace, monospace" : undefined }}>{children}</td>;
 }
 function RoleBadge({ role }: { role: LocalUserRole }) {
   const cls = role === "admin" ? { bg: "#dbeafe", fg: "#1e40af", label: "مسؤول" } : { bg: "#f1f5f9", fg: "#475569", label: "كاشير" };
@@ -171,6 +188,6 @@ function RoleBadge({ role }: { role: LocalUserRole }) {
 
 const input: React.CSSProperties = { width: "100%", padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 14, boxSizing: "border-box", fontFamily: "inherit" };
 const btnPrimary: React.CSSProperties = { padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: 600 };
-const btnSecondary: React.CSSProperties = { padding: "8px 16px", background: "#f1f5f9", color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 14 };
+const btnSecondary: React.CSSProperties = { padding: "4px 10px", background: "#f1f5f9", color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
 const btnLink: React.CSSProperties = { background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontFamily: "inherit", fontSize: 13, padding: 0 };
-const errStyle: React.CSSProperties = { padding: 8, background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca", borderRadius: 6, fontSize: 13, marginTop: 8 };
+const btnSavSm: React.CSSProperties = { padding: "4px 10px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 };

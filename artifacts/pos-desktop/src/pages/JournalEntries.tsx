@@ -1,16 +1,17 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   listJournalEntries, getJournalEntry, createJournalEntry, listAccounts,
   type JournalEntry, type JournalEntryLine, type Account,
 } from "../lib/accounting";
 import {
-  Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
+  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
 export default function JournalEntries() {
   const [rows, setRows] = useState<JournalEntry[]>([]);
-  const [view, setView] = useState<JournalEntry | null>(null);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedDetail, setExpandedDetail] = useState<JournalEntry | null>(null);
   const [creating, setCreating] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
 
@@ -20,19 +21,33 @@ export default function JournalEntries() {
   }
   useEffect(() => { void refresh(); }, []);
 
-  async function openView(id: number) {
-    const e = await getJournalEntry(id);
-    setView(e);
+  async function toggleView(id: number) {
+    if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); return; }
+    setExpandedId(id); setExpandedDetail(null);
+    const fetched = await getJournalEntry(id);
+    setExpandedId((cur) => { if (cur === id) setExpandedDetail(fetched); return cur; });
   }
 
   return (
     <Page
       title="القيود اليومية"
       subtitle={`${rows.length} قيد — تشمل القيود التلقائية (مشتريات/مرتجع/سندات) والقيود اليدوية`}
-      right={<button onClick={() => setCreating(true)} style={btnPrimary}>+ قيد يدوي</button>}
+      right={
+        <button onClick={() => setCreating(true)} disabled={creating}
+          style={{ ...btnPrimary, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+          + قيد يدوي
+        </button>
+      }
     >
+      {creating && (
+        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+          <div style={{ padding: 16 }}>
+            <CreateForm accounts={accounts} onCancel={() => setCreating(false)} onDone={() => { setCreating(false); void refresh(); }} />
+          </div>
+        </Card>
+      )}
       <Card>
-        {rows.length === 0 ? <Empty text="لا توجد قيود بعد" /> : (
+        {rows.length === 0 && !creating ? <Empty text="لا توجد قيود بعد" /> : (
           <Table>
             <thead><tr>
               <Th>رقم القيد</Th><Th>التاريخ</Th><Th>البيان</Th><Th>المصدر</Th>
@@ -41,22 +56,36 @@ export default function JournalEntries() {
             </tr></thead>
             <tbody>
               {rows.map((e) => (
-                <tr key={e.id}>
-                  <Td mono style={{ fontWeight: 600 }}>{e.entryNo}</Td>
-                  <Td>{e.entryDate}</Td>
-                  <Td>{e.description ?? "—"}</Td>
-                  <Td><SourceTag source={e.sourceType} /></Td>
-                  <Td num>{fmt(e.totalDebit)}</Td>
-                  <Td num>{fmt(e.totalCredit)}</Td>
-                  <Td><button onClick={() => void openView(e.id)} style={btnLink}>عرض</button></Td>
-                </tr>
+                <React.Fragment key={e.id}>
+                  <tr>
+                    <Td mono style={{ fontWeight: 600 }}>{e.entryNo}</Td>
+                    <Td>{e.entryDate}</Td>
+                    <Td>{e.description ?? "—"}</Td>
+                    <Td><SourceTag source={e.sourceType} /></Td>
+                    <Td num>{fmt(e.totalDebit)}</Td>
+                    <Td num>{fmt(e.totalCredit)}</Td>
+                    <Td>
+                      <button onClick={() => void toggleView(e.id)} disabled={creating} aria-expanded={expandedId === e.id}
+                        style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                        {expandedId === e.id ? "▲ إخفاء" : "▼ عرض"}
+                      </button>
+                    </Td>
+                  </tr>
+                  {expandedId === e.id && (
+                    <tr style={{ background: "#f8fafc" }}>
+                      <Td colSpan={7 as any}>
+                        {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>... جاري التحميل</div> : (
+                          <EntryDetail entry={expandedDetail} />
+                        )}
+                      </Td>
+                    </tr>
+                  )}
+                </React.Fragment>
               ))}
             </tbody>
           </Table>
         )}
       </Card>
-      {view && <ViewModal entry={view} onClose={() => setView(null)} />}
-      {creating && <CreateForm accounts={accounts} onCancel={() => setCreating(false)} onDone={() => { setCreating(false); void refresh(); }} />}
     </Page>
   );
 }
@@ -73,10 +102,9 @@ function SourceTag({ source }: { source: string | null }) {
   return <span style={{ background: m.c + "20", color: m.c, padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 600 }}>{m.l}</span>;
 }
 
-function ViewModal({ entry, onClose }: { entry: JournalEntry; onClose: () => void }) {
+function EntryDetail({ entry }: { entry: JournalEntry }) {
   return (
-    <Modal title={`القيد ${entry.entryNo}`} onCancel={onClose} wide>
-      <div style={{ marginBottom: 12, color: "#64748b" }}>{entry.entryDate} — {entry.description ?? ""}</div>
+    <div style={{ padding: 12 }}>
       <Table>
         <thead><tr><Th>الحساب</Th><Th>البيان</Th><Th style={{ textAlign: "left" }}>مدين</Th><Th style={{ textAlign: "left" }}>دائن</Th></tr></thead>
         <tbody>
@@ -88,15 +116,14 @@ function ViewModal({ entry, onClose }: { entry: JournalEntry; onClose: () => voi
               <Td num>{l.credit ? fmt(l.credit) : ""}</Td>
             </tr>
           ))}
-          <tr style={{ background: "#f8fafc", fontWeight: 700 }}>
+          <tr style={{ background: "#fff", fontWeight: 700 }}>
             <Td colSpan={2 as any}>الإجمالي</Td>
             <Td num>{fmt(entry.totalDebit)}</Td>
             <Td num>{fmt(entry.totalCredit)}</Td>
           </tr>
         </tbody>
       </Table>
-      <Actions><button onClick={onClose} style={btnSecondary}>إغلاق</button></Actions>
-    </Modal>
+    </div>
   );
 }
 
@@ -132,7 +159,8 @@ function CreateForm({ accounts, onCancel, onDone }: { accounts: Account[]; onCan
   }
 
   return (
-    <Modal title="إضافة قيد يومية يدوي" onCancel={onCancel} wide>
+    <div>
+      <h3 style={{ marginTop: 0 }}>إضافة قيد يومية يدوي</h3>
       <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 10 }}>
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label="البيان"><input value={desc} onChange={(e) => setDesc(e.target.value)} style={input} /></Field>
@@ -159,7 +187,7 @@ function CreateForm({ accounts, onCancel, onDone }: { accounts: Account[]; onCan
               <Td><input value={l.description ?? ""} onChange={(e) => setLine(i, { description: e.target.value || null })} style={input} /></Td>
               <Td><input type="number" step="0.01" value={l.debit || ""} onChange={(e) => setLine(i, { debit: Number(e.target.value) || 0, credit: 0 })} style={input} /></Td>
               <Td><input type="number" step="0.01" value={l.credit || ""} onChange={(e) => setLine(i, { credit: Number(e.target.value) || 0, debit: 0 })} style={input} /></Td>
-              <Td><button onClick={() => removeLine(i)} style={{ ...btnLink, color: "#dc2626" }}>×</button></Td>
+              <Td><button onClick={() => removeLine(i)} type="button" style={{ ...btnLink, color: "#dc2626" }}>×</button></Td>
             </tr>
           ))}
           <tr style={{ background: "#f8fafc", fontWeight: 700 }}>
@@ -171,14 +199,14 @@ function CreateForm({ accounts, onCancel, onDone }: { accounts: Account[]; onCan
         </tbody>
       </Table>
       <div style={{ marginTop: 8 }}>
-        <button onClick={addLine} style={btnSecondary}>+ سطر</button>
+        <button onClick={addLine} type="button" style={btnSecondary}>+ سطر</button>
         {!balanced && totalDr > 0 && <span style={{ marginInlineStart: 12, color: "#dc2626", fontSize: 13 }}>القيد غير متوازن — الفرق {fmt(Math.abs(totalDr - totalCr))}</span>}
       </div>
       <ErrorMsg text={err} />
       <Actions>
-        <button onClick={onCancel} style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy || !balanced} style={btnPrimary}>{busy ? "..." : "حفظ القيد"}</button>
+        <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
+        <button onClick={save} disabled={busy || !balanced} type="button" style={btnPrimary}>{busy ? "..." : "حفظ القيد"}</button>
       </Actions>
-    </Modal>
+    </div>
   );
 }

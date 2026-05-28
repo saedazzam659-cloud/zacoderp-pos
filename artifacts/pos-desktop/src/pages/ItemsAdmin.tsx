@@ -143,7 +143,8 @@ export default function ItemsAdmin() {
           <button onClick={() => setShowImport(true)} style={S.btnImport}>
             📥 استيراد من CSV
           </button>
-          <button onClick={() => { setEditing(null); setShowForm(true); }} style={S.btnPrimary}>
+          <button onClick={() => { setEditing(null); setShowForm(true); }} disabled={showForm}
+            style={{ ...S.btnPrimary, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>
             + صنف جديد
           </button>
         </div>
@@ -157,6 +158,15 @@ export default function ItemsAdmin() {
       />
 
       {toast && <div style={toast.kind === "ok" ? S.ok : S.err}>{toast.text}</div>}
+
+      {showForm && (
+        <ItemForm
+          initial={editing}
+          isPharmacy={isPharmacy}
+          onClose={() => setShowForm(false)}
+          onSaved={async (msg) => { setShowForm(false); setToast({ kind: "ok", text: msg }); await refresh(); }}
+        />
+      )}
 
       {loading ? <div style={S.empty}>... جاري التحميل</div>
       : rows.length === 0 ? <div style={S.empty}>لا توجد أصناف — أضف صنف جديد أو اسحب من السحابة</div>
@@ -188,22 +198,13 @@ export default function ItemsAdmin() {
                   </span>
                 </td>
                 <td style={S.tdRight}>
-                  <button onClick={() => { setEditing(it); setShowForm(true); }} style={S.btnEdit}>تعديل</button>
-                  <button onClick={() => handleDelete(it)} style={S.btnDel}>حذف</button>
+                  <button onClick={() => { setEditing(it); setShowForm(true); }} disabled={showForm} style={{ ...S.btnEdit, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>تعديل</button>
+                  <button onClick={() => handleDelete(it)} disabled={showForm} style={{ ...S.btnDel, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>حذف</button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-      )}
-
-      {showForm && (
-        <ItemForm
-          initial={editing}
-          isPharmacy={isPharmacy}
-          onClose={() => setShowForm(false)}
-          onSaved={async (msg) => { setShowForm(false); setToast({ kind: "ok", text: msg }); await refresh(); }}
-        />
       )}
 
       {showEda && (
@@ -673,9 +674,8 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
   }
 
   return (
-    <div style={S.modalBg} onClick={onClose}>
-      <div style={S.modal} onClick={(e) => e.stopPropagation()}>
-        <h3 style={S.modalTitle}>{initial ? "تعديل صنف" : "صنف جديد"}</h3>
+    <div style={{ background: "#fff", border: `2px solid ${initial ? "#2563eb" : "#16a34a"}`, borderRadius: 12, padding: 20, marginBottom: 16 }}>
+      <h3 style={{ ...S.modalTitle, color: initial ? "#1e40af" : "#15803d" }}>{initial ? "✏️ تعديل صنف" : "➕ صنف جديد"}</h3>
 
         <Field label="الاسم بالعربية *">
           <input value={form.nameAr} onChange={(e) => setForm({ ...form, nameAr: e.target.value })} style={S.input} autoFocus />
@@ -788,7 +788,6 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
           </button>
           <button onClick={onClose} style={S.btnGhost}>إلغاء</button>
         </div>
-      </div>
     </div>
   );
 }

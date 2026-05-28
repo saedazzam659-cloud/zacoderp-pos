@@ -6,7 +6,7 @@ import {
 import { listItems } from "../lib/items";
 import type { LocalItem } from "../lib/items";
 import {
-  Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
+  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
@@ -21,10 +21,22 @@ export default function StockAdjustmentsAdmin() {
     <Page
       title="تسوية المخزون"
       subtitle={`${rows.length} تسوية`}
-      right={<button onClick={() => setShowForm(true)} style={btnPrimary}>+ تسوية جديدة</button>}
+      right={
+        <button onClick={() => setShowForm(true)} disabled={showForm}
+          style={{ ...btnPrimary, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>
+          + تسوية جديدة
+        </button>
+      }
     >
+      {showForm && (
+        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+          <div style={{ padding: 16 }}>
+            <AdjustmentForm onCancel={() => setShowForm(false)} onDone={() => { setShowForm(false); void refresh(); }} />
+          </div>
+        </Card>
+      )}
       <Card>
-        {rows.length === 0 ? <Empty text="لا توجد تسويات بعد" /> : (
+        {rows.length === 0 && !showForm ? <Empty text="لا توجد تسويات بعد" /> : (
           <Table>
             <thead><tr>
               <Th>الرقم</Th><Th>التاريخ</Th><Th>المخزن</Th>
@@ -47,7 +59,6 @@ export default function StockAdjustmentsAdmin() {
           </Table>
         )}
       </Card>
-      {showForm && <AdjustmentForm onCancel={() => setShowForm(false)} onDone={() => { setShowForm(false); void refresh(); }} />}
     </Page>
   );
 }
@@ -102,7 +113,8 @@ function AdjustmentForm({ onCancel, onDone }: { onCancel: () => void; onDone: ()
   }
 
   return (
-    <Modal title="تسوية مخزون جديدة" onCancel={onCancel} wide>
+    <div>
+      <h3 style={{ marginTop: 0 }}>تسوية مخزون جديدة</h3>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 10 }}>
         <Field label="التاريخ"><input type="date" value={adjDate} onChange={(e) => setAdjDate(e.target.value)} style={input} /></Field>
         <Field label="المخزن">
@@ -164,6 +176,6 @@ function AdjustmentForm({ onCancel, onDone }: { onCancel: () => void; onDone: ()
         <button onClick={onCancel} style={btnSecondary} type="button">إلغاء</button>
         <button onClick={save} disabled={busy} style={btnPrimary} type="button">{busy ? "..." : "حفظ وترحيل"}</button>
       </Actions>
-    </Modal>
+    </div>
   );
 }

@@ -4,7 +4,7 @@ import {
   type Account, type AccountInput, type AccountType,
 } from "../lib/accounting";
 import {
-  Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
+  Page, Card, Table, Th, Td, Empty,
   input, btnPrimary, btnSecondary, btnLink, fmt, SearchCombobox,
 } from "./_adminUi";
 
@@ -17,16 +17,46 @@ const TYPE_COLOR: Record<AccountType, string> = {
 
 const emptyInput: AccountInput = { code: "", nameAr: "", nameEn: null, type: "asset", parentId: null, isLeaf: true };
 
+type EditState =
+  | { mode: "new"; data: AccountInput }
+  | { mode: "edit"; id: number; data: AccountInput }
+  | null;
+
 export default function ChartOfAccounts() {
   const [rows, setRows] = useState<Account[]>([]);
-  const [edit, setEdit] = useState<null | { row: Account | null }>(null);
+  const [edit, setEdit] = useState<EditState>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   async function refresh() { setRows(await listAccounts()); }
   useEffect(() => { void refresh(); }, []);
 
-  // Sort by code for tree-like display (codes are hierarchical).
   const sorted = useMemo(() => [...rows].sort((a, b) => a.code.localeCompare(b.code)), [rows]);
 
+  function startNew() { setErr(null); setEdit({ mode: "new", data: { ...emptyInput } }); }
+  function startEdit(a: Account) {
+    setErr(null);
+    setEdit({ mode: "edit", id: a.id, data: {
+      code: a.code, nameAr: a.nameAr, nameEn: a.nameEn,
+      type: a.type, parentId: a.parentId, isLeaf: a.isLeaf,
+    } });
+  }
+  function cancel() { setEdit(null); setErr(null); }
+  function setField<K extends keyof AccountInput>(k: K, v: AccountInput[K]) {
+    if (!edit) return; setEdit({ ...edit, data: { ...edit.data, [k]: v } });
+  }
+  async function save() {
+    if (!edit) return;
+    const f = edit.data;
+    if (!f.code.trim() || !f.nameAr.trim()) { setErr("الكود والاسم مطلوبان"); return; }
+    setBusy(true); setErr(null);
+    try {
+      if (edit.mode === "new") await createAccount(f);
+      else await updateAccount(edit.id, f);
+      setEdit(null); await refresh();
+    } catch (e: any) { setErr(e?.message ?? "فشل"); }
+    finally { setBusy(false); }
+  }
   async function remove(a: Account) {
     if (!confirm(`حذف الحساب ${a.code} - ${a.nameAr}؟`)) return;
     try { await deleteAccount(a.id); await refresh(); }
@@ -37,30 +67,36 @@ export default function ChartOfAccounts() {
     <Page
       title="شجرة الحسابات"
       subtitle={`${rows.length} حساب — الأكواد الافتراضية محفوظة، يمكنك إضافة فرعية`}
-      right={<button onClick={() => setEdit({ row: null })} style={btnPrimary}>+ إضافة حساب</button>}
+      right={<button onClick={startNew} disabled={!!edit} style={{ ...btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>+ إضافة حساب</button>}
     >
       <Card>
-        {sorted.length === 0 ? <Empty text="لا توجد حسابات" /> : (
+        {sorted.length === 0 && !edit ? <Empty text="لا توجد حسابات" /> : (
           <Table>
             <thead><tr>
               <Th>الكود</Th><Th>الاسم</Th><Th>النوع</Th><Th>الحساب الأب</Th>
-              <Th style={{ textAlign: "left" }}>الرصيد</Th><Th style={{ width: 180 }}>إجراءات</Th>
+              <Th style={{ textAlign: "left" }}>الرصيد</Th><Th style={{ width: 220 }}>إجراءات</Th>
             </tr></thead>
             <tbody>
+              {edit?.mode === "new" && (
+                <EditRow data={edit.data} setField={setField} all={rows} editingId={null} onSave={save} onCancel={cancel} busy={busy} err={err} isNew />
+              )}
               {sorted.map((a) => {
+                if (edit?.mode === "edit" && edit.id === a.id) {
+                  return <EditRow key={a.id} data={edit.data} setField={setField} all={rows} editingId={a.id} onSave={save} onCancel={cancel} busy={busy} err={err} balance={a.balance} />;
+                }
                 const depth = (a.code.match(/^(\d{1})/) ? a.code.length - 1 : 0);
                 const parent = a.parentId ? rows.find((x) => x.id === a.parentId) : null;
                 return (
-                  <tr key={a.id}>
+                  <tr key={a.id} style={{ opacity: edit ? 0.6 : 1 }}>
                     <Td mono><span style={{ marginInlineStart: depth * 12 }}>{a.code}</span></Td>
                     <Td style={{ fontWeight: a.isLeaf ? 400 : 700 }}>{a.nameAr}</Td>
                     <Td><span style={{ background: TYPE_COLOR[a.type] + "20", color: TYPE_COLOR[a.type], padding: "2px 8px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{TYPE_LABEL[a.type]}</span></Td>
                     <Td style={{ color: "#64748b" }}>{parent ? `${parent.code} - ${parent.nameAr}` : "—"}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(a.balance)}</Td>
                     <Td>
-                      <button onClick={() => setEdit({ row: a })} style={btnLink}>تعديل</button>
+                      <button onClick={() => startEdit(a)} disabled={!!edit} style={btnLink}>تعديل</button>
                       {" · "}
-                      <button onClick={() => remove(a)} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
+                      <button onClick={() => remove(a)} disabled={!!edit} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
                     </Td>
                   </tr>
                 );
@@ -69,69 +105,70 @@ export default function ChartOfAccounts() {
           </Table>
         )}
       </Card>
-      {edit && <AccountForm row={edit.row} all={rows} onCancel={() => setEdit(null)} onDone={() => { setEdit(null); void refresh(); }} />}
     </Page>
   );
 }
 
-function AccountForm({ row, all, onCancel, onDone }: { row: Account | null; all: Account[]; onCancel: () => void; onDone: () => void }) {
-  const [f, setF] = useState<AccountInput>(row
-    ? { code: row.code, nameAr: row.nameAr, nameEn: row.nameEn, type: row.type, parentId: row.parentId, isLeaf: row.isLeaf }
-    : emptyInput);
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  // Parent options: only non-leaf accounts of the same type.
-  const parents = useMemo(() => all.filter((a) => a.type === f.type && !a.isLeaf && (!row || a.id !== row.id)), [all, f.type, row]);
-
-  async function save() {
-    setBusy(true); setErr(null);
-    try {
-      if (row) await updateAccount(row.id, f);
-      else await createAccount(f);
-      onDone();
-    } catch (e: any) { setErr(e?.message ?? "فشل"); }
-    finally { setBusy(false); }
-  }
+function EditRow({ data, setField, all, editingId, onSave, onCancel, busy, err, isNew, balance }: {
+  data: AccountInput;
+  setField: <K extends keyof AccountInput>(k: K, v: AccountInput[K]) => void;
+  all: Account[]; editingId: number | null;
+  onSave: () => void; onCancel: () => void;
+  busy: boolean; err: string | null; isNew?: boolean; balance?: number;
+}) {
+  const ci: React.CSSProperties = { ...input, padding: "6px 8px", fontSize: 13 };
+  const parents = useMemo(
+    () => all.filter((a) => a.type === data.type && !a.isLeaf && (!editingId || a.id !== editingId)),
+    [all, data.type, editingId],
+  );
   return (
-    <Modal title={row ? `تعديل ${row.code}` : "إضافة حساب"} onCancel={onCancel}>
-      <Field label="الكود *"><input value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} style={input} autoFocus /></Field>
-      <Field label="الاسم *"><input value={f.nameAr} onChange={(e) => setF({ ...f, nameAr: e.target.value })} style={input} /></Field>
-      <Field label="النوع">
-        <SearchCombobox
-          value={f.type}
-          onChange={(v) => setF({ ...f, type: v as AccountType, parentId: null })}
-          style={input}
-          options={Object.entries(TYPE_LABEL).map(([k, v]) => ({ value: k, label: v }))}
-        />
-      </Field>
-      <Field label="الحساب الأب">
-        <SearchCombobox
-          value={f.parentId ?? ""}
-          onChange={(v) => setF({ ...f, parentId: v === "" ? null : Number(v) })}
-          style={input}
-          options={[
-            { value: "", label: "— بدون (حساب رئيسي) —" },
-            ...parents.map((p) => ({ value: p.id, label: `${p.code} — ${p.nameAr}` })),
-          ]}
-        />
-      </Field>
-      <Field label="نوع الحساب">
-        <SearchCombobox
-          value={f.isLeaf ? "1" : "0"}
-          onChange={(v) => setF({ ...f, isLeaf: v === "1" })}
-          style={input}
-          options={[
-            { value: "1", label: "حساب فرعي (يقبل قيود)" },
-            { value: "0", label: "حساب رئيسي (تجميع فقط)" },
-          ]}
-        />
-      </Field>
-      <ErrorMsg text={err} />
-      <Actions>
-        <button onClick={onCancel} style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy || !f.code.trim() || !f.nameAr.trim()} style={btnPrimary}>{busy ? "..." : "حفظ"}</button>
-      </Actions>
-    </Modal>
+    <>
+      <tr style={{ background: isNew ? "#f0fdf4" : "#eff6ff" }}>
+        <Td><input autoFocus value={data.code} onChange={(e) => setField("code", e.target.value)} style={ci} placeholder="الكود *" /></Td>
+        <Td><input value={data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={ci} placeholder="الاسم *" /></Td>
+        <Td>
+          <SearchCombobox
+            value={data.type}
+            onChange={(v) => setField("type", v as AccountType)}
+            style={ci}
+            options={Object.entries(TYPE_LABEL).map(([k, v]) => ({ value: k, label: v }))}
+          />
+        </Td>
+        <Td>
+          <SearchCombobox
+            value={data.parentId ?? ""}
+            onChange={(v) => setField("parentId", v === "" ? null : Number(v))}
+            style={ci}
+            options={[
+              { value: "", label: "— بدون (حساب رئيسي) —" },
+              ...parents.map((p) => ({ value: p.id, label: `${p.code} — ${p.nameAr}` })),
+            ]}
+          />
+        </Td>
+        <Td num>{balance !== undefined ? fmt(balance) : "—"}</Td>
+        <Td>
+          <button onClick={onSave} disabled={busy} style={{ ...btnPrimary, padding: "4px 10px", fontSize: 12 }}>{busy ? "..." : "حفظ"}</button>
+          {" "}
+          <button onClick={onCancel} disabled={busy} style={{ ...btnSecondary, padding: "4px 10px", fontSize: 12 }}>إلغاء</button>
+        </Td>
+      </tr>
+      <tr style={{ background: isNew ? "#f0fdf4" : "#eff6ff" }}>
+        <Td colSpan={2}>
+          <input value={data.nameEn ?? ""} onChange={(e) => setField("nameEn", e.target.value || null)} style={ci} placeholder="الاسم بالإنجليزية (اختياري)" />
+        </Td>
+        <Td colSpan={4}>
+          <SearchCombobox
+            value={data.isLeaf ? "1" : "0"}
+            onChange={(v) => setField("isLeaf", v === "1")}
+            style={ci}
+            options={[
+              { value: "1", label: "حساب فرعي (يقبل قيود)" },
+              { value: "0", label: "حساب رئيسي (تجميع فقط)" },
+            ]}
+          />
+        </Td>
+      </tr>
+      {err && <tr><Td colSpan={6} style={{ background: "#fef2f2", color: "#991b1b", fontSize: 13 }}>⚠️ {err}</Td></tr>}
+    </>
   );
 }

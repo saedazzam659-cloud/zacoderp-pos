@@ -1,17 +1,18 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   listPurchaseReturns, getPurchaseReturn, createPurchaseReturn, listSuppliers,
   type PurchaseReturn, type PurchaseLine, type Supplier,
 } from "../lib/accounting";
 import { listItems, type LocalItem } from "../lib/items";
 import {
-  Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
+  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
 export default function PurchaseReturnsAdmin() {
   const [rows, setRows] = useState<PurchaseReturn[]>([]);
-  const [view, setView] = useState<PurchaseReturn | null>(null);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedDetail, setExpandedDetail] = useState<PurchaseReturn | null>(null);
   const [creating, setCreating] = useState(false);
   const [deps, setDeps] = useState<{ suppliers: Supplier[]; items: LocalItem[] } | null>(null);
 
@@ -24,16 +25,33 @@ export default function PurchaseReturnsAdmin() {
     })();
   }, []);
 
-  async function openView(id: number) { setView(await getPurchaseReturn(id)); }
+  async function toggleView(id: number) {
+    if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); return; }
+    setExpandedId(id); setExpandedDetail(null);
+    const fetched = await getPurchaseReturn(id);
+    setExpandedId((cur) => { if (cur === id) setExpandedDetail(fetched); return cur; });
+  }
 
   return (
     <Page
       title="مرتجع الشراء"
       subtitle={`${rows.length} مرتجع`}
-      right={<button onClick={() => setCreating(true)} style={btnPrimary} disabled={!deps}>+ مرتجع شراء</button>}
+      right={
+        <button onClick={() => setCreating(true)} disabled={!deps || creating}
+          style={{ ...btnPrimary, opacity: (!deps || creating) ? 0.5 : 1, cursor: (!deps || creating) ? "not-allowed" : "pointer" }}>
+          + مرتجع شراء
+        </button>
+      }
     >
+      {creating && deps && (
+        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+          <div style={{ padding: 16 }}>
+            <CreateForm deps={deps} onCancel={() => setCreating(false)} onDone={() => { setCreating(false); void refresh(); }} />
+          </div>
+        </Card>
+      )}
       <Card>
-        {rows.length === 0 ? <Empty text="لا توجد مرتجعات" /> : (
+        {rows.length === 0 && !creating ? <Empty text="لا توجد مرتجعات" /> : (
           <Table>
             <thead><tr>
               <Th>رقم المرتجع</Th><Th>التاريخ</Th><Th>المورد</Th>
@@ -42,34 +60,50 @@ export default function PurchaseReturnsAdmin() {
             </tr></thead>
             <tbody>
               {rows.map((p) => (
-                <tr key={p.id}>
-                  <Td mono>{p.returnNo}</Td><Td>{p.returnDate}</Td><Td>{p.supplierName}</Td>
-                  <Td num>{fmt(p.subtotal)}</Td><Td num>{fmt(p.vatTotal)}</Td>
-                  <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
-                  <Td><button onClick={() => void openView(p.id)} style={btnLink}>عرض</button></Td>
-                </tr>
+                <React.Fragment key={p.id}>
+                  <tr>
+                    <Td mono>{p.returnNo}</Td><Td>{p.returnDate}</Td><Td>{p.supplierName}</Td>
+                    <Td num>{fmt(p.subtotal)}</Td><Td num>{fmt(p.vatTotal)}</Td>
+                    <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
+                    <Td>
+                      <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
+                        style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                        {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
+                      </button>
+                    </Td>
+                  </tr>
+                  {expandedId === p.id && (
+                    <tr style={{ background: "#f8fafc" }}>
+                      <Td colSpan={7 as any}>
+                        {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>... جاري التحميل</div> : (
+                          <ReturnDetail r={expandedDetail} />
+                        )}
+                      </Td>
+                    </tr>
+                  )}
+                </React.Fragment>
               ))}
             </tbody>
           </Table>
         )}
       </Card>
-      {view && (
-        <Modal title={`مرتجع ${view.returnNo}`} onCancel={() => setView(null)} wide>
-          <div style={{ marginBottom: 12, color: "#64748b" }}>{view.returnDate} — {view.supplierName}</div>
-          <Table>
-            <thead><tr><Th>الصنف</Th><Th style={{ textAlign: "left" }}>الكمية</Th><Th style={{ textAlign: "left" }}>سعر الوحدة</Th><Th style={{ textAlign: "left" }}>الإجمالي</Th></tr></thead>
-            <tbody>
-              {view.lines.map((l, i) => (
-                <tr key={l.id ?? i}><Td>{l.itemName}</Td><Td num>{l.qty}</Td><Td num>{fmt(l.unitCost)}</Td><Td num>{fmt(l.lineTotal)}</Td></tr>
-              ))}
-              <tr style={{ background: "#f1f5f9", fontWeight: 700 }}><Td colSpan={3 as any}>الإجمالي</Td><Td num>{fmt(view.grandTotal)}</Td></tr>
-            </tbody>
-          </Table>
-          <Actions><button onClick={() => setView(null)} style={btnSecondary}>إغلاق</button></Actions>
-        </Modal>
-      )}
-      {creating && deps && <CreateForm deps={deps} onCancel={() => setCreating(false)} onDone={() => { setCreating(false); void refresh(); }} />}
     </Page>
+  );
+}
+
+function ReturnDetail({ r }: { r: PurchaseReturn }) {
+  return (
+    <div style={{ padding: 12 }}>
+      <Table>
+        <thead><tr><Th>الصنف</Th><Th style={{ textAlign: "left" }}>الكمية</Th><Th style={{ textAlign: "left" }}>سعر الوحدة</Th><Th style={{ textAlign: "left" }}>الإجمالي</Th></tr></thead>
+        <tbody>
+          {r.lines.map((l, i) => (
+            <tr key={l.id ?? i}><Td>{l.itemName}</Td><Td num>{l.qty}</Td><Td num>{fmt(l.unitCost)}</Td><Td num>{fmt(l.lineTotal)}</Td></tr>
+          ))}
+          <tr style={{ background: "#f1f5f9", fontWeight: 700 }}><Td colSpan={3 as any}>الإجمالي</Td><Td num>{fmt(r.grandTotal)}</Td></tr>
+        </tbody>
+      </Table>
+    </div>
   );
 }
 
@@ -113,7 +147,8 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
   }
 
   return (
-    <Modal title="مرتجع شراء جديد" onCancel={onCancel} wide>
+    <div>
+      <h3 style={{ marginTop: 0 }}>مرتجع شراء جديد</h3>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 200px", gap: 10 }}>
         <Field label="المورد *">
           <SearchCombobox
@@ -151,7 +186,7 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
               <Td><input type="number" step="0.01" value={l.unitCost} onChange={(e) => setLine(i, { unitCost: Number(e.target.value) || 0 })} style={input} /></Td>
               <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={input} /></Td>
               <Td num>{fmt(l.lineTotal)}</Td>
-              <Td><button onClick={() => removeLine(i)} style={{ ...btnLink, color: "#dc2626" }}>×</button></Td>
+              <Td><button onClick={() => removeLine(i)} type="button" style={{ ...btnLink, color: "#dc2626" }}>×</button></Td>
             </tr>
           ))}
           <tr style={{ background: "#f8fafc", fontWeight: 700 }}>
@@ -161,13 +196,13 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
           <tr style={{ background: "#f1f5f9", fontWeight: 800, fontSize: 15 }}><Td colSpan={4 as any}>الإجمالي</Td><Td num>{fmt(grand)}</Td><Td></Td></tr>
         </tbody>
       </Table>
-      <button onClick={addLine} style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
+      <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
       <Field label="ملاحظات" style={{ marginTop: 12 }}><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
       <ErrorMsg text={err} />
       <Actions>
-        <button onClick={onCancel} style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy} style={btnPrimary}>{busy ? "..." : "حفظ وترحيل"}</button>
+        <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
+        <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : "حفظ وترحيل"}</button>
       </Actions>
-    </Modal>
+    </div>
   );
 }

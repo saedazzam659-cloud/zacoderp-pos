@@ -4,18 +4,53 @@ import {
   type Supplier, type SupplierInput,
 } from "../lib/accounting";
 import {
-  Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
-  input, btnPrimary, btnSecondary, btnLink, btnDanger, fmt,
+  Page, Card, Table, Th, Td, Empty,
+  input, btnPrimary, btnSecondary, btnLink, fmt,
 } from "./_adminUi";
 
 const emptyInput: SupplierInput = { code: null, nameAr: "", nameEn: null, phone: null, vatNumber: null, notes: null };
 
+type EditState =
+  | { mode: "new"; data: SupplierInput }
+  | { mode: "edit"; id: number; data: SupplierInput }
+  | null;
+
 export default function SuppliersAdmin() {
   const [rows, setRows] = useState<Supplier[]>([]);
-  const [showForm, setShowForm] = useState<null | { editing: Supplier | null }>(null);
+  const [edit, setEdit] = useState<EditState>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   async function refresh() { setRows(await listSuppliers()); }
   useEffect(() => { void refresh(); }, []);
+
+  function startNew() { setErr(null); setEdit({ mode: "new", data: { ...emptyInput } }); }
+  function startEdit(s: Supplier) {
+    setErr(null);
+    setEdit({ mode: "edit", id: s.id, data: {
+      code: s.code, nameAr: s.nameAr, nameEn: s.nameEn,
+      phone: s.phone, vatNumber: s.vatNumber, notes: s.notes,
+    } });
+  }
+  function cancel() { setEdit(null); setErr(null); }
+  function setField<K extends keyof SupplierInput>(k: K, v: SupplierInput[K]) {
+    if (!edit) return;
+    setEdit({ ...edit, data: { ...edit.data, [k]: v } });
+  }
+
+  async function save() {
+    if (!edit) return;
+    const f = edit.data;
+    if (!f.nameAr.trim()) { setErr("الاسم بالعربي مطلوب"); return; }
+    setBusy(true); setErr(null);
+    try {
+      if (edit.mode === "new") await createSupplier(f);
+      else await updateSupplier(edit.id, f);
+      setEdit(null);
+      await refresh();
+    } catch (e: any) { setErr(e?.message ?? "فشل الحفظ"); }
+    finally { setBusy(false); }
+  }
 
   async function remove(s: Supplier) {
     if (!confirm(`حذف المورد ${s.nameAr}؟`)) return;
@@ -27,78 +62,83 @@ export default function SuppliersAdmin() {
     <Page
       title="الموردون"
       subtitle={`${rows.length} مورد`}
-      right={<button onClick={() => setShowForm({ editing: null })} style={btnPrimary}>+ إضافة مورد</button>}
+      right={
+        <button onClick={startNew} disabled={!!edit}
+          style={{ ...btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>
+          + إضافة مورد
+        </button>
+      }
     >
       <Card>
-        {rows.length === 0 ? <Empty text="لا يوجد موردون بعد" /> : (
+        {rows.length === 0 && !edit ? <Empty text="لا يوجد موردون بعد" /> : (
           <Table>
             <thead><tr>
               <Th>الكود</Th><Th>الاسم</Th><Th>هاتف</Th><Th>الرقم الضريبي</Th>
-              <Th style={{ textAlign: "left" }}>الرصيد</Th><Th style={{ width: 180 }}>إجراءات</Th>
+              <Th style={{ textAlign: "left" }}>الرصيد</Th><Th style={{ width: 220 }}>إجراءات</Th>
             </tr></thead>
             <tbody>
+              {edit?.mode === "new" && (
+                <EditRow data={edit.data} setField={setField} onSave={save} onCancel={cancel} busy={busy} err={err} isNew />
+              )}
               {rows.map((s) => (
-                <tr key={s.id}>
-                  <Td mono>{s.code ?? "—"}</Td>
-                  <Td>{s.nameAr}{s.nameEn && <span style={{ color: "#94a3b8", marginInlineStart: 8 }}>{s.nameEn}</span>}</Td>
-                  <Td>{s.phone ?? "—"}</Td>
-                  <Td mono>{s.vatNumber ?? "—"}</Td>
-                  <Td num style={{ color: s.balance > 0 ? "#dc2626" : "#16a34a", fontWeight: 600 }}>{fmt(s.balance)}</Td>
-                  <Td>
-                    <button onClick={() => setShowForm({ editing: s })} style={btnLink}>تعديل</button>
-                    {" · "}
-                    <button onClick={() => remove(s)} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
-                  </Td>
-                </tr>
+                edit?.mode === "edit" && edit.id === s.id ? (
+                  <EditRow key={s.id} data={edit.data} setField={setField} onSave={save} onCancel={cancel} busy={busy} err={err} balance={s.balance} />
+                ) : (
+                  <tr key={s.id} style={{ opacity: edit ? 0.6 : 1 }}>
+                    <Td mono>{s.code ?? "—"}</Td>
+                    <Td>{s.nameAr}{s.nameEn && <span style={{ color: "#94a3b8", marginInlineStart: 8 }}>{s.nameEn}</span>}</Td>
+                    <Td>{s.phone ?? "—"}</Td>
+                    <Td mono>{s.vatNumber ?? "—"}</Td>
+                    <Td num style={{ color: s.balance > 0 ? "#dc2626" : "#16a34a", fontWeight: 600 }}>{fmt(s.balance)}</Td>
+                    <Td>
+                      <button onClick={() => startEdit(s)} disabled={!!edit} style={btnLink}>تعديل</button>
+                      {" · "}
+                      <button onClick={() => remove(s)} disabled={!!edit} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
+                    </Td>
+                  </tr>
+                )
               ))}
             </tbody>
           </Table>
         )}
       </Card>
-
-      {showForm && (
-        <SupplierForm
-          editing={showForm.editing}
-          onCancel={() => setShowForm(null)}
-          onDone={() => { setShowForm(null); void refresh(); }}
-        />
-      )}
     </Page>
   );
 }
 
-function SupplierForm({ editing, onCancel, onDone }: { editing: Supplier | null; onCancel: () => void; onDone: () => void }) {
-  const [f, setF] = useState<SupplierInput>(editing
-    ? { code: editing.code, nameAr: editing.nameAr, nameEn: editing.nameEn, phone: editing.phone, vatNumber: editing.vatNumber, notes: editing.notes }
-    : emptyInput);
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function save() {
-    setBusy(true); setErr(null);
-    try {
-      if (editing) await updateSupplier(editing.id, f);
-      else await createSupplier(f);
-      onDone();
-    } catch (e: any) { setErr(e?.message ?? "فشل الحفظ"); }
-    finally { setBusy(false); }
-  }
-
+function EditRow({ data, setField, onSave, onCancel, busy, err, isNew, balance }: {
+  data: SupplierInput;
+  setField: <K extends keyof SupplierInput>(k: K, v: SupplierInput[K]) => void;
+  onSave: () => void; onCancel: () => void;
+  busy: boolean; err: string | null; isNew?: boolean; balance?: number;
+}) {
+  const ci: React.CSSProperties = { ...input, padding: "6px 8px", fontSize: 13 };
   return (
-    <Modal title={editing ? `تعديل المورد ${editing.nameAr}` : "إضافة مورد"} onCancel={onCancel}>
-      <Field label="الاسم بالعربي *"><input value={f.nameAr} onChange={(e) => setF({ ...f, nameAr: e.target.value })} style={input} autoFocus /></Field>
-      <Field label="الاسم بالإنجليزي"><input value={f.nameEn ?? ""} onChange={(e) => setF({ ...f, nameEn: e.target.value || null })} style={input} /></Field>
-      <Field label="الكود"><input value={f.code ?? ""} onChange={(e) => setF({ ...f, code: e.target.value || null })} style={input} /></Field>
-      <Field label="رقم الهاتف"><input value={f.phone ?? ""} onChange={(e) => setF({ ...f, phone: e.target.value || null })} style={input} /></Field>
-      <Field label="الرقم الضريبي"><input value={f.vatNumber ?? ""} onChange={(e) => setF({ ...f, vatNumber: e.target.value || null })} style={input} /></Field>
-      <Field label="ملاحظات"><textarea value={f.notes ?? ""} onChange={(e) => setF({ ...f, notes: e.target.value || null })} style={{ ...input, minHeight: 60 }} /></Field>
-      <ErrorMsg text={err} />
-      <Actions>
-        <button onClick={onCancel} style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy || !f.nameAr.trim()} style={btnPrimary}>{busy ? "..." : "حفظ"}</button>
-      </Actions>
-    </Modal>
+    <>
+      <tr style={{ background: isNew ? "#f0fdf4" : "#eff6ff" }}>
+        <Td><input value={data.code ?? ""} onChange={(e) => setField("code", e.target.value || null)} style={ci} placeholder="الكود" /></Td>
+        <Td>
+          <input autoFocus value={data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={ci} placeholder="الاسم بالعربي *" />
+          <input value={data.nameEn ?? ""} onChange={(e) => setField("nameEn", e.target.value || null)} style={{ ...ci, marginTop: 4 }} placeholder="الاسم بالإنجليزي" />
+        </Td>
+        <Td><input value={data.phone ?? ""} onChange={(e) => setField("phone", e.target.value || null)} style={ci} placeholder="هاتف" /></Td>
+        <Td><input value={data.vatNumber ?? ""} onChange={(e) => setField("vatNumber", e.target.value || null)} style={ci} placeholder="الرقم الضريبي" /></Td>
+        <Td num>{balance !== undefined ? fmt(balance) : "—"}</Td>
+        <Td>
+          <button onClick={onSave} disabled={busy} style={{ ...btnPrimary, padding: "4px 10px", fontSize: 12 }}>{busy ? "..." : "حفظ"}</button>
+          {" "}
+          <button onClick={onCancel} disabled={busy} style={{ ...btnSecondary, padding: "4px 10px", fontSize: 12 }}>إلغاء</button>
+        </Td>
+      </tr>
+      <tr style={{ background: isNew ? "#f0fdf4" : "#eff6ff" }}>
+        <Td colSpan={6}>
+          <textarea value={data.notes ?? ""} onChange={(e) => setField("notes", e.target.value || null)}
+            style={{ ...ci, minHeight: 40, width: "100%" }} placeholder="ملاحظات" />
+        </Td>
+      </tr>
+      {err && (
+        <tr><Td colSpan={6} style={{ background: "#fef2f2", color: "#991b1b", fontSize: 13 }}>⚠️ {err}</Td></tr>
+      )}
+    </>
   );
 }
-
-void btnDanger;

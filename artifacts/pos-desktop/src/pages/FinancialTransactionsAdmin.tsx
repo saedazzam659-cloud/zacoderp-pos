@@ -4,7 +4,7 @@ import {
   type FinancialTx, type TxType, type PartyType, type Supplier, type CashBox, type Bank, type Account,
 } from "../lib/accounting";
 import {
-  Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
+  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
@@ -29,10 +29,26 @@ export default function FinancialTransactionsAdmin() {
       title="المعاملات المالية"
       subtitle="سندات القبض والصرف — يتم ترحيل القيد المحاسبي تلقائياً"
       right={<div style={{ display: "flex", gap: 8 }}>
-        <button onClick={() => setCreating({ type: "receipt" })} style={{ ...btnPrimary, background: "#15803d" }} disabled={!deps}>+ سند قبض</button>
-        <button onClick={() => setCreating({ type: "payment" })} style={{ ...btnPrimary, background: "#b91c1c" }} disabled={!deps}>+ سند صرف</button>
+        <button onClick={() => setCreating({ type: "receipt" })}
+          style={{ ...btnPrimary, background: "#15803d", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}
+          disabled={!deps || !!creating}>+ سند قبض</button>
+        <button onClick={() => setCreating({ type: "payment" })}
+          style={{ ...btnPrimary, background: "#b91c1c", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}
+          disabled={!deps || !!creating}>+ سند صرف</button>
       </div>}
     >
+      {creating && deps && (
+        <Card style={{ marginBottom: 12, border: `2px solid ${creating.type === "receipt" ? "#15803d" : "#b91c1c"}` }}>
+          <div style={{ padding: 16 }}>
+            <CreateForm
+              type={creating.type}
+              deps={deps}
+              onCancel={() => setCreating(null)}
+              onDone={() => { setCreating(null); void refresh(); }}
+            />
+          </div>
+        </Card>
+      )}
       <Card>
         {rows.length === 0 ? <Empty text="لا توجد معاملات" /> : (
           <Table>
@@ -58,9 +74,6 @@ export default function FinancialTransactionsAdmin() {
           </Table>
         )}
       </Card>
-      {creating && deps && (
-        <CreateForm type={creating.type} deps={deps} onCancel={() => setCreating(null)} onDone={() => { setCreating(null); void refresh(); }} />
-      )}
     </Page>
   );
 }
@@ -71,7 +84,6 @@ function CreateForm({ type, deps, onCancel, onDone }: {
   onCancel: () => void; onDone: () => void;
 }) {
   const [date, setDate] = useState(todayStr());
-  // For payment: default party_type=supplier; receipt: customer (or none).
   const [partyType, setPartyType] = useState<PartyType>(type === "payment" ? "supplier" : "none");
   const [partyId, setPartyId] = useState<number | null>(null);
   const [walletKind, setWalletKind] = useState<"cash" | "bank">("cash");
@@ -104,47 +116,56 @@ function CreateForm({ type, deps, onCancel, onDone }: {
   }
 
   return (
-    <Modal title={type === "receipt" ? "سند قبض جديد" : "سند صرف جديد"} onCancel={onCancel}>
-      <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
+    <div>
+      <h3 style={{ marginTop: 0, color: type === "receipt" ? "#15803d" : "#b91c1c" }}>
+        {type === "receipt" ? "سند قبض جديد" : "سند صرف جديد"}
+      </h3>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
+        <Field label="المبلغ"><input type="number" step="0.01" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value) || 0)} style={input} autoFocus /></Field>
+        <Field label="المحفظة">
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setWalletKind("cash")} type="button" style={walletKind === "cash" ? btnPrimary : btnSecondary}>خزينة</button>
+            <button onClick={() => setWalletKind("bank")} type="button" style={walletKind === "bank" ? btnPrimary : btnSecondary}>بنك</button>
+          </div>
+        </Field>
+      </div>
 
-      <Field label="المحفظة">
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => setWalletKind("cash")} style={walletKind === "cash" ? btnPrimary : btnSecondary}>خزينة</button>
-          <button onClick={() => setWalletKind("bank")} style={walletKind === "bank" ? btnPrimary : btnSecondary}>بنك</button>
-        </div>
-      </Field>
-      {walletKind === "cash" ? (
-        <Field label="الخزينة">
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        {walletKind === "cash" ? (
+          <Field label="الخزينة">
+            <SearchCombobox
+              value={cashBoxId ?? ""}
+              onChange={(v) => setCashBoxId(Number(v) || null)}
+              style={input}
+              options={deps.cashBoxes.map((c) => ({ value: c.id, label: `${c.name} (${fmt(c.balance)})` }))}
+            />
+          </Field>
+        ) : (
+          <Field label="البنك">
+            <SearchCombobox
+              value={bankId ?? ""}
+              onChange={(v) => setBankId(Number(v) || null)}
+              style={input}
+              options={deps.banks.map((b) => ({ value: b.id, label: `${b.name} (${fmt(b.balance)})` }))}
+            />
+          </Field>
+        )}
+
+        <Field label="الطرف الآخر">
           <SearchCombobox
-            value={cashBoxId ?? ""}
-            onChange={(v) => setCashBoxId(Number(v) || null)}
+            value={partyType}
+            onChange={(v) => { setPartyType(v as PartyType); setPartyId(null); }}
             style={input}
-            options={deps.cashBoxes.map((c) => ({ value: c.id, label: `${c.name} (${fmt(c.balance)})` }))}
+            options={[
+              { value: "none", label: "حساب من شجرة الحسابات (إيراد / مصروف / ...)" },
+              { value: "supplier", label: "مورد" },
+              ...(type === "receipt" ? [{ value: "customer", label: "عميل" }] : []),
+            ]}
           />
         </Field>
-      ) : (
-        <Field label="البنك">
-          <SearchCombobox
-            value={bankId ?? ""}
-            onChange={(v) => setBankId(Number(v) || null)}
-            style={input}
-            options={deps.banks.map((b) => ({ value: b.id, label: `${b.name} (${fmt(b.balance)})` }))}
-          />
-        </Field>
-      )}
+      </div>
 
-      <Field label="الطرف الآخر">
-        <SearchCombobox
-          value={partyType}
-          onChange={(v) => { setPartyType(v as PartyType); setPartyId(null); }}
-          style={input}
-          options={[
-            { value: "none", label: "حساب من شجرة الحسابات (إيراد / مصروف / ...)" },
-            { value: "supplier", label: "مورد" },
-            ...(type === "receipt" ? [{ value: "customer", label: "عميل" }] : []),
-          ]}
-        />
-      </Field>
       {partyType === "supplier" && (
         <Field label="المورد">
           <SearchCombobox
@@ -172,13 +193,12 @@ function CreateForm({ type, deps, onCancel, onDone }: {
         </Field>
       )}
 
-      <Field label="المبلغ"><input type="number" step="0.01" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value) || 0)} style={input} autoFocus /></Field>
       <Field label="البيان"><textarea value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
       <ErrorMsg text={err} />
       <Actions>
-        <button onClick={onCancel} style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy} style={btnPrimary}>{busy ? "..." : "حفظ وترحيل"}</button>
+        <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
+        <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : "حفظ وترحيل"}</button>
       </Actions>
-    </Modal>
+    </div>
   );
 }

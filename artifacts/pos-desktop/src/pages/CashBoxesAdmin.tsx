@@ -1,14 +1,36 @@
 import { useEffect, useState } from "react";
 import { listCashBoxes, createCashBox, updateCashBox, deleteCashBox, type CashBox } from "../lib/accounting";
-import { Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty, input, btnPrimary, btnSecondary, btnLink, fmt } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, input, btnPrimary, btnSecondary, btnLink, fmt } from "./_adminUi";
+
+type EditState =
+  | { mode: "new"; name: string }
+  | { mode: "edit"; id: number; name: string }
+  | null;
 
 export default function CashBoxesAdmin() {
   const [rows, setRows] = useState<CashBox[]>([]);
-  const [edit, setEdit] = useState<null | { row: CashBox | null }>(null);
+  const [edit, setEdit] = useState<EditState>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   async function refresh() { setRows(await listCashBoxes()); }
   useEffect(() => { void refresh(); }, []);
 
+  function startNew() { setErr(null); setEdit({ mode: "new", name: "" }); }
+  function startEdit(b: CashBox) { setErr(null); setEdit({ mode: "edit", id: b.id, name: b.name }); }
+  function cancel() { setEdit(null); setErr(null); }
+  function setName(v: string) { if (edit) setEdit({ ...edit, name: v }); }
+  async function save() {
+    if (!edit) return;
+    if (!edit.name.trim()) { setErr("الاسم مطلوب"); return; }
+    setBusy(true); setErr(null);
+    try {
+      if (edit.mode === "new") await createCashBox(edit.name);
+      else await updateCashBox(edit.id, edit.name);
+      setEdit(null); await refresh();
+    } catch (e: any) { setErr(e?.message ?? "فشل"); }
+    finally { setBusy(false); }
+  }
   async function remove(b: CashBox) {
     if (!confirm(`حذف الخزينة ${b.name}؟`)) return;
     try { await deleteCashBox(b.id); await refresh(); }
@@ -19,54 +41,57 @@ export default function CashBoxesAdmin() {
     <Page
       title="الخزن"
       subtitle={`${rows.length} خزينة — يتم إنشاء حساب فرعي تحت 1100 تلقائياً`}
-      right={<button onClick={() => setEdit({ row: null })} style={btnPrimary}>+ إضافة خزينة</button>}
+      right={<button onClick={startNew} disabled={!!edit} style={{ ...btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>+ إضافة خزينة</button>}
     >
       <Card>
-        {rows.length === 0 ? <Empty text="لا توجد خزن" /> : (
+        {rows.length === 0 && !edit ? <Empty text="لا توجد خزن" /> : (
           <Table>
-            <thead><tr><Th>اسم الخزينة</Th><Th style={{ textAlign: "left" }}>الرصيد</Th><Th style={{ width: 200 }}>إجراءات</Th></tr></thead>
+            <thead><tr><Th>اسم الخزينة</Th><Th style={{ textAlign: "left" }}>الرصيد</Th><Th style={{ width: 220 }}>إجراءات</Th></tr></thead>
             <tbody>
+              {edit?.mode === "new" && (
+                <EditRow name={edit.name} setName={setName} onSave={save} onCancel={cancel} busy={busy} err={err} isNew />
+              )}
               {rows.map((b) => (
-                <tr key={b.id}>
-                  <Td>{b.name}</Td>
-                  <Td num style={{ fontWeight: 600 }}>{fmt(b.balance)} ر.س</Td>
-                  <Td>
-                    <button onClick={() => setEdit({ row: b })} style={btnLink}>تعديل</button>
-                    {" · "}
-                    <button onClick={() => remove(b)} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
-                  </Td>
-                </tr>
+                edit?.mode === "edit" && edit.id === b.id ? (
+                  <EditRow key={b.id} name={edit.name} setName={setName} onSave={save} onCancel={cancel} busy={busy} err={err} balance={b.balance} />
+                ) : (
+                  <tr key={b.id} style={{ opacity: edit ? 0.6 : 1 }}>
+                    <Td>{b.name}</Td>
+                    <Td num style={{ fontWeight: 600 }}>{fmt(b.balance)} ر.س</Td>
+                    <Td>
+                      <button onClick={() => startEdit(b)} disabled={!!edit} style={btnLink}>تعديل</button>
+                      {" · "}
+                      <button onClick={() => remove(b)} disabled={!!edit} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
+                    </Td>
+                  </tr>
+                )
               ))}
             </tbody>
           </Table>
         )}
       </Card>
-      {edit && <CashBoxForm row={edit.row} onCancel={() => setEdit(null)} onDone={() => { setEdit(null); void refresh(); }} />}
     </Page>
   );
 }
 
-function CashBoxForm({ row, onCancel, onDone }: { row: CashBox | null; onCancel: () => void; onDone: () => void }) {
-  const [name, setName] = useState(row?.name ?? "");
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  async function save() {
-    setBusy(true); setErr(null);
-    try {
-      if (row) await updateCashBox(row.id, name);
-      else await createCashBox(name);
-      onDone();
-    } catch (e: any) { setErr(e?.message ?? "فشل"); }
-    finally { setBusy(false); }
-  }
+function EditRow({ name, setName, onSave, onCancel, busy, err, isNew, balance }: {
+  name: string; setName: (v: string) => void;
+  onSave: () => void; onCancel: () => void; busy: boolean; err: string | null;
+  isNew?: boolean; balance?: number;
+}) {
+  const ci: React.CSSProperties = { ...input, padding: "6px 8px", fontSize: 13 };
   return (
-    <Modal title={row ? "تعديل خزينة" : "إضافة خزينة"} onCancel={onCancel}>
-      <Field label="اسم الخزينة"><input value={name} onChange={(e) => setName(e.target.value)} style={input} autoFocus /></Field>
-      <ErrorMsg text={err} />
-      <Actions>
-        <button onClick={onCancel} style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy || !name.trim()} style={btnPrimary}>{busy ? "..." : "حفظ"}</button>
-      </Actions>
-    </Modal>
+    <>
+      <tr style={{ background: isNew ? "#f0fdf4" : "#eff6ff" }}>
+        <Td><input autoFocus value={name} onChange={(e) => setName(e.target.value)} style={ci} placeholder="اسم الخزينة *" /></Td>
+        <Td num>{balance !== undefined ? `${fmt(balance)} ر.س` : "—"}</Td>
+        <Td>
+          <button onClick={onSave} disabled={busy} style={{ ...btnPrimary, padding: "4px 10px", fontSize: 12 }}>{busy ? "..." : "حفظ"}</button>
+          {" "}
+          <button onClick={onCancel} disabled={busy} style={{ ...btnSecondary, padding: "4px 10px", fontSize: 12 }}>إلغاء</button>
+        </Td>
+      </tr>
+      {err && <tr><Td colSpan={3} style={{ background: "#fef2f2", color: "#991b1b", fontSize: 13 }}>⚠️ {err}</Td></tr>}
+    </>
   );
 }
