@@ -362,14 +362,142 @@ pub fn initialize() -> Result<()> {
             counted_qty   REAL NOT NULL DEFAULT 0,
             unit_cost     REAL NOT NULL DEFAULT 0
         );
+
+        -- ── Multi-currency (Task #209) ────────────────────────────────
+        -- Currencies registry. is_base=1 marks the base currency (only one
+        -- row may have it). All amounts on accounts_local are stored in
+        -- base currency; transactional tables carry their native currency
+        -- + exchange_rate to base so the JE can be posted in base currency.
+        CREATE TABLE IF NOT EXISTS currencies_local (
+            code        TEXT PRIMARY KEY,
+            name_ar     TEXT NOT NULL,
+            name_en     TEXT,
+            symbol      TEXT,
+            decimals    INTEGER NOT NULL DEFAULT 2,
+            is_base     INTEGER NOT NULL DEFAULT 0,
+            is_active   INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Exchange rates history. rate_to_base = how many BASE units one
+        -- unit of currency_code is worth on as_of_date. The "current"
+        -- rate is the row with MAX(as_of_date) for that currency.
+        CREATE TABLE IF NOT EXISTS currency_rates_local (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            currency_code   TEXT NOT NULL REFERENCES currencies_local(code),
+            rate_to_base    REAL NOT NULL,
+            as_of_date      TEXT NOT NULL,
+            notes           TEXT,
+            created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(currency_code, as_of_date)
+        );
+        CREATE INDEX IF NOT EXISTS idx_rates_code_date ON currency_rates_local(currency_code, as_of_date DESC);
+
+        -- Treasury transfers between cash boxes / banks. Supports BOTH
+        -- same-currency (amount_from == amount_to) and cross-currency
+        -- (operator-entered exchange_rate, fx_diff -> fx_gain/fx_loss).
+        CREATE TABLE IF NOT EXISTS treasury_transfers_local (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            transfer_no     TEXT NOT NULL UNIQUE,
+            transfer_date   TEXT NOT NULL,
+            from_kind       TEXT NOT NULL CHECK (from_kind IN ('cash','bank')),
+            from_id         INTEGER NOT NULL,
+            from_currency   TEXT NOT NULL,
+            to_kind         TEXT NOT NULL CHECK (to_kind IN ('cash','bank')),
+            to_id           INTEGER NOT NULL,
+            to_currency     TEXT NOT NULL,
+            amount_from     REAL NOT NULL,
+            amount_to       REAL NOT NULL,
+            exchange_rate   REAL NOT NULL DEFAULT 1,
+            fx_diff         REAL NOT NULL DEFAULT 0,
+            je_id           INTEGER REFERENCES journal_entries_local(id),
+            notes           TEXT,
+            created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_treasury_date ON treasury_transfers_local(transfer_date DESC);
         "#,
     )?;
     let _ = conn.execute("ALTER TABLE offline_invoices ADD COLUMN synced_at TEXT", []);
+
+    // ── Idempotent column additions for multi-currency (Task #209) ──
+    // SQLite has no `ADD COLUMN IF NOT EXISTS`, so duplicate-column errors
+    // are silently ignored. All new columns default to 'SAR' / 1.0 so
+    // existing rows keep their meaning post-upgrade.
+    let alters: &[&str] = &[
+        "ALTER TABLE cash_boxes_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
+        "ALTER TABLE banks_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
+        "ALTER TABLE suppliers_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
+        "ALTER TABLE customers_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
+        "ALTER TABLE items_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
+        "ALTER TABLE purchases_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
+        "ALTER TABLE purchases_local ADD COLUMN exchange_rate REAL NOT NULL DEFAULT 1",
+        "ALTER TABLE purchase_returns_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
+        "ALTER TABLE purchase_returns_local ADD COLUMN exchange_rate REAL NOT NULL DEFAULT 1",
+        "ALTER TABLE journal_entries_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
+        "ALTER TABLE journal_entries_local ADD COLUMN exchange_rate REAL NOT NULL DEFAULT 1",
+        "ALTER TABLE financial_transactions_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
+        "ALTER TABLE financial_transactions_local ADD COLUMN exchange_rate REAL NOT NULL DEFAULT 1",
+    ];
+    for sql in alters { let _ = conn.execute(sql, []); }
 
     // Seed default chart of accounts on first run (only when empty).
     seed_default_accounts(&conn)?;
     // Seed default warehouse + inventory-variance accounts on first run.
     seed_inventory_defaults(&conn)?;
+    // Seed currencies + fx gain/loss accounts (idempotent).
+    seed_currencies(&conn)?;
+    Ok(())
+}
+
+fn seed_currencies(conn: &Connection) -> Result<()> {
+    use rusqlite::params;
+    // Default currencies — SAR is the base, others can be activated/deactivated.
+    let seed: &[(&str, &str, &str, &str, i64, i64)] = &[
+        ("SAR", "الريال السعودي", "Saudi Riyal", "ر.س", 2, 1),
+        ("USD", "الدولار الأمريكي", "US Dollar", "$",   2, 0),
+        ("EUR", "اليورو",            "Euro",        "€",   2, 0),
+        ("AED", "الدرهم الإماراتي",  "UAE Dirham",  "د.إ", 2, 0),
+        ("EGP", "الجنيه المصري",     "Egyptian Pound","ج.م",2,0),
+        ("KWD", "الدينار الكويتي",   "Kuwaiti Dinar","د.ك",3, 0),
+    ];
+    for (code, name_ar, name_en, symbol, dec, is_base) in seed {
+        let exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM currencies_local WHERE code=?1",
+            params![code], |r| r.get(0),
+        ).unwrap_or(0);
+        if exists > 0 { continue; }
+        let _ = conn.execute(
+            "INSERT INTO currencies_local(code,name_ar,name_en,symbol,decimals,is_base,is_active) VALUES(?1,?2,?3,?4,?5,?6,1)",
+            params![code, name_ar, name_en, symbol, dec, is_base],
+        );
+        // Seed an initial rate row of 1.0 only for the base currency. Others
+        // start without a rate so the operator MUST enter one before use.
+        if *is_base == 1 {
+            let today: String = chrono::Utc::now().format("%Y-%m-%d").to_string();
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO currency_rates_local(currency_code,rate_to_base,as_of_date,notes) VALUES(?1,1.0,?2,'تلقائي — العملة الأساسية')",
+                params![code, today],
+            );
+        }
+    }
+    // FX gain/loss accounts (idempotent).
+    let fx: &[(&str, &str, &str, &str)] = &[
+        ("4900", "أرباح فروقات العملة", "revenue", "4000"),
+        ("5900", "خسائر فروقات العملة", "expense", "5000"),
+    ];
+    for (code, name, typ, parent_code) in fx {
+        let exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM accounts_local WHERE code=?1", params![code], |r| r.get(0),
+        ).unwrap_or(0);
+        if exists > 0 { continue; }
+        let parent_id: Option<i64> = conn.query_row(
+            "SELECT id FROM accounts_local WHERE code=?1", params![parent_code], |r| r.get(0),
+        ).ok();
+        let _ = conn.execute(
+            "INSERT INTO accounts_local(code,name_ar,type,parent_id,is_leaf) VALUES(?1,?2,?3,?4,1)",
+            params![code, name, typ, parent_id],
+        );
+    }
     Ok(())
 }
 

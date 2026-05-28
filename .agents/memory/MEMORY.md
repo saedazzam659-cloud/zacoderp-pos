@@ -11,3 +11,4 @@
 - [POS Desktop standalone mode](pos-desktop-standalone-mode.md) — cloud and standalone are two separate boot trees; every cloud effect must guard `if (standalone) return;` and the mode-switch wipe must iterate ALL `pos_desktop_*` LS keys.
 - [POS Desktop APP_VERSION define](pos-desktop-app-version-define.md) — always read `__APP_VERSION__` (vite define from package.json); hardcoded version literals go stale and fire false "update available" banners.
 - [POS Desktop inventory ledger invariants](pos-desktop-inventory-ledger.md) — stocktake post must be idempotent (return prior adj_id, not error); ledger reads must use `.optional()?` not `.unwrap_or(0)` or real SQL errors silently corrupt `balance_after`.
+- [POS Desktop multi-currency model](pos-desktop-multicurrency.md) — native-currency balances per treasury endpoint, all JEs in base; FX diff → fx_gain(4900)/fx_loss(5900); changing currency on a non-zero box is rejected at the Rust layer.

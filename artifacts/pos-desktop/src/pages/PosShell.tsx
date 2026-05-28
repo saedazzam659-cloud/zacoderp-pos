@@ -28,6 +28,9 @@ import StandaloneUsersAdmin from "./StandaloneUsersAdmin";
 import SuppliersAdmin from "./SuppliersAdmin";
 import CashBoxesAdmin from "./CashBoxesAdmin";
 import BanksAdmin from "./BanksAdmin";
+import CurrenciesAdmin from "./CurrenciesAdmin";
+import ExchangeRatesAdmin from "./ExchangeRatesAdmin";
+import TreasuryTransfersAdmin from "./TreasuryTransfersAdmin";
 import ChartOfAccounts from "./ChartOfAccounts";
 import JournalEntries from "./JournalEntries";
 import PurchasesAdmin from "./PurchasesAdmin";
@@ -64,6 +67,7 @@ type View =
   // Task #207 — accounting & operations screens (standalone).
   | "suppliers" | "purchases" | "purchase_returns"
   | "cash_boxes" | "banks" | "financial_tx"
+  | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "user_permissions"
   // Task #208 — warehouses & inventory ops (standalone).
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers";
@@ -372,6 +376,9 @@ export default function PosShell({
     { id: "cash_boxes",       icon: "💰", label: "الخزن", perm: "cash_boxes" },
     { id: "banks",            icon: "🏦", label: "البنوك", perm: "banks" },
     { id: "financial_tx",     icon: "💸", label: "المعاملات المالية", perm: "financial_tx" },
+    { id: "treasury_transfers", icon: "🔁", label: "تحويل الخزن", perm: "treasury_transfers" },
+    { id: "currencies",       icon: "🌐", label: "العملات", perm: "currencies" },
+    { id: "exchange_rates",   icon: "💱", label: "أسعار الصرف", perm: "exchange_rates" },
     { id: "chart_of_accounts",icon: "🌳", label: "شجرة الحسابات", perm: "chart_of_accounts" },
     { id: "journal_entries",  icon: "📒", label: "القيود اليومية", perm: "journal_entries" },
     { id: "warehouses",        icon: "🏬", label: "المخازن", perm: "warehouses" },
@@ -652,6 +659,15 @@ export default function PosShell({
           {standalone && view === "stock_transfers" && (isAdmin || can("stock_transfers")) && (
             <div style={S.pagePad}><StockTransfersAdmin /></div>
           )}
+          {standalone && view === "currencies" && (isAdmin || can("currencies")) && (
+            <div style={S.pagePad}><CurrenciesAdmin /></div>
+          )}
+          {standalone && view === "exchange_rates" && (isAdmin || can("exchange_rates")) && (
+            <div style={S.pagePad}><ExchangeRatesAdmin /></div>
+          )}
+          {standalone && view === "treasury_transfers" && (isAdmin || can("treasury_transfers")) && (
+            <div style={S.pagePad}><TreasuryTransfersAdmin /></div>
+          )}
         </main>
       </div>
 
@@ -691,6 +707,9 @@ function labelFor(v: View): string {
     stock_adjustments: "تسوية المخزون",
     stock_movements: "حركة المخزون",
     stock_transfers: "التحويل بين المخازن",
+    currencies: "العملات",
+    exchange_rates: "أسعار الصرف",
+    treasury_transfers: "تحويل الخزن",
   }[v];
 }
 

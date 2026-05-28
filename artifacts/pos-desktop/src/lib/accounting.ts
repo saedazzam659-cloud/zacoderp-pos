@@ -24,14 +24,49 @@ export type AccountInput = {
 export type Supplier = {
   id: number; code: string | null; nameAr: string; nameEn: string | null;
   phone: string | null; vatNumber: string | null; balance: number; notes: string | null;
+  currencyCode: string;
 };
 export type SupplierInput = {
   code: string | null; nameAr: string; nameEn: string | null;
   phone: string | null; vatNumber: string | null; notes: string | null;
+  currencyCode?: string;
 };
 
-export type CashBox = { id: number; name: string; balance: number; accountId: number | null };
-export type Bank = { id: number; name: string; accountNo: string | null; balance: number; accountId: number | null };
+export type CashBox = { id: number; name: string; balance: number; accountId: number | null; currencyCode: string };
+export type Bank = { id: number; name: string; accountNo: string | null; balance: number; accountId: number | null; currencyCode: string };
+
+// ─── Multi-currency (Task #209) ──────────────────────────────────────
+export type Currency = {
+  code: string; nameAr: string; nameEn: string | null; symbol: string | null;
+  decimals: number; isBase: boolean; isActive: boolean;
+  currentRate: number | null; rateAsOf: string | null;
+};
+export type CurrencyInput = {
+  code: string; nameAr: string; nameEn: string | null; symbol: string | null;
+  decimals?: number; isActive?: boolean;
+};
+export type CurrencyRate = {
+  id: number; currencyCode: string; rateToBase: number;
+  asOfDate: string; notes: string | null; createdAt: string;
+};
+export type CurrencyRateInput = {
+  currencyCode: string; rateToBase: number; asOfDate: string; notes: string | null;
+};
+export type TreasuryKind = "cash" | "bank";
+export type TreasuryTransfer = {
+  id: number; transferNo: string; transferDate: string;
+  fromKind: TreasuryKind; fromId: number; fromName: string | null; fromCurrency: string;
+  toKind: TreasuryKind;   toId: number;   toName: string | null;   toCurrency: string;
+  amountFrom: number; amountTo: number; exchangeRate: number; fxDiff: number;
+  jeId: number | null; notes: string | null;
+};
+export type TreasuryTransferInput = {
+  transferDate: string;
+  fromKind: TreasuryKind; fromId: number;
+  toKind: TreasuryKind;   toId: number;
+  amountFrom: number; amountTo: number;
+  notes: string | null;
+};
 
 export type PurchaseLine = {
   id?: number; itemId: number; itemName?: string;
@@ -131,13 +166,13 @@ export async function listCashBoxes(): Promise<CashBox[]> {
   if (!hasTauri()) return [];
   return await invoke<CashBox[]>("cash_boxes_list");
 }
-export async function createCashBox(name: string): Promise<number> {
+export async function createCashBox(name: string, currencyCode = "SAR"): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("cash_boxes_create", { input: { name, accountId: null } });
+  return await invoke<number>("cash_boxes_create", { input: { name, accountId: null, currencyCode } });
 }
-export async function updateCashBox(id: number, name: string): Promise<void> {
+export async function updateCashBox(id: number, name: string, currencyCode = "SAR"): Promise<void> {
   if (!hasTauri()) notImpl();
-  await invoke("cash_boxes_update", { id, input: { name, accountId: null } });
+  await invoke("cash_boxes_update", { id, input: { name, accountId: null, currencyCode } });
 }
 export async function deleteCashBox(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
@@ -149,17 +184,59 @@ export async function listBanks(): Promise<Bank[]> {
   if (!hasTauri()) return [];
   return await invoke<Bank[]>("banks_list");
 }
-export async function createBank(name: string, accountNo: string | null): Promise<number> {
+export async function createBank(name: string, accountNo: string | null, currencyCode = "SAR"): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("banks_create", { input: { name, accountNo } });
+  return await invoke<number>("banks_create", { input: { name, accountNo, currencyCode } });
 }
-export async function updateBank(id: number, name: string, accountNo: string | null): Promise<void> {
+export async function updateBank(id: number, name: string, accountNo: string | null, currencyCode = "SAR"): Promise<void> {
   if (!hasTauri()) notImpl();
-  await invoke("banks_update", { id, input: { name, accountNo } });
+  await invoke("banks_update", { id, input: { name, accountNo, currencyCode } });
 }
 export async function deleteBank(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("banks_delete", { id });
+}
+
+// ─── Currencies (Task #209) ──────────────────────────────────────────
+export async function listCurrencies(activeOnly = false): Promise<Currency[]> {
+  if (!hasTauri()) return [];
+  return await invoke<Currency[]>("currencies_list", { activeOnly });
+}
+export async function createCurrency(input: CurrencyInput): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("currency_create", { input });
+}
+export async function updateCurrency(code: string, input: CurrencyInput): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("currency_update", { code, input });
+}
+export async function deleteCurrency(code: string): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("currency_delete", { code });
+}
+
+// ─── Exchange rates ──────────────────────────────────────────────────
+export async function listCurrencyRates(currencyCode?: string, limit = 500): Promise<CurrencyRate[]> {
+  if (!hasTauri()) return [];
+  return await invoke<CurrencyRate[]>("currency_rates_list", { currencyCode: currencyCode ?? null, limit });
+}
+export async function upsertCurrencyRate(input: CurrencyRateInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("currency_rate_upsert", { input });
+}
+export async function deleteCurrencyRate(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("currency_rate_delete", { id });
+}
+
+// ─── Treasury transfers ──────────────────────────────────────────────
+export async function listTreasuryTransfers(limit = 200): Promise<TreasuryTransfer[]> {
+  if (!hasTauri()) return [];
+  return await invoke<TreasuryTransfer[]>("treasury_transfers_list", { limit });
+}
+export async function createTreasuryTransfer(input: TreasuryTransferInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("treasury_transfer_create", { input });
 }
 
 // ─── Purchases ───────────────────────────────────────────────────────

@@ -430,6 +430,16 @@ fn main() {
             inventory::stocktakes_list,
             inventory::stocktake_create,
             inventory::stocktake_post,
+            // Multi-currency (Task #209).
+            accounting::currencies_list,
+            accounting::currency_create,
+            accounting::currency_update,
+            accounting::currency_delete,
+            accounting::currency_rates_list,
+            accounting::currency_rate_upsert,
+            accounting::currency_rate_delete,
+            accounting::treasury_transfers_list,
+            accounting::treasury_transfer_create,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -301,6 +301,12 @@ export function SearchCombobox({
 export function fmt(n: number): string {
   return Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+/** Format an amount with its currency code as suffix (defaults to SAR → "ر.س"). */
+export function fmtCurrency(n: number, code: string = "SAR", decimals = 2): string {
+  const txt = Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  const suffix = code === "SAR" ? "ر.س" : code;
+  return `${txt} ${suffix}`;
+}
 export function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }

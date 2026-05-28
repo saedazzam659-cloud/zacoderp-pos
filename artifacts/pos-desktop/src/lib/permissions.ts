@@ -21,6 +21,7 @@ export type ScreenKey =
   | "stock_import" | "low_stock"
   | "suppliers" | "purchases" | "purchase_returns"
   | "cash_boxes" | "banks" | "financial_tx"
+  | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries"
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
   | "user_permissions" | "dashboard" | "updates" | "users";
@@ -45,6 +46,9 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "cash_boxes", label: "الخزن", icon: "💰", group: "الخزينة والبنوك" },
   { key: "banks", label: "البنوك", icon: "🏦", group: "الخزينة والبنوك" },
   { key: "financial_tx", label: "المعاملات المالية", icon: "💸", group: "الخزينة والبنوك" },
+  { key: "treasury_transfers", label: "تحويل الخزن", icon: "🔁", group: "الخزينة والبنوك" },
+  { key: "currencies", label: "العملات", icon: "🌐", group: "الخزينة والبنوك" },
+  { key: "exchange_rates", label: "أسعار الصرف", icon: "💱", group: "الخزينة والبنوك" },
 
   { key: "chart_of_accounts", label: "شجرة الحسابات", icon: "🌳", group: "المحاسبة" },
   { key: "journal_entries", label: "القيود اليومية", icon: "📒", group: "المحاسبة" },
