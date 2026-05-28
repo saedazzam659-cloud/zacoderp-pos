@@ -41,6 +41,35 @@ async fn sync_now(server_url: String, device_token: String) -> Result<sync::Push
         .map_err(|e| e.to_string())
 }
 
+// Native "Save As" dialog + write text to chosen path.
+// Returns the chosen path on success, or None if the user cancelled.
+// Used by the stock-import screen (and any future export) so the cashier
+// gets a real Windows save dialog instead of a silent browser download
+// that WebView2 often drops.
+#[tauri::command]
+async fn save_text_file(
+    app: tauri::AppHandle,
+    content: String,
+    suggested_name: String,
+    filter_name: String,
+    filter_ext: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter(&filter_name, &[filter_ext.as_str()])
+        .set_file_name(&suggested_name)
+        .save_file(move |fp| {
+            let _ = tx.send(fp);
+        });
+    let chosen = rx.await.map_err(|e| e.to_string())?;
+    let Some(fp) = chosen else { return Ok(None); };
+    let path: std::path::PathBuf = fp.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, content.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
 #[tauri::command]
 fn get_hardware_fingerprint() -> Result<String, String> {
     license::hardware_fingerprint().map_err(|e| e.to_string())
@@ -293,6 +322,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             activate_device,
             sync_now,
+            save_text_file,
             get_hardware_fingerprint,
             get_device_name,
             get_os_info,
