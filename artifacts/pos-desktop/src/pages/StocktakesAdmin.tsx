@@ -8,7 +8,7 @@ import { listItems } from "../lib/items";
 import type { LocalItem } from "../lib/items";
 import {
   Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
-  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr,
+  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
 export default function StocktakesAdmin() {
@@ -141,10 +141,15 @@ function StocktakeForm({ onCancel, onDone }: { onCancel: () => void; onDone: () 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 10 }}>
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label="المخزن">
-          <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value === "" ? "" : Number(e.target.value))} style={input}>
-            <option value="">— اختر —</option>
-            {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-          </select>
+          <SearchCombobox
+            value={warehouseId}
+            onChange={(v) => setWarehouseId(v === "" ? "" : Number(v))}
+            style={input}
+            options={[
+              { value: "", label: "— اختر —" },
+              ...warehouses.map((w) => ({ value: w.id, label: w.name })),
+            ]}
+          />
         </Field>
         <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} style={input} /></Field>
       </div>

@@ -7,7 +7,7 @@ import { listItems } from "../lib/items";
 import type { LocalItem } from "../lib/items";
 import {
   Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
-  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr,
+  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
 export default function StockAdjustmentsAdmin() {
@@ -106,10 +106,15 @@ function AdjustmentForm({ onCancel, onDone }: { onCancel: () => void; onDone: ()
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 10 }}>
         <Field label="التاريخ"><input type="date" value={adjDate} onChange={(e) => setAdjDate(e.target.value)} style={input} /></Field>
         <Field label="المخزن">
-          <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value === "" ? "" : Number(e.target.value))} style={input}>
-            <option value="">— اختر —</option>
-            {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-          </select>
+          <SearchCombobox
+            value={warehouseId}
+            onChange={(v) => setWarehouseId(v === "" ? "" : Number(v))}
+            style={input}
+            options={[
+              { value: "", label: "— اختر —" },
+              ...warehouses.map((w) => ({ value: w.id, label: w.name })),
+            ]}
+          />
         </Field>
         <Field label="السبب"><input value={reason} onChange={(e) => setReason(e.target.value)} style={input} placeholder="مثال: تالف / فقد / فروقات جرد" /></Field>
       </div>
@@ -131,10 +136,15 @@ function AdjustmentForm({ onCancel, onDone }: { onCancel: () => void; onDone: ()
           ) : lines.map((l) => (
             <tr key={l._key}>
               <Td>
-                <select value={l.item_id} onChange={(e) => updateLine(l._key, { item_id: Number(e.target.value) })} style={input}>
-                  <option value={0}>— اختر صنف —</option>
-                  {items.map((i) => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
-                </select>
+                <SearchCombobox
+                  value={l.item_id}
+                  onChange={(v) => updateLine(l._key, { item_id: Number(v) })}
+                  style={input}
+                  options={[
+                    { value: 0, label: "— اختر صنف —" },
+                    ...items.map((i) => ({ value: i.id, label: i.nameAr })),
+                  ]}
+                />
               </Td>
               <Td><input type="number" step="0.001" value={l.qty_diff} onChange={(e) => updateLine(l._key, { qty_diff: Number(e.target.value) || 0 })} style={input} /></Td>
               <Td><input type="number" step="0.01" value={l.unit_cost} onChange={(e) => updateLine(l._key, { unit_cost: Number(e.target.value) || 0 })} style={input} /></Td>

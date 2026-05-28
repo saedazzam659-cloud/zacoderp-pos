@@ -18,6 +18,7 @@ import {
 } from "../lib/peripherals";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { TAURI_MODE } from "../lib/tauri-shim";
+import { SearchCombobox } from "./_adminUi";
 
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 const LS_SERIAL = "pos_desktop_peripherals_serial_port";
@@ -126,33 +127,38 @@ export default function PeripheralsSettings({ onClose }: Props) {
 
         <section style={S.section}>
           <label style={S.label}>الطابعة (Windows spooler)</label>
-          <select
+          <SearchCombobox
             value={printer}
-            onChange={(e) => persistPrinter(e.target.value)}
-            style={S.input}
+            onChange={(v) => persistPrinter(String(v))}
             disabled={TAURI_MODE !== "tauri"}
-          >
-            <option value="">— لم يتم الاختيار —</option>
-            {printers.map((p) => (
-              <option key={p.name} value={p.name}>
-                {p.name}{p.isDefault ? " (افتراضية)" : ""} — {p.state}
-              </option>
-            ))}
-          </select>
+            style={S.input}
+            placeholder="— لم يتم الاختيار —"
+            options={[
+              { value: "", label: "— لم يتم الاختيار —" },
+              ...printers.map((p) => ({
+                value: p.name,
+                label: `${p.name}${p.isDefault ? " (افتراضية)" : ""} — ${p.state}`,
+              })),
+            ]}
+          />
         </section>
 
         <section style={S.section}>
           <label style={S.label}>منفذ تسلسلي (COM) — اختياري للطابعات القديمة</label>
           <div style={{ display: "flex", gap: 8 }}>
-            <select
-              value={serial}
-              onChange={(e) => persistSerial(e.target.value)}
-              style={{ ...S.input, flex: 1 }}
-              disabled={TAURI_MODE !== "tauri"}
-            >
-              <option value="">— بدون —</option>
-              {serialPorts.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
+            <div style={{ flex: 1 }}>
+              <SearchCombobox
+                value={serial}
+                onChange={(v) => persistSerial(String(v))}
+                disabled={TAURI_MODE !== "tauri"}
+                style={S.input}
+                placeholder="— بدون —"
+                options={[
+                  { value: "", label: "— بدون —" },
+                  ...serialPorts.map((p) => ({ value: p, label: p })),
+                ]}
+              />
+            </div>
             <input
               type="number"
               value={baud}

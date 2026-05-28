@@ -3,7 +3,7 @@ import { listStockMovements, listWarehouses, type StockMovement, type Warehouse 
 import { listItems } from "../lib/items";
 import type { LocalItem } from "../lib/items";
 import {
-  Page, Card, Table, Th, Td, Empty, input, btnSecondary, fmt, todayStr,
+  Page, Card, Table, Th, Td, Empty, input, btnSecondary, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
 const REF_LABEL: Record<string, string> = {
@@ -64,17 +64,27 @@ export default function StockMovementsReport() {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
           <label>
             <div style={{ fontSize: 12, marginBottom: 4 }}>المخزن</div>
-            <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value === "" ? "" : Number(e.target.value))} style={input}>
-              <option value="">كل المخازن</option>
-              {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
+            <SearchCombobox
+              value={warehouseId}
+              onChange={(v) => setWarehouseId(v === "" ? "" : Number(v))}
+              style={input}
+              options={[
+                { value: "", label: "كل المخازن" },
+                ...warehouses.map((w) => ({ value: w.id, label: w.name })),
+              ]}
+            />
           </label>
           <label>
             <div style={{ fontSize: 12, marginBottom: 4 }}>الصنف</div>
-            <select value={itemId} onChange={(e) => setItemId(e.target.value === "" ? "" : Number(e.target.value))} style={input}>
-              <option value="">كل الأصناف</option>
-              {items.map((i) => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
-            </select>
+            <SearchCombobox
+              value={itemId}
+              onChange={(v) => setItemId(v === "" ? "" : Number(v))}
+              style={input}
+              options={[
+                { value: "", label: "كل الأصناف" },
+                ...items.map((i) => ({ value: i.id, label: i.nameAr })),
+              ]}
+            />
           </label>
           <label>
             <div style={{ fontSize: 12, marginBottom: 4 }}>من تاريخ</div>

@@ -8,6 +8,7 @@ import {
   listLocalUsers, createLocalUser, deleteLocalUser, changeLocalPassword,
   type LocalUser, type LocalUserRole, type LocalSession,
 } from "../lib/standalone";
+import { SearchCombobox } from "./_adminUi";
 
 export default function StandaloneUsersAdmin({ session, maxUsers }: { session: LocalSession; maxUsers: number }) {
   const [users, setUsers] = useState<LocalUser[]>([]);
@@ -99,10 +100,15 @@ function CreateUserModal({ onCancel, onCreated }: { onCancel: () => void; onCrea
       <Field label="اسم المستخدم"><input value={u.username} onChange={(e) => setU({ ...u, username: e.target.value })} style={input} /></Field>
       <Field label="الاسم الكامل"><input value={u.displayName} onChange={(e) => setU({ ...u, displayName: e.target.value })} style={input} /></Field>
       <Field label="الدور">
-        <select value={u.role} onChange={(e) => setU({ ...u, role: e.target.value as LocalUserRole })} style={input}>
-          <option value="cashier">كاشير</option>
-          <option value="admin">مسؤول</option>
-        </select>
+        <SearchCombobox
+          value={u.role}
+          onChange={(v) => setU({ ...u, role: v as LocalUserRole })}
+          options={[
+            { value: "cashier", label: "كاشير" },
+            { value: "admin", label: "مسؤول" },
+          ]}
+          style={input}
+        />
       </Field>
       <Field label="كلمة المرور"><input type="password" value={u.password} onChange={(e) => setU({ ...u, password: e.target.value })} style={input} /></Field>
       {err && <div style={errStyle}>⚠️ {err}</div>}

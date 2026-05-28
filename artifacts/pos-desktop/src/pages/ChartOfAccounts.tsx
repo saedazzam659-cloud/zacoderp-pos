@@ -5,7 +5,7 @@ import {
 } from "../lib/accounting";
 import {
   Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
-  input, btnPrimary, btnSecondary, btnLink, fmt,
+  input, btnPrimary, btnSecondary, btnLink, fmt, SearchCombobox,
 } from "./_adminUi";
 
 const TYPE_LABEL: Record<AccountType, string> = {
@@ -98,21 +98,34 @@ function AccountForm({ row, all, onCancel, onDone }: { row: Account | null; all:
       <Field label="الكود *"><input value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} style={input} autoFocus /></Field>
       <Field label="الاسم *"><input value={f.nameAr} onChange={(e) => setF({ ...f, nameAr: e.target.value })} style={input} /></Field>
       <Field label="النوع">
-        <select value={f.type} onChange={(e) => setF({ ...f, type: e.target.value as AccountType, parentId: null })} style={input}>
-          {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </select>
+        <SearchCombobox
+          value={f.type}
+          onChange={(v) => setF({ ...f, type: v as AccountType, parentId: null })}
+          style={input}
+          options={Object.entries(TYPE_LABEL).map(([k, v]) => ({ value: k, label: v }))}
+        />
       </Field>
       <Field label="الحساب الأب">
-        <select value={f.parentId ?? ""} onChange={(e) => setF({ ...f, parentId: e.target.value ? Number(e.target.value) : null })} style={input}>
-          <option value="">— بدون (حساب رئيسي) —</option>
-          {parents.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
-        </select>
+        <SearchCombobox
+          value={f.parentId ?? ""}
+          onChange={(v) => setF({ ...f, parentId: v === "" ? null : Number(v) })}
+          style={input}
+          options={[
+            { value: "", label: "— بدون (حساب رئيسي) —" },
+            ...parents.map((p) => ({ value: p.id, label: `${p.code} — ${p.nameAr}` })),
+          ]}
+        />
       </Field>
       <Field label="نوع الحساب">
-        <select value={f.isLeaf ? "1" : "0"} onChange={(e) => setF({ ...f, isLeaf: e.target.value === "1" })} style={input}>
-          <option value="1">حساب فرعي (يقبل قيود)</option>
-          <option value="0">حساب رئيسي (تجميع فقط)</option>
-        </select>
+        <SearchCombobox
+          value={f.isLeaf ? "1" : "0"}
+          onChange={(v) => setF({ ...f, isLeaf: v === "1" })}
+          style={input}
+          options={[
+            { value: "1", label: "حساب فرعي (يقبل قيود)" },
+            { value: "0", label: "حساب رئيسي (تجميع فقط)" },
+          ]}
+        />
       </Field>
       <ErrorMsg text={err} />
       <Actions>

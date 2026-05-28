@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { listItems, type LocalItem } from "../lib/items";
 import { getAllStock, getStock, setStock, setReorderPoint, type StockMap } from "../lib/stock";
+import { SearchCombobox } from "./_adminUi";
 
 type Row = {
   item: LocalItem;
@@ -106,11 +107,18 @@ export default function LowStockReport({ onGoToImport }: { onGoToImport?: () => 
           placeholder="🔍 بحث بالاسم أو الباركود..."
           style={S.search}
         />
-        <select value={filter} onChange={(e) => setFilter(e.target.value as any)} style={S.select}>
-          <option value="below">أقل من الحد الأدنى فقط</option>
-          <option value="below_or_equal">عند الحد الأدنى أو أقل</option>
-          <option value="all_tracked">كل الأصناف المتتبَّعة</option>
-        </select>
+        <div style={{ minWidth: 220 }}>
+          <SearchCombobox
+            value={filter}
+            onChange={(v) => setFilter(v as any)}
+            options={[
+              { value: "below", label: "أقل من الحد الأدنى فقط" },
+              { value: "below_or_equal", label: "عند الحد الأدنى أو أقل" },
+              { value: "all_tracked", label: "كل الأصناف المتتبَّعة" },
+            ]}
+            style={S.select}
+          />
+        </div>
       </div>
 
       {toast && <div style={toast.kind === "ok" ? S.ok : S.err}>{toast.text}</div>}

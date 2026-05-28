@@ -20,6 +20,7 @@ import {
   saveDeviceToken, TAURI_MODE,
 } from "../lib/tauri-shim";
 import { wipeStandalone } from "../lib/standalone";
+import { SearchCombobox } from "./_adminUi";
 
 type Country = { code: string; name: string };
 
@@ -214,9 +215,12 @@ export default function Activation({ onActivated }: { onActivated: (info: Activa
         {step === 2 && (
           <div>
             <Field label="الخادم">
-              <select value={serverPreset} onChange={(e) => setServerPreset(Number(e.target.value))} style={S.input}>
-                {SERVER_PRESETS.map((p, i) => <option key={i} value={i}>{p.label}</option>)}
-              </select>
+              <SearchCombobox
+                value={serverPreset}
+                onChange={(v) => setServerPreset(Number(v))}
+                options={SERVER_PRESETS.map((p, i) => ({ value: i, label: p.label }))}
+                style={S.input}
+              />
             </Field>
             {serverPreset === 1 && (
               <Field label="عنوان مخصص">
@@ -225,31 +229,36 @@ export default function Activation({ onActivated }: { onActivated: (info: Activa
               </Field>
             )}
             <Field label="الدولة">
-              <select value={country} onChange={(e) => setCountry(e.target.value)} style={S.input}>
-                <option value="SA">🇸🇦 المملكة العربية السعودية</option>
-                <option value="EG">🇪🇬 مصر</option>
-                <option value="AE">🇦🇪 الإمارات</option>
-                <option value="KW">🇰🇼 الكويت</option>
-                <option value="BH">🇧🇭 البحرين</option>
-                <option value="OM">🇴🇲 عُمان</option>
-                <option value="QA">🇶🇦 قطر</option>
-                <option value="JO">🇯🇴 الأردن</option>
-                <option value="IQ">🇮🇶 العراق</option>
-                <option value="LB">🇱🇧 لبنان</option>
-                <option value="SY">🇸🇾 سوريا</option>
-                <option value="YE">🇾🇪 اليمن</option>
-                <option value="PS">🇵🇸 فلسطين</option>
-                <option value="SD">🇸🇩 السودان</option>
-                <option value="LY">🇱🇾 ليبيا</option>
-                <option value="TN">🇹🇳 تونس</option>
-                <option value="DZ">🇩🇿 الجزائر</option>
-                <option value="MA">🇲🇦 المغرب</option>
-                <option value="MR">🇲🇷 موريتانيا</option>
-                <option value="SO">🇸🇴 الصومال</option>
-                <option value="DJ">🇩🇯 جيبوتي</option>
-                <option value="KM">🇰🇲 جزر القمر</option>
-                <option value="ALL">🌍 دولة أخرى</option>
-              </select>
+              <SearchCombobox
+                value={country}
+                onChange={(v) => setCountry(String(v))}
+                options={[
+                  { value: "SA", label: "🇸🇦 المملكة العربية السعودية" },
+                  { value: "EG", label: "🇪🇬 مصر" },
+                  { value: "AE", label: "🇦🇪 الإمارات" },
+                  { value: "KW", label: "🇰🇼 الكويت" },
+                  { value: "BH", label: "🇧🇭 البحرين" },
+                  { value: "OM", label: "🇴🇲 عُمان" },
+                  { value: "QA", label: "🇶🇦 قطر" },
+                  { value: "JO", label: "🇯🇴 الأردن" },
+                  { value: "IQ", label: "🇮🇶 العراق" },
+                  { value: "LB", label: "🇱🇧 لبنان" },
+                  { value: "SY", label: "🇸🇾 سوريا" },
+                  { value: "YE", label: "🇾🇪 اليمن" },
+                  { value: "PS", label: "🇵🇸 فلسطين" },
+                  { value: "SD", label: "🇸🇩 السودان" },
+                  { value: "LY", label: "🇱🇾 ليبيا" },
+                  { value: "TN", label: "🇹🇳 تونس" },
+                  { value: "DZ", label: "🇩🇿 الجزائر" },
+                  { value: "MA", label: "🇲🇦 المغرب" },
+                  { value: "MR", label: "🇲🇷 موريتانيا" },
+                  { value: "SO", label: "🇸🇴 الصومال" },
+                  { value: "DJ", label: "🇩🇯 جيبوتي" },
+                  { value: "KM", label: "🇰🇲 جزر القمر" },
+                  { value: "ALL", label: "🌍 دولة أخرى" },
+                ]}
+                style={S.input}
+              />
             </Field>
           </div>
         )}

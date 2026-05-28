@@ -7,7 +7,7 @@ import { listItems } from "../lib/items";
 import type { LocalItem } from "../lib/items";
 import {
   Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
-  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr,
+  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
 export default function StockTransfersAdmin() {
@@ -102,16 +102,26 @@ function TransferForm({ onCancel, onDone }: { onCancel: () => void; onDone: () =
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
         <Field label="التاريخ"><input type="date" value={trDate} onChange={(e) => setTrDate(e.target.value)} style={input} /></Field>
         <Field label="من مخزن">
-          <select value={fromId} onChange={(e) => setFromId(e.target.value === "" ? "" : Number(e.target.value))} style={input}>
-            <option value="">— اختر —</option>
-            {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-          </select>
+          <SearchCombobox
+            value={fromId}
+            onChange={(v) => setFromId(v === "" ? "" : Number(v))}
+            style={input}
+            options={[
+              { value: "", label: "— اختر —" },
+              ...warehouses.map((w) => ({ value: w.id, label: w.name })),
+            ]}
+          />
         </Field>
         <Field label="إلى مخزن">
-          <select value={toId} onChange={(e) => setToId(e.target.value === "" ? "" : Number(e.target.value))} style={input}>
-            <option value="">— اختر —</option>
-            {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-          </select>
+          <SearchCombobox
+            value={toId}
+            onChange={(v) => setToId(v === "" ? "" : Number(v))}
+            style={input}
+            options={[
+              { value: "", label: "— اختر —" },
+              ...warehouses.map((w) => ({ value: w.id, label: w.name })),
+            ]}
+          />
         </Field>
       </div>
       <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} style={input} /></Field>
@@ -132,10 +142,15 @@ function TransferForm({ onCancel, onDone }: { onCancel: () => void; onDone: () =
           ) : lines.map((l) => (
             <tr key={l._key}>
               <Td>
-                <select value={l.item_id} onChange={(e) => updateLine(l._key, { item_id: Number(e.target.value) })} style={input}>
-                  <option value={0}>— اختر صنف —</option>
-                  {items.map((i) => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
-                </select>
+                <SearchCombobox
+                  value={l.item_id}
+                  onChange={(v) => updateLine(l._key, { item_id: Number(v) })}
+                  style={input}
+                  options={[
+                    { value: 0, label: "— اختر صنف —" },
+                    ...items.map((i) => ({ value: i.id, label: i.nameAr })),
+                  ]}
+                />
               </Td>
               <Td><input type="number" step="0.001" min={0} value={l.qty} onChange={(e) => updateLine(l._key, { qty: Number(e.target.value) || 0 })} style={input} /></Td>
               <Td><input type="number" step="0.01" min={0} value={l.unit_cost} onChange={(e) => updateLine(l._key, { unit_cost: Number(e.target.value) || 0 })} style={input} /></Td>

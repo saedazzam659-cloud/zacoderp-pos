@@ -14,6 +14,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { listExpiringItems, daysUntilExpiry, type LocalItem } from "../lib/items";
+import { SearchCombobox } from "./_adminUi";
 
 type Props = { onJumpToItems?: () => void };
 
@@ -88,9 +89,14 @@ export default function ExpiryReport({ onJumpToItems }: Props = {}) {
             ⬇️ تصدير CSV
           </button>
           <span style={{ fontSize: 13, color: "#475569" }}>الأفق الزمني:</span>
-          <select value={horizon} onChange={(e) => setHorizon(Number(e.target.value))} style={S.select}>
-            {HORIZONS.map((h) => <option key={h} value={h}>{h} يوم</option>)}
-          </select>
+          <div style={{ minWidth: 140 }}>
+            <SearchCombobox
+              value={horizon}
+              onChange={(v) => setHorizon(Number(v))}
+              options={HORIZONS.map((h) => ({ value: h, label: `${h} يوم` }))}
+              style={S.select}
+            />
+          </div>
         </div>
       </div>
 

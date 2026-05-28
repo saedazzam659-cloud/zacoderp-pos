@@ -10,6 +10,7 @@ import {
   DEFAULT_SCALE_CONFIG, type ScaleConfig, type ScaleProtocol,
   type ScaleParity, type ScaleDataBits,
 } from "../lib/scale";
+import { SearchCombobox } from "./_adminUi";
 
 export default function ScaleSettings() {
   const [cfg, setCfg] = useState<ScaleConfig>(() => getScaleConfig());
@@ -68,45 +69,70 @@ export default function ScaleSettings() {
         <div style={S.row2}>
           <Field label="منفذ الاتصال">
             <div style={{ display: "flex", gap: 8 }}>
-              <select value={cfg.port} onChange={(e) => patch("port", e.target.value)} style={S.input}>
-                <option value="">— معطّل —</option>
-                {ports.map((p) => <option key={p} value={p}>{p}</option>)}
-                {cfg.port && !ports.includes(cfg.port) && (
-                  <option value={cfg.port}>{cfg.port} (مخصّص)</option>
-                )}
-              </select>
+              <div style={{ flex: 1 }}>
+                <SearchCombobox
+                  value={cfg.port}
+                  onChange={(v) => patch("port", String(v))}
+                  style={S.input}
+                  placeholder="— معطّل —"
+                  options={[
+                    { value: "", label: "— معطّل —" },
+                    ...ports.map((p) => ({ value: p, label: p })),
+                    ...(cfg.port && !ports.includes(cfg.port)
+                      ? [{ value: cfg.port, label: `${cfg.port} (مخصّص)` }]
+                      : []),
+                  ]}
+                />
+              </div>
               <button type="button" onClick={() => void listScalePorts().then(setPorts)} style={S.btnGhost}>
                 🔄
               </button>
             </div>
           </Field>
           <Field label="سرعة الاتصال (baud)">
-            <select value={cfg.baud} onChange={(e) => patch("baud", Number(e.target.value))} style={S.input}>
-              {[1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200].map((b) =>
-                <option key={b} value={b}>{b}</option>)}
-            </select>
+            <SearchCombobox
+              value={cfg.baud}
+              onChange={(v) => patch("baud", Number(v))}
+              style={S.input}
+              options={[1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200].map((b) => ({
+                value: b, label: String(b),
+              }))}
+            />
           </Field>
         </div>
         <div style={S.row2}>
           <Field label="Parity (التماثل)">
-            <select value={cfg.parity} onChange={(e) => patch("parity", e.target.value as ScaleParity)} style={S.input}>
-              <option value="none">None (لا يوجد)</option>
-              <option value="odd">Odd (فردي)</option>
-              <option value="even">Even (زوجي)</option>
-            </select>
+            <SearchCombobox
+              value={cfg.parity}
+              onChange={(v) => patch("parity", v as ScaleParity)}
+              style={S.input}
+              options={[
+                { value: "none", label: "None (لا يوجد)" },
+                { value: "odd", label: "Odd (فردي)" },
+                { value: "even", label: "Even (زوجي)" },
+              ]}
+            />
           </Field>
           <Field label="Data bits (خانات البيانات)">
-            <select value={cfg.dataBits} onChange={(e) => patch("dataBits", Number(e.target.value) as ScaleDataBits)} style={S.input}>
-              {[5, 6, 7, 8].map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
+            <SearchCombobox
+              value={cfg.dataBits}
+              onChange={(v) => patch("dataBits", Number(v) as ScaleDataBits)}
+              style={S.input}
+              options={[5, 6, 7, 8].map((n) => ({ value: n, label: String(n) }))}
+            />
           </Field>
         </div>
         <Field label="البروتوكول">
-          <select value={cfg.protocol} onChange={(e) => patch("protocol", e.target.value as ScaleProtocol)} style={S.input}>
-            <option value="generic_ascii">عام (ASCII) — صيغة "  1.234 kg"</option>
-            <option value="cas">CAS</option>
-            <option value="bizerba">Bizerba</option>
-          </select>
+          <SearchCombobox
+            value={cfg.protocol}
+            onChange={(v) => patch("protocol", v as ScaleProtocol)}
+            style={S.input}
+            options={[
+              { value: "generic_ascii", label: 'عام (ASCII) — صيغة "  1.234 kg"' },
+              { value: "cas", label: "CAS" },
+              { value: "bizerba", label: "Bizerba" },
+            ]}
+          />
         </Field>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
           <button onClick={testRead} disabled={testing || !cfg.port} style={S.btnPrimary}>

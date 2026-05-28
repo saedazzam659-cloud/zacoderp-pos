@@ -6,7 +6,7 @@ import {
 import { listItems, type LocalItem } from "../lib/items";
 import {
   Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
-  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr,
+  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
 export default function PurchasesAdmin() {
@@ -148,32 +148,48 @@ function CreateForm({ deps, onCancel, onDone }: {
     <Modal title="فاتورة شراء جديدة" onCancel={onCancel} wide>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 200px 200px", gap: 10 }}>
         <Field label="المورد *">
-          <select value={supplierId} onChange={(e) => setSupplierId(Number(e.target.value))} style={input}>
-            <option value={0}>— اختر —</option>
-            {deps.suppliers.map((s) => <option key={s.id} value={s.id}>{s.nameAr}</option>)}
-          </select>
+          <SearchCombobox
+            value={supplierId}
+            onChange={(v) => setSupplierId(Number(v))}
+            style={input}
+            options={[
+              { value: 0, label: "— اختر —" },
+              ...deps.suppliers.map((s) => ({ value: s.id, label: s.nameAr })),
+            ]}
+          />
         </Field>
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label="طريقة الدفع">
-          <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)} style={input}>
-            <option value="credit">آجل (على الحساب)</option>
-            <option value="cash">نقدي</option>
-            <option value="bank">بنك</option>
-          </select>
+          <SearchCombobox
+            value={paymentMethod}
+            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
+            style={input}
+            options={[
+              { value: "credit", label: "آجل (على الحساب)" },
+              { value: "cash", label: "نقدي" },
+              { value: "bank", label: "بنك" },
+            ]}
+          />
         </Field>
       </div>
       {paymentMethod === "cash" && (
         <Field label="الخزينة">
-          <select value={cashBoxId ?? ""} onChange={(e) => setCashBoxId(Number(e.target.value) || null)} style={input}>
-            {deps.cashBoxes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <SearchCombobox
+            value={cashBoxId ?? ""}
+            onChange={(v) => setCashBoxId(Number(v) || null)}
+            style={input}
+            options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
+          />
         </Field>
       )}
       {paymentMethod === "bank" && (
         <Field label="البنك">
-          <select value={bankId ?? ""} onChange={(e) => setBankId(Number(e.target.value) || null)} style={input}>
-            {deps.banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
+          <SearchCombobox
+            value={bankId ?? ""}
+            onChange={(v) => setBankId(Number(v) || null)}
+            style={input}
+            options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
+          />
         </Field>
       )}
 
@@ -190,10 +206,15 @@ function CreateForm({ deps, onCancel, onDone }: {
           {lines.map((l, i) => (
             <tr key={i}>
               <Td>
-                <select value={l.itemId} onChange={(e) => setLine(i, { itemId: Number(e.target.value) })} style={input}>
-                  <option value={0}>— اختر —</option>
-                  {deps.items.map((it) => <option key={it.id} value={it.id}>{it.nameAr}</option>)}
-                </select>
+                <SearchCombobox
+                  value={l.itemId}
+                  onChange={(v) => setLine(i, { itemId: Number(v) })}
+                  style={input}
+                  options={[
+                    { value: 0, label: "— اختر —" },
+                    ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
+                  ]}
+                />
               </Td>
               <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={input} /></Td>
               <Td><input type="number" step="0.01" value={l.unitCost} onChange={(e) => setLine(i, { unitCost: Number(e.target.value) || 0 })} style={input} /></Td>

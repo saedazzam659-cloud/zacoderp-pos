@@ -5,7 +5,7 @@ import {
 } from "../lib/accounting";
 import {
   Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
-  input, btnPrimary, btnSecondary, fmt, todayStr,
+  input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
 export default function FinancialTransactionsAdmin() {
@@ -115,39 +115,60 @@ function CreateForm({ type, deps, onCancel, onDone }: {
       </Field>
       {walletKind === "cash" ? (
         <Field label="الخزينة">
-          <select value={cashBoxId ?? ""} onChange={(e) => setCashBoxId(Number(e.target.value) || null)} style={input}>
-            {deps.cashBoxes.map((c) => <option key={c.id} value={c.id}>{c.name} ({fmt(c.balance)})</option>)}
-          </select>
+          <SearchCombobox
+            value={cashBoxId ?? ""}
+            onChange={(v) => setCashBoxId(Number(v) || null)}
+            style={input}
+            options={deps.cashBoxes.map((c) => ({ value: c.id, label: `${c.name} (${fmt(c.balance)})` }))}
+          />
         </Field>
       ) : (
         <Field label="البنك">
-          <select value={bankId ?? ""} onChange={(e) => setBankId(Number(e.target.value) || null)} style={input}>
-            {deps.banks.map((b) => <option key={b.id} value={b.id}>{b.name} ({fmt(b.balance)})</option>)}
-          </select>
+          <SearchCombobox
+            value={bankId ?? ""}
+            onChange={(v) => setBankId(Number(v) || null)}
+            style={input}
+            options={deps.banks.map((b) => ({ value: b.id, label: `${b.name} (${fmt(b.balance)})` }))}
+          />
         </Field>
       )}
 
       <Field label="الطرف الآخر">
-        <select value={partyType} onChange={(e) => { setPartyType(e.target.value as PartyType); setPartyId(null); }} style={input}>
-          <option value="none">حساب من شجرة الحسابات (إيراد / مصروف / ...)</option>
-          <option value="supplier">مورد</option>
-          {type === "receipt" && <option value="customer">عميل</option>}
-        </select>
+        <SearchCombobox
+          value={partyType}
+          onChange={(v) => { setPartyType(v as PartyType); setPartyId(null); }}
+          style={input}
+          options={[
+            { value: "none", label: "حساب من شجرة الحسابات (إيراد / مصروف / ...)" },
+            { value: "supplier", label: "مورد" },
+            ...(type === "receipt" ? [{ value: "customer", label: "عميل" }] : []),
+          ]}
+        />
       </Field>
       {partyType === "supplier" && (
         <Field label="المورد">
-          <select value={partyId ?? ""} onChange={(e) => setPartyId(Number(e.target.value) || null)} style={input}>
-            <option value="">— اختر —</option>
-            {deps.suppliers.map((s) => <option key={s.id} value={s.id}>{s.nameAr} (رصيد: {fmt(s.balance)})</option>)}
-          </select>
+          <SearchCombobox
+            value={partyId ?? ""}
+            onChange={(v) => setPartyId(Number(v) || null)}
+            style={input}
+            options={[
+              { value: "", label: "— اختر —" },
+              ...deps.suppliers.map((s) => ({ value: s.id, label: `${s.nameAr} (رصيد: ${fmt(s.balance)})` })),
+            ]}
+          />
         </Field>
       )}
       {partyType === "none" && (
         <Field label={type === "receipt" ? "حساب الإيراد / الدائن" : "حساب المصروف / المدين"}>
-          <select value={counterAccountId ?? ""} onChange={(e) => setCounterAccountId(Number(e.target.value) || null)} style={input}>
-            <option value="">— اختر —</option>
-            {leafAccounts.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>)}
-          </select>
+          <SearchCombobox
+            value={counterAccountId ?? ""}
+            onChange={(v) => setCounterAccountId(Number(v) || null)}
+            style={input}
+            options={[
+              { value: "", label: "— اختر —" },
+              ...leafAccounts.map((a) => ({ value: a.id, label: `${a.code} — ${a.nameAr}` })),
+            ]}
+          />
         </Field>
       )}
 

@@ -8,6 +8,7 @@ import {
 } from "../lib/items";
 import { listUom, getDefaultUom } from "../lib/uom";
 import { getVertical, type Vertical } from "../lib/standalone";
+import { SearchCombobox } from "./_adminUi";
 
 export default function ItemsAdmin() {
   const [rows, setRows] = useState<LocalItem[]>([]);
@@ -703,9 +704,15 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
             <input type="number" step="0.5" min="0" max="100" value={form.vatRate} onChange={(e) => setForm({ ...form, vatRate: Number(e.target.value) })} style={S.input} />
           </Field>
           <Field label="وحدة القياس">
-            <select value={form.uomId ?? ""} onChange={(e) => setForm({ ...form, uomId: e.target.value ? Number(e.target.value) : null })} style={S.input}>
-              {uoms.map((u) => <option key={u.id} value={u.id}>{u.nameAr}{u.shortCode ? ` (${u.shortCode})` : ""}</option>)}
-            </select>
+            <SearchCombobox
+              value={form.uomId ?? ""}
+              onChange={(v) => setForm({ ...form, uomId: v === "" ? null : Number(v) })}
+              style={S.input}
+              options={uoms.map((u) => ({
+                value: u.id,
+                label: `${u.nameAr}${u.shortCode ? ` (${u.shortCode})` : ""}`,
+              }))}
+            />
           </Field>
         </div>
 

@@ -5,7 +5,7 @@ import {
 } from "../lib/accounting";
 import {
   Page, Card, Table, Th, Td, Modal, Field, ErrorMsg, Actions, Empty,
-  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr,
+  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
 export default function JournalEntries() {
@@ -146,10 +146,15 @@ function CreateForm({ accounts, onCancel, onDone }: { accounts: Account[]; onCan
           {lines.map((l, i) => (
             <tr key={i}>
               <Td>
-                <select value={l.accountId} onChange={(e) => setLine(i, { accountId: Number(e.target.value) })} style={input}>
-                  <option value={0}>— اختر —</option>
-                  {leafAccounts.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>)}
-                </select>
+                <SearchCombobox
+                  value={l.accountId}
+                  onChange={(v) => setLine(i, { accountId: Number(v) })}
+                  style={input}
+                  options={[
+                    { value: 0, label: "— اختر —" },
+                    ...leafAccounts.map((a) => ({ value: a.id, label: `${a.code} — ${a.nameAr}` })),
+                  ]}
+                />
               </Td>
               <Td><input value={l.description ?? ""} onChange={(e) => setLine(i, { description: e.target.value || null })} style={input} /></Td>
               <Td><input type="number" step="0.01" value={l.debit || ""} onChange={(e) => setLine(i, { debit: Number(e.target.value) || 0, credit: 0 })} style={input} /></Td>
