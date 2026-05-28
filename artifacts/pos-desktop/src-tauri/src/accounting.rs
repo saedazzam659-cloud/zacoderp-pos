@@ -593,6 +593,8 @@ pub fn purchase_create(input: PurchaseInput) -> Result<i64, String> {
     ).map_err(|e| e.to_string())?;
     let purchase_id = tx.last_insert_rowid();
 
+    // Resolve default warehouse for stock ledger inserts (Task #208).
+    let default_wh = crate::inventory::default_warehouse_id_in_tx(&tx)?;
     for l in &input.lines {
         let line_sub = l.qty * l.unit_cost;
         let line_vat = line_sub * l.vat_rate / 100.0;
@@ -601,6 +603,11 @@ pub fn purchase_create(input: PurchaseInput) -> Result<i64, String> {
             "INSERT INTO purchase_lines_local(purchase_id,item_id,qty,unit_cost,vat_rate,line_total) VALUES(?1,?2,?3,?4,?5,?6)",
             params![purchase_id, l.item_id, l.qty, l.unit_cost, l.vat_rate, lt],
         ).map_err(|e| e.to_string())?;
+        // Stock IN: positive qty at unit cost into default warehouse.
+        crate::inventory::ledger_push_in_tx(
+            &tx, l.item_id, default_wh, l.qty, l.unit_cost,
+            "purchase", Some(purchase_id), &input.invoice_date,
+        )?;
     }
 
     // Build & post JE: DR Inventory(subtotal) + DR VAT-In(vat) / CR (supplier|cash|bank)(grand)
@@ -766,6 +773,8 @@ pub fn purchase_return_create(input: PurchaseReturnInput) -> Result<i64, String>
     ).map_err(|e| e.to_string())?;
     let return_id = tx.last_insert_rowid();
 
+    // Default warehouse for outbound stock ledger entries.
+    let default_wh = crate::inventory::default_warehouse_id_in_tx(&tx)?;
     for l in &input.lines {
         let line_sub = l.qty * l.unit_cost;
         let lt = line_sub + line_sub * l.vat_rate / 100.0;
@@ -773,6 +782,11 @@ pub fn purchase_return_create(input: PurchaseReturnInput) -> Result<i64, String>
             "INSERT INTO purchase_return_lines_local(return_id,item_id,qty,unit_cost,vat_rate,line_total) VALUES(?1,?2,?3,?4,?5,?6)",
             params![return_id, l.item_id, l.qty, l.unit_cost, l.vat_rate, lt],
         ).map_err(|e| e.to_string())?;
+        // Stock OUT: negative qty out of default warehouse.
+        crate::inventory::ledger_push_in_tx(
+            &tx, l.item_id, default_wh, -l.qty, l.unit_cost,
+            "purchase_return", Some(return_id), &input.return_date,
+        )?;
     }
 
     // JE reverse: DR Supplier(grand) / CR Inventory(subtotal) + CR VAT-In(vat)

@@ -31,6 +31,11 @@ import BanksAdmin from "./BanksAdmin";
 import ChartOfAccounts from "./ChartOfAccounts";
 import JournalEntries from "./JournalEntries";
 import PurchasesAdmin from "./PurchasesAdmin";
+import WarehousesAdmin from "./WarehousesAdmin";
+import StocktakesAdmin from "./StocktakesAdmin";
+import StockAdjustmentsAdmin from "./StockAdjustmentsAdmin";
+import StockMovementsReport from "./StockMovementsReport";
+import StockTransfersAdmin from "./StockTransfersAdmin";
 import PurchaseReturnsAdmin from "./PurchaseReturnsAdmin";
 import FinancialTransactionsAdmin from "./FinancialTransactionsAdmin";
 import UserPermissionsAdmin from "./UserPermissionsAdmin";
@@ -59,7 +64,9 @@ type View =
   // Task #207 — accounting & operations screens (standalone).
   | "suppliers" | "purchases" | "purchase_returns"
   | "cash_boxes" | "banks" | "financial_tx"
-  | "chart_of_accounts" | "journal_entries" | "user_permissions";
+  | "chart_of_accounts" | "journal_entries" | "user_permissions"
+  // Task #208 — warehouses & inventory ops (standalone).
+  | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers";
 
 /** Minimal CSV parser for the bundled starter catalogs (no quotes/escapes
  *  expected — files are repo-controlled). Returns CreateItemInput rows. */
@@ -367,6 +374,11 @@ export default function PosShell({
     { id: "financial_tx",     icon: "💸", label: "المعاملات المالية", perm: "financial_tx" },
     { id: "chart_of_accounts",icon: "🌳", label: "شجرة الحسابات", perm: "chart_of_accounts" },
     { id: "journal_entries",  icon: "📒", label: "القيود اليومية", perm: "journal_entries" },
+    { id: "warehouses",        icon: "🏬", label: "المخازن", perm: "warehouses" },
+    { id: "stocktakes",        icon: "📋", label: "الجرد", perm: "stocktakes" },
+    { id: "stock_adjustments", icon: "⚖️", label: "تسوية المخزون", perm: "stock_adjustments" },
+    { id: "stock_movements",   icon: "📈", label: "حركة المخزون", perm: "stock_movements" },
+    { id: "stock_transfers",   icon: "🔄", label: "التحويل بين المخازن", perm: "stock_transfers" },
     { id: "scale",            icon: "⚖️", label: "الميزان", perm: "scale" },
     ...(isPharmacy ? [{ id: "expiry" as View, icon: "⏳", label: "تقرير الصلاحية", perm: "expiry" as ScreenKey }] : []),
     ...(isAdmin
@@ -417,7 +429,7 @@ export default function PosShell({
           {!navCollapsed && (
             <div>
               <div style={S.brandName}>ZACOD POS</div>
-              <div style={S.brandTag}>v0.7.14 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
+              <div style={S.brandTag}>v0.7.15 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
             </div>
           )}
         </div>
@@ -624,6 +636,22 @@ export default function PosShell({
           {standalone && view === "user_permissions" && isAdmin && standaloneSession && (
             <div style={S.pagePad}><UserPermissionsAdmin session={standaloneSession} /></div>
           )}
+          {/* Task #208 — warehouses & inventory ops (standalone only). */}
+          {standalone && view === "warehouses" && (isAdmin || can("warehouses")) && (
+            <div style={S.pagePad}><WarehousesAdmin /></div>
+          )}
+          {standalone && view === "stocktakes" && (isAdmin || can("stocktakes")) && (
+            <div style={S.pagePad}><StocktakesAdmin /></div>
+          )}
+          {standalone && view === "stock_adjustments" && (isAdmin || can("stock_adjustments")) && (
+            <div style={S.pagePad}><StockAdjustmentsAdmin /></div>
+          )}
+          {standalone && view === "stock_movements" && (isAdmin || can("stock_movements")) && (
+            <div style={S.pagePad}><StockMovementsReport /></div>
+          )}
+          {standalone && view === "stock_transfers" && (isAdmin || can("stock_transfers")) && (
+            <div style={S.pagePad}><StockTransfersAdmin /></div>
+          )}
         </main>
       </div>
 
@@ -658,6 +686,11 @@ function labelFor(v: View): string {
     chart_of_accounts: "شجرة الحسابات",
     journal_entries: "القيود اليومية",
     user_permissions: "صلاحيات المستخدمين",
+    warehouses: "المخازن",
+    stocktakes: "جرد المخازن",
+    stock_adjustments: "تسوية المخزون",
+    stock_movements: "حركة المخزون",
+    stock_transfers: "التحويل بين المخازن",
   }[v];
 }
 

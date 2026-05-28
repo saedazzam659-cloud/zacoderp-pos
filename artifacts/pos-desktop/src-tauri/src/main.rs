@@ -7,6 +7,7 @@
 mod accounting;
 mod customers;
 mod db;
+mod inventory;
 mod invoices;
 mod items;
 mod license;
@@ -415,6 +416,20 @@ fn main() {
             permissions::permissions_set,
             permissions::permissions_clear,
             permissions::permissions_clear_all,
+            // Inventory & warehouses (Task #208).
+            inventory::warehouses_list,
+            inventory::warehouses_create,
+            inventory::warehouses_update,
+            inventory::warehouses_delete,
+            inventory::stock_on_hand_list,
+            inventory::stock_movements_list,
+            inventory::stock_adjustments_list,
+            inventory::stock_adjustment_create,
+            inventory::stock_transfers_list,
+            inventory::stock_transfer_create,
+            inventory::stocktakes_list,
+            inventory::stocktake_create,
+            inventory::stocktake_post,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

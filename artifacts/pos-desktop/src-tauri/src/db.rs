@@ -262,12 +262,146 @@ pub fn initialize() -> Result<()> {
             can_view    INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (user_id, screen_key)
         );
+
+        -- ── Inventory & Warehouses (Task #208) ───────────────────────
+        -- Multi-warehouse model. Stock-on-hand is denormalised into
+        -- stock_on_hand_local for O(1) lookups; the canonical history
+        -- lives in stock_ledger_local (append-only journal). Every
+        -- write that changes stock MUST insert a ledger row AND upsert
+        -- the on-hand row inside the same transaction.
+
+        CREATE TABLE IF NOT EXISTS warehouses_local (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            code        TEXT NOT NULL UNIQUE,
+            name        TEXT NOT NULL,
+            address     TEXT,
+            is_default  INTEGER NOT NULL DEFAULT 0,
+            is_active   INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS stock_on_hand_local (
+            item_id      INTEGER NOT NULL REFERENCES items_local(id),
+            warehouse_id INTEGER NOT NULL REFERENCES warehouses_local(id),
+            qty          REAL NOT NULL DEFAULT 0,
+            last_cost    REAL NOT NULL DEFAULT 0,
+            updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (item_id, warehouse_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS stock_ledger_local (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id      INTEGER NOT NULL REFERENCES items_local(id),
+            warehouse_id INTEGER NOT NULL REFERENCES warehouses_local(id),
+            qty_delta    REAL NOT NULL,
+            unit_cost    REAL NOT NULL DEFAULT 0,
+            balance_after REAL NOT NULL DEFAULT 0,
+            ref_type     TEXT NOT NULL,
+            ref_id       INTEGER,
+            entry_date   TEXT NOT NULL,
+            notes        TEXT,
+            created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_ledger_item_wh ON stock_ledger_local(item_id, warehouse_id);
+        CREATE INDEX IF NOT EXISTS idx_ledger_date ON stock_ledger_local(entry_date DESC);
+        CREATE INDEX IF NOT EXISTS idx_ledger_ref ON stock_ledger_local(ref_type, ref_id);
+
+        CREATE TABLE IF NOT EXISTS stock_adjustments_local (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            adj_no        TEXT NOT NULL UNIQUE,
+            adj_date      TEXT NOT NULL,
+            warehouse_id  INTEGER NOT NULL REFERENCES warehouses_local(id),
+            reason        TEXT,
+            je_id         INTEGER REFERENCES journal_entries_local(id),
+            created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS stock_adjustment_lines_local (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            adj_id      INTEGER NOT NULL REFERENCES stock_adjustments_local(id) ON DELETE CASCADE,
+            item_id     INTEGER NOT NULL REFERENCES items_local(id),
+            qty_diff    REAL NOT NULL,
+            unit_cost   REAL NOT NULL DEFAULT 0,
+            line_total  REAL NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS stock_transfers_local (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            transfer_no       TEXT NOT NULL UNIQUE,
+            transfer_date     TEXT NOT NULL,
+            from_warehouse_id INTEGER NOT NULL REFERENCES warehouses_local(id),
+            to_warehouse_id   INTEGER NOT NULL REFERENCES warehouses_local(id),
+            notes             TEXT,
+            created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS stock_transfer_lines_local (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            transfer_id  INTEGER NOT NULL REFERENCES stock_transfers_local(id) ON DELETE CASCADE,
+            item_id      INTEGER NOT NULL REFERENCES items_local(id),
+            qty          REAL NOT NULL,
+            unit_cost    REAL NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS stocktakes_local (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            stocktake_no  TEXT NOT NULL UNIQUE,
+            stocktake_date TEXT NOT NULL,
+            warehouse_id  INTEGER NOT NULL REFERENCES warehouses_local(id),
+            status        TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted')),
+            adjustment_id INTEGER REFERENCES stock_adjustments_local(id),
+            notes         TEXT,
+            created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS stocktake_lines_local (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            stocktake_id  INTEGER NOT NULL REFERENCES stocktakes_local(id) ON DELETE CASCADE,
+            item_id       INTEGER NOT NULL REFERENCES items_local(id),
+            system_qty    REAL NOT NULL DEFAULT 0,
+            counted_qty   REAL NOT NULL DEFAULT 0,
+            unit_cost     REAL NOT NULL DEFAULT 0
+        );
         "#,
     )?;
     let _ = conn.execute("ALTER TABLE offline_invoices ADD COLUMN synced_at TEXT", []);
 
     // Seed default chart of accounts on first run (only when empty).
     seed_default_accounts(&conn)?;
+    // Seed default warehouse + inventory-variance accounts on first run.
+    seed_inventory_defaults(&conn)?;
+    Ok(())
+}
+
+fn seed_inventory_defaults(conn: &Connection) -> Result<()> {
+    use rusqlite::params;
+    // Two extra accounts needed for stock adjustments (variance gain/loss).
+    // Created idempotently — only inserted if missing.
+    let extras: &[(&str, &str, &str, &str)] = &[
+        ("1310", "فروقات جرد المخزون (ربح)", "revenue", "4000"),
+        ("5300", "فروقات جرد المخزون (خسارة)", "expense", "5000"),
+    ];
+    for (code, name, typ, parent_code) in extras {
+        let exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM accounts_local WHERE code=?1", params![code], |r| r.get(0),
+        ).unwrap_or(0);
+        if exists > 0 { continue; }
+        let parent_id: Option<i64> = conn.query_row(
+            "SELECT id FROM accounts_local WHERE code=?1", params![parent_code], |r| r.get(0),
+        ).ok();
+        let _ = conn.execute(
+            "INSERT INTO accounts_local(code,name_ar,type,parent_id,is_leaf) VALUES(?1,?2,?3,?4,1)",
+            params![code, name, typ, parent_id],
+        );
+    }
+    // Seed a default warehouse if none exists.
+    let n: i64 = conn.query_row("SELECT COUNT(*) FROM warehouses_local", [], |r| r.get(0)).unwrap_or(0);
+    if n == 0 {
+        let _ = conn.execute(
+            "INSERT INTO warehouses_local(code,name,is_default,is_active) VALUES('WH-01','المخزن الرئيسي',1,1)",
+            [],
+        );
+    }
     Ok(())
 }
 

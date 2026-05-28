@@ -22,6 +22,7 @@ export type ScreenKey =
   | "suppliers" | "purchases" | "purchase_returns"
   | "cash_boxes" | "banks" | "financial_tx"
   | "chart_of_accounts" | "journal_entries"
+  | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
   | "user_permissions" | "dashboard" | "updates" | "users";
 
 export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: string }[] = [
@@ -47,6 +48,12 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
 
   { key: "chart_of_accounts", label: "شجرة الحسابات", icon: "🌳", group: "المحاسبة" },
   { key: "journal_entries", label: "القيود اليومية", icon: "📒", group: "المحاسبة" },
+
+  { key: "warehouses", label: "المخازن", icon: "🏬", group: "المخازن" },
+  { key: "stocktakes", label: "الجرد", icon: "📋", group: "المخازن" },
+  { key: "stock_adjustments", label: "تسوية المخزون", icon: "⚖️", group: "المخازن" },
+  { key: "stock_movements", label: "حركة المخزون", icon: "📈", group: "المخازن" },
+  { key: "stock_transfers", label: "التحويل بين المخازن", icon: "🔄", group: "المخازن" },
 
   { key: "scale", label: "الميزان", icon: "⚖️", group: "الإعدادات" },
   { key: "user_permissions", label: "صلاحيات المستخدمين", icon: "🛡️", group: "الإعدادات" },
