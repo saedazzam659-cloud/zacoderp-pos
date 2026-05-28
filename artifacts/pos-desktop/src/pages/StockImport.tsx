@@ -258,12 +258,22 @@ export default function StockImport({ onDone }: { onDone?: () => void }) {
   }
 
   function downloadSample() {
-    const blob = new Blob([SAMPLE_CSV], { type: "text/csv;charset=utf-8" });
+    // UTF-8 BOM so Excel opens the Arabic columns correctly.
+    const withBom = "\uFEFF" + SAMPLE_CSV;
+    const blob = new Blob([withBom], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "نموذج_استيراد_الأرصدة.csv";
+    a.href = url;
+    a.download = "stock_template.csv";
+    // Tauri WebView2 (Windows) silently drops a.click() unless the anchor
+    // is attached to the DOM first. Same fallback works in regular browsers.
+    a.style.display = "none";
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 0);
   }
 
   return (
