@@ -81,6 +81,19 @@ export default function PosShell({
   const [busy, setBusy] = useState<string | null>(null);
   const [showPeripherals, setShowPeripherals] = useState(false);
   const [view, setView] = useState<View>("sales");
+  // Sidebar collapse — persisted across reloads so the cashier's choice sticks.
+  // Collapsed = 64px icon-only rail (gives the items grid ~180px more breathing
+  // room on 1280-wide tills). Expanded = original 240px with labels.
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem("pos_desktop_nav_collapsed") === "1"; } catch { return false; }
+  });
+  const toggleNav = useCallback(() => {
+    setNavCollapsed((v) => {
+      const next = !v;
+      try { localStorage.setItem("pos_desktop_nav_collapsed", next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
   const [pendingCount, setPendingCount] = useState(0);
   const [parkedCount, setParkedCount] = useState(0);
   const [pushSummary, setPushSummary] = useState<PushSummary | null>(null);
@@ -217,28 +230,52 @@ export default function PosShell({
   return (
     <div dir="rtl" style={S.shell}>
       {/* ─── Left navigation rail (RTL = right) ─────────────── */}
-      <nav style={S.nav}>
-        <div style={S.brand}>
-          <div style={S.brandIcon}>zacode</div>
-          <div>
-            <div style={S.brandName}>ZACOD POS</div>
-            <div style={S.brandTag}>v0.7.11 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
+      {/* The rail dynamically swaps between 240px (labels) and 64px
+          (icon-only). Width transition is animated so the items grid
+          to its left visibly expands/contracts. */}
+      <nav style={navCollapsed ? S.navCollapsed : S.nav}>
+        <div style={navCollapsed ? S.brandCollapsed : S.brand}>
+          <div style={navCollapsed ? S.brandIconCollapsed : S.brandIcon}>
+            {navCollapsed ? "Z" : "zacode"}
           </div>
+          {!navCollapsed && (
+            <div>
+              <div style={S.brandName}>ZACOD POS</div>
+              <div style={S.brandTag}>v0.7.11 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
+            </div>
+          )}
         </div>
+
+        {/* Collapse / expand toggle — chevron flips direction (RTL: collapse
+            points right ▶, expand points left ◀). Tooltip-only when collapsed. */}
+        <button
+          onClick={toggleNav}
+          style={navCollapsed ? S.collapseToggleCollapsed : S.collapseToggle}
+          title={navCollapsed ? "توسيع القائمة" : "تصغير القائمة"}
+        >
+          <span style={{ fontSize: 14 }}>{navCollapsed ? "◀" : "▶"}</span>
+          {!navCollapsed && <span style={{ fontSize: 12 }}>تصغير</span>}
+        </button>
 
         <div style={S.navList}>
           {navItems.map((it) => {
             const active = view === it.id;
+            const baseStyle = active ? S.navItemActive : S.navItem;
             return (
               <button
                 key={it.id}
                 onClick={() => setView(it.id)}
-                style={active ? S.navItemActive : S.navItem}
+                style={navCollapsed
+                  ? { ...baseStyle, justifyContent: "center", padding: "12px 0", gap: 0, position: "relative" as const }
+                  : baseStyle}
+                title={navCollapsed ? `${it.label}${it.badge ? ` (${it.badge})` : ""}` : undefined}
               >
-                <span style={S.navIcon}>{it.icon}</span>
-                <span style={S.navLabel}>{it.label}</span>
+                <span style={navCollapsed ? S.navIconLarge : S.navIcon}>{it.icon}</span>
+                {!navCollapsed && <span style={S.navLabel}>{it.label}</span>}
                 {it.badge !== undefined && (
-                  <span style={S.navBadge}>{it.badge}</span>
+                  navCollapsed
+                    ? <span style={S.navBadgeDot}>{it.badge > 9 ? "9+" : it.badge}</span>
+                    : <span style={S.navBadge}>{it.badge}</span>
                 )}
               </button>
             );
@@ -246,12 +283,21 @@ export default function PosShell({
         </div>
 
         <div style={S.navFooter}>
-          <button onClick={() => setShowPeripherals(true)} style={S.navUtility}>
-            🖨️ <span>الأجهزة الطرفية</span>
+          <button
+            onClick={() => setShowPeripherals(true)}
+            style={navCollapsed
+              ? { ...S.navUtility, justifyContent: "center", padding: "10px 0", gap: 0 }
+              : S.navUtility}
+            title={navCollapsed ? "الأجهزة الطرفية" : undefined}
+          >
+            <span style={{ fontSize: navCollapsed ? 18 : 14 }}>🖨️</span>
+            {!navCollapsed && <span>الأجهزة الطرفية</span>}
           </button>
-          <div style={S.modeChip}>
-            {TAURI_MODE === "tauri" ? "🪟 وضع التطبيق الأصلي" : "🌐 وضع المتصفح"}
-          </div>
+          {!navCollapsed && (
+            <div style={S.modeChip}>
+              {TAURI_MODE === "tauri" ? "🪟 وضع التطبيق الأصلي" : "🌐 وضع المتصفح"}
+            </div>
+          )}
         </div>
       </nav>
 
@@ -765,8 +811,21 @@ const S = {
     display: "flex", flexDirection: "column" as const,
     padding: "20px 12px",
     boxShadow: "-4px 0 12px rgba(0,0,0,.08)",
+    transition: "width .18s ease",
+  } as const,
+  // Collapsed nav: 64px icon-only rail. Same gradient + shadow so it still
+  // reads as the "sidebar"; just narrower with center-aligned icons.
+  navCollapsed: {
+    width: 64, flexShrink: 0,
+    background: "linear-gradient(180deg, #0f172a 0%, #1e293b 100%)",
+    color: "#cbd5e1",
+    display: "flex", flexDirection: "column" as const,
+    padding: "20px 6px",
+    boxShadow: "-4px 0 12px rgba(0,0,0,.08)",
+    transition: "width .18s ease",
   } as const,
   brand: { display: "flex", gap: 10, alignItems: "center", padding: "0 8px 20px", borderBottom: "1px solid #334155", marginBottom: 16 } as const,
+  brandCollapsed: { display: "flex", justifyContent: "center", padding: "0 0 16px", borderBottom: "1px solid #334155", marginBottom: 12 } as const,
   brandIcon: {
     minWidth: 64, height: 38, padding: "0 10px", borderRadius: 10,
     background: "linear-gradient(135deg, #22d3ee 0%, #2563eb 100%)",
@@ -774,6 +833,41 @@ const S = {
     color: "#fff", fontWeight: 800, fontSize: 13, letterSpacing: 0.5,
     boxShadow: "0 4px 12px rgba(34,211,238,.3)",
     fontFamily: "'Segoe UI', system-ui, sans-serif",
+  } as const,
+  brandIconCollapsed: {
+    width: 40, height: 40, borderRadius: 10,
+    background: "linear-gradient(135deg, #22d3ee 0%, #2563eb 100%)",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    color: "#fff", fontWeight: 800, fontSize: 18, letterSpacing: 0.5,
+    boxShadow: "0 4px 12px rgba(34,211,238,.3)",
+    fontFamily: "'Segoe UI', system-ui, sans-serif",
+  } as const,
+  // Collapse toggle — sits between brand and nav list.
+  collapseToggle: {
+    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+    margin: "0 0 12px", padding: "6px 10px",
+    background: "rgba(59,130,246,.08)", color: "#93c5fd",
+    border: "1px solid #334155", borderRadius: 8,
+    cursor: "pointer", fontSize: 12, fontFamily: "inherit", fontWeight: 600,
+    transition: "all .12s",
+  } as const,
+  collapseToggleCollapsed: {
+    display: "flex", alignItems: "center", justifyContent: "center",
+    margin: "0 0 12px", padding: 8,
+    background: "rgba(59,130,246,.08)", color: "#93c5fd",
+    border: "1px solid #334155", borderRadius: 8,
+    cursor: "pointer", fontFamily: "inherit",
+    transition: "all .12s",
+  } as const,
+  navIconLarge: { fontSize: 22, width: 24, textAlign: "center" as const, lineHeight: 1 } as const,
+  // Tiny corner badge for collapsed mode — overlays the icon, top-left.
+  navBadgeDot: {
+    position: "absolute" as const, top: 4, left: 4,
+    minWidth: 18, height: 18, padding: "0 5px",
+    background: "#dc2626", color: "#fff",
+    borderRadius: 999, fontSize: 10, fontWeight: 700,
+    display: "flex", alignItems: "center", justifyContent: "center",
+    boxShadow: "0 0 0 2px #1e293b",
   } as const,
   brandName: { fontSize: 16, fontWeight: 700, color: "#f8fafc" } as const,
   brandTag: { fontSize: 10, color: "#94a3b8", marginTop: 2 } as const,
