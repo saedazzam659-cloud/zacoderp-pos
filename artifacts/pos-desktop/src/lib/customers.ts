@@ -12,6 +12,9 @@ export interface LocalCustomer {
   nameEn?: string | null;
   phone?: string | null;
   vatNumber?: string | null;
+  currencyCode?: string;
+  /** Shadow balance in base currency. Positive = customer owes us (مدين). */
+  balance?: number;
   createdAt?: string;
   updatedAt?: string;
   /** Soft-delete tombstone (overlay). When true, listCustomers filters this row out. */
@@ -26,6 +29,8 @@ interface RustCustomer {
   phone: string | null;
   vat_number: string | null;
   updated_at: string | null;
+  currency_code?: string;
+  balance?: number;
 }
 
 function fromRust(r: RustCustomer): LocalCustomer {
@@ -36,6 +41,8 @@ function fromRust(r: RustCustomer): LocalCustomer {
     nameEn: r.name_en,
     phone: r.phone,
     vatNumber: r.vat_number,
+    currencyCode: r.currency_code ?? "SAR",
+    balance: r.balance ?? 0,
     updatedAt: r.updated_at ?? undefined,
   };
 }
@@ -151,6 +158,12 @@ export interface CreateCustomerInput {
   nameEn?: string | null;
   phone?: string | null;
   vatNumber?: string | null;
+  currencyCode?: string;
+  /** Opening balance amount (native, > 0). Posted as a JE on create only. */
+  openingBalance?: number;
+  /** "debit" (مدين — owes us) or "credit" (دائن — we owe them). */
+  openingNature?: "debit" | "credit";
+  openingDate?: string;
 }
 
 export async function createCustomer(input: CreateCustomerInput): Promise<LocalCustomer> {
@@ -163,6 +176,10 @@ export async function createCustomer(input: CreateCustomerInput): Promise<LocalC
         nameEn: input.nameEn ?? null,
         phone: input.phone ?? null,
         vatNumber: input.vatNumber ?? null,
+        currencyCode: input.currencyCode ?? "SAR",
+        openingBalance: input.openingBalance ?? null,
+        openingNature: input.openingNature ?? null,
+        openingDate: input.openingDate ?? null,
       });
       created = fromRust(r);
     } catch {
@@ -197,6 +214,8 @@ function createInLocalStorage(input: CreateCustomerInput, now: string): LocalCus
     nameEn: input.nameEn ?? null,
     phone: input.phone ?? null,
     vatNumber: input.vatNumber ?? null,
+    currencyCode: input.currencyCode ?? "SAR",
+    balance: 0,
     createdAt: now,
     updatedAt: now,
   };

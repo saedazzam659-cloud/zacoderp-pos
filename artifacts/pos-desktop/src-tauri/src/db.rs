@@ -437,6 +437,10 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE journal_entries_local ADD COLUMN exchange_rate REAL NOT NULL DEFAULT 1",
         "ALTER TABLE financial_transactions_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
         "ALTER TABLE financial_transactions_local ADD COLUMN exchange_rate REAL NOT NULL DEFAULT 1",
+        // Customer shadow balance (suppliers_local already has one). Positive =
+        // customer owes us (AR debit nature). Maintained by opening balance +
+        // financial transactions.
+        "ALTER TABLE customers_local ADD COLUMN balance REAL NOT NULL DEFAULT 0",
     ];
     for sql in alters { let _ = conn.execute(sql, []); }
 

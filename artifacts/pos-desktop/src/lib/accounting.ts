@@ -30,6 +30,11 @@ export type SupplierInput = {
   code: string | null; nameAr: string; nameEn: string | null;
   phone: string | null; vatNumber: string | null; notes: string | null;
   currencyCode?: string;
+  /** Opening balance amount (native, > 0). Posted as a JE on create only. */
+  openingBalance?: number;
+  /** "debit" (مدين) or "credit" (دائن — default for suppliers, we owe them). */
+  openingNature?: "debit" | "credit";
+  openingDate?: string;
 };
 
 export type CashBox = { id: number; name: string; balance: number; accountId: number | null; currencyCode: string };

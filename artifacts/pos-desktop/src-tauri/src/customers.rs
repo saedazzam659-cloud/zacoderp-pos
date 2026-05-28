@@ -22,6 +22,8 @@ pub struct LocalCustomer {
     pub phone: Option<String>,
     pub vat_number: Option<String>,
     pub updated_at: Option<String>,
+    pub currency_code: String,
+    pub balance: f64,
 }
 
 const MAX_ROWS: i64 = 500;
@@ -35,6 +37,8 @@ fn row_to_customer(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalCustomer> {
         phone: row.get(4)?,
         vat_number: row.get(5)?,
         updated_at: row.get(6)?,
+        currency_code: row.get::<_, Option<String>>(7)?.unwrap_or_else(|| "SAR".to_string()),
+        balance: row.get(8)?,
     })
 }
 
@@ -45,7 +49,7 @@ pub fn list_customers(search: Option<String>) -> Result<Vec<LocalCustomer>, Stri
 
 fn list(search: Option<&str>) -> Result<Vec<LocalCustomer>> {
     let conn = db::open()?;
-    let sql = "SELECT id, cloud_id, name_ar, name_en, phone, vat_number, updated_at
+    let sql = "SELECT id, cloud_id, name_ar, name_en, phone, vat_number, updated_at, currency_code, balance
                FROM customers_local
                WHERE (?1 IS NULL OR name_ar LIKE ?2 OR phone LIKE ?2 OR vat_number LIKE ?2)
                ORDER BY name_ar
@@ -102,28 +106,52 @@ fn upsert_from_cloud(rows: Vec<CloudCustomer>) -> Result<u64> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn create_customer_local(
     name_ar: String,
     name_en: Option<String>,
     phone: Option<String>,
     vat_number: Option<String>,
+    currency_code: Option<String>,
+    opening_balance: Option<f64>,
+    opening_nature: Option<String>,
+    opening_date: Option<String>,
 ) -> Result<LocalCustomer, String> {
-    create(name_ar, name_en, phone, vat_number).map_err(|e| e.to_string())
+    create(name_ar, name_en, phone, vat_number, currency_code, opening_balance, opening_nature, opening_date)
+        .map_err(|e| e.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create(
     name_ar: String,
     name_en: Option<String>,
     phone: Option<String>,
     vat_number: Option<String>,
+    currency_code: Option<String>,
+    opening_balance: Option<f64>,
+    opening_nature: Option<String>,
+    opening_date: Option<String>,
 ) -> Result<LocalCustomer> {
-    let conn = db::open()?;
-    conn.execute(
-        "INSERT INTO customers_local (cloud_id, name_ar, name_en, phone, vat_number, updated_at)
-         VALUES (NULL, ?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)",
-        rusqlite::params![name_ar, name_en, phone, vat_number],
+    let mut conn = db::open()?;
+    let cur = currency_code.unwrap_or_else(|| "SAR".to_string());
+    let tx = conn.transaction()?;
+    tx.execute(
+        "INSERT INTO customers_local (cloud_id, name_ar, name_en, phone, vat_number, currency_code, updated_at)
+         VALUES (NULL, ?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)",
+        rusqlite::params![name_ar, name_en, phone, vat_number, cur],
     )?;
-    let id = conn.last_insert_rowid();
+    let id = tx.last_insert_rowid();
+    let ob = opening_balance.unwrap_or(0.0).abs();
+    if ob > 1e-9 {
+        let nature = opening_nature.as_deref().unwrap_or("debit");
+        let date = match opening_date {
+            Some(d) if !d.trim().is_empty() => d,
+            _ => tx.query_row("SELECT date('now','localtime')", [], |r| r.get(0))?,
+        };
+        crate::accounting::post_party_opening_balance(&tx, "customer", id, &cur, ob, nature, &date)?;
+    }
+    let balance: f64 = tx.query_row("SELECT balance FROM customers_local WHERE id=?1", rusqlite::params![id], |r| r.get(0))?;
+    tx.commit()?;
     Ok(LocalCustomer {
         id,
         cloud_id: None,
@@ -132,5 +160,7 @@ fn create(
         phone,
         vat_number,
         updated_at: None,
+        currency_code: cur,
+        balance,
     })
 }

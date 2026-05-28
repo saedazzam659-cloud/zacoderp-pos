@@ -294,19 +294,104 @@ pub struct SupplierInput {
     pub notes: Option<String>,
     #[serde(default)]
     pub currency_code: Option<String>,
+    // Opening balance (applied on create only; ignored on update).
+    #[serde(default)]
+    pub opening_balance: Option<f64>,
+    #[serde(default)]
+    pub opening_nature: Option<String>, // "debit" | "credit"
+    #[serde(default)]
+    pub opening_date: Option<String>,
 }
 
 #[tauri::command]
 pub fn suppliers_create(input: SupplierInput) -> Result<i64, String> {
     if input.name_ar.trim().is_empty() { return Err("اسم المورد مطلوب".into()); }
-    let conn = db::open().map_err(|e| e.to_string())?;
-    let ap = account_id_by_code(&conn, "2100").map_err(|e| e.to_string())?;
-    let cur = input.currency_code.unwrap_or_else(|| "SAR".to_string());
-    conn.execute(
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let ap = account_id_by_code(&tx, "2100").map_err(|e| e.to_string())?;
+    let cur = input.currency_code.clone().unwrap_or_else(|| "SAR".to_string());
+    tx.execute(
         "INSERT INTO suppliers_local(code,name_ar,name_en,phone,vat_number,notes,ap_account_id,currency_code) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
         params![input.code, input.name_ar, input.name_en, input.phone, input.vat_number, input.notes, ap, cur],
     ).map_err(|e| e.to_string())?;
-    Ok(conn.last_insert_rowid())
+    let id = tx.last_insert_rowid();
+    let ob = input.opening_balance.unwrap_or(0.0).abs();
+    if ob > 1e-9 {
+        let nature = input.opening_nature.as_deref().unwrap_or("credit");
+        let date = resolve_opening_date(&tx, input.opening_date.as_deref()).map_err(|e| e.to_string())?;
+        post_party_opening_balance(&tx, "supplier", id, &cur, ob, nature, &date).map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+fn resolve_opening_date(conn: &Connection, given: Option<&str>) -> Result<String> {
+    match given {
+        Some(d) if !d.trim().is_empty() => Ok(d.to_string()),
+        _ => Ok(conn.query_row("SELECT date('now','localtime')", [], |r| r.get(0))?),
+    }
+}
+
+/// Posts a balanced opening-balance JE for a customer/supplier against equity
+/// (3000) and updates the party shadow balance. `amount` is native (>0) and is
+/// converted to base via the current FX rate. Runs inside the caller's tx so
+/// the party row + JE + balance all commit atomically.
+pub(crate) fn post_party_opening_balance(
+    tx: &Transaction,
+    party_type: &str,
+    party_id: i64,
+    currency_code: &str,
+    amount: f64,
+    nature: &str,
+    date: &str,
+) -> Result<i64> {
+    if nature != "debit" && nature != "credit" {
+        return Err(anyhow!("نوع الرصيد يجب أن يكون مدين أو دائن"));
+    }
+    let rate = current_rate_to_base(tx, currency_code)?;
+    let amount_base = amount * rate;
+    let equity = account_id_by_code(tx, "3000")?;
+    let party_acc = match party_type {
+        "supplier" => tx
+            .query_row("SELECT ap_account_id FROM suppliers_local WHERE id=?1", params![party_id], |r| r.get::<_, Option<i64>>(0))
+            .ok()
+            .flatten()
+            .map(Ok)
+            .unwrap_or_else(|| account_id_by_code(tx, "2100"))?,
+        "customer" => account_id_by_code(tx, "1500")?,
+        _ => return Err(anyhow!("نوع طرف غير معروف")),
+    };
+    let desc = "رصيد افتتاحي".to_string();
+    let debit_party = nature == "debit";
+    let lines = vec![
+        JournalEntryLine {
+            id: None, account_id: party_acc, account_code: None, account_name: None,
+            debit: if debit_party { amount_base } else { 0.0 },
+            credit: if debit_party { 0.0 } else { amount_base },
+            description: Some(desc.clone()),
+        },
+        JournalEntryLine {
+            id: None, account_id: equity, account_code: None, account_name: None,
+            debit: if debit_party { 0.0 } else { amount_base },
+            credit: if debit_party { amount_base } else { 0.0 },
+            description: Some(desc.clone()),
+        },
+    ];
+    let je_id = insert_journal_entry(tx, date, Some(&desc), Some("opening_balance"), Some(party_id), &lines)?;
+    match party_type {
+        // supplier balance: positive = we owe (credit nature)
+        "supplier" => {
+            let delta = if nature == "credit" { amount_base } else { -amount_base };
+            tx.execute("UPDATE suppliers_local SET balance=balance+?1 WHERE id=?2", params![delta, party_id])?;
+        }
+        // customer balance: positive = they owe us (debit nature)
+        "customer" => {
+            let delta = if nature == "debit" { amount_base } else { -amount_base };
+            tx.execute("UPDATE customers_local SET balance=balance+?1 WHERE id=?2", params![delta, party_id])?;
+        }
+        _ => {}
+    }
+    Ok(je_id)
 }
 
 #[tauri::command]
