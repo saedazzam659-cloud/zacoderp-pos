@@ -25,6 +25,19 @@ import ItemsAdmin from "./ItemsAdmin";
 import UomAdmin from "./UomAdmin";
 import UpdatesScreen from "./UpdatesScreen";
 import StandaloneUsersAdmin from "./StandaloneUsersAdmin";
+import SuppliersAdmin from "./SuppliersAdmin";
+import CashBoxesAdmin from "./CashBoxesAdmin";
+import BanksAdmin from "./BanksAdmin";
+import ChartOfAccounts from "./ChartOfAccounts";
+import JournalEntries from "./JournalEntries";
+import PurchasesAdmin from "./PurchasesAdmin";
+import PurchaseReturnsAdmin from "./PurchaseReturnsAdmin";
+import FinancialTransactionsAdmin from "./FinancialTransactionsAdmin";
+import UserPermissionsAdmin from "./UserPermissionsAdmin";
+import {
+  listUserPermissions, computeAllowed, persistAllowedToLS, clearAllowedLS,
+  loadAllowedFromLS, defaultsForRole, type ScreenKey,
+} from "../lib/permissions";
 import ExpiryReport from "./ExpiryReport";
 import StockImport from "./StockImport";
 import LowStockReport, { countLowStockTracked } from "./LowStockReport";
@@ -39,7 +52,14 @@ import { flushPendingSessionCloses, countPendingCloses } from "../lib/pendingSes
 import { useLatestVersion } from "../lib/updates";
 import type { OfflineLicensePayload, LocalSession } from "../lib/standalone";
 
-type View = "sales" | "returns" | "pending" | "parked" | "daily" | "customers" | "items" | "uom" | "dashboard" | "updates" | "users" | "expiry" | "scale" | "stock_import" | "low_stock";
+type View =
+  | "sales" | "returns" | "pending" | "parked" | "daily"
+  | "customers" | "items" | "uom" | "dashboard" | "updates" | "users"
+  | "expiry" | "scale" | "stock_import" | "low_stock"
+  // Task #207 — accounting & operations screens (standalone).
+  | "suppliers" | "purchases" | "purchase_returns"
+  | "cash_boxes" | "banks" | "financial_tx"
+  | "chart_of_accounts" | "journal_entries" | "user_permissions";
 
 /** Minimal CSV parser for the bundled starter catalogs (no quotes/escapes
  *  expected — files are repo-controlled). Returns CreateItemInput rows. */
@@ -150,6 +170,35 @@ export default function PosShell({
   const [vertical, setVerticalState] = useState<Vertical>("general");
   useEffect(() => { void getVertical().then((v) => v && setVerticalState(v)); }, []);
   const isPharmacy = vertical === "pharmacy";
+
+  // Task #207 — allowed-screens set for the current user. Admins always see
+  // everything; cashiers start from ROLE_DEFAULTS.cashier and the admin can
+  // grant/revoke individual screens via UserPermissionsAdmin. Cached in LS so
+  // the sidebar renders immediately on reload without waiting for SQLite.
+  const [allowed, setAllowed] = useState<Set<ScreenKey>>(
+    () => loadAllowedFromLS() ?? defaultsForRole("admin"),
+  );
+  useEffect(() => {
+    if (!standalone || !standaloneSession) return;
+    const role = standaloneSession.role;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const overrides = role === "cashier"
+          ? await listUserPermissions(standaloneSession.userId)
+          : [];
+        if (cancelled) return;
+        const next = computeAllowed(role, overrides);
+        persistAllowedToLS(next);
+        setAllowed(new Set(next));
+      } catch {
+        const fallback = computeAllowed(role, []);
+        if (!cancelled) { persistAllowedToLS(fallback); setAllowed(new Set(fallback)); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [standalone, standaloneSession]);
+  const can = useCallback((k: ScreenKey) => allowed.has(k), [allowed]);
 
   // Low-stock count drives the sidebar badge under "أصناف تحت الحد".
   // Refreshed on view-switch (cheap) + after import/sale (no realtime needed).
@@ -288,27 +337,43 @@ export default function PosShell({
     if (!onLogoutCashier) return;
     if (!confirm("هل تريد تسجيل خروج الكاشير الحالي وإغلاق الوردية؟")) return;
     setLoggingOut(true);
-    try { await onLogoutCashier(); }
+    try {
+      // Drop the cached allowed-screens set so the next user starts fresh.
+      clearAllowedLS();
+      await onLogoutCashier();
+    }
     catch (e: any) { setActionErr(e?.message ?? "logout failed"); setLoggingOut(false); }
   }
 
   // Cloud-only nav entries hidden in standalone mode:
   //   • pending (cloud upload queue), dashboard (sync controls), updates (cloud release feed)
   // Standalone gains: users (local user admin, admin role only).
-  const navItems: Array<{ id: View; icon: string; label: string; badge?: number }> = standalone ? [
-    { id: "sales",     icon: "🛒", label: "بيع" },
-    { id: "returns",   icon: "↩️", label: "مرتجع" },
-    { id: "parked",    icon: "📌", label: "السلال المعلّقة", badge: parkedCount > 0 ? parkedCount : undefined },
-    { id: "daily",     icon: "📊", label: "تقرير اليومية" },
-    { id: "customers", icon: "👥", label: "العملاء" },
-    { id: "items",     icon: "📦", label: "الأصناف" },
-    { id: "stock_import", icon: "📥", label: "استيراد الأرصدة" },
-    { id: "low_stock", icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined },
-    { id: "uom",       icon: "📐", label: "وحدات القياس" },
-    { id: "scale",     icon: "⚖️", label: "الميزان" },
-    ...(isPharmacy ? [{ id: "expiry" as View, icon: "⏳", label: "تقرير الصلاحية" }] : []),
-    ...(standaloneSession?.role === "admin"
-      ? [{ id: "users" as View, icon: "🔐", label: "المستخدمون" }]
+  const isAdmin = standaloneSession?.role === "admin";
+  const standaloneNav: Array<{ id: View; icon: string; label: string; badge?: number; perm?: ScreenKey; adminOnly?: boolean }> = [
+    { id: "sales",            icon: "🛒", label: "بيع", perm: "sales" },
+    { id: "returns",          icon: "↩️", label: "مرتجع", perm: "returns" },
+    { id: "parked",           icon: "📌", label: "السلال المعلّقة", badge: parkedCount > 0 ? parkedCount : undefined, perm: "parked" },
+    { id: "daily",            icon: "📊", label: "تقرير اليومية", perm: "daily" },
+    { id: "customers",        icon: "👥", label: "العملاء", perm: "customers" },
+    { id: "suppliers",        icon: "🏭", label: "الموردون", perm: "suppliers" },
+    { id: "items",            icon: "📦", label: "الأصناف", perm: "items" },
+    { id: "stock_import",     icon: "📥", label: "استيراد الأرصدة", perm: "stock_import" },
+    { id: "low_stock",        icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined, perm: "low_stock" },
+    { id: "uom",              icon: "📐", label: "وحدات القياس", perm: "uom" },
+    { id: "purchases",        icon: "🧾", label: "فواتير الشراء", perm: "purchases" },
+    { id: "purchase_returns", icon: "🔁", label: "مرتجع الشراء", perm: "purchase_returns" },
+    { id: "cash_boxes",       icon: "💰", label: "الخزن", perm: "cash_boxes" },
+    { id: "banks",            icon: "🏦", label: "البنوك", perm: "banks" },
+    { id: "financial_tx",     icon: "💸", label: "المعاملات المالية", perm: "financial_tx" },
+    { id: "chart_of_accounts",icon: "🌳", label: "شجرة الحسابات", perm: "chart_of_accounts" },
+    { id: "journal_entries",  icon: "📒", label: "القيود اليومية", perm: "journal_entries" },
+    { id: "scale",            icon: "⚖️", label: "الميزان", perm: "scale" },
+    ...(isPharmacy ? [{ id: "expiry" as View, icon: "⏳", label: "تقرير الصلاحية", perm: "expiry" as ScreenKey }] : []),
+    ...(isAdmin
+      ? [
+          { id: "users" as View,            icon: "🔐", label: "المستخدمون", adminOnly: true },
+          { id: "user_permissions" as View, icon: "🛡️", label: "صلاحيات المستخدمين", adminOnly: true },
+        ]
       : []),
     { id: "dashboard", icon: "⚙️", label: "لوحة التحكم" },
     // Updates entry — even standalone users want to install newer app
@@ -316,7 +381,12 @@ export default function PosShell({
     // The Updates screen itself gracefully handles offline by showing
     // an error and a manual-download link.
     { id: "updates",   icon: "🔄", label: "التحديثات" },
-  ] : [
+  ];
+  const navItems: Array<{ id: View; icon: string; label: string; badge?: number }> = standalone
+    ? standaloneNav
+        .filter((it) => it.adminOnly ? isAdmin : (it.perm ? (isAdmin || can(it.perm)) : true))
+        .map(({ id, icon, label, badge }) => ({ id, icon, label, badge }))
+    : [
     { id: "sales",     icon: "🛒", label: "بيع" },
     { id: "returns",   icon: "↩️", label: "مرتجع" },
     { id: "parked",    icon: "📌", label: "السلال المعلّقة", badge: parkedCount > 0 ? parkedCount : undefined },
@@ -347,7 +417,7 @@ export default function PosShell({
           {!navCollapsed && (
             <div>
               <div style={S.brandName}>ZACOD POS</div>
-              <div style={S.brandTag}>v0.7.11 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
+              <div style={S.brandTag}>v0.7.14 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
             </div>
           )}
         </div>
@@ -523,8 +593,36 @@ export default function PosShell({
           {view === "updates" && (
             <div style={S.pagePad}><UpdatesScreen baseUrl={baseUrl} /></div>
           )}
-          {standalone && view === "users" && standaloneSession && (
+          {standalone && view === "users" && standaloneSession && isAdmin && (
             <StandaloneUsersAdmin session={standaloneSession} maxUsers={standaloneLicense?.maxUsers ?? 1} />
+          )}
+          {/* Task #207 — accounting & operations screens (standalone only). */}
+          {standalone && view === "suppliers" && (isAdmin || can("suppliers")) && (
+            <div style={S.pagePad}><SuppliersAdmin /></div>
+          )}
+          {standalone && view === "purchases" && (isAdmin || can("purchases")) && (
+            <div style={S.pagePad}><PurchasesAdmin /></div>
+          )}
+          {standalone && view === "purchase_returns" && (isAdmin || can("purchase_returns")) && (
+            <div style={S.pagePad}><PurchaseReturnsAdmin /></div>
+          )}
+          {standalone && view === "cash_boxes" && (isAdmin || can("cash_boxes")) && (
+            <div style={S.pagePad}><CashBoxesAdmin /></div>
+          )}
+          {standalone && view === "banks" && (isAdmin || can("banks")) && (
+            <div style={S.pagePad}><BanksAdmin /></div>
+          )}
+          {standalone && view === "financial_tx" && (isAdmin || can("financial_tx")) && (
+            <div style={S.pagePad}><FinancialTransactionsAdmin /></div>
+          )}
+          {standalone && view === "chart_of_accounts" && (isAdmin || can("chart_of_accounts")) && (
+            <div style={S.pagePad}><ChartOfAccounts /></div>
+          )}
+          {standalone && view === "journal_entries" && (isAdmin || can("journal_entries")) && (
+            <div style={S.pagePad}><JournalEntries /></div>
+          )}
+          {standalone && view === "user_permissions" && isAdmin && standaloneSession && (
+            <div style={S.pagePad}><UserPermissionsAdmin session={standaloneSession} /></div>
           )}
         </main>
       </div>
@@ -551,6 +649,15 @@ function labelFor(v: View): string {
     dashboard: "لوحة التحكم",
     updates: "التحديثات",
     users: "المستخدمون المحليون",
+    suppliers: "الموردون",
+    purchases: "فواتير الشراء",
+    purchase_returns: "مرتجع الشراء",
+    cash_boxes: "الخزن",
+    banks: "البنوك",
+    financial_tx: "المعاملات المالية",
+    chart_of_accounts: "شجرة الحسابات",
+    journal_entries: "القيود اليومية",
+    user_permissions: "صلاحيات المستخدمين",
   }[v];
 }
 

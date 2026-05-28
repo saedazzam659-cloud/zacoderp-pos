@@ -4,12 +4,14 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod accounting;
 mod customers;
 mod db;
 mod invoices;
 mod items;
 mod license;
 mod peripherals;
+mod permissions;
 mod scale;
 mod standalone;
 mod sync;
@@ -381,6 +383,38 @@ fn main() {
             standalone::standalone_get_setting,
             standalone::standalone_set_setting,
             updater::download_and_install_update,
+            // Accounting & operations (Task #207).
+            accounting::accounts_list,
+            accounting::accounts_create,
+            accounting::accounts_update,
+            accounting::accounts_delete,
+            accounting::suppliers_list,
+            accounting::suppliers_create,
+            accounting::suppliers_update,
+            accounting::suppliers_delete,
+            accounting::cash_boxes_list,
+            accounting::cash_boxes_create,
+            accounting::cash_boxes_update,
+            accounting::cash_boxes_delete,
+            accounting::banks_list,
+            accounting::banks_create,
+            accounting::banks_update,
+            accounting::banks_delete,
+            accounting::purchases_list,
+            accounting::purchase_get,
+            accounting::purchase_create,
+            accounting::purchase_returns_list,
+            accounting::purchase_return_get,
+            accounting::purchase_return_create,
+            accounting::financial_tx_list,
+            accounting::financial_tx_create,
+            accounting::journal_entries_list,
+            accounting::journal_entry_get,
+            accounting::journal_entry_create,
+            permissions::permissions_list_for_user,
+            permissions::permissions_set,
+            permissions::permissions_clear,
+            permissions::permissions_clear_all,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
