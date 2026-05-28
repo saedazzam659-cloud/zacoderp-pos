@@ -26,6 +26,9 @@ import UomAdmin from "./UomAdmin";
 import UpdatesScreen from "./UpdatesScreen";
 import StandaloneUsersAdmin from "./StandaloneUsersAdmin";
 import ExpiryReport from "./ExpiryReport";
+import StockImport from "./StockImport";
+import LowStockReport, { countLowStockTracked } from "./LowStockReport";
+import { listItems, bulkImportLocalItems, type CreateItemInput } from "../lib/items";
 import { useTaxSettings, defaultRateForCountry } from "../lib/taxSettings";
 import ScaleSettings from "./ScaleSettings";
 import { countPendingInvoices } from "../lib/invoices";
@@ -36,7 +39,49 @@ import { flushPendingSessionCloses, countPendingCloses } from "../lib/pendingSes
 import { useLatestVersion } from "../lib/updates";
 import type { OfflineLicensePayload, LocalSession } from "../lib/standalone";
 
-type View = "sales" | "returns" | "pending" | "parked" | "daily" | "customers" | "items" | "uom" | "dashboard" | "updates" | "users" | "expiry" | "scale";
+type View = "sales" | "returns" | "pending" | "parked" | "daily" | "customers" | "items" | "uom" | "dashboard" | "updates" | "users" | "expiry" | "scale" | "stock_import" | "low_stock";
+
+/** Minimal CSV parser for the bundled starter catalogs (no quotes/escapes
+ *  expected — files are repo-controlled). Returns CreateItemInput rows. */
+function parseCatalogCsv(text: string): CreateItemInput[] {
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length < 2) return [];
+  const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+  const idx = (n: string) => header.indexOf(n);
+  const cCode = idx("code");
+  const cAr = idx("namear");
+  const cEn = idx("nameen");
+  const cBc = idx("barcode");
+  const cPrice = idx("saleprice");
+  const cVat = idx("vatrate");
+  const out: CreateItemInput[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cells = lines[i].split(",").map((c) => c.trim());
+    const nameAr = cAr >= 0 ? cells[cAr] : "";
+    const price = cPrice >= 0 ? Number(cells[cPrice]) : NaN;
+    if (!nameAr || !Number.isFinite(price)) continue;
+    out.push({
+      code: cCode >= 0 && cells[cCode] ? cells[cCode] : null,
+      nameAr,
+      nameEn: cEn >= 0 && cells[cEn] ? cells[cEn] : null,
+      barcode: cBc >= 0 && cells[cBc] ? cells[cBc] : null,
+      salePrice: price,
+      vatRate: cVat >= 0 && cells[cVat] ? Number(cells[cVat]) : 15,
+    });
+  }
+  return out;
+}
+
+function verticalLabel(v: Vertical): string {
+  switch (v) {
+    case "grocery": return "بقالة";
+    case "retail": return "تجزئة";
+    case "restaurant": return "مطاعم";
+    case "pharmacy": return "صيدلية";
+    default: return "عام";
+  }
+}
 
 type Props = {
   baseUrl: string;
@@ -105,6 +150,63 @@ export default function PosShell({
   const [vertical, setVerticalState] = useState<Vertical>("general");
   useEffect(() => { void getVertical().then((v) => v && setVerticalState(v)); }, []);
   const isPharmacy = vertical === "pharmacy";
+
+  // Low-stock count drives the sidebar badge under "أصناف تحت الحد".
+  // Refreshed on view-switch (cheap) + after import/sale (no realtime needed).
+  const [lowStockCount, setLowStockCount] = useState(0);
+  const refreshLowStock = useCallback(async () => {
+    try {
+      const items = await listItems();
+      setLowStockCount(countLowStockTracked(items));
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => { void refreshLowStock(); }, [view, refreshLowStock]);
+
+  // ─── First-run catalog auto-import ────────────────────────────────
+  // Triggered ONCE per device after the vertical is known. Skipped when
+  // the user already has any items (cloud-pulled or self-created), and
+  // pharmacy users get the EDA manual button instead (catalog is too
+  // large to auto-import without consent).
+  useEffect(() => {
+    if (vertical === "general") return;
+    const FLAG = "pos_desktop_catalog_auto_imported_v1";
+    if (localStorage.getItem(FLAG)) return;
+    const catalogFile: Record<string, string | undefined> = {
+      grocery: "grocery_starter.csv",
+      retail: "retail_starter.csv",
+      restaurant: "restaurant_starter.csv",
+      // pharmacy: handled by the prominent "💊 استيراد EDA" button in ItemsAdmin.
+    };
+    const file = catalogFile[vertical];
+    if (!file) { localStorage.setItem(FLAG, new Date().toISOString()); return; }
+    let cancelled = false;
+    void (async () => {
+      try {
+        // Only auto-import into a fresh device — never on top of an existing catalog.
+        const existing = await listItems();
+        // listItems() falls back to a 6-row demo when empty, so treat ≤6 as "empty".
+        if (existing.length > 6) {
+          localStorage.setItem(FLAG, new Date().toISOString());
+          return;
+        }
+        const baseUrl = (import.meta as any).env?.BASE_URL ?? "/";
+        const res = await fetch(`${baseUrl}catalogs/${file}`);
+        if (!res.ok) return; // silent — operator can import manually later
+        const text = await res.text();
+        const rows = parseCatalogCsv(text);
+        if (rows.length === 0) return;
+        const { inserted } = await bulkImportLocalItems(rows, { dedupBy: "barcode" });
+        if (cancelled) return;
+        localStorage.setItem(FLAG, new Date().toISOString());
+        if (inserted > 0) {
+          setAutoImportToast(`تم تحميل ${inserted} صنف من كتالوج «${verticalLabel(vertical)}» — يمكنك تعديلها من شاشة الأصناف`);
+        }
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+  }, [vertical]);
+
+  const [autoImportToast, setAutoImportToast] = useState<string | null>(null);
 
   const refreshParkedCount = useCallback(async () => {
     if (!posSessionId) { setParkedCount(0); return; }
@@ -200,6 +302,8 @@ export default function PosShell({
     { id: "daily",     icon: "📊", label: "تقرير اليومية" },
     { id: "customers", icon: "👥", label: "العملاء" },
     { id: "items",     icon: "📦", label: "الأصناف" },
+    { id: "stock_import", icon: "📥", label: "استيراد الأرصدة" },
+    { id: "low_stock", icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined },
     { id: "uom",       icon: "📐", label: "وحدات القياس" },
     { id: "scale",     icon: "⚖️", label: "الميزان" },
     ...(isPharmacy ? [{ id: "expiry" as View, icon: "⏳", label: "تقرير الصلاحية" }] : []),
@@ -220,6 +324,8 @@ export default function PosShell({
     { id: "daily",     icon: "📊", label: "تقرير اليومية" },
     { id: "customers", icon: "👥", label: "العملاء" },
     { id: "items",     icon: "📦", label: "الأصناف" },
+    { id: "stock_import", icon: "📥", label: "استيراد الأرصدة" },
+    { id: "low_stock", icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined },
     { id: "uom",       icon: "📐", label: "وحدات القياس" },
     { id: "scale",     icon: "⚖️", label: "الميزان" },
     ...(isPharmacy ? [{ id: "expiry" as View, icon: "⏳", label: "تقرير الصلاحية" }] : []),
@@ -363,6 +469,14 @@ export default function PosShell({
         {/* Subscription-expiry warning is now rendered inline inside the
             topbar above (compact pill). No separate row here. */}
 
+        {autoImportToast && (
+          <div style={S.autoImportBanner}>
+            <span style={{ fontSize: 18 }}>📥</span>
+            <span style={{ flex: 1 }}>{autoImportToast}</span>
+            <button onClick={() => setAutoImportToast(null)} style={S.autoImportClose}>إغلاق</button>
+          </div>
+        )}
+
         {/* Page content */}
         <main style={S.content}>
           {view === "sales" && <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={effectiveCashierName} />}
@@ -380,6 +494,8 @@ export default function PosShell({
           )}
           {view === "customers" && <div style={S.pagePad}><CustomersAdmin /></div>}
           {view === "items" && <div style={S.pagePad}><ItemsAdmin /></div>}
+          {view === "stock_import" && <div style={S.pagePad}><StockImport onDone={() => void refreshLowStock()} /></div>}
+          {view === "low_stock" && <div style={S.pagePad}><LowStockReport onGoToImport={() => setView("stock_import")} /></div>}
           {view === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
           {view === "scale" && <div style={S.pagePad}><ScaleSettings /></div>}
           {view === "expiry" && isPharmacy && <div style={S.pagePad}><ExpiryReport onJumpToItems={() => setView("items")} /></div>}
@@ -427,6 +543,8 @@ function labelFor(v: View): string {
     daily: "تقرير اليومية",
     customers: "العملاء",
     items: "الأصناف",
+    stock_import: "استيراد الأرصدة الافتتاحية",
+    low_stock: "الأصناف تحت الحد الأدنى",
     uom: "وحدات القياس",
     expiry: "تقرير الصلاحية",
     scale: "إعدادات الميزان",
@@ -992,6 +1110,16 @@ const S = {
   updateClose: {
     padding: "4px 10px", background: "transparent", color: "#0c4a6e",
     border: "1px solid #93c5fd", borderRadius: 6, cursor: "pointer",
+    fontSize: 12, fontFamily: "inherit",
+  } as const,
+  autoImportBanner: {
+    display: "flex", alignItems: "center", gap: 12, padding: "10px 16px",
+    background: "#ecfdf5", color: "#065f46", borderBottom: "1px solid #a7f3d0",
+    fontSize: 13, fontWeight: 600,
+  } as const,
+  autoImportClose: {
+    padding: "4px 10px", background: "transparent", color: "#065f46",
+    border: "1px solid #86efac", borderRadius: 6, cursor: "pointer",
     fontSize: 12, fontFamily: "inherit",
   } as const,
   content: { flex: 1, overflow: "hidden", minHeight: 0, display: "flex", flexDirection: "column" as const } as const,

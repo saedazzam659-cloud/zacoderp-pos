@@ -22,7 +22,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
   const [invoices, setInvoices] = useState<PendingInvoice[]>([]);
   const [search, setSearch] = useState("");
   const [picked, setPicked] = useState<{ inv: PendingInvoice; payload: OfflineInvoicePayload } | null>(null);
-  const [lines, setLines] = useState<Array<{ nameAr: string; unitPrice: number; vatRate: number; qty: number; refundQty: number }>>([]);
+  const [lines, setLines] = useState<Array<{ itemId: number; nameAr: string; unitPrice: number; vatRate: number; qty: number; refundQty: number }>>([]);
   const DEFAULT_RETURN_REASON = "إرجاع من العميل";
   const [reason, setReason] = useState(DEFAULT_RETURN_REASON);
   const [busy, setBusy] = useState(false);
@@ -112,7 +112,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
       }
       setPicked({ inv, payload });
       setLines(payload.lines.map((l) => ({
-        nameAr: l.nameAr, unitPrice: l.unitPrice, vatRate: l.vatRate,
+        itemId: l.itemId, nameAr: l.nameAr, unitPrice: l.unitPrice, vatRate: l.vatRate,
         qty: l.qty, refundQty: l.qty,
       })));
     } catch (e: any) {
@@ -186,6 +186,17 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
       const reasonKey = finalReason.slice(0, 32).replace(/\s+/g, "_");
       const key = `ret-${picked.inv.id}-${reasonKey}-${shape}`;
       const saved = await saveOfflineInvoice(payload, qr ?? undefined, undefined, key);
+
+      // Restock local inventory for tracked items (no-op for untracked, and
+      // for items whose original sale carried itemId=0 — older returns or
+      // walk-in lines without a catalog match). Tied to the idempotency key
+      // by being a one-shot after the invoice persists.
+      try {
+        const { adjustStock } = await import("../lib/stock");
+        for (const l of refundLines) {
+          if (l.itemId > 0) adjustStock(l.itemId, l.refundQty);
+        }
+      } catch { /* non-fatal */ }
 
       const body: ReceiptLine[] = [];
       for (const l of refundLines) {

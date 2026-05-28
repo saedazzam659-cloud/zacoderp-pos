@@ -247,7 +247,7 @@ function stripStored(u: StoredUser): LocalUser {
 // ─── Vertical preset (Task #200) ─────────────────────────────────────
 // Three presets that switch UI flavor: catalog labels, optional fields,
 // per-vertical reports. "general" is the no-op fallback for new businesses.
-export type Vertical = "general" | "grocery" | "pharmacy";
+export type Vertical = "general" | "grocery" | "pharmacy" | "retail" | "restaurant";
 const LS_VERTICAL = "pos_desktop_vertical";
 const SETTING_VERTICAL = "ui_vertical";
 

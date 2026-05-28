@@ -320,6 +320,17 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       const saved = await saveOfflineInvoice(payload, qr ?? undefined, undefined, key!);
       const invNum = saved.invoiceNo;
 
+      // Decrement local stock IMMEDIATELY after invoice persists, BEFORE
+      // printing/drawer/parked cleanup. A printer fault must NOT prevent
+      // the stock movement that the customer has already walked away with.
+      // No-op for untracked items (operator never set opening qty).
+      try {
+        const { adjustStock } = await import("../lib/stock");
+        for (const l of cart) {
+          adjustStock(l.item.id, -l.qty);
+        }
+      } catch { /* non-fatal */ }
+
       const body: ReceiptLine[] = [];
       for (const l of cart) {
         if (l.weighed) {

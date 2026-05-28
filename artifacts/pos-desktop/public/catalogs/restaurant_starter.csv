@@ -1,0 +1,46 @@
+code,nameAr,nameEn,barcode,salePrice,vatRate
+F001,شاورما دجاج ساندوتش,Chicken Shawarma Sandwich,,18.00,15
+F002,شاورما لحم ساندوتش,Beef Shawarma Sandwich,,22.00,15
+F003,شاورما دجاج عربي,Chicken Shawarma Arabi,,28.00,15
+F004,شاورما لحم عربي,Beef Shawarma Arabi,,32.00,15
+F005,صحن شاورما دجاج,Chicken Shawarma Plate,,42.00,15
+F006,صحن شاورما لحم,Beef Shawarma Plate,,48.00,15
+F007,برجر لحم,Beef Burger,,28.00,15
+F008,برجر دجاج,Chicken Burger,,25.00,15
+F009,برجر مزدوج,Double Burger,,38.00,15
+F010,ساندوتش فيليه دجاج,Chicken Fillet Sandwich,,22.00,15
+F011,بروستد ربع دجاج,Broasted Quarter Chicken,,28.00,15
+F012,بروستد نصف دجاج,Broasted Half Chicken,,48.00,15
+F013,بروستد دجاجة كاملة,Whole Broasted Chicken,,85.00,15
+F014,نقتس دجاج 6 قطع,Chicken Nuggets 6pc,,18.00,15
+F015,نقتس دجاج 12 قطعة,Chicken Nuggets 12pc,,32.00,15
+F016,بطاطس صغيرة,Small Fries,,6.00,15
+F017,بطاطس وسط,Medium Fries,,9.00,15
+F018,بطاطس كبيرة,Large Fries,,12.00,15
+F019,سلطة فتوش,Fattoush Salad,,18.00,15
+F020,سلطة تبولة,Tabbouleh Salad,,18.00,15
+F021,حمص باللحم,Hummus with Meat,,28.00,15
+F022,متبل باذنجان,Baba Ghanoush,,18.00,15
+F023,موتزاريلا ستيكس,Mozzarella Sticks,,22.00,15
+F024,أجنحة دجاج 8 قطع,Chicken Wings 8pc,,28.00,15
+F025,بيتزا مارجريتا وسط,Pizza Margherita M,,42.00,15
+F026,بيتزا بيبروني وسط,Pizza Pepperoni M,,48.00,15
+F027,بيتزا خضار وسط,Pizza Veggie M,,42.00,15
+F028,مياه 500مل,Water 500ml,,2.00,15
+F029,بيبسي علبة,Pepsi Can,,5.00,15
+F030,كوكاكولا علبة,Coca-Cola Can,,5.00,15
+F031,سفن أب علبة,7Up Can,,5.00,15
+F032,موسي علبة,Mirinda Can,,5.00,15
+F033,عصير برتقال طازج,Fresh Orange Juice,,15.00,15
+F034,عصير ليمون بالنعناع,Lemon Mint Juice,,15.00,15
+F035,شاي ساده,Tea Plain,,5.00,15
+F036,شاي بالنعناع,Mint Tea,,6.00,15
+F037,قهوة عربي,Arabic Coffee,,8.00,15
+F038,قهوة سادة,Black Coffee,,10.00,15
+F039,كابتشينو,Cappuccino,,18.00,15
+F040,لاتيه,Latte,,18.00,15
+F041,موكا,Mocha,,20.00,15
+F042,كيك شوكولاتة قطعة,Chocolate Cake Slice,,15.00,15
+F043,كيك جزر قطعة,Carrot Cake Slice,,15.00,15
+F044,تشيز كيك قطعة,Cheesecake Slice,,18.00,15
+F045,آيس كريم سكوب,Ice Cream Scoop,,8.00,15
