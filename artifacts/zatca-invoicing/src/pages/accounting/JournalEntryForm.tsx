@@ -12,6 +12,7 @@ import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SmartDateInput } from "@/components/ui/smart-date-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -1420,10 +1421,9 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                     <Label className="text-xs font-medium">
                       التاريخ <span className="text-destructive">*</span>
                     </Label>
-                    <Input
-                      type="date"
+                    <SmartDateInput
                       value={entryDate}
-                      onChange={e => { if (!fp.isReadOnly("date")) setEntryDate(e.target.value); }}
+                      onChange={v => { if (!fp.isReadOnly("date")) setEntryDate(v); }}
                       className={cn("h-9 text-sm", fp.isReadOnly("date") && "bg-muted/40 cursor-not-allowed")}
                       readOnly={fp.isReadOnly("date")}
                       required
