@@ -7,11 +7,13 @@ import {
   type LocalItem, type CreateItemInput,
 } from "../lib/items";
 import { listUom, getDefaultUom } from "../lib/uom";
+import { getAllStockShared, type StockMap } from "../lib/stock";
 import { getVertical, type Vertical } from "../lib/standalone";
 import { SearchCombobox, Pagination, pageSlice } from "./_adminUi";
 
 export default function ItemsAdmin() {
   const [rows, setRows] = useState<LocalItem[]>([]);
+  const [stockMap, setStockMap] = useState<StockMap>({});
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -118,7 +120,14 @@ export default function ItemsAdmin() {
 
   async function refresh() {
     setLoading(true);
-    try { setRows(await listItems(search || undefined)); }
+    try {
+      const [items, stock] = await Promise.all([
+        listItems(search || undefined),
+        getAllStockShared(),
+      ]);
+      setRows(items);
+      setStockMap(stock);
+    }
     finally { setLoading(false); }
   }
   useEffect(() => { setPage(1); void refresh(); /* eslint-disable-next-line */ }, [search]);
@@ -180,6 +189,7 @@ export default function ItemsAdmin() {
         <table style={S.table}>
           <thead><tr>
             <th style={S.th}>الاسم</th>
+            <th style={S.th}>الكمية المتاحة</th>
             <th style={S.th}>الباركود</th>
             <th style={S.th}>الكود</th>
             <th style={S.th}>السعر</th>
@@ -194,6 +204,7 @@ export default function ItemsAdmin() {
                   <div style={{ fontWeight: 600 }}>{it.nameAr}</div>
                   {it.nameEn && <div style={S.muted}>{it.nameEn}</div>}
                 </td>
+                <td style={S.td}>{renderQty(stockMap[it.id])}</td>
                 <td style={S.tdMono}>{it.barcode ?? "—"}</td>
                 <td style={S.tdMono}>{it.code ?? "—"}</td>
                 <td style={S.td}><strong>{it.salePrice.toFixed(2)}</strong> ر.س</td>
@@ -803,6 +814,19 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
   );
 }
 
+/**
+ * Render the available-quantity cell for the items list.
+ * Stock is opt-in per item (see lib/stock.ts): an item absent from the map is
+ * "غير متتبَّع" (—). Tracked items are colour-coded: out-of-stock (نفد) in red,
+ * at/below reorder point in amber, otherwise green.
+ */
+function renderQty(s: StockMap[number] | undefined) {
+  if (!s) return <span style={S.qtyUntracked}>—</span>;
+  if (s.qty <= 0) return <span style={S.qtyZero}>نفد</span>;
+  const low = s.reorderPoint > 0 && s.qty <= s.reorderPoint;
+  return <span style={low ? S.qtyLow : S.qtyOk}>{s.qty}</span>;
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <label style={{ display: "block", marginBottom: 12 }}>
     <div style={{ fontSize: 13, color: "#475569", marginBottom: 4 }}>{label}</div>
@@ -825,6 +849,10 @@ const S = {
   tdMono: { padding: "12px 14px", fontSize: 13, color: "#0f172a", fontFamily: "ui-monospace, monospace" } as const,
   tdRight: { padding: "12px 14px", textAlign: "left" as const } as const,
   muted: { fontSize: 12, color: "#94a3b8", marginTop: 2 } as const,
+  qtyOk: { fontWeight: 700, fontSize: 15, color: "#16a34a" } as const,
+  qtyLow: { fontWeight: 700, fontSize: 15, color: "#d97706" } as const,
+  qtyZero: { display: "inline-block", padding: "2px 10px", background: "#dc2626", color: "#fff", borderRadius: 6, fontSize: 12, fontWeight: 700 } as const,
+  qtyUntracked: { color: "#cbd5e1" } as const,
   badgeCloud: { display: "inline-block", padding: "2px 8px", background: "#eff6ff", color: "#1d4ed8", border: "1px solid #dbeafe", borderRadius: 999, fontSize: 11 } as const,
   badgeLocal: { display: "inline-block", padding: "2px 8px", background: "#fefce8", color: "#854d0e", border: "1px solid #fef9c3", borderRadius: 999, fontSize: 11 } as const,
   btnPrimary: { padding: "10px 18px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
