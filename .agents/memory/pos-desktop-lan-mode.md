@@ -26,4 +26,9 @@ The wizard/settings "اختبار الاتصال" buttons use `pingHostAt(url, t
 ## Boot
 `initBridge()` runs at the top of `App.boot()` before any data-loading branch, so a client routes from the first load.
 
+## Host server is multi-threaded
+`start_lan_server` wraps the tiny_http `Server` in `Arc` and spawns `LAN_WORKER_THREADS` (8) workers that each block on `server.recv()`; per-request logic lives in `handle_lan_request`. There is NO hardcoded cap on client devices — the worker count just bounds concurrency, not connections.
+**Why:** the original single `incoming_requests()` loop served devices one-at-a-time, so simultaneous checkouts queued. SQLite is opened per-call in WAL mode, so reads run in parallel and writes serialise safely at the DB layer — the HTTP layer must not be the bottleneck.
+**How to apply:** keep request handling stateless/per-call-connection; never introduce a shared mutable `Connection` across workers. `token`/`name`/`version` are shared read-only via `Arc`.
+
 Rust cannot be compiled in Replit — verify via TS typecheck + architectural review only.

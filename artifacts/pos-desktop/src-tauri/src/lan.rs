@@ -501,9 +501,87 @@ fn token_matches(req: &tiny_http::Request, token: &str) -> bool {
     })
 }
 
-/// Start the host HTTP server in a background thread. Idempotent — a second
-/// call (e.g. after a settings refresh) is a no-op so we never bind twice.
-/// `name`/`version` are echoed back on /lan/ping for the client UI.
+/// Number of worker threads that pull from the shared tiny_http accept queue.
+/// SQLite is opened per-call (WAL mode), so reads run truly in parallel and
+/// writes serialise at the DB layer — letting several cashier devices check
+/// out at the same time without queueing behind one another at the HTTP layer.
+const LAN_WORKER_THREADS: usize = 8;
+
+/// Handle a single inbound LAN request. Runs on a worker thread; `token`,
+/// `name`, `version` are shared read-only across all workers.
+fn handle_lan_request(mut req: tiny_http::Request, token: &str, name: &str, version: &str) {
+    let url = req.url().to_string();
+    let method = req.method().clone();
+
+    // /lan/ping — token-checked but distinguishes wrong-token (403)
+    // from reachable, so the client status UI can show a precise msg.
+    if url.starts_with("/lan/ping") {
+        if !token_matches(&req, token) {
+            respond_json(req, 403, &json!({ "error": "unauthorized" }));
+        } else {
+            respond_json(
+                req,
+                200,
+                &json!({ "ok": true, "role": "host", "name": name, "version": version }),
+            );
+        }
+        return;
+    }
+
+    if !token_matches(&req, token) {
+        respond_json(req, 401, &json!({ "error": "unauthorized" }));
+        return;
+    }
+
+    if url.starts_with("/lan/changes") {
+        let v = get_change_version().unwrap_or(0);
+        respond_json(req, 200, &json!({ "version": v }));
+        return;
+    }
+
+    if url.starts_with("/lan/invoke") && method == tiny_http::Method::Post {
+        let mut body = String::new();
+        if req.as_reader().read_to_string(&mut body).is_err() {
+            respond_json(req, 200, &json!({ "ok": false, "error": "تعذّر قراءة الطلب" }));
+            return;
+        }
+        let parsed: Result<Value, _> = serde_json::from_str(&body);
+        let payload = match parsed {
+            Ok(v) => v,
+            Err(_) => {
+                respond_json(
+                    req,
+                    200,
+                    &json!({ "ok": false, "error": "طلب غير صالح (JSON)" }),
+                );
+                return;
+            }
+        };
+        let cmd = payload
+            .get("cmd")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let default_args = json!({});
+        let cmd_args = payload.get("args").unwrap_or(&default_args);
+        match dispatch(&cmd, cmd_args) {
+            Ok(data) => respond_json(req, 200, &json!({ "result": data })),
+            Err(e) => respond_json(req, 200, &json!({ "ok": false, "error": e })),
+        }
+        return;
+    }
+
+    respond_json(req, 404, &json!({ "error": "not found" }));
+}
+
+/// Start the host HTTP server. Idempotent — a second call (e.g. after a
+/// settings refresh) is a no-op so we never bind twice. `name`/`version`
+/// are echoed back on /lan/ping for the client UI.
+///
+/// The server is shared (via `Arc`) across `LAN_WORKER_THREADS` worker
+/// threads that each block on `server.recv()`. tiny_http hands each incoming
+/// connection to whichever worker is free, so multiple devices are served
+/// concurrently instead of one-at-a-time.
 pub fn start_lan_server(port: u16, token: String, name: String, version: String) {
     if SERVER_STARTED.swap(true, Ordering::SeqCst) {
         log::warn!("LAN server already started; ignoring duplicate start");
@@ -512,77 +590,38 @@ pub fn start_lan_server(port: u16, token: String, name: String, version: String)
     std::thread::spawn(move || {
         let addr = format!("0.0.0.0:{port}");
         let server = match tiny_http::Server::http(&addr) {
-            Ok(s) => s,
+            Ok(s) => std::sync::Arc::new(s),
             Err(e) => {
                 log::error!("LAN host server failed to bind {addr}: {e}");
                 SERVER_STARTED.store(false, Ordering::SeqCst);
                 return;
             }
         };
-        log::info!("LAN host server listening on {addr}");
-        for mut req in server.incoming_requests() {
-            let url = req.url().to_string();
-            let method = req.method().clone();
+        log::info!(
+            "LAN host server listening on {addr} ({LAN_WORKER_THREADS} workers)"
+        );
 
-            // /lan/ping — token-checked but distinguishes wrong-token (403)
-            // from reachable, so the client status UI can show a precise msg.
-            if url.starts_with("/lan/ping") {
-                if !token_matches(&req, &token) {
-                    respond_json(req, 403, &json!({ "error": "unauthorized" }));
-                } else {
-                    respond_json(
-                        req,
-                        200,
-                        &json!({ "ok": true, "role": "host", "name": name, "version": version }),
-                    );
-                }
-                continue;
-            }
-
-            if !token_matches(&req, &token) {
-                respond_json(req, 401, &json!({ "error": "unauthorized" }));
-                continue;
-            }
-
-            if url.starts_with("/lan/changes") {
-                let v = get_change_version().unwrap_or(0);
-                respond_json(req, 200, &json!({ "version": v }));
-                continue;
-            }
-
-            if url.starts_with("/lan/invoke") && method == tiny_http::Method::Post {
-                let mut body = String::new();
-                if req.as_reader().read_to_string(&mut body).is_err() {
-                    respond_json(req, 200, &json!({ "ok": false, "error": "تعذّر قراءة الطلب" }));
-                    continue;
-                }
-                let parsed: Result<Value, _> = serde_json::from_str(&body);
-                let payload = match parsed {
-                    Ok(v) => v,
-                    Err(_) => {
-                        respond_json(
-                            req,
-                            200,
-                            &json!({ "ok": false, "error": "طلب غير صالح (JSON)" }),
-                        );
-                        continue;
+        let shared = std::sync::Arc::new((token, name, version));
+        let mut workers = Vec::with_capacity(LAN_WORKER_THREADS);
+        for worker_id in 0..LAN_WORKER_THREADS {
+            let server = std::sync::Arc::clone(&server);
+            let shared = std::sync::Arc::clone(&shared);
+            workers.push(std::thread::spawn(move || loop {
+                match server.recv() {
+                    Ok(req) => {
+                        let (ref token, ref name, ref version) = *shared;
+                        handle_lan_request(req, token, name, version);
                     }
-                };
-                let cmd = payload
-                    .get("cmd")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let default_args = json!({});
-                let cmd_args = payload.get("args").unwrap_or(&default_args);
-                match dispatch(&cmd, cmd_args) {
-                    Ok(data) => respond_json(req, 200, &json!({ "result": data })),
-                    Err(e) => respond_json(req, 200, &json!({ "ok": false, "error": e })),
+                    Err(e) => {
+                        log::warn!("LAN worker {worker_id} recv error: {e}");
+                        break;
+                    }
                 }
-                continue;
-            }
-
-            respond_json(req, 404, &json!({ "error": "not found" }));
+            }));
+        }
+        // Block until every worker exits (only on unrecoverable recv errors).
+        for w in workers {
+            let _ = w.join();
         }
         log::warn!("LAN host server loop exited");
         SERVER_STARTED.store(false, Ordering::SeqCst);
