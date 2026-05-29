@@ -61,7 +61,7 @@ import { getVertical, type Vertical } from "../lib/standalone";
 import { syncPushNow, pullAndPersist, type PushSummary, type PullSummary } from "../lib/sync";
 import { listParkedCarts } from "../lib/parkedCarts";
 import { flushPendingSessionCloses, countPendingCloses } from "../lib/pendingSessionCloses";
-import { useLatestVersion } from "../lib/updates";
+import { useLatestVersion, APP_VERSION } from "../lib/updates";
 import type { OfflineLicensePayload, LocalSession } from "../lib/standalone";
 
 type View =
@@ -630,6 +630,9 @@ export default function PosShell({
               {TAURI_MODE === "tauri" ? "🪟 وضع التطبيق الأصلي" : "🌐 وضع المتصفح"}
             </div>
           )}
+          <div style={S.versionChip} title={`إصدار التطبيق: ${APP_VERSION}`}>
+            {navCollapsed ? `v${APP_VERSION}` : `الإصدار v${APP_VERSION}`}
+          </div>
         </div>
       </nav>
 
@@ -1359,6 +1362,7 @@ const S = {
     textAlign: "right" as const,
   } as const,
   modeChip: { fontSize: 10, color: "#64748b", textAlign: "center" as const, padding: "6px", background: "rgba(0,0,0,.2)", borderRadius: 6 } as const,
+  versionChip: { fontSize: 10, color: "#94a3b8", textAlign: "center" as const, padding: "4px 6px", fontVariantNumeric: "tabular-nums" as const } as const,
 
   // Main column
   main: { flex: 1, display: "flex", flexDirection: "column" as const, minWidth: 0, minHeight: 0 } as const,
