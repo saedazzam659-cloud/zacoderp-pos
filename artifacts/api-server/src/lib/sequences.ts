@@ -110,6 +110,13 @@ function resolveEffectiveDate(source: string | null | undefined, docDate: Date |
   return new Date();
 }
 
+/** "YYYY-MM" period key for the monthly-reset feature. Uses the same local
+ *  month/year basis as `renderMonthPattern` so the reset boundary always lines
+ *  up with the `{MM}` token rendered into the number. */
+function periodKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 /**
  * Generate the next business document number for the given transaction type
  * scoped to `ctx.branchId`. Each (sequence, branch) pair has its own counter.
@@ -183,8 +190,9 @@ export async function nextSequenceNumber(
     const seqRows = await tx.execute<{
       id: number; prefix: string; start_number: number; current_number: number;
       end_number: number; pad_length: number; code: string; month_pattern: string | null;
+      monthly_reset: boolean;
     }>(sql`
-      SELECT id, prefix, start_number, current_number, end_number, pad_length, code, month_pattern
+      SELECT id, prefix, start_number, current_number, end_number, pad_length, code, month_pattern, monthly_reset
       FROM sequences
       WHERE company_id = ${companyId}
         AND is_active = true
@@ -202,12 +210,17 @@ export async function nextSequenceNumber(
 
     // 2. Look up (or create) the per-branch counter row, locking it so two
     //    concurrent issuances on the SAME (sequence, branch) serialize.
-    const counterRows = await tx.execute<{ id: number; current_number: number }>(sql`
-      SELECT id, current_number
+    const counterRows = await tx.execute<{ id: number; current_number: number; last_period: string | null }>(sql`
+      SELECT id, current_number, last_period
       FROM sequence_counters
       WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey}
       FOR UPDATE
     `);
+
+    // Monthly-reset period key for THIS issuance, derived from the same
+    // effective date that renders the {MM} token, so the reset boundary and
+    // the printed month always agree.
+    const currentPeriod = periodKey(effectiveDate);
 
     let counterId: number;
     let issuedNumber: number;
@@ -216,6 +229,19 @@ export async function nextSequenceNumber(
     if (existingCounter) {
       counterId    = existingCounter.id;
       issuedNumber = existingCounter.current_number;
+      // Monthly reset: when the parent sequence opted in AND we already have a
+      // recorded period that differs from the current one, restart at
+      // startNumber. A NULL last_period (counter pre-dates the feature, or was
+      // created before the toggle was on) is treated as "adopt current month
+      // without resetting" — so flipping the toggle on never retroactively
+      // reuses a number already issued earlier this month.
+      if (
+        seq.monthly_reset &&
+        existingCounter.last_period != null &&
+        existingCounter.last_period !== currentPeriod
+      ) {
+        issuedNumber = seq.start_number;
+      }
     } else {
       // No counter yet for this (sequence, branch). Decide the seed value:
       //   • If this sequence has NO counters at all → first issuance ever
@@ -232,9 +258,11 @@ export async function nextSequenceNumber(
         ? seq.start_number
         : Math.max(seq.start_number, seq.current_number);
 
+      // Seed `last_period` with the current period so a brand-new counter
+      // adopts the month without resetting on its very first issuance.
       const inserted = await tx.execute<{ id: number; current_number: number }>(sql`
-        INSERT INTO sequence_counters (sequence_id, branch_id, current_number, created_at, updated_at)
-        VALUES (${seq.id}, ${branchKey}, ${seed}, NOW(), NOW())
+        INSERT INTO sequence_counters (sequence_id, branch_id, current_number, last_period, created_at, updated_at)
+        VALUES (${seq.id}, ${branchKey}, ${seed}, ${currentPeriod}, NOW(), NOW())
         RETURNING id, current_number
       `);
       const newRow = inserted.rows?.[0];
@@ -255,6 +283,9 @@ export async function nextSequenceNumber(
     await tx.update(sequenceCountersTable)
       .set({
         currentNumber: issuedNumber + 1,
+        // Stamp the period this number belongs to so the NEXT issuance can
+        // detect a month rollover (only acted upon when monthlyReset is on).
+        lastPeriod:    currentPeriod,
         updatedAt:     new Date(),
       })
       .where(eq(sequenceCountersTable.id, counterId));

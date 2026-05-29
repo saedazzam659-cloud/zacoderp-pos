@@ -3242,6 +3242,8 @@
     "padLength": "Zero-pad length",
     "monthPattern": "Month/Year code (optional)",
     "monthPatternHelp": "Optional pattern inserted between prefix and number. Leave empty to disable. Tokens: {MM} 2-digit month, {M} no padding, {YY} 2-digit year, {YYYY} 4-digit year. Example: PR + {MM}- + 0001 ⇒ PR-01-0001",
+    "monthlyReset": "Monthly reset",
+    "monthlyResetHelp": "When enabled, the counter restarts at the start number at the beginning of each new month (e.g. with the {MM} code you get qud010001, then qud020001…). Pair it with the {MM} month code to avoid duplicate numbers across months. Leave it off for continuous numbering.",
     "startNumber": "Start number",
     "endNumber": "End number",
     "currentNumber": "Current (next to issue)",

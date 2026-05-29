@@ -37,6 +37,10 @@ export type SequenceRow = {
   currentNumber: number;
   padLength: number;
   isActive: boolean;
+  // When true, the running counter restarts at `startNumber` at the beginning
+  // of each calendar month. Pair with a `{MM}` monthPattern so each month gets
+  // a distinct stream and never collides. Default false = continuous numbering.
+  monthlyReset?: boolean;
   transactionTypes: string[];
   // Optional whitelist of branch IDs allowed to use this sequence. An empty
   // array means "all branches" (preserves the original behavior).

@@ -144,9 +144,9 @@ router.get("/peek/:txType", async (req: any, res) => {
     id: number;
     prefix: string | null; start_number: number; current_number: number;
     end_number: number; pad_length: number | null; code: string;
-    month_pattern: string | null;
+    month_pattern: string | null; monthly_reset: boolean;
   }>(sql`
-    SELECT id, prefix, start_number, current_number, end_number, pad_length, code, month_pattern
+    SELECT id, prefix, start_number, current_number, end_number, pad_length, code, month_pattern, monthly_reset
     FROM sequences
     WHERE company_id = ${cid}
       AND is_active = true
@@ -164,20 +164,37 @@ router.get("/peek/:txType", async (req: any, res) => {
   // a single round-trip. The flag drives the seeding heuristic for the case
   // where this branch has no counter yet.
   const counterRows = await db.execute<{
-    branch_current: number | null; any_exists: boolean;
+    branch_current: number | null; branch_last_period: string | null; any_exists: boolean;
   }>(sql`
     SELECT
       (SELECT current_number FROM sequence_counters
         WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey}) AS branch_current,
+      (SELECT last_period FROM sequence_counters
+        WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey}) AS branch_last_period,
       EXISTS(SELECT 1 FROM sequence_counters WHERE sequence_id = ${seq.id}) AS any_exists
   `);
   const cRow = counterRows.rows?.[0];
   const branchCurrent = cRow?.branch_current ?? null;
+  const branchLastPeriod = cRow?.branch_last_period ?? null;
   const anyExists     = !!cRow?.any_exists;
 
-  const previewNumber = branchCurrent != null
+  // Mirror the issuance helper's monthly-reset preview: when the sequence
+  // opts in and the existing counter's recorded period differs from the
+  // previewed period, the next number restarts at startNumber. Keep the same
+  // "NULL last_period adopts current period without resetting" rule so the
+  // badge never previews a reset the helper wouldn't actually perform.
+  const previewPeriod = `${effectiveDate.getFullYear()}-${String(effectiveDate.getMonth() + 1).padStart(2, "0")}`;
+  let previewNumber = branchCurrent != null
     ? branchCurrent
     : (anyExists ? seq.start_number : Math.max(seq.start_number, seq.current_number));
+  if (
+    seq.monthly_reset &&
+    branchCurrent != null &&
+    branchLastPeriod != null &&
+    branchLastPeriod !== previewPeriod
+  ) {
+    previewNumber = seq.start_number;
+  }
 
   const exhausted = previewNumber > seq.end_number;
   res.json({
@@ -244,6 +261,13 @@ function validatePayload(body: any): string | null {
   const monthPattern = body?.monthPattern == null ? "" : String(body.monthPattern);
   if (monthPattern.length > 32)
     return "نمط الشهر/السنة طويل جداً (الحد الأقصى 32 حرفاً)";
+  // Monthly reset MUST carry a month token in the pattern, otherwise the
+  // counter would re-issue the same formatted number every month (e.g. PR-0001
+  // in both January and February) and collide on the document-number unique
+  // index. Require {MM} or {M} so each month produces a distinct stream.
+  const monthlyReset = body?.monthlyReset === true || body?.monthlyReset === "true";
+  if (monthlyReset && !/\{MM\}|\{M\}/.test(monthPattern))
+    return "التصفير الشهري يتطلب إضافة كود الشهر {MM} أو {M} في نمط الشهر/السنة لتفادي تكرار الأرقام بين الشهور";
   return null;
 }
 
@@ -408,6 +432,10 @@ router.post("/", audit("sequences", "create"), async (req, res) => {
         currentNumber:    req.body.currentNumber == null ? start : Number(req.body.currentNumber),
         padLength:        Number(req.body.padLength ?? 4),
         isActive,
+        // Monthly reset toggle: restart the running counter at startNumber at
+        // the beginning of each calendar month. Defaults to false (legacy
+        // continuous numbering) when the client omits it.
+        monthlyReset:     !!req.body.monthlyReset,
         transactionTypes: req.body.transactionTypes,
         // Normalize: dedupe + coerce to int. validatePayload already
         // rejected non-positive entries.
@@ -454,6 +482,7 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
       existing.padLength     = existing.pad_length     ?? existing.padLength;
       existing.isActive      = existing.is_active      ?? existing.isActive;
       existing.transactionTypes = existing.transaction_types ?? existing.transactionTypes;
+      existing.monthlyReset  = existing.monthly_reset  ?? existing.monthlyReset ?? false;
       existing.branchIds     = existing.branch_ids     ?? existing.branchIds ?? [];
       existing.fiscalPeriodIds = existing.fiscal_period_ids ?? existing.fiscalPeriodIds ?? [];
       existing.nameAr        = existing.name_ar        ?? existing.nameAr;
@@ -479,6 +508,7 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         currentNumber:    req.body.currentNumber    ?? existing.currentNumber,
         padLength:        req.body.padLength        ?? existing.padLength,
         isActive:         req.body.isActive         ?? existing.isActive,
+        monthlyReset:     req.body.monthlyReset     ?? existing.monthlyReset,
         transactionTypes: req.body.transactionTypes ?? existing.transactionTypes,
         branchIds:        req.body.branchIds        ?? existing.branchIds,
         fiscalPeriodIds:  req.body.fiscalPeriodIds  ?? existing.fiscalPeriodIds,
@@ -569,6 +599,7 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         currentNumber:    Number(merged.currentNumber),
         padLength:        Number(merged.padLength),
         isActive:         !!merged.isActive,
+        monthlyReset:     !!merged.monthlyReset,
         transactionTypes: merged.transactionTypes,
         // Same dedupe-and-coerce normalization as CREATE keeps the column
         // shape stable regardless of which path wrote it.

@@ -80,6 +80,14 @@ export const sequencesTable = pgTable("sequences", {
   currentNumber:    integer("current_number").notNull().default(1),  // NEXT to be issued
   padLength:        integer("pad_length").notNull().default(4),      // zero-pad width; 0 = no padding
   isActive:         boolean("is_active").notNull().default(true),
+  // When true, the running counter restarts at `startNumber` at the beginning
+  // of every new calendar month. Pairs naturally with a `{MM}` monthPattern so
+  // each month produces a distinct stream (e.g. PR-01-0001, PR-02-0001…) and
+  // never collides on the document-number unique index. Default false keeps
+  // every existing tenant on a single continuous counter (legacy behaviour).
+  // The actual month-change detection lives per-branch in
+  // `sequence_counters.last_period` so each branch resets independently.
+  monthlyReset:     boolean("monthly_reset").notNull().default(false),
   // Transaction types this sequence feeds. Stored as a JSON array of strings
   // matching SEQUENCE_TX_TYPES so the column stays portable across versions.
   transactionTypes: jsonb("transaction_types").notNull().default([]),
@@ -147,6 +155,13 @@ export const sequenceCountersTable = pgTable("sequence_counters", {
   sequenceId:    integer("sequence_id").notNull(),
   branchId:      integer("branch_id").notNull().default(0),
   currentNumber: integer("current_number").notNull(),
+  // "YYYY-MM" of the most recent issuance on this counter. Only consulted when
+  // the parent sequence has `monthlyReset = true`: when the current issuance's
+  // month differs from this stored value, the counter restarts at the
+  // sequence's `startNumber`. NULL means "never issued under monthly-reset yet"
+  // — the first issuance simply adopts the current month WITHOUT resetting, so
+  // turning the toggle on never retroactively reuses an already-issued number.
+  lastPeriod:    text("last_period"),
   createdAt:     timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt:     timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({

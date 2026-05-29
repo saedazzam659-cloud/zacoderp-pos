@@ -36,6 +36,9 @@ const EMPTY_FORM = {
   currentNumber: 1,
   padLength: 4,
   isActive: true,
+  // When true the running counter restarts at startNumber at the start of each
+  // calendar month. Default false = continuous numbering (legacy behaviour).
+  monthlyReset: false,
   transactionTypes: [] as string[],
   branchIds: [] as number[],
   // Whitelist of fiscal-period IDs this sequence applies to. Empty = all
@@ -502,6 +505,7 @@ export default function Sequences() {
       currentNumber:    r.currentNumber,
       padLength:        r.padLength,
       isActive:         r.isActive,
+      monthlyReset:     r.monthlyReset ?? false,
       transactionTypes: Array.isArray(r.transactionTypes) ? r.transactionTypes : [],
       // Coerce in case the column round-trips strings (older rows or when
       // jsonb is read back unparsed). The backend stores numeric ids.
@@ -737,6 +741,17 @@ export default function Sequences() {
                          data-testid="input-month-pattern" />
                   <p className="text-xs text-muted-foreground mt-1">
                     {t("sequences.monthPatternHelp")}
+                  </p>
+                </div>
+                <div className="md:col-span-2">
+                  <div className="flex items-center gap-2">
+                    <Switch checked={form.monthlyReset}
+                            onCheckedChange={v => setForm({ ...form, monthlyReset: v })}
+                            data-testid="switch-monthly-reset" />
+                    <Label>{t("sequences.monthlyReset")}</Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {t("sequences.monthlyResetHelp")}
                   </p>
                 </div>
                 <div>
