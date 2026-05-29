@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
+import { useFmt } from "@/hooks/use-fmt";
 import BranchFilter from "@/components/BranchFilter";
 import CostCenterFilter from "@/components/CostCenterFilter";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
@@ -160,6 +161,10 @@ export default function AccountStatement() {
   const { user, token } = useAuth() as any;
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
+  const { dp } = useFmt();
+  // Excel number format honouring the company's decimal-places setting so the
+  // money columns are written as REAL numbers (summable) yet display nicely.
+  const moneyFmt = dp > 0 ? `#,##0.${"0".repeat(dp)}` : "#,##0";
   const { toast } = useToast();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const headers = { Authorization: `Bearer ${token}` };
@@ -245,9 +250,9 @@ export default function AccountStatement() {
     ...(showCostCenterCol
       ? [{ key: "costCenter", header: t("accountingReports.costCenter", { defaultValue: "مركز التكلفة" }), width: 22 }]
       : []),
-    { key: "debit",       header: t("accountingReports.debit"), width: 14 },
-    { key: "credit",      header: t("accountingReports.credit"), width: 14 },
-    { key: "balance",     header: t("accountingReports.balance"), width: 14 },
+    { key: "debit",       header: t("accountingReports.debit"), width: 14, numFmt: moneyFmt },
+    { key: "credit",      header: t("accountingReports.credit"), width: 14, numFmt: moneyFmt },
+    { key: "balance",     header: t("accountingReports.balance"), width: 14, numFmt: moneyFmt },
   ];
 
   const { data: accounts = [] } = useQuery<any[]>({
@@ -321,8 +326,8 @@ export default function AccountStatement() {
     entryDate:   fromDate || "",
     docNumber:   "",
     description: t("accountStatement.previousBalance"),
-    debit:       fmt(previousDebit),
-    credit:      fmt(previousCredit),
+    debit:       previousDebit  || "",
+    credit:      previousCredit || "",
     balance:     `${fmt(Math.abs(previousBalance))} ${previousBalance >= 0 ? t("accountingReports.debit") : t("accountingReports.credit")}`,
   };
   const exportRows = [
@@ -337,9 +342,9 @@ export default function AccountStatement() {
           ? `${r.costCenterCode} — ${isRtl ? (r.costCenterNameAr ?? "") : (r.costCenterNameEn ?? r.costCenterNameAr ?? "")}`.trim()
           : "—",
       } : {}),
-      debit:       fmt(r.debit),
-      credit:      fmt(r.credit),
-      balance:     fmt(r.balance),
+      debit:       r.debit  || "",
+      credit:      r.credit || "",
+      balance:     r.balance,
     })),
   ];
 
@@ -351,8 +356,8 @@ export default function AccountStatement() {
         entryDate:   "",
         docNumber:   "",
         description: t("accountingReports.total"),
-        debit:       fmt(totalDebit),
-        credit:      fmt(totalCredit),
+        debit:       totalDebit,
+        credit:      totalCredit,
         balance:     `${fmt(Math.abs(finalBalance))} ${finalBalance >= 0 ? t("accountingReports.debit") : t("accountingReports.credit")}`,
       }
     : null;

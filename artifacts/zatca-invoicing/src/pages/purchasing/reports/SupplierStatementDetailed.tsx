@@ -22,7 +22,8 @@ function authHeaders(): Record<string, string> {
 const COL_COUNT = 8;
 
 export default function SupplierStatementDetailed() {
-  const { fmt } = useFmt();
+  const { fmt, dp } = useFmt();
+  const moneyFmt = dp > 0 ? `#,##0.${"0".repeat(dp)}` : "#,##0";
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`purchasingReports.supplierStatementDetailed.${k}`, opts) as string;
@@ -75,9 +76,9 @@ export default function SupplierStatementDetailed() {
     { key: "type",        header: tr("colType"),        width: 14 },
     { key: "docNumber",   header: tr("colDoc"),         width: 16 },
     { key: "description", header: tr("colDescription"), width: 30 },
-    { key: "debit",       header: tr("colDebit"),       width: 14 },
-    { key: "credit",      header: tr("colCredit"),      width: 14 },
-    { key: "balance",     header: tr("colBalance"),     width: 16 },
+    { key: "debit",       header: tr("colDebit"),       width: 14, numFmt: moneyFmt },
+    { key: "credit",      header: tr("colCredit"),      width: 14, numFmt: moneyFmt },
+    { key: "balance",     header: tr("colBalance"),     width: 16, numFmt: moneyFmt },
   ];
 
   const { data: suppliers = [] } = useQuery({
@@ -112,9 +113,9 @@ export default function SupplierStatementDetailed() {
   const exportRows = [
     ...(applied.supplierId ? [{
       date: applied.from, type: "—", docNumber: "—", description: tr("openingRow"),
-      debit: data?.opening && data.opening < 0 ? fmt(-data.opening) : "",
-      credit: data?.opening && data.opening > 0 ? fmt(data.opening) : "",
-      balance: fmt(data?.opening ?? 0),
+      debit: data?.opening && data.opening < 0 ? -data.opening : "",
+      credit: data?.opening && data.opening > 0 ? data.opening : "",
+      balance: data?.opening ?? 0,
     }] : []),
     ...augmented.flatMap(l => {
       const parent = {
@@ -122,9 +123,9 @@ export default function SupplierStatementDetailed() {
         type:        TYPE_LABEL[l.type] ?? l.type,
         docNumber:   l.docNumber ?? "—",
         description: l.description,
-        debit:       l.debit ? fmt(l.debit) : "",
-        credit:      l.credit ? fmt(l.credit) : "",
-        balance:     fmt(l.balance),
+        debit:       l.debit  || "",
+        credit:      l.credit || "",
+        balance:     l.balance,
       };
       const detailRows: any[] = [];
       if ((l.type === "invoice" || l.type === "return") && l.lines && l.lines.length > 0) {
@@ -164,9 +165,9 @@ export default function SupplierStatementDetailed() {
         type:        "",
         docNumber:   "",
         description: tr("totalLabel"),
-        debit:       fmt(totals.debit),
-        credit:      fmt(totals.credit),
-        balance:     fmt(closing),
+        debit:       totals.debit,
+        credit:      totals.credit,
+        balance:     closing,
       }
     : null;
 
