@@ -11,67 +11,84 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 
+// Internal/stored value is always ISO `YYYY-MM-DD`; the user sees and types the
+// familiar `DD/MM/YYYY` form.
 const ISO_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const DISPLAY_RE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
 
-/** Last calendar day of a 1-based month (handles non-leap February correctly:
- *  `daysInMonth(2026, 2) === 28`). Day 0 of the *next* month rolls back to the
- *  last day of the requested month. */
+/** Convert Arabic-Indic (٠-٩) and extended/Persian (۰-۹) digits to Western 0-9
+ *  so a typed date from an Arabic numpad parses too. */
+function normalizeDigits(s: string): string {
+  return s.replace(/[\u0660-\u0669\u06F0-\u06F9]/g, (ch) => {
+    const code = ch.charCodeAt(0);
+    return code <= 0x0669 ? String(code - 0x0660) : String(code - 0x06f0);
+  });
+}
+
+/** Last calendar day of a 1-based month (non-leap February → 28). */
 function daysInMonth(year: number, month1to12: number): number {
   return new Date(year, month1to12, 0).getDate();
 }
 
-/** Coerce a raw `YYYY-MM-DD` string into a date that REALLY exists on the
- *  calendar by clamping the day to its month's last valid day — e.g.
- *  `2026-02-29` → `2026-02-28` (2026 is not a leap year). Returns `null` when
- *  the string is not a complete `YYYY-MM-DD`. This is the whole point of the
- *  component: the native `<input type="date">` silently REFUSES an impossible
- *  date (no change event fires), so the picked month was never committed and
- *  the form kept the previously-valid date. */
-function clampIso(raw: string): string | null {
-  const m = ISO_RE.exec(raw.trim());
-  if (!m) return null;
-  const y = Number(m[1]);
-  let mo = Number(m[2]);
-  let d = Number(m[3]);
+/** Clamp y/m/d to a date that REALLY exists (e.g. 29 Feb 2026 → 28 Feb 2026). */
+function clampParts(year: number, month1to12: number, day: number) {
+  let mo = month1to12;
+  let d = day;
   if (mo < 1) mo = 1;
   if (mo > 12) mo = 12;
-  const last = daysInMonth(y, mo);
+  const last = daysInMonth(year, mo);
   if (d < 1) d = 1;
   if (d > last) d = last;
-  return `${String(y).padStart(4, "0")}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  return { y: year, mo, d };
 }
 
-/** Keep an ISO date inside the inclusive [min, max] policy window. ISO
- *  `YYYY-MM-DD` strings compare correctly with plain string ordering. */
+function toIso(year: number, month1to12: number, day: number): string {
+  return `${String(year).padStart(4, "0")}-${String(month1to12).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/** ISO `YYYY-MM-DD` → display `DD/MM/YYYY` (empty string when absent/invalid). */
+function isoToDisplay(iso: string | undefined): string {
+  const m = ISO_RE.exec((iso ?? "").trim());
+  if (!m) return "";
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
+/** Display `DD/MM/YYYY` → clamped ISO `YYYY-MM-DD`, or null if not complete. */
+function displayToIso(text: string): string | null {
+  const m = DISPLAY_RE.exec(normalizeDigits(text).trim());
+  if (!m) return null;
+  const c = clampParts(Number(m[3]), Number(m[2]), Number(m[1]));
+  return toIso(c.y, c.mo, c.d);
+}
+
+/** Keep an ISO date inside the inclusive [min, max] policy window. */
 function clampToBounds(iso: string, min?: string, max?: string): string {
   if (min && iso < min) return min;
   if (max && iso > max) return max;
   return iso;
 }
 
-/** Build a *local* Date (midnight) from an ISO string — never `new Date(iso)`,
- *  which parses as UTC and can shift the calendar selection by a day in +03. */
+/** Build a *local* Date (midnight) from ISO — never `new Date(iso)` (UTC drift). */
 function isoToLocalDate(iso: string | undefined): Date | undefined {
-  if (!iso) return undefined;
-  const m = ISO_RE.exec(iso);
+  const m = ISO_RE.exec((iso ?? "").trim());
   if (!m) return undefined;
   const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   return isNaN(d.getTime()) ? undefined : d;
 }
 
-/** Format a local Date back to `YYYY-MM-DD` using its LOCAL parts. */
+/** Local Date → ISO `YYYY-MM-DD` using LOCAL parts. */
 function localDateToIso(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return toIso(d.getFullYear(), d.getMonth() + 1, d.getDate());
 }
 
 export interface SmartDateInputProps {
-  /** Current value as `YYYY-MM-DD` (or empty string for no date). */
+  /** Current value as ISO `YYYY-MM-DD` (or empty string for no date). */
   value: string;
-  /** Called with the clamped, always-valid `YYYY-MM-DD` (or "" when cleared). */
+  /** Called with the clamped, always-valid ISO `YYYY-MM-DD` (or "" when cleared). */
   onChange: (value: string) => void;
-  /** Inclusive lower bound (`YYYY-MM-DD`). */
+  /** Inclusive lower bound (ISO `YYYY-MM-DD`). */
   min?: string;
-  /** Inclusive upper bound (`YYYY-MM-DD`). */
+  /** Inclusive upper bound (ISO `YYYY-MM-DD`). */
   max?: string;
   readOnly?: boolean;
   disabled?: boolean;
@@ -85,13 +102,13 @@ export interface SmartDateInputProps {
 }
 
 /**
- * Drop-in replacement for `<Input type="date" />` that AUTO-CORRECTS impossible
- * dates instead of silently discarding them. The user can type `YYYY-MM-DD`
- * directly (the day is clamped to the chosen month on entry, so `2026-02-29`
- * becomes `2026-02-28`) or pick from the calendar popover (which only ever
- * offers real days). Either way the committed value is always a valid date,
- * so dependent UI — the sequence "next number" badge and the persisted record —
- * stay in sync with what the user actually chose.
+ * Familiar `DD/MM/YYYY` date field with a calendar popover, used as a drop-in for
+ * native `<input type="date">`. The calendar is the primary editor — each month
+ * only ever offers its real days, so picking February gives a valid February
+ * date (fixing the sequence-number "next month" badge) and day 29 stays
+ * available in every month that actually has it. Manual typing in `DD/MM/YYYY`
+ * is also supported; impossible days are clamped to the month end on commit.
+ * The stored/emitted value (`value` / `onChange`) is always ISO `YYYY-MM-DD`.
  */
 export function SmartDateInput({
   value,
@@ -105,29 +122,24 @@ export function SmartDateInput({
   title,
   id,
   name,
-  placeholder = "YYYY-MM-DD",
+  placeholder = "يوم/شهر/سنة",
   "aria-label": ariaLabel,
 }: SmartDateInputProps) {
-  const [draft, setDraft] = React.useState(value ?? "");
+  const [draft, setDraft] = React.useState(() => isoToDisplay(value));
   const [open, setOpen] = React.useState(false);
 
   // Mirror external value changes (reset, edit-load, programmatic set) into the
-  // editable draft without fighting the user mid-keystroke.
+  // displayed draft without fighting the user mid-keystroke.
   React.useEffect(() => {
-    setDraft(value ?? "");
+    setDraft(isoToDisplay(value));
   }, [value]);
 
-  const commit = React.useCallback(
-    (raw: string) => {
-      const trimmed = raw.trim();
-      if (trimmed === "") {
-        onChange("");
-        return;
-      }
-      const clamped = clampIso(trimmed);
-      if (clamped) {
-        const bounded = clampToBounds(clamped, min, max);
-        setDraft(bounded);
+  const commitFromDisplay = React.useCallback(
+    (text: string) => {
+      const iso = displayToIso(text);
+      if (iso) {
+        const bounded = clampToBounds(iso, min, max);
+        setDraft(isoToDisplay(bounded));
         onChange(bounded);
       }
     },
@@ -138,29 +150,31 @@ export function SmartDateInput({
     if (readOnly || disabled) return;
     const raw = e.target.value;
     setDraft(raw);
-    if (raw.trim() === "") {
+    const norm = normalizeDigits(raw).trim();
+    if (norm === "") {
       onChange("");
       return;
     }
-    // Only commit once a complete YYYY-MM-DD has been typed, so partial input
-    // ("2026-0") isn't prematurely clamped.
-    if (ISO_RE.test(raw.trim())) commit(raw);
+    // Commit only once a complete DD/MM/YYYY is typed, so partial input isn't
+    // clamped prematurely.
+    if (DISPLAY_RE.test(norm)) commitFromDisplay(raw);
   };
 
   const handleBlur = () => {
     if (readOnly || disabled) return;
     const raw = draft.trim();
-    if (raw === "") {
+    const norm = normalizeDigits(raw);
+    if (norm === "") {
       onChange("");
       return;
     }
-    if (ISO_RE.test(raw)) {
-      commit(raw);
+    if (DISPLAY_RE.test(norm)) {
+      commitFromDisplay(raw);
       return;
     }
-    // Incomplete / unparseable on blur → restore the last committed value so
-    // the field never displays a half-typed date.
-    setDraft(value ?? "");
+    // Unparseable on blur → restore the last committed value so the field never
+    // displays a half-typed date.
+    setDraft(isoToDisplay(value));
   };
 
   const selected = isoToLocalDate(value);
@@ -172,6 +186,7 @@ export function SmartDateInput({
     <div className="relative w-full">
       <Input
         type="text"
+        dir="ltr"
         inputMode="numeric"
         autoComplete="off"
         value={draft}
@@ -180,13 +195,13 @@ export function SmartDateInput({
         readOnly={readOnly}
         disabled={disabled}
         required={required}
-        pattern="\d{4}-\d{2}-\d{2}"
+        pattern="\d{1,2}/\d{1,2}/\d{4}"
         placeholder={placeholder}
         title={title}
         id={id}
         name={name}
         aria-label={ariaLabel}
-        className={cn(showPicker && "pe-9", className)}
+        className={cn("text-start", showPicker && "pe-9", className)}
       />
       {showPicker && (
         <Popover open={open} onOpenChange={setOpen}>
@@ -217,7 +232,7 @@ export function SmartDateInput({
               onSelect={(d) => {
                 if (d) {
                   const iso = clampToBounds(localDateToIso(d), min, max);
-                  setDraft(iso);
+                  setDraft(isoToDisplay(iso));
                   onChange(iso);
                 }
                 setOpen(false);
