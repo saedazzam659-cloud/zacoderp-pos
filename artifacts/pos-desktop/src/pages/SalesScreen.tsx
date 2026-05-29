@@ -347,35 +347,67 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           qty: l.qty, unitPrice: l.item.salePrice, vatRate: l.item.vatRate,
         })),
       };
+      // Task #209 — on a CLIENT, decrement stock on the HOST *before* the
+      // invoice is persisted. The old flow saved the invoice first and only
+      // then asked the host to decrement; if the host rejected an oversell the
+      // sale was already on the books with no compensating record, leaving the
+      // host's stock/books out of sync. Now an oversell aborts the sale with
+      // NO invoice committed, and any lines already decremented this checkout
+      // are rolled back so the host stays consistent. Single/host mode is
+      // unchanged — it decrements locally AFTER the invoice persists below.
+      const client = isClient();
+      const applied: Array<{ itemId: number; qty: number }> = [];
+      if (client) {
+        const { adjustStockShared } = await import("../lib/stock");
+        try {
+          for (const l of cart) {
+            await adjustStockShared(l.item.id, -l.qty);
+            applied.push({ itemId: l.item.id, qty: l.qty });
+          }
+        } catch (e: any) {
+          // Roll back every decrement already applied in this checkout, then
+          // abort BEFORE committing the invoice — no silent partial-stock sale.
+          for (const a of applied) {
+            try { await adjustStockShared(a.itemId, a.qty); } catch { /* best effort */ }
+          }
+          setMsg({ kind: "err", text: `❌ تعذّر إتمام البيع — المخزون غير كافٍ على الجهاز الرئيسي:\n${e?.message ?? e}\nلم يتم حفظ الفاتورة.` });
+          return;
+        }
+      }
+
       let key = checkoutKey;
       if (!key) {
         key = (crypto as any).randomUUID?.() ??
           `idem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
         setCheckoutKey(key);
       }
-      const saved = await saveOfflineInvoice(payload, qr ?? undefined, undefined, key!);
+      let saved;
+      try {
+        saved = await saveOfflineInvoice(payload, qr ?? undefined, undefined, key!);
+      } catch (e) {
+        // The invoice failed to persist after we already decremented host
+        // stock — restore it so the host books match reality, then rethrow
+        // to the outer handler (which shows the failure message).
+        if (client) {
+          const { adjustStockShared } = await import("../lib/stock");
+          for (const a of applied) {
+            try { await adjustStockShared(a.itemId, a.qty); } catch { /* best effort */ }
+          }
+        }
+        throw e;
+      }
       const invNum = saved.invoiceNo;
 
-      // Decrement local stock IMMEDIATELY after invoice persists, BEFORE
-      // printing/drawer/parked cleanup. A printer fault must NOT prevent
-      // the stock movement that the customer has already walked away with.
-      // No-op for untracked items (operator never set opening qty).
-      // In LAN (client) mode the decrement goes to the host, which serializes
-      // it and atomically REJECTS an oversell (another till sold the last unit
-      // while this screen showed a stale cached qty). We must surface that —
-      // swallowing it would hide that the host couldn't fulfil the stock move.
-      // In single/host mode local adjust never throws (untracked → null), so
-      // behaviour there is unchanged.
-      const stockFailures: string[] = [];
-      {
+      // Single/host mode: decrement local stock IMMEDIATELY after the invoice
+      // persists, BEFORE printing/drawer/parked cleanup. A printer fault must
+      // NOT prevent the stock movement the customer has already walked away
+      // with. No-op for untracked items; local adjust never throws.
+      if (!client) {
         const { adjustStockShared } = await import("../lib/stock");
         for (const l of cart) {
           try {
             await adjustStockShared(l.item.id, -l.qty);
-          } catch (e: any) {
-            if (isClient()) stockFailures.push(`${l.item.nameAr}: ${e?.message ?? e}`);
-            // else single/host — non-fatal, ignore as before.
-          }
+          } catch { /* single/host — non-fatal, ignore as before. */ }
         }
       }
 
@@ -437,14 +469,11 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       setLastInvoice(invNum);
       setCart([]); setCheckoutKey(null); setActiveParkedId(null);
       setCustomer(null); setPaidStr("");
-      if (stockFailures.length) {
-        // Sale was recorded, but the host could not decrement stock for some
-        // lines (out of stock / sold by another till). Tell the cashier so they
-        // can reconcile — the invoice itself is valid.
-        setMsg({ kind: "err", text: `⚠️ تم حفظ الفاتورة ${invNum} لكن تعذّر خصم المخزون من الجهاز الرئيسي:\n${stockFailures.join("\n")}` });
-      } else {
-        setMsg({ kind: "ok", text: `✅ تم إنهاء البيع — فاتورة ${invNum}` });
-      }
+      // By the time we reach here the host stock was already decremented
+      // (client) or will be (single/host), and the invoice persisted — so the
+      // sale is always fully consistent. Oversells aborted earlier with no
+      // invoice committed.
+      setMsg({ kind: "ok", text: `✅ تم إنهاء البيع — فاتورة ${invNum}` });
     } catch (e: any) {
       setMsg({ kind: "err", text: `فشل إنهاء البيع: ${e?.message ?? e}` });
     } finally { setPaying(false); }
