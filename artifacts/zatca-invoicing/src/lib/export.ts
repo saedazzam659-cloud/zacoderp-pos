@@ -4,6 +4,11 @@ export interface ExportColumn {
   header: string;
   key: string;
   width?: number;
+  /** Excel number format applied to NUMERIC cells in this column (e.g.
+   *  "#,##0.00"). When set, pass RAW numbers (not pre-formatted strings) from
+   *  the caller so the cells are written as real numbers — otherwise Excel
+   *  stores them as text and SUM / formulas return 0. */
+  numFmt?: string;
 }
 
 // ─── Excel Export ─────────────────────────────────────────────────────────────
@@ -21,23 +26,35 @@ export function exportToExcel(
   // totalsRow value of the first applicable column to e.g. "الإجمالي".
   totalsRow?: Record<string, unknown> | null,
 ) {
-  const headers = columns.map(c => c.header);
-  const data    = rows.map(row =>
-    columns.map(c => {
-      const val = row[c.key];
-      return val === null || val === undefined ? "" : String(val);
-    })
-  );
+  // Preserve real numbers as numeric cells so Excel SUM / formulas work.
+  // Strings (incl. pre-formatted text) pass through unchanged, so existing
+  // callers are unaffected — only callers that pass raw numbers benefit.
+  const norm = (val: unknown): string | number => {
+    if (val === null || val === undefined) return "";
+    if (typeof val === "number") return Number.isFinite(val) ? val : "";
+    return String(val);
+  };
 
-  const aoa: (string)[][] = [headers, ...data];
+  const headers = columns.map(c => c.header);
+  const data    = rows.map(row => columns.map(c => norm(row[c.key])));
+
+  const aoa: (string | number)[][] = [headers, ...data];
   if (totalsRow) {
-    aoa.push(columns.map(c => {
-      const val = totalsRow[c.key];
-      return val === null || val === undefined ? "" : String(val);
-    }));
+    aoa.push(columns.map(c => norm(totalsRow[c.key])));
   }
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Apply per-column Excel number formats to numeric cells (display only —
+  // the underlying value stays a real number so totals / SUM still work).
+  const lastRow = aoa.length - 1; // row 0 = header
+  columns.forEach((c, ci) => {
+    if (!c.numFmt) return;
+    for (let r = 1; r <= lastRow; r++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c: ci })];
+      if (cell && cell.t === "n") cell.z = c.numFmt;
+    }
+  });
 
   const colWidths = columns.map((c, i) => ({
     wch: c.width ?? Math.max(

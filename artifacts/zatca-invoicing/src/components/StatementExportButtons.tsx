@@ -56,16 +56,21 @@ export default function StatementExportButtons({
   visibleCols = STATEMENT_COL_DEFAULTS, userName,
 }: Props) {
   const [busy, setBusy] = useState(false);
-  const { fmt } = useFmt();
+  const { fmt, dp } = useFmt();
+
+  // Excel number format honouring the company's decimal-places setting, so the
+  // money columns are written as REAL numbers (summable) yet still display with
+  // thousands separators + the right precision.
+  const moneyFmt = dp > 0 ? `#,##0.${"0".repeat(dp)}` : "#,##0";
 
   const ALL_EXCEL_COLUMNS: (ExportColumn & { key: StatementColKey })[] = [
     { key: "date", header: "التاريخ", width: 14 },
     { key: "docType", header: "نوع الوثيقة", width: 18 },
     { key: "docNumber", header: "الرقم", width: 16 },
     { key: "type", header: "رقم القيد", width: 16 },
-    { key: "debit", header: "مدين", width: 14 },
-    { key: "credit", header: "دائن", width: 14 },
-    { key: "balance", header: "الرصيد", width: 16 },
+    { key: "debit", header: "مدين", width: 14, numFmt: moneyFmt },
+    { key: "credit", header: "دائن", width: 14, numFmt: moneyFmt },
+    { key: "balance", header: "الرصيد", width: 16, numFmt: moneyFmt },
     { key: "description", header: "الشرح", width: 30 },
   ];
   const excelColumns: ExportColumn[] = ALL_EXCEL_COLUMNS.filter(c => visibleCols[c.key]);
@@ -77,9 +82,9 @@ export default function StatementExportButtons({
     {
       docType: "رصيد افتتاحي",
       date: from, docNumber: "—", type: "—",
-      debit:  openingDebit  ? fmt(openingDebit)  : "",
-      credit: openingCredit ? fmt(openingCredit) : "",
-      balance: fmt(opening),
+      debit:  openingDebit  || "",
+      credit: openingCredit || "",
+      balance: opening,
       description: "—",
     },
     ...lines.map(l => ({
@@ -91,9 +96,9 @@ export default function StatementExportButtons({
       // so empty cells stay legible in the spreadsheet.
       type: (l as any).journalEntryNumber
         || ((l as any).journalEntryId != null ? `#${(l as any).journalEntryId}` : "—"),
-      debit:  l.debit  ? fmt(l.debit)  : "",
-      credit: l.credit ? fmt(l.credit) : "",
-      balance: fmt(l.balance),
+      debit:  l.debit  || "",
+      credit: l.credit || "",
+      balance: l.balance,
       description: l.description,
     })),
   ];
@@ -109,8 +114,8 @@ export default function StatementExportButtons({
     : null;
   const totalsRow: Record<string, unknown> | null = lines.length > 0 ? {
     docType: "", date: "", docNumber: "", type: "",
-    debit: fmt(totals.debit), credit: fmt(totals.credit),
-    balance: fmt(closing), description: "",
+    debit: totals.debit, credit: totals.credit,
+    balance: closing, description: "",
     ...(firstLeading ? { [firstLeading]: "الإجمالي" } : {}),
   } : null;
 
