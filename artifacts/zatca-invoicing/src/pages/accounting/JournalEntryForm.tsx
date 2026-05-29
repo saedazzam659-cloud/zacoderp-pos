@@ -268,7 +268,7 @@ export default function JournalEntryForm() {
   // (2026) to a backdated 2025 would still show the 2026-scoped sequence
   // number — and then on Save the server would correctly pick the 2025
   // sequence, leaving the user confused about why the badge didn't match.
-  const seqPeek = useNextSequenceNumber("journal_entry", isNew, entryDate);
+  const seqPeek = useNextSequenceNumber("journal_entry", isNew, entryDate, branchId);
 
   // ── Field-level governance (شاشة "حوكمة حقول الفواتير") ─────────────
   // The SuperAdmin can hide / lock / require any header field on this form

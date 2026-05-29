@@ -57,6 +57,12 @@ export function useNextSequenceNumber(
    *  the FY 2026 scoped sequence the form opened on. Re-fetches whenever
    *  the date string changes. */
   date?: string | null,
+  /** Optional branch id. Each (sequence, branch) pair has its OWN running
+   *  counter, so the badge MUST peek the same branch the form will submit —
+   *  otherwise it reads the company-wide (branch 0) counter and stays frozen
+   *  at the start number while saves advance the real branch counter. Pass the
+   *  form's selected branch here; omit/empty/0 → company-wide counter. */
+  branchId?: number | string | null,
 ) {
   const [data, setData] = useState<PeekResult>({ number: null, hasSequence: false });
   const [loading, setLoading] = useState(false);
@@ -67,9 +73,12 @@ export function useNextSequenceNumber(
     const my = ++seq.current;
     setLoading(true);
     try {
-      const url = date && date !== ""
-        ? `${API_BASE}/api/sequences/peek/${txType}?date=${encodeURIComponent(date)}`
-        : `${API_BASE}/api/sequences/peek/${txType}`;
+      const qs = new URLSearchParams();
+      if (date && date !== "") qs.set("date", date);
+      const bid = branchId != null && branchId !== "" ? Number(branchId) : 0;
+      if (Number.isFinite(bid) && bid > 0) qs.set("branchId", String(bid));
+      const q = qs.toString();
+      const url = `${API_BASE}/api/sequences/peek/${txType}${q ? `?${q}` : ""}`;
       const r = await fetch(url, { headers: authHeaders() });
       if (!r.ok) {
         if (my === seq.current) setData({ number: null, hasSequence: false });
@@ -82,7 +91,7 @@ export function useNextSequenceNumber(
     } finally {
       if (my === seq.current) setLoading(false);
     }
-  }, [txType, enabled, date]);
+  }, [txType, enabled, date, branchId]);
 
   useEffect(() => { refetch(); }, [refetch]);
 

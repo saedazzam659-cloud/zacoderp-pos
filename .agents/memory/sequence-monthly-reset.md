@@ -34,3 +34,19 @@ not on edit until the `.set()` was fixed.)
 **DB migration note:** drizzle push in this repo is interactive and wanted to truncate
 an unrelated table; additive columns were applied via direct
 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` instead.
+
+## Next-number badge (peek) MUST match the issuance branch
+
+Numbering counters are per-(sequence, branch). The `useNextSequenceNumber` peek hook
+and the document form's POST must target the SAME branch, or the badge reads the
+wrong counter.
+**Symptom:** badge frozen at the start number (e.g. QU-05-0001) while each save
+increments correctly. **Cause:** the form submits a selected `branchId` (e.g. main
+branch) so issuance advances that branch's counter, but the peek hook sent no branch
+→ it read the company-wide branch-0 sentinel (empty) and fell back to `start_number`.
+**Why:** the server peek defaults `branchId` to 0; the form's branch selector is the
+only thing that knows which branch will actually be submitted.
+**How to apply:** any form that submits a branch AND shows a next-number badge must
+pass that branch as the 4th arg of `useNextSequenceNumber(txType, enabled, date,
+branchId)`. Other branch-bearing forms (sales/purchase/inventory) share this latent
+bug if they omit the branch arg.
