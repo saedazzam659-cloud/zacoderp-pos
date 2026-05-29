@@ -111,14 +111,18 @@ export default function PurchaseInvoiceForm() {
   const isNew  = !!matchNew;
   const editId = matchEdit ? Number((params as any).id) : null;
 
-  const seqPeek = useNextSequenceNumber("purchase_invoice", isNew);
-
   const [activeTab,    setActiveTab]    = useState("header");
   const [docNumber,    setDocNumber]    = useState("");
   const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState("");
   const [invoiceDate,  setInvoiceDate]  = useState(today());
   const [supplierId,   setSupplierId]   = useState("");
   const [branchId,     setBranchId]     = useState("");
+
+  // Peek the NEXT number for the SAME branch the form will submit — counters
+  // are per-(sequence, branch), so omitting branchId reads the empty branch-0
+  // sentinel and the badge freezes at the start number while saves advance the
+  // real branch counter.
+  const seqPeek = useNextSequenceNumber("purchase_invoice", isNew, undefined, branchId);
   const [paymentType,  setPaymentType]  = useState("credit");
   const [cashBoxId,    setCashBoxId]    = useState("");
   const [bankAccountId, setBankAccountId] = useState("");

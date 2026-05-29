@@ -160,7 +160,7 @@ export default function SalesReturns() {
   // Pull next return number from the central sequence engine while creating
   // a new return. Skip when editing an existing record (its number is fixed)
   // or when the form panel is closed.
-  const seqPeek = useNextSequenceNumber("sales_return", showForm && editingId == null);
+  const seqPeek = useNextSequenceNumber("sales_return", showForm && editingId == null, undefined, form.branchId);
   useEffect(() => {
     if (!showForm || editingId != null) return;
     if (seqPeek.hasSequence && seqPeek.number) {

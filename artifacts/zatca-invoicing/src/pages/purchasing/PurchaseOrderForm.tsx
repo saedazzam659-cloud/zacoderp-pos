@@ -112,14 +112,17 @@ export default function PurchaseOrderForm() {
   const isNew  = !!matchNew;
   const editId = matchEdit ? Number((params as any).id) : null;
 
-  const seqPeek = useNextSequenceNumber("purchase_order", isNew);
-
   const [docNumber,    setDocNumber]    = useState("");
   const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState("");
   const [orderDate,    setOrderDate]    = useState(today());
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
   const [supplierId,   setSupplierId]   = useState("");
   const [branchId,     setBranchId]     = useState("");
+
+  // Peek the NEXT number for the SAME branch the form will submit (per-branch
+  // counters) — omitting branchId reads the empty branch-0 sentinel and the
+  // badge freezes at the start number while saves advance the real counter.
+  const seqPeek = useNextSequenceNumber("purchase_order", isNew, undefined, branchId);
   const [paymentType,  setPaymentType]  = useState("credit");
   const [currencyCode, setCurrencyCode] = useState("");
   const [exchangeRate, setExchangeRate] = useState("1");

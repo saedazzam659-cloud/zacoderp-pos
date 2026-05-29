@@ -106,7 +106,7 @@ export default function GoodsReceipts() {
   const [form, setForm] = useState<any>({ ...EMPTY, priceIncludesVat: stickyPriceIncl.initial });
   const [lines, setLines] = useState<ReceiptLine[]>([newLine()]);
 
-  const seqPeek = useNextSequenceNumber("goods_receipt", showForm && editingId == null);
+  const seqPeek = useNextSequenceNumber("goods_receipt", showForm && editingId == null, undefined, form.branchId);
   useEffect(() => {
     if (!showForm || editingId != null) return;
     if (seqPeek.hasSequence && seqPeek.number) {

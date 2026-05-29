@@ -104,7 +104,7 @@ export default function GoodsDeliveries() {
   const [form, setForm] = useState<any>({ ...EMPTY, priceIncludesVat: stickyPriceIncl.initial });
   const [lines, setLines] = useState<DeliveryLine[]>([newLine()]);
 
-  const seqPeek = useNextSequenceNumber("goods_delivery", showForm && editingId == null);
+  const seqPeek = useNextSequenceNumber("goods_delivery", showForm && editingId == null, undefined, form.branchId);
   useEffect(() => {
     if (!showForm || editingId != null) return;
     if (seqPeek.hasSequence && seqPeek.number) {
