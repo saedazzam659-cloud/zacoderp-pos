@@ -61,6 +61,9 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
   const [activeParkedId, setActiveParkedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [lanTick, setLanTick] = useState(0); // bumped by client LAN polling to refetch items/stock
+  // Task #208 — live host-connection status for LAN client devices.
+  // null = not yet checked, true = host reachable, false = host unreachable.
+  const [hostOnline, setHostOnline] = useState<boolean | null>(null);
   const [items, setItems] = useState<LocalItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
   const [paying, setPaying] = useState(false);
@@ -168,11 +171,18 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       if (stopped) return;
       try {
         const v = await getChangeVersion();
+        // getChangeVersion returns null on any reachability failure, so it
+        // doubles as the connection probe for the status badge (Task #208) —
+        // no extra round-trip needed.
+        if (!stopped) setHostOnline(v !== null);
         if (v !== null && v !== lastVersion) {
           if (lastVersion !== -1) setLanTick((n) => n + 1);
           lastVersion = v;
         }
-      } catch { /* host briefly unreachable — keep trying */ }
+      } catch {
+        // host briefly unreachable — keep trying
+        if (!stopped) setHostOnline(false);
+      }
     };
     void tick();
     const id = window.setInterval(() => { void tick(); }, 3000);
@@ -464,6 +474,31 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
             data-allow-scan="true"
           />
           <div style={S.countChip}>{items.length} صنف</div>
+          {isClient() && (
+            <div
+              style={
+                hostOnline === false ? S.connBadgeOff
+                  : hostOnline === true ? S.connBadgeOn
+                  : S.connBadgeUnknown
+              }
+              title={
+                hostOnline === false
+                  ? "تعذّر الوصول إلى الجهاز الرئيسي — تحقق من شبكة Wi-Fi وأن الجهاز الرئيسي يعمل"
+                  : hostOnline === true
+                  ? "الاتصال بالجهاز الرئيسي سليم"
+                  : "جارٍ التحقق من الاتصال بالجهاز الرئيسي..."
+              }
+            >
+              <span style={{ fontSize: 9 }}>{hostOnline === false ? "🔴" : hostOnline === true ? "🟢" : "⚪"}</span>
+              <span>
+                {hostOnline === false
+                  ? "غير متصل بالجهاز الرئيسي"
+                  : hostOnline === true
+                  ? "متصل بالجهاز الرئيسي"
+                  : "جارٍ التحقق..."}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* The ONLY scroll region in the items pane */}
@@ -948,6 +983,10 @@ const S = {
   searchRow: { display: "flex", gap: 12, alignItems: "center", flexShrink: 0 } as const,
   search: { flex: 1, padding: "12px 16px", fontSize: 15, border: "1px solid #cbd5e1", borderRadius: 10, fontFamily: "inherit", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.04)" } as const,
   countChip: { padding: "8px 14px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 999, fontSize: 13, color: "#475569", fontWeight: 600, whiteSpace: "nowrap" as const } as const,
+  // Task #208 — LAN host-connection status badge (client devices only).
+  connBadgeOn: { display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 999, fontSize: 13, color: "#166534", fontWeight: 700, whiteSpace: "nowrap" as const } as const,
+  connBadgeOff: { display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 999, fontSize: 13, color: "#b91c1c", fontWeight: 700, whiteSpace: "nowrap" as const } as const,
+  connBadgeUnknown: { display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 999, fontSize: 13, color: "#64748b", fontWeight: 600, whiteSpace: "nowrap" as const } as const,
   gridScroll: { flex: 1, overflowY: "auto" as const, overflowX: "hidden" as const, minHeight: 0, maxHeight: "100%" } as const,
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: 12, padding: 4 } as const,
   empty: { gridColumn: "1 / -1", padding: 40, color: "#94a3b8", fontSize: 14, textAlign: "center" as const, border: "1px dashed #cbd5e1", borderRadius: 10, background: "#fff" } as const,
