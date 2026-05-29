@@ -6,6 +6,7 @@ import { CreateCompanyBody, UpdateCompanyBody } from "@workspace/api-zod";
 import { extractAuth } from "../middleware/auth.js";
 import { requirePermission, audit } from "../middleware/permissions.js";
 import { seedDefaultChartOfAccounts } from "../lib/seedDefaultChartOfAccounts.js";
+import { seedDefaultUnits } from "../lib/seedDefaultUnits.js";
 import { logger } from "../lib/logger.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
@@ -71,6 +72,16 @@ router.post("/", async (req, res) => {
     await seedDefaultChartOfAccounts(company.id);
   } catch (err) {
     logger.error({ err, companyId: company.id }, "default-coa.seed-failed");
+  }
+
+  // Auto-seed standard measurement units so the line-level "الوحدة" picker on
+  // sales / purchase documents is populated immediately. Non-blocking: a
+  // failure is logged but the company is still created (units can be added
+  // manually from the units-of-measure screen).
+  try {
+    await seedDefaultUnits(company.id);
+  } catch (err) {
+    logger.error({ err, companyId: company.id }, "default-units.seed-failed");
   }
 
   res.status(201).json(company);
