@@ -44,6 +44,7 @@ import StockTransfersAdmin from "./StockTransfersAdmin";
 import PurchaseReturnsAdmin from "./PurchaseReturnsAdmin";
 import FinancialTransactionsAdmin from "./FinancialTransactionsAdmin";
 import UserPermissionsAdmin from "./UserPermissionsAdmin";
+import NumberSeriesAdmin from "./NumberSeriesAdmin";
 import {
   listUserPermissions, computeAllowed, persistAllowedToLS, clearAllowedLS,
   loadAllowedFromLS, defaultsForRole, type ScreenKey,
@@ -74,7 +75,8 @@ type View =
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "user_permissions"
   // Task #208 — warehouses & inventory ops (standalone).
-  | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers";
+  | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
+  | "number_series";
 
 /** Minimal CSV parser for the bundled starter catalogs (no quotes/escapes
  *  expected — files are repo-controlled). Returns CreateItemInput rows. */
@@ -461,6 +463,7 @@ export default function PosShell({
     ...(isAdmin
       ? [
           { id: "users" as View,            icon: "🔐", label: "المستخدمون", adminOnly: true },
+          { id: "number_series" as View,    icon: "🔢", label: "أرقام المسلسلات", adminOnly: true },
           { id: "user_permissions" as View, icon: "🛡️", label: "صلاحيات المستخدمين", adminOnly: true },
         ]
       : []),
@@ -784,6 +787,9 @@ export default function PosShell({
           {standalone && view === "user_permissions" && isAdmin && standaloneSession && (
             <div style={S.pagePad}><UserPermissionsAdmin session={standaloneSession} /></div>
           )}
+          {standalone && view === "number_series" && isAdmin && (
+            <div style={S.pagePad}><NumberSeriesAdmin /></div>
+          )}
           {/* Task #208 — warehouses & inventory ops (standalone only). */}
           {standalone && view === "warehouses" && (isAdmin || can("warehouses")) && (
             <div style={S.pagePad}><WarehousesAdmin /></div>
@@ -854,6 +860,7 @@ function labelFor(v: View): string {
     currencies: "العملات",
     exchange_rates: "أسعار الصرف",
     treasury_transfers: "تحويل الخزن",
+    number_series: "أرقام المسلسلات",
   }[v];
 }
 

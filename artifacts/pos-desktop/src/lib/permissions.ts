@@ -25,6 +25,7 @@ export type ScreenKey =
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries"
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
+  | "number_series"
   | "user_permissions" | "dashboard" | "updates" | "users";
 
 export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: string }[] = [
@@ -64,6 +65,7 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "stock_transfers", label: "التحويل بين المخازن", icon: "🔄", group: "المخازن" },
 
   { key: "scale", label: "الميزان", icon: "⚖️", group: "الإعدادات" },
+  { key: "number_series", label: "أرقام المسلسلات", icon: "🔢", group: "الإعدادات" },
   { key: "user_permissions", label: "صلاحيات المستخدمين", icon: "🛡️", group: "الإعدادات" },
   { key: "users", label: "المستخدمون", icon: "🔐", group: "الإعدادات" },
   { key: "dashboard", label: "لوحة التحكم", icon: "⚙️", group: "الإعدادات" },

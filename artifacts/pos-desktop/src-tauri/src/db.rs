@@ -521,6 +521,38 @@ pub fn initialize() -> Result<()> {
     ];
     for sql in alters { let _ = conn.execute(sql, []); }
 
+    // ── Document numbering series (full operator control) ──
+    // One row per document type. `next_number` is the value the NEXT issued
+    // document will use; it is consumed+incremented atomically inside the
+    // create transaction. Seeded once via INSERT OR IGNORE so user edits made
+    // from the "أرقام المسلسلات" screen are never clobbered on later startups.
+    // Seed value = MAX(id)+1 of each table so numbering continues from any
+    // documents created before this feature existed (no UNIQUE collisions).
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS number_series_local (
+            doc_type    TEXT PRIMARY KEY,
+            prefix      TEXT NOT NULL DEFAULT '',
+            next_number INTEGER NOT NULL DEFAULT 1,
+            padding     INTEGER NOT NULL DEFAULT 6
+        );
+        "#,
+    )?;
+    let seeds: &[(&str, &str, &str)] = &[
+        ("journal_entry",   "JE-",   "journal_entries_local"),
+        ("purchase",        "PUR-",  "purchases_local"),
+        ("purchase_return", "PRT-",  "purchase_returns_local"),
+        ("sales_invoice",   "SINV-", "sales_invoices_local"),
+        ("sales_return",    "SRT-",  "sales_returns_local"),
+    ];
+    for (doc_type, prefix, table) in seeds {
+        let sql = format!(
+            "INSERT OR IGNORE INTO number_series_local(doc_type,prefix,next_number,padding)
+             SELECT '{doc_type}', '{prefix}', COALESCE(MAX(id),0)+1, 6 FROM {table}"
+        );
+        let _ = conn.execute(&sql, []);
+    }
+
     // Seed default chart of accounts on first run (only when empty).
     seed_default_accounts(&conn)?;
     // Seed default warehouse + inventory-variance accounts on first run.

@@ -8,11 +8,13 @@ import {
 } from "../lib/items";
 import { listUom, getDefaultUom } from "../lib/uom";
 import { getVertical, type Vertical } from "../lib/standalone";
-import { SearchCombobox } from "./_adminUi";
+import { SearchCombobox, Pagination, pageSlice } from "./_adminUi";
 
 export default function ItemsAdmin() {
   const [rows, setRows] = useState<LocalItem[]>([]);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<LocalItem | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -119,7 +121,11 @@ export default function ItemsAdmin() {
     try { setRows(await listItems(search || undefined)); }
     finally { setLoading(false); }
   }
-  useEffect(() => { void refresh(); /* eslint-disable-next-line */ }, [search]);
+  useEffect(() => { setPage(1); void refresh(); /* eslint-disable-next-line */ }, [search]);
+
+  const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
+  const pageRows = rows.slice(start, end);
+  useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
 
   async function handleDelete(it: LocalItem) {
     if (!confirm(`حذف الصنف «${it.nameAr}»؟`)) return;
@@ -182,7 +188,7 @@ export default function ItemsAdmin() {
             <th style={S.thRight}>إجراء</th>
           </tr></thead>
           <tbody>
-            {rows.map((it) => (
+            {pageRows.map((it) => (
               <tr key={it.id} style={S.tr}>
                 <td style={S.td}>
                   <div style={{ fontWeight: 600 }}>{it.nameAr}</div>
@@ -205,6 +211,11 @@ export default function ItemsAdmin() {
             ))}
           </tbody>
         </table>
+      )}
+
+      {!loading && rows.length > 0 && (
+        <Pagination total={rows.length} page={page} pageSize={pageSize}
+          onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />
       )}
 
       {showEda && (

@@ -298,6 +298,73 @@ export function SearchCombobox({
   );
 }
 
+// ─── Pagination ──────────────────────────────────────────────────────
+// Client-side pager for the admin tables. Caller slices its own rows; this
+// component just renders the page-size selector + prev/next controls and a
+// "showing X–Y of Z" summary. Page sizes per the user request.
+export const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 500, 1000] as const;
+
+/** Pure helper: given total count + 1-based page + size, return the slice
+ *  bounds and a clamped page (so deleting rows never strands you on an empty
+ *  page). `end` is exclusive — use rows.slice(start, end). */
+export function pageSlice(total: number, page: number, size: number): { start: number; end: number; page: number; pageCount: number } {
+  const pageCount = Math.max(1, Math.ceil(total / size));
+  const clamped = Math.min(Math.max(1, page), pageCount);
+  const start = (clamped - 1) * size;
+  const end = Math.min(start + size, total);
+  return { start, end, page: clamped, pageCount };
+}
+
+export function Pagination({
+  total, page, pageSize, onPageChange, onPageSizeChange,
+}: {
+  total: number;
+  page: number;
+  pageSize: number;
+  onPageChange: (p: number) => void;
+  onPageSizeChange: (s: number) => void;
+}) {
+  const { start, end, page: cur, pageCount } = pageSlice(total, page, pageSize);
+  const from = total === 0 ? 0 : start + 1;
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      gap: 12, padding: "10px 14px", borderTop: "1px solid #f1f5f9", flexWrap: "wrap",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#64748b" }}>
+        <span>عدد الصفوف:</span>
+        <select
+          value={pageSize}
+          onChange={(e) => onPageSizeChange(Number(e.target.value))}
+          style={{ ...input, width: "auto", padding: "6px 10px", fontSize: 13 }}
+        >
+          {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+      </div>
+      <div style={{ fontSize: 13, color: "#64748b", fontVariantNumeric: "tabular-nums" }}>
+        عرض {from}–{end} من {total}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <button
+          type="button"
+          onClick={() => onPageChange(cur - 1)}
+          disabled={cur <= 1}
+          style={{ ...btnSecondary, padding: "6px 12px", fontSize: 13, opacity: cur <= 1 ? 0.5 : 1, cursor: cur <= 1 ? "not-allowed" : "pointer" }}
+        >السابق</button>
+        <span style={{ fontSize: 13, color: "#475569", fontVariantNumeric: "tabular-nums", minWidth: 70, textAlign: "center" }}>
+          {cur} / {pageCount}
+        </span>
+        <button
+          type="button"
+          onClick={() => onPageChange(cur + 1)}
+          disabled={cur >= pageCount}
+          style={{ ...btnSecondary, padding: "6px 12px", fontSize: 13, opacity: cur >= pageCount ? 0.5 : 1, cursor: cur >= pageCount ? "not-allowed" : "pointer" }}
+        >التالي</button>
+      </div>
+    </div>
+  );
+}
+
 export function fmt(n: number): string {
   return Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }

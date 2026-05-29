@@ -4,8 +4,9 @@ import {
   type PurchaseReturn, type PurchaseLine, type Supplier,
 } from "../lib/accounting";
 import { listItems, type LocalItem } from "../lib/items";
+import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
-  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
+  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
@@ -14,16 +15,22 @@ export default function PurchaseReturnsAdmin() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<PurchaseReturn | null>(null);
   const [creating, setCreating] = useState(false);
-  const [deps, setDeps] = useState<{ suppliers: Supplier[]; items: LocalItem[] } | null>(null);
+  const [deps, setDeps] = useState<{ suppliers: Supplier[]; items: LocalItem[]; warehouses: Warehouse[] } | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
-  async function refresh() { setRows(await listPurchaseReturns()); }
+  async function refresh() { setRows(await listPurchaseReturns(5000)); }
   useEffect(() => {
     void refresh();
     void (async () => {
-      const [suppliers, items] = await Promise.all([listSuppliers(), listItems()]);
-      setDeps({ suppliers, items });
+      const [suppliers, items, warehouses] = await Promise.all([listSuppliers(), listItems(), listWarehouses()]);
+      setDeps({ suppliers, items, warehouses });
     })();
   }, []);
+
+  const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
+  const pageRows = rows.slice(start, end);
+  useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
 
   async function toggleView(id: number) {
     if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); return; }
@@ -59,7 +66,7 @@ export default function PurchaseReturnsAdmin() {
               <Th style={{ textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 100 }}></Th>
             </tr></thead>
             <tbody>
-              {rows.map((p) => (
+              {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
                   <tr>
                     <Td mono>{p.returnNo}</Td><Td>{p.returnDate}</Td><Td>{p.supplierName}</Td>
@@ -86,6 +93,10 @@ export default function PurchaseReturnsAdmin() {
             </tbody>
           </Table>
         )}
+        {rows.length > 0 && (
+          <Pagination total={rows.length} page={page} pageSize={pageSize}
+            onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />
+        )}
       </Card>
     </Page>
   );
@@ -107,9 +118,12 @@ function ReturnDetail({ r }: { r: PurchaseReturn }) {
   );
 }
 
-function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[]; items: LocalItem[] }; onCancel: () => void; onDone: () => void }) {
+function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[]; items: LocalItem[]; warehouses: Warehouse[] }; onCancel: () => void; onDone: () => void }) {
   const [supplierId, setSupplierId] = useState<number>(deps.suppliers[0]?.id ?? 0);
   const [date, setDate] = useState(todayStr());
+  const [warehouseId, setWarehouseId] = useState<number>(
+    (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
+  );
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<PurchaseLine[]>([{ itemId: 0, qty: 1, unitCost: 0, vatRate: 15, lineTotal: 0 }]);
   const [err, setErr] = useState<string | null>(null);
@@ -140,7 +154,7 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
       const cleaned = lines.filter((l) => l.itemId && (l.qty || 0) > 0);
       if (!supplierId) throw new Error("اختر المورد");
       if (cleaned.length === 0) throw new Error("أضف صنفاً واحداً على الأقل");
-      await createPurchaseReturn({ supplierId, purchaseId: null, returnDate: date, notes: notes || null, lines: cleaned });
+      await createPurchaseReturn({ supplierId, purchaseId: null, returnDate: date, warehouseId: warehouseId || null, notes: notes || null, lines: cleaned });
       onDone();
     } catch (e: any) { setErr(e?.message ?? "فشل"); }
     finally { setBusy(false); }
@@ -163,6 +177,17 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
         </Field>
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
       </div>
+      <Field label="المستودع" style={{ marginTop: 10, maxWidth: 420 }}>
+        <SearchCombobox
+          value={warehouseId}
+          onChange={(v) => setWarehouseId(Number(v))}
+          style={input}
+          options={[
+            { value: 0, label: "— المستودع الافتراضي —" },
+            ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
+          ]}
+        />
+      </Field>
       <Table>
         <thead><tr>
           <Th>الصنف</Th><Th style={{ width: 90 }}>الكمية</Th><Th style={{ width: 120 }}>سعر الوحدة</Th><Th style={{ width: 80 }}>ض. %</Th>

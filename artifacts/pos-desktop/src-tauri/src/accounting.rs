@@ -123,9 +123,99 @@ fn account_id_by_code(conn: &Connection, code: &str) -> Result<i64> {
     Ok(id)
 }
 
+// ── Document numbering ──
+// All document numbers flow through `next_doc_no`, which reads the operator-
+// configured series (prefix / next_number / padding) from number_series_local,
+// formats the label, then atomically increments next_number INSIDE the caller's
+// transaction. Because the read+increment share the tx, two concurrent creates
+// can never be handed the same number. The series is seeded in db::migrate, so a
+// missing row is a hard error rather than a silent fallback.
+fn next_doc_no(conn: &Connection, doc_type: &str) -> Result<String> {
+    let row: Option<(String, i64, i64)> = conn
+        .query_row(
+            "SELECT prefix, next_number, padding FROM number_series_local WHERE doc_type=?1",
+            params![doc_type],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let (prefix, next_number, padding) =
+        row.ok_or_else(|| anyhow!("سلسلة ترقيم غير معرّفة: {}", doc_type))?;
+    let width = if padding < 1 { 1 } else { padding as usize };
+    let no = format!("{}{:0width$}", prefix, next_number, width = width);
+    conn.execute(
+        "UPDATE number_series_local SET next_number = next_number + 1 WHERE doc_type=?1",
+        params![doc_type],
+    )?;
+    Ok(no)
+}
+
 fn next_entry_no(conn: &Connection) -> Result<String> {
-    let n: i64 = conn.query_row("SELECT COALESCE(MAX(id),0)+1 FROM journal_entries_local", [], |r| r.get(0))?;
-    Ok(format!("JE-{:06}", n))
+    next_doc_no(conn, "journal_entry")
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct NumberSeries {
+    pub doc_type: String,
+    pub prefix: String,
+    pub next_number: i64,
+    pub padding: i64,
+}
+
+const NUMBER_SERIES_DOC_TYPES: &[&str] = &[
+    "journal_entry",
+    "purchase",
+    "purchase_return",
+    "sales_invoice",
+    "sales_return",
+];
+
+#[tauri::command]
+pub fn number_series_list() -> Result<Vec<NumberSeries>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    // Return in a stable, meaningful order rather than alphabetical doc_type.
+    for dt in NUMBER_SERIES_DOC_TYPES {
+        let row = conn
+            .query_row(
+                "SELECT doc_type, prefix, next_number, padding FROM number_series_local WHERE doc_type=?1",
+                params![dt],
+                |r| Ok(NumberSeries { doc_type: r.get(0)?, prefix: r.get(1)?, next_number: r.get(2)?, padding: r.get(3)? }),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some(r) = row {
+            out.push(r);
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn number_series_update(doc_type: String, prefix: String, next_number: i64, padding: i64) -> Result<(), String> {
+    if !NUMBER_SERIES_DOC_TYPES.contains(&doc_type.as_str()) {
+        return Err("نوع مستند غير معروف".into());
+    }
+    if next_number < 1 {
+        return Err("الرقم التالي يجب أن يكون 1 أو أكبر".into());
+    }
+    if !(1..=12).contains(&padding) {
+        return Err("عدد الخانات يجب أن يكون بين 1 و 12".into());
+    }
+    if prefix.chars().count() > 16 {
+        return Err("البادئة طويلة جداً (16 حرفاً كحد أقصى)".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let affected = conn
+        .execute(
+            "UPDATE number_series_local SET prefix=?1, next_number=?2, padding=?3 WHERE doc_type=?4",
+            params![prefix, next_number, padding, doc_type],
+        )
+        .map_err(|e| e.to_string())?;
+    if affected == 0 {
+        return Err("سلسلة الترقيم غير موجودة".into());
+    }
+    Ok(())
 }
 
 // ───────────────────────── Journal Entries ───────────────────────────
@@ -627,12 +717,13 @@ pub struct PurchaseInput {
     pub cash_box_id: Option<i64>,
     pub bank_id: Option<i64>,
     pub notes: Option<String>,
+    /// Header warehouse the lines move stock into. None → company default.
+    pub warehouse_id: Option<i64>,
     pub lines: Vec<PurchaseLine>,
 }
 
 fn next_purchase_no(conn: &Connection) -> Result<String> {
-    let n: i64 = conn.query_row("SELECT COALESCE(MAX(id),0)+1 FROM purchases_local", [], |r| r.get(0))?;
-    Ok(format!("PUR-{:06}", n))
+    next_doc_no(conn, "purchase")
 }
 
 #[tauri::command]
@@ -714,7 +805,7 @@ pub fn purchase_create(input: PurchaseInput) -> Result<i64, String> {
     let purchase_id = tx.last_insert_rowid();
 
     // Resolve default warehouse for stock ledger inserts (Task #208).
-    let default_wh = crate::inventory::default_warehouse_id_in_tx(&tx)?;
+    let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
     for l in &input.lines {
         let line_sub = l.qty * l.unit_cost;
         let line_vat = line_sub * l.vat_rate / 100.0;
@@ -817,12 +908,13 @@ pub struct PurchaseReturnInput {
     pub purchase_id: Option<i64>,
     pub return_date: String,
     pub notes: Option<String>,
+    /// Header warehouse the lines move stock out of. None → company default.
+    pub warehouse_id: Option<i64>,
     pub lines: Vec<PurchaseLine>,
 }
 
 fn next_pret_no(conn: &Connection) -> Result<String> {
-    let n: i64 = conn.query_row("SELECT COALESCE(MAX(id),0)+1 FROM purchase_returns_local", [], |r| r.get(0))?;
-    Ok(format!("PRT-{:06}", n))
+    next_doc_no(conn, "purchase_return")
 }
 
 #[tauri::command]
@@ -894,7 +986,7 @@ pub fn purchase_return_create(input: PurchaseReturnInput) -> Result<i64, String>
     let return_id = tx.last_insert_rowid();
 
     // Default warehouse for outbound stock ledger entries.
-    let default_wh = crate::inventory::default_warehouse_id_in_tx(&tx)?;
+    let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
     for l in &input.lines {
         let line_sub = l.qty * l.unit_cost;
         let lt = line_sub + line_sub * l.vat_rate / 100.0;
@@ -976,12 +1068,13 @@ pub struct SalesInvoiceInput {
     pub cash_box_id: Option<i64>,
     pub bank_id: Option<i64>,
     pub notes: Option<String>,
+    /// Header warehouse the lines move stock out of. None → company default.
+    pub warehouse_id: Option<i64>,
     pub lines: Vec<SalesLine>,
 }
 
 fn next_sales_no(conn: &Connection) -> Result<String> {
-    let n: i64 = conn.query_row("SELECT COALESCE(MAX(id),0)+1 FROM sales_invoices_local", [], |r| r.get(0))?;
-    Ok(format!("SINV-{:06}", n))
+    next_doc_no(conn, "sales_invoice")
 }
 
 /// Current moving cost of an item in a warehouse (0 when never stocked).
@@ -1168,7 +1261,7 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
     ).map_err(|e| e.to_string())?;
     let invoice_id = tx.last_insert_rowid();
 
-    let default_wh = crate::inventory::default_warehouse_id_in_tx(&tx)?;
+    let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
     let mut cogs_total = 0.0_f64;
     for l in &input.lines {
         let line_sub = l.qty * l.unit_price;
@@ -1268,12 +1361,13 @@ pub struct SalesReturnInput {
     pub cash_box_id: Option<i64>,
     pub bank_id: Option<i64>,
     pub notes: Option<String>,
+    /// Header warehouse the lines move stock back into. None → company default.
+    pub warehouse_id: Option<i64>,
     pub lines: Vec<SalesLine>,
 }
 
 fn next_sret_no(conn: &Connection) -> Result<String> {
-    let n: i64 = conn.query_row("SELECT COALESCE(MAX(id),0)+1 FROM sales_returns_local", [], |r| r.get(0))?;
-    Ok(format!("SRT-{:06}", n))
+    next_doc_no(conn, "sales_return")
 }
 
 #[tauri::command]
@@ -1354,7 +1448,7 @@ pub fn sales_return_create(input: SalesReturnInput) -> Result<i64, String> {
     ).map_err(|e| e.to_string())?;
     let return_id = tx.last_insert_rowid();
 
-    let default_wh = crate::inventory::default_warehouse_id_in_tx(&tx)?;
+    let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
     let mut cogs_total = 0.0_f64;
     for l in &input.lines {
         let line_sub = l.qty * l.unit_price;

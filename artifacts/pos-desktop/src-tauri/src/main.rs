@@ -426,6 +426,8 @@ fn main() {
             accounting::journal_entries_list,
             accounting::journal_entry_get,
             accounting::journal_entry_create,
+            accounting::number_series_list,
+            accounting::number_series_update,
             permissions::permissions_list_for_user,
             permissions::permissions_set,
             permissions::permissions_clear,

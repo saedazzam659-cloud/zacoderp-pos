@@ -5,8 +5,9 @@ import {
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
 import { listItems, type LocalItem } from "../lib/items";
+import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
-  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
+  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
@@ -15,16 +16,22 @@ export default function SalesInvoicesAdmin() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<SalesInvoice | null>(null);
   const [creating, setCreating] = useState(false);
-  const [deps, setDeps] = useState<{ customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[] } | null>(null);
+  const [deps, setDeps] = useState<{ customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[] } | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
-  async function refresh() { setRows(await listSalesInvoices()); }
+  async function refresh() { setRows(await listSalesInvoices(5000)); }
   useEffect(() => {
     void refresh();
     void (async () => {
-      const [customers, cashBoxes, banks, items] = await Promise.all([listCustomers(), listCashBoxes(), listBanks(), listItems()]);
-      setDeps({ customers, cashBoxes, banks, items });
+      const [customers, cashBoxes, banks, items, warehouses] = await Promise.all([listCustomers(), listCashBoxes(), listBanks(), listItems(), listWarehouses()]);
+      setDeps({ customers, cashBoxes, banks, items, warehouses });
     })();
   }, []);
+
+  const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
+  const pageRows = rows.slice(start, end);
+  useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
 
   async function toggleView(id: number) {
     if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); return; }
@@ -60,7 +67,7 @@ export default function SalesInvoicesAdmin() {
               <Th style={{ textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 100 }}></Th>
             </tr></thead>
             <tbody>
-              {rows.map((p) => (
+              {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
                   <tr>
                     <Td mono>{p.invoiceNo}</Td>
@@ -90,6 +97,10 @@ export default function SalesInvoicesAdmin() {
               ))}
             </tbody>
           </Table>
+        )}
+        {rows.length > 0 && (
+          <Pagination total={rows.length} page={page} pageSize={pageSize}
+            onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />
         )}
       </Card>
     </Page>
@@ -126,7 +137,7 @@ function SalesDetail({ p }: { p: SalesInvoice }) {
 }
 
 function CreateForm({ deps, onCancel, onDone }: {
-  deps: { customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[] };
+  deps: { customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[] };
   onCancel: () => void; onDone: () => void;
 }) {
   const [customerId, setCustomerId] = useState<number>(0);
@@ -134,6 +145,9 @@ function CreateForm({ deps, onCancel, onDone }: {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [cashBoxId, setCashBoxId] = useState<number | null>(deps.cashBoxes[0]?.id ?? null);
   const [bankId, setBankId] = useState<number | null>(deps.banks[0]?.id ?? null);
+  const [warehouseId, setWarehouseId] = useState<number>(
+    (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
+  );
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<SalesLine[]>([{ itemId: 0, qty: 1, unitPrice: 0, vatRate: 15, lineTotal: 0 }]);
   const [err, setErr] = useState<string | null>(null);
@@ -178,6 +192,7 @@ function CreateForm({ deps, onCancel, onDone }: {
         customerId: customerId || null, invoiceDate: date, paymentMethod,
         cashBoxId: paymentMethod === "cash" ? cashBoxId : null,
         bankId:    paymentMethod === "bank" ? bankId : null,
+        warehouseId: warehouseId || null,
         notes: notes || null, lines: cleaned,
       });
       onDone();
@@ -214,6 +229,17 @@ function CreateForm({ deps, onCancel, onDone }: {
           />
         </Field>
       </div>
+      <Field label="المستودع" style={{ maxWidth: 420 }}>
+        <SearchCombobox
+          value={warehouseId}
+          onChange={(v) => setWarehouseId(Number(v))}
+          style={input}
+          options={[
+            { value: 0, label: "— المستودع الافتراضي —" },
+            ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
+          ]}
+        />
+      </Field>
 
       {selectedCustomer && paymentMethod === "credit" && (selectedCustomer.enforceCreditLimit || (selectedCustomer.creditLimit ?? 0) > 0) && (
         <div style={{ marginTop: 8, padding: "8px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 13, color: "#92400e" }}>

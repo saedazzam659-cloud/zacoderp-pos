@@ -4,8 +4,9 @@ import {
   type Purchase, type PurchaseLine, type PaymentMethod, type Supplier, type CashBox, type Bank,
 } from "../lib/accounting";
 import { listItems, type LocalItem } from "../lib/items";
+import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
-  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
+  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 
@@ -14,16 +15,22 @@ export default function PurchasesAdmin() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<Purchase | null>(null);
   const [creating, setCreating] = useState(false);
-  const [deps, setDeps] = useState<{ suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[] } | null>(null);
+  const [deps, setDeps] = useState<{ suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[] } | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
-  async function refresh() { setRows(await listPurchases()); }
+  async function refresh() { setRows(await listPurchases(5000)); }
   useEffect(() => {
     void refresh();
     void (async () => {
-      const [suppliers, cashBoxes, banks, items] = await Promise.all([listSuppliers(), listCashBoxes(), listBanks(), listItems()]);
-      setDeps({ suppliers, cashBoxes, banks, items });
+      const [suppliers, cashBoxes, banks, items, warehouses] = await Promise.all([listSuppliers(), listCashBoxes(), listBanks(), listItems(), listWarehouses()]);
+      setDeps({ suppliers, cashBoxes, banks, items, warehouses });
     })();
   }, []);
+
+  const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
+  const pageRows = rows.slice(start, end);
+  useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
 
   async function toggleView(id: number) {
     if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); return; }
@@ -59,7 +66,7 @@ export default function PurchasesAdmin() {
               <Th style={{ textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 100 }}></Th>
             </tr></thead>
             <tbody>
-              {rows.map((p) => (
+              {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
                   <tr>
                     <Td mono>{p.invoiceNo}</Td>
@@ -89,6 +96,10 @@ export default function PurchasesAdmin() {
               ))}
             </tbody>
           </Table>
+        )}
+        {rows.length > 0 && (
+          <Pagination total={rows.length} page={page} pageSize={pageSize}
+            onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />
         )}
       </Card>
     </Page>
@@ -126,7 +137,7 @@ function PurchaseDetail({ p }: { p: Purchase }) {
 }
 
 function CreateForm({ deps, onCancel, onDone }: {
-  deps: { suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[] };
+  deps: { suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[] };
   onCancel: () => void; onDone: () => void;
 }) {
   const [supplierId, setSupplierId] = useState<number>(deps.suppliers[0]?.id ?? 0);
@@ -134,6 +145,9 @@ function CreateForm({ deps, onCancel, onDone }: {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("credit");
   const [cashBoxId, setCashBoxId] = useState<number | null>(deps.cashBoxes[0]?.id ?? null);
   const [bankId, setBankId] = useState<number | null>(deps.banks[0]?.id ?? null);
+  const [warehouseId, setWarehouseId] = useState<number>(
+    (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
+  );
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<PurchaseLine[]>([{ itemId: 0, qty: 1, unitCost: 0, vatRate: 15, lineTotal: 0 }]);
   const [err, setErr] = useState<string | null>(null);
@@ -168,6 +182,7 @@ function CreateForm({ deps, onCancel, onDone }: {
         supplierId, invoiceDate: date, paymentMethod,
         cashBoxId: paymentMethod === "cash" ? cashBoxId : null,
         bankId:    paymentMethod === "bank" ? bankId : null,
+        warehouseId: warehouseId || null,
         notes: notes || null, lines: cleaned,
       });
       onDone();
@@ -204,6 +219,17 @@ function CreateForm({ deps, onCancel, onDone }: {
           />
         </Field>
       </div>
+      <Field label="المستودع" style={{ maxWidth: 420 }}>
+        <SearchCombobox
+          value={warehouseId}
+          onChange={(v) => setWarehouseId(Number(v))}
+          style={input}
+          options={[
+            { value: 0, label: "— المستودع الافتراضي —" },
+            ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
+          ]}
+        />
+      </Field>
       {paymentMethod === "cash" && (
         <Field label="الخزينة">
           <SearchCombobox

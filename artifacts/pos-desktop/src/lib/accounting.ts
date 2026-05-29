@@ -87,6 +87,7 @@ export type Purchase = {
 export type PurchaseInput = {
   supplierId: number; invoiceDate: string; paymentMethod: PaymentMethod;
   cashBoxId: number | null; bankId: number | null; notes: string | null;
+  warehouseId?: number | null;
   lines: PurchaseLine[];
 };
 
@@ -98,7 +99,7 @@ export type PurchaseReturn = {
 };
 export type PurchaseReturnInput = {
   supplierId: number; purchaseId: number | null; returnDate: string;
-  notes: string | null; lines: PurchaseLine[];
+  notes: string | null; warehouseId?: number | null; lines: PurchaseLine[];
 };
 
 export type SalesLine = {
@@ -114,6 +115,7 @@ export type SalesInvoice = {
 export type SalesInvoiceInput = {
   customerId: number | null; invoiceDate: string; paymentMethod: PaymentMethod;
   cashBoxId: number | null; bankId: number | null; notes: string | null;
+  warehouseId?: number | null;
   lines: SalesLine[];
 };
 
@@ -127,7 +129,7 @@ export type SalesReturn = {
 export type SalesReturnInput = {
   customerId: number | null; invoiceId: number | null; returnDate: string;
   paymentMethod: PaymentMethod; cashBoxId: number | null; bankId: number | null;
-  notes: string | null; lines: SalesLine[];
+  notes: string | null; warehouseId?: number | null; lines: SalesLine[];
 };
 
 export type TxType = "receipt" | "payment";
@@ -351,4 +353,24 @@ export async function getJournalEntry(id: number): Promise<JournalEntry> {
 export async function createJournalEntry(input: JournalEntryInput): Promise<number> {
   if (!hasTauri()) notImpl();
   return await invoke<number>("journal_entry_create", { input });
+}
+
+// ─── Document numbering series ───────────────────────────────────────
+export type NumberSeriesDocType =
+  | "journal_entry" | "purchase" | "purchase_return" | "sales_invoice" | "sales_return";
+export type NumberSeries = {
+  docType: NumberSeriesDocType;
+  prefix: string;
+  nextNumber: number;
+  padding: number;
+};
+export async function listNumberSeries(): Promise<NumberSeries[]> {
+  if (!hasTauri()) return [];
+  return await invoke<NumberSeries[]>("number_series_list");
+}
+export async function updateNumberSeries(s: NumberSeries): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("number_series_update", {
+    docType: s.docType, prefix: s.prefix, nextNumber: s.nextNumber, padding: s.padding,
+  });
 }
