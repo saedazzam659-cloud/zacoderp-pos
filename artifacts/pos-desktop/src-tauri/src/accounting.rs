@@ -7,7 +7,7 @@
 
 use crate::db;
 use anyhow::{anyhow, Result};
-use rusqlite::{params, Connection, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 
 fn now_iso() -> String { chrono::Utc::now().to_rfc3339() }
@@ -928,6 +928,495 @@ pub fn purchase_return_create(input: PurchaseReturnInput) -> Result<i64, String>
 
     // Reduce supplier balance.
     tx.execute("UPDATE suppliers_local SET balance=balance-?1 WHERE id=?2", params![grand_total, input.supplier_id]).map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(return_id)
+}
+
+// ───────────────────────── Sales Invoices ────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SalesLine {
+    pub id: Option<i64>,
+    pub item_id: i64,
+    pub item_name: Option<String>,
+    pub qty: f64,
+    pub unit_price: f64,
+    pub vat_rate: f64,
+    pub line_total: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SalesInvoice {
+    pub id: i64,
+    pub invoice_no: String,
+    pub customer_id: Option<i64>,
+    pub customer_name: Option<String>,
+    pub invoice_date: String,
+    pub subtotal: f64,
+    pub vat_total: f64,
+    pub grand_total: f64,
+    pub cogs_total: f64,
+    pub payment_method: String,
+    pub cash_box_id: Option<i64>,
+    pub bank_id: Option<i64>,
+    pub je_id: Option<i64>,
+    pub notes: Option<String>,
+    pub lines: Vec<SalesLine>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SalesInvoiceInput {
+    pub customer_id: Option<i64>,
+    pub invoice_date: String,
+    pub payment_method: String,
+    pub cash_box_id: Option<i64>,
+    pub bank_id: Option<i64>,
+    pub notes: Option<String>,
+    pub lines: Vec<SalesLine>,
+}
+
+fn next_sales_no(conn: &Connection) -> Result<String> {
+    let n: i64 = conn.query_row("SELECT COALESCE(MAX(id),0)+1 FROM sales_invoices_local", [], |r| r.get(0))?;
+    Ok(format!("SINV-{:06}", n))
+}
+
+/// Current moving cost of an item in a warehouse (0 when never stocked).
+fn item_cost_in_tx(tx: &Transaction, item_id: i64, warehouse_id: i64) -> f64 {
+    tx.query_row(
+        "SELECT last_cost FROM stock_on_hand_local WHERE item_id=?1 AND warehouse_id=?2",
+        params![item_id, warehouse_id], |r| r.get::<_, f64>(0),
+    ).optional().ok().flatten().unwrap_or(0.0)
+}
+
+/// Whole days between two YYYY-MM-DD dates (to - from); 0 if either unparsable.
+fn days_between(from: &str, to: &str) -> i64 {
+    use chrono::NaiveDate;
+    let f = NaiveDate::parse_from_str(from.get(..10).unwrap_or(from), "%Y-%m-%d");
+    let t = NaiveDate::parse_from_str(to.get(..10).unwrap_or(to), "%Y-%m-%d");
+    match (f, t) {
+        (Ok(f), Ok(t)) => (t - f).num_days(),
+        _ => 0,
+    }
+}
+
+/// Debit side of the revenue JE: AR control (credit), or cash/bank (paid).
+fn resolve_sales_debit_account(
+    conn: &Connection,
+    method: &str,
+    cash_box_id: Option<i64>,
+    bank_id: Option<i64>,
+) -> Result<i64> {
+    match method {
+        // All customers share the AR control account 1500 (mirrors
+        // resolve_party_account's "customer" branch).
+        "credit" => account_id_by_code(conn, "1500"),
+        "cash" => {
+            let cb = cash_box_id.ok_or_else(|| anyhow!("اختر الخزينة"))?;
+            let id: i64 = conn.query_row("SELECT account_id FROM cash_boxes_local WHERE id=?1", params![cb], |r| r.get(0))?;
+            Ok(id)
+        }
+        "bank" => {
+            let b = bank_id.ok_or_else(|| anyhow!("اختر البنك"))?;
+            let id: i64 = conn.query_row("SELECT account_id FROM banks_local WHERE id=?1", params![b], |r| r.get(0))?;
+            Ok(id)
+        }
+        _ => Err(anyhow!("طريقة دفع غير صالحة")),
+    }
+}
+
+#[tauri::command]
+pub fn sales_invoices_list(limit: Option<i64>) -> Result<Vec<SalesInvoice>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let lim = limit.unwrap_or(200);
+    let mut stmt = conn.prepare(
+        "SELECT s.id,s.invoice_no,s.customer_id,c.name_ar,s.invoice_date,s.subtotal,s.vat_total,s.grand_total,
+                s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes
+         FROM sales_invoices_local s LEFT JOIN customers_local c ON c.id=s.customer_id
+         ORDER BY s.id DESC LIMIT ?1"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([lim], |r| Ok(SalesInvoice {
+        id: r.get(0)?, invoice_no: r.get(1)?, customer_id: r.get(2)?, customer_name: r.get(3)?,
+        invoice_date: r.get(4)?, subtotal: r.get(5)?, vat_total: r.get(6)?, grand_total: r.get(7)?,
+        cogs_total: r.get(8)?, payment_method: r.get(9)?, cash_box_id: r.get(10)?, bank_id: r.get(11)?,
+        je_id: r.get(12)?, notes: r.get(13)?, lines: Vec::new(),
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn sales_invoice_get(id: i64) -> Result<SalesInvoice, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut s: SalesInvoice = conn.query_row(
+        "SELECT s.id,s.invoice_no,s.customer_id,c.name_ar,s.invoice_date,s.subtotal,s.vat_total,s.grand_total,
+                s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes
+         FROM sales_invoices_local s LEFT JOIN customers_local c ON c.id=s.customer_id
+         WHERE s.id=?1",
+        params![id], |r| Ok(SalesInvoice {
+            id: r.get(0)?, invoice_no: r.get(1)?, customer_id: r.get(2)?, customer_name: r.get(3)?,
+            invoice_date: r.get(4)?, subtotal: r.get(5)?, vat_total: r.get(6)?, grand_total: r.get(7)?,
+            cogs_total: r.get(8)?, payment_method: r.get(9)?, cash_box_id: r.get(10)?, bank_id: r.get(11)?,
+            je_id: r.get(12)?, notes: r.get(13)?, lines: Vec::new(),
+        })
+    ).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT sl.id,sl.item_id,i.name_ar,sl.qty,sl.unit_price,sl.vat_rate,sl.line_total
+         FROM sales_invoice_lines_local sl JOIN items_local i ON i.id=sl.item_id
+         WHERE sl.invoice_id=?1 ORDER BY sl.id"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([id], |r| Ok(SalesLine {
+        id: r.get(0)?, item_id: r.get(1)?, item_name: r.get(2)?, qty: r.get(3)?,
+        unit_price: r.get(4)?, vat_rate: r.get(5)?, line_total: r.get(6)?,
+    })).map_err(|e| e.to_string())?;
+    for r in rows { s.lines.push(r.map_err(|e| e.to_string())?); }
+    Ok(s)
+}
+
+#[tauri::command]
+pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
+    if input.lines.is_empty() { return Err("لا يمكن حفظ فاتورة بدون أصناف".into()); }
+    if !["credit","cash","bank"].contains(&input.payment_method.as_str()) {
+        return Err("طريقة دفع غير صالحة".into());
+    }
+    if input.payment_method == "credit" && input.customer_id.is_none() {
+        return Err("اختر العميل للبيع الآجل".into());
+    }
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    let mut subtotal = 0.0_f64;
+    let mut vat_total = 0.0_f64;
+    for l in &input.lines {
+        let line_sub = l.qty * l.unit_price;
+        subtotal += line_sub;
+        vat_total += line_sub * l.vat_rate / 100.0;
+    }
+    let grand_total = subtotal + vat_total;
+
+    // ── Credit control (credit sales to a known customer only) ──
+    if input.payment_method == "credit" {
+        if let Some(cid) = input.customer_id {
+            let (bal, limit, enforce, terms): (f64, f64, i64, i64) = tx.query_row(
+                "SELECT balance, credit_limit, enforce_credit_limit, payment_terms_days FROM customers_local WHERE id=?1",
+                params![cid], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            ).map_err(|e| e.to_string())?;
+            // Credit-limit cap — only when enforcement is explicitly enabled.
+            if enforce != 0 && limit > 0.0 && bal + grand_total > limit + 0.001 {
+                return Err(format!(
+                    "تجاوز حد الائتمان: الرصيد الحالي {:.2} + الفاتورة {:.2} = {:.2} يتجاوز الحد المسموح {:.2}",
+                    bal, grand_total, bal + grand_total, limit
+                ));
+            }
+            // Overdue check — applies whenever payment terms are configured and
+            // the customer still carries an outstanding balance, INDEPENDENT of
+            // the credit-limit toggle. We FIFO-settle the customer's credit
+            // invoices oldest-first with whatever has already been paid (or
+            // credited back via returns) and test the age of the OLDEST invoice
+            // that is still not fully covered — never a long-since-settled one.
+            if terms > 0 && bal > 0.001 {
+                let total_invoiced: f64 = tx.query_row(
+                    "SELECT COALESCE(SUM(grand_total),0) FROM sales_invoices_local WHERE customer_id=?1 AND payment_method='credit'",
+                    params![cid], |r| r.get(0),
+                ).map_err(|e| e.to_string())?;
+                // Amount applied against credit invoices so far (receipts +
+                // credit returns). Clamp at 0 so an opening balance that is not
+                // tied to any invoice can never make us skip real exposure.
+                let mut remaining_settled = (total_invoiced - bal).max(0.0);
+                let mut oldest_unpaid: Option<String> = None;
+                {
+                    let mut stmt = tx.prepare(
+                        "SELECT invoice_date, grand_total FROM sales_invoices_local
+                         WHERE customer_id=?1 AND payment_method='credit'
+                         ORDER BY invoice_date ASC, id ASC"
+                    ).map_err(|e| e.to_string())?;
+                    let rows = stmt.query_map(params![cid], |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)))
+                        .map_err(|e| e.to_string())?;
+                    for row in rows {
+                        let (d, gt) = row.map_err(|e| e.to_string())?;
+                        if remaining_settled + 0.001 >= gt {
+                            remaining_settled -= gt; // this invoice is fully paid
+                        } else {
+                            oldest_unpaid = Some(d); // first not-fully-covered invoice
+                            break;
+                        }
+                    }
+                }
+                if let Some(d) = oldest_unpaid {
+                    let days = days_between(&d, &input.invoice_date);
+                    if days > terms {
+                        return Err(format!(
+                            "العميل متأخر في السداد: أقدم فاتورة آجلة غير مسددة عمرها {} يوم وتتجاوز مدة الاستحقاق {} يوم — يلزم تحصيل المستحقات أولاً",
+                            days, terms
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    let invoice_no = next_sales_no(&tx).map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO sales_invoices_local(invoice_no,customer_id,invoice_date,subtotal,vat_total,grand_total,cogs_total,payment_method,cash_box_id,bank_id,notes)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+        params![invoice_no, input.customer_id, input.invoice_date, subtotal, vat_total, grand_total, 0.0,
+                input.payment_method, input.cash_box_id, input.bank_id, input.notes],
+    ).map_err(|e| e.to_string())?;
+    let invoice_id = tx.last_insert_rowid();
+
+    let default_wh = crate::inventory::default_warehouse_id_in_tx(&tx)?;
+    let mut cogs_total = 0.0_f64;
+    for l in &input.lines {
+        let line_sub = l.qty * l.unit_price;
+        let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        let unit_cost = item_cost_in_tx(&tx, l.item_id, default_wh);
+        cogs_total += unit_cost * l.qty;
+        tx.execute(
+            "INSERT INTO sales_invoice_lines_local(invoice_id,item_id,qty,unit_price,unit_cost,vat_rate,line_total) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+            params![invoice_id, l.item_id, l.qty, l.unit_price, unit_cost, l.vat_rate, lt],
+        ).map_err(|e| e.to_string())?;
+        // Stock OUT: negative qty at cost.
+        crate::inventory::ledger_push_in_tx(
+            &tx, l.item_id, default_wh, -l.qty, unit_cost,
+            "sale", Some(invoice_id), &input.invoice_date,
+        )?;
+    }
+    tx.execute("UPDATE sales_invoices_local SET cogs_total=?1 WHERE id=?2", params![cogs_total, invoice_id]).map_err(|e| e.to_string())?;
+
+    // Revenue JE: DR (AR|cash|bank)(grand) / CR Revenue(subtotal) + CR VAT-out(vat)
+    let rev_acc = account_id_by_code(&tx, "4100").map_err(|e| e.to_string())?;
+    let vat_out_acc = account_id_by_code(&tx, "2200").map_err(|e| e.to_string())?;
+    let dr_account_id = resolve_sales_debit_account(&tx, &input.payment_method, input.cash_box_id, input.bank_id)
+        .map_err(|e| e.to_string())?;
+
+    let mut lines = vec![
+        JournalEntryLine { id: None, account_id: dr_account_id, account_code: None, account_name: None, debit: grand_total, credit: 0.0, description: Some(format!("مبيعات {invoice_no}")) },
+        JournalEntryLine { id: None, account_id: rev_acc, account_code: None, account_name: None, debit: 0.0, credit: subtotal, description: None },
+    ];
+    if vat_total > 0.0 {
+        lines.push(JournalEntryLine { id: None, account_id: vat_out_acc, account_code: None, account_name: None, debit: 0.0, credit: vat_total, description: None });
+    }
+    let je_id = insert_journal_entry(&tx, &input.invoice_date, Some(&format!("فاتورة مبيعات {invoice_no}")), Some("sale"), Some(invoice_id), &lines)
+        .map_err(|e| e.to_string())?;
+    tx.execute("UPDATE sales_invoices_local SET je_id=?1 WHERE id=?2", params![je_id, invoice_id]).map_err(|e| e.to_string())?;
+
+    // COGS JE: DR COGS / CR Inventory (at cost).
+    if cogs_total > 0.0 {
+        let cogs_acc = account_id_by_code(&tx, "5100").map_err(|e| e.to_string())?;
+        let inv_acc = account_id_by_code(&tx, "1300").map_err(|e| e.to_string())?;
+        let cogs_lines = vec![
+            JournalEntryLine { id: None, account_id: cogs_acc, account_code: None, account_name: None, debit: cogs_total, credit: 0.0, description: Some(format!("تكلفة مبيعات {invoice_no}")) },
+            JournalEntryLine { id: None, account_id: inv_acc, account_code: None, account_name: None, debit: 0.0, credit: cogs_total, description: None },
+        ];
+        insert_journal_entry(&tx, &input.invoice_date, Some(&format!("تكلفة بضاعة مباعة {invoice_no}")), Some("sale_cogs"), Some(invoice_id), &cogs_lines)
+            .map_err(|e| e.to_string())?;
+    }
+
+    // Balance shadows. Credit → customer owes more; cash/bank → treasury up.
+    if input.payment_method == "credit" {
+        if let Some(cid) = input.customer_id {
+            tx.execute("UPDATE customers_local SET balance=balance+?1 WHERE id=?2", params![grand_total, cid]).map_err(|e| e.to_string())?;
+        }
+    } else if input.payment_method == "cash" {
+        if let Some(cb) = input.cash_box_id {
+            tx.execute("UPDATE cash_boxes_local SET balance=balance+?1 WHERE id=?2", params![grand_total, cb]).map_err(|e| e.to_string())?;
+        }
+    } else if input.payment_method == "bank" {
+        if let Some(b) = input.bank_id {
+            tx.execute("UPDATE banks_local SET balance=balance+?1 WHERE id=?2", params![grand_total, b]).map_err(|e| e.to_string())?;
+        }
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(invoice_id)
+}
+
+// ───────────────────────── Sales Returns ─────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SalesReturn {
+    pub id: i64,
+    pub return_no: String,
+    pub customer_id: Option<i64>,
+    pub customer_name: Option<String>,
+    pub invoice_id: Option<i64>,
+    pub return_date: String,
+    pub subtotal: f64,
+    pub vat_total: f64,
+    pub grand_total: f64,
+    pub cogs_total: f64,
+    pub payment_method: String,
+    pub cash_box_id: Option<i64>,
+    pub bank_id: Option<i64>,
+    pub je_id: Option<i64>,
+    pub notes: Option<String>,
+    pub lines: Vec<SalesLine>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SalesReturnInput {
+    pub customer_id: Option<i64>,
+    pub invoice_id: Option<i64>,
+    pub return_date: String,
+    pub payment_method: String,
+    pub cash_box_id: Option<i64>,
+    pub bank_id: Option<i64>,
+    pub notes: Option<String>,
+    pub lines: Vec<SalesLine>,
+}
+
+fn next_sret_no(conn: &Connection) -> Result<String> {
+    let n: i64 = conn.query_row("SELECT COALESCE(MAX(id),0)+1 FROM sales_returns_local", [], |r| r.get(0))?;
+    Ok(format!("SRT-{:06}", n))
+}
+
+#[tauri::command]
+pub fn sales_returns_list(limit: Option<i64>) -> Result<Vec<SalesReturn>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let lim = limit.unwrap_or(200);
+    let mut stmt = conn.prepare(
+        "SELECT r.id,r.return_no,r.customer_id,c.name_ar,r.invoice_id,r.return_date,r.subtotal,r.vat_total,r.grand_total,
+                r.cogs_total,r.payment_method,r.cash_box_id,r.bank_id,r.je_id,r.notes
+         FROM sales_returns_local r LEFT JOIN customers_local c ON c.id=r.customer_id
+         ORDER BY r.id DESC LIMIT ?1"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([lim], |r| Ok(SalesReturn {
+        id: r.get(0)?, return_no: r.get(1)?, customer_id: r.get(2)?, customer_name: r.get(3)?,
+        invoice_id: r.get(4)?, return_date: r.get(5)?, subtotal: r.get(6)?, vat_total: r.get(7)?,
+        grand_total: r.get(8)?, cogs_total: r.get(9)?, payment_method: r.get(10)?, cash_box_id: r.get(11)?,
+        bank_id: r.get(12)?, je_id: r.get(13)?, notes: r.get(14)?, lines: Vec::new(),
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn sales_return_get(id: i64) -> Result<SalesReturn, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut p: SalesReturn = conn.query_row(
+        "SELECT r.id,r.return_no,r.customer_id,c.name_ar,r.invoice_id,r.return_date,r.subtotal,r.vat_total,r.grand_total,
+                r.cogs_total,r.payment_method,r.cash_box_id,r.bank_id,r.je_id,r.notes
+         FROM sales_returns_local r LEFT JOIN customers_local c ON c.id=r.customer_id WHERE r.id=?1",
+        params![id], |r| Ok(SalesReturn {
+            id: r.get(0)?, return_no: r.get(1)?, customer_id: r.get(2)?, customer_name: r.get(3)?,
+            invoice_id: r.get(4)?, return_date: r.get(5)?, subtotal: r.get(6)?, vat_total: r.get(7)?,
+            grand_total: r.get(8)?, cogs_total: r.get(9)?, payment_method: r.get(10)?, cash_box_id: r.get(11)?,
+            bank_id: r.get(12)?, je_id: r.get(13)?, notes: r.get(14)?, lines: Vec::new(),
+        })
+    ).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT sl.id,sl.item_id,i.name_ar,sl.qty,sl.unit_price,sl.vat_rate,sl.line_total
+         FROM sales_return_lines_local sl JOIN items_local i ON i.id=sl.item_id
+         WHERE sl.return_id=?1 ORDER BY sl.id"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([id], |r| Ok(SalesLine {
+        id: r.get(0)?, item_id: r.get(1)?, item_name: r.get(2)?, qty: r.get(3)?,
+        unit_price: r.get(4)?, vat_rate: r.get(5)?, line_total: r.get(6)?,
+    })).map_err(|e| e.to_string())?;
+    for r in rows { p.lines.push(r.map_err(|e| e.to_string())?); }
+    Ok(p)
+}
+
+#[tauri::command]
+pub fn sales_return_create(input: SalesReturnInput) -> Result<i64, String> {
+    if input.lines.is_empty() { return Err("لا يمكن حفظ مرتجع بدون أصناف".into()); }
+    if !["credit","cash","bank"].contains(&input.payment_method.as_str()) {
+        return Err("طريقة دفع غير صالحة".into());
+    }
+    if input.payment_method == "credit" && input.customer_id.is_none() {
+        return Err("اختر العميل لمرتجع آجل".into());
+    }
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    let mut subtotal = 0.0_f64;
+    let mut vat_total = 0.0_f64;
+    for l in &input.lines {
+        let line_sub = l.qty * l.unit_price;
+        subtotal += line_sub;
+        vat_total += line_sub * l.vat_rate / 100.0;
+    }
+    let grand_total = subtotal + vat_total;
+
+    let return_no = next_sret_no(&tx).map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO sales_returns_local(return_no,customer_id,invoice_id,return_date,subtotal,vat_total,grand_total,cogs_total,payment_method,cash_box_id,bank_id,notes)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+        params![return_no, input.customer_id, input.invoice_id, input.return_date, subtotal, vat_total, grand_total, 0.0,
+                input.payment_method, input.cash_box_id, input.bank_id, input.notes],
+    ).map_err(|e| e.to_string())?;
+    let return_id = tx.last_insert_rowid();
+
+    let default_wh = crate::inventory::default_warehouse_id_in_tx(&tx)?;
+    let mut cogs_total = 0.0_f64;
+    for l in &input.lines {
+        let line_sub = l.qty * l.unit_price;
+        let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        let unit_cost = item_cost_in_tx(&tx, l.item_id, default_wh);
+        cogs_total += unit_cost * l.qty;
+        tx.execute(
+            "INSERT INTO sales_return_lines_local(return_id,item_id,qty,unit_price,unit_cost,vat_rate,line_total) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+            params![return_id, l.item_id, l.qty, l.unit_price, unit_cost, l.vat_rate, lt],
+        ).map_err(|e| e.to_string())?;
+        // Stock IN: positive qty at cost back into warehouse.
+        crate::inventory::ledger_push_in_tx(
+            &tx, l.item_id, default_wh, l.qty, unit_cost,
+            "sale_return", Some(return_id), &input.return_date,
+        )?;
+    }
+    tx.execute("UPDATE sales_returns_local SET cogs_total=?1 WHERE id=?2", params![cogs_total, return_id]).map_err(|e| e.to_string())?;
+
+    // Reverse revenue JE: DR Revenue(subtotal) + DR VAT-out(vat) / CR (AR|cash|bank)(grand)
+    let rev_acc = account_id_by_code(&tx, "4100").map_err(|e| e.to_string())?;
+    let vat_out_acc = account_id_by_code(&tx, "2200").map_err(|e| e.to_string())?;
+    let cr_account_id = resolve_sales_debit_account(&tx, &input.payment_method, input.cash_box_id, input.bank_id)
+        .map_err(|e| e.to_string())?;
+
+    let mut lines = vec![
+        JournalEntryLine { id: None, account_id: rev_acc, account_code: None, account_name: None, debit: subtotal, credit: 0.0, description: Some(format!("مرتجع مبيعات {return_no}")) },
+    ];
+    if vat_total > 0.0 {
+        lines.push(JournalEntryLine { id: None, account_id: vat_out_acc, account_code: None, account_name: None, debit: vat_total, credit: 0.0, description: None });
+    }
+    lines.push(JournalEntryLine { id: None, account_id: cr_account_id, account_code: None, account_name: None, debit: 0.0, credit: grand_total, description: None });
+
+    let je_id = insert_journal_entry(&tx, &input.return_date, Some(&format!("مرتجع مبيعات {return_no}")), Some("sale_return"), Some(return_id), &lines)
+        .map_err(|e| e.to_string())?;
+    tx.execute("UPDATE sales_returns_local SET je_id=?1 WHERE id=?2", params![je_id, return_id]).map_err(|e| e.to_string())?;
+
+    // Reverse COGS JE: DR Inventory / CR COGS (at cost).
+    if cogs_total > 0.0 {
+        let cogs_acc = account_id_by_code(&tx, "5100").map_err(|e| e.to_string())?;
+        let inv_acc = account_id_by_code(&tx, "1300").map_err(|e| e.to_string())?;
+        let cogs_lines = vec![
+            JournalEntryLine { id: None, account_id: inv_acc, account_code: None, account_name: None, debit: cogs_total, credit: 0.0, description: Some(format!("ارتجاع تكلفة {return_no}")) },
+            JournalEntryLine { id: None, account_id: cogs_acc, account_code: None, account_name: None, debit: 0.0, credit: cogs_total, description: None },
+        ];
+        insert_journal_entry(&tx, &input.return_date, Some(&format!("عكس تكلفة بضاعة {return_no}")), Some("sale_return_cogs"), Some(return_id), &cogs_lines)
+            .map_err(|e| e.to_string())?;
+    }
+
+    // Balance shadows. Credit → reduce customer AR; cash/bank → treasury down (refund).
+    if input.payment_method == "credit" {
+        if let Some(cid) = input.customer_id {
+            tx.execute("UPDATE customers_local SET balance=balance-?1 WHERE id=?2", params![grand_total, cid]).map_err(|e| e.to_string())?;
+        }
+    } else if input.payment_method == "cash" {
+        if let Some(cb) = input.cash_box_id {
+            tx.execute("UPDATE cash_boxes_local SET balance=balance-?1 WHERE id=?2", params![grand_total, cb]).map_err(|e| e.to_string())?;
+        }
+    } else if input.payment_method == "bank" {
+        if let Some(b) = input.bank_id {
+            tx.execute("UPDATE banks_local SET balance=balance-?1 WHERE id=?2", params![grand_total, b]).map_err(|e| e.to_string())?;
+        }
+    }
 
     tx.commit().map_err(|e| e.to_string())?;
     Ok(return_id)

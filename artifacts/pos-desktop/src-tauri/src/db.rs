@@ -415,6 +415,75 @@ pub fn initialize() -> Result<()> {
             created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_treasury_date ON treasury_transfers_local(transfer_date DESC);
+
+        -- ── Sales invoices & returns (back-office, full local accounting) ──
+        -- Symmetric to purchases_local. These are NOT the POS offline_invoices
+        -- (sync queue); they post local JEs + COGS + stock OUT and maintain the
+        -- customer AR shadow balance, exactly mirroring the purchase subsystem.
+        CREATE TABLE IF NOT EXISTS sales_invoices_local (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            invoice_no      TEXT NOT NULL UNIQUE,
+            customer_id     INTEGER REFERENCES customers_local(id),
+            invoice_date    TEXT NOT NULL,
+            subtotal        REAL NOT NULL DEFAULT 0,
+            vat_total       REAL NOT NULL DEFAULT 0,
+            grand_total     REAL NOT NULL DEFAULT 0,
+            cogs_total      REAL NOT NULL DEFAULT 0,
+            payment_method  TEXT NOT NULL CHECK (payment_method IN ('credit','cash','bank')),
+            cash_box_id     INTEGER REFERENCES cash_boxes_local(id),
+            bank_id         INTEGER REFERENCES banks_local(id),
+            je_id           INTEGER REFERENCES journal_entries_local(id),
+            notes           TEXT,
+            currency_code   TEXT NOT NULL DEFAULT 'SAR',
+            exchange_rate   REAL NOT NULL DEFAULT 1,
+            created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales_invoices_local(customer_id);
+        CREATE INDEX IF NOT EXISTS idx_sales_date ON sales_invoices_local(invoice_date DESC);
+
+        CREATE TABLE IF NOT EXISTS sales_invoice_lines_local (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            invoice_id  INTEGER NOT NULL REFERENCES sales_invoices_local(id) ON DELETE CASCADE,
+            item_id     INTEGER NOT NULL REFERENCES items_local(id),
+            qty         REAL NOT NULL,
+            unit_price  REAL NOT NULL,
+            unit_cost   REAL NOT NULL DEFAULT 0,
+            vat_rate    REAL NOT NULL DEFAULT 15,
+            line_total  REAL NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS sales_returns_local (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            return_no       TEXT NOT NULL UNIQUE,
+            customer_id     INTEGER REFERENCES customers_local(id),
+            invoice_id      INTEGER REFERENCES sales_invoices_local(id),
+            return_date     TEXT NOT NULL,
+            subtotal        REAL NOT NULL DEFAULT 0,
+            vat_total       REAL NOT NULL DEFAULT 0,
+            grand_total     REAL NOT NULL DEFAULT 0,
+            cogs_total      REAL NOT NULL DEFAULT 0,
+            payment_method  TEXT NOT NULL DEFAULT 'credit' CHECK (payment_method IN ('credit','cash','bank')),
+            cash_box_id     INTEGER REFERENCES cash_boxes_local(id),
+            bank_id         INTEGER REFERENCES banks_local(id),
+            je_id           INTEGER REFERENCES journal_entries_local(id),
+            notes           TEXT,
+            currency_code   TEXT NOT NULL DEFAULT 'SAR',
+            exchange_rate   REAL NOT NULL DEFAULT 1,
+            created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_sret_customer ON sales_returns_local(customer_id);
+        CREATE INDEX IF NOT EXISTS idx_sret_date ON sales_returns_local(return_date DESC);
+
+        CREATE TABLE IF NOT EXISTS sales_return_lines_local (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            return_id   INTEGER NOT NULL REFERENCES sales_returns_local(id) ON DELETE CASCADE,
+            item_id     INTEGER NOT NULL REFERENCES items_local(id),
+            qty         REAL NOT NULL,
+            unit_price  REAL NOT NULL,
+            unit_cost   REAL NOT NULL DEFAULT 0,
+            vat_rate    REAL NOT NULL DEFAULT 15,
+            line_total  REAL NOT NULL
+        );
         "#,
     )?;
     let _ = conn.execute("ALTER TABLE offline_invoices ADD COLUMN synced_at TEXT", []);
@@ -441,6 +510,14 @@ pub fn initialize() -> Result<()> {
         // customer owes us (AR debit nature). Maintained by opening balance +
         // financial transactions.
         "ALTER TABLE customers_local ADD COLUMN balance REAL NOT NULL DEFAULT 0",
+        // Credit control. credit_limit = max outstanding AR allowed; when
+        // enforce_credit_limit=1 a credit sale that would push the balance past
+        // the limit is rejected. payment_terms_days = grace days before an
+        // unpaid credit invoice counts as overdue (0 = no term check). These
+        // are LOCAL settings — upsert_from_cloud never overwrites them.
+        "ALTER TABLE customers_local ADD COLUMN credit_limit REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE customers_local ADD COLUMN enforce_credit_limit INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE customers_local ADD COLUMN payment_terms_days INTEGER NOT NULL DEFAULT 0",
     ];
     for sql in alters { let _ = conn.execute(sql, []); }
 

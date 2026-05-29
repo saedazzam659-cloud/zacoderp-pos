@@ -20,6 +20,7 @@ export type ScreenKey =
   | "customers" | "items" | "uom" | "scale" | "expiry"
   | "stock_import" | "low_stock"
   | "suppliers" | "purchases" | "purchase_returns"
+  | "sales_invoices" | "sales_returns"
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries"
@@ -42,6 +43,9 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "suppliers", label: "الموردون", icon: "🏭", group: "المشتريات" },
   { key: "purchases", label: "فواتير الشراء", icon: "🧾", group: "المشتريات" },
   { key: "purchase_returns", label: "مرتجع الشراء", icon: "📤", group: "المشتريات" },
+
+  { key: "sales_invoices", label: "فواتير المبيعات", icon: "🧾", group: "المبيعات" },
+  { key: "sales_returns", label: "مرتجع المبيعات", icon: "📥", group: "المبيعات" },
 
   { key: "cash_boxes", label: "الخزن", icon: "💰", group: "الخزينة والبنوك" },
   { key: "banks", label: "البنوك", icon: "🏦", group: "الخزينة والبنوك" },

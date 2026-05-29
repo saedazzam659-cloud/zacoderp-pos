@@ -5,7 +5,7 @@ import {
 } from "../lib/accounting";
 import {
   Page, Card, Table, Th, Td, Empty,
-  input, btnPrimary, btnSecondary, btnLink, fmtCurrency, SearchCombobox,
+  btnPrimary, btnLink, fmtCurrency,
 } from "./_adminUi";
 
 const emptyInput: SupplierInput = {
@@ -59,12 +59,8 @@ export default function SuppliersAdmin() {
     setBusy(true); setErr(null);
     try {
       if (edit.mode === "new") {
-        await createSupplier({
-          ...f,
-          openingDate: new Date().toISOString().slice(0, 10),
-        });
+        await createSupplier({ ...f, openingDate: new Date().toISOString().slice(0, 10) });
       } else {
-        // currencyCode only; opening balance is create-only.
         await updateSupplier(edit.id, {
           code: f.code, nameAr: f.nameAr, nameEn: f.nameEn,
           phone: f.phone, vatNumber: f.vatNumber, notes: f.notes,
@@ -83,9 +79,7 @@ export default function SuppliersAdmin() {
     catch (e: any) { alert(e?.message ?? "فشل الحذف"); }
   }
 
-  const currencyOpts = currencies.length > 0
-    ? currencies.map(c => ({ value: c.code, label: `${c.code} — ${c.nameAr}`, hint: c.symbol ?? undefined }))
-    : [{ value: "SAR", label: "SAR — ريال سعودي" }];
+  const currencyOpts = currencies.length > 0 ? currencies.map(c => c.code) : ["SAR"];
 
   return (
     <Page
@@ -98,38 +92,44 @@ export default function SuppliersAdmin() {
         </button>
       }
     >
+      {edit && (
+        <SupplierForm
+          mode={edit.mode}
+          data={edit.data}
+          setField={setField}
+          onSave={save}
+          onCancel={cancel}
+          busy={busy}
+          err={err}
+          currencyOpts={currencyOpts}
+        />
+      )}
+
       <Card>
-        {rows.length === 0 && !edit ? <Empty text="لا يوجد موردون بعد" /> : (
+        {rows.length === 0 ? <Empty text="لا يوجد موردون بعد" /> : (
           <Table>
             <thead><tr>
               <Th>الكود</Th><Th>الاسم</Th><Th>هاتف</Th><Th>الرقم الضريبي</Th>
               <Th style={{ width: 90 }}>العملة</Th>
               <Th style={{ textAlign: "left" }}>الرصيد</Th><Th style={{ width: 90 }}>النوع</Th>
-              <Th style={{ width: 200 }}>إجراءات</Th>
+              <Th style={{ width: 160 }}>إجراءات</Th>
             </tr></thead>
             <tbody>
-              {edit?.mode === "new" && (
-                <EditRow data={edit.data} setField={setField} onSave={save} onCancel={cancel} busy={busy} err={err} isNew currencyOpts={currencyOpts} />
-              )}
               {rows.map((s) => (
-                edit?.mode === "edit" && edit.id === s.id ? (
-                  <EditRow key={s.id} data={edit.data} setField={setField} onSave={save} onCancel={cancel} busy={busy} err={err} balance={s.balance} currencyOpts={currencyOpts} />
-                ) : (
-                  <tr key={s.id} style={{ opacity: edit ? 0.6 : 1 }}>
-                    <Td mono>{s.code ?? "—"}</Td>
-                    <Td>{s.nameAr}{s.nameEn && <span style={{ color: "#94a3b8", marginInlineStart: 8 }}>{s.nameEn}</span>}</Td>
-                    <Td>{s.phone ?? "—"}</Td>
-                    <Td mono>{s.vatNumber ?? "—"}</Td>
-                    <Td><span style={{ background: "#eff6ff", color: "#1e40af", padding: "2px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600 }}>{s.currencyCode || "SAR"}</span></Td>
-                    <Td num style={{ color: balanceNature(s.balance).color, fontWeight: 600 }}>{fmtCurrency(Math.abs(s.balance), "SAR")}</Td>
-                    <Td style={{ color: balanceNature(s.balance).color, fontWeight: 600 }}>{balanceNature(s.balance).label}</Td>
-                    <Td>
-                      <button onClick={() => startEdit(s)} disabled={!!edit} style={btnLink}>تعديل</button>
-                      {" · "}
-                      <button onClick={() => remove(s)} disabled={!!edit} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
-                    </Td>
-                  </tr>
-                )
+                <tr key={s.id} style={{ opacity: edit ? 0.5 : 1 }}>
+                  <Td mono>{s.code ?? "—"}</Td>
+                  <Td>{s.nameAr}{s.nameEn && <span style={{ color: "#94a3b8", marginInlineStart: 8 }}>{s.nameEn}</span>}</Td>
+                  <Td>{s.phone ?? "—"}</Td>
+                  <Td mono>{s.vatNumber ?? "—"}</Td>
+                  <Td><span style={{ background: "#eff6ff", color: "#1e40af", padding: "2px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600 }}>{s.currencyCode || "SAR"}</span></Td>
+                  <Td num style={{ color: balanceNature(s.balance).color, fontWeight: 600 }}>{fmtCurrency(Math.abs(s.balance), "SAR")}</Td>
+                  <Td style={{ color: balanceNature(s.balance).color, fontWeight: 600 }}>{balanceNature(s.balance).label}</Td>
+                  <Td>
+                    <button onClick={() => startEdit(s)} disabled={!!edit} style={btnLink}>تعديل</button>
+                    {" · "}
+                    <button onClick={() => remove(s)} disabled={!!edit} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
+                  </Td>
+                </tr>
               ))}
             </tbody>
           </Table>
@@ -139,67 +139,97 @@ export default function SuppliersAdmin() {
   );
 }
 
-function EditRow({ data, setField, onSave, onCancel, busy, err, isNew, balance, currencyOpts }: {
+function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, currencyOpts }: {
+  mode: "new" | "edit";
   data: SupplierInput;
   setField: <K extends keyof SupplierInput>(k: K, v: SupplierInput[K]) => void;
   onSave: () => void; onCancel: () => void;
-  busy: boolean; err: string | null; isNew?: boolean; balance?: number;
-  currencyOpts: { value: string | number; label: string; hint?: string }[];
+  busy: boolean; err: string | null;
+  currencyOpts: string[];
 }) {
-  const ci: React.CSSProperties = { ...input, padding: "6px 8px", fontSize: 13 };
   return (
-    <>
-      <tr style={{ background: isNew ? "#f0fdf4" : "#eff6ff" }}>
-        <Td><input value={data.code ?? ""} onChange={(e) => setField("code", e.target.value || null)} style={ci} placeholder="الكود" /></Td>
-        <Td>
-          <input autoFocus value={data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={ci} placeholder="الاسم بالعربي *" />
-          <input value={data.nameEn ?? ""} onChange={(e) => setField("nameEn", e.target.value || null)} style={{ ...ci, marginTop: 4 }} placeholder="الاسم بالإنجليزي" />
-        </Td>
-        <Td><input value={data.phone ?? ""} onChange={(e) => setField("phone", e.target.value || null)} style={ci} placeholder="هاتف" /></Td>
-        <Td><input value={data.vatNumber ?? ""} onChange={(e) => setField("vatNumber", e.target.value || null)} style={ci} placeholder="الرقم الضريبي" /></Td>
-        <Td>
-          <SearchCombobox value={data.currencyCode ?? "SAR"} onChange={(v) => setField("currencyCode", String(v))} options={currencyOpts} style={ci} />
-        </Td>
-        <Td num colSpan={2}>{balance !== undefined ? fmtCurrency(Math.abs(balance), "SAR") : "—"}</Td>
-        <Td>
-          <button onClick={onSave} disabled={busy} style={{ ...btnPrimary, padding: "4px 10px", fontSize: 12 }}>{busy ? "..." : "حفظ"}</button>
-          {" "}
-          <button onClick={onCancel} disabled={busy} style={{ ...btnSecondary, padding: "4px 10px", fontSize: 12 }}>إلغاء</button>
-        </Td>
-      </tr>
-      {isNew && (
-        <tr style={{ background: "#f0fdf4" }}>
-          <Td colSpan={8}>
-            <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13, color: "#475569", fontWeight: 600 }}>رصيد افتتاحي:</span>
-              <input
-                type="number" step="0.01" min="0"
-                value={data.openingBalance ?? 0}
+    <div style={F.formCard}>
+      <div style={F.formTitle}>{mode === "new" ? "مورد جديد" : "تعديل بيانات المورد"}</div>
+
+      <div style={F.section}>المعلومات الأساسية</div>
+      <div style={F.grid}>
+        <Field label="الكود">
+          <input value={data.code ?? ""} onChange={(e) => setField("code", e.target.value || null)} style={F.bigInput} placeholder="كود المورد" />
+        </Field>
+        <Field label="الاسم بالعربي *">
+          <input autoFocus value={data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={F.bigInput} placeholder="اسم المورد" />
+        </Field>
+        <Field label="الاسم بالإنجليزي">
+          <input value={data.nameEn ?? ""} onChange={(e) => setField("nameEn", e.target.value || null)} style={F.bigInput} placeholder="Supplier name" />
+        </Field>
+        <Field label="رقم الهاتف">
+          <input value={data.phone ?? ""} onChange={(e) => setField("phone", e.target.value || null)} style={F.bigInput} placeholder="هاتف" />
+        </Field>
+        <Field label="الرقم الضريبي">
+          <input value={data.vatNumber ?? ""} onChange={(e) => setField("vatNumber", e.target.value || null)} style={{ ...F.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="الرقم الضريبي" />
+        </Field>
+        <Field label="العملة">
+          <select value={data.currencyCode ?? "SAR"} onChange={(e) => setField("currencyCode", e.target.value)} style={F.bigInput}>
+            {currencyOpts.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      <div style={F.section}>ملاحظات</div>
+      <textarea value={data.notes ?? ""} onChange={(e) => setField("notes", e.target.value || null)}
+        style={{ ...F.bigInput, minHeight: 70, resize: "vertical" }} placeholder="ملاحظات إضافية" />
+
+      {mode === "new" && (
+        <>
+          <div style={F.section}>الرصيد الافتتاحي (عند الإضافة فقط)</div>
+          <div style={F.grid}>
+            <Field label="المبلغ">
+              <input type="number" step="0.01" min="0" value={data.openingBalance ?? 0}
                 onChange={(e) => setField("openingBalance", Number(e.target.value) || 0)}
-                style={{ ...ci, width: 140 }} placeholder="0.00"
-              />
-              <select
-                value={data.openingNature ?? "credit"}
+                style={F.bigInput} placeholder="0.00" />
+            </Field>
+            <Field label="الطبيعة">
+              <select value={data.openingNature ?? "credit"}
                 onChange={(e) => setField("openingNature", e.target.value as "debit" | "credit")}
-                style={{ ...ci, width: 130 }}
-              >
+                style={F.bigInput}>
                 <option value="credit">دائن (له علينا)</option>
                 <option value="debit">مدين (لنا عليه)</option>
               </select>
-              <span style={{ fontSize: 12, color: "#94a3b8" }}>يُرحَّل قيد افتتاحي مقابل حقوق الملكية عند الحفظ.</span>
-            </div>
-          </Td>
-        </tr>
+            </Field>
+          </div>
+          <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 8 }}>يُرحَّل قيد افتتاحي مقابل حقوق الملكية عند الحفظ.</div>
+        </>
       )}
-      <tr style={{ background: isNew ? "#f0fdf4" : "#eff6ff" }}>
-        <Td colSpan={8}>
-          <textarea value={data.notes ?? ""} onChange={(e) => setField("notes", e.target.value || null)}
-            style={{ ...ci, minHeight: 40, width: "100%" }} placeholder="ملاحظات" />
-        </Td>
-      </tr>
-      {err && (
-        <tr><Td colSpan={8} style={{ background: "#fef2f2", color: "#991b1b", fontSize: 13 }}>⚠️ {err}</Td></tr>
-      )}
-    </>
+
+      {err && <div style={F.formErr}>⚠️ {err}</div>}
+
+      <div style={F.formActions}>
+        <button onClick={onSave} disabled={busy} style={F.btnSave}>{busy ? "جاري الحفظ..." : "حفظ"}</button>
+        <button onClick={onCancel} disabled={busy} style={F.btnCancel}>إلغاء</button>
+      </div>
+    </div>
   );
 }
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={F.field}>
+      <label style={F.label}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+const F = {
+  formCard: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 24, marginBottom: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" } as const,
+  formTitle: { fontSize: 18, fontWeight: 700, color: "#0f172a", marginBottom: 8 } as const,
+  section: { fontSize: 13, fontWeight: 700, color: "#2563eb", marginTop: 18, marginBottom: 10, paddingBottom: 6, borderBottom: "1px solid #eff6ff" } as const,
+  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 } as const,
+  field: { display: "flex", flexDirection: "column" as const, gap: 6 } as const,
+  label: { fontSize: 13, color: "#475569", fontWeight: 600 } as const,
+  bigInput: { width: "100%", padding: "13px 14px", fontSize: 16, border: "1px solid #cbd5e1", borderRadius: 8, fontFamily: "inherit", boxSizing: "border-box" as const, background: "#fff" } as const,
+  formErr: { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: "12px 14px", borderRadius: 8, marginTop: 16, fontSize: 14 } as const,
+  formActions: { display: "flex", gap: 12, marginTop: 22 } as const,
+  btnSave: { padding: "12px 28px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 15, fontWeight: 700 } as const,
+  btnCancel: { padding: "12px 28px", background: "#f1f5f9", color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 15, fontWeight: 600 } as const,
+};

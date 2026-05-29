@@ -24,6 +24,9 @@ pub struct LocalCustomer {
     pub updated_at: Option<String>,
     pub currency_code: String,
     pub balance: f64,
+    pub credit_limit: f64,
+    pub enforce_credit_limit: bool,
+    pub payment_terms_days: i64,
 }
 
 const MAX_ROWS: i64 = 500;
@@ -39,6 +42,9 @@ fn row_to_customer(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalCustomer> {
         updated_at: row.get(6)?,
         currency_code: row.get::<_, Option<String>>(7)?.unwrap_or_else(|| "SAR".to_string()),
         balance: row.get(8)?,
+        credit_limit: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),
+        enforce_credit_limit: row.get::<_, Option<i64>>(10)?.unwrap_or(0) != 0,
+        payment_terms_days: row.get::<_, Option<i64>>(11)?.unwrap_or(0),
     })
 }
 
@@ -49,7 +55,8 @@ pub fn list_customers(search: Option<String>) -> Result<Vec<LocalCustomer>, Stri
 
 fn list(search: Option<&str>) -> Result<Vec<LocalCustomer>> {
     let conn = db::open()?;
-    let sql = "SELECT id, cloud_id, name_ar, name_en, phone, vat_number, updated_at, currency_code, balance
+    let sql = "SELECT id, cloud_id, name_ar, name_en, phone, vat_number, updated_at, currency_code, balance,
+                      credit_limit, enforce_credit_limit, payment_terms_days
                FROM customers_local
                WHERE (?1 IS NULL OR name_ar LIKE ?2 OR phone LIKE ?2 OR vat_number LIKE ?2)
                ORDER BY name_ar
@@ -116,8 +123,12 @@ pub fn create_customer_local(
     opening_balance: Option<f64>,
     opening_nature: Option<String>,
     opening_date: Option<String>,
+    credit_limit: Option<f64>,
+    enforce_credit_limit: Option<bool>,
+    payment_terms_days: Option<i64>,
 ) -> Result<LocalCustomer, String> {
-    create(name_ar, name_en, phone, vat_number, currency_code, opening_balance, opening_nature, opening_date)
+    create(name_ar, name_en, phone, vat_number, currency_code, opening_balance, opening_nature, opening_date,
+           credit_limit, enforce_credit_limit, payment_terms_days)
         .map_err(|e| e.to_string())
 }
 
@@ -131,14 +142,21 @@ fn create(
     opening_balance: Option<f64>,
     opening_nature: Option<String>,
     opening_date: Option<String>,
+    credit_limit: Option<f64>,
+    enforce_credit_limit: Option<bool>,
+    payment_terms_days: Option<i64>,
 ) -> Result<LocalCustomer> {
     let mut conn = db::open()?;
     let cur = currency_code.unwrap_or_else(|| "SAR".to_string());
+    let cl = credit_limit.unwrap_or(0.0);
+    let enforce = enforce_credit_limit.unwrap_or(false);
+    let terms = payment_terms_days.unwrap_or(0);
     let tx = conn.transaction()?;
     tx.execute(
-        "INSERT INTO customers_local (cloud_id, name_ar, name_en, phone, vat_number, currency_code, updated_at)
-         VALUES (NULL, ?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)",
-        rusqlite::params![name_ar, name_en, phone, vat_number, cur],
+        "INSERT INTO customers_local (cloud_id, name_ar, name_en, phone, vat_number, currency_code,
+                                      credit_limit, enforce_credit_limit, payment_terms_days, updated_at)
+         VALUES (NULL, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)",
+        rusqlite::params![name_ar, name_en, phone, vat_number, cur, cl, enforce as i64, terms],
     )?;
     let id = tx.last_insert_rowid();
     let ob = opening_balance.unwrap_or(0.0).abs();
@@ -162,5 +180,68 @@ fn create(
         updated_at: None,
         currency_code: cur,
         balance,
+        credit_limit: cl,
+        enforce_credit_limit: enforce,
+        payment_terms_days: terms,
     })
+}
+
+/// Persist editable scalar fields (incl. credit control) to SQLite. Unlike the
+/// LS-overlay path used by the browser fallback, this writes the canonical row
+/// so the Rust-side credit-limit enforcement on sales reads the true values.
+/// Only non-None fields are updated (COALESCE keeps the existing value).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn update_customer_local(
+    id: i64,
+    name_ar: Option<String>,
+    name_en: Option<String>,
+    phone: Option<String>,
+    vat_number: Option<String>,
+    currency_code: Option<String>,
+    credit_limit: Option<f64>,
+    enforce_credit_limit: Option<bool>,
+    payment_terms_days: Option<i64>,
+) -> Result<LocalCustomer, String> {
+    update(id, name_ar, name_en, phone, vat_number, currency_code,
+           credit_limit, enforce_credit_limit, payment_terms_days)
+        .map_err(|e| e.to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update(
+    id: i64,
+    name_ar: Option<String>,
+    name_en: Option<String>,
+    phone: Option<String>,
+    vat_number: Option<String>,
+    currency_code: Option<String>,
+    credit_limit: Option<f64>,
+    enforce_credit_limit: Option<bool>,
+    payment_terms_days: Option<i64>,
+) -> Result<LocalCustomer> {
+    let conn = db::open()?;
+    let enforce_int: Option<i64> = enforce_credit_limit.map(|b| b as i64);
+    conn.execute(
+        "UPDATE customers_local SET
+           name_ar              = COALESCE(?2, name_ar),
+           name_en              = COALESCE(?3, name_en),
+           phone                = COALESCE(?4, phone),
+           vat_number           = COALESCE(?5, vat_number),
+           currency_code        = COALESCE(?6, currency_code),
+           credit_limit         = COALESCE(?7, credit_limit),
+           enforce_credit_limit = COALESCE(?8, enforce_credit_limit),
+           payment_terms_days   = COALESCE(?9, payment_terms_days),
+           updated_at           = CURRENT_TIMESTAMP
+         WHERE id = ?1",
+        rusqlite::params![id, name_ar, name_en, phone, vat_number, currency_code,
+                          credit_limit, enforce_int, payment_terms_days],
+    )?;
+    conn.query_row(
+        "SELECT id, cloud_id, name_ar, name_en, phone, vat_number, updated_at, currency_code, balance,
+                credit_limit, enforce_credit_limit, payment_terms_days
+         FROM customers_local WHERE id = ?1",
+        rusqlite::params![id],
+        row_to_customer,
+    ).map_err(Into::into)
 }

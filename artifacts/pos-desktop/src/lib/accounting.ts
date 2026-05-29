@@ -101,6 +101,35 @@ export type PurchaseReturnInput = {
   notes: string | null; lines: PurchaseLine[];
 };
 
+export type SalesLine = {
+  id?: number; itemId: number; itemName?: string;
+  qty: number; unitPrice: number; vatRate: number; lineTotal: number;
+};
+export type SalesInvoice = {
+  id: number; invoiceNo: string; customerId: number | null; customerName: string | null;
+  invoiceDate: string; subtotal: number; vatTotal: number; grandTotal: number; cogsTotal: number;
+  paymentMethod: PaymentMethod; cashBoxId: number | null; bankId: number | null;
+  jeId: number | null; notes: string | null; lines: SalesLine[];
+};
+export type SalesInvoiceInput = {
+  customerId: number | null; invoiceDate: string; paymentMethod: PaymentMethod;
+  cashBoxId: number | null; bankId: number | null; notes: string | null;
+  lines: SalesLine[];
+};
+
+export type SalesReturn = {
+  id: number; returnNo: string; customerId: number | null; customerName: string | null;
+  invoiceId: number | null; returnDate: string;
+  subtotal: number; vatTotal: number; grandTotal: number; cogsTotal: number;
+  paymentMethod: PaymentMethod; cashBoxId: number | null; bankId: number | null;
+  jeId: number | null; notes: string | null; lines: SalesLine[];
+};
+export type SalesReturnInput = {
+  customerId: number | null; invoiceId: number | null; returnDate: string;
+  paymentMethod: PaymentMethod; cashBoxId: number | null; bankId: number | null;
+  notes: string | null; lines: SalesLine[];
+};
+
 export type TxType = "receipt" | "payment";
 export type PartyType = "customer" | "supplier" | "none";
 export type FinancialTx = {
@@ -270,6 +299,34 @@ export async function getPurchaseReturn(id: number): Promise<PurchaseReturn> {
 export async function createPurchaseReturn(input: PurchaseReturnInput): Promise<number> {
   if (!hasTauri()) notImpl();
   return await invoke<number>("purchase_return_create", { input });
+}
+
+// ─── Sales invoices ──────────────────────────────────────────────────
+export async function listSalesInvoices(limit = 200): Promise<SalesInvoice[]> {
+  if (!hasTauri()) return [];
+  return await invoke<SalesInvoice[]>("sales_invoices_list", { limit });
+}
+export async function getSalesInvoice(id: number): Promise<SalesInvoice> {
+  if (!hasTauri()) notImpl();
+  return await invoke<SalesInvoice>("sales_invoice_get", { id });
+}
+export async function createSalesInvoice(input: SalesInvoiceInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("sales_invoice_create", { input });
+}
+
+// ─── Sales returns ───────────────────────────────────────────────────
+export async function listSalesReturns(limit = 200): Promise<SalesReturn[]> {
+  if (!hasTauri()) return [];
+  return await invoke<SalesReturn[]>("sales_returns_list", { limit });
+}
+export async function getSalesReturn(id: number): Promise<SalesReturn> {
+  if (!hasTauri()) notImpl();
+  return await invoke<SalesReturn>("sales_return_get", { id });
+}
+export async function createSalesReturn(input: SalesReturnInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("sales_return_create", { input });
 }
 
 // ─── Financial transactions ──────────────────────────────────────────

@@ -18,6 +18,12 @@ export interface LocalCustomer {
   currencyCode?: string;
   /** Shadow balance in base currency. Positive = customer owes us (مدين). */
   balance?: number;
+  /** Credit control — max outstanding AR allowed (0 = unlimited). */
+  creditLimit?: number;
+  /** When true, a credit sale that exceeds creditLimit is rejected. */
+  enforceCreditLimit?: boolean;
+  /** Grace days before an unpaid credit invoice is overdue (0 = no check). */
+  paymentTermsDays?: number;
   createdAt?: string;
   updatedAt?: string;
   /** Soft-delete tombstone (overlay). When true, listCustomers filters this row out. */
@@ -34,6 +40,9 @@ interface RustCustomer {
   updated_at: string | null;
   currency_code?: string;
   balance?: number;
+  credit_limit?: number;
+  enforce_credit_limit?: boolean;
+  payment_terms_days?: number;
 }
 
 function fromRust(r: RustCustomer): LocalCustomer {
@@ -46,6 +55,9 @@ function fromRust(r: RustCustomer): LocalCustomer {
     vatNumber: r.vat_number,
     currencyCode: r.currency_code ?? "SAR",
     balance: r.balance ?? 0,
+    creditLimit: r.credit_limit ?? 0,
+    enforceCreditLimit: r.enforce_credit_limit ?? false,
+    paymentTermsDays: r.payment_terms_days ?? 0,
     updatedAt: r.updated_at ?? undefined,
   };
 }
@@ -167,6 +179,10 @@ export interface CreateCustomerInput {
   /** "debit" (مدين — owes us) or "credit" (دائن — we owe them). */
   openingNature?: "debit" | "credit";
   openingDate?: string;
+  /** Credit control. */
+  creditLimit?: number;
+  enforceCreditLimit?: boolean;
+  paymentTermsDays?: number;
 }
 
 export async function createCustomer(input: CreateCustomerInput): Promise<LocalCustomer> {
@@ -183,6 +199,9 @@ export async function createCustomer(input: CreateCustomerInput): Promise<LocalC
         openingBalance: input.openingBalance ?? null,
         openingNature: input.openingNature ?? null,
         openingDate: input.openingDate ?? null,
+        creditLimit: input.creditLimit ?? null,
+        enforceCreditLimit: input.enforceCreditLimit ?? null,
+        paymentTermsDays: input.paymentTermsDays ?? null,
       });
       created = fromRust(r);
     } catch {
@@ -219,6 +238,9 @@ function createInLocalStorage(input: CreateCustomerInput, now: string): LocalCus
     vatNumber: input.vatNumber ?? null,
     currencyCode: input.currencyCode ?? "SAR",
     balance: 0,
+    creditLimit: input.creditLimit ?? 0,
+    enforceCreditLimit: input.enforceCreditLimit ?? false,
+    paymentTermsDays: input.paymentTermsDays ?? 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -228,6 +250,24 @@ function createInLocalStorage(input: CreateCustomerInput, now: string): LocalCus
 }
 
 export async function updateCustomer(id: number, patch: CreateCustomerInput): Promise<LocalCustomer | null> {
+  // Persist to SQLite first so the Rust-side credit-limit enforcement on sales
+  // reads the true values (the LS overlay below is invisible to Rust). Browser
+  // mode and any bridge failure fall through to the LS-overlay path.
+  if (shouldUseBridge()) {
+    try {
+      await tauriInvoke<RustCustomer>("update_customer_local", {
+        id,
+        nameAr: patch.nameAr ?? null,
+        nameEn: patch.nameEn ?? null,
+        phone: patch.phone ?? null,
+        vatNumber: patch.vatNumber ?? null,
+        currencyCode: patch.currencyCode ?? null,
+        creditLimit: patch.creditLimit ?? null,
+        enforceCreditLimit: patch.enforceCreditLimit ?? null,
+        paymentTermsDays: patch.paymentTermsDays ?? null,
+      });
+    } catch { /* fall through to LS overlay */ }
+  }
   const all = lsRead<LocalCustomer[]>(LS_KEYS.customers, []);
   const idx = all.findIndex((c) => c.id === id);
   let updated: LocalCustomer;

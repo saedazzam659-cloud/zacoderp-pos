@@ -34,6 +34,8 @@ import TreasuryTransfersAdmin from "./TreasuryTransfersAdmin";
 import ChartOfAccounts from "./ChartOfAccounts";
 import JournalEntries from "./JournalEntries";
 import PurchasesAdmin from "./PurchasesAdmin";
+import SalesInvoicesAdmin from "./SalesInvoicesAdmin";
+import SalesReturnsAdmin from "./SalesReturnsAdmin";
 import WarehousesAdmin from "./WarehousesAdmin";
 import StocktakesAdmin from "./StocktakesAdmin";
 import StockAdjustmentsAdmin from "./StockAdjustmentsAdmin";
@@ -67,6 +69,7 @@ type View =
   | "expiry" | "scale" | "stock_import" | "low_stock" | "network"
   // Task #207 — accounting & operations screens (standalone).
   | "suppliers" | "purchases" | "purchase_returns"
+  | "sales_invoices" | "sales_returns"
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "user_permissions"
@@ -155,6 +158,12 @@ const NAV_GROUPS: NavGroupDef[] = [
     icon: "🛒",
     label: "المشتريات والموردون",
     members: ["suppliers", "purchases", "purchase_returns"],
+  },
+  {
+    key: "selling",
+    icon: "🧾",
+    label: "المبيعات والعملاء",
+    members: ["sales_invoices", "sales_returns"],
   },
   {
     key: "accounts",
@@ -431,6 +440,8 @@ export default function PosShell({
     { id: "uom",              icon: "📐", label: "وحدات القياس", perm: "uom" },
     { id: "purchases",        icon: "🧾", label: "فواتير الشراء", perm: "purchases" },
     { id: "purchase_returns", icon: "🔁", label: "مرتجع الشراء", perm: "purchase_returns" },
+    { id: "sales_invoices",   icon: "🧾", label: "فواتير المبيعات", perm: "sales_invoices" },
+    { id: "sales_returns",    icon: "🔁", label: "مرتجع المبيعات", perm: "sales_returns" },
     { id: "cash_boxes",       icon: "💰", label: "الخزن", perm: "cash_boxes" },
     { id: "banks",            icon: "🏦", label: "البنوك", perm: "banks" },
     { id: "financial_tx",     icon: "💸", label: "المعاملات المالية", perm: "financial_tx" },
@@ -749,6 +760,12 @@ export default function PosShell({
           {standalone && view === "purchase_returns" && (isAdmin || can("purchase_returns")) && (
             <div style={S.pagePad}><PurchaseReturnsAdmin /></div>
           )}
+          {standalone && view === "sales_invoices" && (isAdmin || can("sales_invoices")) && (
+            <div style={S.pagePad}><SalesInvoicesAdmin /></div>
+          )}
+          {standalone && view === "sales_returns" && (isAdmin || can("sales_returns")) && (
+            <div style={S.pagePad}><SalesReturnsAdmin /></div>
+          )}
           {standalone && view === "cash_boxes" && (isAdmin || can("cash_boxes")) && (
             <div style={S.pagePad}><CashBoxesAdmin /></div>
           )}
@@ -821,6 +838,8 @@ function labelFor(v: View): string {
     suppliers: "الموردون",
     purchases: "فواتير الشراء",
     purchase_returns: "مرتجع الشراء",
+    sales_invoices: "فواتير المبيعات",
+    sales_returns: "مرتجع المبيعات",
     cash_boxes: "الخزن",
     banks: "البنوك",
     financial_tx: "المعاملات المالية",
