@@ -131,6 +131,53 @@ type Props = {
   standaloneSession?: LocalSession;
 };
 
+// ── Sidebar groups (standalone mode) ────────────────────────────────────
+// The standalone (Windows) nav has ~30 screens. Per user request they are
+// organised into collapsible top-level groups that behave as an ACCORDION:
+// opening one group closes any other (single `openGroup` state). Screens not
+// listed in any group (sales, returns, parked, daily, customers, network,
+// expiry, updates …) stay as flat top-level entries. A group is rendered only
+// when at least one of its members is actually present in the (perm-filtered)
+// nav list, so it disappears entirely for users without access.
+type NavGroupDef = { key: string; icon: string; label: string; members: View[] };
+const NAV_GROUPS: NavGroupDef[] = [
+  {
+    key: "inventory",
+    icon: "🏬",
+    label: "المخازن",
+    members: [
+      "items", "uom", "warehouses", "stock_transfers",
+      "stocktakes", "stock_adjustments", "stock_movements", "low_stock",
+    ],
+  },
+  {
+    key: "purchasing",
+    icon: "🛒",
+    label: "المشتريات والموردون",
+    members: ["suppliers", "purchases", "purchase_returns"],
+  },
+  {
+    key: "accounts",
+    icon: "🧮",
+    label: "الحسابات العامة",
+    members: [
+      "chart_of_accounts", "journal_entries", "banks", "cash_boxes",
+      "financial_tx", "treasury_transfers", "currencies", "exchange_rates",
+      "dashboard",
+    ],
+  },
+  {
+    key: "users",
+    icon: "👤",
+    label: "المستخدمون والصلاحيات",
+    members: ["users", "scale", "stock_import", "user_permissions"],
+  },
+];
+// Reverse lookup: view id → group key (for auto-expanding the active group).
+const VIEW_TO_GROUP: Partial<Record<View, string>> = Object.fromEntries(
+  NAV_GROUPS.flatMap((g) => g.members.map((m) => [m, g.key])),
+) as Partial<Record<View, string>>;
+
 export default function PosShell({
   baseUrl, deviceToken, userToken, cashierContext,
   companyName, deviceId, expiresAt, onSignOut, onLogoutCashier,
@@ -176,6 +223,16 @@ export default function PosShell({
   const [pushSummary, setPushSummary] = useState<PushSummary | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   const [updateDismissed, setUpdateDismissed] = useState(false);
+  // Sidebar accordion (standalone): only ONE group open at a time. `null` =
+  // all collapsed. Auto-opens the group that owns the active view so the
+  // current screen is always revealed in the sidebar.
+  const [openGroup, setOpenGroup] = useState<string | null>(
+    () => VIEW_TO_GROUP[view] ?? null,
+  );
+  useEffect(() => {
+    const g = VIEW_TO_GROUP[view];
+    if (g) setOpenGroup(g);
+  }, [view]);
   const { latest: latestRelease, isNewer: updateAvailable } = useLatestVersion(baseUrl);
   // Vertical preset (Task #200) — drives pharmacy-only nav (تقرير الصلاحية).
   // Read once on mount; switching verticals requires a re-launch.
@@ -456,28 +513,91 @@ export default function PosShell({
         </button>
 
         <div style={S.navList}>
-          {navItems.map((it) => {
-            const active = view === it.id;
-            const baseStyle = active ? S.navItemActive : S.navItem;
+          {(() => {
+            const renderLeaf = (
+              it: { id: View; icon: string; label: string; badge?: number },
+              indented = false,
+            ) => {
+              const active = view === it.id;
+              const baseStyle = active ? S.navItemActive : S.navItem;
+              return (
+                <button
+                  key={it.id}
+                  onClick={() => setView(it.id)}
+                  style={navCollapsed
+                    ? { ...baseStyle, justifyContent: "center", padding: "12px 0", gap: 0, position: "relative" as const }
+                    : indented
+                      ? { ...baseStyle, paddingInlineStart: 34, fontSize: 13 }
+                      : baseStyle}
+                  title={navCollapsed ? `${it.label}${it.badge ? ` (${it.badge})` : ""}` : undefined}
+                >
+                  <span style={navCollapsed ? S.navIconLarge : S.navIcon}>{it.icon}</span>
+                  {!navCollapsed && <span style={S.navLabel}>{it.label}</span>}
+                  {it.badge !== undefined && (
+                    navCollapsed
+                      ? <span style={S.navBadgeDot}>{it.badge > 9 ? "9+" : it.badge}</span>
+                      : <span style={S.navBadge}>{it.badge}</span>
+                  )}
+                </button>
+              );
+            };
+
+            // Flat rendering — collapsed icon rail OR cloud mode (the rich
+            // accordion grouping is a standalone-only feature).
+            if (navCollapsed || !standalone) {
+              return navItems.map((it) => renderLeaf(it));
+            }
+
+            // ── Accordion grouping (standalone, expanded rail) ──
+            const byId = new Map(navItems.map((it) => [it.id, it]));
+            const grouped = new Set<View>(NAV_GROUPS.flatMap((g) => g.members));
+            const topLeaves = navItems.filter((it) => !grouped.has(it.id));
+            // Primary daily-operations leaves sit ABOVE the groups; the rest
+            // (network, expiry, updates …) sit below them.
+            const PRIMARY: View[] = ["sales", "returns", "parked", "pending", "daily", "customers"];
+            const primaryLeaves = topLeaves.filter((it) => PRIMARY.includes(it.id));
+            const trailingLeaves = topLeaves.filter((it) => !PRIMARY.includes(it.id));
+
             return (
-              <button
-                key={it.id}
-                onClick={() => setView(it.id)}
-                style={navCollapsed
-                  ? { ...baseStyle, justifyContent: "center", padding: "12px 0", gap: 0, position: "relative" as const }
-                  : baseStyle}
-                title={navCollapsed ? `${it.label}${it.badge ? ` (${it.badge})` : ""}` : undefined}
-              >
-                <span style={navCollapsed ? S.navIconLarge : S.navIcon}>{it.icon}</span>
-                {!navCollapsed && <span style={S.navLabel}>{it.label}</span>}
-                {it.badge !== undefined && (
-                  navCollapsed
-                    ? <span style={S.navBadgeDot}>{it.badge > 9 ? "9+" : it.badge}</span>
-                    : <span style={S.navBadge}>{it.badge}</span>
-                )}
-              </button>
+              <>
+                {primaryLeaves.map((it) => renderLeaf(it))}
+                {NAV_GROUPS.map((g) => {
+                  const children = g.members
+                    .map((m) => byId.get(m))
+                    .filter((x): x is NonNullable<typeof x> => x != null);
+                  if (children.length === 0) return null;
+                  const isOpen = openGroup === g.key;
+                  const hasActive = children.some((c) => c.id === view);
+                  const badgeTotal = children.reduce((s, c) => s + (c.badge ?? 0), 0);
+                  return (
+                    <div key={g.key}>
+                      <button
+                        onClick={() => setOpenGroup((prev) => (prev === g.key ? null : g.key))}
+                        style={hasActive ? S.navGroupHeaderActive : S.navGroupHeader}
+                        aria-expanded={isOpen}
+                        title={g.label}
+                      >
+                        <span style={S.navIcon}>{g.icon}</span>
+                        <span style={S.navLabel}>{g.label}</span>
+                        {!isOpen && badgeTotal > 0 && <span style={S.navBadge}>{badgeTotal}</span>}
+                        <span style={{ ...S.navChevron, transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}>▸</span>
+                      </button>
+                      <div
+                        style={{
+                          ...S.navGroupBody,
+                          maxHeight: isOpen ? children.length * 48 + 8 : 0,
+                          opacity: isOpen ? 1 : 0,
+                        }}
+                      >
+                        {children.map((it) => renderLeaf(it, true))}
+                      </div>
+                    </div>
+                  );
+                })}
+                {trailingLeaves.map((it) => renderLeaf(it))}
+              </>
             );
-          })}
+          })()}
         </div>
 
         <div style={S.navFooter}>
@@ -1175,6 +1295,34 @@ const S = {
   navIcon: { fontSize: 18, width: 24, textAlign: "center" as const } as const,
   navLabel: { flex: 1 } as const,
   navBadge: { padding: "2px 8px", background: "#dc2626", color: "#fff", borderRadius: 999, fontSize: 11, fontWeight: 700 } as const,
+
+  // ── Accordion group styles (standalone sidebar) ──
+  navGroupHeader: {
+    display: "flex", alignItems: "center", gap: 12,
+    padding: "10px 14px", border: "none",
+    background: "transparent", color: "#e2e8f0",
+    borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 700,
+    fontFamily: "inherit", textAlign: "right" as const, width: "100%",
+    transition: "background .15s",
+  } as const,
+  navGroupHeaderActive: {
+    display: "flex", alignItems: "center", gap: 12,
+    padding: "10px 14px", border: "none",
+    background: "rgba(148,163,184,.12)", color: "#fff",
+    borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 700,
+    fontFamily: "inherit", textAlign: "right" as const, width: "100%",
+    transition: "background .15s",
+  } as const,
+  navChevron: {
+    fontSize: 12, color: "#94a3b8", lineHeight: 1,
+    transition: "transform .22s ease", display: "inline-block",
+  } as const,
+  navGroupBody: {
+    display: "flex", flexDirection: "column" as const, gap: 4,
+    overflow: "hidden",
+    transition: "max-height .26s ease, opacity .2s ease",
+    paddingInlineStart: 4,
+  } as const,
 
   navFooter: { borderTop: "1px solid #334155", paddingTop: 12, display: "flex", flexDirection: "column" as const, gap: 8 } as const,
   navUtility: {
