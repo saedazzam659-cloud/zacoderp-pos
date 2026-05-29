@@ -154,19 +154,31 @@ export const sequenceCountersTable = pgTable("sequence_counters", {
   id:            serial("id").primaryKey(),
   sequenceId:    integer("sequence_id").notNull(),
   branchId:      integer("branch_id").notNull().default(0),
+  // Period bucket for the counter. The key insight that makes monthly-reset
+  // correct under out-of-order / backdated entry:
+  //   • monthlyReset = false → ALWAYS the empty-string sentinel "". One single
+  //     continuous counter row per (sequence, branch), exactly like before.
+  //   • monthlyReset = true  → "YYYY-MM" of the document. EACH month gets its
+  //     OWN counter row, so switching the entry month back and forth (or
+  //     backdating) never resets or duplicates another month's stream. Month
+  //     5's counter is completely independent of month 4's counter.
+  // Replaces the old single-row + `lastPeriod` reset hack, which could only
+  // remember ONE month at a time and produced wrong "next numbers" and
+  // duplicate document numbers whenever months were entered out of order.
+  period:        text("period").notNull().default(""),
   currentNumber: integer("current_number").notNull(),
-  // "YYYY-MM" of the most recent issuance on this counter. Only consulted when
-  // the parent sequence has `monthlyReset = true`: when the current issuance's
-  // month differs from this stored value, the counter restarts at the
-  // sequence's `startNumber`. NULL means "never issued under monthly-reset yet"
-  // — the first issuance simply adopts the current month WITHOUT resetting, so
-  // turning the toggle on never retroactively reuses an already-issued number.
+  // "YYYY-MM" stamp of the most recent issuance on this row. Retained mainly
+  // for the legacy-adoption path: when a sequence that previously ran WITHOUT
+  // monthly reset (its single "" row) is toggled ON, the first issuance in the
+  // current month adopts that row's running number (so it never reuses an
+  // already-issued number), then stamps this field so later months reset
+  // cleanly. NULL means "never stamped" (a pre-feature / freshly-inserted row).
   lastPeriod:    text("last_period"),
   createdAt:     timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt:     timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
-  seqBranchUnique: uniqueIndex("sequence_counters_seq_branch_unq").on(t.sequenceId, t.branchId),
-  bySequence:      index("sequence_counters_sequence_idx").on(t.sequenceId),
+  seqBranchPeriodUnique: uniqueIndex("sequence_counters_seq_branch_period_unq").on(t.sequenceId, t.branchId, t.period),
+  bySequence:            index("sequence_counters_sequence_idx").on(t.sequenceId),
 }));
 
 export const insertSequenceSchema = createInsertSchema(sequencesTable).omit({

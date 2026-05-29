@@ -160,40 +160,60 @@ router.get("/peek/:txType", async (req: any, res) => {
   const seq = rows.rows?.[0];
   if (!seq) { res.json({ number: null, hasSequence: false }); return; }
 
-  // Pull the per-branch counter (if any) and an "any counter exists?" flag in
-  // a single round-trip. The flag drives the seeding heuristic for the case
-  // where this branch has no counter yet.
+  // Resolve the counter BUCKET this preview belongs to — IDENTICAL to the
+  // issuance helper:
+  //   • monthly_reset OFF → the single continuous "" sentinel row.
+  //   • monthly_reset ON  → the per-month "YYYY-MM" row for the previewed date.
+  const monthlyReset  = seq.monthly_reset === true;
+  const previewPeriod = `${effectiveDate.getFullYear()}-${String(effectiveDate.getMonth() + 1).padStart(2, "0")}`;
+  const counterPeriod = monthlyReset ? previewPeriod : "";
+
+  // Pull the bucket counter (if any) and an "any counter exists?" flag in a
+  // single round-trip. The flag drives the non-reset seeding heuristic.
   const counterRows = await db.execute<{
-    branch_current: number | null; branch_last_period: string | null; any_exists: boolean;
+    bucket_current: number | null; any_exists: boolean;
   }>(sql`
     SELECT
       (SELECT current_number FROM sequence_counters
-        WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey}) AS branch_current,
-      (SELECT last_period FROM sequence_counters
-        WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey}) AS branch_last_period,
+        WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey} AND period = ${counterPeriod}) AS bucket_current,
       EXISTS(SELECT 1 FROM sequence_counters WHERE sequence_id = ${seq.id}) AS any_exists
   `);
   const cRow = counterRows.rows?.[0];
-  const branchCurrent = cRow?.branch_current ?? null;
-  const branchLastPeriod = cRow?.branch_last_period ?? null;
+  const bucketCurrent = cRow?.bucket_current ?? null;
   const anyExists     = !!cRow?.any_exists;
 
-  // Mirror the issuance helper's monthly-reset preview: when the sequence
-  // opts in and the existing counter's recorded period differs from the
-  // previewed period, the next number restarts at startNumber. Keep the same
-  // "NULL last_period adopts current period without resetting" rule so the
-  // badge never previews a reset the helper wouldn't actually perform.
-  const previewPeriod = `${effectiveDate.getFullYear()}-${String(effectiveDate.getMonth() + 1).padStart(2, "0")}`;
-  let previewNumber = branchCurrent != null
-    ? branchCurrent
-    : (anyExists ? seq.start_number : Math.max(seq.start_number, seq.current_number));
-  if (
-    seq.monthly_reset &&
-    branchCurrent != null &&
-    branchLastPeriod != null &&
-    branchLastPeriod !== previewPeriod
-  ) {
-    previewNumber = seq.start_number;
+  let previewNumber: number;
+  if (bucketCurrent != null) {
+    // Bucket already exists — preview its running number directly.
+    previewNumber = bucketCurrent;
+  } else if (monthlyReset) {
+    // No counter for this month yet — mirror the helper's seed: start_number,
+    // but never below what was already issued this month (logs) nor below a
+    // legacy "" row being adopted on a monthly_reset toggle. (Read-only: the
+    // preview never retires the legacy row — only the real issuance does.)
+    let seed = seq.start_number;
+    const renderedPrefix = `${seq.prefix ?? ""}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
+    const escaped = renderedPrefix.replace(/([\\%_])/g, "\\$1");
+    const logRows = await db.execute<{ mx: number | null }>(sql`
+      SELECT MAX((regexp_match(generated_number, '(\\d+)$'))[1]::int) AS mx
+      FROM sequence_logs
+      WHERE sequence_id = ${seq.id}
+        AND generated_number LIKE ${escaped + "%"} ESCAPE '\\'
+    `);
+    const logMax = logRows.rows?.[0]?.mx ?? null;
+    if (logMax != null) seed = Math.max(seed, logMax + 1);
+    const legacyRows = await db.execute<{ current_number: number; last_period: string | null }>(sql`
+      SELECT current_number, last_period FROM sequence_counters
+      WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey} AND period = ''
+    `);
+    const legacy = legacyRows.rows?.[0];
+    if (legacy && (legacy.last_period == null || legacy.last_period === counterPeriod)) {
+      seed = Math.max(seed, legacy.current_number);
+    }
+    previewNumber = seed;
+  } else {
+    // Non-reset, no "" row yet — identical to the pre-period seeding rule.
+    previewNumber = anyExists ? seq.start_number : Math.max(seq.start_number, seq.current_number);
   }
 
   const exhausted = previewNumber > seq.end_number;

@@ -117,6 +117,43 @@ function periodKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+/** Escape the LIKE wildcards in a literal prefix so a prefix that happens to
+ *  contain `%`, `_` or `\` can never widen the match. Paired with `ESCAPE '\'`. */
+function escapeLike(s: string): string {
+  return s.replace(/([\\%_])/g, "\\$1");
+}
+
+/** Highest running number ALREADY issued for a given (sequence, rendered-month)
+ *  bucket, read from the append-only `sequence_logs`. This is what lets a
+ *  per-month counter self-heal: the first time a month is touched after the
+ *  per-period upgrade (or when an old corrupted single-counter row was cleared),
+ *  the new month counter is seeded just above the true maximum already issued
+ *  that month — so it can never re-emit a number a document already used.
+ *
+ *  `renderedPrefix` is `${prefix}${renderMonthPattern(...)}` (e.g. "QU-05-"),
+ *  so the LIKE isolates exactly the rows belonging to this month's stream. The
+ *  trailing-digits regex pulls the padded running number off the formatted
+ *  string. Returns `null` when this month has never been issued.
+ *
+ *  Note: `sequence_logs` is company/sequence-scoped but NOT branch-scoped, so
+ *  in a multi-branch tenant this returns the company-wide max for the month.
+ *  That only ever seeds a NEW branch's month counter slightly HIGHER (a gap),
+ *  never lower — gaps are acceptable, reuse is not. */
+async function maxIssuedForPeriod(
+  exec: { execute: (q: any) => Promise<{ rows?: Array<{ mx: number | null }> }> },
+  sequenceId: number,
+  renderedPrefix: string,
+): Promise<number | null> {
+  const like = `${escapeLike(renderedPrefix)}%`;
+  const r = await exec.execute(sql`
+    SELECT MAX((regexp_match(generated_number, '(\\d+)$'))[1]::int) AS mx
+    FROM sequence_logs
+    WHERE sequence_id = ${sequenceId}
+      AND generated_number LIKE ${like} ESCAPE '\\'
+  `);
+  return r.rows?.[0]?.mx ?? null;
+}
+
 /**
  * Generate the next business document number for the given transaction type
  * scoped to `ctx.branchId`. Each (sequence, branch) pair has its own counter.
@@ -208,61 +245,87 @@ export async function nextSequenceNumber(
     const seq = seqRows.rows?.[0];
     if (!seq) return null;
 
-    // 2. Look up (or create) the per-branch counter row, locking it so two
-    //    concurrent issuances on the SAME (sequence, branch) serialize.
-    const counterRows = await tx.execute<{ id: number; current_number: number; last_period: string | null }>(sql`
-      SELECT id, current_number, last_period
+    // 2. Resolve the counter BUCKET for this issuance:
+    //      • monthly_reset OFF → the single continuous "" sentinel row
+    //        (identical to the pre-period behaviour).
+    //      • monthly_reset ON  → a per-month row keyed by "YYYY-MM", so each
+    //        month is an independent stream that out-of-order / backdated entry
+    //        can never disturb.
+    const monthlyReset  = seq.monthly_reset === true;
+    const currentPeriod = periodKey(effectiveDate);          // "YYYY-MM"
+    const counterPeriod = monthlyReset ? currentPeriod : ""; // bucket key
+
+    // Look up (or create) the per-(branch, period) counter row, locking it so
+    // two concurrent issuances on the SAME bucket serialize.
+    const counterRows = await tx.execute<{ id: number; current_number: number }>(sql`
+      SELECT id, current_number
       FROM sequence_counters
-      WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey}
+      WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey} AND period = ${counterPeriod}
       FOR UPDATE
     `);
-
-    // Monthly-reset period key for THIS issuance, derived from the same
-    // effective date that renders the {MM} token, so the reset boundary and
-    // the printed month always agree.
-    const currentPeriod = periodKey(effectiveDate);
 
     let counterId: number;
     let issuedNumber: number;
 
     const existingCounter = counterRows.rows?.[0];
     if (existingCounter) {
+      // Hot path: the bucket already exists — just issue its running number.
       counterId    = existingCounter.id;
       issuedNumber = existingCounter.current_number;
-      // Monthly reset: when the parent sequence opted in AND we already have a
-      // recorded period that differs from the current one, restart at
-      // startNumber. A NULL last_period (counter pre-dates the feature, or was
-      // created before the toggle was on) is treated as "adopt current month
-      // without resetting" — so flipping the toggle on never retroactively
-      // reuses a number already issued earlier this month.
-      if (
-        seq.monthly_reset &&
-        existingCounter.last_period != null &&
-        existingCounter.last_period !== currentPeriod
-      ) {
-        issuedNumber = seq.start_number;
-      }
     } else {
-      // No counter yet for this (sequence, branch). Decide the seed value:
-      //   • If this sequence has NO counters at all → first issuance ever
-      //     after the per-branch upgrade. Inherit the master's currentNumber
-      //     to avoid re-issuing numbers an existing tenant already used.
-      //   • Otherwise → fresh per-branch start, seed at start_number per spec.
-      const anyExisting = await tx.execute<{ exists_flag: boolean }>(sql`
-        SELECT EXISTS(
-          SELECT 1 FROM sequence_counters WHERE sequence_id = ${seq.id}
-        ) AS exists_flag
-      `);
-      const hasAnyCounter = !!anyExisting.rows?.[0]?.exists_flag;
-      const seed = hasAnyCounter
-        ? seq.start_number
-        : Math.max(seq.start_number, seq.current_number);
+      // First issuance into this bucket — compute the seed.
+      let seed: number;
+      if (monthlyReset) {
+        // Each month starts at start_number, but NEVER below what has already
+        // been issued this month (logs) nor below a legacy "" counter that is
+        // being adopted on a monthly_reset toggle (see below).
+        seed = seq.start_number;
 
-      // Seed `last_period` with the current period so a brand-new counter
-      // adopts the month without resetting on its very first issuance.
+        const renderedPrefix = `${seq.prefix ?? ""}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
+        const logMax = await maxIssuedForPeriod(tx, seq.id, renderedPrefix);
+        if (logMax != null) seed = Math.max(seed, logMax + 1);
+
+        // Legacy adoption: a sequence that ran WITHOUT monthly reset has a
+        // single "" row. The first issuance after the toggle is turned ON must
+        // adopt that running number for the CURRENT month (so it never reuses an
+        // already-issued number), then retire the "" row so later months reset
+        // cleanly. We only adopt when the "" row has never been stamped (NULL)
+        // or was last stamped in THIS very month.
+        const legacyRows = await tx.execute<{ id: number; current_number: number; last_period: string | null }>(sql`
+          SELECT id, current_number, last_period
+          FROM sequence_counters
+          WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey} AND period = ''
+          FOR UPDATE
+        `);
+        const legacy = legacyRows.rows?.[0];
+        if (legacy && (legacy.last_period == null || legacy.last_period === counterPeriod)) {
+          seed = Math.max(seed, legacy.current_number);
+          await tx.execute(sql`
+            UPDATE sequence_counters
+            SET last_period = ${counterPeriod}, updated_at = NOW()
+            WHERE id = ${legacy.id}
+          `);
+        }
+      } else {
+        // Non-reset: identical seeding to the pre-period engine.
+        //   • If this sequence has NO counters at all → first issuance ever
+        //     after the per-branch upgrade. Inherit the master's currentNumber
+        //     to avoid re-issuing numbers an existing tenant already used.
+        //   • Otherwise → fresh per-branch start, seed at start_number per spec.
+        const anyExisting = await tx.execute<{ exists_flag: boolean }>(sql`
+          SELECT EXISTS(
+            SELECT 1 FROM sequence_counters WHERE sequence_id = ${seq.id}
+          ) AS exists_flag
+        `);
+        const hasAnyCounter = !!anyExisting.rows?.[0]?.exists_flag;
+        seed = hasAnyCounter
+          ? seq.start_number
+          : Math.max(seq.start_number, seq.current_number);
+      }
+
       const inserted = await tx.execute<{ id: number; current_number: number }>(sql`
-        INSERT INTO sequence_counters (sequence_id, branch_id, current_number, last_period, created_at, updated_at)
-        VALUES (${seq.id}, ${branchKey}, ${seed}, ${currentPeriod}, NOW(), NOW())
+        INSERT INTO sequence_counters (sequence_id, branch_id, period, current_number, last_period, created_at, updated_at)
+        VALUES (${seq.id}, ${branchKey}, ${counterPeriod}, ${seed}, ${counterPeriod === "" ? null : counterPeriod}, NOW(), NOW())
         RETURNING id, current_number
       `);
       const newRow = inserted.rows?.[0];
@@ -278,14 +341,14 @@ export async function nextSequenceNumber(
 
     const generated = format(seq.prefix ?? "", issuedNumber, seq.pad_length ?? 0, seq.month_pattern, effectiveDate);
 
-    // 4. Bump the per-branch counter only. Master sequences row is NEVER
-    //    written to during issuance (per spec).
+    // 4. Bump the per-(branch, period) counter only. Master sequences row is
+    //    NEVER written to during issuance (per spec).
     await tx.update(sequenceCountersTable)
       .set({
         currentNumber: issuedNumber + 1,
-        // Stamp the period this number belongs to so the NEXT issuance can
-        // detect a month rollover (only acted upon when monthlyReset is on).
-        lastPeriod:    currentPeriod,
+        // Stamp the bucket's own period (NULL for the non-reset "" sentinel) so
+        // the legacy-adoption path can tell a stamped row from a fresh one.
+        lastPeriod:    counterPeriod === "" ? null : counterPeriod,
         updatedAt:     new Date(),
       })
       .where(eq(sequenceCountersTable.id, counterId));

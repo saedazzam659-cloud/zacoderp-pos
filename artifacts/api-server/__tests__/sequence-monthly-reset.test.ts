@@ -154,6 +154,8 @@ after(async () => {
 const JAN = "2026-01-15T12:00:00";
 const FEB = "2026-02-15T12:00:00";
 const MAR = "2026-03-15T12:00:00";
+const APR = "2026-04-15T12:00:00";
+const MAY = "2026-05-15T12:00:00";
 
 test("monthly_reset restarts the counter at start_number on a new month", async () => {
   // January: two issuances → 0001, 0002 (month token = 01).
@@ -204,4 +206,38 @@ test("toggling monthly_reset on for a counter with NULL last_period does NOT reu
   // Now that the period is stamped (2026-02), the NEXT month genuinely resets.
   const next = await nextSequenceNumber(testCompanyId, "sales_order", { branchId: branchAId, docDate: MAR });
   assert.equal(next, "TG-03-0001", "once a period is recorded, a real month change resets the counter");
+});
+
+test("out-of-order month entry keeps each month's counter independent (no reset, no duplicate)", async () => {
+  // This encodes the EXACT historical failure: with the old single-counter +
+  // last_period model, jumping between months (May → April → May …) made the
+  // counter reset/overwrite, producing wrong next-numbers and DUPLICATE
+  // document numbers. With per-period counters each month is its own stream.
+  const [seq] = await db.insert(sequencesTable).values({
+    companyId:        testCompanyId,
+    code:             `${TEST_TAG}_OOO`,
+    nameAr:           `مسلسل خارج الترتيب ${TEST_TAG}`,
+    prefix:           "OO-",
+    monthPattern:     "{MM}-",
+    startNumber:      1,
+    endNumber:        9999,
+    currentNumber:    1,
+    padLength:        4,
+    isActive:         true,
+    monthlyReset:     true,
+    transactionTypes: ["sales_return"],
+  }).returning();
+  insertedSequenceIds.push(seq.id);
+
+  const issue = (date: string) =>
+    nextSequenceNumber(testCompanyId, "sales_return", { branchId: branchAId, docDate: date });
+
+  // May → April → May → April → May, interleaved.
+  assert.equal(await issue(MAY), "OO-05-0001");
+  assert.equal(await issue(APR), "OO-04-0001");
+  assert.equal(await issue(MAY), "OO-05-0002", "May must CONTINUE, not reset back to 0001");
+  assert.equal(await issue(APR), "OO-04-0002", "April keeps its own independent stream");
+  assert.equal(await issue(MAY), "OO-05-0003");
+  // Re-touching April once more proves it never collided with May's numbers.
+  assert.equal(await issue(APR), "OO-04-0003");
 });
