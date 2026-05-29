@@ -183,7 +183,7 @@ export function SmartDateInput({
   const showPicker = !readOnly && !disabled;
 
   return (
-    <div className="relative w-full">
+    <div className="relative w-full" dir="ltr">
       <Input
         type="text"
         dir="ltr"
@@ -201,7 +201,11 @@ export function SmartDateInput({
         id={id}
         name={name}
         aria-label={ariaLabel}
-        className={cn("text-start", showPicker && "pe-9", className)}
+        className={cn(
+          "text-right font-medium tabular-nums tracking-wide",
+          showPicker && "ps-10",
+          className,
+        )}
       />
       {showPicker && (
         <Popover open={open} onOpenChange={setOpen}>
@@ -212,7 +216,7 @@ export function SmartDateInput({
               size="icon"
               tabIndex={-1}
               aria-label="اختيار التاريخ من التقويم"
-              className="absolute inset-y-0 end-0 h-full w-9 px-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+              className="absolute inset-y-0 start-0 h-full w-10 px-0 text-muted-foreground hover:bg-transparent hover:text-primary"
             >
               <CalendarIconLucide className="h-4 w-4" />
             </Button>
