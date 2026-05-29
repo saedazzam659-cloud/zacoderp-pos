@@ -435,6 +435,21 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
             f_opt("openingBalance"),
             s_opt("openingNature"),
             s_opt("openingDate"),
+            f_opt("creditLimit"),
+            b_opt("enforceCreditLimit"),
+            i_opt("paymentTermsDays"),
+        )
+        .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+        "update_customer_local" => crate::customers::update_customer_local(
+            i_req("id")?,
+            s_opt("nameAr"),
+            s_opt("nameEn"),
+            s_opt("phone"),
+            s_opt("vatNumber"),
+            s_opt("currencyCode"),
+            f_opt("creditLimit"),
+            b_opt("enforceCreditLimit"),
+            i_opt("paymentTermsDays"),
         )
         .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
 
