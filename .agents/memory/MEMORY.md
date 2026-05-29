@@ -12,3 +12,4 @@
 - [POS Desktop APP_VERSION define](pos-desktop-app-version-define.md) — always read `__APP_VERSION__` (vite define from package.json); hardcoded version literals go stale and fire false "update available" banners.
 - [POS Desktop inventory ledger invariants](pos-desktop-inventory-ledger.md) — stocktake post must be idempotent (return prior adj_id, not error); ledger reads must use `.optional()?` not `.unwrap_or(0)` or real SQL errors silently corrupt `balance_after`.
 - [POS Desktop multi-currency model](pos-desktop-multicurrency.md) — native-currency balances per treasury endpoint, all JEs in base; FX diff → fx_gain(4900)/fx_loss(5900); changing currency on a non-zero box is rejected at the Rust layer.
+- [POS Desktop LAN shared-DB mode](pos-desktop-lan-mode.md) — net_role host/client/single; use isClient() not shouldUseBridge() for client-only logic; lan_stock JSON is camelCase in lockstep both sides; test-connection must be side-effect free.

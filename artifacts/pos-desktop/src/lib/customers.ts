@@ -2,7 +2,10 @@
 // Browser mode: localStorage. Tauri mode: SQLite via Rust commands
 // (customers::list_customers / upsert_customers / create_customer).
 
-import { LS_KEYS, lsRead, lsWrite, IS_TAURI, tauriInvoke } from "./localStore";
+import { LS_KEYS, lsRead, lsWrite } from "./localStore";
+// Task #207: shared-data Rust commands route through the bridge (a LAN
+// client forwards them to the host; single/host call the local command).
+import { bridgeInvoke as tauriInvoke, shouldUseBridge } from "./bridge";
 import { enqueuePush } from "./pushQueue";
 
 export interface LocalCustomer {
@@ -52,7 +55,7 @@ export async function listCustomers(search?: string): Promise<LocalCustomer[]> {
   // updateCustomer/deleteCustomer write to localStorage only, so the merged
   // view is what makes those edits visible after the change.
   const fromTauri: LocalCustomer[] = [];
-  if (IS_TAURI) {
+  if (shouldUseBridge()) {
     try {
       const rows = await tauriInvoke<RustCustomer[]>("list_customers", { search: search ?? null });
       fromTauri.push(...rows.map(fromRust));
@@ -105,7 +108,7 @@ export async function upsertCustomersFromCloud(remote: Array<{
   id: number; nameAr: string; nameEn: string | null; phone: string | null;
   vatNumber: string | null; createdAt?: string;
 }>): Promise<number> {
-  if (IS_TAURI) {
+  if (shouldUseBridge()) {
     try {
       return await tauriInvoke<number>("upsert_customers_from_cloud", {
         rows: remote.map((c) => ({
@@ -169,7 +172,7 @@ export interface CreateCustomerInput {
 export async function createCustomer(input: CreateCustomerInput): Promise<LocalCustomer> {
   const now = new Date().toISOString();
   let created: LocalCustomer;
-  if (IS_TAURI) {
+  if (shouldUseBridge()) {
     try {
       const r = await tauriInvoke<RustCustomer>("create_customer_local", {
         nameAr: input.nameAr,

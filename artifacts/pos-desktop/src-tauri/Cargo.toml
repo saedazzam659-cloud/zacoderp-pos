@@ -40,6 +40,8 @@ dirs = "5"
 machine-uid = "0.5"
 getrandom = "0.2"
 bcrypt = "0.15"
+tiny_http = "0.12"
+local-ip-address = "0.6"
 
 [profile.release]
 panic = "abort"

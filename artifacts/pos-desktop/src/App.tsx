@@ -42,6 +42,7 @@ import {
   type AppMode, type OfflineLicensePayload, type LocalSession,
 } from "./lib/standalone";
 import { getFingerprint } from "./lib/tauri-shim";
+import { initBridge } from "./lib/bridge";
 
 type BootState =
   | { phase: "checking" }
@@ -67,6 +68,10 @@ export default function App() {
   useEffect(() => { void boot(); }, []);
 
   async function boot() {
+    // ── LAN bridge (Task #207) ────────────────────────────────────────
+    // Must run before any shared-data load so a `client` device routes its
+    // reads/writes to the host. No-op for single/host (local Tauri invoke).
+    await initBridge();
     // ── First-run mode selection ──────────────────────────────────────
     const mode = await getAppMode();
     if (!mode) { setState({ phase: "needs-mode" }); return; }

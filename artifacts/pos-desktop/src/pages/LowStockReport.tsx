@@ -6,7 +6,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { listItems, type LocalItem } from "../lib/items";
-import { getAllStock, getStock, setStock, setReorderPoint, type StockMap } from "../lib/stock";
+import {
+  getStock,
+  getAllStockShared,
+  setStockShared,
+  setReorderPointShared,
+  countLowStockInMap,
+  type StockMap,
+} from "../lib/stock";
 import { SearchCombobox } from "./_adminUi";
 
 type Row = {
@@ -32,7 +39,7 @@ export default function LowStockReport({ onGoToImport }: { onGoToImport?: () => 
     try {
       const all = await listItems();
       setItems(all);
-      setStockMap(getAllStock());
+      setStockMap(await getAllStockShared());
     } finally { setLoading(false); }
   }
   useEffect(() => { void refresh(); }, []);
@@ -71,21 +78,29 @@ export default function LowStockReport({ onGoToImport }: { onGoToImport?: () => 
     setEditRp(String(r.reorderPoint));
   }
   function cancelEdit() { setEditingId(null); }
-  function saveEdit(id: number) {
+  async function saveEdit(id: number) {
     const q = Number(editQty);
     const rp = Number(editRp);
     if (!Number.isFinite(q) || q < 0) { setToast({ kind: "err", text: "الرصيد غير صالح" }); return; }
     if (!Number.isFinite(rp) || rp < 0) { setToast({ kind: "err", text: "حد الطلب غير صالح" }); return; }
-    setStock(id, q, rp);
-    setEditingId(null);
-    setStockMap(getAllStock());
-    setToast({ kind: "ok", text: "تم الحفظ" });
+    try {
+      await setStockShared(id, q, rp);
+      setEditingId(null);
+      setStockMap(await getAllStockShared());
+      setToast({ kind: "ok", text: "تم الحفظ" });
+    } catch (e: any) {
+      setToast({ kind: "err", text: e?.message ?? "فشل الحفظ — تعذّر الوصول للجهاز المضيف" });
+    }
   }
-  function untrack(id: number, name: string) {
+  async function untrack(id: number, name: string) {
     if (!confirm(`إيقاف تتبّع الرصيد للصنف «${name}»؟ (سيتم تصفير حد الطلب)`)) return;
-    setReorderPoint(id, 0);
-    setStockMap(getAllStock());
-    setToast({ kind: "ok", text: "تم إيقاف التتبّع" });
+    try {
+      await setReorderPointShared(id, 0);
+      setStockMap(await getAllStockShared());
+      setToast({ kind: "ok", text: "تم إيقاف التتبّع" });
+    } catch (e: any) {
+      setToast({ kind: "err", text: e?.message ?? "فشل — تعذّر الوصول للجهاز المضيف" });
+    }
   }
 
   return (
@@ -197,15 +212,13 @@ export default function LowStockReport({ onGoToImport }: { onGoToImport?: () => 
   );
 }
 
-/** Util re-export so PosShell can compute the badge without importing stock.ts twice. */
-export function countLowStockTracked(items: LocalItem[]): number {
-  const m = getAllStock();
-  let n = 0;
-  for (const it of items) {
-    const s = m[it.id];
-    if (s && s.reorderPoint > 0 && s.qty <= s.reorderPoint) n++;
-  }
-  return n;
+/**
+ * Util re-export so PosShell can compute the badge without importing stock.ts
+ * twice. LAN-aware: reads the host's shared stock map in host/client mode.
+ */
+export async function countLowStockTracked(items: LocalItem[]): Promise<number> {
+  const m = await getAllStockShared();
+  return countLowStockInMap(m, new Set(items.map((it) => it.id)));
 }
 
 // Re-export for convenience.

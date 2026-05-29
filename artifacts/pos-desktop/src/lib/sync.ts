@@ -14,6 +14,7 @@ import { LS_KEYS, lsWrite, IS_TAURI } from "./localStore";
 import { createApi } from "./api";
 import { upsertItemsFromCloud } from "./items";
 import { upsertCustomersFromCloud } from "./customers";
+import { isClient } from "./bridge";
 
 export type PushSummary = {
   attempted: number;
@@ -32,6 +33,10 @@ export async function pullAndPersist(
   baseUrl: string,
   deviceToken: string,
 ): Promise<PullSummary> {
+  // Task #207 — a `client` device owns no local data; the catalog/customers
+  // live on the host, which is the only device that talks to the cloud. Pulling
+  // here would write into a SQLite the client never reads from. No-op.
+  if (isClient()) return { customers: 0, items: 0, serverTime: null };
   const api = createApi({ baseUrl, deviceToken });
   const r = await api.pull({ entities: ["customers", "items", "settings"] });
 
@@ -54,6 +59,10 @@ export async function syncPushNow(
     // No local DB in browser preview — nothing to push.
     return { attempted: 0, synced: 0, failed: 0, server_time: null };
   }
+  // Task #207 — a `client` records its sales on the host's DB (via the bridge),
+  // not in a local offline_invoices table, so it has nothing of its own to push
+  // to the cloud. The host is the single uploader. No-op.
+  if (isClient()) return { attempted: 0, synced: 0, failed: 0, server_time: null };
   const mod = await import(/* @vite-ignore */ "@tauri-apps/api/core");
   const raw = (await mod.invoke("sync_push_now", {
     serverUrl,

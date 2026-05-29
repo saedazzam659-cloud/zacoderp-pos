@@ -287,6 +287,82 @@ export async function setAppMode(m: AppMode): Promise<void> {
   localStorage.setItem(LS_MODE, m);
 }
 
+// ─── Network role (Task #207 — LAN shared database) ──────────────────
+// A device's network role is orthogonal to app_mode (cloud/standalone):
+//   • single — one device, own SQLite (today's behaviour, the default).
+//   • host   — this device sells AND hosts the shared SQLite + a local
+//              HTTP server other devices connect to over the branch LAN.
+//   • client — sells but owns NO data file; every shared-data read/write
+//              is routed to the host over HTTP (see lib/bridge.ts).
+// Settings live next to app_mode (app_settings in Tauri, localStorage in
+// browser dev). lan_host_url/lan_token are only meaningful for clients;
+// lan_port only for the host.
+export type NetRole = "single" | "host" | "client";
+
+const SETTING_NET_ROLE = "net_role";
+const SETTING_LAN_HOST_URL = "lan_host_url";
+const SETTING_LAN_TOKEN = "lan_token";
+const SETTING_LAN_PORT = "lan_port";
+
+const LS_NET_ROLE = "pos_desktop_net_role";
+const LS_LAN_HOST_URL = "pos_desktop_lan_host_url";
+const LS_LAN_TOKEN = "pos_desktop_lan_token";
+const LS_LAN_PORT = "pos_desktop_lan_port";
+
+/** Default LAN port for the host server. Kept in sync with lan.rs. */
+export const DEFAULT_LAN_PORT = 7711;
+
+async function getSetting(key: string, ls: string): Promise<string | null> {
+  if (hasTauri()) {
+    try { return await invoke<string | null>("standalone_get_setting", { key }); }
+    catch { return null; }
+  }
+  return localStorage.getItem(ls);
+}
+async function setSetting(key: string, ls: string, value: string): Promise<void> {
+  if (hasTauri()) {
+    try { await invoke("standalone_set_setting", { key, value }); return; }
+    catch { /* fall through */ }
+  }
+  localStorage.setItem(ls, value);
+}
+
+export async function getNetRole(): Promise<NetRole> {
+  const v = await getSetting(SETTING_NET_ROLE, LS_NET_ROLE);
+  return v === "host" || v === "client" ? v : "single";
+}
+export async function setNetRole(role: NetRole): Promise<void> {
+  await setSetting(SETTING_NET_ROLE, LS_NET_ROLE, role);
+}
+export async function getLanHostUrl(): Promise<string | null> {
+  const v = await getSetting(SETTING_LAN_HOST_URL, LS_LAN_HOST_URL);
+  return v && v.trim() ? v.trim().replace(/\/+$/, "") : null;
+}
+export async function setLanHostUrl(url: string): Promise<void> {
+  await setSetting(SETTING_LAN_HOST_URL, LS_LAN_HOST_URL, url.trim().replace(/\/+$/, ""));
+}
+export async function getLanToken(): Promise<string | null> {
+  const v = await getSetting(SETTING_LAN_TOKEN, LS_LAN_TOKEN);
+  return v && v.trim() ? v.trim() : null;
+}
+export async function setLanToken(token: string): Promise<void> {
+  await setSetting(SETTING_LAN_TOKEN, LS_LAN_TOKEN, token.trim());
+}
+export async function getLanPort(): Promise<number> {
+  const v = await getSetting(SETTING_LAN_PORT, LS_LAN_PORT);
+  const n = v ? Number(v) : NaN;
+  return Number.isInteger(n) && n > 0 && n < 65536 ? n : DEFAULT_LAN_PORT;
+}
+export async function setLanPort(port: number): Promise<void> {
+  await setSetting(SETTING_LAN_PORT, LS_LAN_PORT, String(port));
+}
+
+/** Generate a branch pairing token (host side). 32 hex chars. */
+export function generateLanToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 // ─── License ─────────────────────────────────────────────────────────
 export async function saveLicense(file: SignedLicenseFile): Promise<void> {
   if (hasTauri()) {

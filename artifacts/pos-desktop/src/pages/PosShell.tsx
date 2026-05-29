@@ -52,6 +52,7 @@ import LowStockReport, { countLowStockTracked } from "./LowStockReport";
 import { listItems, bulkImportLocalItems, type CreateItemInput } from "../lib/items";
 import { useTaxSettings, defaultRateForCountry } from "../lib/taxSettings";
 import ScaleSettings from "./ScaleSettings";
+import NetworkSettings from "./NetworkSettings";
 import { countPendingInvoices } from "../lib/invoices";
 import { getVertical, type Vertical } from "../lib/standalone";
 import { syncPushNow, pullAndPersist, type PushSummary, type PullSummary } from "../lib/sync";
@@ -63,7 +64,7 @@ import type { OfflineLicensePayload, LocalSession } from "../lib/standalone";
 type View =
   | "sales" | "returns" | "pending" | "parked" | "daily"
   | "customers" | "items" | "uom" | "dashboard" | "updates" | "users"
-  | "expiry" | "scale" | "stock_import" | "low_stock"
+  | "expiry" | "scale" | "stock_import" | "low_stock" | "network"
   // Task #207 — accounting & operations screens (standalone).
   | "suppliers" | "purchases" | "purchase_returns"
   | "cash_boxes" | "banks" | "financial_tx"
@@ -217,7 +218,7 @@ export default function PosShell({
   const refreshLowStock = useCallback(async () => {
     try {
       const items = await listItems();
-      setLowStockCount(countLowStockTracked(items));
+      setLowStockCount(await countLowStockTracked(items));
     } catch { /* ignore */ }
   }, []);
   useEffect(() => { void refreshLowStock(); }, [view, refreshLowStock]);
@@ -387,6 +388,7 @@ export default function PosShell({
     { id: "stock_movements",   icon: "📈", label: "حركة المخزون", perm: "stock_movements" },
     { id: "stock_transfers",   icon: "🔄", label: "التحويل بين المخازن", perm: "stock_transfers" },
     { id: "scale",            icon: "⚖️", label: "الميزان", perm: "scale" },
+    ...(isAdmin ? [{ id: "network" as View, icon: "🌐", label: "مشاركة الشبكة", adminOnly: true }] : []),
     ...(isPharmacy ? [{ id: "expiry" as View, icon: "⏳", label: "تقرير الصلاحية", perm: "expiry" as ScreenKey }] : []),
     ...(isAdmin
       ? [
@@ -417,6 +419,7 @@ export default function PosShell({
     { id: "low_stock", icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined },
     { id: "uom",       icon: "📐", label: "وحدات القياس" },
     { id: "scale",     icon: "⚖️", label: "الميزان" },
+    { id: "network",   icon: "🌐", label: "مشاركة الشبكة" },
     ...(isPharmacy ? [{ id: "expiry" as View, icon: "⏳", label: "تقرير الصلاحية" }] : []),
     { id: "dashboard", icon: "📊", label: "لوحة التحكم" },
     { id: "updates",   icon: "🔄", label: "التحديثات" },
@@ -587,6 +590,7 @@ export default function PosShell({
           {view === "low_stock" && <div style={S.pagePad}><LowStockReport onGoToImport={() => setView("stock_import")} /></div>}
           {view === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
           {view === "scale" && <div style={S.pagePad}><ScaleSettings /></div>}
+          {view === "network" && <div style={S.pagePad}><NetworkSettings /></div>}
           {view === "expiry" && isPharmacy && <div style={S.pagePad}><ExpiryReport onJumpToItems={() => setView("items")} /></div>}
           {!standalone && view === "dashboard" && (
             <div style={S.pagePad}>
@@ -690,6 +694,7 @@ function labelFor(v: View): string {
     uom: "وحدات القياس",
     expiry: "تقرير الصلاحية",
     scale: "إعدادات الميزان",
+    network: "مشاركة الشبكة المحلية",
     dashboard: "لوحة التحكم",
     updates: "التحديثات",
     users: "المستخدمون المحليون",

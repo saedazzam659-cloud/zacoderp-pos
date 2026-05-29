@@ -16,7 +16,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { listItems, bulkImportLocalItems, type LocalItem } from "../lib/items";
-import { bulkSetStock, getStock } from "../lib/stock";
+import { getAllStockShared, bulkSetStockShared } from "../lib/stock";
 
 type Mode = "update_only" | "upsert";
 
@@ -122,6 +122,7 @@ export default function StockImport({ onDone }: { onDone?: () => void }) {
     }
 
     const items: LocalItem[] = await listItems();
+    const stockMap = await getAllStockShared();
     const byBc = new Map<string, LocalItem>();
     const byCode = new Map<string, LocalItem>();
     for (const it of items) {
@@ -177,7 +178,7 @@ export default function StockImport({ onDone }: { onDone?: () => void }) {
         reason = "لم يتم العثور على الصنف في الكتالوج (وضع التحديث فقط)";
       }
 
-      const prev = matched ? getStock(matched.id) : null;
+      const prev = matched ? stockMap[matched.id] ?? null : null;
 
       rows.push({
         rowNum: r + 1,
@@ -233,7 +234,7 @@ export default function StockImport({ onDone }: { onDone?: () => void }) {
           stockRows.push({ itemId: id, qty: r.quantity, reorderPoint: r.reorderPoint });
         }
       }
-      const written = bulkSetStock(stockRows);
+      const written = await bulkSetStockShared(stockRows);
       setToast({
         kind: "ok",
         text: `تم: ${written} رصيد محفوظ${newRows.length ? ` — ${newRows.length} صنف جديد` : ""}${summary?.skip ? ` — ${summary.skip} تم تجاهلها` : ""}`,

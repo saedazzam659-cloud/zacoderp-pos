@@ -9,7 +9,11 @@
 // actually populate the sales grid — previously Pull only set a counter
 // on screen; the items themselves were dropped on the floor.
 
-import { LS_KEYS, lsRead, lsWrite, IS_TAURI, tauriInvoke } from "./localStore";
+import { LS_KEYS, lsRead, lsWrite } from "./localStore";
+// Task #207: shared-data Rust commands route through the bridge so a LAN
+// client forwards them to the host. In single/host mode `bridgeInvoke`
+// calls the LOCAL Tauri command — identical to the previous `tauriInvoke`.
+import { bridgeInvoke as tauriInvoke, shouldUseBridge } from "./bridge";
 import { enqueuePush } from "./pushQueue";
 
 export interface LocalItem {
@@ -114,7 +118,7 @@ export async function listItems(search?: string): Promise<LocalItem[]> {
   //   • LocalStorage rows that have a cloudId match a Tauri row via cloud_id
   //   • LocalStorage rows without cloudId are always-additive (locally-created)
   const fromTauri: LocalItem[] = [];
-  if (IS_TAURI) {
+  if (shouldUseBridge()) {
     try {
       const rows = await tauriInvoke<RustItem[]>("list_items", { search: search ?? null });
       fromTauri.push(...rows.map(fromRust));
@@ -166,7 +170,7 @@ export async function listItems(search?: string): Promise<LocalItem[]> {
 }
 
 export async function findItemByBarcode(barcode: string): Promise<LocalItem | null> {
-  if (IS_TAURI) {
+  if (shouldUseBridge()) {
     try {
       const r = await tauriInvoke<RustItem | null>("find_item_by_barcode", { barcode });
       if (r) return fromRust(r);
@@ -179,7 +183,7 @@ export async function findItemByBarcode(barcode: string): Promise<LocalItem | nu
 }
 
 export async function seedDemoItems(): Promise<number> {
-  if (IS_TAURI) {
+  if (shouldUseBridge()) {
     try { return await tauriInvoke<number>("seed_demo_items"); }
     catch { /* fall through */ }
   }
@@ -203,7 +207,7 @@ export async function upsertItemsFromCloud(remote: Array<{
     vatRate: Number(r.vatRate),
   }));
 
-  if (IS_TAURI) {
+  if (shouldUseBridge()) {
     try {
       return await tauriInvoke<number>("upsert_items_from_cloud", {
         rows: normalized.map((r) => ({
@@ -336,7 +340,7 @@ export async function bulkImportLocalItems(
   const seenCode = new Set(existing.map((r) => r.code).filter((c): c is string => !!c));
   let inserted = 0;
   let skippedDup = 0;
-  if (IS_TAURI) {
+  if (shouldUseBridge()) {
     for (const r of rows) {
       if (dedupBy === "barcode" && r.barcode && seenBc.has(r.barcode)) { skippedDup++; continue; }
       if (dedupBy === "code" && r.code && seenCode.has(r.code)) { skippedDup++; continue; }
@@ -387,7 +391,7 @@ export async function bulkImportLocalItems(
  * Backed by `list_expiring_items` on Tauri; computes client-side otherwise.
  */
 export async function listExpiringItems(withinDays = 90): Promise<LocalItem[]> {
-  if (IS_TAURI) {
+  if (shouldUseBridge()) {
     try {
       const rows = await tauriInvoke<RustItem[]>("list_expiring_items", { within_days: withinDays });
       return rows.map(fromRust);
@@ -426,7 +430,7 @@ export async function updateItemExtended(
     batchNo?: string | null;
   },
 ): Promise<void> {
-  if (!IS_TAURI) {
+  if (!shouldUseBridge()) {
     // Browser-preview persistence (dev mode). Patch the LS row so edits don't
     // silently disappear when the operator is testing the form without Tauri.
     const all = readLocal();
@@ -465,7 +469,7 @@ export async function updateItemWeighed(
   id: number,
   fields: { isWeighed?: boolean | null; pricePerKg?: number | null; plu?: string | null },
 ): Promise<void> {
-  if (!IS_TAURI) {
+  if (!shouldUseBridge()) {
     const all = readLocal();
     const idx = all.findIndex((r) => r.id === id);
     if (idx >= 0) {
@@ -497,7 +501,7 @@ export async function updateItemWeighed(
  * the merged catalog client-side.
  */
 export async function findItemByPlu(plu: string): Promise<LocalItem | null> {
-  if (IS_TAURI) {
+  if (shouldUseBridge()) {
     try {
       const r = await tauriInvoke<RustItem | null>("find_item_by_plu", { plu });
       if (r) return fromRust(r);

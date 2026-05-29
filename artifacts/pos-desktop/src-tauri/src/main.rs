@@ -10,6 +10,7 @@ mod db;
 mod inventory;
 mod invoices;
 mod items;
+mod lan;
 mod license;
 mod peripherals;
 mod permissions;
@@ -320,6 +321,12 @@ fn main() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|_app| {
             db::initialize().expect("DB init failed");
+            // Task #207: if this device is configured as the LAN host, start
+            // its shared-database HTTP server now. No-op for single/client.
+            lan::maybe_start_host_server(
+                get_device_name(),
+                env!("CARGO_PKG_VERSION").to_string(),
+            );
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -440,6 +447,14 @@ fn main() {
             accounting::currency_rate_delete,
             accounting::treasury_transfers_list,
             accounting::treasury_transfer_create,
+            // LAN shared database (Task #207).
+            lan::lan_stock_get_all,
+            lan::lan_stock_set,
+            lan::lan_stock_set_reorder,
+            lan::lan_stock_adjust,
+            lan::lan_stock_bulk_set,
+            lan::lan_stock_clear,
+            lan::lan_local_ip,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -192,9 +192,9 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
       // walk-in lines without a catalog match). Tied to the idempotency key
       // by being a one-shot after the invoice persists.
       try {
-        const { adjustStock } = await import("../lib/stock");
+        const { adjustStockShared } = await import("../lib/stock");
         for (const l of refundLines) {
-          if (l.itemId > 0) adjustStock(l.itemId, l.refundQty);
+          if (l.itemId > 0) await adjustStockShared(l.itemId, l.refundQty);
         }
       } catch { /* non-fatal */ }
 

@@ -3,18 +3,11 @@
 // keeps working without a backend. Dev records are NOT persisted across
 // page reloads (intentional — only the real SQLite path is durable).
 
-const IS_TAURI =
-  typeof window !== "undefined" &&
-  ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
-
-let _invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null = null;
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (!_invoke) {
-    const mod = await import(/* @vite-ignore */ "@tauri-apps/api/core");
-    _invoke = mod.invoke;
-  }
-  return (await _invoke!(cmd, args)) as T;
-}
+// Task #207: invoice persistence is SHARED data. In a LAN client these
+// commands forward to the host (the single SQLite owner) so every device's
+// sales land in one ledger and the host can serialize writes. In single/
+// host mode `bridgeInvoke` calls the local Tauri command, unchanged.
+import { bridgeInvoke as invoke, shouldUseBridge } from "./bridge";
 
 export interface SavedInvoice {
   localUuid: string;
@@ -63,7 +56,7 @@ export async function saveOfflineInvoice(
   idempotencyKey?: string,
 ): Promise<SavedInvoice> {
   const payloadJson = JSON.stringify(payload);
-  if (!IS_TAURI) {
+  if (!shouldUseBridge()) {
     // Idempotency in browser: if a row with the same uuid already exists,
     // return it. Mirrors the Rust path's INSERT-or-fetch semantics.
     const uuid = idempotencyKey ?? `dev-${++devCounter}-${Math.random().toString(16).slice(2, 8)}`;
@@ -125,7 +118,7 @@ interface RustFull {
 }
 
 export async function getOfflineInvoice(id: number): Promise<FullInvoice | null> {
-  if (!IS_TAURI) return null;
+  if (!shouldUseBridge()) return null;
   const r = await invoke<RustFull | null>("get_offline_invoice", { id });
   if (!r) return null;
   return {
@@ -141,7 +134,7 @@ export async function getOfflineInvoice(id: number): Promise<FullInvoice | null>
 }
 
 export async function listPendingInvoices(): Promise<PendingInvoice[]> {
-  if (!IS_TAURI) return [];
+  if (!shouldUseBridge()) return [];
   const rows = await invoke<RustPending[]>("list_pending_invoices");
   return rows.map((r) => ({
     id: r.id,
@@ -154,7 +147,7 @@ export async function listPendingInvoices(): Promise<PendingInvoice[]> {
 }
 
 export async function countPendingInvoices(): Promise<number> {
-  if (!IS_TAURI) {
+  if (!shouldUseBridge()) {
     try {
       const raw = localStorage.getItem("pos_desktop_invoices_v1");
       const arr: any[] = raw ? JSON.parse(raw) : [];
@@ -167,7 +160,7 @@ export async function countPendingInvoices(): Promise<number> {
 // All invoices (pending + synced + returns). Used by the Returns screen
 // to pick an original sale to refund against.
 export async function listAllInvoices(limit = 100): Promise<PendingInvoice[]> {
-  if (IS_TAURI) {
+  if (shouldUseBridge()) {
     try {
       const rows = await invoke<RustPending[]>("list_all_invoices", { limit });
       return rows.map((r) => ({

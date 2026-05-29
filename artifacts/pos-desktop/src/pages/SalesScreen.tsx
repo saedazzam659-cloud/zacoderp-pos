@@ -11,6 +11,7 @@ import { generateZatcaQr } from "../lib/zatca";
 import { listItems, findItemByBarcode, seedDemoItems, daysUntilExpiry, findItemByPlu, type LocalItem } from "../lib/items";
 import { parseEmbeddedWeightBarcode, readWeightOnce, getScaleConfig } from "../lib/scale";
 import { getVertical, verifyAdminCredentials, type Vertical } from "../lib/standalone";
+import { isClient, getChangeVersion } from "../lib/bridge";
 
 const LS_OVERRIDE_LOG = "pos_desktop_pharmacy_overrides_v1";
 type OverrideLog = { ts: string; itemId: number; itemName: string; expiryDate: string | null; daysPastExpiry: number; supervisor: string; cashier: string | null };
@@ -59,6 +60,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
   // checkout deletes it.
   const [activeParkedId, setActiveParkedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [lanTick, setLanTick] = useState(0); // bumped by client LAN polling to refetch items/stock
   const [items, setItems] = useState<LocalItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
   const [paying, setPaying] = useState(false);
@@ -151,7 +153,31 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       }
     }, search ? 150 : 0);
     return () => { cancelled = true; window.clearTimeout(t); };
-  }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search, lanTick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Task #207 — client realtime refresh ────────────────────────────
+  // On a `client` device the catalog + stock live on the host. Poll the
+  // host's change-version (~3s); when it advances (another till sold, an
+  // admin edited an item/price, stock changed) bump `lanTick` to re-run the
+  // item-load effect above so this screen never shows stale prices/stock.
+  useEffect(() => {
+    if (!isClient()) return; // only a client reads from the host; single/host read locally
+    let stopped = false;
+    let lastVersion = -1;
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const v = await getChangeVersion();
+        if (v !== null && v !== lastVersion) {
+          if (lastVersion !== -1) setLanTick((n) => n + 1);
+          lastVersion = v;
+        }
+      } catch { /* host briefly unreachable — keep trying */ }
+    };
+    void tick();
+    const id = window.setInterval(() => { void tick(); }, 3000);
+    return () => { stopped = true; window.clearInterval(id); };
+  }, []);
 
   useBarcodeScanner({
     onScan: async (code) => {
@@ -324,12 +350,24 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       // printing/drawer/parked cleanup. A printer fault must NOT prevent
       // the stock movement that the customer has already walked away with.
       // No-op for untracked items (operator never set opening qty).
-      try {
-        const { adjustStock } = await import("../lib/stock");
+      // In LAN (client) mode the decrement goes to the host, which serializes
+      // it and atomically REJECTS an oversell (another till sold the last unit
+      // while this screen showed a stale cached qty). We must surface that —
+      // swallowing it would hide that the host couldn't fulfil the stock move.
+      // In single/host mode local adjust never throws (untracked → null), so
+      // behaviour there is unchanged.
+      const stockFailures: string[] = [];
+      {
+        const { adjustStockShared } = await import("../lib/stock");
         for (const l of cart) {
-          adjustStock(l.item.id, -l.qty);
+          try {
+            await adjustStockShared(l.item.id, -l.qty);
+          } catch (e: any) {
+            if (isClient()) stockFailures.push(`${l.item.nameAr}: ${e?.message ?? e}`);
+            // else single/host — non-fatal, ignore as before.
+          }
         }
-      } catch { /* non-fatal */ }
+      }
 
       const body: ReceiptLine[] = [];
       for (const l of cart) {
@@ -389,7 +427,14 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       setLastInvoice(invNum);
       setCart([]); setCheckoutKey(null); setActiveParkedId(null);
       setCustomer(null); setPaidStr("");
-      setMsg({ kind: "ok", text: `✅ تم إنهاء البيع — فاتورة ${invNum}` });
+      if (stockFailures.length) {
+        // Sale was recorded, but the host could not decrement stock for some
+        // lines (out of stock / sold by another till). Tell the cashier so they
+        // can reconcile — the invoice itself is valid.
+        setMsg({ kind: "err", text: `⚠️ تم حفظ الفاتورة ${invNum} لكن تعذّر خصم المخزون من الجهاز الرئيسي:\n${stockFailures.join("\n")}` });
+      } else {
+        setMsg({ kind: "ok", text: `✅ تم إنهاء البيع — فاتورة ${invNum}` });
+      }
     } catch (e: any) {
       setMsg({ kind: "err", text: `فشل إنهاء البيع: ${e?.message ?? e}` });
     } finally { setPaying(false); }
