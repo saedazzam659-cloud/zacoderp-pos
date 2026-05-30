@@ -16,6 +16,13 @@ Rust `StockRow` in `src-tauri/src/lan.rs` serializes **camelCase** via `#[serde(
 **Why:** they were silently mismatched once (Rust camelCase + no `updated_at` vs TS snake_case + `updated_at`), which breaks `getAllStockShared()` mapping in LAN mode without any type error (it's a runtime JSON shape).
 **How to apply:** any change to either struct must change the other in the same edit; the `lan_stock_get_all` SELECT must include every column the struct deserializes.
 
+## Client webview→host fetch needs BOTH CSP allowance AND server CORS
+The client reaches the host with the **webview `fetch`** (`fetch("http://<ip>:<port>/lan/{ping,invoke,changes}", {headers:{"x-lan-token"}})`). On Windows the WebView2 origin is `http://tauri.localhost`, so a LAN `http://` target is cross-origin (NOT mixed-content). Two things must both be true or every LAN call silently fails with the generic "تعذّر الوصول":
+1. `tauri.conf.json` `security.csp` `connect-src` must include `http://*:*` (LAN host IP+port). It originally only listed `'self'` + the cloud `https://*.zacoderp.com`, so the webview blocked all LAN fetches.
+2. The tiny_http host (`lan.rs`) must answer the **CORS preflight** and send `Access-Control-Allow-*` on every response. `x-lan-token` is a non-safelisted header → the browser sends an `OPTIONS` preflight first; that branch must be handled BEFORE `token_matches` (preflight carries no token) and return 204 + CORS headers.
+**Why:** the LAN feature was shipped using webview fetch but never tested cross-machine; CSP + missing CORS made test-connection always fail even with the host running.
+**How to apply:** if you ever switch the transport to Rust-side reqwest (via a Tauri command), both of these become unnecessary — but as long as the bridge uses webview `fetch`, keep CSP `connect-src http://*:*` and the lan.rs CORS/OPTIONS handling in lockstep.
+
 ## Test-connection must be side-effect free
 The wizard/settings "اختبار الاتصال" buttons use `pingHostAt(url, token)` (explicit args, no state writes), NOT `pingHost()` + persisting `net_role`/`lan_host_url`/`lan_token`.
 **Why:** persisting before a test silently flips a saved single/host device into client mode just by testing. Role is only committed on explicit Save/Finish.

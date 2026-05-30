@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: https:; connect-src 'self' https://zacoderp.com https://*.zacoderp.com"
+      "csp": "default-src 'self'; img-src 'self' data: https:; connect-src 'self' https://zacoderp.com https://*.zacoderp.com http://*:* http://*"
     }
   },
   "bundle": {

@@ -496,16 +496,37 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
 }
 
 // ── HTTP server ──────────────────────────────────────────────────────
+// CORS headers attached to EVERY response. The client devices run inside a
+// Tauri WebView2 webview whose origin is `http://tauri.localhost`; a fetch to
+// `http://<host-ip>:<port>/lan/*` is cross-origin, so without these headers the
+// browser blocks the response (and the preflight) and the client UI shows the
+// generic "تعذّر الوصول" error even though the host is perfectly reachable.
+// `x-lan-token` is a non-safelisted header, so it forces a CORS preflight that
+// is answered in `handle_lan_request`.
+fn cors_headers() -> Vec<tiny_http::Header> {
+    [
+        ("Access-Control-Allow-Origin", "*"),
+        ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+        ("Access-Control-Allow-Headers", "x-lan-token, content-type"),
+        ("Access-Control-Max-Age", "86400"),
+    ]
+    .iter()
+    .filter_map(|(k, v)| tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()).ok())
+    .collect()
+}
+
 fn respond_json(req: tiny_http::Request, status: u16, body: &Value) {
     let data = serde_json::to_string(body).unwrap_or_else(|_| "{}".to_string());
-    let header = tiny_http::Header::from_bytes(
+    let mut response = tiny_http::Response::from_string(data).with_status_code(status);
+    if let Ok(ct) = tiny_http::Header::from_bytes(
         &b"Content-Type"[..],
         &b"application/json; charset=utf-8"[..],
-    )
-    .unwrap();
-    let response = tiny_http::Response::from_string(data)
-        .with_status_code(status)
-        .with_header(header);
+    ) {
+        response.add_header(ct);
+    }
+    for h in cors_headers() {
+        response.add_header(h);
+    }
     let _ = req.respond(response);
 }
 
@@ -527,6 +548,18 @@ const LAN_WORKER_THREADS: usize = 8;
 fn handle_lan_request(mut req: tiny_http::Request, token: &str, name: &str, version: &str) {
     let url = req.url().to_string();
     let method = req.method().clone();
+
+    // CORS preflight — the webview sends an OPTIONS request before the real
+    // GET/POST because `x-lan-token` is a custom header. Answer it with the
+    // CORS headers and an empty 204 so the actual request is allowed through.
+    if method == tiny_http::Method::Options {
+        let mut response = tiny_http::Response::empty(204);
+        for h in cors_headers() {
+            response.add_header(h);
+        }
+        let _ = req.respond(response);
+        return;
+    }
 
     // /lan/ping — token-checked but distinguishes wrong-token (403)
     // from reachable, so the client status UI can show a precise msg.
