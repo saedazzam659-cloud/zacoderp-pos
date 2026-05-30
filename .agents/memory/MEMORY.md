@@ -1,4 +1,5 @@
 - [Atomic claim-and-post in PG](atomic-claim-post.md) — conditional UPDATE alone is NOT enough; the SET must flip the gating column or two concurrent callers both win.
+- [Gated download URL exposure](gated-download-url.md) — metered downloads must return the resource URL ONLY from the consuming /claim step, never from the metadata/release endpoint.
 - [Module gate keys live in two places](module-gate-sync.md) — backend `COMPANY_MODULE_GATE` (permissions.ts) AND frontend group-perms arrays in `Layout.tsx` must both list any new module key, or sidebar/company-toggle silently breaks.
 - [POS Desktop new-screen wiring](pos-desktop-screen-wiring.md) — a new PosShell screen needs View type + nav + permission + the render branch in the content switch; the render branch is the one tsc won't catch.
 - [POS Desktop Rust compiles only in CI](pos-desktop-no-local-cargo.md) — no local cargo; tsc+architect miss Rust errors. Hand-check dup serde-default helpers, unused imports, column/param drift before tagging.

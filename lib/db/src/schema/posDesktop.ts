@@ -132,9 +132,33 @@ export const offlineLicensesTable = pgTable("offline_licenses", {
   statusIdx: index("offline_licenses_status_idx").on(t.status),
 }));
 
+// ─── Protected install-wizard activation codes (/install) ────────────
+// SuperAdmin issues codes that, COMBINED with a valid user login, unlock
+// the MSI download in the wizard. Independent of device/offline licenses.
+export const downloadAccessCodesTable = pgTable("download_access_codes", {
+  id: serial("id").primaryKey(),
+  code: text("code").notNull(),
+  label: text("label"),
+  // Optional binding: when set, ONLY users of this company may use the code.
+  companyId: integer("company_id").references(() => companiesTable.id, { onDelete: "set null" }),
+  // NULL = unlimited downloads; otherwise consumed one-per-download via claim.
+  maxUses: integer("max_uses"),
+  usedCount: integer("used_count").notNull().default(0),
+  expiresAt: timestamp("expires_at"),
+  isActive: boolean("is_active").notNull().default(true),
+  notes: text("notes"),
+  createdByUserId: integer("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  codeUniq: uniqueIndex("download_access_codes_code_uniq").on(t.code),
+  companyIdx: index("download_access_codes_company_idx").on(t.companyId),
+}));
+
 export type DeviceLicense = typeof deviceLicensesTable.$inferSelect;
 export type PosDevice = typeof posDevicesTable.$inferSelect;
 export type SyncQueueLog = typeof syncQueueLogTable.$inferSelect;
 export type DeviceInvoiceRange = typeof deviceInvoiceRangesTable.$inferSelect;
 export type DownloadRelease = typeof downloadReleasesTable.$inferSelect;
 export type OfflineLicense = typeof offlineLicensesTable.$inferSelect;
+export type DownloadAccessCode = typeof downloadAccessCodesTable.$inferSelect;

@@ -462,6 +462,7 @@
     "licenses": "ترخيص النسخة",
     "posDevices": "أجهزة POS المكتبية",
     "offlineLicenses": "تراخيص POS Standalone",
+    "downloadCodes": "أكواد تثبيت POS",
     "backupOperations": "مركز عمليات النسخ الاحتياطي",
     "securityCenter": "مركز الأمان المركزي",
     "superAdminSecurity": "أمان السوبر أدمن",

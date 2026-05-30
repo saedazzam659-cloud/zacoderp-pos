@@ -462,6 +462,7 @@
     "licenses": "License",
     "posDevices": "POS Desktop Devices",
     "offlineLicenses": "POS Standalone Licenses",
+    "downloadCodes": "POS Install Codes",
     "backupOperations": "Backup Operations",
     "securityCenter": "Security Center",
     "superAdminSecurity": "SuperAdmin Security",

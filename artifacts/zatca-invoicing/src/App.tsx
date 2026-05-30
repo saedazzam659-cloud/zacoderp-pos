@@ -21,7 +21,9 @@ import InvoiceFieldPolicies from "@/pages/admin/InvoiceFieldPolicies";
 import EnterCompany from "@/pages/admin/EnterCompany";
 import PosDevices from "@/pages/admin/PosDevices";
 import OfflineLicenses from "@/pages/admin/OfflineLicenses";
+import DownloadCodes from "@/pages/admin/DownloadCodes";
 import Download from "@/pages/Download";
+import InstallWizard from "@/pages/InstallWizard";
 import DatabaseStats from "@/pages/admin/DatabaseStats";
 import AICompanyFix from "@/pages/admin/AICompanyFix";
 import CompanyDataDoctor from "@/pages/admin/CompanyDataDoctor";
@@ -493,6 +495,7 @@ function AppRoutes() {
       location === "/compare" ||
       location === "/why-zacod" ||
       location === "/download" ||
+      location === "/install" ||
       location === "/pending-approval" ||
       location === "/recover-superadmin" ||
       location.startsWith("/recover-superadmin/") ||
@@ -551,6 +554,7 @@ function AppRoutes() {
       <Route path="/why-zacod" component={WhyZacod} />
       <Route path="/pos-system" component={PosLanding} />
       <Route path="/download" component={Download} />
+      <Route path="/install" component={InstallWizard} />
       <Route path="/blog/:slug" component={BlogArticle} />
       <Route path="/pending-approval" component={PendingApproval} />
       <Route path="/recover-superadmin" component={RecoverSuperAdmin} />
@@ -584,6 +588,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
             {isSuperAdmin && <Route path="/admin/pos-devices" component={PosDevices} />}
             {isSuperAdmin && <Route path="/admin/offline-licenses" component={OfflineLicenses} />}
+            {isSuperAdmin && <Route path="/admin/download-codes" component={DownloadCodes} />}
             {isSuperAdmin && <Route path="/admin/security-superadmin" component={SuperAdminSecurity} />}
             {isSuperAdmin && <Route path="/admin/security" component={SecurityCenter} />}
             <Route path="/integrations/gateway" component={IntegrationGateway} />
