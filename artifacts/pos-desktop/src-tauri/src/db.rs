@@ -581,6 +581,16 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE purchase_returns_local ADD COLUMN cost_center_id INTEGER",
         "ALTER TABLE financial_transactions_local ADD COLUMN branch_id INTEGER",
         "ALTER TABLE financial_transactions_local ADD COLUMN cost_center_id INTEGER",
+        // ── Manual journal-entry parity with the web app ──
+        // entry_type mirrors the web entry kinds (general / opening / closing /
+        // adjustment / depreciation). status is the draft↔posted lifecycle: a
+        // 'draft' JE has NO balance impact and is excluded from every financial
+        // report; a 'posted' JE is applied to account balances and reports.
+        // Every existing row (system-generated documents + previously-saved
+        // manual entries) already moved balances, so both columns default to
+        // values that preserve current behaviour ('general' / 'posted').
+        "ALTER TABLE journal_entries_local ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'general'",
+        "ALTER TABLE journal_entries_local ADD COLUMN status TEXT NOT NULL DEFAULT 'posted'",
     ];
     for sql in alters { let _ = conn.execute(sql, []); }
 

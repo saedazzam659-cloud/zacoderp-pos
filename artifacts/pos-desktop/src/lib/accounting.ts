@@ -166,16 +166,38 @@ export type JournalEntryLine = {
   id?: number | null; accountId: number; accountCode?: string | null; accountName?: string | null;
   debit: number; credit: number; description: string | null;
 };
+export type JeEntryType = "general" | "opening" | "closing" | "adjustment" | "depreciation";
+export type JeStatus = "draft" | "posted";
 export type JournalEntry = {
   id: number; entryNo: string; entryDate: string; description: string | null;
   totalDebit: number; totalCredit: number;
   sourceType: string | null; sourceId: number | null;
+  entryType: JeEntryType; status: JeStatus;
+  branchId: number | null; costCenterId: number | null;
   lines: JournalEntryLine[];
 };
-export type JournalEntryInput = {
+
+// Manual-form line carries a per-line cost center (the system `JournalEntryLine`
+// deliberately does not, to avoid touching the system document call-sites).
+export type ManualJeLine = {
+  id?: number | null; accountId: number; accountCode?: string | null; accountName?: string | null;
+  debit: number; credit: number; description: string | null; costCenterId?: number | null;
+};
+export type ManualJeDetail = {
+  id: number; entryNo: string; entryDate: string; description: string | null;
+  entryType: JeEntryType; status: JeStatus; sourceType: string | null;
+  branchId: number | null; costCenterId: number | null;
+  totalDebit: number; totalCredit: number;
+  lines: ManualJeLine[];
+};
+export type ManualJeInput = {
   entryDate: string; description: string | null;
+  entryType?: JeEntryType;
+  /** Manual document-number override; omit/empty to consume the next sequence. */
+  docNumber?: string | null;
+  status?: JeStatus;
   branchId?: number | null; costCenterId?: number | null;
-  lines: JournalEntryLine[];
+  lines: ManualJeLine[];
 };
 
 // ─── Accounts ────────────────────────────────────────────────────────
@@ -367,9 +389,33 @@ export async function getJournalEntry(id: number): Promise<JournalEntry> {
   if (!hasTauri()) notImpl();
   return await invoke<JournalEntry>("journal_entry_get", { id });
 }
-export async function createJournalEntry(input: JournalEntryInput): Promise<number> {
+export async function getJournalEntryDetail(id: number): Promise<ManualJeDetail> {
+  if (!hasTauri()) notImpl();
+  return await invoke<ManualJeDetail>("journal_entry_detail", { id });
+}
+export async function createJournalEntry(input: ManualJeInput): Promise<number> {
   if (!hasTauri()) notImpl();
   return await invoke<number>("journal_entry_create", { input });
+}
+export async function updateJournalEntry(id: number, input: ManualJeInput): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("journal_entry_update", { id, input });
+}
+export async function postJournalEntry(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("journal_entry_post", { id });
+}
+export async function unpostJournalEntry(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("journal_entry_unpost", { id });
+}
+export async function deleteJournalEntry(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("journal_entry_delete", { id });
+}
+export async function peekJournalEntryNumber(): Promise<string> {
+  if (!hasTauri()) return "";
+  return await invoke<string>("journal_entry_peek_number");
 }
 
 // ─── Document numbering series ───────────────────────────────────────

@@ -231,6 +231,10 @@ pub struct JournalEntry {
     pub total_credit: f64,
     pub source_type: Option<String>,
     pub source_id: Option<i64>,
+    pub entry_type: String,
+    pub status: String,
+    pub branch_id: Option<i64>,
+    pub cost_center_id: Option<i64>,
     pub lines: Vec<JournalEntryLine>,
 }
 
@@ -246,17 +250,150 @@ pub struct JournalEntryLine {
     pub description: Option<String>,
 }
 
-#[derive(Deserialize)]
+// ── Manual journal-entry CRUD (web-parity) ──
+// The manual form carries richer data than the shared `insert_journal_entry`
+// path used by system documents: an entry type, a draft/posted status, an
+// optional manual document number, and a per-line cost center. To avoid
+// touching the ~24 system call-sites that construct `JournalEntryLine`, the
+// manual form uses its own dedicated structs + insert path.
+#[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct JournalEntryInput {
+pub struct ManualJeLine {
+    #[serde(default)]
+    pub id: Option<i64>,
+    pub account_id: i64,
+    #[serde(default)]
+    pub account_code: Option<String>,
+    #[serde(default)]
+    pub account_name: Option<String>,
+    pub debit: f64,
+    pub credit: f64,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualJeDetail {
+    pub id: i64,
+    pub entry_no: String,
     pub entry_date: String,
     pub description: Option<String>,
+    pub entry_type: String,
+    pub status: String,
+    pub source_type: Option<String>,
+    pub branch_id: Option<i64>,
+    pub cost_center_id: Option<i64>,
+    pub total_debit: f64,
+    pub total_credit: f64,
+    pub lines: Vec<ManualJeLine>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualJeInput {
+    pub entry_date: String,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub entry_type: Option<String>,
+    /// Manual document-number override. When None/empty the next sequence
+    /// number is consumed; when set it is used verbatim (must be unique).
+    #[serde(default)]
+    pub doc_number: Option<String>,
+    /// "draft" | "posted". None defaults to "posted".
+    #[serde(default)]
+    pub status: Option<String>,
     /// Optional analytic dimensions (الفرع / مركز التكلفة). None = untagged.
     #[serde(default)]
     pub branch_id: Option<i64>,
     #[serde(default)]
     pub cost_center_id: Option<i64>,
-    pub lines: Vec<JournalEntryLine>,
+    pub lines: Vec<ManualJeLine>,
+}
+
+const VALID_ENTRY_TYPES: &[&str] = &["general", "opening", "closing", "adjustment", "depreciation"];
+
+fn norm_entry_type(v: Option<&str>) -> String {
+    match v {
+        Some(s) if VALID_ENTRY_TYPES.contains(&s) => s.to_string(),
+        _ => "general".to_string(),
+    }
+}
+
+/// Keeps only lines that reference a real account AND carry a non-zero amount.
+fn valid_manual_lines(lines: &[ManualJeLine]) -> Vec<&ManualJeLine> {
+    lines.iter().filter(|l| l.account_id > 0 && (l.debit.abs() > 1e-9 || l.credit.abs() > 1e-9)).collect()
+}
+
+/// Validates a manual entry that is about to be POSTED. Draft entries skip this.
+fn validate_posted(valid: &[&ManualJeLine]) -> Result<(f64, f64), String> {
+    if valid.len() < 2 { return Err("القيد المرحَّل يحتاج سطرين صالحين على الأقل".into()); }
+    let total_debit: f64 = valid.iter().map(|l| l.debit).sum();
+    let total_credit: f64 = valid.iter().map(|l| l.credit).sum();
+    if total_debit <= 1e-9 { return Err("إجمالي القيد يجب أن يكون أكبر من صفر".into()); }
+    if (total_debit - total_credit).abs() > 0.001 {
+        return Err(format!("القيد غير متوازن: مدين={total_debit:.2} دائن={total_credit:.2}"));
+    }
+    Ok((total_debit, total_credit))
+}
+
+/// Inserts the manual-entry lines for `je_id`, propagating the header cost
+/// center to any line that has none. Applies the balance impact only when the
+/// entry is being posted (drafts have zero balance effect).
+fn write_manual_lines(
+    tx: &Transaction,
+    je_id: i64,
+    valid: &[&ManualJeLine],
+    header_cc: Option<i64>,
+    post: bool,
+) -> Result<()> {
+    for l in valid {
+        let line_cc = l.cost_center_id.or(header_cc);
+        tx.execute(
+            "INSERT INTO journal_entry_lines_local(entry_id,account_id,debit,credit,description,cost_center_id) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![je_id, l.account_id, l.debit, l.credit, l.description, line_cc],
+        )?;
+        if post {
+            apply_balance(tx, l.account_id, l.debit, l.credit)?;
+        }
+    }
+    Ok(())
+}
+
+/// Reverses the balance impact of every posted line of `je_id` (debit/credit
+/// swapped). Used before re-saving an edit or unposting/deleting.
+fn reverse_je_balance(tx: &Transaction, je_id: i64) -> Result<()> {
+    let mut stmt = tx.prepare("SELECT account_id, debit, credit FROM journal_entry_lines_local WHERE entry_id=?1")?;
+    let rows: Vec<(i64, f64, f64)> = stmt
+        .query_map(params![je_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (acc, debit, credit) in rows {
+        // Swap debit/credit to undo the original apply_balance.
+        apply_balance(tx, acc, credit, debit)?;
+    }
+    Ok(())
+}
+
+/// Loads (source_type, status) for a manual-CRUD guard, erroring when the
+/// entry is system-generated (only NULL or 'manual' may be edited/deleted).
+fn load_manual_guard(conn: &Connection, id: i64) -> Result<(Option<String>, String), String> {
+    let row: Option<(Option<String>, String)> = conn
+        .query_row(
+            "SELECT source_type, status FROM journal_entries_local WHERE id=?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let (source_type, status) = row.ok_or_else(|| "القيد غير موجود".to_string())?;
+    if let Some(s) = &source_type {
+        if s != "manual" {
+            return Err("هذا القيد مُولّد تلقائياً من مستند آخر — افتح المستند الأصلي لفك ترحيله بدلاً من تعديله مباشرة".into());
+        }
+    }
+    Ok((source_type, status))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -299,12 +436,13 @@ pub fn journal_entries_list(limit: Option<i64>) -> Result<Vec<JournalEntry>, Str
     let conn = db::open().map_err(|e| e.to_string())?;
     let lim = limit.unwrap_or(200);
     let mut stmt = conn.prepare(
-        "SELECT id,entry_no,entry_date,description,total_debit,total_credit,source_type,source_id
+        "SELECT id,entry_no,entry_date,description,total_debit,total_credit,source_type,source_id,entry_type,status,branch_id,cost_center_id
          FROM journal_entries_local ORDER BY id DESC LIMIT ?1"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([lim], |r| Ok(JournalEntry {
         id: r.get(0)?, entry_no: r.get(1)?, entry_date: r.get(2)?, description: r.get(3)?,
         total_debit: r.get(4)?, total_credit: r.get(5)?, source_type: r.get(6)?, source_id: r.get(7)?,
+        entry_type: r.get(8)?, status: r.get(9)?, branch_id: r.get(10)?, cost_center_id: r.get(11)?,
         lines: Vec::new(),
     })).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
@@ -316,10 +454,11 @@ pub fn journal_entries_list(limit: Option<i64>) -> Result<Vec<JournalEntry>, Str
 pub fn journal_entry_get(id: i64) -> Result<JournalEntry, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     let mut entry: JournalEntry = conn.query_row(
-        "SELECT id,entry_no,entry_date,description,total_debit,total_credit,source_type,source_id FROM journal_entries_local WHERE id=?1",
+        "SELECT id,entry_no,entry_date,description,total_debit,total_credit,source_type,source_id,entry_type,status,branch_id,cost_center_id FROM journal_entries_local WHERE id=?1",
         params![id], |r| Ok(JournalEntry {
             id: r.get(0)?, entry_no: r.get(1)?, entry_date: r.get(2)?, description: r.get(3)?,
             total_debit: r.get(4)?, total_credit: r.get(5)?, source_type: r.get(6)?, source_id: r.get(7)?,
+            entry_type: r.get(8)?, status: r.get(9)?, branch_id: r.get(10)?, cost_center_id: r.get(11)?,
             lines: Vec::new(),
         })
     ).map_err(|e| e.to_string())?;
@@ -337,14 +476,182 @@ pub fn journal_entry_get(id: i64) -> Result<JournalEntry, String> {
     Ok(entry)
 }
 
+/// Read-only peek of the next manual JE number WITHOUT consuming the sequence
+/// (mirrors the web "الرقم المقترح" badge). The number is only actually
+/// reserved inside `journal_entry_create` when the form is saved.
 #[tauri::command]
-pub fn journal_entry_create(input: JournalEntryInput) -> Result<i64, String> {
+pub fn journal_entry_peek_number() -> Result<String, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let row: Option<(String, i64, i64)> = conn
+        .query_row(
+            "SELECT prefix, next_number, padding FROM number_series_local WHERE doc_type='journal_entry'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let (prefix, next_number, padding) = row.ok_or_else(|| "سلسلة ترقيم القيود غير معرّفة".to_string())?;
+    let width = if padding < 1 { 1 } else { padding as usize };
+    Ok(format!("{}{:0width$}", prefix, next_number, width = width))
+}
+
+/// Resolves the entry number for a new manual JE: a non-empty manual override
+/// is used verbatim (and the sequence is left untouched); otherwise the next
+/// sequence number is atomically consumed.
+fn resolve_manual_entry_no(tx: &Transaction, doc_number: Option<&str>) -> Result<String> {
+    match doc_number.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        Some(manual) => Ok(manual.to_string()),
+        None => next_entry_no(tx),
+    }
+}
+
+fn map_entry_no_conflict(e: rusqlite::Error) -> String {
+    let msg = e.to_string();
+    if msg.contains("UNIQUE") {
+        "رقم القيد مستخدَم بالفعل — اختر رقماً آخر".into()
+    } else {
+        msg
+    }
+}
+
+#[tauri::command]
+pub fn journal_entry_create(input: ManualJeInput) -> Result<i64, String> {
+    let status = match input.status.as_deref() { Some("draft") => "draft", _ => "posted" };
+    let entry_type = norm_entry_type(input.entry_type.as_deref());
+    let valid = valid_manual_lines(&input.lines);
+    let post = status == "posted";
+    let (total_debit, total_credit) = if post {
+        validate_posted(&valid)?
+    } else {
+        if valid.is_empty() { return Err("أضف سطراً واحداً صالحاً على الأقل".into()); }
+        (valid.iter().map(|l| l.debit).sum(), valid.iter().map(|l| l.credit).sum())
+    };
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let id = insert_journal_entry(&tx, &input.entry_date, input.description.as_deref(), Some("manual"), None, input.branch_id, input.cost_center_id, &input.lines)
-        .map_err(|e| e.to_string())?;
+    let entry_no = resolve_manual_entry_no(&tx, input.doc_number.as_deref()).map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO journal_entries_local(entry_no,entry_date,description,total_debit,total_credit,source_type,source_id,branch_id,cost_center_id,entry_type,status) \
+         VALUES(?1,?2,?3,?4,?5,'manual',NULL,?6,?7,?8,?9)",
+        params![entry_no, input.entry_date, input.description, total_debit, total_credit, input.branch_id, input.cost_center_id, entry_type, status],
+    ).map_err(map_entry_no_conflict)?;
+    let je_id = tx.last_insert_rowid();
+    write_manual_lines(&tx, je_id, &valid, input.cost_center_id, post).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
-    Ok(id)
+    Ok(je_id)
+}
+
+/// Full detail (incl. per-line cost center) for the manual edit form.
+#[tauri::command]
+pub fn journal_entry_detail(id: i64) -> Result<ManualJeDetail, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut entry: ManualJeDetail = conn.query_row(
+        "SELECT id,entry_no,entry_date,description,entry_type,status,source_type,branch_id,cost_center_id,total_debit,total_credit FROM journal_entries_local WHERE id=?1",
+        params![id], |r| Ok(ManualJeDetail {
+            id: r.get(0)?, entry_no: r.get(1)?, entry_date: r.get(2)?, description: r.get(3)?,
+            entry_type: r.get(4)?, status: r.get(5)?, source_type: r.get(6)?,
+            branch_id: r.get(7)?, cost_center_id: r.get(8)?, total_debit: r.get(9)?, total_credit: r.get(10)?,
+            lines: Vec::new(),
+        })
+    ).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT l.id,l.account_id,a.code,a.name_ar,l.debit,l.credit,l.description,l.cost_center_id
+         FROM journal_entry_lines_local l
+         JOIN accounts_local a ON a.id=l.account_id
+         WHERE l.entry_id=?1 ORDER BY l.id"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([id], |r| Ok(ManualJeLine {
+        id: r.get(0)?, account_id: r.get(1)?, account_code: r.get(2)?, account_name: r.get(3)?,
+        debit: r.get(4)?, credit: r.get(5)?, description: r.get(6)?, cost_center_id: r.get(7)?,
+    })).map_err(|e| e.to_string())?;
+    for r in rows { entry.lines.push(r.map_err(|e| e.to_string())?); }
+    Ok(entry)
+}
+
+/// Rewrites a manual JE in place. System-generated entries are rejected. The
+/// document number is immutable on edit (only set at creation). When the entry
+/// was posted its old balance impact is reversed first; the new status decides
+/// whether the rewritten lines re-apply to balances.
+#[tauri::command]
+pub fn journal_entry_update(id: i64, input: ManualJeInput) -> Result<(), String> {
+    let new_status = match input.status.as_deref() { Some("draft") => "draft", _ => "posted" };
+    let entry_type = norm_entry_type(input.entry_type.as_deref());
+    let valid = valid_manual_lines(&input.lines);
+    let post = new_status == "posted";
+    let (total_debit, total_credit) = if post {
+        validate_posted(&valid)?
+    } else {
+        if valid.is_empty() { return Err("أضف سطراً واحداً صالحاً على الأقل".into()); }
+        (valid.iter().map(|l| l.debit).sum(), valid.iter().map(|l| l.credit).sum())
+    };
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let (_src, old_status) = load_manual_guard(&conn, id)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    if old_status == "posted" {
+        reverse_je_balance(&tx, id).map_err(|e| e.to_string())?;
+    }
+    tx.execute("DELETE FROM journal_entry_lines_local WHERE entry_id=?1", params![id]).map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE journal_entries_local SET entry_date=?1,description=?2,total_debit=?3,total_credit=?4,branch_id=?5,cost_center_id=?6,entry_type=?7,status=?8 WHERE id=?9",
+        params![input.entry_date, input.description, total_debit, total_credit, input.branch_id, input.cost_center_id, entry_type, new_status, id],
+    ).map_err(|e| e.to_string())?;
+    write_manual_lines(&tx, id, &valid, input.cost_center_id, post).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Posts a manual draft: validates balance, applies the balance impact, flips
+/// status to 'posted'.
+#[tauri::command]
+pub fn journal_entry_post(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let (_src, status) = load_manual_guard(&conn, id)?;
+    if status != "draft" { return Err("هذا القيد ليس مسودة".into()); }
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let mut stmt = tx.prepare("SELECT account_id,debit,credit FROM journal_entry_lines_local WHERE entry_id=?1").map_err(|e| e.to_string())?;
+    let lines: Vec<(i64, f64, f64)> = stmt
+        .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+    if lines.len() < 2 { return Err("القيد المرحَّل يحتاج سطرين على الأقل".into()); }
+    let td: f64 = lines.iter().map(|l| l.1).sum();
+    let tc: f64 = lines.iter().map(|l| l.2).sum();
+    if td <= 1e-9 { return Err("إجمالي القيد يجب أن يكون أكبر من صفر".into()); }
+    if (td - tc).abs() > 0.001 { return Err(format!("القيد غير متوازن: مدين={td:.2} دائن={tc:.2}")); }
+    for (acc, debit, credit) in &lines { apply_balance(&tx, *acc, *debit, *credit).map_err(|e| e.to_string())?; }
+    tx.execute("UPDATE journal_entries_local SET status='posted' WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Unposts a manual posted entry back to draft, reversing its balance impact.
+#[tauri::command]
+pub fn journal_entry_unpost(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let (_src, status) = load_manual_guard(&conn, id)?;
+    if status != "posted" { return Err("هذا القيد ليس مرحَّلاً".into()); }
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    reverse_je_balance(&tx, id).map_err(|e| e.to_string())?;
+    tx.execute("UPDATE journal_entries_local SET status='draft' WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Deletes a manual entry (drafts or posted). A posted entry's balance impact
+/// is reversed first. System-generated entries are rejected.
+#[tauri::command]
+pub fn journal_entry_delete(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let (_src, status) = load_manual_guard(&conn, id)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    if status == "posted" {
+        reverse_je_balance(&tx, id).map_err(|e| e.to_string())?;
+    }
+    tx.execute("DELETE FROM journal_entry_lines_local WHERE entry_id=?1", params![id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM journal_entries_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ───────────────────────── Suppliers ─────────────────────────────────
@@ -2316,7 +2623,7 @@ pub fn report_ledger_lines(
          e.entry_date, e.entry_no, COALESCE(l.description, e.description), e.source_type, e.branch_id, l.cost_center_id \
          FROM journal_entry_lines_local l \
          JOIN journal_entries_local e ON e.id = l.entry_id \
-         JOIN accounts_local a ON a.id = l.account_id WHERE 1=1"
+         JOIN accounts_local a ON a.id = l.account_id WHERE e.status = 'posted'"
     );
     let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     if let Some(d) = &to_date { sql.push_str(" AND e.entry_date <= ?"); args.push(Box::new(d.clone())); }
