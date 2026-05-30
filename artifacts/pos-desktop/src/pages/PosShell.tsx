@@ -140,8 +140,8 @@ type Props = {
 // The standalone (Windows) nav has ~30 screens. Per user request they are
 // organised into collapsible top-level groups that behave as an ACCORDION:
 // opening one group closes any other (single `openGroup` state). Screens not
-// listed in any group (sales, returns, parked, daily, customers, network,
-// expiry, updates …) stay as flat top-level entries. A group is rendered only
+// listed in any group (sales, returns, parked, daily, customers, scale,
+// expiry …) stay as flat top-level entries. A group is rendered only
 // when at least one of its members is actually present in the (perm-filtered)
 // nav list, so it disappears entirely for users without access.
 type NavGroupDef = { key: string; icon: string; label: string; members: View[] };
@@ -153,6 +153,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     members: [
       "items", "uom", "warehouses", "stock_transfers",
       "stocktakes", "stock_adjustments", "stock_movements", "low_stock",
+      "stock_import",
     ],
   },
   {
@@ -168,20 +169,25 @@ const NAV_GROUPS: NavGroupDef[] = [
     members: ["sales_invoices", "sales_returns"],
   },
   {
+    key: "cash_banks",
+    icon: "🏦",
+    label: "النقد والبنوك",
+    members: ["banks", "cash_boxes", "financial_tx", "treasury_transfers"],
+  },
+  {
     key: "accounts",
     icon: "🧮",
     label: "الحسابات العامة",
-    members: [
-      "chart_of_accounts", "journal_entries", "banks", "cash_boxes",
-      "financial_tx", "treasury_transfers", "currencies", "exchange_rates",
-      "dashboard",
-    ],
+    members: ["chart_of_accounts", "journal_entries"],
   },
   {
-    key: "users",
-    icon: "👤",
-    label: "المستخدمون والصلاحيات",
-    members: ["users", "scale", "stock_import", "user_permissions"],
+    key: "control",
+    icon: "⚙️",
+    label: "التحكم العام",
+    members: [
+      "currencies", "exchange_rates", "dashboard",
+      "users", "user_permissions", "network", "number_series", "updates",
+    ],
   },
 ];
 // Reverse lookup: view id → group key (for auto-expanding the active group).
