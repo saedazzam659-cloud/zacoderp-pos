@@ -12,7 +12,7 @@ import {
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { getTaxRate } from "../lib/taxSettings";
-import { getDefaultTaxPercent } from "../lib/taxes";
+import { getDefaultTax } from "../lib/taxes";
 
 const ENTRY_TYPES: { value: JeEntryType; label: string }[] = [
   { value: "general", label: "قيد عام" },
@@ -301,13 +301,21 @@ function JeForm({ accounts, state, onCancel, onDone }: {
   );
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // VAT percent driving applyVat: the system default tax's percent rate if one
-  // is configured, otherwise the country/localStorage rate. Loaded once.
+  // VAT driving applyVat: the system default tax's percent rate + its own GL
+  // account if one is configured; otherwise the country/localStorage rate and
+  // the hardcoded VAT account codes (1400/2200). Loaded once.
   const [vatRate, setVatRate] = useState<number>(() => getTaxRate());
+  const [vatTaxAccountId, setVatTaxAccountId] = useState<number | null>(null);
 
   useEffect(() => {
-    void getDefaultTaxPercent()
-      .then((p) => { if (p != null) setVatRate(p); })
+    void getDefaultTax()
+      .then((t) => {
+        if (t && t.rateType === "percent") {
+          const n = Number(t.rateValue);
+          if (Number.isFinite(n) && n >= 0) setVatRate(n);
+        }
+        setVatTaxAccountId(t?.accountId ?? null);
+      })
       .catch(() => { /* keep the getTaxRate() fallback */ });
   }, []);
 
@@ -344,11 +352,27 @@ function JeForm({ accounts, state, onCancel, onDone }: {
   }
 
   function applyVat() {
-    const vatInId = accounts.find((a) => a.code === VAT_IN_CODE)?.id;
-    const vatOutId = accounts.find((a) => a.code === VAT_OUT_CODE)?.id;
-    if (!vatInId || !vatOutId) {
-      setErr(`حسابا ضريبة القيمة المضافة (${VAT_IN_CODE} مدخلات / ${VAT_OUT_CODE} مخرجات) غير موجودين في شجرة الحسابات`);
-      return;
+    // Account resolution: the default tax (شاشة الضرائب) owns ONE GL account
+    // used on either side. If a default tax is configured WITH an account, that
+    // account MUST exist — we never silently fall back, so a bad configuration
+    // surfaces instead of posting to the wrong account. Only when there is no
+    // default-tax account at all do we fall back to the legacy codes 1400/2200.
+    let vatInId: number | undefined;
+    let vatOutId: number | undefined;
+    if (vatTaxAccountId != null) {
+      if (!accounts.some((a) => a.id === vatTaxAccountId)) {
+        setErr("حساب الضريبة المرتبط بالضريبة الافتراضية غير موجود في شجرة الحسابات — افتح شاشة الضرائب واختر حسابًا صحيحًا");
+        return;
+      }
+      vatInId = vatTaxAccountId;
+      vatOutId = vatTaxAccountId;
+    } else {
+      vatInId = accounts.find((a) => a.code === VAT_IN_CODE)?.id;
+      vatOutId = accounts.find((a) => a.code === VAT_OUT_CODE)?.id;
+      if (!vatInId || !vatOutId) {
+        setErr(`لا يوجد حساب ضريبة افتراضي — افتح شاشة الضرائب وحدّد ضريبة افتراضية بحساب، أو أضف الحسابين (${VAT_IN_CODE} مدخلات / ${VAT_OUT_CODE} مخرجات) في شجرة الحسابات`);
+        return;
+      }
     }
     setErr(null);
     const defCc = costCenterId === "" ? null : costCenterId;
@@ -357,7 +381,8 @@ function JeForm({ accounts, state, onCancel, onDone }: {
       const vatLines: ManualJeLine[] = [];
       for (const l of prev) {
         const code = accounts.find((a) => a.id === l.accountId)?.code;
-        const isVatAcc = code === VAT_IN_CODE || code === VAT_OUT_CODE;
+        const isVatAcc = code === VAT_IN_CODE || code === VAT_OUT_CODE ||
+          (vatTaxAccountId != null && l.accountId === vatTaxAccountId);
         const dr = Number(l.debit) || 0, cr = Number(l.credit) || 0;
         if (!l.accountId || isVatAcc || (dr <= 0 && cr <= 0)) { out.push(l); continue; }
         const onDebit = dr > 0;
