@@ -48,6 +48,12 @@ uri = "file://artifacts/install-guide-video/public/images/payments.png"
 type = "image"
 title = "mada apple pay icons"
 
+[[generated]]
+id = "xfLSQS_Jx7pe3Y2kVt1uH"
+uri = "file://artifacts/pos-desktop/src-tauri/icon-source.png"
+type = "image"
+title = "zacode pos icon"
+
 [[outputs]]
 id = "ZijkzvPyt1HNWuXO3Wk_d"
 uri = "file://exports/zacoderp-source.tar.gz"
