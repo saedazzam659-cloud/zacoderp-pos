@@ -340,6 +340,15 @@ export default function ItemsAdmin() {
     document.body.style.cursor = "col-resize";
   }, [colWidths, onResizeMove, onResizeEnd]);
 
+  // Always tear down drag listeners on unmount — a mid-drag navigation away
+  // would otherwise leak global mousemove/mouseup handlers and leave the
+  // body cursor stuck on "col-resize".
+  useEffect(() => () => {
+    window.removeEventListener("mousemove", onResizeMove);
+    window.removeEventListener("mouseup", onResizeEnd);
+    document.body.style.cursor = "";
+  }, [onResizeMove, onResizeEnd]);
+
   const autoFit = useCallback((key: ColKey) => {
     const col = ITEM_COLS.find((c) => c.key === key);
     if (!col) return;
