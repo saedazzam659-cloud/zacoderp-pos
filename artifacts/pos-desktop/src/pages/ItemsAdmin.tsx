@@ -564,7 +564,19 @@ export default function ItemsAdmin() {
             </thead>
             <tbody>
               {pageRows.map((it) => (
-                <tr key={it.id} style={S.tr}>
+                <tr
+                  key={it.id}
+                  style={{ ...S.tr, cursor: showForm ? "default" : "pointer" }}
+                  onClick={(e) => {
+                    if (showForm) return;
+                    // Don't hijack clicks on interactive cell children (buttons,
+                    // future inputs/links) — only a click on the row body edits.
+                    if ((e.target as HTMLElement).closest('button,input,select,textarea,a,[role="button"]')) return;
+                    setEditing(it);
+                    setShowForm(true);
+                  }}
+                  title={showForm ? "أغلق النموذج الحالي أولاً" : "اضغط على السطر للتعديل"}
+                >
                   <td style={S.tdClip}>
                     <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {it.nameAr}
@@ -586,7 +598,7 @@ export default function ItemsAdmin() {
                       {it.cloudId ? `☁️ #${it.cloudId}` : "📱 محلي"}
                     </span>
                   </td>
-                  <td style={S.tdRight}>
+                  <td style={S.tdRight} onClick={(e) => e.stopPropagation()}>
                     <button onClick={() => { setEditing(it); setShowForm(true); }} disabled={showForm} style={{ ...S.btnEdit, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>تعديل</button>
                     <button onClick={() => handleDelete(it)} disabled={showForm} style={{ ...S.btnDel, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>حذف</button>
                   </td>
