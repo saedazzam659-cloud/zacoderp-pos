@@ -9,7 +9,14 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
+  LineDiscountCell, InvoiceTotals,
 } from "./_adminUi";
+import {
+  computeDiscount, lineNet, saveDocDiscount, getDocDiscount,
+  type DiscType, type DiscFields,
+} from "../lib/discount";
+
+type FLine = PurchaseLine & DiscFields;
 
 export default function PurchaseReturnsAdmin() {
   const [rows, setRows] = useState<PurchaseReturn[]>([]);
@@ -104,6 +111,8 @@ export default function PurchaseReturnsAdmin() {
 }
 
 function ReturnDetail({ r }: { r: PurchaseReturn }) {
+  const disc = getDocDiscount("purchase_return", r.id);
+  const discTotal = disc ? (disc.lineDiscountTotal + disc.headerDiscountValue) : 0;
   return (
     <div style={{ padding: 12 }}>
       <Table>
@@ -112,6 +121,12 @@ function ReturnDetail({ r }: { r: PurchaseReturn }) {
           {r.lines.map((l, i) => (
             <tr key={l.id ?? i}><Td>{l.itemName}</Td><Td>{l.uomName ?? ""}</Td><Td num>{l.qty}</Td><Td num>{fmt(l.unitCost)}</Td><Td num>{fmt(l.lineTotal)}</Td></tr>
           ))}
+          {disc && discTotal > 0.00001 && (
+            <>
+              <tr style={{ background: "#fff", color: "#475569" }}><Td colSpan={4 as any}>الإجمالي قبل الخصم</Td><Td num>{fmt(disc.grossSubtotal)}</Td></tr>
+              <tr style={{ background: "#fff", color: "#b45309" }}><Td colSpan={4 as any}>الخصم</Td><Td num>− {fmt(discTotal)}</Td></tr>
+            </>
+          )}
           <tr style={{ background: "#f1f5f9", fontWeight: 700 }}><Td colSpan={4 as any}>الإجمالي</Td><Td num>{fmt(r.grandTotal)}</Td></tr>
         </tbody>
       </Table>
@@ -128,15 +143,17 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
   const [notes, setNotes] = useState("");
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
-  const blankLine = (): PurchaseLine => ({
-    itemId: 0, qty: 1, unitCost: 0, vatRate: 15, lineTotal: 0,
+  const blankLine = (): FLine => ({
+    itemId: 0, qty: 1, unitCost: 0, vatRate: 15, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
-  const [lines, setLines] = useState<PurchaseLine[]>(() => [blankLine()]);
+  const [lines, setLines] = useState<FLine[]>(() => [blankLine()]);
+  const [headerDisc, setHeaderDisc] = useState(0);
+  const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  function setLine(i: number, patch: Partial<PurchaseLine>) {
+  function setLine(i: number, patch: Partial<FLine>) {
     setLines((ls) => ls.map((l, k) => {
       if (k !== i) return l;
       const next = { ...l, ...patch };
@@ -153,20 +170,19 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
         const u = uoms.find((x) => x.id === Number(patch.uomId));
         if (u) { next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
       }
-      const sub = (Number(next.qty) || 0) * (Number(next.unitCost) || 0);
-      next.lineTotal = sub + sub * (Number(next.vatRate) || 0) / 100;
+      // Per-line الإجمالي reflects the line discount (header shown in totals panel).
+      const { net } = lineNet(next.qty, next.unitCost, next.disc, next.discType);
+      next.lineTotal = net + net * (Number(next.vatRate) || 0) / 100;
       return next;
     }));
   }
   function addLine() { setLines((ls) => [...ls, blankLine()]); }
   function removeLine(i: number) { setLines((ls) => ls.filter((_, k) => k !== i)); }
 
-  const subtotal = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.unitCost) || 0), 0);
-  const vatTotal = lines.reduce((s, l) => {
-    const sub = (Number(l.qty) || 0) * (Number(l.unitCost) || 0);
-    return s + sub * (Number(l.vatRate) || 0) / 100;
-  }, 0);
-  const grand = subtotal + vatTotal;
+  const result = computeDiscount(
+    lines.map((l) => ({ qty: l.qty, unit: l.unitCost, vatRate: l.vatRate, disc: l.disc, discType: l.discType })),
+    headerDisc, headerDiscType,
+  );
 
   async function save() {
     setBusy(true); setErr(null);
@@ -174,7 +190,24 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
       const cleaned = lines.filter((l) => l.itemId && (l.qty || 0) > 0);
       if (!supplierId) throw new Error("اختر المورد");
       if (cleaned.length === 0) throw new Error("أضف صنفاً واحداً على الأقل");
-      await createPurchaseReturn({ supplierId, purchaseId: null, returnDate: date, warehouseId: warehouseId || null, notes: notes || null, lines: cleaned });
+      // Fold the discount into each unit cost; Rust recomputes totals from
+      // qty × unitCost so VAT lands on the net base (ZATCA-correct).
+      const r = computeDiscount(
+        cleaned.map((l) => ({ qty: l.qty, unit: l.unitCost, vatRate: l.vatRate, disc: l.disc, discType: l.discType })),
+        headerDisc, headerDiscType,
+      );
+      const payloadLines: PurchaseLine[] = cleaned.map((l, i) => {
+        const net = r.netUnitPrices[i];
+        return {
+          itemId: l.itemId, itemName: l.itemName, qty: l.qty, unitCost: net, vatRate: l.vatRate,
+          lineTotal: l.qty * net * (1 + (Number(l.vatRate) || 0) / 100),
+          uomId: l.uomId, uomName: l.uomName, conversionFactor: l.conversionFactor,
+        };
+      });
+      const id = await createPurchaseReturn({ supplierId, purchaseId: null, returnDate: date, warehouseId: warehouseId || null, notes: notes || null, lines: payloadLines });
+      saveDocDiscount("purchase_return", id, {
+        grossSubtotal: r.grossSubtotal, lineDiscountTotal: r.lineDiscountTotal, headerDiscountValue: r.headerDiscountValue,
+      });
       onDone();
     } catch (e: any) { setErr(e?.message ?? "فشل"); }
     finally { setBusy(false); }
@@ -210,7 +243,7 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
       </Field>
       <Table>
         <thead><tr>
-          <Th>الصنف</Th><Th style={{ width: 130 }}>الوحدة</Th><Th style={{ width: 90 }}>الكمية</Th><Th style={{ width: 120 }}>سعر الوحدة</Th><Th style={{ width: 80 }}>ض. %</Th>
+          <Th>الصنف</Th><Th style={{ width: 130 }}>الوحدة</Th><Th style={{ width: 90 }}>الكمية</Th><Th style={{ width: 120 }}>سعر الوحدة</Th><Th style={{ width: 170 }}>الخصم</Th><Th style={{ width: 80 }}>ض. %</Th>
           <Th style={{ width: 120, textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 40 }}></Th>
         </tr></thead>
         <tbody>
@@ -237,19 +270,16 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
               </Td>
               <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={input} /></Td>
               <Td><input type="number" step="0.01" value={l.unitCost} onChange={(e) => setLine(i, { unitCost: Number(e.target.value) || 0 })} style={input} /></Td>
+              <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} /></Td>
               <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={input} /></Td>
               <Td num>{fmt(l.lineTotal)}</Td>
               <Td><button onClick={() => removeLine(i)} type="button" style={{ ...btnLink, color: "#dc2626" }}>×</button></Td>
             </tr>
           ))}
-          <tr style={{ background: "#f8fafc", fontWeight: 700 }}>
-            <Td colSpan={5 as any}>قبل الضريبة</Td><Td num>{fmt(subtotal)}</Td><Td></Td>
-          </tr>
-          <tr style={{ background: "#f8fafc" }}><Td colSpan={5 as any}>الضريبة</Td><Td num>{fmt(vatTotal)}</Td><Td></Td></tr>
-          <tr style={{ background: "#f1f5f9", fontWeight: 800, fontSize: 15 }}><Td colSpan={5 as any}>الإجمالي</Td><Td num>{fmt(grand)}</Td><Td></Td></tr>
         </tbody>
       </Table>
       <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
+      <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
       <Field label="ملاحظات" style={{ marginTop: 12 }}><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
       <ErrorMsg text={err} />
       <Actions>

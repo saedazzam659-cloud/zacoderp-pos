@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { currencySymbol } from "../lib/currency";
+import type { DiscType, DiscountResult } from "../lib/discount";
 
 export function Page({ title, subtitle, right, children }: {
   title: string; subtitle?: string; right?: ReactNode; children: ReactNode;
@@ -129,9 +130,8 @@ export function SearchCombobox({
   const [q, setQ] = useState("");
   const [hi, setHi] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const popRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const popRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<{ top: number; left: number; width: number; openUp: boolean } | null>(null);
 
@@ -154,7 +154,7 @@ export function SearchCombobox({
       const t = e.target as Node;
       if (rootRef.current?.contains(t)) return;
       if (popRef.current?.contains(t)) return;
-      setOpen(false);
+      closeAndReset();
     }
     document.addEventListener("mousedown", onDocDown);
     return () => document.removeEventListener("mousedown", onDocDown);
@@ -163,14 +163,14 @@ export function SearchCombobox({
   useEffect(() => {
     if (!open) { setPos(null); return; }
     function recompute() {
-      const el = triggerRef.current;
+      const el = inputRef.current;
       if (!el) return;
       const r = el.getBoundingClientRect();
-      const POP_MAX = 320;
+      const POP_MAX = 300;
       const spaceBelow = window.innerHeight - r.bottom;
       const openUp = spaceBelow < POP_MAX + 8 && r.top > spaceBelow;
       setPos({
-        top: openUp ? r.top - 4 : r.bottom + 4,
+        top: openUp ? r.top : r.bottom,
         left: r.left,
         width: r.width,
         openUp,
@@ -185,15 +185,7 @@ export function SearchCombobox({
     };
   }, [open]);
 
-  useEffect(() => {
-    if (open) {
-      setQ("");
-      setHi(Math.max(0, filtered.findIndex((o) => o.value === value)));
-      setTimeout(() => inputRef.current?.focus(), 0);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
+  useEffect(() => { if (open) setHi(Math.max(0, filtered.findIndex((o) => o.value === value))); }, [open]);
   useEffect(() => { setHi(0); }, [q]);
 
   useEffect(() => {
@@ -202,48 +194,55 @@ export function SearchCombobox({
     el?.scrollIntoView({ block: "nearest" });
   }, [hi, open]);
 
+  function closeAndReset() { setOpen(false); setQ(""); }
+
   function pick(o: ComboOption) {
     if (o.disabled) return;
     onChange(o.value);
-    setOpen(false);
+    closeAndReset();
+    inputRef.current?.blur();
   }
 
   function onKey(e: React.KeyboardEvent) {
-    if (e.key === "ArrowDown") { e.preventDefault(); setHi((h) => Math.min(filtered.length - 1, h + 1)); }
+    if (e.key === "ArrowDown") { e.preventDefault(); if (!open) { setOpen(true); return; } setHi((h) => Math.min(filtered.length - 1, h + 1)); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setHi((h) => Math.max(0, h - 1)); }
-    else if (e.key === "Enter") { e.preventDefault(); const o = filtered[hi]; if (o) pick(o); }
-    else if (e.key === "Escape") { e.preventDefault(); setOpen(false); }
+    else if (e.key === "Enter") { e.preventDefault(); if (!open) { setOpen(true); return; } const o = filtered[hi]; if (o) pick(o); }
+    else if (e.key === "Escape") { e.preventDefault(); closeAndReset(); inputRef.current?.blur(); }
   }
 
-  const triggerStyle: CSSProperties = {
+  // The field itself is the typeable input: closed → shows the selected label,
+  // open → shows the live query. Results attach flush beneath it.
+  const fieldStyle: CSSProperties = {
     ...(style ?? input),
-    display: "flex", alignItems: "center", justifyContent: "space-between",
-    cursor: disabled ? "not-allowed" : "pointer",
     background: disabled ? "#f1f5f9" : "#fff",
+    cursor: disabled ? "not-allowed" : "text",
     textAlign: "right",
-    overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
+    ...(open && pos ? { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } : null),
   };
 
   return (
     <div ref={rootRef} style={{ position: "relative", width: "100%" }}>
-      <button
-        ref={triggerRef}
-        type="button"
+      <span style={{ position: "absolute", insetInlineStart: 8, top: "50%", transform: "translateY(-50%)", fontSize: 10, color: "#94a3b8", pointerEvents: "none" }}>▾</span>
+      <input
+        ref={inputRef}
+        type="text"
         disabled={disabled}
         autoFocus={autoFocus}
-        onClick={() => { if (!disabled) setOpen((o) => !o); }}
-        onKeyDown={(e) => {
-          if (!open && (e.key === "Enter" || e.key === "ArrowDown" || e.key === " ")) {
-            e.preventDefault(); setOpen(true);
-          }
+        value={open ? q : (selected ? selected.label : "")}
+        placeholder={selected ? selected.label : placeholder}
+        onChange={(e) => { setQ(e.target.value); if (!open) setOpen(true); }}
+        onFocus={() => { if (!disabled) { setOpen(true); setQ(""); } }}
+        onMouseDown={() => { if (!disabled && !open) { setOpen(true); setQ(""); } }}
+        onBlur={(e) => {
+          // Close on focus leaving the field (e.g. Tab), but not when focus
+          // moves into the popup (clicking an option fires pick() itself).
+          const next = e.relatedTarget as Node | null;
+          if (next && (rootRef.current?.contains(next) || popRef.current?.contains(next))) return;
+          closeAndReset();
         }}
-        style={triggerStyle}
-      >
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", color: selected ? "inherit" : "#94a3b8" }}>
-          {selected ? selected.label : placeholder}
-        </span>
-        <span style={{ fontSize: 10, color: "#64748b", marginInlineStart: 6 }}>▾</span>
-      </button>
+        onKeyDown={onKey}
+        style={{ ...fieldStyle, paddingInlineStart: 22 }}
+      />
       {open && pos && (
         <div
           ref={popRef}
@@ -253,24 +252,17 @@ export function SearchCombobox({
             bottom: pos.openUp ? window.innerHeight - pos.top : undefined,
             left: pos.left,
             minWidth: pos.width, width: pos.width, maxWidth: "min(420px, 92vw)",
-            background: "#fff", border: "1px solid #cbd5e1", borderRadius: 6,
-            boxShadow: "0 8px 24px rgba(15,23,42,.12)", zIndex: 9999,
-            display: "flex", flexDirection: "column", maxHeight: 320,
+            background: "#fff", border: "1px solid #2563eb",
+            borderTop: pos.openUp ? "1px solid #2563eb" : "none",
+            borderBottom: pos.openUp ? "none" : "1px solid #2563eb",
+            borderRadius: pos.openUp ? "6px 6px 0 0" : "0 0 6px 6px",
+            boxShadow: pos.openUp ? "0 -6px 16px rgba(15,23,42,.08)" : "0 6px 16px rgba(15,23,42,.08)",
+            zIndex: 9999, overflowY: "auto", maxHeight: 280,
           }}
         >
-          <div style={{ padding: 8, borderBottom: "1px solid #e2e8f0", background: "#f8fafc" }}>
-            <input
-              ref={inputRef}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={onKey}
-              placeholder="بحث..."
-              style={{ ...input, padding: "6px 10px", fontSize: 13 }}
-            />
-          </div>
-          <div ref={listRef} style={{ overflowY: "auto", flex: 1 }}>
+          <div ref={listRef}>
             {filtered.length === 0 ? (
-              <div style={{ padding: 16, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>لا توجد نتائج</div>
+              <div style={{ padding: 14, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>لا توجد نتائج</div>
             ) : filtered.map((o, idx) => {
               const isSel = o.value === value;
               const isHi = idx === hi;
@@ -295,6 +287,93 @@ export function SearchCombobox({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Discount controls ───────────────────────────────────────────────
+// Compact %/value toggle shared by the per-line discount cell and the
+// header (whole-invoice) discount control.
+function DiscTypeToggle({ value, onChange, disabled }: {
+  value: DiscType; onChange: (t: DiscType) => void; disabled?: boolean;
+}) {
+  const seg: CSSProperties = {
+    border: "none", background: "transparent", cursor: disabled ? "default" : "pointer",
+    fontFamily: "inherit", fontSize: 12, fontWeight: 700, padding: "0 8px", color: "#64748b",
+  };
+  const on: CSSProperties = { background: "#2563eb", color: "#fff", borderRadius: 5 };
+  return (
+    <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", padding: 2, height: 34 }}>
+      <button type="button" disabled={disabled} onClick={() => onChange("percent")} style={{ ...seg, ...(value === "percent" ? on : null) }}>%</button>
+      <button type="button" disabled={disabled} onClick={() => onChange("value")} style={{ ...seg, ...(value === "value" ? on : null) }}>{currencySymbol()}</button>
+    </div>
+  );
+}
+
+/** Per-line discount cell: a number input plus a compact %/value toggle. */
+export function LineDiscountCell({ amount, type, onAmount, onType }: {
+  amount: number; type: DiscType;
+  onAmount: (v: number) => void; onType: (t: DiscType) => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+      <input
+        type="number" step="0.01" min={0} value={amount || ""}
+        placeholder="0"
+        onChange={(e) => onAmount(Number(e.target.value) || 0)}
+        style={{ ...input, padding: "8px 8px" }}
+      />
+      <DiscTypeToggle value={type} onChange={onType} />
+    </div>
+  );
+}
+
+/** Attractive totals panel; hosts the header (whole-invoice) discount control. */
+export function InvoiceTotals({ result, headerDisc, headerType, onHeaderDisc, onHeaderType }: {
+  result: DiscountResult;
+  headerDisc: number; headerType: DiscType;
+  onHeaderDisc: (v: number) => void; onHeaderType: (t: DiscType) => void;
+}) {
+  const sym = currencySymbol();
+  const m = (n: number) => `${fmt(n)} ${sym}`;
+  const hasLineDisc = result.lineDiscountTotal > 0.00001;
+  const hasHeaderDisc = result.headerDiscountValue > 0.00001;
+  const rowS: CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", fontSize: 14 };
+  return (
+    <div style={{ marginTop: 12, marginInlineStart: "auto", maxWidth: 420, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 16px" }}>
+      <div style={{ ...rowS, color: "#475569" }}>
+        <span>الإجمالي قبل الخصم</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{m(result.grossSubtotal)}</span>
+      </div>
+      {hasLineDisc && (
+        <div style={{ ...rowS, color: "#b45309" }}>
+          <span>خصم الأصناف</span><span style={{ fontVariantNumeric: "tabular-nums" }}>− {m(result.lineDiscountTotal)}</span>
+        </div>
+      )}
+      <div style={{ ...rowS, borderTop: "1px dashed #e2e8f0" }}>
+        <span style={{ fontWeight: 600, color: "#0f172a" }}>خصم على الفاتورة</span>
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          <input
+            type="number" step="0.01" min={0} value={headerDisc || ""} placeholder="0"
+            onChange={(e) => onHeaderDisc(Number(e.target.value) || 0)}
+            style={{ ...input, width: 96, padding: "6px 8px" }}
+          />
+          <DiscTypeToggle value={headerType} onChange={onHeaderType} />
+        </div>
+      </div>
+      {hasHeaderDisc && (
+        <div style={{ ...rowS, color: "#b45309", paddingTop: 0 }}>
+          <span>قيمة خصم الفاتورة</span><span style={{ fontVariantNumeric: "tabular-nums" }}>− {m(result.headerDiscountValue)}</span>
+        </div>
+      )}
+      <div style={{ ...rowS, borderTop: "1px solid #e2e8f0", fontWeight: 600 }}>
+        <span>الصافي قبل الضريبة</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{m(result.netSubtotal)}</span>
+      </div>
+      <div style={{ ...rowS, color: "#475569" }}>
+        <span>ضريبة القيمة المضافة</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{m(result.vatTotal)}</span>
+      </div>
+      <div style={{ ...rowS, borderTop: "2px solid #2563eb", marginTop: 2, fontSize: 17, fontWeight: 800, color: "#1e3a8a" }}>
+        <span>الإجمالي النهائي</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{m(result.grandTotal)}</span>
+      </div>
     </div>
   );
 }
