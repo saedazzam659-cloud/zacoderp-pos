@@ -92,6 +92,7 @@ export type PurchaseInput = {
   supplierId: number; invoiceDate: string; paymentMethod: PaymentMethod;
   cashBoxId: number | null; bankId: number | null; notes: string | null;
   warehouseId?: number | null;
+  branchId?: number | null; costCenterId?: number | null;
   lines: PurchaseLine[];
 };
 
@@ -103,7 +104,9 @@ export type PurchaseReturn = {
 };
 export type PurchaseReturnInput = {
   supplierId: number; purchaseId: number | null; returnDate: string;
-  notes: string | null; warehouseId?: number | null; lines: PurchaseLine[];
+  notes: string | null; warehouseId?: number | null;
+  branchId?: number | null; costCenterId?: number | null;
+  lines: PurchaseLine[];
 };
 
 export type SalesLine = {
@@ -124,6 +127,7 @@ export type SalesInvoiceInput = {
   customerId: number | null; invoiceDate: string; paymentMethod: PaymentMethod;
   cashBoxId: number | null; bankId: number | null; notes: string | null;
   warehouseId?: number | null;
+  branchId?: number | null; costCenterId?: number | null;
   lines: SalesLine[];
 };
 
@@ -137,7 +141,9 @@ export type SalesReturn = {
 export type SalesReturnInput = {
   customerId: number | null; invoiceId: number | null; returnDate: string;
   paymentMethod: PaymentMethod; cashBoxId: number | null; bankId: number | null;
-  notes: string | null; warehouseId?: number | null; lines: SalesLine[];
+  notes: string | null; warehouseId?: number | null;
+  branchId?: number | null; costCenterId?: number | null;
+  lines: SalesLine[];
 };
 
 export type TxType = "receipt" | "payment";
@@ -153,6 +159,7 @@ export type FinancialTxInput = {
   partyType: PartyType | null; partyId: number | null;
   cashBoxId: number | null; bankId: number | null; counterAccountId: number | null;
   amount: number; description: string | null;
+  branchId?: number | null; costCenterId?: number | null;
 };
 
 export type JournalEntryLine = {
@@ -166,7 +173,9 @@ export type JournalEntry = {
   lines: JournalEntryLine[];
 };
 export type JournalEntryInput = {
-  entryDate: string; description: string | null; lines: JournalEntryLine[];
+  entryDate: string; description: string | null;
+  branchId?: number | null; costCenterId?: number | null;
+  lines: JournalEntryLine[];
 };
 
 // ─── Accounts ────────────────────────────────────────────────────────

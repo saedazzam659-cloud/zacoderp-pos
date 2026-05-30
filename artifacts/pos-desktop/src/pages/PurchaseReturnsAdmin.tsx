@@ -11,6 +11,7 @@ import {
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
 } from "./_adminUi";
+import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { baseCurrencyCode, currencyByCode } from "../lib/currency";
 import {
   computeDiscount, lineNet, saveDocDiscount, getDocDiscount,
@@ -144,6 +145,9 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
   const [warehouseId, setWarehouseId] = useState<number>(
     (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
   );
+  const { branches, costCenters } = useDimensions();
+  const [branchId, setBranchId] = useState<number | "">("");
+  const [costCenterId, setCostCenterId] = useState<number | "">("");
   const [notes, setNotes] = useState("");
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
@@ -214,7 +218,7 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
           uomId: l.uomId, uomName: l.uomName, conversionFactor: l.conversionFactor,
         };
       });
-      const id = await createPurchaseReturn({ supplierId, purchaseId: null, returnDate: date, warehouseId: warehouseId || null, notes: notes || null, lines: payloadLines });
+      const id = await createPurchaseReturn({ supplierId, purchaseId: null, returnDate: date, warehouseId: warehouseId || null, branchId: branchId === "" ? null : branchId, costCenterId: costCenterId === "" ? null : costCenterId, notes: notes || null, lines: payloadLines });
       saveDocDiscount("purchase_return", id, {
         grossSubtotal: r.grossSubtotal * effRate, lineDiscountTotal: r.lineDiscountTotal * effRate, headerDiscountValue: r.headerDiscountValue * effRate,
         currencyCode: currency, exchangeRate: effRate,
@@ -252,6 +256,14 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
           ]}
         />
       </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+        <Field label="الفرع">
+          <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
+        </Field>
+        <Field label="مركز التكلفة">
+          <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
+        </Field>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "200px 200px", gap: 10, marginTop: 10 }}>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
       </div>

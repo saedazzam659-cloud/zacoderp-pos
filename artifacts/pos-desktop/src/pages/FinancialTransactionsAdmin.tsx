@@ -7,6 +7,7 @@ import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
+import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 
 export default function FinancialTransactionsAdmin() {
   const [rows, setRows] = useState<FinancialTx[]>([]);
@@ -83,7 +84,10 @@ function CreateForm({ type, deps, onCancel, onDone }: {
   deps: { suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; accounts: Account[] };
   onCancel: () => void; onDone: () => void;
 }) {
+  const { branches, costCenters } = useDimensions();
   const [date, setDate] = useState(todayStr());
+  const [branchId, setBranchId] = useState<number | "">("");
+  const [costCenterId, setCostCenterId] = useState<number | "">("");
   const [partyType, setPartyType] = useState<PartyType>(type === "payment" ? "supplier" : "none");
   const [partyId, setPartyId] = useState<number | null>(null);
   const [walletKind, setWalletKind] = useState<"cash" | "bank">("cash");
@@ -109,6 +113,8 @@ function CreateForm({ type, deps, onCancel, onDone }: {
         bankId:    walletKind === "bank" ? bankId : null,
         counterAccountId: partyType === "none" ? counterAccountId : null,
         amount, description: desc || null,
+        branchId: branchId === "" ? null : branchId,
+        costCenterId: costCenterId === "" ? null : costCenterId,
       });
       onDone();
     } catch (e: any) { setErr(e?.message ?? "فشل"); }
@@ -193,6 +199,14 @@ function CreateForm({ type, deps, onCancel, onDone }: {
         </Field>
       )}
 
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field label="الفرع">
+          <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
+        </Field>
+        <Field label="مركز التكلفة">
+          <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
+        </Field>
+      </div>
       <Field label="البيان"><textarea value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
       <ErrorMsg text={err} />
       <Actions>

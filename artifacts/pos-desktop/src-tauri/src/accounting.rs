@@ -251,15 +251,23 @@ pub struct JournalEntryLine {
 pub struct JournalEntryInput {
     pub entry_date: String,
     pub description: Option<String>,
+    /// Optional analytic dimensions (الفرع / مركز التكلفة). None = untagged.
+    #[serde(default)]
+    pub branch_id: Option<i64>,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
     pub lines: Vec<JournalEntryLine>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn insert_journal_entry(
     tx: &Transaction,
     entry_date: &str,
     description: Option<&str>,
     source_type: Option<&str>,
     source_id: Option<i64>,
+    branch_id: Option<i64>,
+    cost_center_id: Option<i64>,
     lines: &[JournalEntryLine],
 ) -> Result<i64> {
     let total_debit: f64 = lines.iter().map(|l| l.debit).sum();
@@ -270,14 +278,16 @@ fn insert_journal_entry(
     if lines.len() < 2 { return Err(anyhow!("القيد يحتاج سطرين على الأقل")); }
     let entry_no = next_entry_no(tx)?;
     tx.execute(
-        "INSERT INTO journal_entries_local(entry_no,entry_date,description,total_debit,total_credit,source_type,source_id) VALUES(?1,?2,?3,?4,?5,?6,?7)",
-        params![entry_no, entry_date, description, total_debit, total_credit, source_type, source_id],
+        "INSERT INTO journal_entries_local(entry_no,entry_date,description,total_debit,total_credit,source_type,source_id,branch_id,cost_center_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        params![entry_no, entry_date, description, total_debit, total_credit, source_type, source_id, branch_id, cost_center_id],
     )?;
     let je_id = tx.last_insert_rowid();
     for l in lines {
+        // Propagate the header cost center to every line so line-level report
+        // queries can filter without a header join.
         tx.execute(
-            "INSERT INTO journal_entry_lines_local(entry_id,account_id,debit,credit,description) VALUES(?1,?2,?3,?4,?5)",
-            params![je_id, l.account_id, l.debit, l.credit, l.description],
+            "INSERT INTO journal_entry_lines_local(entry_id,account_id,debit,credit,description,cost_center_id) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![je_id, l.account_id, l.debit, l.credit, l.description, cost_center_id],
         )?;
         apply_balance(tx, l.account_id, l.debit, l.credit)?;
     }
@@ -331,7 +341,7 @@ pub fn journal_entry_get(id: i64) -> Result<JournalEntry, String> {
 pub fn journal_entry_create(input: JournalEntryInput) -> Result<i64, String> {
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let id = insert_journal_entry(&tx, &input.entry_date, input.description.as_deref(), Some("manual"), None, &input.lines)
+    let id = insert_journal_entry(&tx, &input.entry_date, input.description.as_deref(), Some("manual"), None, input.branch_id, input.cost_center_id, &input.lines)
         .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(id)
@@ -467,7 +477,7 @@ pub(crate) fn post_party_opening_balance(
             description: Some(desc.clone()),
         },
     ];
-    let je_id = insert_journal_entry(tx, date, Some(&desc), Some("opening_balance"), Some(party_id), &lines)?;
+    let je_id = insert_journal_entry(tx, date, Some(&desc), Some("opening_balance"), Some(party_id), None, None, &lines)?;
     match party_type {
         // supplier balance: positive = we owe (credit nature)
         "supplier" => {
@@ -727,6 +737,10 @@ pub struct PurchaseInput {
     pub notes: Option<String>,
     /// Header warehouse the lines move stock into. None → company default.
     pub warehouse_id: Option<i64>,
+    #[serde(default)]
+    pub branch_id: Option<i64>,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
     pub lines: Vec<PurchaseLine>,
 }
 
@@ -806,10 +820,10 @@ pub fn purchase_create(input: PurchaseInput) -> Result<i64, String> {
 
     let invoice_no = next_purchase_no(&tx).map_err(|e| e.to_string())?;
     tx.execute(
-        "INSERT INTO purchases_local(invoice_no,supplier_id,invoice_date,subtotal,vat_total,grand_total,payment_method,cash_box_id,bank_id,notes)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        "INSERT INTO purchases_local(invoice_no,supplier_id,invoice_date,subtotal,vat_total,grand_total,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
         params![invoice_no, input.supplier_id, input.invoice_date, subtotal, vat_total, grand_total,
-                input.payment_method, input.cash_box_id, input.bank_id, input.notes],
+                input.payment_method, input.cash_box_id, input.bank_id, input.notes, input.branch_id, input.cost_center_id],
     ).map_err(|e| e.to_string())?;
     let purchase_id = tx.last_insert_rowid();
 
@@ -846,7 +860,7 @@ pub fn purchase_create(input: PurchaseInput) -> Result<i64, String> {
     }
     lines.push(JournalEntryLine { id: None, account_id: cr_account_id, account_code: None, account_name: None, debit: 0.0, credit: grand_total, description: None });
 
-    let je_id = insert_journal_entry(&tx, &input.invoice_date, Some(&format!("فاتورة شراء {invoice_no}")), Some("purchase"), Some(purchase_id), &lines)
+    let je_id = insert_journal_entry(&tx, &input.invoice_date, Some(&format!("فاتورة شراء {invoice_no}")), Some("purchase"), Some(purchase_id), input.branch_id, input.cost_center_id, &lines)
         .map_err(|e| e.to_string())?;
     tx.execute("UPDATE purchases_local SET je_id=?1 WHERE id=?2", params![je_id, purchase_id]).map_err(|e| e.to_string())?;
 
@@ -921,6 +935,10 @@ pub struct PurchaseReturnInput {
     pub notes: Option<String>,
     /// Header warehouse the lines move stock out of. None → company default.
     pub warehouse_id: Option<i64>,
+    #[serde(default)]
+    pub branch_id: Option<i64>,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
     pub lines: Vec<PurchaseLine>,
 }
 
@@ -991,9 +1009,9 @@ pub fn purchase_return_create(input: PurchaseReturnInput) -> Result<i64, String>
 
     let return_no = next_pret_no(&tx).map_err(|e| e.to_string())?;
     tx.execute(
-        "INSERT INTO purchase_returns_local(return_no,supplier_id,purchase_id,return_date,subtotal,vat_total,grand_total,notes)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
-        params![return_no, input.supplier_id, input.purchase_id, input.return_date, subtotal, vat_total, grand_total, input.notes],
+        "INSERT INTO purchase_returns_local(return_no,supplier_id,purchase_id,return_date,subtotal,vat_total,grand_total,notes,branch_id,cost_center_id)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![return_no, input.supplier_id, input.purchase_id, input.return_date, subtotal, vat_total, grand_total, input.notes, input.branch_id, input.cost_center_id],
     ).map_err(|e| e.to_string())?;
     let return_id = tx.last_insert_rowid();
 
@@ -1027,7 +1045,7 @@ pub fn purchase_return_create(input: PurchaseReturnInput) -> Result<i64, String>
     if vat_total > 0.0 {
         lines.push(JournalEntryLine { id: None, account_id: vat_in_acc, account_code: None, account_name: None, debit: 0.0, credit: vat_total, description: None });
     }
-    let je_id = insert_journal_entry(&tx, &input.return_date, Some(&format!("مرتجع شراء {return_no}")), Some("purchase_return"), Some(return_id), &lines)
+    let je_id = insert_journal_entry(&tx, &input.return_date, Some(&format!("مرتجع شراء {return_no}")), Some("purchase_return"), Some(return_id), input.branch_id, input.cost_center_id, &lines)
         .map_err(|e| e.to_string())?;
     tx.execute("UPDATE purchase_returns_local SET je_id=?1 WHERE id=?2", params![je_id, return_id]).map_err(|e| e.to_string())?;
 
@@ -1089,6 +1107,10 @@ pub struct SalesInvoiceInput {
     pub notes: Option<String>,
     /// Header warehouse the lines move stock out of. None → company default.
     pub warehouse_id: Option<i64>,
+    #[serde(default)]
+    pub branch_id: Option<i64>,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
     pub lines: Vec<SalesLine>,
 }
 
@@ -1274,10 +1296,10 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
 
     let invoice_no = next_sales_no(&tx).map_err(|e| e.to_string())?;
     tx.execute(
-        "INSERT INTO sales_invoices_local(invoice_no,customer_id,invoice_date,subtotal,vat_total,grand_total,cogs_total,payment_method,cash_box_id,bank_id,notes)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+        "INSERT INTO sales_invoices_local(invoice_no,customer_id,invoice_date,subtotal,vat_total,grand_total,cogs_total,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
         params![invoice_no, input.customer_id, input.invoice_date, subtotal, vat_total, grand_total, 0.0,
-                input.payment_method, input.cash_box_id, input.bank_id, input.notes],
+                input.payment_method, input.cash_box_id, input.bank_id, input.notes, input.branch_id, input.cost_center_id],
     ).map_err(|e| e.to_string())?;
     let invoice_id = tx.last_insert_rowid();
 
@@ -1315,7 +1337,7 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
     if vat_total > 0.0 {
         lines.push(JournalEntryLine { id: None, account_id: vat_out_acc, account_code: None, account_name: None, debit: 0.0, credit: vat_total, description: None });
     }
-    let je_id = insert_journal_entry(&tx, &input.invoice_date, Some(&format!("فاتورة مبيعات {invoice_no}")), Some("sale"), Some(invoice_id), &lines)
+    let je_id = insert_journal_entry(&tx, &input.invoice_date, Some(&format!("فاتورة مبيعات {invoice_no}")), Some("sale"), Some(invoice_id), input.branch_id, input.cost_center_id, &lines)
         .map_err(|e| e.to_string())?;
     tx.execute("UPDATE sales_invoices_local SET je_id=?1 WHERE id=?2", params![je_id, invoice_id]).map_err(|e| e.to_string())?;
 
@@ -1327,7 +1349,7 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
             JournalEntryLine { id: None, account_id: cogs_acc, account_code: None, account_name: None, debit: cogs_total, credit: 0.0, description: Some(format!("تكلفة مبيعات {invoice_no}")) },
             JournalEntryLine { id: None, account_id: inv_acc, account_code: None, account_name: None, debit: 0.0, credit: cogs_total, description: None },
         ];
-        insert_journal_entry(&tx, &input.invoice_date, Some(&format!("تكلفة بضاعة مباعة {invoice_no}")), Some("sale_cogs"), Some(invoice_id), &cogs_lines)
+        insert_journal_entry(&tx, &input.invoice_date, Some(&format!("تكلفة بضاعة مباعة {invoice_no}")), Some("sale_cogs"), Some(invoice_id), input.branch_id, input.cost_center_id, &cogs_lines)
             .map_err(|e| e.to_string())?;
     }
 
@@ -1385,6 +1407,10 @@ pub struct SalesReturnInput {
     pub notes: Option<String>,
     /// Header warehouse the lines move stock back into. None → company default.
     pub warehouse_id: Option<i64>,
+    #[serde(default)]
+    pub branch_id: Option<i64>,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
     pub lines: Vec<SalesLine>,
 }
 
@@ -1464,10 +1490,10 @@ pub fn sales_return_create(input: SalesReturnInput) -> Result<i64, String> {
 
     let return_no = next_sret_no(&tx).map_err(|e| e.to_string())?;
     tx.execute(
-        "INSERT INTO sales_returns_local(return_no,customer_id,invoice_id,return_date,subtotal,vat_total,grand_total,cogs_total,payment_method,cash_box_id,bank_id,notes)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+        "INSERT INTO sales_returns_local(return_no,customer_id,invoice_id,return_date,subtotal,vat_total,grand_total,cogs_total,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
         params![return_no, input.customer_id, input.invoice_id, input.return_date, subtotal, vat_total, grand_total, 0.0,
-                input.payment_method, input.cash_box_id, input.bank_id, input.notes],
+                input.payment_method, input.cash_box_id, input.bank_id, input.notes, input.branch_id, input.cost_center_id],
     ).map_err(|e| e.to_string())?;
     let return_id = tx.last_insert_rowid();
 
@@ -1506,7 +1532,7 @@ pub fn sales_return_create(input: SalesReturnInput) -> Result<i64, String> {
     }
     lines.push(JournalEntryLine { id: None, account_id: cr_account_id, account_code: None, account_name: None, debit: 0.0, credit: grand_total, description: None });
 
-    let je_id = insert_journal_entry(&tx, &input.return_date, Some(&format!("مرتجع مبيعات {return_no}")), Some("sale_return"), Some(return_id), &lines)
+    let je_id = insert_journal_entry(&tx, &input.return_date, Some(&format!("مرتجع مبيعات {return_no}")), Some("sale_return"), Some(return_id), input.branch_id, input.cost_center_id, &lines)
         .map_err(|e| e.to_string())?;
     tx.execute("UPDATE sales_returns_local SET je_id=?1 WHERE id=?2", params![je_id, return_id]).map_err(|e| e.to_string())?;
 
@@ -1518,7 +1544,7 @@ pub fn sales_return_create(input: SalesReturnInput) -> Result<i64, String> {
             JournalEntryLine { id: None, account_id: inv_acc, account_code: None, account_name: None, debit: cogs_total, credit: 0.0, description: Some(format!("ارتجاع تكلفة {return_no}")) },
             JournalEntryLine { id: None, account_id: cogs_acc, account_code: None, account_name: None, debit: 0.0, credit: cogs_total, description: None },
         ];
-        insert_journal_entry(&tx, &input.return_date, Some(&format!("عكس تكلفة بضاعة {return_no}")), Some("sale_return_cogs"), Some(return_id), &cogs_lines)
+        insert_journal_entry(&tx, &input.return_date, Some(&format!("عكس تكلفة بضاعة {return_no}")), Some("sale_return_cogs"), Some(return_id), input.branch_id, input.cost_center_id, &cogs_lines)
             .map_err(|e| e.to_string())?;
     }
 
@@ -1573,6 +1599,10 @@ pub struct FinancialTxInput {
     pub counter_account_id: Option<i64>,
     pub amount: f64,
     pub description: Option<String>,
+    #[serde(default)]
+    pub branch_id: Option<i64>,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
 }
 
 fn next_fintx_no(conn: &Connection, tx_type: &str) -> Result<String> {
@@ -1648,9 +1678,9 @@ pub fn financial_tx_create(input: FinancialTxInput) -> Result<i64, String> {
     };
 
     tx.execute(
-        "INSERT INTO financial_transactions_local(tx_no,tx_date,tx_type,party_type,party_id,cash_box_id,bank_id,counter_account_id,amount,description)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-        params![tx_no, input.tx_date, input.tx_type, input.party_type, input.party_id, input.cash_box_id, input.bank_id, counter_acc, input.amount, input.description],
+        "INSERT INTO financial_transactions_local(tx_no,tx_date,tx_type,party_type,party_id,cash_box_id,bank_id,counter_account_id,amount,description,branch_id,cost_center_id)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+        params![tx_no, input.tx_date, input.tx_type, input.party_type, input.party_id, input.cash_box_id, input.bank_id, counter_acc, input.amount, input.description, input.branch_id, input.cost_center_id],
     ).map_err(|e| e.to_string())?;
     let ftx_id = tx.last_insert_rowid();
 
@@ -1669,7 +1699,7 @@ pub fn financial_tx_create(input: FinancialTxInput) -> Result<i64, String> {
         &tx, &input.tx_date,
         Some(&format!("{} {tx_no}", if input.tx_type == "receipt" { "سند قبض" } else { "سند صرف" })),
         Some(if input.tx_type == "receipt" { "receipt" } else { "payment" }),
-        Some(ftx_id), &lines,
+        Some(ftx_id), input.branch_id, input.cost_center_id, &lines,
     ).map_err(|e| e.to_string())?;
     tx.execute("UPDATE financial_transactions_local SET je_id=?1 WHERE id=?2", params![je_id, ftx_id]).map_err(|e| e.to_string())?;
 
@@ -2060,7 +2090,7 @@ pub fn treasury_transfer_create(input: TreasuryTransferInput) -> Result<i64, Str
 
     let je_id = insert_journal_entry(&tx, &input.transfer_date,
         Some(&format!("تحويل خزينة {transfer_no}")),
-        Some("treasury_transfer"), Some(transfer_id), &lines,
+        Some("treasury_transfer"), Some(transfer_id), None, None, &lines,
     ).map_err(|e| e.to_string())?;
     tx.execute("UPDATE treasury_transfers_local SET je_id=?1 WHERE id=?2", params![je_id, transfer_id])
         .map_err(|e| e.to_string())?;
@@ -2075,4 +2105,233 @@ pub fn treasury_transfer_create(input: TreasuryTransferInput) -> Result<i64, Str
 
     tx.commit().map_err(|e| e.to_string())?;
     Ok(transfer_id)
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// Accounting dimensions: Branches & Cost Centers + Financial reports
+//
+// Branches (الفروع) and cost centers (مراكز التكلفة) are optional analytic
+// tags attached to journal entries (and the documents that generate them).
+// The financial report command below reads posted JE lines and the React
+// pages compute the trial balance / income statement / balance sheet /
+// account statement from them — mirroring the web app's report set.
+// ═════════════════════════════════════════════════════════════════════
+
+fn default_true() -> bool { true }
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Branch {
+    pub id: i64,
+    pub code: String,
+    pub name_ar: String,
+    pub name_en: Option<String>,
+    pub is_active: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchInput {
+    pub code: String,
+    pub name_ar: String,
+    pub name_en: Option<String>,
+    #[serde(default = "default_true")]
+    pub is_active: bool,
+}
+
+#[tauri::command]
+pub fn branches_list() -> Result<Vec<Branch>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id,code,name_ar,name_en,is_active FROM branches_local ORDER BY code"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |r| Ok(Branch {
+        id: r.get(0)?, code: r.get(1)?, name_ar: r.get(2)?, name_en: r.get(3)?,
+        is_active: r.get::<_, i64>(4)? != 0,
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn branch_create(input: BranchInput) -> Result<i64, String> {
+    if input.code.trim().is_empty() || input.name_ar.trim().is_empty() {
+        return Err("الكود والاسم مطلوبان".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO branches_local(code,name_ar,name_en,is_active) VALUES(?1,?2,?3,?4)",
+        params![input.code.trim(), input.name_ar.trim(), input.name_en, if input.is_active {1} else {0}],
+    ).map_err(|e| if e.to_string().contains("UNIQUE") { "كود الفرع مستخدم من قبل".to_string() } else { e.to_string() })?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[tauri::command]
+pub fn branch_update(id: i64, input: BranchInput) -> Result<(), String> {
+    if input.code.trim().is_empty() || input.name_ar.trim().is_empty() {
+        return Err("الكود والاسم مطلوبان".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let n = conn.execute(
+        "UPDATE branches_local SET code=?1,name_ar=?2,name_en=?3,is_active=?4 WHERE id=?5",
+        params![input.code.trim(), input.name_ar.trim(), input.name_en, if input.is_active {1} else {0}, id],
+    ).map_err(|e| if e.to_string().contains("UNIQUE") { "كود الفرع مستخدم من قبل".to_string() } else { e.to_string() })?;
+    if n == 0 { return Err("الفرع غير موجود".into()); }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn branch_delete(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let used: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM journal_entries_local WHERE branch_id=?1", params![id], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+    if used > 0 { return Err("لا يمكن حذف فرع مستخدم في قيود محاسبية".into()); }
+    conn.execute("DELETE FROM branches_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CostCenter {
+    pub id: i64,
+    pub code: String,
+    pub name_ar: String,
+    pub name_en: Option<String>,
+    pub parent_id: Option<i64>,
+    pub is_posting: bool,
+    pub is_active: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostCenterInput {
+    pub code: String,
+    pub name_ar: String,
+    pub name_en: Option<String>,
+    #[serde(default)]
+    pub parent_id: Option<i64>,
+    #[serde(default = "default_true")]
+    pub is_posting: bool,
+    #[serde(default = "default_true")]
+    pub is_active: bool,
+}
+
+#[tauri::command]
+pub fn cost_centers_list() -> Result<Vec<CostCenter>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id,code,name_ar,name_en,parent_id,is_posting,is_active FROM cost_centers_local ORDER BY code"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |r| Ok(CostCenter {
+        id: r.get(0)?, code: r.get(1)?, name_ar: r.get(2)?, name_en: r.get(3)?,
+        parent_id: r.get(4)?, is_posting: r.get::<_, i64>(5)? != 0, is_active: r.get::<_, i64>(6)? != 0,
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn cost_center_create(input: CostCenterInput) -> Result<i64, String> {
+    if input.code.trim().is_empty() || input.name_ar.trim().is_empty() {
+        return Err("الكود والاسم مطلوبان".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO cost_centers_local(code,name_ar,name_en,parent_id,is_posting,is_active) VALUES(?1,?2,?3,?4,?5,?6)",
+        params![input.code.trim(), input.name_ar.trim(), input.name_en, input.parent_id,
+                if input.is_posting {1} else {0}, if input.is_active {1} else {0}],
+    ).map_err(|e| if e.to_string().contains("UNIQUE") { "كود مركز التكلفة مستخدم من قبل".to_string() } else { e.to_string() })?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[tauri::command]
+pub fn cost_center_update(id: i64, input: CostCenterInput) -> Result<(), String> {
+    if input.code.trim().is_empty() || input.name_ar.trim().is_empty() {
+        return Err("الكود والاسم مطلوبان".into());
+    }
+    if input.parent_id == Some(id) { return Err("لا يمكن أن يكون المركز أباً لنفسه".into()); }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let n = conn.execute(
+        "UPDATE cost_centers_local SET code=?1,name_ar=?2,name_en=?3,parent_id=?4,is_posting=?5,is_active=?6 WHERE id=?7",
+        params![input.code.trim(), input.name_ar.trim(), input.name_en, input.parent_id,
+                if input.is_posting {1} else {0}, if input.is_active {1} else {0}, id],
+    ).map_err(|e| if e.to_string().contains("UNIQUE") { "كود مركز التكلفة مستخدم من قبل".to_string() } else { e.to_string() })?;
+    if n == 0 { return Err("مركز التكلفة غير موجود".into()); }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cost_center_delete(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let kids: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM cost_centers_local WHERE parent_id=?1", params![id], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+    if kids > 0 { return Err("لا يمكن حذف مركز له مراكز فرعية".into()); }
+    let used: i64 = conn.query_row(
+        "SELECT (SELECT COUNT(*) FROM journal_entries_local WHERE cost_center_id=?1)
+              + (SELECT COUNT(*) FROM journal_entry_lines_local WHERE cost_center_id=?1)",
+        params![id], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+    if used > 0 { return Err("لا يمكن حذف مركز مستخدم في قيود محاسبية".into()); }
+    conn.execute("DELETE FROM cost_centers_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// A single posted journal-entry line joined with its account + entry header.
+/// The React report pages bucket these by date (opening vs period) and group
+/// by account type to build all four financial reports.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LedgerLine {
+    pub account_id: i64,
+    pub account_code: String,
+    pub account_name: String,
+    pub account_type: String,
+    pub debit: f64,
+    pub credit: f64,
+    pub entry_date: String,
+    pub entry_no: String,
+    pub description: Option<String>,
+    pub source_type: Option<String>,
+    pub branch_id: Option<i64>,
+    pub cost_center_id: Option<i64>,
+}
+
+/// Returns every journal-entry line up to `to_date` (inclusive), optionally
+/// filtered by branch, cost center, and/or account. All four financial
+/// reports are derived from this single dataset on the client.
+#[tauri::command]
+pub fn report_ledger_lines(
+    to_date: Option<String>,
+    branch_id: Option<i64>,
+    cost_center_id: Option<i64>,
+    account_id: Option<i64>,
+) -> Result<Vec<LedgerLine>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut sql = String::from(
+        "SELECT l.account_id, a.code, a.name_ar, a.type, l.debit, l.credit, \
+         e.entry_date, e.entry_no, COALESCE(l.description, e.description), e.source_type, e.branch_id, l.cost_center_id \
+         FROM journal_entry_lines_local l \
+         JOIN journal_entries_local e ON e.id = l.entry_id \
+         JOIN accounts_local a ON a.id = l.account_id WHERE 1=1"
+    );
+    let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(d) = &to_date { sql.push_str(" AND e.entry_date <= ?"); args.push(Box::new(d.clone())); }
+    if let Some(b) = branch_id { sql.push_str(" AND e.branch_id = ?"); args.push(Box::new(b)); }
+    if let Some(c) = cost_center_id { sql.push_str(" AND l.cost_center_id = ?"); args.push(Box::new(c)); }
+    if let Some(ac) = account_id { sql.push_str(" AND l.account_id = ?"); args.push(Box::new(ac)); }
+    sql.push_str(" ORDER BY e.entry_date, e.id, l.id");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(rusqlite::params_from_iter(params_ref), |r| Ok(LedgerLine {
+        account_id: r.get(0)?, account_code: r.get(1)?, account_name: r.get(2)?, account_type: r.get(3)?,
+        debit: r.get(4)?, credit: r.get(5)?, entry_date: r.get(6)?, entry_no: r.get(7)?,
+        description: r.get(8)?, source_type: r.get(9)?, branch_id: r.get(10)?, cost_center_id: r.get(11)?,
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
 }

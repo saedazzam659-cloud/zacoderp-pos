@@ -456,6 +456,16 @@ fn main() {
             accounting::currency_rate_delete,
             accounting::treasury_transfers_list,
             accounting::treasury_transfer_create,
+            // Accounting dimensions + financial reports.
+            accounting::branches_list,
+            accounting::branch_create,
+            accounting::branch_update,
+            accounting::branch_delete,
+            accounting::cost_centers_list,
+            accounting::cost_center_create,
+            accounting::cost_center_update,
+            accounting::cost_center_delete,
+            accounting::report_ledger_lines,
             // LAN shared database (Task #207).
             lan::lan_stock_get_all,
             lan::lan_stock_set,

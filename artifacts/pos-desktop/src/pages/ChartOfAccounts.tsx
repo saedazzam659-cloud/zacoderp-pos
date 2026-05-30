@@ -14,6 +14,16 @@ const TYPE_LABEL: Record<AccountType, string> = {
 const TYPE_COLOR: Record<AccountType, string> = {
   asset: "#1e40af", liability: "#9a3412", equity: "#7c3aed", revenue: "#15803d", expense: "#b91c1c",
 };
+// "توجيه الحساب" — auto-derived from the account type. Balance-sheet accounts
+// (asset/liability/equity) → مركز مالي; P&L accounts (revenue/expense) → قائمة الدخل.
+const TARGET_LABEL: Record<AccountType, string> = {
+  asset: "مركز مالي", liability: "مركز مالي", equity: "مركز مالي",
+  revenue: "قائمة الدخل", expense: "قائمة الدخل",
+};
+const TARGET_COLOR: Record<AccountType, string> = {
+  asset: "#0f766e", liability: "#0f766e", equity: "#0f766e",
+  revenue: "#a16207", expense: "#a16207",
+};
 
 const emptyInput: AccountInput = { code: "", nameAr: "", nameEn: null, type: "asset", parentId: null, isLeaf: true };
 
@@ -73,7 +83,7 @@ export default function ChartOfAccounts() {
         {sorted.length === 0 && !edit ? <Empty text="لا توجد حسابات" /> : (
           <Table>
             <thead><tr>
-              <Th>الكود</Th><Th>الاسم</Th><Th>النوع</Th><Th>الحساب الأب</Th>
+              <Th>الكود</Th><Th>الاسم</Th><Th>النوع</Th><Th>التوجيه</Th><Th>الحساب الأب</Th>
               <Th style={{ textAlign: "left" }}>الرصيد</Th><Th style={{ width: 220 }}>إجراءات</Th>
             </tr></thead>
             <tbody>
@@ -91,6 +101,7 @@ export default function ChartOfAccounts() {
                     <Td mono><span style={{ marginInlineStart: depth * 12 }}>{a.code}</span></Td>
                     <Td style={{ fontWeight: a.isLeaf ? 400 : 700 }}>{a.nameAr}</Td>
                     <Td><span style={{ background: TYPE_COLOR[a.type] + "20", color: TYPE_COLOR[a.type], padding: "2px 8px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{TYPE_LABEL[a.type]}</span></Td>
+                    <Td><span style={{ background: TARGET_COLOR[a.type] + "20", color: TARGET_COLOR[a.type], padding: "2px 8px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{TARGET_LABEL[a.type]}</span></Td>
                     <Td style={{ color: "#64748b" }}>{parent ? `${parent.code} - ${parent.nameAr}` : "—"}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(a.balance)}</Td>
                     <Td>
@@ -134,6 +145,7 @@ function EditRow({ data, setField, all, editingId, onSave, onCancel, busy, err, 
             options={Object.entries(TYPE_LABEL).map(([k, v]) => ({ value: k, label: v }))}
           />
         </Td>
+        <Td><span style={{ background: TARGET_COLOR[data.type] + "20", color: TARGET_COLOR[data.type], padding: "2px 8px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{TARGET_LABEL[data.type]}</span></Td>
         <Td>
           <SearchCombobox
             value={data.parentId ?? ""}
@@ -156,7 +168,7 @@ function EditRow({ data, setField, all, editingId, onSave, onCancel, busy, err, 
         <Td colSpan={2}>
           <input value={data.nameEn ?? ""} onChange={(e) => setField("nameEn", e.target.value || null)} style={ci} placeholder="الاسم بالإنجليزية (اختياري)" />
         </Td>
-        <Td colSpan={4}>
+        <Td colSpan={5}>
           <SearchCombobox
             value={data.isLeaf ? "1" : "0"}
             onChange={(v) => setField("isLeaf", v === "1")}
@@ -168,7 +180,7 @@ function EditRow({ data, setField, all, editingId, onSave, onCancel, busy, err, 
           />
         </Td>
       </tr>
-      {err && <tr><Td colSpan={6} style={{ background: "#fef2f2", color: "#991b1b", fontSize: 13 }}>⚠️ {err}</Td></tr>}
+      {err && <tr><Td colSpan={7} style={{ background: "#fef2f2", color: "#991b1b", fontSize: 13 }}>⚠️ {err}</Td></tr>}
     </>
   );
 }

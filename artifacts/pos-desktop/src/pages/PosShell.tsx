@@ -11,7 +11,7 @@
 // step that caused "تم السحب: 5 عميل، 184 صنف" to show on the dashboard
 // while the sales screen kept reporting "لا توجد أصناف".
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { createApi, type SyncStatus } from "../lib/api";
 import { useCurrencySymbol, getCountryIso, setCountryIso, countryByIso, ARAB_COUNTRIES } from "../lib/currency";
 import { SearchCombobox } from "./_adminUi";
@@ -35,6 +35,12 @@ import ExchangeRatesAdmin from "./ExchangeRatesAdmin";
 import TreasuryTransfersAdmin from "./TreasuryTransfersAdmin";
 import ChartOfAccounts from "./ChartOfAccounts";
 import JournalEntries from "./JournalEntries";
+import CostCentersAdmin from "./CostCentersAdmin";
+import BranchesAdmin from "./BranchesAdmin";
+import AccountStatementReport from "./AccountStatementReport";
+import IncomeStatementReport from "./IncomeStatementReport";
+import BalanceSheetReport from "./BalanceSheetReport";
+import TrialBalanceReport from "./TrialBalanceReport";
 import PurchasesAdmin from "./PurchasesAdmin";
 import SalesInvoicesAdmin from "./SalesInvoicesAdmin";
 import SalesReturnsAdmin from "./SalesReturnsAdmin";
@@ -76,6 +82,9 @@ type View =
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "user_permissions"
+  | "cost_centers" | "branches"
+  | "report_account_statement" | "report_income_statement"
+  | "report_balance_sheet" | "report_trial_balance"
   // Task #208 — warehouses & inventory ops (standalone).
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
   | "number_series";
@@ -146,7 +155,14 @@ type Props = {
 // expiry …) stay as flat top-level entries. A group is rendered only
 // when at least one of its members is actually present in the (perm-filtered)
 // nav list, so it disappears entirely for users without access.
-type NavGroupDef = { key: string; icon: string; label: string; members: View[] };
+type NavGroupDef = {
+  key: string;
+  icon: string;
+  label: string;
+  members: View[];
+  // Optional sub-section labels rendered (non-clickable) before a given member.
+  subHeaders?: Partial<Record<View, string>>;
+};
 const NAV_GROUPS: NavGroupDef[] = [
   {
     key: "inventory",
@@ -180,14 +196,19 @@ const NAV_GROUPS: NavGroupDef[] = [
     key: "accounts",
     icon: "🧮",
     label: "الحسابات العامة",
-    members: ["chart_of_accounts", "journal_entries"],
+    members: [
+      "chart_of_accounts", "journal_entries", "cost_centers",
+      "report_account_statement", "report_income_statement",
+      "report_balance_sheet", "report_trial_balance",
+    ],
+    subHeaders: { report_account_statement: "التقارير المالية" },
   },
   {
     key: "control",
     icon: "⚙️",
     label: "التحكم العام",
     members: [
-      "currencies", "exchange_rates", "dashboard",
+      "branches", "currencies", "exchange_rates", "dashboard",
       "users", "user_permissions", "network", "number_series", "updates",
     ],
   },
@@ -460,6 +481,12 @@ export default function PosShell({
     { id: "exchange_rates",   icon: "💱", label: "أسعار الصرف", perm: "exchange_rates" },
     { id: "chart_of_accounts",icon: "🌳", label: "شجرة الحسابات", perm: "chart_of_accounts" },
     { id: "journal_entries",  icon: "📒", label: "القيود اليومية", perm: "journal_entries" },
+    { id: "cost_centers",     icon: "🎯", label: "مراكز التكلفة", perm: "cost_centers" },
+    { id: "report_account_statement", icon: "📄", label: "كشف حساب", perm: "report_account_statement" },
+    { id: "report_income_statement",  icon: "📈", label: "قائمة الدخل", perm: "report_income_statement" },
+    { id: "report_balance_sheet",     icon: "⚖️", label: "الميزانية", perm: "report_balance_sheet" },
+    { id: "report_trial_balance",     icon: "📊", label: "ميزان المراجعة بالمجاميع", perm: "report_trial_balance" },
+    { id: "branches",         icon: "🏢", label: "الفروع", perm: "branches" },
     { id: "warehouses",        icon: "🏬", label: "المخازن", perm: "warehouses" },
     { id: "stocktakes",        icon: "📋", label: "الجرد", perm: "stocktakes" },
     { id: "stock_adjustments", icon: "⚖️", label: "تسوية المخزون", perm: "stock_adjustments" },
@@ -591,6 +618,9 @@ export default function PosShell({
                   const isOpen = openGroup === g.key;
                   const hasActive = children.some((c) => c.id === view);
                   const badgeTotal = children.reduce((s, c) => s + (c.badge ?? 0), 0);
+                  const subHeaderCount = g.subHeaders
+                    ? children.filter((c) => g.subHeaders?.[c.id]).length
+                    : 0;
                   return (
                     <div key={g.key}>
                       <button
@@ -607,11 +637,19 @@ export default function PosShell({
                       <div
                         style={{
                           ...S.navGroupBody,
-                          maxHeight: isOpen ? children.length * 48 + 8 : 0,
+                          maxHeight: isOpen ? children.length * 48 + subHeaderCount * 28 + 8 : 0,
                           opacity: isOpen ? 1 : 0,
                         }}
                       >
-                        {children.map((it) => renderLeaf(it, true))}
+                        {children.map((it) => {
+                          const sub = g.subHeaders?.[it.id];
+                          return (
+                            <Fragment key={it.id}>
+                              {sub && <div style={S.navSubHeader}>{sub}</div>}
+                              {renderLeaf(it, true)}
+                            </Fragment>
+                          );
+                        })}
                       </div>
                     </div>
                   );
@@ -795,6 +833,24 @@ export default function PosShell({
           {standalone && view === "journal_entries" && (isAdmin || can("journal_entries")) && (
             <div style={S.pagePad}><JournalEntries /></div>
           )}
+          {standalone && view === "cost_centers" && (isAdmin || can("cost_centers")) && (
+            <div style={S.pagePad}><CostCentersAdmin /></div>
+          )}
+          {standalone && view === "branches" && (isAdmin || can("branches")) && (
+            <div style={S.pagePad}><BranchesAdmin /></div>
+          )}
+          {standalone && view === "report_account_statement" && (isAdmin || can("report_account_statement")) && (
+            <div style={S.pagePad}><AccountStatementReport /></div>
+          )}
+          {standalone && view === "report_income_statement" && (isAdmin || can("report_income_statement")) && (
+            <div style={S.pagePad}><IncomeStatementReport /></div>
+          )}
+          {standalone && view === "report_balance_sheet" && (isAdmin || can("report_balance_sheet")) && (
+            <div style={S.pagePad}><BalanceSheetReport /></div>
+          )}
+          {standalone && view === "report_trial_balance" && (isAdmin || can("report_trial_balance")) && (
+            <div style={S.pagePad}><TrialBalanceReport /></div>
+          )}
           {standalone && view === "user_permissions" && isAdmin && standaloneSession && (
             <div style={S.pagePad}><UserPermissionsAdmin session={standaloneSession} /></div>
           )}
@@ -862,6 +918,12 @@ function labelFor(v: View): string {
     financial_tx: "المعاملات المالية",
     chart_of_accounts: "شجرة الحسابات",
     journal_entries: "القيود اليومية",
+    cost_centers: "مراكز التكلفة",
+    branches: "الفروع",
+    report_account_statement: "كشف حساب",
+    report_income_statement: "قائمة الدخل",
+    report_balance_sheet: "الميزانية",
+    report_trial_balance: "ميزان المراجعة بالمجاميع",
     user_permissions: "صلاحيات المستخدمين",
     warehouses: "المخازن",
     stocktakes: "جرد المخازن",
@@ -1407,6 +1469,11 @@ const S = {
     overflow: "hidden",
     transition: "max-height .26s ease, opacity .2s ease",
     paddingInlineStart: 4,
+  } as const,
+  navSubHeader: {
+    fontSize: 10, fontWeight: 700, color: "#64748b",
+    textTransform: "uppercase" as const, letterSpacing: ".04em",
+    padding: "6px 14px 2px",
   } as const,
 
   navFooter: { borderTop: "1px solid #334155", paddingTop: 12, display: "flex", flexDirection: "column" as const, gap: 8 } as const,

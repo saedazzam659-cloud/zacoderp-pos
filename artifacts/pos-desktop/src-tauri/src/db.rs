@@ -484,6 +484,33 @@ pub fn initialize() -> Result<()> {
             vat_rate    REAL NOT NULL DEFAULT 15,
             line_total  REAL NOT NULL
         );
+
+        -- ── Accounting dimensions: branches & cost centers ───────────────
+        -- Both are optional analytic tags attached to journal entries (and
+        -- the documents that generate them). They let the financial reports
+        -- be filtered by branch (الفرع) and cost center (مركز التكلفة),
+        -- mirroring the web app. cost_centers_local is a tree (parent_id);
+        -- only is_posting=1 (leaf) centers may be selected on documents.
+        CREATE TABLE IF NOT EXISTS branches_local (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            code        TEXT NOT NULL UNIQUE,
+            name_ar     TEXT NOT NULL,
+            name_en     TEXT,
+            is_active   INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS cost_centers_local (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            code        TEXT NOT NULL UNIQUE,
+            name_ar     TEXT NOT NULL,
+            name_en     TEXT,
+            parent_id   INTEGER REFERENCES cost_centers_local(id),
+            is_posting  INTEGER NOT NULL DEFAULT 1,
+            is_active   INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_cost_centers_parent ON cost_centers_local(parent_id);
         "#,
     )?;
     let _ = conn.execute("ALTER TABLE offline_invoices ADD COLUMN synced_at TEXT", []);
@@ -535,8 +562,34 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE sales_return_lines_local ADD COLUMN uom_id INTEGER",
         "ALTER TABLE sales_return_lines_local ADD COLUMN uom_name TEXT",
         "ALTER TABLE sales_return_lines_local ADD COLUMN conversion_factor REAL NOT NULL DEFAULT 1",
+        // ── Accounting dimensions (branch + cost center) ──
+        // Optional analytic tags on the JE header (and the documents that
+        // generate it) so the financial reports can be filtered by branch
+        // and cost center. cost_center_id is also stored on every JE line
+        // (propagated from the header) so line-level report queries can
+        // filter without a header join. All nullable — old rows = untagged.
+        "ALTER TABLE journal_entries_local ADD COLUMN branch_id INTEGER",
+        "ALTER TABLE journal_entries_local ADD COLUMN cost_center_id INTEGER",
+        "ALTER TABLE journal_entry_lines_local ADD COLUMN cost_center_id INTEGER",
+        "ALTER TABLE sales_invoices_local ADD COLUMN branch_id INTEGER",
+        "ALTER TABLE sales_invoices_local ADD COLUMN cost_center_id INTEGER",
+        "ALTER TABLE sales_returns_local ADD COLUMN branch_id INTEGER",
+        "ALTER TABLE sales_returns_local ADD COLUMN cost_center_id INTEGER",
+        "ALTER TABLE purchases_local ADD COLUMN branch_id INTEGER",
+        "ALTER TABLE purchases_local ADD COLUMN cost_center_id INTEGER",
+        "ALTER TABLE purchase_returns_local ADD COLUMN branch_id INTEGER",
+        "ALTER TABLE purchase_returns_local ADD COLUMN cost_center_id INTEGER",
+        "ALTER TABLE financial_transactions_local ADD COLUMN branch_id INTEGER",
+        "ALTER TABLE financial_transactions_local ADD COLUMN cost_center_id INTEGER",
     ];
     for sql in alters { let _ = conn.execute(sql, []); }
+
+    // Seed a default branch on first run so documents have something to
+    // tag against out of the box (idempotent — user edits never clobbered).
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO branches_local(code,name_ar,is_active) VALUES('MAIN','الفرع الرئيسي',1)",
+        [],
+    );
 
     // ── Document numbering series (full operator control) ──
     // One row per document type. `next_number` is the value the NEXT issued

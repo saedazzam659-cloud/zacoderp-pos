@@ -7,6 +7,7 @@ import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
+import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 
 export default function JournalEntries() {
   const [rows, setRows] = useState<JournalEntry[]>([]);
@@ -128,8 +129,11 @@ function EntryDetail({ entry }: { entry: JournalEntry }) {
 }
 
 function CreateForm({ accounts, onCancel, onDone }: { accounts: Account[]; onCancel: () => void; onDone: () => void }) {
+  const { branches, costCenters } = useDimensions();
   const [date, setDate] = useState(todayStr());
   const [desc, setDesc] = useState("");
+  const [branchId, setBranchId] = useState<number | "">("");
+  const [costCenterId, setCostCenterId] = useState<number | "">("");
   const [lines, setLines] = useState<JournalEntryLine[]>([
     { accountId: 0, debit: 0, credit: 0, description: null },
     { accountId: 0, debit: 0, credit: 0, description: null },
@@ -152,7 +156,12 @@ function CreateForm({ accounts, onCancel, onDone }: { accounts: Account[]; onCan
     setBusy(true); setErr(null);
     try {
       const cleaned = lines.filter((l) => l.accountId && ((l.debit || 0) > 0 || (l.credit || 0) > 0));
-      await createJournalEntry({ entryDate: date, description: desc || null, lines: cleaned });
+      await createJournalEntry({
+        entryDate: date, description: desc || null,
+        branchId: branchId === "" ? null : branchId,
+        costCenterId: costCenterId === "" ? null : costCenterId,
+        lines: cleaned,
+      });
       onDone();
     } catch (e: any) { setErr(e?.message ?? "فشل"); }
     finally { setBusy(false); }
@@ -164,6 +173,14 @@ function CreateForm({ accounts, onCancel, onDone }: { accounts: Account[]; onCan
       <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 10 }}>
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label="البيان"><input value={desc} onChange={(e) => setDesc(e.target.value)} style={input} /></Field>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+        <Field label="الفرع">
+          <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
+        </Field>
+        <Field label="مركز التكلفة">
+          <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
+        </Field>
       </div>
       <Table>
         <thead><tr>

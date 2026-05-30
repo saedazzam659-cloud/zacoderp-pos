@@ -14,6 +14,7 @@
 - [POS Desktop multi-currency model](pos-desktop-multicurrency.md) — native-currency balances per treasury endpoint, all JEs in base; FX diff → fx_gain(4900)/fx_loss(5900); changing currency on a non-zero box is rejected at the Rust layer.
 - [POS Desktop country → currency symbol](pos-desktop-country-currency.md) — display symbol piggybacks on the SAME pos_desktop_country VAT key (one source); reactive via useCurrencySymbol(), module-level formatters need the host component to subscribe.
 - [POS Desktop LAN shared-DB mode](pos-desktop-lan-mode.md) — net_role host/client/single; use isClient() not shouldUseBridge() for client-only logic; lan_stock JSON is camelCase in lockstep both sides; test-connection must be side-effect free.
+- [POS Desktop dimension pickers](pos-desktop-dimension-pickers.md) — entry forms use `*PickerOptions` (active/posting only, "بدون"); reports use `branchOptions`/`costCenterOptions` (ALL incl. inactive).
 - [POS Desktop FX on invoice forms](pos-desktop-fx-overlay.md) — foreign prices baked to base (×rate) before save; detect foreign by currency identity not rate≠1; validate rate>0.
 - [POS Desktop invoice discounts](pos-desktop-invoice-discounts.md) — no SQLite/Rust discount column; fold net unit price into payload so VAT lands on net; pre-discount breakdown lives only in a localStorage overlay for re-display.
 - [POS Desktop add-to-cart gates](pos-desktop-add-to-cart-gates.md) — every cart-add path must reuse shared ensureExpiryAllowed gate; multi-unit pricing is LS-overlay-only, stock deducts qty×factor in base unit.

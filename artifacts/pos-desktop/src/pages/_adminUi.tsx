@@ -31,11 +31,11 @@ export function Card({ children, style }: { children: ReactNode; style?: CSSProp
 export function Table({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return <table style={{ width: "100%", borderCollapse: "collapse", ...style }}>{children}</table>;
 }
-export function Th({ children, style, colSpan }: { children?: ReactNode; style?: CSSProperties; colSpan?: number }) {
-  return <th colSpan={colSpan} style={{ textAlign: "right", padding: "10px 14px", fontSize: 12, color: "#64748b", fontWeight: 600, background: "#f8fafc", ...style }}>{children}</th>;
+export function Th({ children, style, colSpan, rowSpan }: { children?: ReactNode; style?: CSSProperties; colSpan?: number; rowSpan?: number }) {
+  return <th colSpan={colSpan} rowSpan={rowSpan} style={{ textAlign: "right", padding: "10px 14px", fontSize: 12, color: "#64748b", fontWeight: 600, background: "#f8fafc", ...style }}>{children}</th>;
 }
-export function Td({ children, mono, num, style, colSpan }: { children?: ReactNode; mono?: boolean; num?: boolean; style?: CSSProperties; colSpan?: number }) {
-  return <td colSpan={colSpan} style={{
+export function Td({ children, mono, num, style, colSpan, rowSpan }: { children?: ReactNode; mono?: boolean; num?: boolean; style?: CSSProperties; colSpan?: number; rowSpan?: number }) {
+  return <td colSpan={colSpan} rowSpan={rowSpan} style={{
     padding: "10px 14px", fontSize: 14, borderTop: "1px solid #f1f5f9",
     fontFamily: mono ? "ui-monospace, monospace" : undefined,
     textAlign: num ? "left" : undefined,
