@@ -677,6 +677,8 @@ pub fn banks_delete(id: i64) -> Result<(), String> {
 
 // ───────────────────────── Purchases ─────────────────────────────────
 
+fn default_conversion_factor() -> f64 { 1.0 }
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PurchaseLine {
@@ -687,6 +689,12 @@ pub struct PurchaseLine {
     pub unit_cost: f64,
     pub vat_rate: f64,
     pub line_total: f64,
+    #[serde(default)]
+    pub uom_id: Option<i64>,
+    #[serde(default)]
+    pub uom_name: Option<String>,
+    #[serde(default = "default_conversion_factor")]
+    pub conversion_factor: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -763,13 +771,14 @@ pub fn purchase_get(id: i64) -> Result<Purchase, String> {
         })
     ).map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT pl.id,pl.item_id,i.name_ar,pl.qty,pl.unit_cost,pl.vat_rate,pl.line_total
+        "SELECT pl.id,pl.item_id,i.name_ar,pl.qty,pl.unit_cost,pl.vat_rate,pl.line_total,pl.uom_id,pl.uom_name,pl.conversion_factor
          FROM purchase_lines_local pl JOIN items_local i ON i.id=pl.item_id
          WHERE pl.purchase_id=?1 ORDER BY pl.id"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([id], |r| Ok(PurchaseLine {
         id: r.get(0)?, item_id: r.get(1)?, item_name: r.get(2)?, qty: r.get(3)?,
         unit_cost: r.get(4)?, vat_rate: r.get(5)?, line_total: r.get(6)?,
+        uom_id: r.get(7)?, uom_name: r.get(8)?, conversion_factor: r.get(9)?,
     })).map_err(|e| e.to_string())?;
     for r in rows { p.lines.push(r.map_err(|e| e.to_string())?); }
     Ok(p)
@@ -807,16 +816,18 @@ pub fn purchase_create(input: PurchaseInput) -> Result<i64, String> {
     // Resolve default warehouse for stock ledger inserts (Task #208).
     let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
     for l in &input.lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
         let line_sub = l.qty * l.unit_cost;
         let line_vat = line_sub * l.vat_rate / 100.0;
         let lt = line_sub + line_vat;
         tx.execute(
-            "INSERT INTO purchase_lines_local(purchase_id,item_id,qty,unit_cost,vat_rate,line_total) VALUES(?1,?2,?3,?4,?5,?6)",
-            params![purchase_id, l.item_id, l.qty, l.unit_cost, l.vat_rate, lt],
+            "INSERT INTO purchase_lines_local(purchase_id,item_id,qty,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            params![purchase_id, l.item_id, l.qty, l.unit_cost, l.vat_rate, lt, l.uom_id, l.uom_name, factor],
         ).map_err(|e| e.to_string())?;
-        // Stock IN: positive qty at unit cost into default warehouse.
+        // Stock IN: qty converted to BASE units (qty × factor) at cost-per-base
+        // (unit_cost ÷ factor) so total cost = qty × unit_cost is preserved.
         crate::inventory::ledger_push_in_tx(
-            &tx, l.item_id, default_wh, l.qty, l.unit_cost,
+            &tx, l.item_id, default_wh, l.qty * factor, l.unit_cost / factor,
             "purchase", Some(purchase_id), &input.invoice_date,
         )?;
     }
@@ -949,13 +960,14 @@ pub fn purchase_return_get(id: i64) -> Result<PurchaseReturn, String> {
         })
     ).map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT pl.id,pl.item_id,i.name_ar,pl.qty,pl.unit_cost,pl.vat_rate,pl.line_total
+        "SELECT pl.id,pl.item_id,i.name_ar,pl.qty,pl.unit_cost,pl.vat_rate,pl.line_total,pl.uom_id,pl.uom_name,pl.conversion_factor
          FROM purchase_return_lines_local pl JOIN items_local i ON i.id=pl.item_id
          WHERE pl.return_id=?1 ORDER BY pl.id"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([id], |r| Ok(PurchaseLine {
         id: r.get(0)?, item_id: r.get(1)?, item_name: r.get(2)?, qty: r.get(3)?,
         unit_cost: r.get(4)?, vat_rate: r.get(5)?, line_total: r.get(6)?,
+        uom_id: r.get(7)?, uom_name: r.get(8)?, conversion_factor: r.get(9)?,
     })).map_err(|e| e.to_string())?;
     for r in rows { p.lines.push(r.map_err(|e| e.to_string())?); }
     Ok(p)
@@ -988,15 +1000,16 @@ pub fn purchase_return_create(input: PurchaseReturnInput) -> Result<i64, String>
     // Default warehouse for outbound stock ledger entries.
     let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
     for l in &input.lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
         let line_sub = l.qty * l.unit_cost;
         let lt = line_sub + line_sub * l.vat_rate / 100.0;
         tx.execute(
-            "INSERT INTO purchase_return_lines_local(return_id,item_id,qty,unit_cost,vat_rate,line_total) VALUES(?1,?2,?3,?4,?5,?6)",
-            params![return_id, l.item_id, l.qty, l.unit_cost, l.vat_rate, lt],
+            "INSERT INTO purchase_return_lines_local(return_id,item_id,qty,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            params![return_id, l.item_id, l.qty, l.unit_cost, l.vat_rate, lt, l.uom_id, l.uom_name, factor],
         ).map_err(|e| e.to_string())?;
-        // Stock OUT: negative qty out of default warehouse.
+        // Stock OUT: BASE units (qty × factor) at cost-per-base (unit_cost ÷ factor).
         crate::inventory::ledger_push_in_tx(
-            &tx, l.item_id, default_wh, -l.qty, l.unit_cost,
+            &tx, l.item_id, default_wh, -l.qty * factor, l.unit_cost / factor,
             "purchase_return", Some(return_id), &input.return_date,
         )?;
     }
@@ -1037,6 +1050,12 @@ pub struct SalesLine {
     pub unit_price: f64,
     pub vat_rate: f64,
     pub line_total: f64,
+    #[serde(default)]
+    pub uom_id: Option<i64>,
+    #[serde(default)]
+    pub uom_name: Option<String>,
+    #[serde(default = "default_conversion_factor")]
+    pub conversion_factor: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1158,13 +1177,14 @@ pub fn sales_invoice_get(id: i64) -> Result<SalesInvoice, String> {
         })
     ).map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT sl.id,sl.item_id,i.name_ar,sl.qty,sl.unit_price,sl.vat_rate,sl.line_total
+        "SELECT sl.id,sl.item_id,i.name_ar,sl.qty,sl.unit_price,sl.vat_rate,sl.line_total,sl.uom_id,sl.uom_name,sl.conversion_factor
          FROM sales_invoice_lines_local sl JOIN items_local i ON i.id=sl.item_id
          WHERE sl.invoice_id=?1 ORDER BY sl.id"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([id], |r| Ok(SalesLine {
         id: r.get(0)?, item_id: r.get(1)?, item_name: r.get(2)?, qty: r.get(3)?,
         unit_price: r.get(4)?, vat_rate: r.get(5)?, line_total: r.get(6)?,
+        uom_id: r.get(7)?, uom_name: r.get(8)?, conversion_factor: r.get(9)?,
     })).map_err(|e| e.to_string())?;
     for r in rows { s.lines.push(r.map_err(|e| e.to_string())?); }
     Ok(s)
@@ -1264,17 +1284,19 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
     let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
     let mut cogs_total = 0.0_f64;
     for l in &input.lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
         let line_sub = l.qty * l.unit_price;
         let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        // unit_cost is the moving cost PER BASE UNIT; base qty sold = qty × factor.
         let unit_cost = item_cost_in_tx(&tx, l.item_id, default_wh);
-        cogs_total += unit_cost * l.qty;
+        cogs_total += unit_cost * l.qty * factor;
         tx.execute(
-            "INSERT INTO sales_invoice_lines_local(invoice_id,item_id,qty,unit_price,unit_cost,vat_rate,line_total) VALUES(?1,?2,?3,?4,?5,?6,?7)",
-            params![invoice_id, l.item_id, l.qty, l.unit_price, unit_cost, l.vat_rate, lt],
+            "INSERT INTO sales_invoice_lines_local(invoice_id,item_id,qty,unit_price,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![invoice_id, l.item_id, l.qty, l.unit_price, unit_cost, l.vat_rate, lt, l.uom_id, l.uom_name, factor],
         ).map_err(|e| e.to_string())?;
-        // Stock OUT: negative qty at cost.
+        // Stock OUT: BASE units (qty × factor) at the per-base moving cost.
         crate::inventory::ledger_push_in_tx(
-            &tx, l.item_id, default_wh, -l.qty, unit_cost,
+            &tx, l.item_id, default_wh, -l.qty * factor, unit_cost,
             "sale", Some(invoice_id), &input.invoice_date,
         )?;
     }
@@ -1406,13 +1428,14 @@ pub fn sales_return_get(id: i64) -> Result<SalesReturn, String> {
         })
     ).map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT sl.id,sl.item_id,i.name_ar,sl.qty,sl.unit_price,sl.vat_rate,sl.line_total
+        "SELECT sl.id,sl.item_id,i.name_ar,sl.qty,sl.unit_price,sl.vat_rate,sl.line_total,sl.uom_id,sl.uom_name,sl.conversion_factor
          FROM sales_return_lines_local sl JOIN items_local i ON i.id=sl.item_id
          WHERE sl.return_id=?1 ORDER BY sl.id"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([id], |r| Ok(SalesLine {
         id: r.get(0)?, item_id: r.get(1)?, item_name: r.get(2)?, qty: r.get(3)?,
         unit_price: r.get(4)?, vat_rate: r.get(5)?, line_total: r.get(6)?,
+        uom_id: r.get(7)?, uom_name: r.get(8)?, conversion_factor: r.get(9)?,
     })).map_err(|e| e.to_string())?;
     for r in rows { p.lines.push(r.map_err(|e| e.to_string())?); }
     Ok(p)
@@ -1451,17 +1474,19 @@ pub fn sales_return_create(input: SalesReturnInput) -> Result<i64, String> {
     let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
     let mut cogs_total = 0.0_f64;
     for l in &input.lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
         let line_sub = l.qty * l.unit_price;
         let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        // unit_cost is the moving cost PER BASE UNIT; base qty returned = qty × factor.
         let unit_cost = item_cost_in_tx(&tx, l.item_id, default_wh);
-        cogs_total += unit_cost * l.qty;
+        cogs_total += unit_cost * l.qty * factor;
         tx.execute(
-            "INSERT INTO sales_return_lines_local(return_id,item_id,qty,unit_price,unit_cost,vat_rate,line_total) VALUES(?1,?2,?3,?4,?5,?6,?7)",
-            params![return_id, l.item_id, l.qty, l.unit_price, unit_cost, l.vat_rate, lt],
+            "INSERT INTO sales_return_lines_local(return_id,item_id,qty,unit_price,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![return_id, l.item_id, l.qty, l.unit_price, unit_cost, l.vat_rate, lt, l.uom_id, l.uom_name, factor],
         ).map_err(|e| e.to_string())?;
-        // Stock IN: positive qty at cost back into warehouse.
+        // Stock IN: BASE units (qty × factor) at the per-base moving cost.
         crate::inventory::ledger_push_in_tx(
-            &tx, l.item_id, default_wh, l.qty, unit_cost,
+            &tx, l.item_id, default_wh, l.qty * factor, unit_cost,
             "sale_return", Some(return_id), &input.return_date,
         )?;
     }

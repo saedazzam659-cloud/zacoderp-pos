@@ -76,6 +76,10 @@ export type TreasuryTransferInput = {
 export type PurchaseLine = {
   id?: number; itemId: number; itemName?: string;
   qty: number; unitCost: number; vatRate: number; lineTotal: number;
+  // Line-level unit of measure. unitPrice/unitCost & qty are per the SELECTED
+  // unit; conversionFactor (= uom.baseQty) converts qty to BASE units for stock
+  // & COGS only — it does NOT change the monetary line total.
+  uomId?: number | null; uomName?: string | null; conversionFactor?: number;
 };
 export type PaymentMethod = "credit" | "cash" | "bank";
 export type Purchase = {
@@ -105,6 +109,10 @@ export type PurchaseReturnInput = {
 export type SalesLine = {
   id?: number; itemId: number; itemName?: string;
   qty: number; unitPrice: number; vatRate: number; lineTotal: number;
+  // Line-level unit of measure. unitPrice & qty are per the SELECTED unit;
+  // conversionFactor (= uom.baseQty) converts qty to BASE units for stock &
+  // COGS only — it does NOT change the monetary line total.
+  uomId?: number | null; uomName?: string | null; conversionFactor?: number;
 };
 export type SalesInvoice = {
   id: number; invoiceNo: string; customerId: number | null; customerName: string | null;

@@ -23,6 +23,7 @@ pub struct LocalItem {
     pub barcode: Option<String>,
     pub sale_price: f64,
     pub vat_rate: f64,
+    pub uom_id: Option<i64>,
     // Pharmacy vertical (Task #200) — all nullable, present only when the
     // store's vertical is "pharmacy". Generic catalog rows leave these NULL.
     pub active_ingredient: Option<String>,
@@ -45,7 +46,7 @@ const MAX_ROWS: i64 = 2000;
 const SELECT_COLS: &str =
     "id, cloud_id, code, name_ar, name_en, barcode, sale_price, vat_rate, \
      active_ingredient, dosage_form, strength, manufacturer, requires_prescription, \
-     controlled, expiry_date, batch_no, is_weighed, price_per_kg, plu";
+     controlled, expiry_date, batch_no, is_weighed, price_per_kg, plu, uom_id";
 
 fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalItem> {
     Ok(LocalItem {
@@ -68,6 +69,7 @@ fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalItem> {
         is_weighed: row.get::<_, Option<i64>>(16).ok().flatten().map(|v| v != 0),
         price_per_kg: row.get(17).ok().flatten(),
         plu: row.get(18).ok().flatten(),
+        uom_id: row.get(19).ok().flatten(),
     })
 }
 

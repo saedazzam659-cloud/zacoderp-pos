@@ -56,6 +56,7 @@ interface RustItem {
   barcode: string | null;
   sale_price: number;
   vat_rate: number;
+  uom_id?: number | null;
   active_ingredient?: string | null;
   dosage_form?: string | null;
   strength?: string | null;
@@ -79,6 +80,7 @@ function fromRust(r: RustItem): LocalItem {
     barcode: r.barcode,
     salePrice: r.sale_price,
     vatRate: r.vat_rate,
+    uomId: r.uom_id ?? null,
     activeIngredient: r.active_ingredient ?? null,
     dosageForm: r.dosage_form ?? null,
     strength: r.strength ?? null,

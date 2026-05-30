@@ -518,6 +518,23 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE customers_local ADD COLUMN credit_limit REAL NOT NULL DEFAULT 0",
         "ALTER TABLE customers_local ADD COLUMN enforce_credit_limit INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE customers_local ADD COLUMN payment_terms_days INTEGER NOT NULL DEFAULT 0",
+        // Line-level unit of measure (الوحدة). uom_id/uom_name are the selected
+        // unit; conversion_factor converts the line qty into BASE units for the
+        // stock ledger & COGS (e.g. carton=12 → factor 12). Financial totals stay
+        // qty × unit_price (price is per selected unit). Defaults keep old rows as
+        // 1-to-1 base-unit lines. Local-only — never overwritten by cloud sync.
+        "ALTER TABLE purchase_lines_local ADD COLUMN uom_id INTEGER",
+        "ALTER TABLE purchase_lines_local ADD COLUMN uom_name TEXT",
+        "ALTER TABLE purchase_lines_local ADD COLUMN conversion_factor REAL NOT NULL DEFAULT 1",
+        "ALTER TABLE purchase_return_lines_local ADD COLUMN uom_id INTEGER",
+        "ALTER TABLE purchase_return_lines_local ADD COLUMN uom_name TEXT",
+        "ALTER TABLE purchase_return_lines_local ADD COLUMN conversion_factor REAL NOT NULL DEFAULT 1",
+        "ALTER TABLE sales_invoice_lines_local ADD COLUMN uom_id INTEGER",
+        "ALTER TABLE sales_invoice_lines_local ADD COLUMN uom_name TEXT",
+        "ALTER TABLE sales_invoice_lines_local ADD COLUMN conversion_factor REAL NOT NULL DEFAULT 1",
+        "ALTER TABLE sales_return_lines_local ADD COLUMN uom_id INTEGER",
+        "ALTER TABLE sales_return_lines_local ADD COLUMN uom_name TEXT",
+        "ALTER TABLE sales_return_lines_local ADD COLUMN conversion_factor REAL NOT NULL DEFAULT 1",
     ];
     for sql in alters { let _ = conn.execute(sql, []); }
 

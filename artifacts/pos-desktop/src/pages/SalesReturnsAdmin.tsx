@@ -5,6 +5,7 @@ import {
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
 import { listItems, type LocalItem } from "../lib/items";
+import { listUom, type Uom } from "../lib/uom";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
@@ -114,12 +115,12 @@ function ReturnDetail({ r }: { r: SalesReturn }) {
   return (
     <div style={{ padding: 12 }}>
       <Table>
-        <thead><tr><Th>الصنف</Th><Th style={{ textAlign: "left" }}>الكمية</Th><Th style={{ textAlign: "left" }}>سعر الوحدة</Th><Th style={{ textAlign: "left" }}>الإجمالي</Th></tr></thead>
+        <thead><tr><Th>الصنف</Th><Th>الوحدة</Th><Th style={{ textAlign: "left" }}>الكمية</Th><Th style={{ textAlign: "left" }}>سعر الوحدة</Th><Th style={{ textAlign: "left" }}>الإجمالي</Th></tr></thead>
         <tbody>
           {r.lines.map((l, i) => (
-            <tr key={l.id ?? i}><Td>{l.itemName}</Td><Td num>{l.qty}</Td><Td num>{fmt(l.unitPrice)}</Td><Td num>{fmt(l.lineTotal)}</Td></tr>
+            <tr key={l.id ?? i}><Td>{l.itemName}</Td><Td>{l.uomName ?? ""}</Td><Td num>{l.qty}</Td><Td num>{fmt(l.unitPrice)}</Td><Td num>{fmt(l.lineTotal)}</Td></tr>
           ))}
-          <tr style={{ background: "#f1f5f9", fontWeight: 700 }}><Td colSpan={3 as any}>الإجمالي</Td><Td num>{fmt(r.grandTotal)}</Td></tr>
+          <tr style={{ background: "#f1f5f9", fontWeight: 700 }}><Td colSpan={4 as any}>الإجمالي</Td><Td num>{fmt(r.grandTotal)}</Td></tr>
         </tbody>
       </Table>
     </div>
@@ -139,7 +140,13 @@ function CreateForm({ deps, onCancel, onDone }: {
     (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
   );
   const [notes, setNotes] = useState("");
-  const [lines, setLines] = useState<SalesLine[]>([{ itemId: 0, qty: 1, unitPrice: 0, vatRate: 15, lineTotal: 0 }]);
+  const [uoms] = useState<Uom[]>(() => listUom());
+  const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
+  const blankLine = (): SalesLine => ({
+    itemId: 0, qty: 1, unitPrice: 0, vatRate: 15, lineTotal: 0,
+    uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
+  });
+  const [lines, setLines] = useState<SalesLine[]>(() => [blankLine()]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -152,14 +159,23 @@ function CreateForm({ deps, onCancel, onDone }: {
         if (it) {
           if (!next.unitPrice) next.unitPrice = it.salePrice ?? 0;
           next.vatRate = it.vatRate ?? next.vatRate;
+          if (it.uomId != null) {
+            const u = uoms.find((x) => x.id === it.uomId);
+            if (u) { next.uomId = u.id; next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
+          }
         }
+      }
+      // Unit change: price stays per SELECTED unit; factor only affects stock/COGS.
+      if (patch.uomId !== undefined) {
+        const u = uoms.find((x) => x.id === Number(patch.uomId));
+        if (u) { next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
       }
       const sub = (Number(next.qty) || 0) * (Number(next.unitPrice) || 0);
       next.lineTotal = sub + sub * (Number(next.vatRate) || 0) / 100;
       return next;
     }));
   }
-  function addLine() { setLines((ls) => [...ls, { itemId: 0, qty: 1, unitPrice: 0, vatRate: 15, lineTotal: 0 }]); }
+  function addLine() { setLines((ls) => [...ls, blankLine()]); }
   function removeLine(i: number) { setLines((ls) => ls.filter((_, k) => k !== i)); }
 
   const subtotal = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.unitPrice) || 0), 0);
@@ -251,7 +267,7 @@ function CreateForm({ deps, onCancel, onDone }: {
 
       <Table>
         <thead><tr>
-          <Th>الصنف</Th><Th style={{ width: 90 }}>الكمية</Th><Th style={{ width: 120 }}>سعر الوحدة</Th><Th style={{ width: 80 }}>ض. %</Th>
+          <Th>الصنف</Th><Th style={{ width: 130 }}>الوحدة</Th><Th style={{ width: 90 }}>الكمية</Th><Th style={{ width: 120 }}>سعر الوحدة</Th><Th style={{ width: 80 }}>ض. %</Th>
           <Th style={{ width: 120, textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 40 }}></Th>
         </tr></thead>
         <tbody>
@@ -268,6 +284,14 @@ function CreateForm({ deps, onCancel, onDone }: {
                   ]}
                 />
               </Td>
+              <Td>
+                <SearchCombobox
+                  value={l.uomId ?? 0}
+                  onChange={(v) => setLine(i, { uomId: Number(v) })}
+                  style={input}
+                  options={uoms.map((u) => ({ value: u.id, label: u.baseQty !== 1 ? `${u.nameAr} (×${u.baseQty})` : u.nameAr }))}
+                />
+              </Td>
               <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={input} /></Td>
               <Td><input type="number" step="0.01" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={input} /></Td>
               <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={input} /></Td>
@@ -276,10 +300,10 @@ function CreateForm({ deps, onCancel, onDone }: {
             </tr>
           ))}
           <tr style={{ background: "#f8fafc", fontWeight: 700 }}>
-            <Td colSpan={4 as any}>قبل الضريبة</Td><Td num>{fmt(subtotal)}</Td><Td></Td>
+            <Td colSpan={5 as any}>قبل الضريبة</Td><Td num>{fmt(subtotal)}</Td><Td></Td>
           </tr>
-          <tr style={{ background: "#f8fafc" }}><Td colSpan={4 as any}>الضريبة</Td><Td num>{fmt(vatTotal)}</Td><Td></Td></tr>
-          <tr style={{ background: "#f1f5f9", fontWeight: 800, fontSize: 15 }}><Td colSpan={4 as any}>الإجمالي</Td><Td num>{fmt(grand)}</Td><Td></Td></tr>
+          <tr style={{ background: "#f8fafc" }}><Td colSpan={5 as any}>الضريبة</Td><Td num>{fmt(vatTotal)}</Td><Td></Td></tr>
+          <tr style={{ background: "#f1f5f9", fontWeight: 800, fontSize: 15 }}><Td colSpan={5 as any}>الإجمالي</Td><Td num>{fmt(grand)}</Td><Td></Td></tr>
         </tbody>
       </Table>
       <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
