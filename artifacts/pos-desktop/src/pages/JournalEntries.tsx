@@ -13,6 +13,7 @@ import {
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { getTaxRate } from "../lib/taxSettings";
 import { getDefaultTax } from "../lib/taxes";
+import { getCompanyProfile } from "../lib/appSettings";
 
 const ENTRY_TYPES: { value: JeEntryType; label: string }[] = [
   { value: "general", label: "قيد عام" },
@@ -570,45 +571,116 @@ function JeForm({ accounts, state, onCancel, onDone }: {
   );
 }
 
-// ── Print ─────────────────────────────────────────────────────────────
+// ── Print (professional letterhead, mirrors the web app) ───────────────
 function PrintArea({ data }: { data: ManualJeDetail | null }) {
   if (!data) return null;
+  const company = getCompanyProfile();
+  const statusLabel = data.status === "posted" ? "مرحَّل" : "مسودة";
+  const printedAt = new Date().toLocaleString("ar-SA");
   return (
     <div id="je-print-area" style={{ display: "none" }}>
       <style>{`
         @media print {
+          @page { size: A4; margin: 14mm; }
           body * { visibility: hidden !important; }
           #je-print-area, #je-print-area * { visibility: visible !important; }
-          #je-print-area { display: block !important; position: absolute; inset: 0; padding: 24px; direction: rtl; font-family: inherit; }
-          .je-print-table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-          .je-print-table th, .je-print-table td { border: 1px solid #94a3b8; padding: 6px 10px; font-size: 13px; }
+          #je-print-area {
+            display: block !important; position: absolute; inset: 0;
+            direction: rtl; font-family: inherit; color: #0f172a;
+          }
+          .je-head { display: flex; justify-content: space-between; align-items: flex-start;
+            border-bottom: 2px solid #1e293b; padding-bottom: 12px; }
+          .je-head-r { display: flex; gap: 14px; align-items: center; }
+          .je-logo { max-height: 70px; max-width: 160px; object-fit: contain; }
+          .je-co-name { font-size: 20px; font-weight: 800; margin: 0; }
+          .je-co-meta { font-size: 12px; color: #475569; margin-top: 4px; }
+          .je-print-meta { font-size: 11px; color: #64748b; text-align: left; }
+          .je-banner { display: flex; justify-content: space-between; align-items: center;
+            background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px;
+            padding: 10px 14px; margin-top: 16px; }
+          .je-docno { font-size: 16px; }
+          .je-docmeta { font-size: 12px; color: #475569; margin-top: 4px; }
+          .je-status { font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 999px;
+            background: ${data.status === "posted" ? "#dcfce7" : "#fef9c3"};
+            color: ${data.status === "posted" ? "#166534" : "#854d0e"}; }
+          .je-desc { font-size: 13px; margin-top: 12px; }
+          .je-print-table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+          .je-print-table th, .je-print-table td { border: 1px solid #94a3b8; padding: 7px 10px; font-size: 12.5px; }
           .je-print-table th { background: #f1f5f9; text-align: right; }
+          .je-print-table tfoot td { background: #f8fafc; font-weight: 800; }
+          .je-num { text-align: left; font-variant-numeric: tabular-nums; }
+          .je-signs { display: flex; justify-content: space-between; gap: 24px; margin-top: 56px; }
+          .je-sign { flex: 1; text-align: center; }
+          .je-sign-line { border-top: 1px solid #475569; margin-bottom: 6px; }
+          .je-sign-label { font-size: 12px; color: #475569; }
         }
       `}</style>
-      <h2 style={{ margin: 0 }}>قيد يومية — {data.entryNo}</h2>
-      <div style={{ marginTop: 8, fontSize: 13 }}>
-        <div>التاريخ: {data.entryDate}</div>
-        <div>النوع: {ENTRY_TYPE_LABEL[data.entryType] ?? data.entryType} — الحالة: {data.status === "posted" ? "مرحَّل" : "مسودة"}</div>
-        {data.description && <div>البيان: {data.description}</div>}
+
+      <div className="je-head">
+        <div className="je-head-r">
+          {company.logo ? <img className="je-logo" src={company.logo} alt="شعار الشركة" /> : null}
+          <div>
+            <h1 className="je-co-name">{company.name || "قيد يومية"}</h1>
+            <div className="je-co-meta">
+              {company.cr ? <span>س.ت: {company.cr}</span> : null}
+              {company.cr && company.vat ? <span> • </span> : null}
+              {company.vat ? <span>الرقم الضريبي: {company.vat}</span> : null}
+            </div>
+          </div>
+        </div>
+        <div className="je-print-meta">
+          <div>تاريخ الطباعة</div>
+          <div>{printedAt}</div>
+        </div>
       </div>
+
+      <div className="je-banner">
+        <div>
+          <div className="je-docno">قيد رقم: <b>{data.entryNo}</b></div>
+          <div className="je-docmeta">
+            التاريخ: {data.entryDate} • النوع: {ENTRY_TYPE_LABEL[data.entryType] ?? data.entryType}
+          </div>
+        </div>
+        <div className="je-status">{statusLabel}</div>
+      </div>
+
+      {data.description ? <div className="je-desc"><b>البيان:</b> {data.description}</div> : null}
+
       <table className="je-print-table">
-        <thead><tr><th>الحساب</th><th>البيان</th><th>مدين</th><th>دائن</th></tr></thead>
+        <thead>
+          <tr>
+            <th style={{ width: 38 }}>م</th>
+            <th>الحساب</th>
+            <th>الوصف</th>
+            <th style={{ width: 110 }}>مدين</th>
+            <th style={{ width: 110 }}>دائن</th>
+          </tr>
+        </thead>
         <tbody>
           {data.lines.map((l, i) => (
             <tr key={l.id ?? i}>
+              <td className="je-num">{i + 1}</td>
               <td>{l.accountCode} — {l.accountName}</td>
               <td>{l.description ?? ""}</td>
-              <td style={{ textAlign: "left" }}>{l.debit ? fmt(l.debit) : ""}</td>
-              <td style={{ textAlign: "left" }}>{l.credit ? fmt(l.credit) : ""}</td>
+              <td className="je-num">{l.debit ? fmt(l.debit) : ""}</td>
+              <td className="je-num">{l.credit ? fmt(l.credit) : ""}</td>
             </tr>
           ))}
-          <tr style={{ fontWeight: 700 }}>
-            <td colSpan={2}>الإجمالي</td>
-            <td style={{ textAlign: "left" }}>{fmt(data.totalDebit)}</td>
-            <td style={{ textAlign: "left" }}>{fmt(data.totalCredit)}</td>
-          </tr>
         </tbody>
+        <tfoot>
+          <tr>
+            <td colSpan={3}>الإجمالي</td>
+            <td className="je-num">{fmt(data.totalDebit)}</td>
+            <td className="je-num">{fmt(data.totalCredit)}</td>
+          </tr>
+        </tfoot>
       </table>
+
+      <div className="je-signs">
+        <div className="je-sign"><div className="je-sign-line" /><div className="je-sign-label">المحاسب / المُعدّ</div></div>
+        <div className="je-sign"><div className="je-sign-line" /><div className="je-sign-label">المراجع</div></div>
+        <div className="je-sign"><div className="je-sign-line" /><div className="je-sign-label">المدير المالي / الاعتماد</div></div>
+      </div>
     </div>
   );
 }

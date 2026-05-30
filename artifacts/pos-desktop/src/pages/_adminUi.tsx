@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { currencySymbol, CURRENCIES, baseCurrencyCode } from "../lib/currency";
+import { getDecimals } from "../lib/appSettings";
 import type { DiscType, DiscountResult } from "../lib/discount";
 
 export function Page({ title, subtitle, right, children }: {
@@ -517,10 +518,11 @@ export function Pagination({
 }
 
 export function fmt(n: number): string {
-  return Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const dp = getDecimals();
+  return Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 }
 /** Format an amount with its currency code as suffix (defaults to SAR → "ر.س"). */
-export function fmtCurrency(n: number, code: string = "SAR", decimals = 2): string {
+export function fmtCurrency(n: number, code: string = "SAR", decimals = getDecimals()): string {
   const txt = Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
   const suffix = code === "SAR" ? currencySymbol() : code;
   return `${txt} ${suffix}`;

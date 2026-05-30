@@ -54,6 +54,7 @@ import PurchaseReturnsAdmin from "./PurchaseReturnsAdmin";
 import FinancialTransactionsAdmin from "./FinancialTransactionsAdmin";
 import UserPermissionsAdmin from "./UserPermissionsAdmin";
 import NumberSeriesAdmin from "./NumberSeriesAdmin";
+import SettingsGuide from "./SettingsGuide";
 import {
   listUserPermissions, computeAllowed, persistAllowedToLS, clearAllowedLS,
   loadAllowedFromLS, defaultsForRole, type ScreenKey,
@@ -88,7 +89,7 @@ type View =
   | "report_balance_sheet" | "report_trial_balance"
   // Task #208 — warehouses & inventory ops (standalone).
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
-  | "number_series";
+  | "number_series" | "settings_guide";
 
 /** Minimal CSV parser for the bundled starter catalogs (no quotes/escapes
  *  expected — files are repo-controlled). Returns CreateItemInput rows. */
@@ -210,7 +211,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     label: "التحكم العام",
     members: [
       "branches", "currencies", "exchange_rates", "dashboard",
-      "users", "user_permissions", "network", "number_series", "updates",
+      "users", "user_permissions", "network", "number_series", "settings_guide", "updates",
     ],
   },
 ];
@@ -508,6 +509,7 @@ export default function PosShell({
         ]
       : []),
     { id: "dashboard", icon: "⚙️", label: "لوحة التحكم" },
+    { id: "settings_guide", icon: "🏢", label: "دليل الإعدادات", perm: "settings_guide" },
     // Updates entry — even standalone users want to install newer app
     // versions (the device usually has occasional internet for this).
     // The Updates screen itself gracefully handles offline by showing
@@ -890,6 +892,9 @@ export default function PosShell({
           {standalone && view === "treasury_transfers" && (isAdmin || can("treasury_transfers")) && (
             <div style={S.pagePad}><TreasuryTransfersAdmin /></div>
           )}
+          {standalone && view === "settings_guide" && (isAdmin || can("settings_guide")) && (
+            <div style={S.pagePad}><SettingsGuide /></div>
+          )}
         </main>
       </div>
 
@@ -943,6 +948,7 @@ function labelFor(v: View): string {
     exchange_rates: "أسعار الصرف",
     treasury_transfers: "تحويل الخزن",
     number_series: "أرقام المسلسلات",
+    settings_guide: "دليل الإعدادات",
   }[v];
 }
 

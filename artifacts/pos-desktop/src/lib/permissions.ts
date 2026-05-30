@@ -28,7 +28,7 @@ export type ScreenKey =
   | "report_balance_sheet" | "report_trial_balance"
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
   | "number_series" | "branches"
-  | "user_permissions" | "dashboard" | "updates" | "users";
+  | "user_permissions" | "dashboard" | "updates" | "users" | "settings_guide";
 
 export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: string }[] = [
   { key: "sales", label: "البيع", icon: "🛒", group: "العمليات" },
@@ -79,6 +79,7 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "users", label: "المستخدمون", icon: "🔐", group: "الإعدادات" },
   { key: "dashboard", label: "لوحة التحكم", icon: "⚙️", group: "الإعدادات" },
   { key: "updates", label: "التحديثات", icon: "🔄", group: "الإعدادات" },
+  { key: "settings_guide", label: "دليل الإعدادات", icon: "🏢", group: "الإعدادات" },
 ];
 
 // Role default: which screens are visible by default for each role.
