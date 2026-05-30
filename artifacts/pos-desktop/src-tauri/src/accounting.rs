@@ -2464,8 +2464,6 @@ pub fn treasury_transfer_create(input: TreasuryTransferInput) -> Result<i64, Str
 // account statement from them — mirroring the web app's report set.
 // ═════════════════════════════════════════════════════════════════════
 
-fn default_true() -> bool { true }
-
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Branch {

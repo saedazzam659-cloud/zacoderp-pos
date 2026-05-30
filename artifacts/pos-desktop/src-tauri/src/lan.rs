@@ -29,7 +29,6 @@ use anyhow::Result;
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static SERVER_STARTED: AtomicBool = AtomicBool::new(false);
