@@ -13,10 +13,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { buildDailyReport, todayLocalYmd, type DailyReport } from "../lib/dailyReport";
+import { currencySymbol, useCurrencySymbol } from "../lib/currency";
 
 type Props = { companyName?: string; cashierName?: string };
 
 export default function DailyReportPage({ companyName, cashierName }: Props) {
+  // Subscribe to country/currency changes so the (module-level) fmtSar
+  // formatter re-reads the symbol on the next render when the country flips.
+  useCurrencySymbol();
   const [date, setDate] = useState<string>(todayLocalYmd());
   const [data, setData] = useState<DailyReport | null>(null);
   const [loading, setLoading] = useState(false);
@@ -398,7 +402,7 @@ function HourlyChart({ hours }: { hours: { hour: number; sales: number; returns:
 
 function fmtSar(n: number): string {
   const v = Math.abs(n).toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return `${n < 0 ? "−" : ""}${v} ر.س`;
+  return `${n < 0 ? "−" : ""}${v} ${currencySymbol()}`;
 }
 function fmtNum(n: number): string {
   return n.toLocaleString("ar-EG", { maximumFractionDigits: 3 });

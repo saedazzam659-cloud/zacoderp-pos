@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { currencySymbol } from "../lib/currency";
 
 export function Page({ title, subtitle, right, children }: {
   title: string; subtitle?: string; right?: ReactNode; children: ReactNode;
@@ -371,7 +372,7 @@ export function fmt(n: number): string {
 /** Format an amount with its currency code as suffix (defaults to SAR → "ر.س"). */
 export function fmtCurrency(n: number, code: string = "SAR", decimals = 2): string {
   const txt = Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
-  const suffix = code === "SAR" ? "ر.س" : code;
+  const suffix = code === "SAR" ? currencySymbol() : code;
   return `${txt} ${suffix}`;
 }
 export function todayStr(): string {

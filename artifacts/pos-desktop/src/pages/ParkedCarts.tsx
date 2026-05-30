@@ -10,6 +10,7 @@ import {
   listParkedCarts, deleteParkedCart, setResumeCartId,
   type ParkedCart,
 } from "../lib/parkedCarts";
+import { useCurrencySymbol } from "../lib/currency";
 
 type Props = {
   posSessionId: number;
@@ -17,6 +18,7 @@ type Props = {
 };
 
 export default function ParkedCarts({ posSessionId, onResume }: Props) {
+  const sym = useCurrencySymbol();
   const [rows, setRows] = useState<ParkedCart[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -74,7 +76,7 @@ export default function ParkedCarts({ posSessionId, onResume }: Props) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={S.cardLabel}>{c.label}</div>
                 <div style={S.cardMeta}>
-                  {c.lines.length} صنف · {c.grandTotal.toFixed(2)} ر.س ·{" "}
+                  {c.lines.length} صنف · {c.grandTotal.toFixed(2)} {sym} ·{" "}
                   {new Date(c.updatedAt).toLocaleString("ar-SA")}
                 </div>
                 {c.customerNote && (

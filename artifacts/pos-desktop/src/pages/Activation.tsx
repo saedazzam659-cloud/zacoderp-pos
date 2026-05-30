@@ -20,6 +20,7 @@ import {
   saveDeviceToken, TAURI_MODE,
 } from "../lib/tauri-shim";
 import { wipeStandalone } from "../lib/standalone";
+import { getCountryIso, setCountryIso } from "../lib/currency";
 import { SearchCombobox } from "./_adminUi";
 
 type Country = { code: string; name: string };
@@ -52,7 +53,7 @@ export default function Activation({ onActivated }: { onActivated: (info: Activa
 
   const [serverPreset, setServerPreset] = useState(0);
   const [serverUrl, setServerUrl] = useState(SERVER_PRESETS[0].url);
-  const [country, setCountry] = useState("SA");
+  const [country, setCountry] = useState(() => getCountryIso());
 
   const [licenseKey, setLicenseKey] = useState("");
 
@@ -113,7 +114,7 @@ export default function Activation({ onActivated }: { onActivated: (info: Activa
       });
       await saveDeviceToken(r.deviceToken);
       localStorage.setItem("pos_desktop_server_url", effectiveUrl());
-      localStorage.setItem("pos_desktop_country", country);
+      setCountryIso(country);
       onActivated({
         deviceToken: r.deviceToken,
         deviceId: r.deviceId,

@@ -13,6 +13,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createApi, type SyncStatus } from "../lib/api";
+import { useCurrencySymbol, getCountryIso, setCountryIso, countryByIso, ARAB_COUNTRIES } from "../lib/currency";
+import { SearchCombobox } from "./_adminUi";
 import { TAURI_MODE, type CashierContext } from "../lib/tauri-shim";
 import PeripheralsSettings from "./PeripheralsSettings";
 import SalesScreen from "./SalesScreen";
@@ -1068,6 +1070,8 @@ function StandaloneDashboardView({
         </div>
       </section>
 
+      {isAdmin && <CountrySettingsCard />}
+
       {isAdmin && <TaxSettingsCard />}
 
       {license && (
@@ -1123,7 +1127,53 @@ function Tile({ icon, label, value, accent, small }: { icon: string; label: stri
  * (e.g. SA→15, EG→14, AE→5). Admin can override at any time and reset
  * to country default with one click.
  */
+/**
+ * CountrySettingsCard — lets the admin change the operator's country at any
+ * time after first-run. Writing the country updates the POS currency symbol
+ * (display-only) AND the default VAT rate in lockstep, because both read the
+ * same `pos_desktop_country` key. Hidden for non-admins.
+ */
+function CountrySettingsCard() {
+  const sym = useCurrencySymbol();
+  const [iso, setIso] = useState<string>(() => getCountryIso());
+  const [saved, setSaved] = useState<"" | "ok">("");
+  const info = countryByIso(iso);
+
+  function choose(next: string) {
+    setIso(next);
+    setCountryIso(next);
+    setSaved("ok");
+    setTimeout(() => setSaved(""), 1500);
+  }
+
+  return (
+    <section style={S.card}>
+      <h2 style={S.h2}>الدولة والعملة</h2>
+      <div style={{ marginBottom: 12, fontSize: 13, color: "#64748b" }}>
+        تحديد الدولة يضبط رمز العملة المعروض في نقطة البيع (مثال: مصر → ج.م) ونسبة الضريبة الافتراضية.
+      </div>
+      <div style={{ maxWidth: 420 }}>
+        <SearchCombobox
+          value={iso}
+          onChange={(v) => choose(String(v))}
+          options={ARAB_COUNTRIES.map((c) => ({
+            value: c.iso,
+            label: `${c.flag} ${c.nameAr} (${c.currencySymbol})`,
+          }))}
+        />
+      </div>
+      <div style={{ marginTop: 10, fontSize: 13, color: "#0f172a", display: "flex", alignItems: "center", gap: 10 }}>
+        العملة الحالية: <strong>{info.nameAr} — {sym}</strong>
+        {saved === "ok" && (
+          <span style={{ color: "#16a34a", fontSize: 13, fontWeight: 600 }}>✓ تم الحفظ</span>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function TaxSettingsCard() {
+  const sym = useCurrencySymbol();
   const { rate, mode, country, setRate, setMode, resetToCountryDefault } = useTaxSettings();
   const [draft, setDraft] = useState<string>(String(rate));
   const [saved, setSaved] = useState<"" | "ok">("");
@@ -1195,7 +1245,7 @@ function TaxSettingsCard() {
           )}
         </div>
         <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
-          المثال الحالي: على فاتورة بقيمة <strong>100 ر.س</strong>{" "}
+          المثال الحالي: على فاتورة بقيمة <strong>100 {sym}</strong>{" "}
           {mode === "inclusive"
             ? <>(شاملة) → ضريبة <strong>{(100 - 100/(1+Number(draft)/100)).toFixed(2)}</strong>، صافي <strong>{(100/(1+Number(draft)/100)).toFixed(2)}</strong></>
             : <>(غير شاملة) → ضريبة <strong>{(100 * Number(draft)/100).toFixed(2)}</strong>، الإجمالي <strong>{(100 * (1+Number(draft)/100)).toFixed(2)}</strong></>}

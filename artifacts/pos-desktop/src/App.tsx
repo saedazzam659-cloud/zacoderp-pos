@@ -24,6 +24,8 @@ import PosShell from "./pages/PosShell";
 import LicenseExpired from "./pages/LicenseExpired";
 import FirstRunWizard from "./pages/FirstRunWizard";
 import VerticalSelector from "./pages/VerticalSelector";
+import CountrySelector from "./pages/CountrySelector";
+import { hasChosenCountry } from "./lib/currency";
 import StandaloneActivation from "./pages/StandaloneActivation";
 import StandaloneLogin from "./pages/StandaloneLogin";
 import { createApi, ApiError } from "./lib/api";
@@ -48,6 +50,7 @@ type BootState =
   | { phase: "checking" }
   | { phase: "needs-mode" }
   | { phase: "needs-vertical" }
+  | { phase: "needs-country" }
   // Cloud paths
   | { phase: "needs-activation" }
   | { phase: "license-expired"; baseUrl: string; deviceToken: string; expiresAt: string | null; companyName?: string }
@@ -80,6 +83,9 @@ export default function App() {
     // that matches their business. Returning users skip this branch.
     const vertical = await getVertical();
     if (!vertical) { setState({ phase: "needs-vertical" }); return; }
+    // ── Country / currency (applies to BOTH cloud + standalone). Sets the
+    // default POS currency symbol + VAT rate. Returning users skip this.
+    if (!hasChosenCountry()) { setState({ phase: "needs-country" }); return; }
     if (mode === "standalone") return bootStandalone();
     return bootCloud();
   }
@@ -272,6 +278,12 @@ export default function App() {
 
   if (state.phase === "needs-vertical") {
     return <VerticalSelector onChosen={() => {
+      void (async () => { setState({ phase: "checking" }); await boot(); })();
+    }} />;
+  }
+
+  if (state.phase === "needs-country") {
+    return <CountrySelector onChosen={() => {
       void (async () => { setState({ phase: "checking" }); await boot(); })();
     }} />;
   }

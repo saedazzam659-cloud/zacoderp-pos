@@ -9,6 +9,7 @@ import {
 import { listUom, getDefaultUom } from "../lib/uom";
 import { getAllStockShared, type StockMap } from "../lib/stock";
 import { getVertical, type Vertical } from "../lib/standalone";
+import { currencySymbol } from "../lib/currency";
 import { SearchCombobox, Pagination, pageSlice } from "./_adminUi";
 
 // ─── Excel-like grid: column defs, filtering, sorting, export ───────
@@ -591,7 +592,7 @@ export default function ItemsAdmin() {
                   <td style={S.td}>{renderQty(stockMap[it.id])}</td>
                   <td style={S.tdMonoClip}>{it.barcode ?? "—"}</td>
                   <td style={S.tdMonoClip}>{it.code ?? "—"}</td>
-                  <td style={S.td}><strong>{it.salePrice.toFixed(2)}</strong> ر.س</td>
+                  <td style={S.td}><strong>{it.salePrice.toFixed(2)}</strong> {currencySymbol()}</td>
                   <td style={S.td}>{it.vatRate}%</td>
                   <td style={S.td}>
                     <span style={it.cloudId ? S.badgeCloud : S.badgeLocal}>
@@ -1175,7 +1176,7 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
         </label>
         {form.isWeighed && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <Field label="السعر للكيلو (ر.س / كجم) *">
+            <Field label={`السعر للكيلو (${currencySymbol()} / كجم) *`}>
               <input type="number" step="0.01" min="0" value={form.pricePerKg ?? 0}
                      onChange={(e) => setForm({ ...form, pricePerKg: Number(e.target.value) })}
                      style={S.input} />

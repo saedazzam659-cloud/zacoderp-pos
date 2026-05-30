@@ -13,12 +13,14 @@ import { listAllInvoices, getOfflineInvoice, saveOfflineInvoice, type PendingInv
 import { printReceipt, type ReceiptLine } from "../lib/peripherals";
 import { generateZatcaQr } from "../lib/zatca";
 import { useTaxSettings, computeTotals } from "../lib/taxSettings";
+import { useCurrencySymbol } from "../lib/currency";
 
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 
 type Props = { companyName?: string; vatNumber?: string; cashierName?: string };
 
 export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003", cashierName }: Props) {
+  const sym = useCurrencySymbol();
   const [invoices, setInvoices] = useState<PendingInvoice[]>([]);
   const [search, setSearch] = useState("");
   const [picked, setPicked] = useState<{ inv: PendingInvoice; payload: OfflineInvoicePayload } | null>(null);
@@ -403,7 +405,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
 
             <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
               <button onClick={submitReturn} disabled={busy || totals.grand <= 0} style={{ ...S.btnDanger, opacity: (busy || totals.grand <= 0) ? 0.5 : 1, cursor: (busy || totals.grand <= 0) ? "not-allowed" : "pointer" }}>
-                {busy ? "..." : `↩️ تأكيد المرتجع (${totals.grand.toFixed(2)} ر.س)`}
+                {busy ? "..." : `↩️ تأكيد المرتجع (${totals.grand.toFixed(2)} ${sym})`}
               </button>
               <button onClick={() => setPicked(null)} style={S.btnGhost}>إلغاء</button>
             </div>

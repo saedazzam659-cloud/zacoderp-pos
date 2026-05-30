@@ -27,6 +27,7 @@ function appendOverrideLog(entry: OverrideLog) {
 import { listCustomers, createCustomer, type LocalCustomer } from "../lib/customers";
 import { saveOfflineInvoice, type OfflineInvoicePayload } from "../lib/invoices";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
+import { useCurrencySymbol, currencySymbol } from "../lib/currency";
 import {
   saveParkedCart, listParkedCarts, deleteParkedCart, takeResumeCartId,
   type ParkedCart,
@@ -58,6 +59,7 @@ function newLineId(): string {
 type Props = { companyName?: string; vatNumber?: string; posSessionId?: number; cashierName?: string };
 
 export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003", posSessionId = 0, cashierName }: Props) {
+  const sym = useCurrencySymbol();
   const [cart, setCart] = useState<CartLine[]>([]);
   const [checkoutKey, setCheckoutKey] = useState<string | null>(null);
   // When non-null, the current cart in state was resumed from this parked
@@ -637,7 +639,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
                       </div>
                     )}
                     <div style={S.itemName}>{item.nameAr}</div>
-                    <div style={S.itemPrice}>{item.salePrice.toFixed(2)} <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 400 }}>ر.س</span></div>
+                    <div style={S.itemPrice}>{item.salePrice.toFixed(2)} <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 400 }}>{sym}</span></div>
                     {item.barcode && <div style={S.itemBarcode}>{item.barcode}</div>}
                   </button>
                 );
@@ -773,7 +775,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
                       {enough ? "💰 الباقي للعميل" : "⚠️ المتبقي على العميل"}
                     </span>
                     <span style={S.changeAmount}>
-                      {Math.abs(change).toFixed(2)} <span style={{ fontSize: 11, fontWeight: 400 }}>ر.س</span>
+                      {Math.abs(change).toFixed(2)} <span style={{ fontSize: 11, fontWeight: 400 }}>{sym}</span>
                     </span>
                   </div>
                 )}
@@ -867,7 +869,7 @@ function UnitPickerModal({
           {/* Base unit */}
           <button onClick={() => onPick(null)} style={S.unitPickRow}>
             <span style={{ fontWeight: 700, color: "#0f172a" }}>قطعة</span>
-            <span style={{ color: "#166534", fontWeight: 700 }}>{item.salePrice.toFixed(2)} ر.س</span>
+            <span style={{ color: "#166534", fontWeight: 700 }}>{item.salePrice.toFixed(2)} {currencySymbol()}</span>
           </button>
           {units.map((u) => (
             <button key={u.id} onClick={() => onPick(u)} style={S.unitPickRow}>
@@ -877,7 +879,7 @@ function UnitPickerModal({
                   ({u.factor} قطعة)
                 </span>
               </span>
-              <span style={{ color: "#166534", fontWeight: 700 }}>{u.price.toFixed(2)} ر.س</span>
+              <span style={{ color: "#166534", fontWeight: 700 }}>{u.price.toFixed(2)} {currencySymbol()}</span>
             </button>
           ))}
         </div>
@@ -959,7 +961,7 @@ function WeightCaptureModal({
           ⚖️ {item.nameAr}
         </div>
         <div style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>
-          السعر: {(item.pricePerKg ?? 0).toFixed(2)} ر.س / كجم
+          السعر: {(item.pricePerKg ?? 0).toFixed(2)} {currencySymbol()} / كجم
         </div>
 
         {hasPort ? (
@@ -988,7 +990,7 @@ function WeightCaptureModal({
 
         <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 12px", background: "#fefce8", border: "1px solid #fde047", borderRadius: 8, marginBottom: 12 }}>
           <span style={{ color: "#854d0e" }}>المجموع</span>
-          <strong style={{ color: "#854d0e", fontSize: 18 }}>{subtotal.toFixed(2)} ر.س</strong>
+          <strong style={{ color: "#854d0e", fontSize: 18 }}>{subtotal.toFixed(2)} {currencySymbol()}</strong>
         </div>
 
         {err && <div style={S.msgErr}>{err}</div>}
