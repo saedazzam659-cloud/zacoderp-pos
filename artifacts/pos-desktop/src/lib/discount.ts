@@ -11,6 +11,8 @@
 // ZATCA-correct behaviour. The original discount breakdown is kept in a
 // localStorage overlay (see saveDocDiscount) purely for re-display.
 
+import { baseCurrencyCode } from "./currency";
+
 export type DiscType = "percent" | "value";
 
 /** Optional discount fields attached to a form line (stripped before payload). */
@@ -100,6 +102,10 @@ export type StoredDisc = {
   grossSubtotal: number;
   lineDiscountTotal: number;
   headerDiscountValue: number;
+  /** Document currency code (ISO-4217). Omitted/equal-to-base means base currency. */
+  currencyCode?: string;
+  /** Exchange rate to base currency (1 for base-currency documents). */
+  exchangeRate?: number;
 };
 
 function readAll(): Record<string, StoredDisc> {
@@ -111,7 +117,9 @@ function readAll(): Record<string, StoredDisc> {
 
 export function saveDocDiscount(docType: DocType, id: number, d: StoredDisc): void {
   if (!id) return;
-  if ((d.lineDiscountTotal || 0) <= 0 && (d.headerDiscountValue || 0) <= 0) return;
+  const hasDisc = (d.lineDiscountTotal || 0) > 0 || (d.headerDiscountValue || 0) > 0;
+  const hasForeignCurrency = !!d.currencyCode && d.currencyCode !== baseCurrencyCode();
+  if (!hasDisc && !hasForeignCurrency) return;
   try {
     const all = readAll();
     all[`${docType}:${id}`] = d;

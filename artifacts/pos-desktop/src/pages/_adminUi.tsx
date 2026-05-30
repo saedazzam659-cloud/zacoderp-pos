@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { currencySymbol } from "../lib/currency";
+import { currencySymbol, CURRENCIES, baseCurrencyCode } from "../lib/currency";
 import type { DiscType, DiscountResult } from "../lib/discount";
 
 export function Page({ title, subtitle, right, children }: {
@@ -314,11 +314,11 @@ function DiscTypeToggle({ value, onChange, disabled }: {
  *  readout of the converted equivalent. When you type a percent it shows the
  *  resulting value (from `gross` = qty×unit); when you type a value it shows
  *  the equivalent percent. */
-export function LineDiscountCell({ amount, type, gross, onAmount, onType }: {
-  amount: number; type: DiscType; gross?: number;
+export function LineDiscountCell({ amount, type, gross, sym: symOverride, onAmount, onType }: {
+  amount: number; type: DiscType; gross?: number; sym?: string;
   onAmount: (v: number) => void; onType: (t: DiscType) => void;
 }) {
-  const sym = currencySymbol();
+  const sym = symOverride ?? currencySymbol();
   const g = Number(gross) || 0;
   const a = Number(amount) || 0;
   let hint = "";
@@ -351,14 +351,19 @@ export function LineDiscountCell({ amount, type, gross, onAmount, onType }: {
   );
 }
 
-/** Attractive totals panel; hosts the header (whole-invoice) discount control. */
-export function InvoiceTotals({ result, headerDisc, headerType, onHeaderDisc, onHeaderType }: {
+/** Attractive totals panel; hosts the header (whole-invoice) discount control.
+ *  When `rate` ≠ 1 (foreign-currency document) it also shows the grand total
+ *  converted to the base currency. */
+export function InvoiceTotals({ result, headerDisc, headerType, sym: symOverride, rate, onHeaderDisc, onHeaderType }: {
   result: DiscountResult;
-  headerDisc: number; headerType: DiscType;
+  headerDisc: number; headerType: DiscType; sym?: string; rate?: number;
   onHeaderDisc: (v: number) => void; onHeaderType: (t: DiscType) => void;
 }) {
-  const sym = currencySymbol();
+  const sym = symOverride ?? currencySymbol();
   const m = (n: number) => `${fmt(n)} ${sym}`;
+  const r = Number(rate) || 1;
+  const showBase = r !== 1 && r > 0;
+  const baseSym = currencySymbol();
   const hasLineDisc = result.lineDiscountTotal > 0.00001;
   const hasHeaderDisc = result.headerDiscountValue > 0.00001;
   const rowS: CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", fontSize: 14 };
@@ -397,7 +402,50 @@ export function InvoiceTotals({ result, headerDisc, headerType, onHeaderDisc, on
       <div style={{ ...rowS, borderTop: "2px solid #2563eb", marginTop: 2, fontSize: 17, fontWeight: 800, color: "#1e3a8a" }}>
         <span>الإجمالي النهائي</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{m(result.grandTotal)}</span>
       </div>
+      {showBase && (
+        <div style={{ ...rowS, color: "#475569", fontSize: 13 }}>
+          <span>الإجمالي بالعملة الأساسية</span>
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmt(result.grandTotal * r)} {baseSym}</span>
+        </div>
+      )}
     </div>
+  );
+}
+
+/** Header currency picker + exchange-rate input shared by the document forms.
+ *  The exchange-rate input is locked to 1 while the base currency is selected;
+ *  for a foreign currency the user enters the rate that converts one unit of
+ *  the document currency into the base currency. */
+export function CurrencyExchangeFields({ currency, exchangeRate, onCurrency, onRate }: {
+  currency: string; exchangeRate: number;
+  onCurrency: (code: string) => void; onRate: (v: number) => void;
+}) {
+  const base = baseCurrencyCode();
+  const isBase = currency === base;
+  return (
+    <>
+      <Field label="العملة">
+        <SearchCombobox
+          value={currency}
+          onChange={(v) => onCurrency(String(v))}
+          style={input}
+          options={CURRENCIES.map((c) => ({
+            value: c.code,
+            label: `${c.nameAr ? c.nameAr + " " : ""}(${c.code})${c.code === base ? " — أساسية" : ""}`,
+          }))}
+        />
+      </Field>
+      <Field label="سعر الصرف">
+        <input
+          type="number" step="0.0001" min={0}
+          value={isBase ? 1 : (exchangeRate || "")}
+          disabled={isBase}
+          placeholder="1"
+          onChange={(e) => onRate(Number(e.target.value) || 0)}
+          style={{ ...input, background: isBase ? "#f1f5f9" : "#fff", color: isBase ? "#64748b" : undefined }}
+        />
+      </Field>
+    </>
   );
 }
 

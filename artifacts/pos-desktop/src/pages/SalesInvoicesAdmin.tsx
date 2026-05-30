@@ -10,8 +10,9 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
 } from "./_adminUi";
+import { baseCurrencyCode, currencyByCode } from "../lib/currency";
 import {
   computeDiscount, lineNet, saveDocDiscount, getDocDiscount,
   type DiscType, type DiscFields,
@@ -140,6 +141,9 @@ function SalesDetail({ p }: { p: SalesInvoice }) {
               <tr style={{ background: "#fff", color: "#b45309" }}><Td colSpan={5 as any}>الخصم</Td><Td num>− {fmt(discTotal)}</Td></tr>
             </>
           )}
+          {disc?.currencyCode && disc.currencyCode !== baseCurrencyCode() && (
+            <tr style={{ background: "#fff", color: "#475569" }}><Td colSpan={5 as any}>العملة · سعر الصرف</Td><Td num>{disc.currencyCode} · {fmt(disc.exchangeRate ?? 1)}</Td></tr>
+          )}
           <tr style={{ background: "#fff", fontWeight: 700 }}>
             <Td colSpan={5 as any}>الإجمالي قبل الضريبة</Td><Td num>{fmt(p.subtotal)}</Td>
           </tr>
@@ -174,6 +178,10 @@ function CreateForm({ deps, onCancel, onDone }: {
   const [lines, setLines] = useState<FLine[]>(() => [blankLine()]);
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
+  const [currency, setCurrency] = useState<string>(() => baseCurrencyCode());
+  const [exchangeRate, setExchangeRate] = useState<number>(1);
+  const effRate = currency === baseCurrencyCode() ? 1 : (exchangeRate || 1);
+  const docSym = currencyByCode(currency).symbol;
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -221,6 +229,7 @@ function CreateForm({ deps, onCancel, onDone }: {
       const cleaned = lines.filter((l) => l.itemId && (l.qty || 0) > 0);
       if (cleaned.length === 0) throw new Error("أضف صنفاً واحداً على الأقل");
       if (paymentMethod === "credit" && !customerId) throw new Error("اختر العميل للبيع الآجل");
+      if (currency !== baseCurrencyCode() && !(exchangeRate > 0)) throw new Error("أدخل سعر صرف صحيح للعملة الأجنبية");
       // Fold the discount into each unit price; Rust recomputes totals from
       // qty × unitPrice so VAT lands on the net base (ZATCA-correct).
       const r = computeDiscount(
@@ -228,7 +237,9 @@ function CreateForm({ deps, onCancel, onDone }: {
         headerDisc, headerDiscType,
       );
       const payloadLines: SalesLine[] = cleaned.map((l, i) => {
-        const net = r.netUnitPrices[i];
+        // Bake discount AND the FX conversion into the base-currency unit
+        // price (Rust stores/recomputes in the base currency only).
+        const net = r.netUnitPrices[i] * effRate;
         return {
           itemId: l.itemId, itemName: l.itemName, qty: l.qty, unitPrice: net, vatRate: l.vatRate,
           lineTotal: l.qty * net * (1 + (Number(l.vatRate) || 0) / 100),
@@ -243,7 +254,8 @@ function CreateForm({ deps, onCancel, onDone }: {
         notes: notes || null, lines: payloadLines,
       });
       saveDocDiscount("sales_invoice", id, {
-        grossSubtotal: r.grossSubtotal, lineDiscountTotal: r.lineDiscountTotal, headerDiscountValue: r.headerDiscountValue,
+        grossSubtotal: r.grossSubtotal * effRate, lineDiscountTotal: r.lineDiscountTotal * effRate, headerDiscountValue: r.headerDiscountValue * effRate,
+        currencyCode: currency, exchangeRate: effRate,
       });
       onDone();
     } catch (e: any) { setErr(e?.message ?? "فشل"); }
@@ -290,6 +302,9 @@ function CreateForm({ deps, onCancel, onDone }: {
           ]}
         />
       </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "200px 200px", gap: 10, marginTop: 10 }}>
+        <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
+      </div>
 
       {selectedCustomer && paymentMethod === "credit" && (selectedCustomer.enforceCreditLimit || (selectedCustomer.creditLimit ?? 0) > 0) && (
         <div style={{ marginTop: 8, padding: "8px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 13, color: "#92400e" }}>
@@ -357,7 +372,7 @@ function CreateForm({ deps, onCancel, onDone }: {
               </Td>
               <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={input} /></Td>
               <Td><input type="number" step="0.01" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={input} /></Td>
-              <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} /></Td>
+              <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} /></Td>
               <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={input} /></Td>
               <Td num>{fmt(l.lineTotal)}</Td>
               <Td><button onClick={() => removeLine(i)} style={{ ...btnLink, color: "#dc2626" }}>×</button></Td>
@@ -367,7 +382,7 @@ function CreateForm({ deps, onCancel, onDone }: {
       </Table>
       </div>
       <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
-      <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
 
       <Field label="ملاحظات" style={{ marginTop: 12 }}>
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} />

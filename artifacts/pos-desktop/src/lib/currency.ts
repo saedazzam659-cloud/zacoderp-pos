@@ -63,6 +63,59 @@ export const ARAB_COUNTRIES: CountryInfo[] = [
 const BY_ISO: Record<string, CountryInfo> =
   Object.fromEntries(ARAB_COUNTRIES.map((c) => [c.iso, c]));
 
+// ─── Currency catalogue (for the invoice currency picker) ─────────────
+// A selectable list of currencies used on the document forms. Includes the
+// Arab-state currencies (derived from ARAB_COUNTRIES) plus the major foreign
+// currencies a Saudi/Egyptian business commonly invoices in. Display only —
+// the accounting base currency in SQLite never changes; choosing a non-base
+// currency on a document just converts the entered prices to base via the
+// exchange rate before the payload is saved.
+export type CurrencyInfo = { code: string; nameAr: string; symbol: string };
+
+const EXTRA_CURRENCIES: CurrencyInfo[] = [
+  { code: "USD", nameAr: "دولار أمريكي", symbol: "$" },
+  { code: "EUR", nameAr: "يورو", symbol: "€" },
+  { code: "GBP", nameAr: "جنيه إسترليني", symbol: "£" },
+  { code: "TRY", nameAr: "ليرة تركية", symbol: "₺" },
+  { code: "CNY", nameAr: "يوان صيني", symbol: "¥" },
+  { code: "INR", nameAr: "روبية هندية", symbol: "₹" },
+];
+
+export const CURRENCIES: CurrencyInfo[] = (() => {
+  const seen = new Set<string>();
+  const out: CurrencyInfo[] = [];
+  for (const c of ARAB_COUNTRIES) {
+    if (seen.has(c.currencyCode)) continue;
+    seen.add(c.currencyCode);
+    out.push({ code: c.currencyCode, nameAr: c.nameAr, symbol: c.currencySymbol });
+  }
+  for (const c of EXTRA_CURRENCIES) {
+    if (seen.has(c.code)) continue;
+    seen.add(c.code);
+    out.push(c);
+  }
+  return out;
+})();
+
+const BY_CURRENCY: Record<string, CurrencyInfo> =
+  Object.fromEntries(CURRENCIES.map((c) => [c.code, c]));
+
+/** The company/operator base currency code (derived from the chosen country). */
+export function baseCurrencyCode(): string {
+  return getCountryInfo().currencyCode;
+}
+
+/** Lookup currency info by ISO-4217 code (falls back to the base currency). */
+export function currencyByCode(code: string | null | undefined): CurrencyInfo {
+  const c = (code || "").toUpperCase();
+  return BY_CURRENCY[c] ?? { code: baseCurrencyCode(), nameAr: "", symbol: currencySymbol() };
+}
+
+/** Display symbol for any currency code (falls back to the base symbol). */
+export function symbolForCurrency(code: string | null | undefined): string {
+  return currencyByCode(code).symbol;
+}
+
 const DEFAULT_COUNTRY: CountryInfo = BY_ISO.SA;
 
 /** Currently selected ISO-2 country code (defaults to "SA"). */
