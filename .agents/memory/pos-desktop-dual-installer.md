@@ -1,35 +1,43 @@
 ---
-name: POS Desktop dual installer (MSI vs one-click EXE)
-description: How /download (MSI) and /install (NSIS one-click EXE) serve different installer flavors of the same POS Desktop build.
+name: POS Desktop dual installer (small MSI vs large offline one-click EXE)
+description: How /download (small MSI), the in-app updater, and /install (large offline NSIS EXE) serve different installer flavors via two build passes.
 ---
 
-# Two installer flavors, one build, keyed by the `platform` column
+# Two installer flavors, keyed by the `platform` column — built in TWO passes
 
-The POS Desktop app ships in two installer formats from the SAME tagged build:
+The POS Desktop app ships two installer formats, intentionally different sizes:
 
-- **`.msi`** → `download_releases.platform = "win-x64"` → served by the **public
-  `/download`** page (`public-download.ts`, default platform `win-x64`).
-- **NSIS one-click `.exe`** → `platform = "win-x64-exe"` → served by the **gated
-  `/install` wizard** (`download-wizard.ts`, default platform `win-x64-exe`).
+- **`.msi` (small ~4.5MB, `downloadBootstrapper`)** → `download_releases.platform = "win-x64"`
+  → served by the **public `/download`** page (`public-download.ts`) **AND consumed by
+  the in-app updater** (frontend `lib/updates.ts` / `UpdatesScreen.tsx` query
+  `platform=win-x64`; `updater.rs` downloads + passively installs it).
+- **NSIS one-click `.exe` (large ~195MB, `offlineInstaller`)** → `platform = "win-x64-exe"`
+  → served by the **gated `/install` wizard** (`download-wizard.ts`).
 
-The NSIS exe is configured per-user (`installMode: currentUser`, no admin/UAC) with
-`webviewInstallMode: offlineInstaller` so it installs without internet — Chrome-like
-one-click feel, and consistent with the app being offline-first.
+**Why two sizes:** the user wants `/download` + auto-update to be SMALL (WebView2
+fetched at install — and it is already present on any machine running the app, so an
+update never downloads it), while `/install` is the LARGE fully-offline installer for
+air-gapped POS machines.
 
-**Why:** a website can never silently install a program (Windows security — even
-Chrome makes you run a downloaded stub). NSIS per-user one-click is the closest
-practical experience; MSI stays for the public page so existing installs/enterprise
-deployment are unaffected.
+# The single-build constraint and the fix
+
+`bundle.windows.webviewInstallMode` is **global per Tauri build** — one
+`tauri build --bundles msi nsis` gives BOTH bundles the SAME WebView2 mode. So you
+**cannot** get a small MSI and a large offline EXE from one build pass.
+
+**Fix (in `.github/workflows/pos-desktop-build.yml`):** build in TWO passes.
+- Base `tauri.conf.json` keeps `webviewInstallMode.type = downloadBootstrapper`.
+- Pass 1: `tauri build --bundles msi` → small MSI.
+- Pass 2: `tauri build --bundles nsis --config src-tauri/tauri.offline.conf.json`
+  where the override file sets `webviewInstallMode.type = offlineInstaller` → large EXE.
+- Both passes write into the same `target/.../bundle/{msi,nsis}` dirs, so the existing
+  "Find produced MSI/NSIS exe" steps still locate each one. Doubles Windows-runner time.
 
 **How to apply:**
-- No schema change is needed to add an installer flavor — the `platform` text column
-  is the discriminator. Add a new platform string + a `download_releases` row.
-- `githubReleaseSync.ts` auto-mirrors BOTH assets hourly (ALL country). The `.exe`
-  mirror is **best-effort (try/catch)** so a missing/failed exe never blocks the
-  authoritative `.msi` publish.
-- The `/install` wizard resolves via a **fallback chain `win-x64-exe -> win-x64`**
-  (`resolveWizardRelease`), so it keeps working (serving the MSI) until the first
-  EXE-producing build is released. Keep this chain if you add more flavors.
-- The feature only reaches installed machines after a new tagged build is published
-  (no in-app auto-updater exists; updates = "publish a new tag", mirrored to the same
-  Releases table).
+- No schema change to add a flavor — `platform` text column is the discriminator.
+- `githubReleaseSync.ts` auto-mirrors BOTH assets hourly (ALL country); the `.exe`
+  mirror is best-effort (try/catch) so a failed exe never blocks the `.msi` publish.
+- `/install` wizard resolves via fallback chain `win-x64-exe -> win-x64`, so it serves
+  the MSI until the first EXE-producing build lands.
+- Changing webviewInstallMode affects EVERY bundle in that pass — if you ever go back
+  to one pass, /download and /install will be forced to the same size again.

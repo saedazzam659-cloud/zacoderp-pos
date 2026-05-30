@@ -238,9 +238,19 @@ jobs:
           Remove-Item $certPath
           Write-Host "Certificate imported."
 
-      - name: Build Tauri MSI (unsigned)
+      - name: Build Tauri installers (unsigned)
         if: steps.signing.outputs.MODE == 'unsigned'
-        run: pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles msi nsis
+        run: |
+          # Pass 1 — SMALL MSI (downloadBootstrapper from base tauri.conf.json):
+          # served by the public /download page AND used by the in-app updater
+          # (platform=win-x64). WebView2 is fetched at install time (and is
+          # already present on any machine running this app, so updates need
+          # no extra download).
+          pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles msi
+          # Pass 2 — LARGE OFFLINE one-click NSIS .exe: the offline config
+          # override bundles the full WebView2 runtime so the protected
+          # /install wizard (platform=win-x64-exe) installs with no internet.
+          pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles nsis --config src-tauri/tauri.offline.conf.json
 
       - name: Build Tauri MSI (signed)
         if: steps.signing.outputs.MODE == 'signed'
@@ -250,7 +260,11 @@ jobs:
           TAURI__BUNDLE__WINDOWS__CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERT_THUMBPRINT }}
           TAURI__BUNDLE__WINDOWS__DIGEST_ALGORITHM: "sha256"
           TAURI__BUNDLE__WINDOWS__TIMESTAMP_URL: "http://timestamp.digicert.com"
-        run: pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles msi nsis
+        run: |
+          # Pass 1 — SMALL MSI (downloadBootstrapper) → /download + in-app updater
+          pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles msi
+          # Pass 2 — LARGE OFFLINE one-click NSIS .exe → /install wizard
+          pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles nsis --config src-tauri/tauri.offline.conf.json
 
       # ─── 8. Locate + checksum the MSI ───────────────────────────────
       - name: Find produced MSI
