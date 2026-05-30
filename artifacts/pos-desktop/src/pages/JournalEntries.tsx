@@ -27,6 +27,7 @@ const ENTRY_TYPE_LABEL: Record<string, string> =
 const VAT_IN_CODE = "1400";   // ضريبة القيمة المضافة - مدخلات (أصل)
 const VAT_OUT_CODE = "2200";  // ضريبة القيمة المضافة - مخرجات (التزام)
 const NET_MARKER = " (صافٍ من الضريبة)";
+const VAT_DESC_PREFIX = "ضريبة القيمة المضافة";
 const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 
 type FormState =
@@ -376,38 +377,47 @@ function JeForm({ accounts, state, onCancel, onDone }: {
     }
     setErr(null);
     const defCc = costCenterId === "" ? null : costCenterId;
+    const rate = vatRate;
+    const vatDesc = `${VAT_DESC_PREFIX} ${fmt(rate)}%`;
+    const isVatAccount = (accId: number | null | undefined) => {
+      const code = accounts.find((a) => a.id === accId)?.code;
+      return code === VAT_IN_CODE || code === VAT_OUT_CODE ||
+        (vatTaxAccountId != null && accId === vatTaxAccountId);
+    };
     setLines((prev) => {
+      // Idempotent: drop the VAT lines a previous click already generated so
+      // re-running the tool rebuilds ONE correct set instead of stacking a new
+      // tax line for every base line on every press (the reported duplication).
+      const base = prev.filter(
+        (l) => !(isVatAccount(l.accountId) && (l.description ?? "").startsWith(VAT_DESC_PREFIX)),
+      );
       const out: ManualJeLine[] = [];
       const vatLines: ManualJeLine[] = [];
-      for (const l of prev) {
-        const code = accounts.find((a) => a.id === l.accountId)?.code;
-        const isVatAcc = code === VAT_IN_CODE || code === VAT_OUT_CODE ||
-          (vatTaxAccountId != null && l.accountId === vatTaxAccountId);
+      for (const l of base) {
         const dr = Number(l.debit) || 0, cr = Number(l.credit) || 0;
-        if (!l.accountId || isVatAcc || (dr <= 0 && cr <= 0)) { out.push(l); continue; }
+        if (!l.accountId || isVatAccount(l.accountId) || (dr <= 0 && cr <= 0)) { out.push(l); continue; }
         const onDebit = dr > 0;
-        const gross = onDebit ? dr : cr;
-        const rate = vatRate;
-        const vatDesc = `ضريبة القيمة المضافة ${fmt(rate)}%`;
-        if (vatMode === "exclusive") {
+        const amount = onDebit ? dr : cr;
+        const alreadyNet = (l.description ?? "").includes(NET_MARKER);
+        let vat: number;
+        if (alreadyNet) {
+          // Line is already the net base from a prior inclusive run — tax the net
+          // and keep it as-is; never re-net (that compounded on each click).
+          vat = round2(amount * rate / 100);
           out.push(l);
-          const vat = round2(gross * rate / 100);
-          vatLines.push({
-            accountId: onDebit ? vatInId : vatOutId,
-            debit: onDebit ? vat : 0, credit: onDebit ? 0 : vat,
-            description: vatDesc, costCenterId: l.costCenterId ?? defCc,
-          });
+        } else if (vatMode === "exclusive") {
+          vat = round2(amount * rate / 100);
+          out.push(l);
         } else {
-          const vat = round2(gross * rate / (100 + rate));
-          const net = round2(gross - vat);
-          const newDesc = `${l.description ?? ""}${NET_MARKER}`;
-          out.push({ ...l, debit: onDebit ? net : 0, credit: onDebit ? 0 : net, description: newDesc });
-          vatLines.push({
-            accountId: onDebit ? vatInId : vatOutId,
-            debit: onDebit ? vat : 0, credit: onDebit ? 0 : vat,
-            description: vatDesc, costCenterId: l.costCenterId ?? defCc,
-          });
+          vat = round2(amount * rate / (100 + rate));
+          const net = round2(amount - vat);
+          out.push({ ...l, debit: onDebit ? net : 0, credit: onDebit ? 0 : net, description: `${l.description ?? ""}${NET_MARKER}` });
         }
+        vatLines.push({
+          accountId: onDebit ? vatInId : vatOutId,
+          debit: onDebit ? vat : 0, credit: onDebit ? 0 : vat,
+          description: vatDesc, costCenterId: l.costCenterId ?? defCc,
+        });
       }
       return [...out, ...vatLines];
     });
