@@ -310,20 +310,43 @@ function DiscTypeToggle({ value, onChange, disabled }: {
   );
 }
 
-/** Per-line discount cell: a number input plus a compact %/value toggle. */
-export function LineDiscountCell({ amount, type, onAmount, onType }: {
-  amount: number; type: DiscType;
+/** Per-line discount cell: a number input + %/value toggle, plus a live
+ *  readout of the converted equivalent. When you type a percent it shows the
+ *  resulting value (from `gross` = qty×unit); when you type a value it shows
+ *  the equivalent percent. */
+export function LineDiscountCell({ amount, type, gross, onAmount, onType }: {
+  amount: number; type: DiscType; gross?: number;
   onAmount: (v: number) => void; onType: (t: DiscType) => void;
 }) {
+  const sym = currencySymbol();
+  const g = Number(gross) || 0;
+  const a = Number(amount) || 0;
+  let hint = "";
+  if (a > 0 && g > 0) {
+    if (type === "percent") {
+      const val = g * Math.min(a, 100) / 100;
+      hint = `= ${fmt(val)} ${sym}`;
+    } else {
+      const pct = Math.min(a, g) / g * 100;
+      hint = `= ${fmt(pct)} %`;
+    }
+  }
   return (
-    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-      <input
-        type="number" step="0.01" min={0} value={amount || ""}
-        placeholder="0"
-        onChange={(e) => onAmount(Number(e.target.value) || 0)}
-        style={{ ...input, padding: "8px 8px" }}
-      />
-      <DiscTypeToggle value={type} onChange={onType} />
+    <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 150 }}>
+      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+        <input
+          type="number" step="0.01" min={0} value={amount || ""}
+          placeholder="0"
+          onChange={(e) => onAmount(Number(e.target.value) || 0)}
+          style={{ ...input, padding: "8px 8px" }}
+        />
+        <DiscTypeToggle value={type} onChange={onType} />
+      </div>
+      {hint && (
+        <span style={{ fontSize: 11, fontWeight: 600, color: "#2563eb", fontVariantNumeric: "tabular-nums", paddingInlineStart: 2 }}>
+          {hint}
+        </span>
+      )}
     </div>
   );
 }
