@@ -241,9 +241,10 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
           ]}
         />
       </Field>
-      <Table>
+      <div style={{ overflowX: "auto" }}>
+      <Table style={{ minWidth: 1040 }}>
         <thead><tr>
-          <Th>الصنف</Th><Th style={{ width: 130 }}>الوحدة</Th><Th style={{ width: 90 }}>الكمية</Th><Th style={{ width: 120 }}>سعر الوحدة</Th><Th style={{ width: 170 }}>الخصم</Th><Th style={{ width: 80 }}>ض. %</Th>
+          <Th style={{ minWidth: 240 }}>الصنف</Th><Th style={{ width: 130 }}>الوحدة</Th><Th style={{ width: 90 }}>الكمية</Th><Th style={{ width: 120 }}>سعر الوحدة</Th><Th style={{ width: 170 }}>الخصم</Th><Th style={{ width: 80 }}>ض. %</Th>
           <Th style={{ width: 120, textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 40 }}></Th>
         </tr></thead>
         <tbody>
@@ -278,6 +279,7 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
           ))}
         </tbody>
       </Table>
+      </div>
       <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
       <Field label="ملاحظات" style={{ marginTop: 12 }}><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>

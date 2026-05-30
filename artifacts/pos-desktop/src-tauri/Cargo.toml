@@ -1,6 +1,6 @@
 [package]
 name = "pos-desktop"
-version = "0.7.24"
+version = "0.7.25"
 description = "ZACOD POS Desktop (Windows offline)"
 edition = "2021"
 rust-version = "1.85"

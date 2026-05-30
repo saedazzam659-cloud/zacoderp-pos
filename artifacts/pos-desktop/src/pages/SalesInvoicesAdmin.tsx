@@ -321,9 +321,10 @@ function CreateForm({ deps, onCancel, onDone }: {
         </Field>
       )}
 
-      <Table>
+      <div style={{ overflowX: "auto" }}>
+      <Table style={{ minWidth: 1040 }}>
         <thead><tr>
-          <Th>الصنف</Th>
+          <Th style={{ minWidth: 240 }}>الصنف</Th>
           <Th style={{ width: 130 }}>الوحدة</Th>
           <Th style={{ width: 90 }}>الكمية</Th>
           <Th style={{ width: 120 }}>سعر الوحدة</Th>
@@ -364,6 +365,7 @@ function CreateForm({ deps, onCancel, onDone }: {
           ))}
         </tbody>
       </Table>
+      </div>
       <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
 

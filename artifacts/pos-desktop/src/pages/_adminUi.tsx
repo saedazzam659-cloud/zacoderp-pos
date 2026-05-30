@@ -28,8 +28,8 @@ export function Card({ children, style }: { children: ReactNode; style?: CSSProp
   return <div style={{ background: "#fff", borderRadius: 12, overflow: "hidden", border: "1px solid #e2e8f0", ...style }}>{children}</div>;
 }
 
-export function Table({ children }: { children: ReactNode }) {
-  return <table style={{ width: "100%", borderCollapse: "collapse" }}>{children}</table>;
+export function Table({ children, style }: { children: ReactNode; style?: CSSProperties }) {
+  return <table style={{ width: "100%", borderCollapse: "collapse", ...style }}>{children}</table>;
 }
 export function Th({ children, style, colSpan }: { children?: ReactNode; style?: CSSProperties; colSpan?: number }) {
   return <th colSpan={colSpan} style={{ textAlign: "right", padding: "10px 14px", fontSize: 12, color: "#64748b", fontWeight: 600, background: "#f8fafc", ...style }}>{children}</th>;
