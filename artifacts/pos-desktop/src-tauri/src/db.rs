@@ -591,6 +591,21 @@ pub fn initialize() -> Result<()> {
         // values that preserve current behaviour ('general' / 'posted').
         "ALTER TABLE journal_entries_local ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'general'",
         "ALTER TABLE journal_entries_local ADD COLUMN status TEXT NOT NULL DEFAULT 'posted'",
+        // ── Chart-of-accounts parity with the web app ──
+        // Extra metadata mirroring the web COA form. All nullable / defaulted
+        // so existing seeded + user accounts keep working untouched:
+        //   cost_center_id  — optional analytic tag (soft ref to cost_centers_local)
+        //   report_direction — manual override of the auto-by-type financial
+        //                      report bucket ('balance_sheet' | 'income_statement');
+        //                      NULL = derive from account type.
+        //   level           — tree depth hint (informational; default 1)
+        //   notes           — free text
+        //   is_active       — soft enable/disable (1 = active, default)
+        "ALTER TABLE accounts_local ADD COLUMN cost_center_id INTEGER",
+        "ALTER TABLE accounts_local ADD COLUMN report_direction TEXT",
+        "ALTER TABLE accounts_local ADD COLUMN level INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE accounts_local ADD COLUMN notes TEXT",
+        "ALTER TABLE accounts_local ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1",
     ];
     for sql in alters { let _ = conn.execute(sql, []); }
 

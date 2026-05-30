@@ -26,6 +26,11 @@ pub struct Account {
     pub parent_id: Option<i64>,
     pub is_leaf: bool,
     pub balance: f64,
+    pub cost_center_id: Option<i64>,
+    pub report_direction: Option<String>,
+    pub level: i64,
+    pub notes: Option<String>,
+    pub is_active: bool,
 }
 
 fn row_to_account(r: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
@@ -38,6 +43,11 @@ fn row_to_account(r: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
         parent_id: r.get(5)?,
         is_leaf: r.get::<_, i64>(6)? != 0,
         balance: r.get(7)?,
+        cost_center_id: r.get(8)?,
+        report_direction: r.get(9)?,
+        level: r.get(10)?,
+        notes: r.get(11)?,
+        is_active: r.get::<_, i64>(12)? != 0,
     })
 }
 
@@ -45,7 +55,7 @@ fn row_to_account(r: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
 pub fn accounts_list() -> Result<Vec<Account>, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT id,code,name_ar,name_en,type,parent_id,is_leaf,balance FROM accounts_local ORDER BY code"
+        "SELECT id,code,name_ar,name_en,type,parent_id,is_leaf,balance,cost_center_id,report_direction,level,notes,is_active FROM accounts_local ORDER BY code"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], row_to_account).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
@@ -62,6 +72,29 @@ pub struct AccountInput {
     pub r#type: String,
     pub parent_id: Option<i64>,
     pub is_leaf: bool,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
+    #[serde(default)]
+    pub report_direction: Option<String>,
+    #[serde(default = "default_level")]
+    pub level: i64,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default = "default_true")]
+    pub is_active: bool,
+}
+
+fn default_level() -> i64 { 1 }
+fn default_true() -> bool { true }
+
+/// Normalize an optional report_direction: only the two valid buckets are
+/// stored; anything else (incl. empty string) collapses to NULL = derive-by-type.
+fn norm_report_direction(d: &Option<String>) -> Option<String> {
+    match d.as_deref() {
+        Some("balance_sheet") => Some("balance_sheet".into()),
+        Some("income_statement") => Some("income_statement".into()),
+        _ => None,
+    }
 }
 
 #[tauri::command]
@@ -70,20 +103,27 @@ pub fn accounts_create(input: AccountInput) -> Result<i64, String> {
         return Err("نوع الحساب غير صالح".into());
     }
     let conn = db::open().map_err(|e| e.to_string())?;
+    let rd = norm_report_direction(&input.report_direction);
+    let level = if input.level < 1 { 1 } else { input.level };
     conn.execute(
-        "INSERT INTO accounts_local(code,name_ar,name_en,type,parent_id,is_leaf) VALUES(?1,?2,?3,?4,?5,?6)",
-        params![input.code, input.name_ar, input.name_en, input.r#type, input.parent_id, if input.is_leaf {1} else {0}],
+        "INSERT INTO accounts_local(code,name_ar,name_en,type,parent_id,is_leaf,cost_center_id,report_direction,level,notes,is_active) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+        params![input.code, input.name_ar, input.name_en, input.r#type, input.parent_id, if input.is_leaf {1} else {0}, input.cost_center_id, rd, level, input.notes, if input.is_active {1} else {0}],
     ).map_err(|e| if e.to_string().contains("UNIQUE") { "كود الحساب موجود".to_string() } else { e.to_string() })?;
     Ok(conn.last_insert_rowid())
 }
 
 #[tauri::command]
 pub fn accounts_update(id: i64, input: AccountInput) -> Result<(), String> {
+    if !["asset","liability","equity","revenue","expense"].contains(&input.r#type.as_str()) {
+        return Err("نوع الحساب غير صالح".into());
+    }
     let conn = db::open().map_err(|e| e.to_string())?;
+    let rd = norm_report_direction(&input.report_direction);
+    let level = if input.level < 1 { 1 } else { input.level };
     conn.execute(
-        "UPDATE accounts_local SET code=?1,name_ar=?2,name_en=?3,type=?4,parent_id=?5,is_leaf=?6 WHERE id=?7",
-        params![input.code, input.name_ar, input.name_en, input.r#type, input.parent_id, if input.is_leaf {1} else {0}, id],
-    ).map_err(|e| e.to_string())?;
+        "UPDATE accounts_local SET code=?1,name_ar=?2,name_en=?3,type=?4,parent_id=?5,is_leaf=?6,cost_center_id=?7,report_direction=?8,level=?9,notes=?10,is_active=?11 WHERE id=?12",
+        params![input.code, input.name_ar, input.name_en, input.r#type, input.parent_id, if input.is_leaf {1} else {0}, input.cost_center_id, rd, level, input.notes, if input.is_active {1} else {0}, id],
+    ).map_err(|e| if e.to_string().contains("UNIQUE") { "كود الحساب موجود".to_string() } else { e.to_string() })?;
     Ok(())
 }
 

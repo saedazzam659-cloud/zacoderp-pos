@@ -12,13 +12,18 @@ function notImpl(): never { throw new Error("هذه الميزة متاحة في
 
 // ─── Types ───────────────────────────────────────────────────────────
 export type AccountType = "asset" | "liability" | "equity" | "revenue" | "expense";
+export type ReportDirection = "balance_sheet" | "income_statement";
 export type Account = {
   id: number; code: string; nameAr: string; nameEn: string | null;
   type: AccountType; parentId: number | null; isLeaf: boolean; balance: number;
+  costCenterId: number | null; reportDirection: ReportDirection | null;
+  level: number; notes: string | null; isActive: boolean;
 };
 export type AccountInput = {
   code: string; nameAr: string; nameEn: string | null;
   type: AccountType; parentId: number | null; isLeaf: boolean;
+  costCenterId: number | null; reportDirection: ReportDirection | null;
+  level: number; notes: string | null; isActive: boolean;
 };
 
 export type Supplier = {

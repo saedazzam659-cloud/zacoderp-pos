@@ -6,10 +6,10 @@ import { useDimensions, DateField, BranchField, CostCenterField, FilterField } f
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
 
-export default function AccountStatementReport() {
+export default function AccountStatementReport({ initialAccountId, onConsumed }: { initialAccountId?: number | null; onConsumed?: () => void } = {}) {
   const { branches, costCenters } = useDimensions();
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [accountId, setAccountId] = useState<number | "">("");
+  const [accountId, setAccountId] = useState<number | "">(initialAccountId ?? "");
   const [fromDate, setFromDate] = useState(firstOfYear());
   const [toDate, setToDate] = useState(todayStr());
   const [branchId, setBranchId] = useState<number | "">("");
@@ -20,6 +20,16 @@ export default function AccountStatementReport() {
 
   useEffect(() => { void (async () => setAccounts(await listAccounts()))(); }, []);
 
+  // When opened via a Chart-of-Accounts balance-pill drill-down, preselect the
+  // account and auto-run the statement for the current period.
+  useEffect(() => {
+    if (initialAccountId == null) return;
+    setAccountId(initialAccountId);
+    void runFor(initialAccountId);
+    onConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialAccountId]);
+
   const accountOpts = useMemo(
     () => accounts
       .filter((a) => a.isLeaf)
@@ -28,14 +38,15 @@ export default function AccountStatementReport() {
     [accounts],
   );
 
-  async function run() {
-    if (accountId === "") { setErr("اختر الحساب أولاً"); return; }
+  async function run() { await runFor(accountId); }
+  async function runFor(acct: number | "") {
+    if (acct === "") { setErr("اختر الحساب أولاً"); return; }
     if (fromDate > toDate) { setErr("تاريخ البداية يجب أن يكون قبل تاريخ النهاية"); return; }
     setErr(null); setLoading(true);
     try {
       const lines = await reportLedgerLines({
         toDate,
-        accountId,
+        accountId: acct,
         branchId: branchId === "" ? null : branchId,
         costCenterId: costCenterId === "" ? null : costCenterId,
       });

@@ -245,6 +245,9 @@ export default function PosShell({
   const [busy, setBusy] = useState<string | null>(null);
   const [showPeripherals, setShowPeripherals] = useState(false);
   const [view, setView] = useState<View>("sales");
+  // Drill-down target: set when a COA balance pill is clicked, consumed by
+  // AccountStatementReport to preselect + auto-run for that account.
+  const [stmtAccountId, setStmtAccountId] = useState<number | null>(null);
   // Sidebar collapse — persisted across reloads so the cashier's choice sticks.
   // Collapsed = 64px icon-only rail (gives the items grid ~180px more breathing
   // room on 1280-wide tills). Expanded = original 240px with labels.
@@ -828,7 +831,7 @@ export default function PosShell({
             <div style={S.pagePad}><FinancialTransactionsAdmin /></div>
           )}
           {standalone && view === "chart_of_accounts" && (isAdmin || can("chart_of_accounts")) && (
-            <div style={S.pagePad}><ChartOfAccounts /></div>
+            <div style={S.pagePad}><ChartOfAccounts onDrillToStatement={(id) => { setStmtAccountId(id); setView("report_account_statement"); }} /></div>
           )}
           {standalone && view === "journal_entries" && (isAdmin || can("journal_entries")) && (
             <div style={S.pagePad}><JournalEntries /></div>
@@ -840,7 +843,7 @@ export default function PosShell({
             <div style={S.pagePad}><BranchesAdmin /></div>
           )}
           {standalone && view === "report_account_statement" && (isAdmin || can("report_account_statement")) && (
-            <div style={S.pagePad}><AccountStatementReport /></div>
+            <div style={S.pagePad}><AccountStatementReport initialAccountId={stmtAccountId} onConsumed={() => setStmtAccountId(null)} /></div>
           )}
           {standalone && view === "report_income_statement" && (isAdmin || can("report_income_statement")) && (
             <div style={S.pagePad}><IncomeStatementReport /></div>
