@@ -27,3 +27,4 @@
 - [Sequence monthly reset](sequence-monthly-reset.md) — web-ERP numbering counters keyed (sequence,branch,period); per-month rows when reset on (""=continuous); month seeds from logs max+1; peek must mirror issuance bucket+branch or badge drifts.
 - [POS Desktop numbering series](pos-desktop-numbering-series.md) — user-editable prefix/next/padding per doc type; dup numbers prevented ONLY by column UNIQUE — new numbered doc types MUST add their own UNIQUE or numbering can mint duplicates.
 - [POS Desktop credit overdue FIFO](pos-desktop-credit-overdue-fifo.md) — overdue check is ungated from credit-limit toggle and must FIFO oldest-UNPAID invoice, never MIN(invoice_date) over all credit invoices.
+- [POS Desktop release mechanism](pos-desktop-release-mechanism.md) — MSI cut by pushing a pos-desktop-v* tag to GitHub; main agent can't (git writes sandbox-blocked + stale GitHub creds), so user pushes via Git pane + publishes a GitHub Release.
