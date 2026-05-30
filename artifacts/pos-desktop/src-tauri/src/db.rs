@@ -511,6 +511,37 @@ pub fn initialize() -> Result<()> {
             created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_cost_centers_parent ON cost_centers_local(parent_id);
+
+        -- Tax definitions (الضرائب) — dynamic master list. Each tax has its
+        -- own GL account (account_id) + rate. rate_type 'percent' applies a
+        -- percentage of the base; 'value' is a fixed amount (master-data only,
+        -- not auto-applied to the percentage-based invoice/JE engines yet).
+        -- Per-direction *_enabled gates which invoice types may pick the tax;
+        -- *_nature ('debit'|'credit') is the side the tax account takes for
+        -- that direction. Exactly one row may have is_default=1.
+        CREATE TABLE IF NOT EXISTS taxes_local (
+            id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+            code                     TEXT NOT NULL UNIQUE,
+            name_ar                  TEXT NOT NULL,
+            name_en                  TEXT,
+            currency_code            TEXT,
+            branch_id                INTEGER REFERENCES branches_local(id),
+            rate_type                TEXT NOT NULL DEFAULT 'percent',
+            rate_value               REAL NOT NULL DEFAULT 0,
+            account_id               INTEGER REFERENCES accounts_local(id),
+            sales_enabled            INTEGER NOT NULL DEFAULT 1,
+            sales_nature             TEXT NOT NULL DEFAULT 'credit',
+            sales_return_enabled     INTEGER NOT NULL DEFAULT 1,
+            sales_return_nature      TEXT NOT NULL DEFAULT 'debit',
+            purchase_enabled         INTEGER NOT NULL DEFAULT 1,
+            purchase_nature          TEXT NOT NULL DEFAULT 'debit',
+            purchase_return_enabled  INTEGER NOT NULL DEFAULT 1,
+            purchase_return_nature   TEXT NOT NULL DEFAULT 'credit',
+            is_default               INTEGER NOT NULL DEFAULT 0,
+            is_active                INTEGER NOT NULL DEFAULT 1,
+            created_at               TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_taxes_account ON taxes_local(account_id);
         "#,
     )?;
     let _ = conn.execute("ALTER TABLE offline_invoices ADD COLUMN synced_at TEXT", []);

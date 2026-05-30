@@ -471,6 +471,11 @@ fn main() {
             accounting::cost_center_create,
             accounting::cost_center_update,
             accounting::cost_center_delete,
+            accounting::taxes_list,
+            accounting::tax_create,
+            accounting::tax_update,
+            accounting::tax_delete,
+            accounting::tax_set_default,
             accounting::report_ledger_lines,
             // LAN shared database (Task #207).
             lan::lan_stock_get_all,

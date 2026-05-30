@@ -11,6 +11,8 @@ import {
   input, btnPrimary, btnSecondary, btnDanger, btnLink, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
+import { getTaxRate } from "../lib/taxSettings";
+import { getDefaultTaxPercent } from "../lib/taxes";
 
 const ENTRY_TYPES: { value: JeEntryType; label: string }[] = [
   { value: "general", label: "قيد عام" },
@@ -24,7 +26,7 @@ const ENTRY_TYPE_LABEL: Record<string, string> =
 
 const VAT_IN_CODE = "1400";   // ضريبة القيمة المضافة - مدخلات (أصل)
 const VAT_OUT_CODE = "2200";  // ضريبة القيمة المضافة - مخرجات (التزام)
-const NET_MARKER = " (صافٍ من ضريبة 15%)";
+const NET_MARKER = " (صافٍ من الضريبة)";
 const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 
 type FormState =
@@ -299,6 +301,15 @@ function JeForm({ accounts, state, onCancel, onDone }: {
   );
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // VAT percent driving applyVat: the system default tax's percent rate if one
+  // is configured, otherwise the country/localStorage rate. Loaded once.
+  const [vatRate, setVatRate] = useState<number>(() => getTaxRate());
+
+  useEffect(() => {
+    void getDefaultTaxPercent()
+      .then((p) => { if (p != null) setVatRate(p); })
+      .catch(() => { /* keep the getTaxRate() fallback */ });
+  }, []);
 
   // Peek the next sequence number for the "الرقم المقترح" hint (create/duplicate only).
   useEffect(() => {
@@ -351,23 +362,25 @@ function JeForm({ accounts, state, onCancel, onDone }: {
         if (!l.accountId || isVatAcc || (dr <= 0 && cr <= 0)) { out.push(l); continue; }
         const onDebit = dr > 0;
         const gross = onDebit ? dr : cr;
+        const rate = vatRate;
+        const vatDesc = `ضريبة القيمة المضافة ${fmt(rate)}%`;
         if (vatMode === "exclusive") {
           out.push(l);
-          const vat = round2(gross * 0.15);
+          const vat = round2(gross * rate / 100);
           vatLines.push({
             accountId: onDebit ? vatInId : vatOutId,
             debit: onDebit ? vat : 0, credit: onDebit ? 0 : vat,
-            description: "ضريبة القيمة المضافة 15%", costCenterId: l.costCenterId ?? defCc,
+            description: vatDesc, costCenterId: l.costCenterId ?? defCc,
           });
         } else {
-          const vat = round2(gross * 15 / 115);
+          const vat = round2(gross * rate / (100 + rate));
           const net = round2(gross - vat);
           const newDesc = `${l.description ?? ""}${NET_MARKER}`;
           out.push({ ...l, debit: onDebit ? net : 0, credit: onDebit ? 0 : net, description: newDesc });
           vatLines.push({
             accountId: onDebit ? vatInId : vatOutId,
             debit: onDebit ? vat : 0, credit: onDebit ? 0 : vat,
-            description: "ضريبة القيمة المضافة 15%", costCenterId: l.costCenterId ?? defCc,
+            description: vatDesc, costCenterId: l.costCenterId ?? defCc,
           });
         }
       }
@@ -468,7 +481,7 @@ function JeForm({ accounts, state, onCancel, onDone }: {
       </div>
 
       <div style={{ marginTop: 12, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <strong style={{ fontSize: 13 }}>أداة الضريبة 15%:</strong>
+        <strong style={{ fontSize: 13 }}>{`أداة الضريبة ${fmt(vatRate)}%:`}</strong>
         <select value={vatMode} onChange={(e) => setVatMode(e.target.value as any)} style={{ ...input, width: 220 }}>
           <option value="exclusive">غير شامل — تُضاف الضريبة فوق المبلغ</option>
           <option value="inclusive">شامل — المبلغ يتضمن الضريبة</option>

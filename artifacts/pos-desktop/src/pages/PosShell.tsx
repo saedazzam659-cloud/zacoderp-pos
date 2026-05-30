@@ -37,6 +37,7 @@ import ChartOfAccounts from "./ChartOfAccounts";
 import JournalEntries from "./JournalEntries";
 import CostCentersAdmin from "./CostCentersAdmin";
 import BranchesAdmin from "./BranchesAdmin";
+import TaxesAdmin from "./TaxesAdmin";
 import AccountStatementReport from "./AccountStatementReport";
 import IncomeStatementReport from "./IncomeStatementReport";
 import BalanceSheetReport from "./BalanceSheetReport";
@@ -82,7 +83,7 @@ type View =
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "user_permissions"
-  | "cost_centers" | "branches"
+  | "cost_centers" | "branches" | "taxes"
   | "report_account_statement" | "report_income_statement"
   | "report_balance_sheet" | "report_trial_balance"
   // Task #208 — warehouses & inventory ops (standalone).
@@ -197,7 +198,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     icon: "🧮",
     label: "الحسابات العامة",
     members: [
-      "chart_of_accounts", "journal_entries", "cost_centers",
+      "chart_of_accounts", "journal_entries", "cost_centers", "taxes",
       "report_account_statement", "report_income_statement",
       "report_balance_sheet", "report_trial_balance",
     ],
@@ -485,6 +486,7 @@ export default function PosShell({
     { id: "chart_of_accounts",icon: "🌳", label: "شجرة الحسابات", perm: "chart_of_accounts" },
     { id: "journal_entries",  icon: "📒", label: "القيود اليومية", perm: "journal_entries" },
     { id: "cost_centers",     icon: "🎯", label: "مراكز التكلفة", perm: "cost_centers" },
+    { id: "taxes",            icon: "🧾", label: "الضرائب", perm: "taxes" },
     { id: "report_account_statement", icon: "📄", label: "كشف حساب", perm: "report_account_statement" },
     { id: "report_income_statement",  icon: "📈", label: "قائمة الدخل", perm: "report_income_statement" },
     { id: "report_balance_sheet",     icon: "⚖️", label: "الميزانية", perm: "report_balance_sheet" },
@@ -860,6 +862,9 @@ export default function PosShell({
           {standalone && view === "number_series" && isAdmin && (
             <div style={S.pagePad}><NumberSeriesAdmin /></div>
           )}
+          {standalone && view === "taxes" && (isAdmin || can("taxes")) && (
+            <div style={S.pagePad}><TaxesAdmin /></div>
+          )}
           {/* Task #208 — warehouses & inventory ops (standalone only). */}
           {standalone && view === "warehouses" && (isAdmin || can("warehouses")) && (
             <div style={S.pagePad}><WarehousesAdmin /></div>
@@ -896,6 +901,7 @@ export default function PosShell({
 function labelFor(v: View): string {
   return {
     sales: "نقطة البيع",
+    taxes: "الضرائب",
     returns: "مرتجع المبيعات",
     parked: "السلال المعلّقة",
     pending: "الفواتير غير المرفوعة",

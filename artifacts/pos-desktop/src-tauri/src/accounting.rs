@@ -2682,3 +2682,198 @@ pub fn report_ledger_lines(
     for r in rows { out.push(r.map_err(|e| e.to_string())?); }
     Ok(out)
 }
+
+// ─────────────────────────── Taxes (الضرائب) ───────────────────────────
+// Dynamic master list of taxes. Each tax owns one GL account + a rate, and
+// declares per-direction availability + debit/credit nature. Exactly one row
+// may carry is_default=1 (enforced in a transaction on create/update/set).
+
+fn default_rate_type() -> String { "percent".into() }
+fn default_credit() -> String { "credit".into() }
+fn default_debit() -> String { "debit".into() }
+
+fn norm_rate_type(s: &str) -> String {
+    if s.trim().eq_ignore_ascii_case("value") { "value".into() } else { "percent".into() }
+}
+fn norm_nature(s: &str, fallback: &str) -> String {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "debit" => "debit".into(),
+        "credit" => "credit".into(),
+        _ => fallback.into(),
+    }
+}
+fn uniq_tax(e: rusqlite::Error) -> String {
+    if e.to_string().contains("UNIQUE") { "كود الضريبة مستخدم من قبل".to_string() } else { e.to_string() }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Tax {
+    pub id: i64,
+    pub code: String,
+    pub name_ar: String,
+    pub name_en: Option<String>,
+    pub currency_code: Option<String>,
+    pub branch_id: Option<i64>,
+    pub rate_type: String,
+    pub rate_value: f64,
+    pub account_id: Option<i64>,
+    pub sales_enabled: bool,
+    pub sales_nature: String,
+    pub sales_return_enabled: bool,
+    pub sales_return_nature: String,
+    pub purchase_enabled: bool,
+    pub purchase_nature: String,
+    pub purchase_return_enabled: bool,
+    pub purchase_return_nature: String,
+    pub is_default: bool,
+    pub is_active: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaxInput {
+    pub code: String,
+    pub name_ar: String,
+    pub name_en: Option<String>,
+    pub currency_code: Option<String>,
+    pub branch_id: Option<i64>,
+    #[serde(default = "default_rate_type")]
+    pub rate_type: String,
+    #[serde(default)]
+    pub rate_value: f64,
+    pub account_id: Option<i64>,
+    #[serde(default = "default_true")]
+    pub sales_enabled: bool,
+    #[serde(default = "default_credit")]
+    pub sales_nature: String,
+    #[serde(default = "default_true")]
+    pub sales_return_enabled: bool,
+    #[serde(default = "default_debit")]
+    pub sales_return_nature: String,
+    #[serde(default = "default_true")]
+    pub purchase_enabled: bool,
+    #[serde(default = "default_debit")]
+    pub purchase_nature: String,
+    #[serde(default = "default_true")]
+    pub purchase_return_enabled: bool,
+    #[serde(default = "default_credit")]
+    pub purchase_return_nature: String,
+    #[serde(default)]
+    pub is_default: bool,
+    #[serde(default = "default_true")]
+    pub is_active: bool,
+}
+
+fn row_to_tax(r: &rusqlite::Row) -> rusqlite::Result<Tax> {
+    Ok(Tax {
+        id: r.get(0)?, code: r.get(1)?, name_ar: r.get(2)?, name_en: r.get(3)?,
+        currency_code: r.get(4)?, branch_id: r.get(5)?,
+        rate_type: r.get(6)?, rate_value: r.get(7)?, account_id: r.get(8)?,
+        sales_enabled: r.get::<_, i64>(9)? != 0, sales_nature: r.get(10)?,
+        sales_return_enabled: r.get::<_, i64>(11)? != 0, sales_return_nature: r.get(12)?,
+        purchase_enabled: r.get::<_, i64>(13)? != 0, purchase_nature: r.get(14)?,
+        purchase_return_enabled: r.get::<_, i64>(15)? != 0, purchase_return_nature: r.get(16)?,
+        is_default: r.get::<_, i64>(17)? != 0, is_active: r.get::<_, i64>(18)? != 0,
+    })
+}
+
+const TAX_COLS: &str = "id,code,name_ar,name_en,currency_code,branch_id,rate_type,rate_value,account_id,\
+    sales_enabled,sales_nature,sales_return_enabled,sales_return_nature,\
+    purchase_enabled,purchase_nature,purchase_return_enabled,purchase_return_nature,\
+    is_default,is_active";
+
+#[tauri::command]
+pub fn taxes_list() -> Result<Vec<Tax>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(&format!("SELECT {} FROM taxes_local ORDER BY code", TAX_COLS))
+        .map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], row_to_tax).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn tax_create(input: TaxInput) -> Result<i64, String> {
+    if input.code.trim().is_empty() || input.name_ar.trim().is_empty() {
+        return Err("الكود والاسم مطلوبان".into());
+    }
+    let rate_type = norm_rate_type(&input.rate_type);
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    if input.is_default {
+        tx.execute("UPDATE taxes_local SET is_default=0", []).map_err(|e| e.to_string())?;
+    }
+    tx.execute(
+        "INSERT INTO taxes_local(code,name_ar,name_en,currency_code,branch_id,rate_type,rate_value,account_id,\
+         sales_enabled,sales_nature,sales_return_enabled,sales_return_nature,\
+         purchase_enabled,purchase_nature,purchase_return_enabled,purchase_return_nature,\
+         is_default,is_active) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+        params![
+            input.code.trim(), input.name_ar.trim(), input.name_en, input.currency_code,
+            input.branch_id, rate_type, input.rate_value, input.account_id,
+            input.sales_enabled as i64, norm_nature(&input.sales_nature, "credit"),
+            input.sales_return_enabled as i64, norm_nature(&input.sales_return_nature, "debit"),
+            input.purchase_enabled as i64, norm_nature(&input.purchase_nature, "debit"),
+            input.purchase_return_enabled as i64, norm_nature(&input.purchase_return_nature, "credit"),
+            input.is_default as i64, input.is_active as i64,
+        ],
+    ).map_err(uniq_tax)?;
+    let id = tx.last_insert_rowid();
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn tax_update(id: i64, input: TaxInput) -> Result<(), String> {
+    if input.code.trim().is_empty() || input.name_ar.trim().is_empty() {
+        return Err("الكود والاسم مطلوبان".into());
+    }
+    let rate_type = norm_rate_type(&input.rate_type);
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    if input.is_default {
+        tx.execute("UPDATE taxes_local SET is_default=0", []).map_err(|e| e.to_string())?;
+    }
+    let n = tx.execute(
+        "UPDATE taxes_local SET code=?1,name_ar=?2,name_en=?3,currency_code=?4,branch_id=?5,\
+         rate_type=?6,rate_value=?7,account_id=?8,\
+         sales_enabled=?9,sales_nature=?10,sales_return_enabled=?11,sales_return_nature=?12,\
+         purchase_enabled=?13,purchase_nature=?14,purchase_return_enabled=?15,purchase_return_nature=?16,\
+         is_default=?17,is_active=?18 WHERE id=?19",
+        params![
+            input.code.trim(), input.name_ar.trim(), input.name_en, input.currency_code,
+            input.branch_id, rate_type, input.rate_value, input.account_id,
+            input.sales_enabled as i64, norm_nature(&input.sales_nature, "credit"),
+            input.sales_return_enabled as i64, norm_nature(&input.sales_return_nature, "debit"),
+            input.purchase_enabled as i64, norm_nature(&input.purchase_nature, "debit"),
+            input.purchase_return_enabled as i64, norm_nature(&input.purchase_return_nature, "credit"),
+            input.is_default as i64, input.is_active as i64, id,
+        ],
+    ).map_err(uniq_tax)?;
+    if n == 0 { return Err("الضريبة غير موجودة".into()); }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn tax_delete(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM taxes_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn tax_set_default(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute("UPDATE taxes_local SET is_default=0", []).map_err(|e| e.to_string())?;
+    let n = tx.execute(
+        "UPDATE taxes_local SET is_default=1, is_active=1 WHERE id=?1", params![id],
+    ).map_err(|e| e.to_string())?;
+    if n == 0 { return Err("الضريبة غير موجودة".into()); }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}

@@ -13,6 +13,7 @@ import {
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
+import { useInvoiceTaxes } from "./_invoiceTax";
 import { baseCurrencyCode, currencyByCode } from "../lib/currency";
 import {
   computeDiscount, lineNet, saveDocDiscount, getDocDiscount,
@@ -188,6 +189,7 @@ function CreateForm({ deps, onCancel, onDone }: {
   const docSym = currencyByCode(currency).symbol;
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { taxes, taxId, setTaxId, taxOptions, selectedRate } = useInvoiceTaxes("sales");
 
   const selectedCustomer = deps.customers.find((c) => c.id === customerId) ?? null;
 
@@ -212,6 +214,9 @@ function CreateForm({ deps, onCancel, onDone }: {
         const u = uoms.find((x) => x.id === Number(patch.uomId));
         if (u) { next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
       }
+      // A selected header tax overrides any per-item/per-line rate so one tax
+      // applies to the whole invoice.
+      if (selectedRate != null) next.vatRate = selectedRate;
       // Per-line الإجمالي reflects the line discount (header discount is shown
       // separately in the totals panel).
       const { net } = lineNet(next.qty, next.unitPrice, next.disc, next.discType);
@@ -219,8 +224,25 @@ function CreateForm({ deps, onCancel, onDone }: {
       return next;
     }));
   }
-  function addLine() { setLines((ls) => [...ls, blankLine()]); }
+  function addLine() {
+    setLines((ls) => {
+      const nl = blankLine();
+      if (selectedRate != null) nl.vatRate = selectedRate;
+      return [...ls, nl];
+    });
+  }
   function removeLine(i: number) { setLines((ls) => ls.filter((_, k) => k !== i)); }
+  function onSelectTax(v: string | number) {
+    const id = v === "" ? "" : Number(v);
+    setTaxId(id);
+    const t = taxes.find((x) => x.id === id);
+    if (!t) return;
+    const rate = t.rateValue;
+    setLines((ls) => ls.map((l) => {
+      const { net } = lineNet(l.qty, l.unitPrice, l.disc, l.discType);
+      return { ...l, vatRate: rate, lineTotal: net + net * rate / 100 };
+    }));
+  }
 
   const result = computeDiscount(
     lines.map((l) => ({ qty: l.qty, unit: l.unitPrice, vatRate: l.vatRate, disc: l.disc, discType: l.discType })),
@@ -307,6 +329,9 @@ function CreateForm({ deps, onCancel, onDone }: {
             ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
           ]}
         />
+      </Field>
+      <Field label="الضريبة (تُطبّق على كل البنود)" style={{ marginTop: 10, maxWidth: 420 }}>
+        <SearchCombobox value={taxId} onChange={onSelectTax} options={taxOptions} style={input} />
       </Field>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
         <Field label="الفرع">
