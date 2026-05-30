@@ -59,6 +59,23 @@ async function resolveRelease(country: string, platform: string) {
   return fallback ? { ...fallback, fallback: true } : null;
 }
 
+// /install prefers the NSIS one-click .exe (win-x64-exe). Until a build that
+// produces it has been published, gracefully fall back to the .msi (win-x64)
+// so the wizard keeps working — it just hands out the .msi in the meantime.
+const WIZARD_PLATFORM_CHAIN: Record<string, string[]> = {
+  "win-x64-exe": ["win-x64-exe", "win-x64"],
+  "win-x64": ["win-x64"],
+};
+
+async function resolveWizardRelease(country: string, requested: string) {
+  const chain = WIZARD_PLATFORM_CHAIN[requested] ?? [requested];
+  for (const p of chain) {
+    const found = await resolveRelease(country, p);
+    if (found) return found;
+  }
+  return null;
+}
+
 const codeSchema = z.object({ code: z.string().min(1).max(100) });
 
 // POST /api/download-wizard/verify — step 1 gate (login + code). No consume.
@@ -81,8 +98,8 @@ router.get("/release", async (req, res) => {
   const r = await checkCode(String(req.query.code || ""), user);
   if (!("ok" in r)) { res.status(r.status).json({ error: r.error }); return; }
   const country = String(req.query.country || "").toUpperCase() || "SA";
-  const platform = String(req.query.platform || "win-x64");
-  const release = await resolveRelease(country, platform);
+  const platform = String(req.query.platform || "win-x64-exe");
+  const release = await resolveWizardRelease(country, platform);
   if (!release) { res.status(404).json({ error: "لا يتوفر إصدار للدولة المحددة حالياً" }); return; }
   // Metadata ONLY — never expose downloadUrl here, or a caller could grab the
   // installer link and skip /claim, defeating the per-code use limit. The URL
@@ -113,8 +130,8 @@ router.post("/claim", async (req, res) => {
   const pre = await checkCode(parsed.data.code, user);
   if (!("ok" in pre)) { res.status(pre.status).json({ error: pre.error }); return; }
   const country = (parsed.data.country || "SA").toUpperCase();
-  const platform = parsed.data.platform || "win-x64";
-  const release = await resolveRelease(country, platform);
+  const platform = parsed.data.platform || "win-x64-exe";
+  const release = await resolveWizardRelease(country, platform);
   if (!release) { res.status(404).json({ error: "لا يتوفر إصدار للدولة المحددة حالياً" }); return; }
 
   // Atomic consume guarded by maxUses — the WHERE re-checks the cap so two

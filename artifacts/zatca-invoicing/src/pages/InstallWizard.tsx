@@ -106,7 +106,7 @@ export default function InstallWizard() {
     setLoadingRelease(true); setRelease(null); setErr(null);
     try {
       const r = await fetch(
-        `${API}/api/download-wizard/release?code=${encodeURIComponent(code.trim())}&country=${c}&platform=win-x64`,
+        `${API}/api/download-wizard/release?code=${encodeURIComponent(code.trim())}&country=${c}&platform=win-x64-exe`,
         { headers: { Authorization: `Bearer ${tok}` } },
       );
       if (r.status === 404) { setRelease(null); setLoadingRelease(false); return; }
@@ -131,7 +131,7 @@ export default function InstallWizard() {
       const r = await fetch(`${API}/api/download-wizard/claim`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ code: code.trim(), country, platform: "win-x64" }),
+        body: JSON.stringify({ code: code.trim(), country, platform: "win-x64-exe" }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { setErr(j.error || "تعذر بدء التنزيل"); setDownloading(false); return; }
@@ -322,7 +322,11 @@ export default function InstallWizard() {
                 <Button size="lg" className="h-14 px-10 text-lg" onClick={handleDownload} disabled={downloading}>
                   {downloading ? <><Loader2 className="ml-2 h-5 w-5 animate-spin" /> جاري التحضير...</> : <><DLIcon className="ml-2 h-5 w-5" /> تنزيل الآن</>}
                 </Button>
-                <p className="text-xs text-muted-foreground">.msi installer — متوافق مع Windows 10 / 11</p>
+                <p className="text-xs text-muted-foreground">
+                  {release?.platform === "win-x64-exe"
+                    ? "مثبّت بنقرة واحدة (.exe) — يبدأ التثبيت فوراً بدون صلاحية مدير — متوافق مع Windows 10 / 11"
+                    : ".msi installer — متوافق مع Windows 10 / 11"}
+                </p>
 
                 {done && (
                   <div className="rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-800 space-y-1 text-right">
@@ -338,7 +342,11 @@ export default function InstallWizard() {
                 <div className="border-t pt-4 text-right space-y-2">
                   <h3 className="font-semibold text-sm">بعد التنزيل:</h3>
                   <ol className="text-sm text-muted-foreground space-y-1 mr-5 list-decimal">
-                    <li>افتح ملف ‎.msi واتبع خطوات المثبّت.</li>
+                    <li>
+                      {release?.platform === "win-x64-exe"
+                        ? "شغّل الملف المُنزّل — سيبدأ التثبيت تلقائياً ثم يفتح التطبيق."
+                        : "افتح ملف ‎.msi واتبع خطوات المثبّت."}
+                    </li>
                     <li>أدخل مفتاح الترخيص عند أول تشغيل.</li>
                     <li>اربط التطبيق بحسابك السحابي لمزامنة البيانات.</li>
                   </ol>

@@ -273,33 +273,6 @@ jobs:
           echo "MSI: $MSI_NAME ($MSI_SIZE bytes)"
           echo "SHA256: $MSI_SHA256"
 
-      # ─── 8b. Locate + checksum the NSIS one-click .exe ──────────────
-      # NSIS produces a Chrome-style one-click installer (per-user, no admin)
-      # used by the protected /install wizard (platform=win-x64-exe). The
-      # public /download page keeps serving the .msi (platform=win-x64).
-      - name: Find produced NSIS exe
-        id: exe
-        shell: bash
-        run: |
-          EXE_PATH=$(find src-tauri/target/${{ env.TAURI_TARGET }}/release/bundle/nsis -name "*-setup.exe" | head -n1)
-          if [[ -z "$EXE_PATH" ]]; then
-            EXE_PATH=$(find src-tauri/target/${{ env.TAURI_TARGET }}/release/bundle/nsis -name "*.exe" | head -n1)
-          fi
-          if [[ -z "$EXE_PATH" ]]; then
-            echo "::error::No NSIS .exe produced — check Tauri build output above."
-            exit 1
-          fi
-          EXE_NAME=$(basename "$EXE_PATH")
-          EXE_SIZE=$(stat -c %s "$EXE_PATH" 2>/dev/null || stat -f %z "$EXE_PATH")
-          EXE_SHA256=$(sha256sum "$EXE_PATH" | cut -d' ' -f1)
-          echo "PATH=$EXE_PATH" >> "$GITHUB_OUTPUT"
-          echo "NAME=$EXE_NAME" >> "$GITHUB_OUTPUT"
-          echo "SIZE=$EXE_SIZE" >> "$GITHUB_OUTPUT"
-          echo "SHA256=$EXE_SHA256" >> "$GITHUB_OUTPUT"
-          echo ""
-          echo "NSIS exe: $EXE_NAME ($EXE_SIZE bytes)"
-          echo "SHA256: $EXE_SHA256"
-
       - name: Write build manifest
         shell: bash
         run: |
@@ -324,7 +297,6 @@ jobs:
           name: pos-desktop-${{ github.sha }}-${{ steps.signing.outputs.MODE }}
           path: |
             artifacts/pos-desktop/${{ steps.msi.outputs.PATH }}
-            artifacts/pos-desktop/${{ steps.exe.outputs.PATH }}
             artifacts/pos-desktop/build-manifest.json
           retention-days: 30
           if-no-files-found: error
@@ -336,7 +308,6 @@ jobs:
         with:
           files: |
             artifacts/pos-desktop/${{ steps.msi.outputs.PATH }}
-            artifacts/pos-desktop/${{ steps.exe.outputs.PATH }}
             artifacts/pos-desktop/build-manifest.json
           name: "ZACOD POS Desktop ${{ github.ref_name }}"
           draft: true
@@ -344,24 +315,18 @@ jobs:
           body: |
             ## ZACOD POS Desktop — `${{ github.ref_name }}`
 
-            **MSI installer (`/download` page):** `${{ steps.msi.outputs.NAME }}`
+            **Installer:** `${{ steps.msi.outputs.NAME }}`
             **Size:** ${{ steps.msi.outputs.SIZE }} bytes
             **SHA-256:** `${{ steps.msi.outputs.SHA256 }}`
-
-            **One-click installer (`/install` wizard):** `${{ steps.exe.outputs.NAME }}`
-            **Size:** ${{ steps.exe.outputs.SIZE }} bytes
-            **SHA-256:** `${{ steps.exe.outputs.SHA256 }}`
-
             **Signed:** `${{ steps.signing.outputs.MODE }}`
             **Commit:** ${{ github.sha }}
 
             ### Next steps for SuperAdmin
-            The server auto-mirrors BOTH assets hourly into the Releases table
-            (`ALL` country): the `.msi` as platform `win-x64` and the `.exe` as
-            platform `win-x64-exe`. To publish immediately, hit **SuperAdmin →
-            POS Devices → Releases tab → مزامنة الآن**, or add per-country rows
-            manually (use platform `win-x64` for `/download`, `win-x64-exe` for
-            the `/install` one-click wizard).
+            1. Download the `.msi` from this release.
+            2. Upload it to your CDN / object storage.
+            3. Paste the URL into **SuperAdmin → POS Devices → Releases tab**
+               (set `countryCode` per market or `ALL` as the fallback).
+            4. End users can then download from your public `/download` page.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -19,7 +19,8 @@ import { logger } from "./logger.js";
 const REPO = "saedazzam659-cloud/zacoderp-pos";
 const TAG_PREFIX = "pos-desktop-v";
 const COUNTRY = "ALL";
-const PLATFORM = "win-x64";
+const PLATFORM = "win-x64";          // .msi — public /download page
+const PLATFORM_EXE = "win-x64-exe";  // NSIS one-click .exe — /install wizard
 const TICK_MS = 60 * 60_000;       // 1h
 const STARTUP_DELAY_MS = 60_000;   // 1 min after boot
 
@@ -73,58 +74,62 @@ function pickMsiAsset(rel: GhRelease): GhAsset | null {
   return rel.assets.find((a) => a.name.toLowerCase().endsWith(".msi")) ?? null;
 }
 
-/**
- * Sync once. Idempotent: when the latest tag is already mirrored, this
- * returns { alreadySynced: true } without touching the DB.
- */
-export async function runReleaseSyncOnce(): Promise<SyncSummary> {
-  const rel = await fetchLatestRelease();
-  if (!rel) return { checked: true, latestTag: null, reason: "no matching release on GitHub" };
+// The NSIS one-click installer asset (per-user, no-admin) used by the
+// protected /install wizard. Tauri names it `*-setup.exe`; fall back to any
+// `.exe` so a naming change upstream doesn't silently skip the mirror.
+function pickExeAsset(rel: GhRelease): GhAsset | null {
+  const lower = (a: GhAsset) => a.name.toLowerCase();
+  return (
+    rel.assets.find((a) => lower(a).endsWith("-setup.exe")) ??
+    rel.assets.find((a) => lower(a).endsWith(".exe")) ??
+    null
+  );
+}
 
-  const version = rel.tag_name.slice(TAG_PREFIX.length).trim();
-  if (!version) return { checked: true, latestTag: rel.tag_name, reason: "empty version after tag prefix" };
-
-  const asset = pickMsiAsset(rel);
-  if (!asset) return { checked: true, latestTag: rel.tag_name, version, reason: "no .msi asset on release" };
-
-  // Is this version already in the table for this scope?
+// Mirror a single asset into download_releases for (COUNTRY, platform).
+// Idempotent per (country, platform, version): re-running with an
+// already-mirrored version is a no-op (reactivating it if it was disabled).
+async function mirrorAsset(
+  rel: GhRelease,
+  version: string,
+  platform: string,
+  asset: GhAsset,
+): Promise<Pick<SyncSummary, "inserted" | "alreadySynced" | "deactivatedCount" | "url" | "reason">> {
   const [existing] = await db.select({ id: downloadReleasesTable.id, isActive: downloadReleasesTable.isActive })
     .from(downloadReleasesTable)
     .where(and(
       eq(downloadReleasesTable.countryCode, COUNTRY),
-      eq(downloadReleasesTable.platform, PLATFORM),
+      eq(downloadReleasesTable.platform, platform),
       eq(downloadReleasesTable.version, version),
     ))
     .limit(1);
 
   if (existing) {
-    // Already mirrored. If it's not active for some reason, reactivate it.
     if (!existing.isActive) {
       await db.transaction(async (tx) => {
         await tx.update(downloadReleasesTable)
           .set({ isActive: false, updatedAt: new Date() })
           .where(and(
             eq(downloadReleasesTable.countryCode, COUNTRY),
-            eq(downloadReleasesTable.platform, PLATFORM),
+            eq(downloadReleasesTable.platform, platform),
             eq(downloadReleasesTable.isActive, true),
           ));
         await tx.update(downloadReleasesTable)
           .set({ isActive: true, updatedAt: new Date() })
           .where(eq(downloadReleasesTable.id, existing.id));
       });
-      return { checked: true, latestTag: rel.tag_name, version, alreadySynced: true, inserted: false, reason: "reactivated" };
+      return { inserted: false, alreadySynced: true, reason: "reactivated" };
     }
-    return { checked: true, latestTag: rel.tag_name, version, alreadySynced: true, inserted: false };
+    return { inserted: false, alreadySynced: true };
   }
 
-  // New version — insert + deactivate previous active rows for the same scope.
   let deactivatedCount = 0;
   await db.transaction(async (tx) => {
     const dResult = await tx.update(downloadReleasesTable)
       .set({ isActive: false, updatedAt: new Date() })
       .where(and(
         eq(downloadReleasesTable.countryCode, COUNTRY),
-        eq(downloadReleasesTable.platform, PLATFORM),
+        eq(downloadReleasesTable.platform, platform),
         eq(downloadReleasesTable.isActive, true),
       ))
       .returning({ id: downloadReleasesTable.id });
@@ -132,7 +137,7 @@ export async function runReleaseSyncOnce(): Promise<SyncSummary> {
 
     await tx.insert(downloadReleasesTable).values({
       countryCode: COUNTRY,
-      platform: PLATFORM,
+      platform,
       version,
       downloadUrl: asset.browser_download_url,
       fileSizeBytes: asset.size,
@@ -143,14 +148,47 @@ export async function runReleaseSyncOnce(): Promise<SyncSummary> {
   });
 
   logger.info(
-    { version, url: asset.browser_download_url, deactivatedCount },
+    { version, platform, url: asset.browser_download_url, deactivatedCount },
     "gh-release-sync: new POS desktop release mirrored",
   );
-  return {
-    checked: true, latestTag: rel.tag_name, version,
-    inserted: true, alreadySynced: false,
-    deactivatedCount, url: asset.browser_download_url,
-  };
+  return { inserted: true, alreadySynced: false, deactivatedCount, url: asset.browser_download_url };
+}
+
+/**
+ * Sync once. Mirrors BOTH the `.msi` (platform `win-x64`, used by the public
+ * /download page) and the NSIS one-click `.exe` (platform `win-x64-exe`, used
+ * by the protected /install wizard). Idempotent: when the latest tag is
+ * already mirrored, this returns { alreadySynced: true } without DB writes.
+ *
+ * The returned summary stays MSI-focused for backward compatibility with the
+ * admin sync endpoint; the .exe mirror is best-effort and logged separately so
+ * a missing/failed .exe never blocks the .msi from publishing.
+ */
+export async function runReleaseSyncOnce(): Promise<SyncSummary> {
+  const rel = await fetchLatestRelease();
+  if (!rel) return { checked: true, latestTag: null, reason: "no matching release on GitHub" };
+
+  const version = rel.tag_name.slice(TAG_PREFIX.length).trim();
+  if (!version) return { checked: true, latestTag: rel.tag_name, reason: "empty version after tag prefix" };
+
+  // Mirror the one-click .exe first (best-effort) so its failure can't abort
+  // the .msi result, then mirror the .msi as the authoritative summary.
+  const exeAsset = pickExeAsset(rel);
+  if (exeAsset) {
+    try {
+      await mirrorAsset(rel, version, PLATFORM_EXE, exeAsset);
+    } catch (err) {
+      logger.error({ err, version }, "gh-release-sync: .exe mirror failed (continuing with .msi)");
+    }
+  } else {
+    logger.warn({ version }, "gh-release-sync: no .exe asset on release — /install one-click skipped");
+  }
+
+  const asset = pickMsiAsset(rel);
+  if (!asset) return { checked: true, latestTag: rel.tag_name, version, reason: "no .msi asset on release" };
+
+  const r = await mirrorAsset(rel, version, PLATFORM, asset);
+  return { checked: true, latestTag: rel.tag_name, version, ...r };
 }
 
 let intervalHandle: NodeJS.Timeout | null = null;
