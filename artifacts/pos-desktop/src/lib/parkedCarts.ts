@@ -23,6 +23,13 @@ export interface ParkedCartLine {
   vatRate: number;
   barcode?: string | null;
   qty: number;
+  /** Multi-unit sale: present when the line was sold as a non-base unit
+   * (carton / half-carton). `salePrice` already holds the per-unit price and
+   * `qty` counts these units; these fields let resume rebuild the cart line's
+   * unit (name shown on screen + factor used for stock deduction). */
+  unitId?: string | null;
+  unitName?: string | null;
+  unitFactor?: number | null;
 }
 
 export interface ParkedCart {

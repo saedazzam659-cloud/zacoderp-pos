@@ -16,6 +16,26 @@ import { LS_KEYS, lsRead, lsWrite } from "./localStore";
 import { bridgeInvoke as tauriInvoke, shouldUseBridge } from "./bridge";
 import { enqueuePush } from "./pushQueue";
 
+/**
+ * A non-base sale unit (e.g. كرتونة, نص كرتونة). Multi-unit pricing is
+ * LOCAL-ONLY: it lives in the localStorage overlay, never in SQLite/cloud —
+ * exactly like the stock map and the LS overlay edits (see memory
+ * pos-desktop-overlay-pattern). Each unit has a conversion factor expressed in
+ * BASE units (pieces) and its own price + optional barcode for one-scan sell.
+ */
+export interface ItemUnit {
+  /** Stable local id (uuid) — used as the cart-line unit key. */
+  id: string;
+  /** Display name, e.g. "كرتونة", "نص كرتونة". */
+  name: string;
+  /** How many base units (pieces) make up ONE of this unit. Must be > 0. */
+  factor: number;
+  /** Sale price for ONE of this unit (same gross/net basis as salePrice). */
+  price: number;
+  /** Optional unique barcode — scanning it sells one of this unit. */
+  barcode?: string | null;
+}
+
 export interface LocalItem {
   id: number;
   cloudId?: number | null;
@@ -45,6 +65,10 @@ export interface LocalItem {
   pricePerKg?: number | null;
   /** 4–5 digit PLU. Matches the digits embedded in scale-printed barcodes. */
   plu?: string | null;
+  /** Multi-unit sale pricing (carton / half-carton / piece). LOCAL-ONLY —
+   * stored in the LS overlay, never written to SQLite/cloud. The item's own
+   * salePrice/barcode are the BASE unit (factor 1); these are ADDITIONAL units. */
+  units?: ItemUnit[] | null;
 }
 
 interface RustItem {
@@ -184,6 +208,35 @@ export async function findItemByBarcode(barcode: string): Promise<LocalItem | nu
       ?? null;
 }
 
+export interface SaleUnitMatch {
+  item: LocalItem;
+  /** The matched additional unit, or null when the BASE unit matched. */
+  unit: ItemUnit | null;
+}
+
+/**
+ * Resolve a scanned barcode to an item AND the specific sale-unit it maps to.
+ * Unit barcodes win over the base barcode (more specific). `unit: null` means
+ * the base unit (qty 1 = 1 base unit at salePrice). Returns null when nothing
+ * matches.
+ *
+ * Unlike findItemByBarcode this is OVERLAY-AWARE (reads listItems) because unit
+ * definitions live only in the LS overlay — the Rust find_item_by_barcode
+ * command only knows the SQLite `barcode` column and can't see units.
+ */
+export async function findItemUnitByBarcode(barcode: string): Promise<SaleUnitMatch | null> {
+  const code = barcode.trim();
+  if (!code) return null;
+  const all = await listItems();
+  for (const it of all) {
+    const u = it.units?.find((x) => (x.barcode ?? "").trim() === code);
+    if (u) return { item: it, unit: u };
+  }
+  const base = all.find((it) => (it.barcode ?? "").trim() === code);
+  if (base) return { item: base, unit: null };
+  return null;
+}
+
 export async function seedDemoItems(): Promise<number> {
   if (shouldUseBridge()) {
     try { return await tauriInvoke<number>("seed_demo_items"); }
@@ -283,6 +336,8 @@ export interface CreateItemInput {
   isWeighed?: boolean | null;
   pricePerKg?: number | null;
   plu?: string | null;
+  // Multi-unit pricing — LOCAL-ONLY (LS overlay).
+  units?: ItemUnit[] | null;
 }
 
 export async function createItem(input: CreateItemInput): Promise<LocalItem> {
@@ -309,6 +364,7 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
     isWeighed: input.isWeighed ?? null,
     pricePerKg: input.pricePerKg ?? null,
     plu: input.plu ?? null,
+    units: input.units ?? null,
     updatedAt: new Date().toISOString(),
   };
   all.push(row);

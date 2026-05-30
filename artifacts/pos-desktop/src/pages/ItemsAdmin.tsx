@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import {
   listItems, createItem, updateItem, deleteItem, bulkImportLocalItems, updateItemExtended, updateItemWeighed,
-  type LocalItem, type CreateItemInput,
+  type LocalItem, type CreateItemInput, type ItemUnit,
 } from "../lib/items";
 import { listUom, getDefaultUom } from "../lib/uom";
 import { getAllStockShared, type StockMap } from "../lib/stock";
@@ -566,7 +566,14 @@ export default function ItemsAdmin() {
               {pageRows.map((it) => (
                 <tr key={it.id} style={S.tr}>
                   <td style={S.tdClip}>
-                    <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.nameAr}</div>
+                    <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {it.nameAr}
+                      {it.units && it.units.length > 0 && (
+                        <span style={S.badgeUnits} title={it.units.map((u) => `${u.name} (${u.factor})`).join("، ")}>
+                          📦 {it.units.length} وحدة
+                        </span>
+                      )}
+                    </div>
                     {it.nameEn && <div style={{ ...S.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.nameEn}</div>}
                   </td>
                   <td style={S.td}>{renderQty(stockMap[it.id])}</td>
@@ -1008,6 +1015,22 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Multi-unit pricing — additional sale units (نص كرتونة / كرتونة …). Stored
+  // in the LS overlay only (via create/updateItem), never in SQLite.
+  const [units, setUnits] = useState<ItemUnit[]>(initial?.units ?? []);
+
+  function newUnitId(): string {
+    return (crypto as any).randomUUID?.() ?? `u_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+  function addUnit() {
+    setUnits((prev) => [...prev, { id: newUnitId(), name: "", factor: 1, price: 0, barcode: "" }]);
+  }
+  function updateUnit(id: string, patch: Partial<ItemUnit>) {
+    setUnits((prev) => prev.map((u) => u.id === id ? { ...u, ...patch } : u));
+  }
+  function removeUnit(id: string) {
+    setUnits((prev) => prev.filter((u) => u.id !== id));
+  }
 
   async function submit() {
     if (!form.nameAr.trim()) { setErr("الاسم بالعربية مطلوب"); return; }
@@ -1020,6 +1043,28 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
       if (form.salePrice <= 0) { setErr("السعر يجب أن يكون أكبر من صفر"); return; }
     }
     if (form.vatRate < 0 || form.vatRate > 100) { setErr("نسبة الضريبة بين 0 و 100"); return; }
+    // Multi-unit validation — only for non-weighed items (units are hidden for
+    // weighed). Each unit needs a name, a factor > 0, and a price > 0.
+    const cleanUnits: ItemUnit[] = form.isWeighed ? [] : units
+      .map((u) => ({ ...u, name: u.name.trim(), barcode: (u.barcode ?? "").trim() || undefined }))
+      .filter((u) => u.name || u.factor !== 1 || u.price > 0);
+    if (!form.isWeighed) {
+      const seenBarcodes = new Set<string>();
+      const base = (form.barcode ?? "").trim();
+      if (base) seenBarcodes.add(base);
+      for (const u of cleanUnits) {
+        if (!u.name) { setErr("اسم وحدة البيع الإضافية مطلوب"); return; }
+        if (!u.factor || u.factor <= 0) { setErr(`معامل التحويل للوحدة "${u.name}" يجب أن يكون أكبر من صفر`); return; }
+        if (u.price <= 0) { setErr(`سعر الوحدة "${u.name}" يجب أن يكون أكبر من صفر`); return; }
+        // Reject barcodes that collide with the base barcode or a sibling unit —
+        // the scanner resolves the first match, so duplicates are ambiguous.
+        const bc = (u.barcode ?? "").trim();
+        if (bc) {
+          if (seenBarcodes.has(bc)) { setErr(`الباركود "${bc}" مكرر — يجب أن يكون باركود كل وحدة فريداً`); return; }
+          seenBarcodes.add(bc);
+        }
+      }
+    }
     if (isPharmacy) {
       if (!(form.activeIngredient ?? "").trim()) { setErr("المادة الفعّالة مطلوبة في وضع الصيدلية"); return; }
       if (!(form.dosageForm ?? "").trim()) { setErr("الشكل الصيدلي مطلوب في وضع الصيدلية"); return; }
@@ -1028,11 +1073,14 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
     setSaving(true); setErr(null);
     try {
       let id: number;
+      // Units live in the LS overlay only — they flow through create/updateItem
+      // (NOT updateItemWeighed/Extended, which are SQLite-only).
+      const payload = { ...form, units: cleanUnits.length ? cleanUnits : null };
       if (initial) {
-        await updateItem(initial.id, form);
+        await updateItem(initial.id, payload);
         id = initial.id;
       } else {
-        const created = await createItem(form);
+        const created = await createItem(payload);
         id = created.id;
       }
       // Pharmacy extended fields go straight to SQLite via the dedicated
@@ -1128,6 +1176,47 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
           </div>
         )}
 
+        {/* Multi-unit pricing — hidden for weighed items (priced per-kg). */}
+        {!form.isWeighed && (
+          <>
+            <div style={{ marginTop: 16, marginBottom: 4, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#7c3aed" }}>
+              📦 وحدات بيع إضافية
+            </div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>
+              الوحدة الأساسية = قطعة بسعر البيع أعلاه. أضف وحدات أكبر (نص كرتونة / كرتونة …) لكل منها سعر، ومعامل التحويل = عدد القطع، وباركود اختياري. المخزون يُخصم بالقطعة.
+            </div>
+            {units.map((u) => (
+              <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 0.8fr 0.9fr 1.2fr auto", gap: 8, marginBottom: 8, alignItems: "end" }}>
+                <Field label="اسم الوحدة">
+                  <input list="pos-uom-suggestions" value={u.name}
+                         onChange={(e) => updateUnit(u.id, { name: e.target.value })}
+                         style={S.input} placeholder="كرتونة" />
+                </Field>
+                <Field label="عدد القطع">
+                  <input type="number" step="1" min="1" value={u.factor}
+                         onChange={(e) => updateUnit(u.id, { factor: Number(e.target.value) })}
+                         style={S.input} />
+                </Field>
+                <Field label="السعر">
+                  <input type="number" step="0.01" min="0" value={u.price}
+                         onChange={(e) => updateUnit(u.id, { price: Number(e.target.value) })}
+                         style={S.input} />
+                </Field>
+                <Field label="باركود (اختياري)">
+                  <input value={u.barcode ?? ""}
+                         onChange={(e) => updateUnit(u.id, { barcode: e.target.value })}
+                         style={S.input} placeholder="EAN-13" />
+                </Field>
+                <button type="button" onClick={() => removeUnit(u.id)} style={{ ...S.btnDel, marginBottom: 12 }}>×</button>
+              </div>
+            ))}
+            <datalist id="pos-uom-suggestions">
+              {uoms.map((u) => <option key={u.id} value={u.nameAr} />)}
+            </datalist>
+            <button type="button" onClick={addUnit} style={S.btnAddCond}>+ إضافة وحدة بيع</button>
+          </>
+        )}
+
         {isPharmacy && (
           <>
             <div style={{ marginTop: 16, marginBottom: 8, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#86198f" }} key="pharma-header">
@@ -1221,6 +1310,7 @@ const S = {
   qtyUntracked: { color: "#cbd5e1" } as const,
   badgeCloud: { display: "inline-block", padding: "2px 8px", background: "#eff6ff", color: "#1d4ed8", border: "1px solid #dbeafe", borderRadius: 999, fontSize: 11 } as const,
   badgeLocal: { display: "inline-block", padding: "2px 8px", background: "#fefce8", color: "#854d0e", border: "1px solid #fef9c3", borderRadius: 999, fontSize: 11 } as const,
+  badgeUnits: { display: "inline-block", marginInlineStart: 6, padding: "1px 7px", background: "#f5f3ff", color: "#7c3aed", border: "1px solid #ddd6fe", borderRadius: 999, fontSize: 11, fontWeight: 600 } as const,
   btnPrimary: { padding: "10px 18px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
   btnImport: { padding: "10px 18px", background: "#fff", color: "#0f766e", border: "1px solid #5eead4", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,
   btnEda: { padding: "10px 18px", background: "#fdf4ff", color: "#86198f", border: "1px solid #f0abfc", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 } as const,

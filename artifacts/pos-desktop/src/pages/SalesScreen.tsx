@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { printReceipt, openCashDrawer, type ReceiptLine } from "../lib/peripherals";
 import { generateZatcaQr } from "../lib/zatca";
-import { listItems, findItemByBarcode, seedDemoItems, daysUntilExpiry, findItemByPlu, type LocalItem } from "../lib/items";
+import { listItems, findItemUnitByBarcode, seedDemoItems, daysUntilExpiry, findItemByPlu, type LocalItem, type ItemUnit } from "../lib/items";
 import { parseEmbeddedWeightBarcode, readWeightOnce, getScaleConfig } from "../lib/scale";
 import { getVertical, verifyAdminCredentials, type Vertical } from "../lib/standalone";
 import { isClient, getChangeVersion } from "../lib/bridge";
@@ -44,6 +44,11 @@ interface CartLine {
   qty: number;
   /** Task #201: when true, qty is in kilograms and the line was priced per-kg. */
   weighed?: boolean;
+  /** Multi-unit sale: present when the line was added as a non-base unit
+   * (e.g. كرتونة). `item.salePrice` already holds the per-unit price and `qty`
+   * counts these units; `factor` = base units (pieces) per one of this unit and
+   * is used to deduct stock in the base unit. */
+  unit?: { id: string; name: string; factor: number };
 }
 
 function newLineId(): string {
@@ -74,6 +79,9 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
   const [paidStr, setPaidStr] = useState("");
   // Task #201 — weight-capture modal state. Holds the item awaiting a weight.
   const [weighItem, setWeighItem] = useState<LocalItem | null>(null);
+  // Multi-unit picker modal state. Holds the item whose sale-unit (base /
+  // carton / half-carton) the cashier is choosing on a manual tap.
+  const [unitPickItem, setUnitPickItem] = useState<LocalItem | null>(null);
   const [vertical, setVertical] = useState<Vertical>("general");
   useEffect(() => { void getVertical().then((v) => v && setVertical(v)); }, []);
   const isPharmacy = vertical === "pharmacy";
@@ -102,6 +110,11 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
             code: "", nameEn: null, updatedAt: null,
           } as unknown as LocalItem,
           qty: l.qty,
+          // Restore the sale-unit so stock still deducts in base units and the
+          // line keeps showing "كرتونة" etc. after a resume.
+          ...(l.unitId != null && l.unitName != null && l.unitFactor != null
+            ? { unit: { id: l.unitId, name: l.unitName, factor: l.unitFactor } }
+            : {}),
         }));
         setCart(lines);
         setActiveParkedId(c.id);
@@ -132,6 +145,8 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           itemId: l.item.id, nameAr: l.item.nameAr,
           salePrice: l.item.salePrice, vatRate: l.item.vatRate,
           barcode: l.item.barcode ?? null, qty: l.qty,
+          unitId: l.unit?.id ?? null, unitName: l.unit?.name ?? null,
+          unitFactor: l.unit?.factor ?? null,
         })),
       });
       setCart([]); setCheckoutKey(null); setActiveParkedId(null);
@@ -194,7 +209,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       // Ignore scans while a blocking modal owns the screen — otherwise the
       // cashier's pending weight entry / customer pick would silently lose
       // focus or get overwritten by an unrelated background cart mutation.
-      if (weighItem || showCustomerPicker || paying) return;
+      if (weighItem || unitPickItem || showCustomerPicker || paying) return;
       try {
         // Task #201: a barcode-printing scale prints EAN-13 stickers that
         // encode prefix + PLU + weight. Try that first; if it matches AND
@@ -211,9 +226,14 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           // (some POSes also ship plain-EAN catalogs that happen to match
           // the weight-prefix range).
         }
-        const found = await findItemByBarcode(code);
-        if (found) addToCart(found);
-        else setMsg({ kind: "err", text: `لم يُعثر على باركود: ${code}` });
+        // Unit-aware lookup: a scanned code may belong to a specific sale-unit
+        // (e.g. the carton barcode) — that wins over the base barcode. `unit`
+        // is null when the base barcode matched, so we add the base unit.
+        const match = await findItemUnitByBarcode(code);
+        if (match) {
+          if (match.unit) await addUnitToCart(match.item, match.unit);
+          else await addToCart(match.item);
+        } else setMsg({ kind: "err", text: `لم يُعثر على باركود: ${code}` });
       } catch (e: any) {
         setMsg({ kind: "err", text: `خطأ في البحث: ${e?.message ?? e}` });
       }
@@ -260,6 +280,41 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
    * will always fail and expired items become unsellable on cloud devices.
    * Cloud-mode supervisor override is tracked as a follow-up.
    */
+  /**
+   * Pharmacy-only expiry gate, shared by base and unit add paths so neither can
+   * bypass the supervisor-override safety net. Returns true when the item may be
+   * sold (not pharmacy, not expired, or override approved), false when blocked
+   * (and sets the error message). On a successful override it logs + shows the
+   * approval notice.
+   */
+  async function ensureExpiryAllowed(item: LocalItem): Promise<boolean> {
+    if (!isPharmacy) return true;
+    const d = daysUntilExpiry(item);
+    if (d === null || d >= 0) return true;
+    const username = window.prompt(`❌ ${item.nameAr} منتهي الصلاحية بتاريخ ${item.expiryDate} (مر عليه ${Math.abs(d)} يوم).\n\nلتجاوز الحظر يجب أن يعتمد المشرف عملية البيع.\nاسم مستخدم المشرف:`);
+    if (!username || !username.trim()) {
+      setMsg({ kind: "err", text: `❌ ${item.nameAr} — منتهي الصلاحية، لا يمكن بيعه` });
+      return false;
+    }
+    const password = window.prompt(`كلمة مرور المشرف ${username}:`);
+    if (!password) {
+      setMsg({ kind: "err", text: `❌ تم إلغاء التجاوز — ${item.nameAr} لن يُباع` });
+      return false;
+    }
+    const ok = await verifyAdminCredentials(username, password);
+    if (!ok) {
+      setMsg({ kind: "err", text: `❌ اعتماد المشرف فشل — ${item.nameAr} منتهي الصلاحية ولا يمكن بيعه` });
+      return false;
+    }
+    appendOverrideLog({
+      ts: new Date().toISOString(), itemId: item.id, itemName: item.nameAr,
+      expiryDate: item.expiryDate ?? null, daysPastExpiry: Math.abs(d),
+      supervisor: username.trim(), cashier: cashierName ?? null,
+    });
+    setMsg({ kind: "ok", text: `⚠️ تم اعتماد التجاوز من المشرف ${username} — ${item.nameAr}` });
+    return true;
+  }
+
   async function addToCart(item: LocalItem) {
     setMsg(null);
     // Task #201: weighed items go through the WeightCaptureModal instead
@@ -272,41 +327,54 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       setWeighItem(item);
       return;
     }
-    if (isPharmacy) {
-      const d = daysUntilExpiry(item);
-      if (d !== null && d < 0) {
-        const username = window.prompt(`❌ ${item.nameAr} منتهي الصلاحية بتاريخ ${item.expiryDate} (مر عليه ${Math.abs(d)} يوم).\n\nلتجاوز الحظر يجب أن يعتمد المشرف عملية البيع.\nاسم مستخدم المشرف:`);
-        if (!username || !username.trim()) {
-          setMsg({ kind: "err", text: `❌ ${item.nameAr} — منتهي الصلاحية، لا يمكن بيعه` });
-          return;
-        }
-        const password = window.prompt(`كلمة مرور المشرف ${username}:`);
-        if (!password) {
-          setMsg({ kind: "err", text: `❌ تم إلغاء التجاوز — ${item.nameAr} لن يُباع` });
-          return;
-        }
-        const ok = await verifyAdminCredentials(username, password);
-        if (!ok) {
-          setMsg({ kind: "err", text: `❌ اعتماد المشرف فشل — ${item.nameAr} منتهي الصلاحية ولا يمكن بيعه` });
-          return;
-        }
-        appendOverrideLog({
-          ts: new Date().toISOString(), itemId: item.id, itemName: item.nameAr,
-          expiryDate: item.expiryDate ?? null, daysPastExpiry: Math.abs(d),
-          supervisor: username.trim(), cashier: cashierName ?? null,
-        });
-        setMsg({ kind: "ok", text: `⚠️ تم اعتماد التجاوز من المشرف ${username} — ${item.nameAr}` });
-      }
-    }
+    if (!(await ensureExpiryAllowed(item))) return;
     setCart((prev) => {
       // Non-weighed lines still collapse to a single line per catalog row —
       // tapping the same product twice should bump qty, not spawn duplicates.
       // Weighed lines bypass this branch entirely (see pushWeighedLine).
-      const existing = prev.find((l) => l.item.id === item.id && !l.weighed);
+      // `!l.unit` keeps base-unit lines separate from carton/half-carton lines
+      // of the same product (those are added by addUnitToCart).
+      const existing = prev.find((l) => l.item.id === item.id && !l.weighed && !l.unit);
       if (existing) return prev.map((l) => l.lineId === existing.lineId ? { ...l, qty: l.qty + 1 } : l);
       return [...prev, { lineId: newLineId(), item, qty: 1 }];
     });
   }
+
+  /**
+   * Add an item as a specific NON-BASE sale unit (e.g. كرتونة). We synthesize a
+   * LocalItem whose `salePrice = unit.price` so all the existing totals math
+   * (subtotal = salePrice × qty) keeps working unchanged. The `unit.factor` is
+   * carried on the cart line and applied at checkout to deduct stock in base
+   * units. Lines collapse per (item.id + unit.id) so tapping the same unit twice
+   * bumps qty rather than spawning duplicates.
+   */
+  async function addUnitToCart(item: LocalItem, unit: ItemUnit) {
+    setMsg(null);
+    // Same pharmacy expiry gate as base adds — a carton of expired medicine is
+    // still expired medicine.
+    if (!(await ensureExpiryAllowed(item))) return;
+    const synth: LocalItem = { ...item, salePrice: unit.price };
+    setCart((prev) => {
+      const existing = prev.find((l) => l.item.id === item.id && l.unit?.id === unit.id && !l.weighed);
+      if (existing) return prev.map((l) => l.lineId === existing.lineId ? { ...l, qty: l.qty + 1 } : l);
+      return [...prev, { lineId: newLineId(), item: synth, qty: 1, unit: { id: unit.id, name: unit.name, factor: unit.factor } }];
+    });
+    setMsg({ kind: "ok", text: `➕ ${item.nameAr} — ${unit.name}` });
+  }
+
+  /**
+   * Manual tap on an item card. If the item has additional sale units (and is
+   * not weighed), open the unit picker so the cashier chooses قطعة / كرتونة /
+   * etc.; otherwise add the base unit directly.
+   */
+  function onItemTap(item: LocalItem) {
+    if (!item.isWeighed && item.units && item.units.length > 0) {
+      setUnitPickItem(item);
+      return;
+    }
+    void addToCart(item);
+  }
+
   function changeQty(lineId: string, delta: number) {
     setCart((prev) => prev
       .map((l) => l.lineId === lineId ? { ...l, qty: l.qty + delta } : l)
@@ -343,7 +411,9 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
         grandTotal: Number(totals.grandTotal.toFixed(2)),
         lines: cart.map((l) => ({
           itemId: l.item.id,
-          nameAr: l.weighed ? `${l.item.nameAr} (${l.qty.toFixed(3)} كجم)` : l.item.nameAr,
+          nameAr: l.weighed
+            ? `${l.item.nameAr} (${l.qty.toFixed(3)} كجم)`
+            : l.unit ? `${l.item.nameAr} (${l.unit.name})` : l.item.nameAr,
           qty: l.qty, unitPrice: l.item.salePrice, vatRate: l.item.vatRate,
         })),
       };
@@ -361,8 +431,11 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
         const { adjustStockShared } = await import("../lib/stock");
         try {
           for (const l of cart) {
-            await adjustStockShared(l.item.id, -l.qty);
-            applied.push({ itemId: l.item.id, qty: l.qty });
+            // Stock is kept in the BASE unit (pieces) — selling a carton
+            // deducts factor× pieces. weighed/base lines have factor undefined → ×1.
+            const baseQty = l.qty * (l.unit?.factor ?? 1);
+            await adjustStockShared(l.item.id, -baseQty);
+            applied.push({ itemId: l.item.id, qty: baseQty });
           }
         } catch (e: any) {
           // Roll back every decrement already applied in this checkout, then
@@ -406,7 +479,8 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
         const { adjustStockShared } = await import("../lib/stock");
         for (const l of cart) {
           try {
-            await adjustStockShared(l.item.id, -l.qty);
+            // Deduct in base units: carton line → factor× pieces.
+            await adjustStockShared(l.item.id, -(l.qty * (l.unit?.factor ?? 1)));
           } catch { /* single/host — non-fatal, ignore as before. */ }
         }
       }
@@ -419,7 +493,8 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           body.push({ text: l.item.nameAr });
           body.push({ text: `  ${l.qty.toFixed(3)} كجم × ${l.item.salePrice.toFixed(2)} = ${(l.item.salePrice * l.qty).toFixed(2)}` });
         } else {
-          body.push({ text: `${l.item.nameAr.padEnd(20, " ")} ×${l.qty}  ${(l.item.salePrice * l.qty).toFixed(2)}` });
+          const label = l.unit ? `${l.item.nameAr} (${l.unit.name})` : l.item.nameAr;
+          body.push({ text: `${label.padEnd(20, " ")} ×${l.qty}  ${(l.item.salePrice * l.qty).toFixed(2)}` });
         }
       }
       body.push({ text: "─".repeat(32) });
@@ -549,7 +624,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
                 const sev: "red" | "yellow" | null =
                   d === null ? null : d < 30 ? "red" : d < 90 ? "yellow" : null;
                 return (
-                  <button key={item.id} onClick={() => { void addToCart(item); }} style={S.itemCard}>
+                  <button key={item.id} onClick={() => { onItemTap(item); }} style={S.itemCard}>
                     {sev && (
                       <div style={{
                         position: "absolute" as const, top: 4, insetInlineStart: 4,
@@ -637,6 +712,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14, color: "#0f172a", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.item.nameAr}</div>
                     <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                      {l.unit && <span style={{ color: "#7c3aed", fontWeight: 700 }}>{l.unit.name} · </span>}
                       {l.item.salePrice.toFixed(2)} × {l.qty} = <strong style={{ color: "#0f172a" }}>{(l.item.salePrice * l.qty).toFixed(2)}</strong>
                     </div>
                   </div>
@@ -749,6 +825,67 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           }}
         />
       )}
+
+      {unitPickItem && (
+        <UnitPickerModal
+          item={unitPickItem}
+          onCancel={() => setUnitPickItem(null)}
+          onPick={(unit) => {
+            if (unit) void addUnitToCart(unitPickItem, unit);
+            else void addToCart(unitPickItem);
+            setUnitPickItem(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Unit picker modal (multi-unit pricing) ─────────────────────────
+// Opens on a manual tap of an item that has additional sale units. Lets
+// the cashier choose the base unit (قطعة) or any defined unit (نص كرتونة
+// / كرتونة …). `onPick(null)` = base unit; `onPick(unit)` = that unit.
+function UnitPickerModal({
+  item, onPick, onCancel,
+}: {
+  item: LocalItem;
+  onPick: (unit: ItemUnit | null) => void;
+  onCancel: () => void;
+}) {
+  const units = item.units ?? [];
+  return (
+    <div style={S.modalOverlay} onClick={onCancel}>
+      <div dir="rtl" style={{ ...S.modalCard, maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>
+          {item.nameAr}
+        </div>
+        <div style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>
+          اختر وحدة البيع
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {/* Base unit */}
+          <button onClick={() => onPick(null)} style={S.unitPickRow}>
+            <span style={{ fontWeight: 700, color: "#0f172a" }}>قطعة</span>
+            <span style={{ color: "#166534", fontWeight: 700 }}>{item.salePrice.toFixed(2)} ر.س</span>
+          </button>
+          {units.map((u) => (
+            <button key={u.id} onClick={() => onPick(u)} style={S.unitPickRow}>
+              <span style={{ fontWeight: 700, color: "#0f172a" }}>
+                {u.name}
+                <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 400, marginInlineStart: 6 }}>
+                  ({u.factor} قطعة)
+                </span>
+              </span>
+              <span style={{ color: "#166534", fontWeight: 700 }}>{u.price.toFixed(2)} ر.س</span>
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+          <button onClick={onCancel} style={S.modalBackBtn}>إلغاء</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1152,6 +1289,7 @@ const S = {
   modalField: { width: "100%", padding: "10px 12px", fontSize: 14, border: "1px solid #cbd5e1", borderRadius: 8, fontFamily: "inherit", boxSizing: "border-box" as const } as const,
   modalSaveBtn: { flex: 1, padding: "12px 16px", background: "linear-gradient(180deg, #16a34a 0%, #15803d 100%)", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: "inherit" } as const,
   modalBackBtn: { padding: "12px 16px", background: "#fff", color: "#475569", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 13, fontFamily: "inherit" } as const,
+  unitPickRow: { display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "14px 16px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, cursor: "pointer", fontSize: 15, fontFamily: "inherit" } as const,
 };
 
 // Wrapper around the modal body to fix padding when in "new customer" mode
