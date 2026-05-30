@@ -1,7 +1,7 @@
 // Items admin — list + add + edit + delete.
 // Uses lib/items.ts + lib/uom.ts.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import {
   listItems, createItem, updateItem, deleteItem, bulkImportLocalItems, updateItemExtended, updateItemWeighed,
   type LocalItem, type CreateItemInput,
@@ -10,6 +10,130 @@ import { listUom, getDefaultUom } from "../lib/uom";
 import { getAllStockShared, type StockMap } from "../lib/stock";
 import { getVertical, type Vertical } from "../lib/standalone";
 import { SearchCombobox, Pagination, pageSlice } from "./_adminUi";
+
+// ─── Excel-like grid: column defs, filtering, sorting, export ───────
+type ColKey = "name" | "qty" | "barcode" | "code" | "price" | "vat" | "source";
+type ColType = "text" | "number";
+interface ColDef {
+  key: ColKey;
+  label: string;
+  type: ColType;
+  width: number;
+  value: (it: LocalItem, s: StockMap) => string | number | null;
+  text: (it: LocalItem, s: StockMap) => string;
+}
+
+const ITEM_COLS: ColDef[] = [
+  { key: "name", label: "الاسم", type: "text", width: 240,
+    value: (it) => it.nameAr,
+    text: (it) => (it.nameEn ? `${it.nameAr} ${it.nameEn}` : it.nameAr) },
+  { key: "qty", label: "الكمية المتاحة", type: "number", width: 130,
+    value: (it, s) => s[it.id]?.qty ?? null,
+    text: (it, s) => { const v = s[it.id]; return v ? String(v.qty) : "—"; } },
+  { key: "barcode", label: "الباركود", type: "text", width: 160,
+    value: (it) => it.barcode ?? "",
+    text: (it) => it.barcode ?? "—" },
+  { key: "code", label: "الكود", type: "text", width: 130,
+    value: (it) => it.code ?? "",
+    text: (it) => it.code ?? "—" },
+  { key: "price", label: "السعر", type: "number", width: 110,
+    value: (it) => it.salePrice,
+    text: (it) => it.salePrice.toFixed(2) },
+  { key: "vat", label: "الضريبة", type: "number", width: 95,
+    value: (it) => it.vatRate,
+    text: (it) => `${it.vatRate}%` },
+  { key: "source", label: "المصدر", type: "text", width: 110,
+    value: (it) => (it.cloudId ? "سحابي" : "محلي"),
+    text: (it) => (it.cloudId ? "سحابي" : "محلي") },
+];
+
+type FilterOp = "contains" | "starts" | "eq" | "neq" | "gt" | "gte" | "lt" | "lte";
+interface AdvCond { id: number; field: ColKey; op: FilterOp; value: string; }
+
+const OP_LABELS: Record<FilterOp, string> = {
+  contains: "يحتوي", starts: "يبدأ بـ", eq: "يساوي", neq: "لا يساوي",
+  gt: "أكبر من", gte: "أكبر أو يساوي", lt: "أصغر من", lte: "أصغر أو يساوي",
+};
+function opsForType(t: ColType): FilterOp[] {
+  return t === "number" ? ["eq", "neq", "gt", "gte", "lt", "lte"] : ["contains", "starts", "eq", "neq"];
+}
+
+/** Number column quick-filter: supports >, >=, <, <=, =, a-b range, else substring. */
+function matchNumberExpr(val: number | null, expr: string): boolean {
+  const e = expr.trim();
+  if (!e) return true;
+  if (val == null) return false;
+  const range = e.match(/^(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)$/);
+  if (range) { const a = +range[1], b = +range[2]; return val >= Math.min(a, b) && val <= Math.max(a, b); }
+  const m = e.match(/^(>=|<=|>|<|=)?\s*(-?\d+(?:\.\d+)?)$/);
+  if (m) {
+    const op = m[1] || "="; const n = +m[2];
+    switch (op) { case ">": return val > n; case ">=": return val >= n; case "<": return val < n; case "<=": return val <= n; default: return val === n; }
+  }
+  return String(val).includes(e);
+}
+
+function matchColumnFilter(col: ColDef, it: LocalItem, s: StockMap, expr: string): boolean {
+  if (col.type === "number") return matchNumberExpr(col.value(it, s) as number | null, expr);
+  return col.text(it, s).toLowerCase().includes(expr.trim().toLowerCase());
+}
+
+function evalAdvCond(c: AdvCond, it: LocalItem, s: StockMap): boolean {
+  const col = ITEM_COLS.find((x) => x.key === c.field);
+  if (!col) return true;
+  const v = c.value.trim();
+  if (!v) return true;
+  if (c.op === "contains") return col.text(it, s).toLowerCase().includes(v.toLowerCase());
+  if (c.op === "starts") return col.text(it, s).toLowerCase().startsWith(v.toLowerCase());
+  if (col.type === "number") {
+    const raw = col.value(it, s) as number | null;
+    const n = Number(v);
+    if (raw == null || !Number.isFinite(n)) return false;
+    switch (c.op) {
+      case "eq": return raw === n;
+      case "neq": return raw !== n;
+      case "gt": return raw > n;
+      case "gte": return raw >= n;
+      case "lt": return raw < n;
+      case "lte": return raw <= n;
+      default: return true;
+    }
+  }
+  const t = col.text(it, s).toLowerCase();
+  const vv = v.toLowerCase();
+  if (c.op === "eq") return t === vv;
+  if (c.op === "neq") return t !== vv;
+  return true;
+}
+
+function itemsToCsv(list: LocalItem[], s: StockMap): string {
+  const headers = ["الاسم", "الاسم بالإنجليزية", "الكمية المتاحة", "الباركود", "الكود", "السعر", "الضريبة %", "المصدر"];
+  const esc = (x: string) => (/[",\n\r]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x);
+  const lines = [headers.map(esc).join(",")];
+  for (const it of list) {
+    const q = s[it.id];
+    lines.push([
+      it.nameAr ?? "",
+      it.nameEn ?? "",
+      q ? String(q.qty) : "",
+      it.barcode ?? "",
+      it.code ?? "",
+      it.salePrice.toFixed(2),
+      String(it.vatRate),
+      it.cloudId ? "سحابي" : "محلي",
+    ].map((c) => esc(String(c))).join(","));
+  }
+  return "\uFEFF" + lines.join("\r\n");
+}
+
+function downloadCsv(content: string, filename: string): void {
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 export default function ItemsAdmin() {
   const [rows, setRows] = useState<LocalItem[]>([]);
@@ -27,6 +151,21 @@ export default function ItemsAdmin() {
   const [importingEda, setImportingEda] = useState(false);
   useEffect(() => { void getVertical().then((v) => v && setVertical(v)); }, []);
   const isPharmacy = vertical === "pharmacy";
+
+  // ── Excel-like grid state (sort / per-column filters / advanced / widths) ──
+  const [sort, setSort] = useState<{ key: ColKey; dir: "asc" | "desc" } | null>(null);
+  const [columnFilters, setColumnFilters] = useState<Partial<Record<ColKey, string>>>({});
+  const [showFilters, setShowFilters] = useState(false);
+  const [conditions, setConditions] = useState<AdvCond[]>([]);
+  const [logic, setLogic] = useState<"and" | "or">("and");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
+    const m: Record<string, number> = { actions: 150 };
+    for (const c of ITEM_COLS) m[c.key] = c.width;
+    return m;
+  });
+  const measureCanvas = useRef<HTMLCanvasElement | null>(null);
+  const resizeState = useRef<{ key: string; startX: number; startW: number } | null>(null);
 
   // Click-to-edit from ExpiryReport — that page writes the item id into
   // sessionStorage and switches view; we read+consume it on mount so the
@@ -132,9 +271,106 @@ export default function ItemsAdmin() {
   }
   useEffect(() => { setPage(1); void refresh(); /* eslint-disable-next-line */ }, [search]);
 
-  const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
-  const pageRows = rows.slice(start, end);
+  const processed = useMemo(() => {
+    let list = rows.slice();
+    const fEntries = Object.entries(columnFilters).filter(([, v]) => (v ?? "").trim() !== "");
+    if (fEntries.length) {
+      list = list.filter((it) =>
+        fEntries.every(([k, v]) => {
+          const col = ITEM_COLS.find((c) => c.key === (k as ColKey));
+          return col ? matchColumnFilter(col, it, stockMap, v as string) : true;
+        }),
+      );
+    }
+    const active = conditions.filter((c) => c.value.trim() !== "");
+    if (active.length) {
+      list = list.filter((it) => {
+        const res = active.map((c) => evalAdvCond(c, it, stockMap));
+        return logic === "and" ? res.every(Boolean) : res.some(Boolean);
+      });
+    }
+    if (sort) {
+      const col = ITEM_COLS.find((c) => c.key === sort.key);
+      if (col) {
+        list.sort((a, b) => {
+          const va = col.value(a, stockMap);
+          const vb = col.value(b, stockMap);
+          if (va == null && vb == null) return 0;
+          if (va == null) return 1;
+          if (vb == null) return -1;
+          const cmp = col.type === "number" ? (va as number) - (vb as number) : String(va).localeCompare(String(vb), "ar");
+          return sort.dir === "asc" ? cmp : -cmp;
+        });
+      }
+    }
+    return list;
+  }, [rows, stockMap, columnFilters, conditions, logic, sort]);
+
+  const { start, end, page: clampedPage } = pageSlice(processed.length, page, pageSize);
+  const pageRows = processed.slice(start, end);
   useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
+  useEffect(() => { setPage(1); }, [columnFilters, conditions, logic, sort]);
+
+  const toggleSort = useCallback((key: ColKey) => {
+    setSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: "asc" };
+      if (prev.dir === "asc") return { key, dir: "desc" };
+      return null;
+    });
+  }, []);
+
+  const onResizeMove = useCallback((e: MouseEvent) => {
+    const r = resizeState.current;
+    if (!r) return;
+    const delta = r.startX - e.clientX;
+    setColWidths((prev) => ({ ...prev, [r.key]: Math.max(60, Math.min(700, r.startW + delta)) }));
+  }, []);
+  const onResizeEnd = useCallback(() => {
+    resizeState.current = null;
+    window.removeEventListener("mousemove", onResizeMove);
+    window.removeEventListener("mouseup", onResizeEnd);
+    document.body.style.cursor = "";
+  }, [onResizeMove]);
+  const onResizeStart = useCallback((e: React.MouseEvent, key: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizeState.current = { key, startX: e.clientX, startW: colWidths[key] ?? 120 };
+    window.addEventListener("mousemove", onResizeMove);
+    window.addEventListener("mouseup", onResizeEnd);
+    document.body.style.cursor = "col-resize";
+  }, [colWidths, onResizeMove, onResizeEnd]);
+
+  const autoFit = useCallback((key: ColKey) => {
+    const col = ITEM_COLS.find((c) => c.key === key);
+    if (!col) return;
+    if (!measureCanvas.current) measureCanvas.current = document.createElement("canvas");
+    const ctx = measureCanvas.current.getContext("2d");
+    if (!ctx) return;
+    ctx.font = "600 13px system-ui, -apple-system, sans-serif";
+    let max = ctx.measureText(col.label).width + 28;
+    ctx.font = "14px system-ui, -apple-system, sans-serif";
+    for (const it of processed) {
+      const w = ctx.measureText(col.text(it, stockMap)).width;
+      if (w > max) max = w;
+    }
+    setColWidths((prev) => ({ ...prev, [key]: Math.max(60, Math.min(700, Math.ceil(max) + 32)) }));
+  }, [processed, stockMap]);
+
+  const hasActiveView = !!sort
+    || Object.values(columnFilters).some((v) => (v ?? "").trim() !== "")
+    || conditions.some((c) => c.value.trim() !== "");
+  function clearAllViews() {
+    setSort(null);
+    setColumnFilters({});
+    setConditions([]);
+    setLogic("and");
+  }
+  function exportCsv() {
+    const csv = itemsToCsv(processed, stockMap);
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadCsv(csv, `items_${stamp}.csv`);
+    setToast({ kind: "ok", text: `تم تصدير ${processed.length} صنف إلى ملف Excel/CSV` });
+  }
 
   async function handleDelete(it: LocalItem) {
     if (!confirm(`حذف الصنف «${it.nameAr}»؟`)) return;
@@ -165,12 +401,90 @@ export default function ItemsAdmin() {
         </div>
       </div>
 
-      <input
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="بحث بالاسم أو الكود أو الباركود..."
-        style={S.search}
-      />
+      {/* ── Toolbar: quick search + Excel-like toggles + export ── */}
+      <div style={S.toolbar}>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="بحث سريع بالاسم أو الكود أو الباركود..."
+          style={{ ...S.search, marginBottom: 0, flex: 1, minWidth: 220 }}
+        />
+        <button onClick={() => setShowFilters((v) => !v)} style={showFilters ? S.btnToolActive : S.btnTool} title="إظهار صف فلتر تحت كل عمود">
+          ⛃ فلاتر الأعمدة
+        </button>
+        <button onClick={() => setShowAdvanced((v) => !v)} style={showAdvanced ? S.btnToolActive : S.btnTool} title="بحث متقدم بأكثر من شرط">
+          🔍 بحث متقدم
+        </button>
+        <button onClick={exportCsv} style={S.btnTool} title="تصدير القائمة المفلترة إلى Excel/CSV">
+          📊 تصدير Excel
+        </button>
+        {hasActiveView && (
+          <button onClick={clearAllViews} style={S.btnClear} title="إلغاء كل الفلاتر والترتيب">
+            🧹 مسح الكل
+          </button>
+        )}
+      </div>
+
+      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+        عدد النتائج: {processed.length}{processed.length !== rows.length ? ` من أصل ${rows.length}` : ""}
+      </div>
+
+      {/* ── Advanced multi-condition search ── */}
+      {showAdvanced && (
+        <div style={S.advPanel}>
+          <div style={S.advHeader}>
+            <strong style={{ fontSize: 14, color: "#0f172a" }}>🔍 بحث متقدم</strong>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+              <span style={{ color: "#64748b" }}>دمج الشروط:</span>
+              <button onClick={() => setLogic("and")} style={logic === "and" ? S.logicActive : S.logicBtn}>تحقّق الكل (و)</button>
+              <button onClick={() => setLogic("or")} style={logic === "or" ? S.logicActive : S.logicBtn}>تحقّق أي (أو)</button>
+            </div>
+          </div>
+          {conditions.length === 0 && (
+            <div style={{ fontSize: 13, color: "#94a3b8", padding: "6px 0" }}>
+              لا توجد شروط — اضغط «➕ إضافة شرط». مثال: السعر «أكبر من» 30 و الكمية المتاحة «أصغر من» 5.
+            </div>
+          )}
+          {conditions.map((c) => {
+            const col = ITEM_COLS.find((x) => x.key === c.field)!;
+            const ops = opsForType(col.type);
+            return (
+              <div key={c.id} style={S.condRow}>
+                <select
+                  value={c.field}
+                  onChange={(e) => {
+                    const field = e.target.value as ColKey;
+                    const nextCol = ITEM_COLS.find((x) => x.key === field)!;
+                    const validOps = opsForType(nextCol.type);
+                    setConditions((prev) => prev.map((p) => (p.id === c.id ? { ...p, field, op: validOps.includes(p.op) ? p.op : validOps[0] } : p)));
+                  }}
+                  style={S.condSelect}
+                >
+                  {ITEM_COLS.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
+                </select>
+                <select
+                  value={c.op}
+                  onChange={(e) => { const op = e.target.value as FilterOp; setConditions((prev) => prev.map((p) => (p.id === c.id ? { ...p, op } : p))); }}
+                  style={S.condSelect}
+                >
+                  {ops.map((o) => <option key={o} value={o}>{OP_LABELS[o]}</option>)}
+                </select>
+                <input
+                  value={c.value}
+                  type={col.type === "number" ? "number" : "text"}
+                  onChange={(e) => { const value = e.target.value; setConditions((prev) => prev.map((p) => (p.id === c.id ? { ...p, value } : p))); }}
+                  placeholder="القيمة"
+                  style={S.condInput}
+                />
+                <button onClick={() => setConditions((prev) => prev.filter((p) => p.id !== c.id))} style={S.condDel} title="حذف الشرط">🗑</button>
+              </div>
+            );
+          })}
+          <button onClick={() => setConditions((prev) => [...prev, { id: Date.now() + prev.length, field: "name", op: "contains", value: "" }])} style={S.btnAddCond}>
+            ➕ إضافة شرط
+          </button>
+        </div>
+      )}
 
       {toast && <div style={toast.kind === "ok" ? S.ok : S.err}>{toast.text}</div>}
 
@@ -185,47 +499,90 @@ export default function ItemsAdmin() {
 
       {loading ? <div style={S.empty}>... جاري التحميل</div>
       : rows.length === 0 ? <div style={S.empty}>لا توجد أصناف — أضف صنف جديد أو اسحب من السحابة</div>
+      : processed.length === 0 ? <div style={S.empty}>لا توجد نتائج مطابقة — جرّب تعديل الفلاتر أو «🧹 مسح الكل»</div>
       : (
-        <table style={S.table}>
-          <thead><tr>
-            <th style={S.th}>الاسم</th>
-            <th style={S.th}>الكمية المتاحة</th>
-            <th style={S.th}>الباركود</th>
-            <th style={S.th}>الكود</th>
-            <th style={S.th}>السعر</th>
-            <th style={S.th}>الضريبة</th>
-            <th style={S.th}>المصدر</th>
-            <th style={S.thRight}>إجراء</th>
-          </tr></thead>
-          <tbody>
-            {pageRows.map((it) => (
-              <tr key={it.id} style={S.tr}>
-                <td style={S.td}>
-                  <div style={{ fontWeight: 600 }}>{it.nameAr}</div>
-                  {it.nameEn && <div style={S.muted}>{it.nameEn}</div>}
-                </td>
-                <td style={S.td}>{renderQty(stockMap[it.id])}</td>
-                <td style={S.tdMono}>{it.barcode ?? "—"}</td>
-                <td style={S.tdMono}>{it.code ?? "—"}</td>
-                <td style={S.td}><strong>{it.salePrice.toFixed(2)}</strong> ر.س</td>
-                <td style={S.td}>{it.vatRate}%</td>
-                <td style={S.td}>
-                  <span style={it.cloudId ? S.badgeCloud : S.badgeLocal}>
-                    {it.cloudId ? `☁️ #${it.cloudId}` : "📱 محلي"}
-                  </span>
-                </td>
-                <td style={S.tdRight}>
-                  <button onClick={() => { setEditing(it); setShowForm(true); }} disabled={showForm} style={{ ...S.btnEdit, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>تعديل</button>
-                  <button onClick={() => handleDelete(it)} disabled={showForm} style={{ ...S.btnDel, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>حذف</button>
-                </td>
+        <div style={{ overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: 8, background: "#fff" }}>
+          <table style={S.tableFixed}>
+            <colgroup>
+              {ITEM_COLS.map((c) => <col key={c.key} style={{ width: colWidths[c.key] }} />)}
+              <col style={{ width: colWidths.actions }} />
+            </colgroup>
+            <thead>
+              <tr>
+                {ITEM_COLS.map((c) => {
+                  const active = sort?.key === c.key;
+                  return (
+                    <th key={c.key} style={S.thSort} onClick={() => toggleSort(c.key)} title="اضغط للترتيب تصاعدي/تنازلي">
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        {c.label}
+                        <span style={S.sortArrow}>{active ? (sort!.dir === "asc" ? "▲" : "▼") : "⇅"}</span>
+                      </span>
+                      <span
+                        onMouseDown={(e) => onResizeStart(e, c.key)}
+                        onDoubleClick={(e) => { e.stopPropagation(); autoFit(c.key); }}
+                        onClick={(e) => e.stopPropagation()}
+                        style={S.resizeHandle}
+                        title="اسحب لتغيير العرض — دبل كليك للضبط التلقائي"
+                      />
+                    </th>
+                  );
+                })}
+                <th style={S.thRight}>إجراء</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+              {showFilters && (
+                <tr>
+                  {ITEM_COLS.map((c) => (
+                    <th key={c.key} style={S.thFilter}>
+                      {c.key === "source" ? (
+                        <select value={columnFilters[c.key] ?? ""} onChange={(e) => setColumnFilters((prev) => ({ ...prev, [c.key]: e.target.value }))} style={S.filterInput}>
+                          <option value="">الكل</option>
+                          <option value="سحابي">سحابي</option>
+                          <option value="محلي">محلي</option>
+                        </select>
+                      ) : (
+                        <input
+                          value={columnFilters[c.key] ?? ""}
+                          onChange={(e) => setColumnFilters((prev) => ({ ...prev, [c.key]: e.target.value }))}
+                          placeholder={c.type === "number" ? "مثال: >30 أو 10-20" : "بحث..."}
+                          style={S.filterInput}
+                        />
+                      )}
+                    </th>
+                  ))}
+                  <th style={S.thFilter} />
+                </tr>
+              )}
+            </thead>
+            <tbody>
+              {pageRows.map((it) => (
+                <tr key={it.id} style={S.tr}>
+                  <td style={S.tdClip}>
+                    <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.nameAr}</div>
+                    {it.nameEn && <div style={{ ...S.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.nameEn}</div>}
+                  </td>
+                  <td style={S.td}>{renderQty(stockMap[it.id])}</td>
+                  <td style={S.tdMonoClip}>{it.barcode ?? "—"}</td>
+                  <td style={S.tdMonoClip}>{it.code ?? "—"}</td>
+                  <td style={S.td}><strong>{it.salePrice.toFixed(2)}</strong> ر.س</td>
+                  <td style={S.td}>{it.vatRate}%</td>
+                  <td style={S.td}>
+                    <span style={it.cloudId ? S.badgeCloud : S.badgeLocal}>
+                      {it.cloudId ? `☁️ #${it.cloudId}` : "📱 محلي"}
+                    </span>
+                  </td>
+                  <td style={S.tdRight}>
+                    <button onClick={() => { setEditing(it); setShowForm(true); }} disabled={showForm} style={{ ...S.btnEdit, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>تعديل</button>
+                    <button onClick={() => handleDelete(it)} disabled={showForm} style={{ ...S.btnDel, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>حذف</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
-      {!loading && rows.length > 0 && (
-        <Pagination total={rows.length} page={page} pageSize={pageSize}
+      {!loading && processed.length > 0 && (
+        <Pagination total={processed.length} page={page} pageSize={pageSize}
           onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />
       )}
 
@@ -868,4 +1225,25 @@ const S = {
   modal: { background: "#fff", borderRadius: 12, padding: 24, maxWidth: 560, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,.25)" } as const,
   modalTitle: { margin: "0 0 16px", fontSize: 18, color: "#0f172a" } as const,
   input: { width: "100%", padding: "10px 12px", fontSize: 14, border: "1px solid #cbd5e1", borderRadius: 6, fontFamily: "inherit", boxSizing: "border-box" as const } as const,
+  toolbar: { display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" as const } as const,
+  btnTool: { padding: "9px 14px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" as const } as const,
+  btnToolActive: { padding: "9px 14px", background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" as const } as const,
+  btnClear: { padding: "9px 14px", background: "#fff", color: "#b91c1c", border: "1px solid #fecaca", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" as const } as const,
+  advPanel: { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: 14, marginBottom: 16 } as const,
+  advHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap" as const, gap: 8 } as const,
+  logicBtn: { padding: "5px 10px", background: "#fff", color: "#475569", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontSize: 12 } as const,
+  logicActive: { padding: "5px 10px", background: "#1d4ed8", color: "#fff", border: "1px solid #1d4ed8", borderRadius: 6, cursor: "pointer", fontSize: 12 } as const,
+  condRow: { display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" as const } as const,
+  condSelect: { padding: "8px 10px", fontSize: 13, border: "1px solid #cbd5e1", borderRadius: 6, fontFamily: "inherit", background: "#fff", minWidth: 130 } as const,
+  condInput: { padding: "8px 10px", fontSize: 13, border: "1px solid #cbd5e1", borderRadius: 6, fontFamily: "inherit", flex: 1, minWidth: 120, boxSizing: "border-box" as const } as const,
+  condDel: { padding: "7px 11px", background: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer", fontSize: 14 } as const,
+  btnAddCond: { marginTop: 4, padding: "8px 14px", background: "#fff", color: "#1d4ed8", border: "1px dashed #93c5fd", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 } as const,
+  tableFixed: { borderCollapse: "collapse" as const, tableLayout: "fixed" as const, width: "max-content", minWidth: "100%" } as const,
+  thSort: { position: "relative" as const, textAlign: "right" as const, padding: "12px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: 13, color: "#475569", fontWeight: 600, cursor: "pointer", userSelect: "none" as const, whiteSpace: "nowrap" as const } as const,
+  sortArrow: { fontSize: 10, color: "#94a3b8" } as const,
+  resizeHandle: { position: "absolute" as const, insetInlineStart: 0, top: 0, bottom: 0, width: 7, cursor: "col-resize", userSelect: "none" as const } as const,
+  thFilter: { padding: "6px 8px", background: "#f1f5f9", borderBottom: "1px solid #e2e8f0" } as const,
+  filterInput: { width: "100%", padding: "5px 8px", fontSize: 12, border: "1px solid #cbd5e1", borderRadius: 5, fontFamily: "inherit", boxSizing: "border-box" as const, background: "#fff" } as const,
+  tdClip: { padding: "12px 14px", fontSize: 14, color: "#0f172a", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const } as const,
+  tdMonoClip: { padding: "12px 14px", fontSize: 13, color: "#0f172a", fontFamily: "ui-monospace, monospace", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const } as const,
 };
