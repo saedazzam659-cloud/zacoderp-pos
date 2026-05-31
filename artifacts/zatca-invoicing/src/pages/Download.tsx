@@ -110,11 +110,33 @@ export default function Download() {
                       {releaseQ.data.fallback && <Badge className="bg-amber-100 text-amber-700">إصدار دولي</Badge>}
                       <span className="text-sm text-muted-foreground">نُشر {new Date(releaseQ.data.publishedAt).toLocaleDateString("ar-SA")}</span>
                     </div>
-                    {releaseQ.data.releaseNotes && (
-                      <div className="text-sm text-muted-foreground bg-slate-50 p-3 rounded-md whitespace-pre-wrap">
-                        {releaseQ.data.releaseNotes}
+                    <div className="rounded-lg border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-4 space-y-3">
+                      <div className="flex items-center gap-2 text-blue-700 font-bold">
+                        <Monitor className="h-5 w-5" /> نظام نقاط بيع متكامل لسطح المكتب
                       </div>
-                    )}
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        حلٌّ احترافي شامل يدير دورة عملك بالكامل — من المبيعات حتى المحاسبة — في منظومة واحدة،
+                        يعمل أونلاين وأوفلاين بمزامنة سحابية فورية لتظل بياناتك محدّثة في كل فروعك.
+                      </p>
+                      <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                        {[
+                          "إدارة المبيعات والمشتريات والمخزون",
+                          "فواتير ضريبية متوافقة مع هيئة الزكاة (ZATCA)",
+                          "تقارير محاسبية ومالية لحظية",
+                          "دعم الموازين الإلكترونية وقارئ الباركود",
+                          "تعدد الفروع والكاشيرات والعملات",
+                          "يعمل بدون إنترنت مع مزامنة تلقائية عند الاتصال",
+                        ].map((f) => (
+                          <li key={f} className="flex items-start gap-2 text-muted-foreground">
+                            <CheckCircle2 className="h-4 w-4 text-green-600 mt-0.5 shrink-0" />
+                            <span>{f}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      <div className="border-t pt-3 text-xs text-muted-foreground">
+                        تطوير وإدارة فريق عمل متكامل — <span className="font-semibold text-foreground">م/ كرم عزام</span>
+                      </div>
+                    </div>
                     <div className="text-xs text-muted-foreground flex flex-wrap gap-4">
                       <span><HardDrive className="inline h-3 w-3 ml-1" /> الحجم: {sizeStr(releaseQ.data.fileSizeBytes)}</span>
                       {releaseQ.data.checksumSha256 && (
