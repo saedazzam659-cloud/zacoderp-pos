@@ -145,6 +145,10 @@ export const companiesTable = pgTable("companies", {
   // which one is preselected when the modal opens.
   printEnabledTemplates: jsonb("print_enabled_templates").$type<number[]>(),
   printDefaultTemplate:  integer("print_default_template").notNull().default(1),
+  // Default language for invoice PRINT output ("ar" | "en"). Currently
+  // honoured by template 14 («الأصلي») only; the per-print toggle in
+  // SalesPrintModal can override it for a single print job.
+  invoicePrintLanguage:  text("invoice_print_language").notNull().default("ar"),
   // Which date the `{MM}`/`{YY}`/`{YYYY}` tokens in a document-number
   // sequence pattern should read from:
   //   - "system"   = today's date at the moment of issuance (default,

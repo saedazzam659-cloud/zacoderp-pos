@@ -144,6 +144,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     faDisposalGainAccountId, faDisposalLossAccountId,
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
     printEnabledTemplates, printDefaultTemplate,
+    invoicePrintLanguage,
     sequenceDateSource,
     // Per-doc-type print preferences (auto-print toggle + template name).
     // Each `printAutoAfterSave*` is a boolean; each `printTemplate*` is
@@ -182,6 +183,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     printFooterInvoice?: string; printFooterReturn?: string;
     printShowTimestamp?: boolean; printShowZatcaBrand?: boolean;
     printEnabledTemplates?: number[] | null; printDefaultTemplate?: number;
+    invoicePrintLanguage?: string;
     sequenceDateSource?: string;
     printAutoAfterSaveSales?: boolean; printAutoAfterSaveReceipt?: boolean;
     printAutoAfterSavePayment?: boolean; printAutoAfterSaveJournal?: boolean;
@@ -275,6 +277,13 @@ router.patch("/:id/general-settings", async (req, res) => {
       res.status(400).json({ error: "النموذج الافتراضي يجب أن يكون رقماً بين 1 و 14" }); return;
     }
     updates.printDefaultTemplate = n;
+  }
+  if (invoicePrintLanguage !== undefined) {
+    const v = String(invoicePrintLanguage);
+    if (v !== "ar" && v !== "en") {
+      res.status(400).json({ error: "لغة طباعة الفاتورة يجب أن تكون 'ar' أو 'en'" }); return;
+    }
+    updates.invoicePrintLanguage = v;
   }
   if (sequenceDateSource !== undefined) {
     const v = String(sequenceDateSource);

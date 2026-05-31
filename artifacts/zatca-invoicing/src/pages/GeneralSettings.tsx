@@ -1957,6 +1957,7 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
     printTemplateReceipt:  company.printTemplateReceipt ?? "a4",
     printTemplatePayment:  company.printTemplatePayment ?? "a4",
     printTemplateJournal:  company.printTemplateJournal ?? "a4",
+    invoicePrintLanguage:  company.invoicePrintLanguage ?? "ar",
   });
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -1988,6 +1989,7 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
                   printTemplateReceipt: data.printTemplateReceipt,
                   printTemplatePayment: data.printTemplatePayment,
                   printTemplateJournal: data.printTemplateJournal,
+                  invoicePrintLanguage: data.invoicePrintLanguage,
                 },
               }
             : u,
@@ -2045,6 +2047,29 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
               </div>
             </div>
           ))}
+        </div>
+      </div>
+
+      <div className="rounded-xl border bg-card p-5 space-y-4">
+        <div>
+          <h2 className="font-semibold text-base flex items-center gap-2">
+            <Printer className="h-4 w-4 text-muted-foreground" />
+            لغة طباعة الفاتورة (نموذج «الأصلي»)
+          </h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            تحدد اللغة الافتراضية عند طباعة الفاتورة بنموذج «الأصلي». في الوضع الإنجليزي تُطبع الفاتورة من اليسار لليمين بعناوين وأسماء أصناف بالإنجليزية (تُجلب أسماء الأصناف الإنجليزية مباشرةً من بطاقة الصنف). يمكن تجاوز هذا الاختيار لكل عملية طباعة من نافذة الطباعة نفسها.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Label className="text-xs text-muted-foreground whitespace-nowrap">اللغة الافتراضية</Label>
+          <select
+            value={form.invoicePrintLanguage}
+            onChange={(e) => setForm((p) => ({ ...p, invoicePrintLanguage: e.target.value }))}
+            className="h-9 w-[220px] rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="ar">العربية (افتراضي)</option>
+            <option value="en">English</option>
+          </select>
         </div>
       </div>
 

@@ -1,11 +1,15 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Printer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { safeLogoSrc } from "@/lib/export";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 import QRCode from "qrcode";
+
+const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 // Number formatter — uses Arabic-Indic digits with a deterministic
 // separator scheme so output is identical on every device.
@@ -39,6 +43,22 @@ const NUM_FMT = new Intl.NumberFormat("ar-SA-u-nu-arab", { minimumFractionDigits
 //   U+FEFF  Zero-width no-break space (BOM)
 const STRIP_INVISIBLE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 const fmt = (n: any) => NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
+// Latin-digit formatter for English print mode — Arabic-Indic numerals
+// (ar-SA-u-nu-arab) look broken inside an otherwise-English invoice.
+const EN_NUM_FMT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtEn = (n: any) => EN_NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
+// Build the Arabic-name → English-name lookup map from an inventory item list.
+// Keys are normalised (trimmed + lower-cased) Arabic names; only items that
+// actually carry an English name are included.
+function buildEnNamesMap(items: any[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const it of (items ?? [])) {
+    const ar = (it?.nameAr ?? "").toString().trim().toLowerCase();
+    const en = (it?.nameEn ?? "").toString().trim();
+    if (ar && en) m.set(ar, en);
+  }
+  return m;
+}
 
 // ── Arabic number-to-words (tafqeet) ─────────────────────────────────────────
 // Copied verbatim from voucherPrint.ts so the print modal stays self-contained
@@ -1667,6 +1687,69 @@ function template13(d: PrintData): string {
   </div></body></html>`;
 }
 
+// ── Print i18n (currently honoured by template 14 «الأصلي» only) ────────────
+// Central label dictionary so future templates can opt into bilingual print
+// by threading the same `getPrintLabels(lang)` map. English mode flips the
+// document to LTR and uses English column / field labels; item names are
+// resolved live from the inventory catalogue (Arabic name → English name)
+// by the modal and passed in via `d._enNames`.
+export type PrintLang = "ar" | "en";
+interface PrintLabels {
+  companyInfo: string; vatNumber: string; crNumber: string; phone: string;
+  customerInfo: string; accountCode: string; customerAddress: string;
+  validUntil: string; reference: string;
+  colItem: string; colQty: string; colFree: string; colUnit: string;
+  colUnitPrice: string; colDiscount: string; colDiscountValue: string;
+  colVat: string; colVatValue: string; colTotal: string;
+  lineNotesLbl: string; notesLbl: string;
+  createdAtLbl: string; byLbl: string; printedLbl: string;
+  companyNameFallback: string; none: string;
+  totalItemsLbl: string; totalQtyLbl: string; freeWord: string;
+}
+function getPrintLabels(lang: PrintLang): PrintLabels {
+  if (lang === "en") {
+    return {
+      companyInfo: "Company", vatNumber: "VAT No.", crNumber: "CR No.", phone: "Phone",
+      customerInfo: "Customer", accountCode: "Account Code", customerAddress: "Address",
+      validUntil: "Valid until", reference: "Ref",
+      colItem: "Item / Service", colQty: "Qty", colFree: "Free", colUnit: "Unit",
+      colUnitPrice: "Unit Price", colDiscount: "Disc.", colDiscountValue: "Disc. Value",
+      colVat: "VAT", colVatValue: "VAT Value", colTotal: "Total",
+      lineNotesLbl: "Notes:", notesLbl: "Notes:",
+      createdAtLbl: "Created", byLbl: "By", printedLbl: "Printed",
+      companyNameFallback: "Company Name", none: "—",
+      totalItemsLbl: "Total Items", totalQtyLbl: "Total Quantity (incl. free)", freeWord: "free",
+    };
+  }
+  return {
+    companyInfo: "بيانات الشركة", vatNumber: "الرقم الضريبي:", crNumber: "السجل التجاري:", phone: "الهاتف:",
+    customerInfo: "بيانات العميل", accountCode: "كود الحساب:", customerAddress: "عنوان العميل:",
+    validUntil: "صالح حتى", reference: "مرجع",
+    colItem: "الصنف / الخدمة", colQty: "الكمية", colFree: "مجاني", colUnit: "الوحدة",
+    colUnitPrice: "سعر الوحدة", colDiscount: "الخصم", colDiscountValue: "قيمة الخصم",
+    colVat: "الضريبة", colVatValue: "قيمة الضريبة", colTotal: "الإجمالي",
+    lineNotesLbl: "ملاحظات:", notesLbl: "ملاحظات:",
+    createdAtLbl: "تاريخ الإنشاء", byLbl: "بواسطة", printedLbl: "طُبع",
+    companyNameFallback: "اسم الشركة", none: "—",
+    totalItemsLbl: "إجمالي أصناف الفاتورة", totalQtyLbl: "إجمالي كميات الفاتورة (شاملة المجانية)", freeWord: "مجاني",
+  };
+}
+// English-only summary footer (no Arabic tafqeet) used when printing template
+// 14 in English. Mirrors the layout of `summaryFooterHtml` minus amountWords.
+function summaryFooterHtmlEn(t: FullTotals): string {
+  return `
+    <div style="margin-top:10px;border:1px solid #e5e7eb;border-radius:6px;padding:8px 12px;font-size:11px;background:#fafafa;">
+      <div style="display:flex;justify-content:space-between;border-top:1px dashed #cbd5e1;padding-top:6px;">
+        <span>Total Items</span>
+        <span class="mono" style="font-weight:700;">${t.itemsCount}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:3px;">
+        <span>Total Quantity (incl. free)</span>
+        <span class="mono" style="font-weight:700;">${fmtEn(t.totalQty + t.totalFreeQty)}${t.totalFreeQty > 0 ? ` <span style="color:#b45309;font-weight:600;">(${fmtEn(t.totalFreeQty)} free)</span>` : ""}</span>
+      </div>
+    </div>`;
+}
+
 // ── Template 14: الأصلي ─────────────────────────────────────────────────────
 // Per-spec layout requested by the user:
 //   • Top-right  : company info column (AR + EN name, VAT, CR, phone)
@@ -1682,6 +1765,29 @@ function template13(d: PrintData): string {
 // a simplified (B2C) invoice. Returns/orders/quotations are handled too.
 function template14(d: PrintData): string {
   const { doc, lines, customer, company } = d;
+  // ── Language ───────────────────────────────────────────────────────────
+  // `_lang` / `_enNames` are injected by SalesPrintModal right before this
+  // builder runs. English mode flips to LTR, English labels, and live
+  // English item names (Arabic name → English name lookup map).
+  const lang: PrintLang = (d as any)._lang === "en" ? "en" : "ar";
+  const isEn = lang === "en";
+  const L = getPrintLabels(lang);
+  const enNames: Map<string, string> = (d as any)._enNames instanceof Map ? (d as any)._enNames : new Map();
+  const dir = isEn ? "ltr" : "rtl";
+  const locale = isEn ? "en-GB" : "ar-SA";
+  // Number formatter: Latin digits in EN mode, Arabic-Indic in AR mode.
+  const nf = isEn ? fmtEn : fmt;
+  // Bilingual totals label: AR mode keeps the "عربي — English" pairing,
+  // EN mode shows English only.
+  const tl = (ar: string, en: string) => (isEn ? en : `${ar} — ${en}`);
+  // Item display name — English lookup by Arabic name when printing in EN.
+  const itemDisplayName = (l: any): string => {
+    const arName = (l.itemName ?? l.itemCode ?? "").toString();
+    if (!isEn) return arName || L.none;
+    const key = arName.trim().toLowerCase();
+    const en = key ? enNames.get(key) : undefined;
+    return en || arName || L.none;
+  };
   const totals = computeFullTotals(doc, lines);
   const safeLogo = safeLogoSrc(company?.logo);
   const isReturn = d.type === "return";
@@ -1702,11 +1808,13 @@ function template14(d: PrintData): string {
               : isQuot   ? "Quotation"
               : isOrder  ? "Sales Order"
               :            (isSimplified ? "Simplified Tax Invoice" : "Tax Invoice");
+  const titleMain = isEn ? titleEn : titleAr;
+  const titleSub  = isEn ? titleAr : titleEn;
   const docNo = doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`;
   const dateStr = docDate(doc, d.type);
-  const payLabel = doc.paymentType === "cash" ? "نقداً"
-                : doc.paymentType === "bank" ? "على حساب"
-                : "آجل";
+  const payLabel = isEn
+    ? (doc.paymentType === "cash" ? "Cash" : doc.paymentType === "bank" ? "On Account" : "Credit")
+    : (doc.paymentType === "cash" ? "نقداً" : doc.paymentType === "bank" ? "على حساب" : "آجل");
   // Customer "account code" — prefer an explicit code, else fall back to the
   // chart-of-accounts link, else the customer id (#123) so the field never
   // shows a blank placeholder.
@@ -1725,7 +1833,7 @@ function template14(d: PrintData): string {
     try {
       const dt = new Date(createdAtRaw);
       if (!isNaN(dt.getTime())) {
-        createdAtStr = dt.toLocaleString("ar-SA", {
+        createdAtStr = dt.toLocaleString(locale, {
           year: "numeric", month: "2-digit", day: "2-digit",
           hour: "2-digit", minute: "2-digit",
         });
@@ -1756,7 +1864,7 @@ function template14(d: PrintData): string {
   // structure (thead row, etc.) shows even when there are no items.
   if (lineChunks.length === 0) lineChunks.push([]);
 
-  const docHead = `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${titleAr} — ${docNo}</title>
+  const docHead = `<!DOCTYPE html><html dir="${dir}"><head><meta charset="UTF-8"><title>${titleMain} — ${docNo}</title>
   ${baseStyles("#0f172a")}
   <style>
     /* "النموذج الأصلي" — reasonable page margins so the running header
@@ -1898,6 +2006,12 @@ function template14(d: PrintData): string {
       border-radius:8px; padding:8px 12px; font-size:11px; color:#334155;
     }
     .notes-box b { color:var(--ink); }
+    /* English (LTR) mode — flip table + field alignment so the layout
+       reads naturally left-to-right while keeping the same structure. */
+    html[dir="ltr"] .lines-chunk th,
+    html[dir="ltr"] .lines-chunk td { text-align:left; }
+    html[dir="ltr"] .line-notes td { border-right:none; border-left:3px solid var(--gold2); }
+    html[dir="ltr"] .audit-footer .grp:last-child { text-align:right !important; }
   </style>
   </head>`;
 
@@ -1907,12 +2021,12 @@ function template14(d: PrintData): string {
     <div class="hdr">
       <!-- COMPANY (right side in RTL — first in DOM) -->
       <div class="col-co">
-        <div class="label">بيانات الشركة</div>
-        <div class="co-name-ar">${company?.nameAr ?? "اسم الشركة"}</div>
-        ${company?.nameEn ? `<div class="co-name-en">${company.nameEn}</div>` : ""}
-        ${company?.vatNumber ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${company.vatNumber}</span></div>` : ""}
-        ${company?.crNumber  ? `<div class="row"><b>السجل التجاري:</b><span class="mono">${company.crNumber}</span></div>` : ""}
-        ${(company as any)?.phone ? `<div class="row"><b>الهاتف:</b><span class="mono">${(company as any).phone}</span></div>` : ""}
+        <div class="label">${L.companyInfo}</div>
+        <div class="co-name-ar">${(isEn ? (company?.nameEn ?? company?.nameAr) : company?.nameAr) ?? L.companyNameFallback}</div>
+        ${(isEn ? company?.nameAr : company?.nameEn) ? `<div class="co-name-en">${isEn ? company?.nameAr : company?.nameEn}</div>` : ""}
+        ${company?.vatNumber ? `<div class="row"><b>${L.vatNumber}</b><span class="mono">${company.vatNumber}</span></div>` : ""}
+        ${company?.crNumber  ? `<div class="row"><b>${L.crNumber}</b><span class="mono">${company.crNumber}</span></div>` : ""}
+        ${(company as any)?.phone ? `<div class="row"><b>${L.phone}</b><span class="mono">${(company as any).phone}</span></div>` : ""}
       </div>
 
       <!-- LOGO + TITLE + META (center) -->
@@ -1923,27 +2037,27 @@ function template14(d: PrintData): string {
             : `<div class="logo-fallback">${(company?.nameAr ?? company?.nameEn ?? "?").trim().slice(0, 2)}</div>`}
         </div>
         <div class="doc-title-pill">
-          ${titleAr}
-          <span class="en">${titleEn}</span>
+          ${titleMain}
+          <span class="en">${titleSub}</span>
         </div>
         <div class="meta-pills">
           <span class="pill no"><b>${docNo}</b></span>
           ${!isNonPaymentDoc(d.type) ? `<span class="pill pay"><b>${payLabel}</b></span>` : ""}
           <span class="pill">📅 <b>${dateStr}</b></span>
-          ${isQuot && doc.validUntil ? `<span class="pill">صالح حتى <b>${doc.validUntil}</b></span>` : ""}
-          ${isReturn && doc.invoiceId ? `<span class="pill">مرجع: <b>${doc.invoiceId}</b></span>` : ""}
+          ${isQuot && doc.validUntil ? `<span class="pill">${L.validUntil} <b>${doc.validUntil}</b></span>` : ""}
+          ${isReturn && doc.invoiceId ? `<span class="pill">${L.reference}: <b>${doc.invoiceId}</b></span>` : ""}
         </div>
       </div>
 
       <!-- CUSTOMER (left side in RTL — last in DOM) -->
       <div class="col-cu">
-        <div class="label">بيانات العميل</div>
-        <div class="cu-name">${customer?.nameAr ?? customer?.nameEn ?? doc.buyerName ?? "—"}</div>
+        <div class="label">${L.customerInfo}</div>
+        <div class="cu-name">${(isEn ? (customer?.nameEn ?? customer?.nameAr) : (customer?.nameAr ?? customer?.nameEn)) ?? doc.buyerName ?? L.none}</div>
         ${(customer?.vatNumber ?? doc.buyerVatNumber)
-          ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
-        ${acctCode ? `<div class="row"><b>كود الحساب:</b><span class="mono">${acctCode}</span></div>` : ""}
-        ${customer?.phone ? `<div class="row"><b>الهاتف:</b><span class="mono">${customer.phone}</span></div>` : ""}
-        ${bldgNo ? `<div class="row"><b>عنوان العميل:</b><span class="mono">${bldgNo}</span></div>` : ""}
+          ? `<div class="row"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
+        ${acctCode ? `<div class="row"><b>${L.accountCode}</b><span class="mono">${acctCode}</span></div>` : ""}
+        ${customer?.phone ? `<div class="row"><b>${L.phone}</b><span class="mono">${customer.phone}</span></div>` : ""}
+        ${bldgNo ? `<div class="row"><b>${L.customerAddress}</b><span class="mono">${bldgNo}</span></div>` : ""}
       </div>
     </div>`;
 
@@ -1951,11 +2065,11 @@ function template14(d: PrintData): string {
   const footerHtml = `
     <div class="audit-footer">
       <div class="grp">
-        <span>تاريخ الإنشاء: <b>${createdAtStr}</b></span>
-        <span>بواسطة: <b>${userName}</b></span>
+        <span>${L.createdAtLbl}: <b>${createdAtStr}</b></span>
+        <span>${L.byLbl}: <b>${userName}</b></span>
       </div>
       <div class="grp" style="text-align:left;">
-        <span>طُبع: <b>${new Date().toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" })}</b></span>
+        <span>${L.printedLbl}: <b>${new Date().toLocaleString(locale, { dateStyle: "short", timeStyle: "short" })}</b></span>
         <span style="color:var(--gold);font-weight:700;">ZATCA e-Invoice</span>
       </div>
     </div>`;
@@ -1974,16 +2088,16 @@ function template14(d: PrintData): string {
     <thead>
       <tr>
         <th style="width:30px">#</th>
-        <th>الصنف / الخدمة</th>
-        <th>الكمية</th>
-        ${showFree ? `<th style="color:#b45309;">مجاني</th>` : ""}
-        <th>الوحدة</th>
-        <th>سعر الوحدة</th>
-        ${showDisc ? `<th>الخصم</th>` : ""}
-        ${showDisc ? `<th>قيمة الخصم</th>` : ""}
-        <th>الضريبة</th>
-        <th>قيمة الضريبة</th>
-        <th>الإجمالي</th>
+        <th>${L.colItem}</th>
+        <th>${L.colQty}</th>
+        ${showFree ? `<th style="color:#b45309;">${L.colFree}</th>` : ""}
+        <th>${L.colUnit}</th>
+        <th>${L.colUnitPrice}</th>
+        ${showDisc ? `<th>${L.colDiscount}</th>` : ""}
+        ${showDisc ? `<th>${L.colDiscountValue}</th>` : ""}
+        <th>${L.colVat}</th>
+        <th>${L.colVatValue}</th>
+        <th>${L.colTotal}</th>
       </tr>
     </thead>`;
 
@@ -2001,24 +2115,24 @@ function template14(d: PrintData): string {
       const tot  = sub + vat;
       const freeQ = Number(l.freeQty) || 0;
       const discPctCell = discPct > 0 ? `${discPct}%` : "—";
-      const discValCell = discAmtEff > 0 ? fmt(discAmtEff) : "—";
+      const discValCell = discAmtEff > 0 ? nf(discAmtEff) : "—";
       const noteText = (l.notes ?? l.description ?? "").toString().trim();
       const itemRow = `
         <tr class="item-row">
           <td>${idx + 1}</td>
-          <td>${l.itemName ?? l.itemCode ?? "—"}</td>
+          <td>${itemDisplayName(l)}</td>
           <td class="mono">${Math.round(qty)}</td>
           ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
           <td>${l.unit ?? "—"}</td>
-          <td class="mono">${fmt(l.unitPrice)}</td>
+          <td class="mono">${nf(l.unitPrice)}</td>
           ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discPctCell}</td>` : ""}
           ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discValCell}</td>` : ""}
           <td class="mono">${l.vatRate ?? 15}%</td>
-          <td class="mono">${fmt(vat)}</td>
-          <td class="mono" style="font-weight:600;">${fmt(tot)}</td>
+          <td class="mono">${nf(vat)}</td>
+          <td class="mono" style="font-weight:600;">${nf(tot)}</td>
         </tr>`;
       const notesRow = noteText
-        ? `<tr class="line-notes"><td colspan="${colCount}"><span class="nlbl">📝 ملاحظات:</span>${noteText}</td></tr>`
+        ? `<tr class="line-notes"><td colspan="${colCount}"><span class="nlbl">📝 ${L.lineNotesLbl}</span>${noteText}</td></tr>`
         : "";
       return itemRow + notesRow;
     }).join("");
@@ -2069,12 +2183,12 @@ function template14(d: PrintData): string {
           <!-- Bottom : totals + QR (only after the last chunk) ───────── -->
           <div class="bottom">
             <div class="totals-card">
-              <div class="__totalsRow"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(totals.subtotalPreDiscount)}</span></div>
-              <div class="__totalsRow"><span>مبلغ الخصم — Discount</span><span class="mono" style="color:#b91c1c;">${fmt(totals.discountTotal)}</span></div>
-              <div class="__totalsRow"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(totals.netPreVat)}</span></div>
-              <div class="__totalsRow"><span>ضريبة القيمة المضافة — VAT</span><span class="mono" style="color:#b45309;">${fmt(totals.vatAmount)}</span></div>
-              <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(totals.grandTotal)}</span></div>
-              ${summaryFooterHtml(totals)}
+              <div class="__totalsRow"><span>${tl("الإجمالي قبل الخصم", "Subtotal")}</span><span class="mono">${nf(totals.subtotalPreDiscount)}</span></div>
+              <div class="__totalsRow"><span>${tl("مبلغ الخصم", "Discount")}</span><span class="mono" style="color:#b91c1c;">${nf(totals.discountTotal)}</span></div>
+              <div class="__totalsRow"><span>${tl("الصافي بدون الضريبة", "Net")}</span><span class="mono">${nf(totals.netPreVat)}</span></div>
+              <div class="__totalsRow"><span>${tl("ضريبة القيمة المضافة", "VAT")}</span><span class="mono" style="color:#b45309;">${nf(totals.vatAmount)}</span></div>
+              <div class="__totalsRow grand"><span>${tl("الصافي شامل الضريبة", "Total")}</span><span class="mono">${nf(totals.grandTotal)}</span></div>
+              ${isEn ? summaryFooterHtmlEn(totals) : summaryFooterHtml(totals)}
             </div>
             <div class="qr-card">
               ${qrImgHtml(d, { size: 150 })}
@@ -2082,7 +2196,7 @@ function template14(d: PrintData): string {
             </div>
           </div>
 
-          ${doc.notes ? `<div class="notes-box"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
+          ${doc.notes ? `<div class="notes-box"><b>${L.notesLbl}</b> ${doc.notes}</div>` : ""}
         </td></tr>
       </tbody>
     </table>
@@ -2157,6 +2271,36 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   }
   const [selected, setSelected] = useState<number>(resolveInitialId);
   const { toast } = useToast();
+  const { user, token } = useAuth() as any;
+
+  // ── Print language (template 14 «الأصلي» only, for now) ───────────────
+  // Seed from the company default; the user can override per print job via
+  // the toggle in the modal header. Re-syncs when the company default
+  // changes underneath us.
+  const [printLang, setPrintLang] = useState<PrintLang>(
+    () => (companyCfg.invoicePrintLanguage === "en" ? "en" : "ar"),
+  );
+  useEffect(() => {
+    setPrintLang(companyCfg.invoicePrintLanguage === "en" ? "en" : "ar");
+  }, [companyCfg.invoicePrintLanguage]);
+
+  // Live inventory catalogue → English item-name lookup. Only fetched when
+  // we're actually printing in English (and the modal is open).
+  const itemsCompanyId = companyCfg?.id ?? user?.company?.id;
+  const enItemsQuery = useQuery({
+    queryKey: ["print-en-items", itemsCompanyId],
+    enabled: !!open && printLang === "en" && !!itemsCompanyId,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/inventory/items?companyId=${itemsCompanyId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) return [] as any[];
+      const j = await r.json();
+      return Array.isArray(j) ? j : (j.items ?? j.data ?? []);
+    },
+  });
+  const enNamesMap = useMemo(() => buildEnNamesMap(enItemsQuery.data ?? []), [enItemsQuery.data]);
   // Re-sync the selected template when the caller's preference or the
   // company's visibility config changes.
   useEffect(() => { setSelected(resolveInitialId()); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [defaultTemplate, companyCfg.printEnabledTemplates, companyCfg.printDefaultTemplate]);
@@ -2218,6 +2362,21 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
       const qr = await buildZatcaQrDataUrl(data.company, data.doc, totals);
       (data as any)._qrDataUrl = qr;
     } catch { /* fallback to placeholder inside qrImgHtml */ }
+    // Inject the chosen print language + live English item-name map so the
+    // (currently template-14-only) i18n builder can render in English.
+    // The English name lookup is async (useQuery); if the user prints before
+    // it has resolved (e.g. auto-print on open with EN default), await a
+    // fetch here so the first print already has English item names instead
+    // of silently falling back to Arabic.
+    (data as any)._lang = printLang;
+    let namesForPrint = enNamesMap;
+    if (printLang === "en" && itemsCompanyId && namesForPrint.size === 0) {
+      try {
+        const res = await enItemsQuery.refetch();
+        namesForPrint = buildEnNamesMap((res.data as any[]) ?? []);
+      } catch { /* fall back to Arabic names inside the template */ }
+    }
+    (data as any)._enNames = namesForPrint;
     const html = tmpl.fn(data);
     // Use a hidden same-origin iframe instead of `window.open` so popup
     // blockers don't kill auto-print after save (no user-gesture path)
@@ -2269,6 +2428,32 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
             اختر نموذج الطباعة — {typeLabelAr}
           </DialogTitle>
         </DialogHeader>
+
+        {selected === 14 && (
+          <div className="flex items-center justify-between gap-2 rounded-lg border bg-muted/30 px-3 py-2 mt-2">
+            <span className="text-xs text-muted-foreground">
+              لغة الطباعة <span className="opacity-70">(نموذج «الأصلي»)</span>
+            </span>
+            <div className="flex gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant={printLang === "ar" ? "default" : "outline"}
+                onClick={() => setPrintLang("ar")}
+              >
+                عربي
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={printLang === "en" ? "default" : "outline"}
+                onClick={() => setPrintLang("en")}
+              >
+                English
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-3 md:grid-cols-6 gap-3 my-4 max-h-[55vh] overflow-y-auto pr-1">
           {visibleTemplates.map(t => (

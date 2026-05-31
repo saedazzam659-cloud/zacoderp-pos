@@ -28,4 +28,5 @@
 - [POS Desktop numbering series](pos-desktop-numbering-series.md) — user-editable prefix/next/padding per doc type; dup numbers prevented ONLY by column UNIQUE — new numbered doc types MUST add their own UNIQUE or numbering can mint duplicates.
 - [POS Desktop credit overdue FIFO](pos-desktop-credit-overdue-fifo.md) — overdue check is ungated from credit-limit toggle and must FIFO oldest-UNPAID invoice, never MIN(invoice_date) over all credit invoices.
 - [POS Desktop release mechanism](pos-desktop-release-mechanism.md) — MSI cut by pushing a pos-desktop-v* tag to GitHub; main agent can't (git writes sandbox-blocked + stale GitHub creds), so user pushes via Git pane + publishes a GitHub Release.
+- [db push bundles all drift](db-push-bundles-drift.md) — `db run push` diffs the whole schema, hits unrelated drift + interactive prompts; for one additive column use direct ALTER TABLE ADD COLUMN IF NOT EXISTS.
 - [POS Desktop print isolation](pos-desktop-print-isolation.md) — print via a standalone HTML iframe document, NOT an in-DOM @media-print overlay; the absolute overlay gets clipped by PosShell flex/overflow ancestors and prints cropped.
