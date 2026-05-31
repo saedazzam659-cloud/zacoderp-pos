@@ -13,7 +13,7 @@ import {
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { getTaxRate } from "../lib/taxSettings";
 import { getDefaultTax } from "../lib/taxes";
-import { getCompanyProfile } from "../lib/appSettings";
+import { getCompanyProfile, safeLogoSrc, type CompanyProfile } from "../lib/appSettings";
 
 const ENTRY_TYPES: { value: JeEntryType; label: string }[] = [
   { value: "general", label: "قيد عام" },
@@ -57,11 +57,15 @@ export default function JournalEntries() {
   }
   useEffect(() => { void refresh(); }, []);
 
-  // Print: render the hidden printable area then trigger the browser dialog.
+  // Print: build a standalone HTML document and print it inside an isolated
+  // hidden iframe. The previous in-DOM overlay (#je-print-area, position:absolute)
+  // was clipped by PosShell's flex/overflow containers, so the printout came out
+  // cropped/blank. An iframe is its own document — no clipping ancestors — and
+  // prints reliably inside the Tauri WebView2.
   useEffect(() => {
     if (!printData) return;
-    const t = setTimeout(() => { window.print(); setPrintData(null); }, 60);
-    return () => clearTimeout(t);
+    printJournalEntry(printData, getCompanyProfile());
+    setPrintData(null);
   }, [printData]);
 
   async function toggleView(id: number) {
@@ -227,8 +231,6 @@ export default function JournalEntries() {
           </Table>
         )}
       </Card>
-
-      <PrintArea data={printData} />
     </Page>
   );
 }
@@ -571,116 +573,137 @@ function JeForm({ accounts, state, onCancel, onDone }: {
   );
 }
 
-// ── Print (professional letterhead, mirrors the web app) ───────────────
-function PrintArea({ data }: { data: ManualJeDetail | null }) {
-  if (!data) return null;
-  const company = getCompanyProfile();
+// ── Print (professional letterhead, standalone HTML document) ──────────
+// We build a complete, self-contained HTML document and print it inside a
+// hidden iframe rather than overlaying a hidden node in the live DOM. The
+// old overlay approach (#je-print-area, position:absolute + visibility tricks)
+// was silently CLIPPED by PosShell's flex/overflow ancestor containers, so the
+// printout came out cropped/short. An iframe is its own document with no
+// clipping ancestors and prints reliably inside the Tauri WebView2.
+const jeEscapeHtml = (s: unknown): string =>
+  String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+
+function buildJePrintHtml(data: ManualJeDetail, company: CompanyProfile): string {
   const statusLabel = data.status === "posted" ? "مرحَّل" : "مسودة";
+  const statusBg = data.status === "posted" ? "#dcfce7" : "#fef9c3";
+  const statusColor = data.status === "posted" ? "#166534" : "#854d0e";
   const printedAt = new Date().toLocaleString("ar-SA");
-  return (
-    <div id="je-print-area" style={{ display: "none" }}>
-      <style>{`
-        @media print {
-          @page { size: A4; margin: 14mm; }
-          body * { visibility: hidden !important; }
-          #je-print-area, #je-print-area * { visibility: visible !important; }
-          #je-print-area {
-            display: block !important; position: absolute; inset: 0;
-            direction: rtl; font-family: inherit; color: #0f172a;
-          }
-          .je-head { display: flex; justify-content: space-between; align-items: flex-start;
-            border-bottom: 2px solid #1e293b; padding-bottom: 12px; }
-          .je-head-r { display: flex; gap: 14px; align-items: center; }
-          .je-logo { max-height: 70px; max-width: 160px; object-fit: contain; }
-          .je-co-name { font-size: 20px; font-weight: 800; margin: 0; }
-          .je-co-meta { font-size: 12px; color: #475569; margin-top: 4px; }
-          .je-print-meta { font-size: 11px; color: #64748b; text-align: left; }
-          .je-banner { display: flex; justify-content: space-between; align-items: center;
-            background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px;
-            padding: 10px 14px; margin-top: 16px; }
-          .je-docno { font-size: 16px; }
-          .je-docmeta { font-size: 12px; color: #475569; margin-top: 4px; }
-          .je-status { font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 999px;
-            background: ${data.status === "posted" ? "#dcfce7" : "#fef9c3"};
-            color: ${data.status === "posted" ? "#166534" : "#854d0e"}; }
-          .je-desc { font-size: 13px; margin-top: 12px; }
-          .je-print-table { width: 100%; border-collapse: collapse; margin-top: 14px; }
-          .je-print-table th, .je-print-table td { border: 1px solid #94a3b8; padding: 7px 10px; font-size: 12.5px; }
-          .je-print-table th { background: #f1f5f9; text-align: right; }
-          .je-print-table tfoot td { background: #f8fafc; font-weight: 800; }
-          .je-num { text-align: left; font-variant-numeric: tabular-nums; }
-          .je-signs { display: flex; justify-content: space-between; gap: 24px; margin-top: 56px; }
-          .je-sign { flex: 1; text-align: center; }
-          .je-sign-line { border-top: 1px solid #475569; margin-bottom: 6px; }
-          .je-sign-label { font-size: 12px; color: #475569; }
-        }
-      `}</style>
-
-      <div className="je-head">
-        <div className="je-head-r">
-          {company.logo ? <img className="je-logo" src={company.logo} alt="شعار الشركة" /> : null}
-          <div>
-            <h1 className="je-co-name">{company.name || "قيد يومية"}</h1>
-            <div className="je-co-meta">
-              {company.cr ? <span>س.ت: {company.cr}</span> : null}
-              {company.cr && company.vat ? <span> • </span> : null}
-              {company.vat ? <span>الرقم الضريبي: {company.vat}</span> : null}
-            </div>
-          </div>
-        </div>
-        <div className="je-print-meta">
-          <div>تاريخ الطباعة</div>
-          <div>{printedAt}</div>
-        </div>
-      </div>
-
-      <div className="je-banner">
-        <div>
-          <div className="je-docno">قيد رقم: <b>{data.entryNo}</b></div>
-          <div className="je-docmeta">
-            التاريخ: {data.entryDate} • النوع: {ENTRY_TYPE_LABEL[data.entryType] ?? data.entryType}
-          </div>
-        </div>
-        <div className="je-status">{statusLabel}</div>
-      </div>
-
-      {data.description ? <div className="je-desc"><b>البيان:</b> {data.description}</div> : null}
-
-      <table className="je-print-table">
-        <thead>
-          <tr>
-            <th style={{ width: 38 }}>م</th>
-            <th>الحساب</th>
-            <th>الوصف</th>
-            <th style={{ width: 110 }}>مدين</th>
-            <th style={{ width: 110 }}>دائن</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.lines.map((l, i) => (
-            <tr key={l.id ?? i}>
-              <td className="je-num">{i + 1}</td>
-              <td>{l.accountCode} — {l.accountName}</td>
-              <td>{l.description ?? ""}</td>
-              <td className="je-num">{l.debit ? fmt(l.debit) : ""}</td>
-              <td className="je-num">{l.credit ? fmt(l.credit) : ""}</td>
-            </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td colSpan={3}>الإجمالي</td>
-            <td className="je-num">{fmt(data.totalDebit)}</td>
-            <td className="je-num">{fmt(data.totalCredit)}</td>
-          </tr>
-        </tfoot>
-      </table>
-
-      <div className="je-signs">
-        <div className="je-sign"><div className="je-sign-line" /><div className="je-sign-label">المحاسب / المُعدّ</div></div>
-        <div className="je-sign"><div className="je-sign-line" /><div className="je-sign-label">المراجع</div></div>
-        <div className="je-sign"><div className="je-sign-line" /><div className="je-sign-label">المدير المالي / الاعتماد</div></div>
+  const typeLabel = ENTRY_TYPE_LABEL[data.entryType] ?? data.entryType;
+  const logo = safeLogoSrc(company.logo);
+  const rows = data.lines.map((l, i) => `
+        <tr>
+          <td class="je-num">${i + 1}</td>
+          <td>${jeEscapeHtml(l.accountCode)} — ${jeEscapeHtml(l.accountName)}</td>
+          <td>${jeEscapeHtml(l.description ?? "")}</td>
+          <td class="je-num">${l.debit ? jeEscapeHtml(fmt(l.debit)) : ""}</td>
+          <td class="je-num">${l.credit ? jeEscapeHtml(fmt(l.credit)) : ""}</td>
+        </tr>`).join("");
+  const metaParts: string[] = [];
+  if (company.cr) metaParts.push(`<span>س.ت: ${jeEscapeHtml(company.cr)}</span>`);
+  if (company.cr && company.vat) metaParts.push(`<span> • </span>`);
+  if (company.vat) metaParts.push(`<span>الرقم الضريبي: ${jeEscapeHtml(company.vat)}</span>`);
+  return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8">
+<title>قيد يومية — ${jeEscapeHtml(data.entryNo)}</title>
+<style>
+@page { size: A4; margin: 14mm; }
+* { box-sizing: border-box; }
+body { direction: rtl; font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#0f172a; margin:0; padding:0; }
+.je-head { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #1e293b; padding-bottom:12px; }
+.je-head-r { display:flex; gap:14px; align-items:center; }
+.je-logo { max-height:70px; max-width:160px; object-fit:contain; }
+.je-co-name { font-size:20px; font-weight:800; margin:0; }
+.je-co-meta { font-size:12px; color:#475569; margin-top:4px; }
+.je-print-meta { font-size:11px; color:#64748b; text-align:left; }
+.je-banner { display:flex; justify-content:space-between; align-items:center; background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:10px 14px; margin-top:16px; }
+.je-docno { font-size:16px; }
+.je-docmeta { font-size:12px; color:#475569; margin-top:4px; }
+.je-status { font-size:12px; font-weight:700; padding:4px 12px; border-radius:999px; background:${statusBg}; color:${statusColor}; }
+.je-desc { font-size:13px; margin-top:12px; }
+.je-print-table { width:100%; border-collapse:collapse; margin-top:14px; }
+.je-print-table th, .je-print-table td { border:1px solid #94a3b8; padding:7px 10px; font-size:12.5px; }
+.je-print-table th { background:#f1f5f9; text-align:right; }
+.je-print-table tfoot td { background:#f8fafc; font-weight:800; }
+.je-num { text-align:left; font-variant-numeric:tabular-nums; }
+.je-signs { display:flex; justify-content:space-between; gap:24px; margin-top:56px; }
+.je-sign { flex:1; text-align:center; }
+.je-sign-line { border-top:1px solid #475569; margin-bottom:6px; }
+.je-sign-label { font-size:12px; color:#475569; }
+</style></head><body>
+  <div class="je-head">
+    <div class="je-head-r">
+      ${logo ? `<img class="je-logo" src="${jeEscapeHtml(logo)}" alt="" />` : ""}
+      <div>
+        <h1 class="je-co-name">${jeEscapeHtml(company.name || "قيد يومية")}</h1>
+        <div class="je-co-meta">${metaParts.join("")}</div>
       </div>
     </div>
-  );
+    <div class="je-print-meta"><div>تاريخ الطباعة</div><div>${jeEscapeHtml(printedAt)}</div></div>
+  </div>
+
+  <div class="je-banner">
+    <div>
+      <div class="je-docno">قيد رقم: <b>${jeEscapeHtml(data.entryNo)}</b></div>
+      <div class="je-docmeta">التاريخ: ${jeEscapeHtml(data.entryDate)} • النوع: ${jeEscapeHtml(typeLabel)}</div>
+    </div>
+    <div class="je-status">${statusLabel}</div>
+  </div>
+
+  ${data.description ? `<div class="je-desc"><b>البيان:</b> ${jeEscapeHtml(data.description)}</div>` : ""}
+
+  <table class="je-print-table">
+    <thead>
+      <tr>
+        <th style="width:38px">م</th>
+        <th>الحساب</th>
+        <th>الوصف</th>
+        <th style="width:110px">مدين</th>
+        <th style="width:110px">دائن</th>
+      </tr>
+    </thead>
+    <tbody>${rows}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td colspan="3">الإجمالي</td>
+        <td class="je-num">${jeEscapeHtml(fmt(data.totalDebit))}</td>
+        <td class="je-num">${jeEscapeHtml(fmt(data.totalCredit))}</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <div class="je-signs">
+    <div class="je-sign"><div class="je-sign-line"></div><div class="je-sign-label">المحاسب / المُعدّ</div></div>
+    <div class="je-sign"><div class="je-sign-line"></div><div class="je-sign-label">المراجع</div></div>
+    <div class="je-sign"><div class="je-sign-line"></div><div class="je-sign-label">المدير المالي / الاعتماد</div></div>
+  </div>
+</body></html>`;
+}
+
+function printJournalEntry(data: ManualJeDetail, company: CompanyProfile): void {
+  const html = buildJePrintHtml(data, company);
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.cssText =
+    "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
+  document.body.appendChild(iframe);
+  const win = iframe.contentWindow;
+  const doc = win?.document;
+  if (!win || !doc) { iframe.remove(); return; }
+  let done = false;
+  const run = () => {
+    if (done) return;
+    done = true;
+    try { win.focus(); win.print(); } catch { /* user cancelled / unsupported */ }
+    setTimeout(() => iframe.remove(), 1500);
+  };
+  doc.open();
+  doc.write(html);
+  doc.close();
+  // Wait for the document (incl. the logo image) to finish loading so the
+  // letterhead isn't blank, then print. Fall back to a timeout in case the
+  // load event never fires inside the embedded webview.
+  if (doc.readyState === "complete") setTimeout(run, 200);
+  else win.addEventListener("load", () => setTimeout(run, 200), { once: true });
+  setTimeout(run, 1200);
 }
