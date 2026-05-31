@@ -235,12 +235,26 @@ export default function UpdatesScreen({ baseUrl }: Props) {
             )}
           </div>
 
-          {release.releaseNotes && (
-            <div style={S.notes}>
-              <div style={S.notesTitle}>📝 ملاحظات الإصدار</div>
-              <div style={S.notesBody}>{release.releaseNotes}</div>
+          <div style={S.notes}>
+            <div style={S.notesTitle}>🖥️ نظام نقاط بيع متكامل لسطح المكتب</div>
+            <div style={S.notesBody}>
+              حلٌّ احترافي شامل يدير دورة عملك بالكامل — من المبيعات حتى المحاسبة — في منظومة واحدة،
+              يعمل أونلاين وأوفلاين بمزامنة سحابية فورية لتظل بياناتك محدّثة في كل فروعك.
             </div>
-          )}
+            <ul style={S.featureList}>
+              {[
+                "إدارة المبيعات والمشتريات والمخزون",
+                "فواتير ضريبية متوافقة مع هيئة الزكاة (ZATCA)",
+                "تقارير محاسبية ومالية لحظية",
+                "دعم الموازين الإلكترونية وقارئ الباركود",
+                "تعدد الفروع والكاشيرات والعملات",
+                "يعمل بدون إنترنت مع مزامنة تلقائية عند الاتصال",
+              ].map((f) => (
+                <li key={f} style={S.featureItem}>✅ {f}</li>
+              ))}
+            </ul>
+            <div style={S.credit}>تطوير فريق عمل متكامل تحت إدارة م/ كرم عزام</div>
+          </div>
 
           <div style={S.detailGrid}>
             <div style={S.detailItem}>
@@ -402,6 +416,15 @@ const S = {
   } as React.CSSProperties,
   notesTitle: { fontSize: 13, fontWeight: 600, color: "#0369a1", marginBottom: 6 } as React.CSSProperties,
   notesBody: { fontSize: 14, color: "#334155", lineHeight: 1.6, whiteSpace: "pre-wrap" as const } as React.CSSProperties,
+  featureList: {
+    listStyle: "none", margin: "12px 0 0", padding: 0,
+    display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8,
+  } as React.CSSProperties,
+  featureItem: { fontSize: 13, color: "#334155", lineHeight: 1.7 } as React.CSSProperties,
+  credit: {
+    marginTop: 14, paddingTop: 10, borderTop: "1px solid #e0f2fe",
+    fontSize: 12, color: "#64748b", fontWeight: 600, textAlign: "center" as const,
+  } as React.CSSProperties,
   detailGrid: {
     display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
     gap: 12, marginBottom: 20,
