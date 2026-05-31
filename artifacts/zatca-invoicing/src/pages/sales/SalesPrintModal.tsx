@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { safeLogoSrc } from "@/lib/export";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { ZATCA_UNIT_CODES } from "@/lib/zatca-units";
 import QRCode from "qrcode";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -57,6 +58,25 @@ function buildEnNamesMap(items: any[]): Map<string, string> {
     const en = (it?.nameEn ?? "").toString().trim();
     if (ar && en) m.set(ar, en);
   }
+  return m;
+}
+// Build the unit-of-measure → English-name lookup. A line's `unit` field stores
+// the unit's Arabic name (e.g. "علبة") or sometimes its UN/CEFACT code. We seed
+// the map with the ZATCA static dictionary (covers the common units) and then
+// overlay the company's own `units` rows so a per-company English name wins.
+// Keys: normalised-lowercase Arabic name AND uppercased code → English name.
+function buildEnUnitsMap(dbUnits: any[]): Map<string, string> {
+  const m = new Map<string, string>();
+  const add = (ar: any, code: any, en: any) => {
+    const enS = (en ?? "").toString().trim();
+    if (!enS) return;
+    const arS = (ar ?? "").toString().trim().toLowerCase();
+    const codeS = (code ?? "").toString().trim().toUpperCase();
+    if (arS) m.set(arS, enS);
+    if (codeS) m.set(codeS, enS);
+  };
+  for (const u of ZATCA_UNIT_CODES) add(u.nameAr, u.code, u.nameEn);
+  for (const u of (dbUnits ?? [])) add(u?.nameAr, u?.code, u?.nameEn);
   return m;
 }
 
@@ -1773,6 +1793,7 @@ function template14(d: PrintData): string {
   const isEn = lang === "en";
   const L = getPrintLabels(lang);
   const enNames: Map<string, string> = (d as any)._enNames instanceof Map ? (d as any)._enNames : new Map();
+  const enUnits: Map<string, string> = (d as any)._enUnits instanceof Map ? (d as any)._enUnits : new Map();
   const dir = isEn ? "ltr" : "rtl";
   const locale = isEn ? "en-GB" : "ar-SA";
   // Number formatter: Latin digits in EN mode, Arabic-Indic in AR mode.
@@ -1787,6 +1808,15 @@ function template14(d: PrintData): string {
     const key = arName.trim().toLowerCase();
     const en = key ? enNames.get(key) : undefined;
     return en || arName || L.none;
+  };
+  // Unit-of-measure display — translated to English when printing in EN. The
+  // line's `unit` is the Arabic name (or sometimes the UN/CEFACT code); fall
+  // back to the raw value when no English mapping exists.
+  const unitDisplay = (l: any): string => {
+    const raw = (l.unit ?? "").toString().trim();
+    if (!raw) return "—";
+    if (!isEn) return raw;
+    return enUnits.get(raw.toLowerCase()) || enUnits.get(raw.toUpperCase()) || raw;
   };
   const totals = computeFullTotals(doc, lines);
   const safeLogo = safeLogoSrc(company?.logo);
@@ -2123,7 +2153,7 @@ function template14(d: PrintData): string {
           <td>${itemDisplayName(l)}</td>
           <td class="mono">${Math.round(qty)}</td>
           ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
-          <td>${l.unit ?? "—"}</td>
+          <td>${unitDisplay(l)}</td>
           <td class="mono">${nf(l.unitPrice)}</td>
           ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discPctCell}</td>` : ""}
           ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discValCell}</td>` : ""}
@@ -2301,6 +2331,21 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     },
   });
   const enNamesMap = useMemo(() => buildEnNamesMap(enItemsQuery.data ?? []), [enItemsQuery.data]);
+  // Live units catalogue → English unit-name lookup (same EN-only gating).
+  const enUnitsQuery = useQuery({
+    queryKey: ["print-en-units", itemsCompanyId],
+    enabled: !!open && printLang === "en" && !!itemsCompanyId && !!token,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/inventory/units?companyId=${itemsCompanyId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) return [] as any[];
+      const j = await r.json();
+      return Array.isArray(j) ? j : (j.items ?? j.data ?? []);
+    },
+  });
+  const enUnitsMap = useMemo(() => buildEnUnitsMap(enUnitsQuery.data ?? []), [enUnitsQuery.data]);
   // Re-sync the selected template when the caller's preference or the
   // company's visibility config changes.
   useEffect(() => { setSelected(resolveInitialId()); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [defaultTemplate, companyCfg.printEnabledTemplates, companyCfg.printDefaultTemplate]);
@@ -2370,13 +2415,21 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     // of silently falling back to Arabic.
     (data as any)._lang = printLang;
     let namesForPrint = enNamesMap;
+    let unitsForPrint = enUnitsMap;
     if (printLang === "en" && itemsCompanyId && namesForPrint.size === 0) {
       try {
         const res = await enItemsQuery.refetch();
         namesForPrint = buildEnNamesMap((res.data as any[]) ?? []);
       } catch { /* fall back to Arabic names inside the template */ }
     }
+    if (printLang === "en" && itemsCompanyId && enUnitsQuery.data == null) {
+      try {
+        const res = await enUnitsQuery.refetch();
+        unitsForPrint = buildEnUnitsMap((res.data as any[]) ?? []);
+      } catch { /* fall back to the static ZATCA dictionary / Arabic */ }
+    }
     (data as any)._enNames = namesForPrint;
+    (data as any)._enUnits = unitsForPrint;
     const html = tmpl.fn(data);
     // Use a hidden same-origin iframe instead of `window.open` so popup
     // blockers don't kill auto-print after save (no user-gesture path)
