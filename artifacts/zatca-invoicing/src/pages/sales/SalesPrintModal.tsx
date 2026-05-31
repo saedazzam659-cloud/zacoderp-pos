@@ -2037,7 +2037,13 @@ function template14(d: PrintData): string {
     }
     .notes-box b { color:var(--ink); }
     /* English (LTR) mode — flip table + field alignment so the layout
-       reads naturally left-to-right while keeping the same structure. */
+       reads naturally left-to-right while keeping the same structure.
+       baseStyles hard-codes body direction:rtl which beats the html
+       dir="ltr" attribute, so we must override the body direction here —
+       this is what actually flips the item-table column order and the
+       3-column header grid (COMPANY to the left, CUSTOMER to the right)
+       to the English convention, mirror-imaging the Arabic layout. */
+    html[dir="ltr"] body { direction: ltr; }
     html[dir="ltr"] .lines-chunk th,
     html[dir="ltr"] .lines-chunk td { text-align:left; }
     html[dir="ltr"] .line-notes td { border-right:none; border-left:3px solid var(--gold2); }
