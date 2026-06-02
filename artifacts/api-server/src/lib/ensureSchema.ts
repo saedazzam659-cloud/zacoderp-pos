@@ -963,7 +963,7 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
         raw_response JSONB
       )` },
     { label: "create integration_sync_runs connection idx",
-      sql: `CREATE INDEX IF NOT EXISTS integration_sync_runs_connection_idx ON integration_sync_runs(connection_id, started_at DESC)` },
+      sql: `CREATE INDEX IF NOT EXISTS integration_sync_runs_connection_idx ON integration_sync_runs(connection_id, started_at)` },
 
     { label: "alter journal_entries add createdBy",
       sql:   `ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS created_by INTEGER` },

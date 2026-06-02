@@ -42,7 +42,7 @@ export const integrationSyncRunsTable = pgTable("integration_sync_runs", {
   errors: jsonb("errors").$type<Array<{ ref: string; reason: string }>>().notNull().default([]),
   rawResponse: jsonb("raw_response"),
 }, t => ({
-  byConnection: index("integration_sync_runs_connection_idx").on(t.connectionId),
+  byConnection: index("integration_sync_runs_connection_idx").on(t.connectionId, t.startedAt),
 }));
 
 /**
