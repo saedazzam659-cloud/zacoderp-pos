@@ -589,6 +589,7 @@ export default function InvoiceDetails() {
             subtotal: invoice.subtotal,
             taxAmount: invoice.taxAmount,
             total: invoice.total,
+            currencyCode: (invoice as any).currencyCode,
             discountAmount: (invoice as any).discountAmount,
             qrCode: invoice.qrCode,
             lineItems: (invoice as any).lineItems ?? [],

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Printer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { safeLogoSrc } from "@/lib/export";
+import { currencySymbol } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { ZATCA_UNIT_CODES } from "@/lib/zatca-units";
@@ -141,6 +142,7 @@ interface FullTotals {
   totalFreeQty: number;
   itemsCount: number;
   currency: string;
+  currencySym: string;
   amountWords: string;
 }
 function computeFullTotals(doc: any, lines: any[]): FullTotals {
@@ -171,6 +173,7 @@ function computeFullTotals(doc: any, lines: any[]): FullTotals {
   return {
     subtotalPreDiscount, discountTotal, netPreVat, vatAmount, grandTotal,
     totalQty, totalFreeQty, itemsCount: (lines ?? []).length, currency,
+    currencySym: currencySymbol(currency),
     amountWords: numberToArabicWords(grandTotal),
   };
 }
@@ -180,11 +183,11 @@ function computeFullTotals(doc: any, lines: any[]): FullTotals {
 // plus an optional grand‑row class for the final highlighted line.
 function totalRowsHtml(t: FullTotals, rowClass = "totals-row", grandClass = "grand"): string {
   return `
-    <div class="${rowClass}"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(t.subtotalPreDiscount)} ${t.currency}</span></div>
-    <div class="${rowClass}"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(t.discountTotal)} ${t.currency}</span></div>
-    <div class="${rowClass}"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currency}</span></div>
-    <div class="${rowClass}"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(t.vatAmount)} ${t.currency}</span></div>
-    <div class="${rowClass} ${grandClass}"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currency}</span></div>`;
+    <div class="${rowClass}"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(t.subtotalPreDiscount)} ${t.currencySym}</span></div>
+    <div class="${rowClass}"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(t.discountTotal)} ${t.currencySym}</span></div>
+    <div class="${rowClass}"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currencySym}</span></div>
+    <div class="${rowClass}"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(t.vatAmount)} ${t.currencySym}</span></div>
+    <div class="${rowClass} ${grandClass}"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}</span></div>`;
 }
 
 // Universal summary footer (tafqeet + total items + total qty inc. free) shown
@@ -451,11 +454,11 @@ function totalsBlock(doc: any, lines: any[], align: "right" | "left" = "right") 
       .__totalsRow { display:flex; justify-content:space-between; margin-bottom:6px; color:#374151; font-size:12px; }
       .__totalsRow.grand { border-top:2px solid #ddd; padding-top:6px; margin-top:4px; font-size:14px; font-weight:700; color:#0f172a; }
     </style>
-    <div class="__totalsRow"><span style="color:#666">الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(t.subtotalPreDiscount)} ${t.currency}</span></div>
-    <div class="__totalsRow"><span style="color:#666">مبلغ الخصم — Discount</span><span class="mono" style="color:#b91c1c;">${fmt(t.discountTotal)} ${t.currency}</span></div>
-    <div class="__totalsRow"><span style="color:#666">الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currency}</span></div>
-    <div class="__totalsRow"><span style="color:#666">ضريبة القيمة المضافة — VAT</span><span class="mono" style="color:#b45309;">${fmt(t.vatAmount)} ${t.currency}</span></div>
-    <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currency}</span></div>`;
+    <div class="__totalsRow"><span style="color:#666">الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(t.subtotalPreDiscount)} ${t.currencySym}</span></div>
+    <div class="__totalsRow"><span style="color:#666">مبلغ الخصم — Discount</span><span class="mono" style="color:#b91c1c;">${fmt(t.discountTotal)} ${t.currencySym}</span></div>
+    <div class="__totalsRow"><span style="color:#666">الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currencySym}</span></div>
+    <div class="__totalsRow"><span style="color:#666">ضريبة القيمة المضافة — VAT</span><span class="mono" style="color:#b45309;">${fmt(t.vatAmount)} ${t.currencySym}</span></div>
+    <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}</span></div>`;
   return `
     <div style="display:flex;justify-content:${align === "right" ? "flex-start" : "flex-end"};gap:14px;align-items:flex-start;">
       <div style="${align === "right" ? "" : "margin-left:auto;"}">
@@ -1687,11 +1690,11 @@ function template13(d: PrintData): string {
       </div>
       <div>
         <div class="totals-card">
-          <div class="row muted"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(totals.subtotalPreDiscount)} ${totals.currency}</span></div>
-          <div class="row disc"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(totals.discountTotal)} ${totals.currency}</span></div>
-          <div class="row"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(totals.netPreVat)} ${totals.currency}</span></div>
-          <div class="row vat"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(totals.vatAmount)} ${totals.currency}</span></div>
-          <div class="row grand"><span>الصافي شامل الضريبة — Total</span><span class="mono v">${fmt(totals.grandTotal)} ${totals.currency}</span></div>
+          <div class="row muted"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(totals.subtotalPreDiscount)} ${totals.currencySym}</span></div>
+          <div class="row disc"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(totals.discountTotal)} ${totals.currencySym}</span></div>
+          <div class="row"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(totals.netPreVat)} ${totals.currencySym}</span></div>
+          <div class="row vat"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(totals.vatAmount)} ${totals.currencySym}</span></div>
+          <div class="row grand"><span>الصافي شامل الضريبة — Total</span><span class="mono v">${fmt(totals.grandTotal)} ${totals.currencySym}</span></div>
         </div>
         ${summaryFooterHtml(totals)}
       </div>

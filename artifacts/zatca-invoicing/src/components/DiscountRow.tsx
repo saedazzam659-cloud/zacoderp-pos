@@ -6,9 +6,10 @@ interface DiscountRowProps {
   value: string;
   onChange: (newAmount: string) => void;
   className?: string;
+  currencySymbol?: string;
 }
 
-export function DiscountRow({ gross, value, onChange, className }: DiscountRowProps) {
+export function DiscountRow({ gross, value, onChange, className, currencySymbol = "ر.س" }: DiscountRowProps) {
   const amt = Math.max(0, Math.min(gross, Number(value) || 0));
   const pctFromAmt = gross > 0 ? (amt / gross) * 100 : 0;
   const [pctText, setPctText] = useState(pctFromAmt ? pctFromAmt.toFixed(2).replace(/\.?0+$/, "") : "0");
@@ -46,7 +47,7 @@ export function DiscountRow({ gross, value, onChange, className }: DiscountRowPr
           onChange={e => onChange(e.target.value)}
           className="w-24 h-7 text-left font-mono text-rose-700 bg-background border rounded px-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
         />
-        <span className="text-[10px] text-muted-foreground">ر.س</span>
+        <span className="text-[10px] text-muted-foreground">{currencySymbol}</span>
       </div>
     </div>
   );

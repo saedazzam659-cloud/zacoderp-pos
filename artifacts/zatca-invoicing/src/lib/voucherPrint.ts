@@ -10,6 +10,7 @@
 //   - "thermal": narrow 80 mm receipt suitable for thermal printers
 
 import { safeLogoSrc } from "./export";
+import { currencySymbol } from "./format";
 
 export type VoucherKind = "receipt" | "payment";
 export type VoucherTemplate = "a4" | "thermal";
@@ -148,6 +149,7 @@ function buildA4(args: BuildVoucherArgs): string {
   const docNumber = doc.docNumber || `${fallbackPrefix}-${doc.id ?? "—"}`;
   const amountNumber = Number(doc.amount || 0);
   const currency = doc.currencyCode || "SAR";
+  const currencySym = currencySymbol(currency);
   const amountInWords = numberToArabicWords(amountNumber);
   const today = new Date().toLocaleDateString("ar-SA");
   const accountLabel = account
@@ -211,7 +213,7 @@ body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111
   ${counterpartyVat ? `<div style="font-size:11px;color:#6b7280;margin-top:4px;">الرقم الضريبي: ${counterpartyVat}</div>` : ""}
 </div>
 <div class="amount-box">
-  <div class="digits">${fmtMoney(amountNumber)} ${escapeHtml(currency)}</div>
+  <div class="digits">${fmtMoney(amountNumber)} ${escapeHtml(currencySym)}</div>
   <div class="words">${escapeHtml(amountInWords)}</div>
 </div>
 ${doc.notes ? `<div class="notes-box"><span class="lbl">ملاحظات</span>${escapeHtml(doc.notes)}</div>` : ""}
@@ -234,6 +236,7 @@ function buildThermal(args: BuildVoucherArgs): string {
   const docNumber = doc.docNumber || `${fallbackPrefix}-${doc.id ?? "—"}`;
   const amountNumber = Number(doc.amount || 0);
   const currency = doc.currencyCode || "SAR";
+  const currencySym = currencySymbol(currency);
   const today = new Date().toLocaleDateString("ar-SA");
   const accountLabel = account
     ? `${escapeHtml(account.code ?? "")} — ${escapeHtml(account.nameAr || account.nameEn || "")}`
@@ -269,7 +272,7 @@ ${company?.vatNumber ? `<div class="center" style="font-size:10px;">ض.ق.م: ${
 <div class="row"><span class="lbl">${escapeHtml(partyLabel)}</span><span class="val">${counterpartyName}</span></div>
 <div class="row"><span class="lbl">طريقة الدفع</span><span class="val">${escapeHtml(paymentMethodLabel(doc.paymentMethod))}</span></div>
 <div class="row"><span class="lbl">الحساب</span><span class="val" style="font-size:10px;">${accountLabel}</span></div>
-<div class="amount">${fmtMoney(amountNumber)} ${escapeHtml(currency)}</div>
+<div class="amount">${fmtMoney(amountNumber)} ${escapeHtml(currencySym)}</div>
 ${doc.notes ? `<div class="notes"><span class="bold">ملاحظات: </span>${escapeHtml(doc.notes)}</div>` : ""}
 <div class="footer">شكراً لتعاملكم</div>
 <script>setTimeout(()=>window.print(),300);</script>

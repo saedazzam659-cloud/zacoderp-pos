@@ -9,6 +9,7 @@ import { Printer, X, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { ensurePrinterReady } from "@/lib/printerGuard";
+import { currencySymbol } from "@/lib/format";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface PrintInvoice {
@@ -22,6 +23,7 @@ export interface PrintInvoice {
   subtotal: number | string;
   taxAmount: number | string;
   total: number | string;
+  currencyCode?: string | null;
   discountAmount?: number | string | null;
   qrCode?: string | null;
   lineItems?: Array<{
@@ -210,6 +212,7 @@ function fmtDate(d: string) {
 
 function buildClassicHtml(inv: PrintInvoice, qrDataUrl: string): string {
   const dp = inv.company?.decimalPlaces ?? 2;
+  const sym = currencySymbol(inv.currencyCode);
   const logo = inv.company?.logo;
   return `<!DOCTYPE html><html dir="rtl" lang="ar">
 <head><meta charset="UTF-8"><title>فاتورة ${inv.invoiceNumber}</title>
@@ -280,10 +283,10 @@ function buildClassicHtml(inv: PrintInvoice, qrDataUrl: string): string {
   </table>
 
   <div class="totals">
-    <div class="totals-row"><span>المبلغ قبل الضريبة</span><span>${fmt(inv.subtotal, dp)} ريال</span></div>
-    ${inv.discountAmount ? `<div class="totals-row"><span>الخصم</span><span>- ${fmt(inv.discountAmount, dp)} ريال</span></div>` : ""}
-    <div class="totals-row"><span>ضريبة القيمة المضافة (15%)</span><span>${fmt(inv.taxAmount, dp)} ريال</span></div>
-    <div class="totals-row total"><span>الإجمالي المستحق</span><span>${fmt(inv.total, dp)} ريال</span></div>
+    <div class="totals-row"><span>المبلغ قبل الضريبة</span><span>${fmt(inv.subtotal, dp)} ${sym}</span></div>
+    ${inv.discountAmount ? `<div class="totals-row"><span>الخصم</span><span>- ${fmt(inv.discountAmount, dp)} ${sym}</span></div>` : ""}
+    <div class="totals-row"><span>ضريبة القيمة المضافة (15%)</span><span>${fmt(inv.taxAmount, dp)} ${sym}</span></div>
+    <div class="totals-row total"><span>الإجمالي المستحق</span><span>${fmt(inv.total, dp)} ${sym}</span></div>
   </div>
 
   ${inv.notes ? `<div style="margin-top:16px;border:1px solid #ccc;padding:8px;font-size:11px"><strong>ملاحظات:</strong> ${inv.notes}</div>` : ""}
@@ -297,6 +300,7 @@ function buildClassicHtml(inv: PrintInvoice, qrDataUrl: string): string {
 
 function buildModernHtml(inv: PrintInvoice, qrDataUrl: string): string {
   const dp = inv.company?.decimalPlaces ?? 2;
+  const sym = currencySymbol(inv.currencyCode);
   const logo = inv.company?.logo;
   return `<!DOCTYPE html><html dir="rtl" lang="ar">
 <head><meta charset="UTF-8"><title>فاتورة ${inv.invoiceNumber}</title>
@@ -365,7 +369,7 @@ function buildModernHtml(inv: PrintInvoice, qrDataUrl: string): string {
   <div class="totals">
     <div class="t-row"><span>المبلغ قبل الضريبة</span><span>${fmt(inv.subtotal, dp)}</span></div>
     <div class="t-row"><span>ضريبة 15%</span><span>${fmt(inv.taxAmount, dp)}</span></div>
-    <div class="t-row grand"><span>الإجمالي — ريال</span><span>${fmt(inv.total, dp)}</span></div>
+    <div class="t-row grand"><span>الإجمالي — ${sym}</span><span>${fmt(inv.total, dp)}</span></div>
   </div>
 
   ${inv.notes ? `<div style="margin-top:20px;background:#f8f8f8;border-radius:8px;padding:12px;font-size:11px;color:#555"><strong>ملاحظات:</strong> ${inv.notes}</div>` : ""}
@@ -379,6 +383,7 @@ function buildModernHtml(inv: PrintInvoice, qrDataUrl: string): string {
 
 function buildProfessionalHtml(inv: PrintInvoice, qrDataUrl: string): string {
   const dp = inv.company?.decimalPlaces ?? 2;
+  const sym = currencySymbol(inv.currencyCode);
   const logo = inv.company?.logo;
   const C = "#0d9488";  // teal-600
   return `<!DOCTYPE html><html dir="rtl" lang="ar">
@@ -441,19 +446,19 @@ function buildProfessionalHtml(inv: PrintInvoice, qrDataUrl: string): string {
         ${(inv.lineItems ?? []).map(li => `<tr>
           <td>${li.description}</td>
           <td style="text-align:center">${li.quantity}</td>
-          <td>${fmt(li.unitPrice, dp)} ر.س</td>
+          <td>${fmt(li.unitPrice, dp)} ${sym}</td>
           <td style="text-align:center">${li.vatRate ?? 15}%</td>
-          <td>${fmt(li.vatAmount ?? 0, dp)} ر.س</td>
-          <td style="font-weight:700;color:${C}">${fmt(li.totalPrice, dp)} ر.س</td>
+          <td>${fmt(li.vatAmount ?? 0, dp)} ${sym}</td>
+          <td style="font-weight:700;color:${C}">${fmt(li.totalPrice, dp)} ${sym}</td>
         </tr>`).join("")}
       </tbody>
     </table>
 
     <div class="totals"><div class="totals-inner">
-      <div class="t-row"><span>المبلغ قبل الضريبة</span><span>${fmt(inv.subtotal, dp)} ر.س</span></div>
-      ${inv.discountAmount ? `<div class="t-row"><span>الخصم</span><span>- ${fmt(inv.discountAmount, dp)} ر.س</span></div>` : ""}
-      <div class="t-row"><span>ضريبة القيمة المضافة 15%</span><span>${fmt(inv.taxAmount, dp)} ر.س</span></div>
-      <div class="t-row grand"><span>الإجمالي المستحق</span><span>${fmt(inv.total, dp)} ر.س</span></div>
+      <div class="t-row"><span>المبلغ قبل الضريبة</span><span>${fmt(inv.subtotal, dp)} ${sym}</span></div>
+      ${inv.discountAmount ? `<div class="t-row"><span>الخصم</span><span>- ${fmt(inv.discountAmount, dp)} ${sym}</span></div>` : ""}
+      <div class="t-row"><span>ضريبة القيمة المضافة 15%</span><span>${fmt(inv.taxAmount, dp)} ${sym}</span></div>
+      <div class="t-row grand"><span>الإجمالي المستحق</span><span>${fmt(inv.total, dp)} ${sym}</span></div>
     </div></div>
 
     ${inv.notes ? `<div style="margin-top:16px;border-right:4px solid ${C};padding:10px 14px;background:#f0fdfa;font-size:11px;border-radius:0 8px 8px 0"><strong>ملاحظات:</strong> ${inv.notes}</div>` : ""}
@@ -468,6 +473,7 @@ function buildProfessionalHtml(inv: PrintInvoice, qrDataUrl: string): string {
 
 function buildColorfulHtml(inv: PrintInvoice, qrDataUrl: string): string {
   const dp = inv.company?.decimalPlaces ?? 2;
+  const sym = currencySymbol(inv.currencyCode);
   const logo = inv.company?.logo;
   return `<!DOCTYPE html><html dir="rtl" lang="ar">
 <head><meta charset="UTF-8"><title>فاتورة ${inv.invoiceNumber}</title>
@@ -531,18 +537,18 @@ function buildColorfulHtml(inv: PrintInvoice, qrDataUrl: string): string {
         ${(inv.lineItems ?? []).map(li => `<tr>
           <td><strong>${li.description}</strong></td>
           <td style="text-align:center">${li.quantity}</td>
-          <td>${fmt(li.unitPrice, dp)} ر.س</td>
-          <td>${fmt(li.vatAmount ?? 0, dp)} ر.س <span style="color:#888">(${li.vatRate ?? 15}%)</span></td>
-          <td style="font-weight:700;color:#4f46e5">${fmt(li.totalPrice, dp)} ر.س</td>
+          <td>${fmt(li.unitPrice, dp)} ${sym}</td>
+          <td>${fmt(li.vatAmount ?? 0, dp)} ${sym} <span style="color:#888">(${li.vatRate ?? 15}%)</span></td>
+          <td style="font-weight:700;color:#4f46e5">${fmt(li.totalPrice, dp)} ${sym}</td>
         </tr>`).join("")}
       </tbody>
     </table>
 
     <div class="totals"><div class="totals-inner">
-      <div class="t-row"><span>المبلغ قبل الضريبة</span><span>${fmt(inv.subtotal, dp)} ر.س</span></div>
-      ${inv.discountAmount ? `<div class="t-row"><span>الخصم</span><span style="color:#e53e3e">- ${fmt(inv.discountAmount, dp)} ر.س</span></div>` : ""}
-      <div class="t-row"><span>ضريبة 15%</span><span>${fmt(inv.taxAmount, dp)} ر.س</span></div>
-      <div class="t-row grand"><span>الإجمالي المستحق</span><span>${fmt(inv.total, dp)} ر.س</span></div>
+      <div class="t-row"><span>المبلغ قبل الضريبة</span><span>${fmt(inv.subtotal, dp)} ${sym}</span></div>
+      ${inv.discountAmount ? `<div class="t-row"><span>الخصم</span><span style="color:#e53e3e">- ${fmt(inv.discountAmount, dp)} ${sym}</span></div>` : ""}
+      <div class="t-row"><span>ضريبة 15%</span><span>${fmt(inv.taxAmount, dp)} ${sym}</span></div>
+      <div class="t-row grand"><span>الإجمالي المستحق</span><span>${fmt(inv.total, dp)} ${sym}</span></div>
     </div></div>
 
     ${inv.notes ? `<div style="margin-top:16px;border-right:4px solid #4f46e5;padding:10px 14px;background:#f5f3ff;border-radius:0 8px 8px 0;font-size:11px"><strong>ملاحظات:</strong> ${inv.notes}</div>` : ""}
@@ -557,6 +563,7 @@ function buildColorfulHtml(inv: PrintInvoice, qrDataUrl: string): string {
 
 function buildCompactHtml(inv: PrintInvoice, qrDataUrl: string): string {
   const dp = inv.company?.decimalPlaces ?? 2;
+  const sym = currencySymbol(inv.currencyCode);
   const logo = inv.company?.logo;
   const C = "#7c3aed";  // purple
   return `<!DOCTYPE html><html dir="rtl" lang="ar">
@@ -630,9 +637,9 @@ function buildCompactHtml(inv: PrintInvoice, qrDataUrl: string): string {
       </table>
 
       <div class="totals">
-        <div class="t-row"><span>قبل الضريبة</span><span>${fmt(inv.subtotal, dp)} ر.س</span></div>
-        <div class="t-row"><span>ضريبة 15%</span><span>${fmt(inv.taxAmount, dp)} ر.س</span></div>
-        <div class="t-row grand"><span>الإجمالي</span><span>${fmt(inv.total, dp)} ر.س</span></div>
+        <div class="t-row"><span>قبل الضريبة</span><span>${fmt(inv.subtotal, dp)} ${sym}</span></div>
+        <div class="t-row"><span>ضريبة 15%</span><span>${fmt(inv.taxAmount, dp)} ${sym}</span></div>
+        <div class="t-row grand"><span>الإجمالي</span><span>${fmt(inv.total, dp)} ${sym}</span></div>
       </div>
 
       ${inv.notes ? `<div style="margin-top:12px;font-size:10px;color:#555;border-top:1px dashed #ede9fe;padding-top:10px"><strong>ملاحظات:</strong> ${inv.notes}</div>` : ""}

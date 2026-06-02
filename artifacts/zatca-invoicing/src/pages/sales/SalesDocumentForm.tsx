@@ -10,7 +10,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
-import { useFormatters } from "@/lib/format";
+import { useFormatters, currencySymbol } from "@/lib/format";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { useToast } from "@/hooks/use-toast";
@@ -1591,7 +1591,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <span className="font-mono">−{fmt(lineDiscountTotal)}</span>
                     </div>
                   )}
-                  <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} />
+                  <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} currencySymbol={currencySymbol(currencyCode || defaultCurrency?.code, currencies)} />
                   {documentOfferId && documentOfferName && (
                     <div
                       className="flex items-start gap-1.5 -mt-1 px-2 py-1.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800"

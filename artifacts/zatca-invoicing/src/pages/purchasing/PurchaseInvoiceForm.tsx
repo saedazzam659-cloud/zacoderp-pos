@@ -19,6 +19,7 @@ import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { DiscountRow } from "@/components/DiscountRow";
+import { currencySymbol } from "@/lib/format";
 import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -1371,7 +1372,7 @@ export default function PurchaseInvoiceForm() {
                       <span className="font-mono">−{fmt(lineDiscountTotal)}</span>
                     </div>
                   )}
-                  <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} />
+                  <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} currencySymbol={currencySymbol(currencyCode || defaultCurrency?.code, currencies)} />
                   <div className="flex justify-between"><span className="text-muted-foreground">{tr("lcExpenses")}</span><span className="font-mono text-blue-700">{fmt(totalExpLoaded)}</span></div>
                   <div className="flex justify-between font-bold border-t pt-2 text-base">
                     <span>{priceIncludesVat ? tr("totalIncl") : tr("totalLabel")}</span>

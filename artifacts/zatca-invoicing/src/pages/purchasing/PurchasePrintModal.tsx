@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Printer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { safeLogoSrc } from "@/lib/export";
+import { currencySymbol } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import { ensurePrinterReady } from "@/lib/printerGuard";
 
@@ -122,15 +123,15 @@ function totalsBlock(doc: any, align = "right") {
       <div style="min-width:220px;border:1px solid #ddd;border-radius:6px;padding:10px 14px;font-size:12px;">
         <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
           <span style="color:#666">المجموع قبل الضريبة:</span>
-          <span class="mono">${fmt(doc.subtotal)} ${doc.currencyCode ?? "SAR"}</span>
+          <span class="mono">${fmt(doc.subtotal)} ${currencySymbol(doc.currencyCode)}</span>
         </div>
         <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
           <span style="color:#666">ضريبة القيمة المضافة (15%):</span>
-          <span class="mono" style="color:#b45309;">${fmt(doc.vatAmount)} ${doc.currencyCode ?? "SAR"}</span>
+          <span class="mono" style="color:#b45309;">${fmt(doc.vatAmount)} ${currencySymbol(doc.currencyCode)}</span>
         </div>
         <div style="display:flex;justify-content:space-between;border-top:2px solid #ddd;padding-top:6px;font-size:14px;font-weight:700;">
           <span>الإجمالي الشامل:</span>
-          <span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span>
+          <span class="mono">${fmt(doc.totalAmount)} ${currencySymbol(doc.currencyCode)}</span>
         </div>
       </div>
     </div>`;
@@ -295,9 +296,9 @@ function template3(d: PrintData): string {
     ${linesTable(lines, "", "")}
     <div style="display:flex;justify-content:flex-start;margin-top:16px;">
       <div class="totals-box">
-        <div class="totals-row"><span>المجموع:</span><span class="mono">${fmt(doc.subtotal)} ${doc.currencyCode ?? "SAR"}</span></div>
-        <div class="totals-row"><span>الضريبة:</span><span class="mono">${fmt(doc.vatAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
-        <div class="totals-row total"><span>الإجمالي:</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+        <div class="totals-row"><span>المجموع:</span><span class="mono">${fmt(doc.subtotal)} ${currencySymbol(doc.currencyCode)}</span></div>
+        <div class="totals-row"><span>الضريبة:</span><span class="mono">${fmt(doc.vatAmount)} ${currencySymbol(doc.currencyCode)}</span></div>
+        <div class="totals-row total"><span>الإجمالي:</span><span class="mono">${fmt(doc.totalAmount)} ${currencySymbol(doc.currencyCode)}</span></div>
       </div>
     </div>
     ${doc.notes ? `<div style="margin-top:14px;padding:10px 14px;background:#f1f5f9;border-radius:6px;font-size:11px;"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
@@ -372,7 +373,7 @@ function template4(d: PrintData): string {
     <div class="total-area">
       <div class="t-row"><span>المجموع:</span><span class="mono">${fmt(doc.subtotal)}</span></div>
       <div class="t-row"><span>الضريبة 15%:</span><span class="mono">${fmt(doc.vatAmount)}</span></div>
-      <div class="t-row grand"><span>الإجمالي:</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+      <div class="t-row grand"><span>الإجمالي:</span><span class="mono">${fmt(doc.totalAmount)} ${currencySymbol(doc.currencyCode)}</span></div>
     </div>
   </div>
   ${doc.notes ? `<div class="box" style="margin-top:12px;"><div class="section-title">ملاحظات</div>${doc.notes}</div>` : ""}
@@ -458,9 +459,9 @@ function template5(d: PrintData): string {
       <div class="qr-box">QR Code<br>ZATCA<br>رمز التحقق</div>
     </div>
     <div class="totals">
-      <div class="row"><span>المجموع الخاضع للضريبة:</span><span class="mono">${fmt(doc.subtotal)} ${doc.currencyCode ?? "SAR"}</span></div>
-      <div class="row"><span>ضريبة القيمة المضافة (15%):</span><span class="mono" style="color:#b45309;">${fmt(doc.vatAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
-      <div class="row grand"><span>الإجمالي الشامل:</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+      <div class="row"><span>المجموع الخاضع للضريبة:</span><span class="mono">${fmt(doc.subtotal)} ${currencySymbol(doc.currencyCode)}</span></div>
+      <div class="row"><span>ضريبة القيمة المضافة (15%):</span><span class="mono" style="color:#b45309;">${fmt(doc.vatAmount)} ${currencySymbol(doc.currencyCode)}</span></div>
+      <div class="row grand"><span>الإجمالي الشامل:</span><span class="mono">${fmt(doc.totalAmount)} ${currencySymbol(doc.currencyCode)}</span></div>
     </div>
   </div>
 

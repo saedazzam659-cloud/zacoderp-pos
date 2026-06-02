@@ -24,6 +24,7 @@ import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { DiscountRow } from "@/components/DiscountRow";
+import { currencySymbol } from "@/lib/format";
 import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { cn } from "@/lib/utils";
 import {
@@ -1678,7 +1679,7 @@ ${sections}
                     <span className="font-mono">−{fmt(lineDiscountTotal)}</span>
                   </div>
                 )}
-                <DiscountRow gross={grossTotal} value={form.discountAmount ?? "0"} onChange={v => setForm((p: any) => ({ ...p, discountAmount: v }))} />
+                <DiscountRow gross={grossTotal} value={form.discountAmount ?? "0"} onChange={v => setForm((p: any) => ({ ...p, discountAmount: v }))} currencySymbol={currencySymbol(form.currencyCode, currencies)} />
                 <div className="flex justify-between font-bold border-t pt-2 text-base">
                   <span>{tr("totalLabel")}{priceIncludesVat ? ` ${tr("totalIncl").replace(tr("totalLabel"), "").trim() || ""}` : ""}</span>
                   <span className="font-mono text-primary">{fmt(totalAmount)}</span>

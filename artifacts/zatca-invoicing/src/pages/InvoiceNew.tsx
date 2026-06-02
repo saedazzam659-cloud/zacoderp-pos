@@ -22,6 +22,7 @@ import {
 import { Link } from "wouter";
 import { ZATCA_UNIT_CODES } from "@/lib/zatca-units";
 import { useAuth } from "@/contexts/AuthContext";
+import { useBaseCurrencySymbol } from "@/hooks/useCurrencySymbol";
 
 const PAYMENT_METHOD_ITEMS: ComboboxItem[] = [
   { value: "10", code: "10", label: "نقدي",             labelEn: "Cash" },
@@ -122,6 +123,7 @@ export default function InvoiceNew() {
   const createInvoice = useCreateInvoice();
   const [activeTab, setActiveTab] = useState("basic");
   const { user } = useAuth();
+  const baseSym = useBaseCurrencySymbol();
 
   const isSuperAdmin = user?.role === "superadmin";
   const userCompanyId = user?.companyId;
@@ -696,13 +698,13 @@ export default function InvoiceNew() {
                             وحدة القياس
                             <span className="block text-[9px] font-normal opacity-60">UN/CEFACT</span>
                           </th>
-                          <th className="h-10 px-3 text-right font-medium text-muted-foreground text-xs" style={{ minWidth: 110 }}>سعر الوحدة (ر.س)</th>
-                          <th className="h-10 px-3 text-right font-medium text-muted-foreground text-xs" style={{ minWidth: 90 }}>خصم (ر.س)</th>
+                          <th className="h-10 px-3 text-right font-medium text-muted-foreground text-xs" style={{ minWidth: 110 }}>سعر الوحدة ({baseSym})</th>
+                          <th className="h-10 px-3 text-right font-medium text-muted-foreground text-xs" style={{ minWidth: 90 }}>خصم ({baseSym})</th>
                           <th className="h-10 px-3 text-right font-medium text-muted-foreground text-xs" style={{ minWidth: 145 }}>
                             فئة الضريبة
                             <span className="block text-[9px] font-normal opacity-60">ZATCA VAT</span>
                           </th>
-                          <th className="h-10 px-3 text-right font-medium text-muted-foreground text-xs" style={{ minWidth: 110 }}>الإجمالي (ر.س)</th>
+                          <th className="h-10 px-3 text-right font-medium text-muted-foreground text-xs" style={{ minWidth: 110 }}>الإجمالي ({baseSym})</th>
                           <th className="h-10 px-3" style={{ width: 40 }} />
                         </tr>
                       </thead>

@@ -11,7 +11,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
-import { useFormatters } from "@/lib/format";
+import { useFormatters, currencySymbol } from "@/lib/format";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -2016,7 +2016,7 @@ ${sections}
                     <span className="font-mono">−{fmt(lineDiscountTotal)}</span>
                   </div>
                 )}
-                <DiscountRow gross={grossTotal} value={form.discountAmount ?? "0"} onChange={v => setForm((p: any) => ({ ...p, discountAmount: v }))} />
+                <DiscountRow gross={grossTotal} value={form.discountAmount ?? "0"} onChange={v => setForm((p: any) => ({ ...p, discountAmount: v }))} currencySymbol={currencySymbol(form.currencyCode, currencies)} />
                 <div className="flex justify-between font-bold border-t pt-2 text-base">
                   <span>{priceIncludesVat ? t("salesReturns.totalLabelInclusive") : t("salesReturns.totalLabel")}</span>
                   <span className="font-mono text-primary">{fmt(totalAmount)}</span>

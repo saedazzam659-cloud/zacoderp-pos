@@ -30,3 +30,4 @@
 - [POS Desktop release mechanism](pos-desktop-release-mechanism.md) — MSI cut by pushing a pos-desktop-v* tag to GitHub; main agent can't (git writes sandbox-blocked + stale GitHub creds), so user pushes via Git pane + publishes a GitHub Release.
 - [db push bundles all drift](db-push-bundles-drift.md) — `db run push` diffs the whole schema, hits unrelated drift + interactive prompts; for one additive column use direct ALTER TABLE ADD COLUMN IF NOT EXISTS.
 - [POS Desktop print isolation](pos-desktop-print-isolation.md) — print via a standalone HTML iframe document, NOT an in-DOM @media-print overlay; the absolute overlay gets clipped by PosShell flex/overflow ancestors and prints cropped.
+- [Currency symbol display](currency-symbol-display.md) — amounts show the SYMBOL via lib/format currencySymbol (hooks in screens, pure fn in print builders); "العملة:" field + SAR amount-in-words keep the CODE; SaaS/ZATCA/base-only screens excluded.

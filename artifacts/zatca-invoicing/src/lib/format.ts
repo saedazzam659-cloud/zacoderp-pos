@@ -11,6 +11,30 @@ export function getNumberLocale(lang: string): string {
   return lang.startsWith("ar") ? "ar-SA-u-nu-latn" : "en-US";
 }
 
+// Central currency-symbol registry. Mirrors the symbols seeded in
+// lib/countries.ts plus a few common globals. Used as the fallback when a
+// company-defined currency row carries no explicit `symbol`.
+export const CURRENCY_SYMBOLS: Record<string, string> = {
+  SAR: "ر.س", AED: "د.إ", KWD: "د.ك", QAR: "ر.ق", BHD: "د.ب",
+  OMR: "ر.ع", EGP: "ج.م", USD: "$", EUR: "€", GBP: "£",
+  JOD: "د.أ", JPY: "¥", CNY: "¥", TRY: "₺", INR: "₹",
+};
+
+/**
+ * Resolve the display symbol for a currency code.
+ * Precedence: company currency row's explicit `symbol` → built-in map → the
+ * raw code itself (so an unknown currency degrades gracefully, never throws).
+ */
+export function currencySymbol(
+  code?: string | null,
+  currencies?: Array<{ code: string; symbol?: string | null }>,
+): string {
+  if (!code) return CURRENCY_SYMBOLS.SAR;
+  const row = currencies?.find(c => c.code === code);
+  if (row?.symbol) return row.symbol;
+  return CURRENCY_SYMBOLS[code] ?? code;
+}
+
 export function getDateLocale(lang: string): string {
   return lang.startsWith("ar") ? "ar-SA-u-ca-gregory-nu-latn" : "en-GB";
 }
@@ -52,7 +76,10 @@ export function useFormatters() {
     fmt:    (n: any, opts?: Intl.NumberFormatOptions) => formatNumber(n, lang, opts),
     fmtInt: (n: any) => formatInt(n, lang),
     fmtDate: (v: any) => formatDate(v, lang),
-    fmtMoney: (n: any, currency = "SAR") =>
-      `${formatNumber(n, lang)} ${currency === "SAR" ? t("common.currencySAR", { defaultValue: currency }) : currency}`,
+    fmtMoney: (
+      n: any,
+      currency = "SAR",
+      currencies?: Array<{ code: string; symbol?: string | null }>,
+    ) => `${formatNumber(n, lang)} ${currencySymbol(currency, currencies)}`,
   };
 }
