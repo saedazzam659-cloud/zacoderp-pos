@@ -1,5 +1,6 @@
 {pkgs}: {
   deps = [
+    pkgs.chromium
     pkgs.xorg.libXScrnSaver
     pkgs.xorg.libxshmfence
     pkgs.xorg.libXtst

@@ -263,3 +263,9 @@ id = "mQANst8X0WDiUgvDgzQMT"
 uri = "file://attached_assets/grocery_items_egypt.xlsx"
 type = "table"
 title = "كتالوج البقالة المصري (Excel، 624 صنف)"
+
+[[outputs]]
+id = "bSFbefmoSvlzePuv0xABw"
+uri = "file://exports/Zacode-ERP-Technical-Offer.pdf"
+type = "pdf"
+title = "العرض التقني — Zacode ERP لمصانع البسكويت والحلويات (PDF)"
