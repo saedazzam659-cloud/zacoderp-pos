@@ -73,3 +73,4 @@ export * from "./customPrintTemplates";
 export * from "./userTracking";
 export * from "./sisterCompanies";
 export * from "./accountNotes";
+export * from "./safety";

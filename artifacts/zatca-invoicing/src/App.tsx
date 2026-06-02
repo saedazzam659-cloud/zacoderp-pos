@@ -146,6 +146,9 @@ import WorkCenters from "@/pages/production/WorkCenters";
 import QualityChecks from "@/pages/production/QualityChecks";
 import ProductionRoutings from "@/pages/production/ProductionRoutings";
 import ProductionBoard from "@/pages/production/ProductionBoard";
+import SafetyDashboard from "@/pages/safety/SafetyDashboard";
+import RiskRegister from "@/pages/safety/RiskRegister";
+import SafetyIncidents from "@/pages/safety/Incidents";
 import ContractingDashboard from "@/pages/ContractingDashboard";
 import ContractingProjects from "@/pages/ContractingProjects";
 import ContractingProjectDetail from "@/pages/ContractingProjectDetail";
@@ -728,6 +731,11 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/production/cost-rollup"        module="production"     component={CostRollup} />}
             {!isSuperAdmin && <PermRoute path="/production/approvals"          module="production"     component={PendingApprovals} />}
             {!isSuperAdmin && <PermRoute path="/production/kpis"               module="production"     component={ManufacturingKpis} />}
+
+            {/* Occupational Safety & Health (OSH / ISO 45001) — gated by `safety` permission. */}
+            {!isSuperAdmin && <PermRoute path="/safety"                        module="safety"         component={SafetyDashboard} />}
+            {!isSuperAdmin && <PermRoute path="/safety/risk-assessments"       module="safety"         component={RiskRegister} />}
+            {!isSuperAdmin && <PermRoute path="/safety/incidents"              module="safety"         component={SafetyIncidents} />}
 
             {/* Contracting / Construction ERP — gated by `contracting` permission. */}
             {!isSuperAdmin && <PermRoute path="/contracting"                  module="contracting"    component={ContractingDashboard} />}

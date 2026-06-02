@@ -48,6 +48,7 @@ const MENU_ICONS: Record<string, React.ElementType> = {
   hr_module:          UserCog,
   contracting:        HardHat,
   production:         Factory,
+  safety:             ShieldAlert,
   maintenance:        Wrench,
   hotel:              Hotel,
   hospital:           Stethoscope,

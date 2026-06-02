@@ -65,6 +65,9 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   // Operations modules
   contracting: "contracting",
   production: "production",
+  // Occupational Safety & Health (OSH / ISO 45001) — standalone gate. Mirror
+  // of the backend COMPANY_MODULE_GATE; keep both maps in sync.
+  safety: "safety",
   maintenance: "maintenance",
   hotel: "hotel",
   hospital: "hospital",

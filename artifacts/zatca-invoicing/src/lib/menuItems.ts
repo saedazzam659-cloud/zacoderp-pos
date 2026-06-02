@@ -48,6 +48,8 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "production",         label: "الإنتاج والتصنيع",           section: "الإنتاج والتصنيع" },
 
+  { key: "safety",             label: "السلامة والصحة المهنية",      section: "السلامة والصحة المهنية" },
+
   { key: "maintenance",        label: "إدارة الصيانة",              section: "إدارة الصيانة" },
 
   { key: "hotel",              label: "إدارة الفنادق الذكية",       section: "إدارة الفنادق" },
@@ -128,6 +130,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   hr_module:          "hr",
   contracting:        "contracting",
   production:         "production",
+  safety:             null,            // OSH module — toggle is the on/off switch, no separate billable module
   maintenance:        "maintenance",
   hotel:              "hotel",
   hospital:           "hospital",
@@ -171,6 +174,7 @@ export const SECTION_THEME: Record<string, { bg: string; text: string; border: s
   "شؤون الموظفين":         { bg: "bg-rose-50",     text: "text-rose-700",     border: "border-rose-200" },
   "إدارة المقاولات":       { bg: "bg-yellow-50",   text: "text-yellow-700",   border: "border-yellow-200" },
   "الإنتاج والتصنيع":      { bg: "bg-stone-50",    text: "text-stone-700",    border: "border-stone-200" },
+  "السلامة والصحة المهنية": { bg: "bg-red-50",      text: "text-red-700",      border: "border-red-200" },
   "إدارة الصيانة":         { bg: "bg-orange-50",   text: "text-orange-700",   border: "border-orange-200" },
   "إدارة الفنادق":         { bg: "bg-teal-50",     text: "text-teal-700",     border: "border-teal-200" },
   "إدارة المستشفيات":      { bg: "bg-sky-50",      text: "text-sky-700",      border: "border-sky-200" },

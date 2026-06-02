@@ -241,6 +241,14 @@ const productionSubNav: NavDef[] = [
   { nameKey: "nav.productionTraceability", href: "/production/traceability",   icon: GitBranch,     permKey: "production" },
 ];
 const PRODUCTION_GROUP_PERMS = ["production"];
+// Occupational Safety & Health (OSH / ISO 45001) — single `safety` permission
+// key matching MODULE_PERMISSIONS in api-server/auth.ts.
+const safetySubNav: NavDef[] = [
+  { nameKey: "nav.safetyDashboard",   href: "/safety",                  icon: BarChart3,     permKey: "safety", exact: true },
+  { nameKey: "nav.safetyRiskRegister", href: "/safety/risk-assessments", icon: ClipboardList, permKey: "safety" },
+  { nameKey: "nav.safetyIncidents",   href: "/safety/incidents",        icon: AlertTriangle, permKey: "safety" },
+];
+const SAFETY_GROUP_PERMS = ["safety"];
 // Contracting/Construction ERP — gated by a single `contracting` permission key
 // matching MODULE_PERMISSIONS in api-server/auth.ts.
 const contractingSubNav: NavDef[] = [
@@ -1581,6 +1589,39 @@ function ProductionNavGroup({
   );
 }
 
+// ─── SafetyNavGroup ──────────────────────────────────────────────────────────
+// Collapsible "السلامة والصحة المهنية" group — mirrors ProductionNavGroup,
+// gated by a single `safety` permission key.
+function SafetyNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  if (!groupVisible(user, SAFETY_GROUP_PERMS)) return null;
+  const isOnSub = safetySubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref="/safety"
+        icon={ShieldAlert}
+        label={t("nav.safetyGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {safetySubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── ContractingNavGroup ─────────────────────────────────────────────────────
 // Collapsible "إدارة المقاولات" group — mirrors ProductionNavGroup, gated by
 // the `contracting` permission key.
@@ -1969,6 +2010,8 @@ function SidebarInner({
   onHrToggle,
   productionOpen,
   onProductionToggle,
+  safetyOpen,
+  onSafetyToggle,
   contractingOpen,
   onContractingToggle,
   maintenanceOpen,
@@ -2031,6 +2074,8 @@ function SidebarInner({
   onHrToggle: () => void;
   productionOpen: boolean;
   onProductionToggle: () => void;
+  safetyOpen: boolean;
+  onSafetyToggle: () => void;
   contractingOpen: boolean;
   onContractingToggle: () => void;
   maintenanceOpen: boolean;
@@ -2277,6 +2322,17 @@ function SidebarInner({
                   onNavigate={onNavigate}
                   open={productionOpen}
                   onToggle={onProductionToggle}
+                />
+              </div>
+            )}
+
+            {isGroupAllowed(menuPerms, "safety", isSuperAdmin, user) && (
+              <div className="space-y-0.5">
+                <SafetyNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={safetyOpen}
+                  onToggle={onSafetyToggle}
                 />
               </div>
             )}
@@ -2819,6 +2875,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [accountingOpen, setAccountingOpen]   = useState(() => location.startsWith("/accounting/accounts") || location.startsWith("/accounting/journals") || location.startsWith("/accounting/reports"));
   const [hrOpen,         setHrOpen]           = useState(() => location.startsWith("/hr/"));
   const [productionOpen, setProductionOpen]   = useState(() => location.startsWith("/production"));
+  const [safetyOpen,     setSafetyOpen]       = useState(() => location.startsWith("/safety"));
   const [contractingOpen, setContractingOpen] = useState(() => location.startsWith("/contracting"));
   const [maintenanceOpen, setMaintenanceOpen] = useState(() => location.startsWith("/maintenance"));
   const [installmentsOpen, setInstallmentsOpen] = useState(() => location.startsWith("/installments"));
@@ -2859,7 +2916,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // and their own open/closed state is independent.
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "sister" | "accounting"
-    | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting" | "maintenance" | "installments" | "hotel" | "hospital" | "crm" | "fixedAssets"
+    | "purchasing" | "sales" | "cash" | "hr" | "production" | "safety" | "contracting" | "maintenance" | "installments" | "hotel" | "hospital" | "crm" | "fixedAssets"
     | "multiLink" | "pos" | "security" | "aiTools" | "liveMonitoring";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
@@ -2872,6 +2929,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (keep !== "cash")       setCashOpen(false);
     if (keep !== "hr")         setHrOpen(false);
     if (keep !== "production")  setProductionOpen(false);
+    if (keep !== "safety")      setSafetyOpen(false);
     if (keep !== "contracting") setContractingOpen(false);
     if (keep !== "maintenance") setMaintenanceOpen(false);
     if (keep !== "installments") setInstallmentsOpen(false);
@@ -2911,6 +2969,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleCashToggle       = makeAccordionToggle("cash",       cashOpen,       setCashOpen);
   const handleHrToggle         = makeAccordionToggle("hr",         hrOpen,         setHrOpen);
   const handleProductionToggle  = makeAccordionToggle("production",  productionOpen,  setProductionOpen);
+  const handleSafetyToggle      = makeAccordionToggle("safety",      safetyOpen,      setSafetyOpen);
   const handleContractingToggle = makeAccordionToggle("contracting", contractingOpen, setContractingOpen);
   const handleMaintenanceToggle = makeAccordionToggle("maintenance", maintenanceOpen, setMaintenanceOpen);
   const handleInstallmentsToggle = makeAccordionToggle("installments", installmentsOpen, setInstallmentsOpen);
@@ -2972,6 +3031,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     else if (location.startsWith("/inventory/sister-")) target = "sister";
     else if (location.startsWith("/inventory")) target = "inventory";
     else if (location.startsWith("/production")) target = "production";
+    else if (location.startsWith("/safety")) target = "safety";
     else if (location.startsWith("/contracting")) target = "contracting";
     else if (location.startsWith("/maintenance")) target = "maintenance";
     else if (location.startsWith("/installments")) target = "installments";
@@ -3016,6 +3076,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         cash:       setCashOpen,
         hr:         setHrOpen,
         production:  setProductionOpen,
+        safety:      setSafetyOpen,
         contracting: setContractingOpen,
         maintenance: setMaintenanceOpen,
         installments: setInstallmentsOpen,
@@ -3069,6 +3130,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onHrToggle: handleHrToggle,
     productionOpen,
     onProductionToggle: handleProductionToggle,
+    safetyOpen,
+    onSafetyToggle: handleSafetyToggle,
     contractingOpen,
     onContractingToggle: handleContractingToggle,
     maintenanceOpen,
