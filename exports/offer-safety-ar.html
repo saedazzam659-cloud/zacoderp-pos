@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>العرض التقني — السلامة والصحة المهنية | Zacode ERP</title>
+<style>
+  @font-face{
+    font-family:'Cairo';
+    src:url('offer-assets/fonts/Cairo-VF.ttf') format('truetype');
+    font-weight:200 900; font-style:normal; font-display:swap;
+  }
+  :root{
+    --emerald:#059669; --emerald-d:#047857; --emerald-l:#10b981;
+    --gold:#d4a017; --gold-l:#fbbf24;
+    --ink:#0f172a; --slate:#334155; --muted:#64748b;
+    --line:#e2e8f0; --soft:#f1f5f9; --soft2:#f8fafc;
+    --paper:#ffffff;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; font-family:'Cairo',sans-serif; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  @page{ size:A4; margin:0; }
+  html,body{ background:#fff; color:var(--ink); font-size:13px; line-height:1.85; }
+
+  .page{
+    width:210mm; min-height:297mm; padding:18mm 16mm 22mm; position:relative;
+    page-break-after:always; overflow:hidden; background:var(--paper);
+  }
+  .page:last-child{ page-break-after:auto; }
+
+  /* running footer band */
+  .pfoot{
+    position:absolute; left:0; right:0; bottom:0; height:12mm;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0 16mm; font-size:9.5px; color:var(--muted);
+    border-top:2px solid var(--emerald);
+  }
+  .pfoot .brand{ color:var(--emerald-d); font-weight:800; }
+  .pfoot .gold-dot{ color:var(--gold); }
+
+  /* ============ COVER ============ */
+  .cover{
+    color:#fff; padding:0; display:flex; flex-direction:column;
+    background:
+      radial-gradient(1200px 500px at 12% -8%, rgba(16,185,129,.45), transparent 60%),
+      radial-gradient(900px 500px at 110% 115%, rgba(212,160,23,.30), transparent 55%),
+      linear-gradient(150deg,#04130f 0%, #06251c 38%, #053b2c 100%);
+  }
+  .cover-inner{ padding:24mm 18mm; flex:1; display:flex; flex-direction:column; position:relative; }
+  .cover .topbar{ display:flex; align-items:center; justify-content:space-between; }
+  .cover .topbar img{ height:46px; }
+  .cover .badge{
+    border:1px solid rgba(251,191,36,.55); color:var(--gold-l);
+    padding:6px 14px; border-radius:999px; font-size:10.5px; font-weight:700; letter-spacing:.3px;
+    background:rgba(251,191,36,.08);
+  }
+  .cover .hero{ margin-top:auto; }
+  .cover .kicker{ color:var(--gold-l); font-weight:800; font-size:14px; letter-spacing:1px; margin-bottom:10px; }
+  .cover h1{ font-size:46px; font-weight:900; line-height:1.2; letter-spacing:-.5px; }
+  .cover h1 .accent{ color:var(--emerald-l); }
+  .cover .sub{ margin-top:14px; font-size:17px; color:#cbe9dd; font-weight:600; max-width:80%; }
+  .cover .rule{ width:90px; height:5px; border-radius:3px; background:linear-gradient(90deg,var(--gold-l),var(--emerald-l)); margin:22px 0; }
+  .cover .lede{ font-size:12.5px; color:#a9d3c4; line-height:2; max-width:88%; }
+  .cover .pills{ display:flex; gap:10px; flex-wrap:wrap; margin-top:26px; }
+  .cover .pill{ background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14); color:#e6f5ee;
+    padding:7px 14px; border-radius:10px; font-size:11px; font-weight:700; }
+  .cover .meta{
+    margin-top:30px; padding-top:18px; border-top:1px solid rgba(255,255,255,.14);
+    display:flex; gap:34px; flex-wrap:wrap; font-size:11.5px; color:#bfe2d5;
+  }
+  .cover .meta b{ color:#fff; display:block; font-size:13px; margin-bottom:2px; }
+  .cover .watermark{ position:absolute; left:-40px; bottom:-40px; width:240px; opacity:.06; }
+
+  /* ============ SECTION SHELL ============ */
+  .sec-head{ display:flex; align-items:center; gap:14px; margin-bottom:18px; }
+  .sec-head .no{
+    flex-shrink:0; width:42px; height:42px; border-radius:12px; color:#fff; font-weight:900; font-size:18px;
+    display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(145deg,var(--emerald-l),var(--emerald-d)); box-shadow:0 6px 14px rgba(5,150,105,.28);
+  }
+  .sec-head h2{ font-size:22px; font-weight:900; color:var(--ink); }
+  .sec-head .tag{ font-size:11px; color:var(--emerald-d); font-weight:700; }
+  .lead{ color:var(--slate); font-size:13.5px; margin-bottom:16px; line-height:2; }
+
+  .intro-card{
+    background:linear-gradient(135deg,#ecfdf5,#f0fdfa); border:1px solid #bbf7d0;
+    border-radius:16px; padding:20px 22px; margin-bottom:18px; position:relative;
+  }
+  .intro-card:before{ content:""; position:absolute; top:0; right:0; bottom:0; width:6px; border-radius:0 16px 16px 0;
+    background:linear-gradient(180deg,var(--emerald-l),var(--gold-l)); }
+  .intro-card p{ color:var(--slate); font-size:13.5px; line-height:2; }
+  .intro-card p+p{ margin-top:10px; }
+
+  /* feature grid */
+  .fgrid{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .fcard{
+    border:1px solid var(--line); border-radius:14px; padding:15px 16px; background:#fff;
+    break-inside:avoid;
+  }
+  .fcard .ico{ font-size:22px; }
+  .fcard h3{ font-size:14px; font-weight:800; color:var(--ink); margin:8px 0 8px; }
+  .fcard ul{ list-style:none; }
+  .fcard li{ position:relative; padding-right:18px; font-size:12.5px; color:var(--slate); line-height:1.95; }
+  .fcard li:before{ content:"✓"; position:absolute; right:0; top:0; color:var(--emerald); font-weight:900; font-size:11px; }
+  .fcard.span2{ grid-column:1 / -1; }
+  .fcard.hl{ background:linear-gradient(135deg,#fffbeb,#fefce8); border-color:#fde68a; }
+
+  /* dashboard kpi row */
+  .kpis{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:6px 0 14px; }
+  .kpi{ background:var(--ink); color:#fff; border-radius:12px; padding:14px; text-align:center; }
+  .kpi.alt{ background:linear-gradient(145deg,var(--emerald-d),var(--emerald)); }
+  .kpi .big{ font-size:22px; font-weight:900; color:var(--gold-l); }
+  .kpi.alt .big{ color:#fff; }
+  .kpi .lbl{ font-size:10px; color:#cbd5e1; margin-top:2px; }
+  .kpi.alt .lbl{ color:#d1fae5; }
+
+  /* benefits */
+  .bgrid{ display:grid; grid-template-columns:1fr 1fr; gap:10px 18px; }
+  .bitem{ display:flex; gap:10px; align-items:flex-start; font-size:13px; color:var(--slate); break-inside:avoid; }
+  .bitem .chk{ flex-shrink:0; width:22px; height:22px; border-radius:7px; background:#dcfce7; color:var(--emerald-d);
+    display:flex; align-items:center; justify-content:center; font-weight:900; font-size:12px; }
+
+  /* timeline */
+  .tl{ position:relative; margin-top:6px; padding-right:8px; }
+  .tl .step{ display:flex; gap:14px; padding-bottom:16px; position:relative; break-inside:avoid; }
+  .tl .step:before{ content:""; position:absolute; right:17px; top:34px; bottom:-2px; width:2px; background:var(--line); }
+  .tl .step:last-child:before{ display:none; }
+  .tl .dot{ flex-shrink:0; width:36px; height:36px; border-radius:50%; color:#fff; font-weight:900; font-size:13px;
+    display:flex; align-items:center; justify-content:center; z-index:1;
+    background:linear-gradient(145deg,var(--emerald-l),var(--emerald-d)); }
+  .tl .body h4{ font-size:13.5px; font-weight:800; color:var(--ink); }
+  .tl .body p{ font-size:12.5px; color:var(--muted); margin-top:2px; }
+  .tl .body .wk{ font-size:10px; color:var(--gold); font-weight:800; }
+
+  /* compliance two-col */
+  .comp{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .comp .cc{ border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+  .comp .cc .top{ padding:11px 14px; color:#fff; font-weight:800; font-size:13px; display:flex; align-items:center; gap:8px; }
+  .comp .cc.eg .top{ background:linear-gradient(135deg,#b91c1c,#dc2626); }
+  .comp .cc.sa .top{ background:linear-gradient(135deg,var(--emerald-d),var(--emerald)); }
+  .comp .cc ul{ list-style:none; padding:12px 14px; }
+  .comp .cc li{ position:relative; padding-right:18px; font-size:12.5px; color:var(--slate); line-height:1.95; }
+  .comp .cc li:before{ content:"◆"; position:absolute; right:0; top:1px; font-size:8px; color:var(--gold); }
+
+  /* trial box */
+  .trial{
+    background:linear-gradient(140deg,#04130f,#06302350); border-radius:18px; overflow:hidden;
+    border:1px solid #064e3b; background:linear-gradient(140deg,#052e22,#04130f);
+    color:#fff; display:grid; grid-template-columns:1.1fr 1fr;
+  }
+  .trial .l{ padding:24px; }
+  .trial .l .t{ color:var(--gold-l); font-weight:800; font-size:13px; }
+  .trial .l h3{ font-size:24px; font-weight:900; margin:6px 0 10px; }
+  .trial .l p{ font-size:12px; color:#bfe2d5; line-height:1.9; }
+  .trial .r{ background:rgba(255,255,255,.04); border-right:1px solid rgba(255,255,255,.1); padding:24px; }
+  .cred{ display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px dashed rgba(255,255,255,.14); font-size:13.5px; }
+  .cred:last-child{ border-bottom:none; }
+  .cred .k{ color:#9fd3c1; }
+  .cred .v{ font-weight:800; color:#fff; letter-spacing:.4px; font-family:'Cairo',monospace; }
+
+  /* contacts */
+  .contacts{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:6px; }
+  .pcard{ border:1px solid var(--line); border-radius:16px; padding:18px 20px; background:linear-gradient(160deg,#fff,#f8fafc); break-inside:avoid; }
+  .pcard .role{ font-size:11px; color:var(--emerald-d); font-weight:800; }
+  .pcard .name{ font-size:17px; font-weight:900; color:var(--ink); margin:6px 0 4px; }
+  .pcard .phone{ font-size:14px; color:var(--slate); font-weight:700; letter-spacing:.5px; direction:ltr; text-align:right; }
+  .pcard .phone:before{ content:"📞 "; }
+
+  .closing{
+    margin-top:18px; background:linear-gradient(135deg,#ecfdf5,#f0fdfa);
+    border:1px solid #bbf7d0; border-radius:16px; padding:20px 22px; text-align:center;
+  }
+  .closing p{ color:var(--slate); font-size:13.5px; line-height:2; }
+  .closing .sig{ margin-top:12px; font-weight:900; color:var(--emerald-d); font-size:14px; }
+
+  .section-divider{ height:1px; background:var(--line); margin:18px 0; }
+</style>
+</head>
+<body>
+
+<!-- ====================== PAGE 1 — COVER ====================== -->
+<section class="page cover">
+  <div class="cover-inner">
+    <div class="topbar">
+      <img src="offer-assets/zacode-logo-dark.png" alt="Zacode">
+      <span class="badge">عرض تقني متخصص · السلامة والصحة المهنية · 2026</span>
+    </div>
+
+    <img class="watermark" src="offer-assets/zacode-mark-512.png" alt="">
+
+    <div class="hero">
+      <div class="kicker">ZACODE ERP</div>
+      <h1>نظام إدارة<br><span class="accent">السلامة والصحة المهنية</span></h1>
+      <div class="sub">منظومة رقمية متكاملة لإدارة السلامة داخل مصانع الملابس — حمايةٌ للعاملين والتزامٌ كامل بالمعايير.</div>
+      <div class="rule"></div>
+      <div class="lede">
+        وحدة متخصصة ضمن نظام Zacode ERP تربط الحوادث والمخاطر والتفتيش ومعدات الوقاية والتدريب والطوارئ في منظومة واحدة،
+        وتمنح إدارة السلامة رؤية لحظية ولوحة مؤشرات دقيقة لاتخاذ القرار الوقائي قبل وقوع الخطر.
+      </div>
+      <div class="pills">
+        <span class="pill">الحوادث والإصابات</span>
+        <span class="pill">تقييم المخاطر</span>
+        <span class="pill">معدات الوقاية PPE</span>
+        <span class="pill">التفتيش وCAPA</span>
+        <span class="pill">التدريب والطوارئ</span>
+        <span class="pill">الامتثال وISO 45001</span>
+      </div>
+
+      <div class="meta">
+        <div><b>مُقدَّم إلى</b>السيد مدير إدارة السلامة والصحة المهنية — شركة أليكس أباريلز المحترم</div>
+        <div><b>إعداد</b>فريق Zacode ERP</div>
+        <div><b>نوع المستند</b>عرض تقني متخصص</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== PAGE 2 — INTRO + KPIs + SCOPE ====================== -->
+<section class="page">
+  <div class="sec-head">
+    <div class="no">١</div>
+    <div><h2>مقدمة ونظرة عامة</h2><div class="tag">رؤية متكاملة لإدارة السلامة المهنية</div></div>
+  </div>
+  <div class="intro-card">
+    <p>يسعدنا أن نقدّم إلى إدارة السلامة والصحة المهنية بشركة <b>أليكس أباريلز</b> وحدةً متخصصة ضمن نظام <b>Zacode ERP</b>،
+    مصمَّمة لإدارة منظومة السلامة داخل مصانع الملابس بشكل كامل — من تسجيل الحوادث وتقييم المخاطر، إلى إدارة معدات الوقاية
+    والتدريب والطوارئ والامتثال للمعايير المحلية والدولية.</p>
+    <p>تعمل الوحدة مترابطةً مع باقي أقسام المصنع (الإنتاج، المخازن، الموارد البشرية)، فتربط كل عامل وكل خط إنتاج وكل ماكينة
+    بسجل السلامة الخاص به، وتحوّل إجراءات السلامة من أعمالٍ ورقية متفرقة إلى منظومة رقمية موحّدة قابلة للقياس والمتابعة اللحظية.</p>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi alt"><div class="big">▼</div><div class="lbl">معدل تكرار الإصابات (LTIFR)</div></div>
+    <div class="kpi"><div class="big">▲</div><div class="lbl">الحوادث الوشيكة المُبلّغة</div></div>
+    <div class="kpi"><div class="big">■</div><div class="lbl">أيام العمل المفقودة</div></div>
+    <div class="kpi alt"><div class="big">✓</div><div class="lbl">نسبة إغلاق الإجراءات التصحيحية</div></div>
+  </div>
+
+  <div class="sec-head" style="margin-top:6px">
+    <div class="no">✦</div>
+    <div><h2>نطاق وحدة السلامة</h2><div class="tag">منظومة شاملة تغطّي كل جوانب السلامة</div></div>
+  </div>
+  <div class="bgrid">
+    <div class="bitem"><span class="chk">✓</span> تسجيل ومتابعة الحوادث والإصابات والحوادث الوشيكة</div>
+    <div class="bitem"><span class="chk">✓</span> سجل مخاطر شامل لكل قسم وخط إنتاج وماكينة</div>
+    <div class="bitem"><span class="chk">✓</span> إدارة دورة معدات الوقاية الشخصية بالكامل</div>
+    <div class="bitem"><span class="chk">✓</span> جولات التفتيش وقوائم الفحص الدورية</div>
+    <div class="bitem"><span class="chk">✓</span> إدارة التدريب والشهادات وخطط الطوارئ</div>
+    <div class="bitem"><span class="chk">✓</span> لوحة مؤشرات سلامة لحظية للإدارة العليا</div>
+  </div>
+
+  <div class="pfoot"><span class="brand">Zacode ERP</span><span><span class="gold-dot">●</span> العرض التقني — السلامة والصحة المهنية</span><span>صفحة ٢</span></div>
+</section>
+
+<!-- ====================== PAGE 3 — CORE SAFETY OPERATIONS ====================== -->
+<section class="page">
+  <div class="sec-head">
+    <div class="no">٢</div>
+    <div><h2>إدارة عمليات السلامة</h2><div class="tag">من رصد الخطر إلى إغلاق الإجراء</div></div>
+  </div>
+  <div class="fgrid">
+    <div class="fcard">
+      <div class="ico">🚨</div>
+      <h3>الحوادث والإصابات والبلاغات</h3>
+      <ul>
+        <li>تسجيل الحوادث والإصابات والحوادث الوشيكة (Near-Miss)</li>
+        <li>تصنيف الحادث حسب النوع والخطورة والموقع</li>
+        <li>تحقيق وتحليل الأسباب الجذرية لكل حادث</li>
+        <li>متابعة أيام العمل المفقودة والتعويضات</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">⚠️</div>
+      <h3>تقييم المخاطر وسجل الأخطار</h3>
+      <ul>
+        <li>سجل مخاطر لكل قسم وخط إنتاج وماكينة</li>
+        <li>تقييم درجة الخطورة (الاحتمالية × الأثر)</li>
+        <li>خطط ضبط المخاطر وتقليلها للحد المقبول</li>
+        <li>مراجعة دورية وتحديث مستمر للسجل</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">🦺</div>
+      <h3>معدات الوقاية الشخصية (PPE)</h3>
+      <ul>
+        <li>صرف المعدات لكل عامل حسب المقاس والمهمة</li>
+        <li>متابعة صلاحية المعدات ومواعيد الاستبدال</li>
+        <li>ربط الصرف بالمخزون والتكلفة</li>
+        <li>تقارير الالتزام بارتداء المعدات</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">🔍</div>
+      <h3>التفتيش وتصاريح العمل</h3>
+      <ul>
+        <li>جولات تفتيش دورية بقوائم فحص (Checklists)</li>
+        <li>تصاريح العمل للأعمال الخطرة (Permit to Work)</li>
+        <li>رصد المخالفات وتوثيقها بالصور</li>
+        <li>جدولة التفتيش الدوري تلقائيًا</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">🛠️</div>
+      <h3>الإجراءات التصحيحية والوقائية (CAPA)</h3>
+      <ul>
+        <li>فتح إجراء تصحيحي لكل مخالفة أو حادث</li>
+        <li>تعيين مسؤول وتاريخ استحقاق لكل إجراء</li>
+        <li>متابعة حالة الإجراء حتى الإغلاق النهائي</li>
+        <li>تنبيهات تلقائية بالإجراءات المتأخرة</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">⚙️</div>
+      <h3>صيانة الأمان للماكينات</h3>
+      <ul>
+        <li>بطاقة أمان لكل ماكينة ومعدة</li>
+        <li>جدولة الصيانة الوقائية الدورية</li>
+        <li>ربط الأعطال بمخاطر السلامة</li>
+        <li>منع تشغيل الماكينات غير الآمنة</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="pfoot"><span class="brand">Zacode ERP</span><span><span class="gold-dot">●</span> العرض التقني — السلامة والصحة المهنية</span><span>صفحة ٣</span></div>
+</section>
+
+<!-- ====================== PAGE 4 — TRAINING / EMERGENCY / HEALTH + COMPLIANCE ====================== -->
+<section class="page">
+  <div class="sec-head">
+    <div class="no">٣</div>
+    <div><h2>التدريب والطوارئ والصحة المهنية</h2><div class="tag">جاهزية كاملة وحماية مستمرة للعاملين</div></div>
+  </div>
+  <div class="fgrid">
+    <div class="fcard">
+      <div class="ico">🎓</div>
+      <h3>التدريب والشهادات</h3>
+      <ul>
+        <li>سجل تدريب السلامة لكل عامل</li>
+        <li>متابعة الشهادات وتواريخ تجديدها</li>
+        <li>تنبيهات قبل انتهاء صلاحية الشهادات</li>
+        <li>تقييم مدى استيعاب التدريب</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">🔥</div>
+      <h3>الطوارئ والإخلاء والحريق</h3>
+      <ul>
+        <li>خطط الإخلاء وتحديد نقاط التجمّع</li>
+        <li>جدولة محاكاة الحريق والإخلاء دوريًا</li>
+        <li>متابعة معدات الإطفاء وصلاحيتها</li>
+        <li>توثيق نتائج التجارب والدروس المستفادة</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">🧪</div>
+      <h3>إدارة المواد الكيميائية (MSDS)</h3>
+      <ul>
+        <li>سجل المواد الكيميائية (صباغة / طباعة)</li>
+        <li>بطاقات السلامة (MSDS) لكل مادة</li>
+        <li>اشتراطات التخزين والمناولة الآمنة</li>
+        <li>متابعة المخزون وتواريخ الصلاحية</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">🩺</div>
+      <h3>الصحة المهنية والفحص الطبي</h3>
+      <ul>
+        <li>سجل الفحوصات الطبية الدورية للعاملين</li>
+        <li>متابعة الأمراض المهنية والحالات الخاصة</li>
+        <li>ربط بيئة العمل بالمخاطر الصحية</li>
+        <li>تنبيهات بمواعيد الفحص الدوري</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="section-divider"></div>
+
+  <div class="sec-head">
+    <div class="no">✦</div>
+    <div><h2>الامتثال والمعايير الدولية</h2><div class="tag">التزام كامل بالقوانين والمعايير</div></div>
+  </div>
+  <div class="comp">
+    <div class="cc eg">
+      <div class="top">📋 الامتثال المحلي — قانون العمل المصري</div>
+      <ul>
+        <li>الالتزام باشتراطات السلامة والصحة المهنية</li>
+        <li>متطلبات بيئة العمل وساعات العمل الآمنة</li>
+        <li>سجلات السلامة المطلوبة للجهات الرقابية</li>
+        <li>تقارير جاهزة للتفتيش الحكومي</li>
+      </ul>
+    </div>
+    <div class="cc sa">
+      <div class="top">🌐 المعايير الدولية — ISO 45001</div>
+      <ul>
+        <li>بناء نظام إدارة السلامة وفق ISO 45001</li>
+        <li>دورة التحسين المستمر (Plan-Do-Check-Act)</li>
+        <li>توثيق الإجراءات والسياسات بشكل منظّم</li>
+        <li>جاهزية كاملة لمتطلبات التدقيق والاعتماد</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="pfoot"><span class="brand">Zacode ERP</span><span><span class="gold-dot">●</span> العرض التقني — السلامة والصحة المهنية</span><span>صفحة ٤</span></div>
+</section>
+
+<!-- ====================== PAGE 5 — BENEFITS + IMPLEMENTATION ====================== -->
+<section class="page">
+  <div class="sec-head">
+    <div class="no">٤</div>
+    <div><h2>فوائد التطبيق</h2><div class="tag">أثر مباشر على بيئة العمل والإنتاج</div></div>
+  </div>
+  <div class="bgrid">
+    <div class="bitem"><span class="chk">✓</span> خفض معدلات الحوادث والإصابات</div>
+    <div class="bitem"><span class="chk">✓</span> حماية العاملين وتعزيز ثقافة السلامة</div>
+    <div class="bitem"><span class="chk">✓</span> تقليل أيام العمل المفقودة والتكاليف</div>
+    <div class="bitem"><span class="chk">✓</span> الامتثال الكامل للقوانين وتجنّب الغرامات</div>
+    <div class="bitem"><span class="chk">✓</span> رؤية لحظية لكل مخاطر المصنع</div>
+    <div class="bitem"><span class="chk">✓</span> سرعة الاستجابة للحوادث والمخالفات</div>
+    <div class="bitem"><span class="chk">✓</span> توحيد سجلات السلامة في منظومة واحدة</div>
+    <div class="bitem"><span class="chk">✓</span> جاهزية دائمة للتدقيق والاعتماد</div>
+  </div>
+
+  <div class="section-divider"></div>
+
+  <div class="sec-head">
+    <div class="no">٥</div>
+    <div><h2>خطة التطبيق والتدريب</h2><div class="tag">انطلاقة سلسة خلال أسابيع</div></div>
+  </div>
+  <div class="tl">
+    <div class="step">
+      <div class="dot">١</div>
+      <div class="body"><h4>دراسة وتحليل بيئة العمل</h4>
+        <p>حصر المخاطر والأقسام والماكينات وإعداد سجل المخاطر المبدئي.</p>
+        <span class="wk">الأسبوع ١–٢</span></div>
+    </div>
+    <div class="step">
+      <div class="dot">٢</div>
+      <div class="body"><h4>التهيئة والإعداد</h4>
+        <p>تكوين قوائم الفحص وأنواع الحوادث ومعدات الوقاية والصلاحيات.</p>
+        <span class="wk">الأسبوع ٢–٣</span></div>
+    </div>
+    <div class="step">
+      <div class="dot">٣</div>
+      <div class="body"><h4>إدخال البيانات والتشغيل التجريبي</h4>
+        <p>إدخال سجلات السلامة الحالية وتشغيل تجريبي للتأكد من دقة المنظومة.</p>
+        <span class="wk">الأسبوع ٣–٤</span></div>
+    </div>
+    <div class="step">
+      <div class="dot">٤</div>
+      <div class="body"><h4>تدريب فريق السلامة</h4>
+        <p>تدريب عملي لإدارة السلامة والمشرفين على استخدام الوحدة بالكامل.</p>
+        <span class="wk">الأسبوع ٤</span></div>
+    </div>
+    <div class="step">
+      <div class="dot">٥</div>
+      <div class="body"><h4>الإطلاق والدعم المستمر</h4>
+        <p>إطلاق رسمي مع دعم فني مباشر ومتابعة دورية وتحديثات مستمرة.</p>
+        <span class="wk">مستمر</span></div>
+    </div>
+  </div>
+
+  <div class="pfoot"><span class="brand">Zacode ERP</span><span><span class="gold-dot">●</span> العرض التقني — السلامة والصحة المهنية</span><span>صفحة ٥</span></div>
+</section>
+
+<!-- ====================== PAGE 6 — TRIAL + CONTACTS + CLOSING ====================== -->
+<section class="page">
+  <div class="sec-head">
+    <div class="no">🎁</div>
+    <div><h2>التجربة المجانية</h2><div class="tag">جرّب الوحدة قبل اتخاذ القرار</div></div>
+  </div>
+  <div class="trial">
+    <div class="l">
+      <div class="t">عرض خاص</div>
+      <h3>نسخة تجريبية مجانية كاملة لمدة شهر</h3>
+      <p>يسعدنا تقديم نسخة تجريبية كاملة المزايا لتجربة وحدة السلامة على بيانات المصنع الحقيقية، مع دعم فني خلال فترة التجربة.</p>
+    </div>
+    <div class="r">
+      <div class="cred"><span class="k">رابط الدخول</span><span class="v">zacoderp.com</span></div>
+      <div class="cred"><span class="k">كود الشركة</span><span class="v">ZTC-31</span></div>
+      <div class="cred"><span class="k">اسم المستخدم</span><span class="v">demo</span></div>
+      <div class="cred"><span class="k">كلمة المرور</span><span class="v">Demo@2026</span></div>
+      <div class="cred"><span class="k">مدة التجربة</span><span class="v">٣٠ يومًا</span></div>
+    </div>
+  </div>
+
+  <div class="section-divider"></div>
+
+  <div class="sec-head">
+    <div class="no">☎</div>
+    <div><h2>بيانات التواصل</h2><div class="tag">فريق Zacode في خدمتكم</div></div>
+  </div>
+  <div class="contacts">
+    <div class="pcard">
+      <div class="role">المستشار القانوني</div>
+      <div class="name">اللواء / محمد كمال</div>
+      <div class="phone">01221679691</div>
+    </div>
+    <div class="pcard">
+      <div class="role">الرئيس التنفيذي</div>
+      <div class="name">المهندس / سعيد عزام</div>
+      <div class="phone">01000903159</div>
+    </div>
+  </div>
+
+  <div class="closing">
+    <p>نتطلّع للتعاون معكم وتقديم عرضٍ عملي لوحدة السلامة والصحة المهنية، يوضّح كيف يساعد نظام <b>Zacode ERP</b>
+    في بناء بيئة عمل آمنة، وحماية العاملين، والامتثال الكامل لمعايير السلامة المحلية والدولية.</p>
+    <div class="sig">مع خالص التقدير — فريق Zacode ERP</div>
+  </div>
+
+  <div class="pfoot"><span class="brand">Zacode ERP</span><span><span class="gold-dot">●</span> العرض التقني — السلامة والصحة المهنية</span><span>صفحة ٦</span></div>
+</section>
+
+</body>
+</html>

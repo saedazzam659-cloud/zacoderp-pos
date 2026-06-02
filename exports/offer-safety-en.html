@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<title>Technical Proposal — Occupational Health &amp; Safety | Zacode ERP</title>
+<style>
+  @font-face{
+    font-family:'Cairo';
+    src:url('offer-assets/fonts/Cairo-VF.ttf') format('truetype');
+    font-weight:200 900; font-style:normal; font-display:swap;
+  }
+  :root{
+    --emerald:#059669; --emerald-d:#047857; --emerald-l:#10b981;
+    --gold:#d4a017; --gold-l:#fbbf24;
+    --ink:#0f172a; --slate:#334155; --muted:#64748b;
+    --line:#e2e8f0; --soft:#f1f5f9; --soft2:#f8fafc;
+    --paper:#ffffff;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; font-family:'Cairo',sans-serif; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  @page{ size:A4; margin:0; }
+  html,body{ background:#fff; color:var(--ink); font-size:13px; line-height:1.7; }
+
+  .page{
+    width:210mm; min-height:297mm; padding:18mm 16mm 22mm; position:relative;
+    page-break-after:always; overflow:hidden; background:var(--paper);
+  }
+  .page:last-child{ page-break-after:auto; }
+
+  /* running footer band */
+  .pfoot{
+    position:absolute; left:0; right:0; bottom:0; height:12mm;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0 16mm; font-size:9.5px; color:var(--muted);
+    border-top:2px solid var(--emerald);
+  }
+  .pfoot .brand{ color:var(--emerald-d); font-weight:800; }
+  .pfoot .gold-dot{ color:var(--gold); }
+
+  /* ============ COVER ============ */
+  .cover{
+    color:#fff; padding:0; display:flex; flex-direction:column;
+    background:
+      radial-gradient(1200px 500px at 12% -8%, rgba(16,185,129,.45), transparent 60%),
+      radial-gradient(900px 500px at 110% 115%, rgba(212,160,23,.30), transparent 55%),
+      linear-gradient(150deg,#04130f 0%, #06251c 38%, #053b2c 100%);
+  }
+  .cover-inner{ padding:24mm 18mm; flex:1; display:flex; flex-direction:column; position:relative; }
+  .cover .topbar{ display:flex; align-items:center; justify-content:space-between; }
+  .cover .topbar img{ height:46px; }
+  .cover .badge{
+    border:1px solid rgba(251,191,36,.55); color:var(--gold-l);
+    padding:6px 14px; border-radius:999px; font-size:10.5px; font-weight:700; letter-spacing:.3px;
+    background:rgba(251,191,36,.08);
+  }
+  .cover .hero{ margin-top:auto; }
+  .cover .kicker{ color:var(--gold-l); font-weight:800; font-size:14px; letter-spacing:1px; margin-bottom:10px; }
+  .cover h1{ font-size:44px; font-weight:900; line-height:1.2; letter-spacing:-.5px; }
+  .cover h1 .accent{ color:var(--emerald-l); }
+  .cover .sub{ margin-top:14px; font-size:16px; color:#cbe9dd; font-weight:600; max-width:86%; }
+  .cover .rule{ width:90px; height:5px; border-radius:3px; background:linear-gradient(90deg,var(--gold-l),var(--emerald-l)); margin:22px 0; }
+  .cover .lede{ font-size:12.5px; color:#a9d3c4; line-height:1.9; max-width:90%; }
+  .cover .pills{ display:flex; gap:10px; flex-wrap:wrap; margin-top:26px; }
+  .cover .pill{ background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14); color:#e6f5ee;
+    padding:7px 14px; border-radius:10px; font-size:11px; font-weight:700; }
+  .cover .meta{
+    margin-top:30px; padding-top:18px; border-top:1px solid rgba(255,255,255,.14);
+    display:flex; gap:34px; flex-wrap:wrap; font-size:11.5px; color:#bfe2d5;
+  }
+  .cover .meta b{ color:#fff; display:block; font-size:13px; margin-bottom:2px; }
+  .cover .watermark{ position:absolute; right:-40px; bottom:-40px; width:240px; opacity:.06; }
+
+  /* ============ SECTION SHELL ============ */
+  .sec-head{ display:flex; align-items:center; gap:14px; margin-bottom:18px; }
+  .sec-head .no{
+    flex-shrink:0; width:42px; height:42px; border-radius:12px; color:#fff; font-weight:900; font-size:18px;
+    display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(145deg,var(--emerald-l),var(--emerald-d)); box-shadow:0 6px 14px rgba(5,150,105,.28);
+  }
+  .sec-head h2{ font-size:21px; font-weight:900; color:var(--ink); }
+  .sec-head .tag{ font-size:11px; color:var(--emerald-d); font-weight:700; }
+  .lead{ color:var(--slate); font-size:13px; margin-bottom:16px; line-height:1.8; }
+
+  .intro-card{
+    background:linear-gradient(135deg,#ecfdf5,#f0fdfa); border:1px solid #bbf7d0;
+    border-radius:16px; padding:20px 22px; margin-bottom:18px; position:relative;
+  }
+  .intro-card:before{ content:""; position:absolute; top:0; left:0; bottom:0; width:6px; border-radius:16px 0 0 16px;
+    background:linear-gradient(180deg,var(--emerald-l),var(--gold-l)); }
+  .intro-card p{ color:var(--slate); font-size:13px; line-height:1.85; }
+  .intro-card p+p{ margin-top:10px; }
+
+  /* feature grid */
+  .fgrid{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .fcard{
+    border:1px solid var(--line); border-radius:14px; padding:15px 16px; background:#fff;
+    break-inside:avoid;
+  }
+  .fcard .ico{ font-size:22px; }
+  .fcard h3{ font-size:14px; font-weight:800; color:var(--ink); margin:8px 0 8px; }
+  .fcard ul{ list-style:none; }
+  .fcard li{ position:relative; padding-left:18px; font-size:12px; color:var(--slate); line-height:1.8; }
+  .fcard li:before{ content:"✓"; position:absolute; left:0; top:0; color:var(--emerald); font-weight:900; font-size:11px; }
+  .fcard.span2{ grid-column:1 / -1; }
+  .fcard.hl{ background:linear-gradient(135deg,#fffbeb,#fefce8); border-color:#fde68a; }
+
+  /* dashboard kpi row */
+  .kpis{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:6px 0 14px; }
+  .kpi{ background:var(--ink); color:#fff; border-radius:12px; padding:14px; text-align:center; }
+  .kpi.alt{ background:linear-gradient(145deg,var(--emerald-d),var(--emerald)); }
+  .kpi .big{ font-size:22px; font-weight:900; color:var(--gold-l); }
+  .kpi.alt .big{ color:#fff; }
+  .kpi .lbl{ font-size:10px; color:#cbd5e1; margin-top:2px; line-height:1.4; }
+  .kpi.alt .lbl{ color:#d1fae5; }
+
+  /* benefits */
+  .bgrid{ display:grid; grid-template-columns:1fr 1fr; gap:10px 18px; }
+  .bitem{ display:flex; gap:10px; align-items:flex-start; font-size:12.5px; color:var(--slate); break-inside:avoid; }
+  .bitem .chk{ flex-shrink:0; width:22px; height:22px; border-radius:7px; background:#dcfce7; color:var(--emerald-d);
+    display:flex; align-items:center; justify-content:center; font-weight:900; font-size:12px; }
+
+  /* timeline */
+  .tl{ position:relative; margin-top:6px; padding-left:8px; }
+  .tl .step{ display:flex; gap:14px; padding-bottom:16px; position:relative; break-inside:avoid; }
+  .tl .step:before{ content:""; position:absolute; left:17px; top:34px; bottom:-2px; width:2px; background:var(--line); }
+  .tl .step:last-child:before{ display:none; }
+  .tl .dot{ flex-shrink:0; width:36px; height:36px; border-radius:50%; color:#fff; font-weight:900; font-size:13px;
+    display:flex; align-items:center; justify-content:center; z-index:1;
+    background:linear-gradient(145deg,var(--emerald-l),var(--emerald-d)); }
+  .tl .body h4{ font-size:13.5px; font-weight:800; color:var(--ink); }
+  .tl .body p{ font-size:12px; color:var(--muted); margin-top:2px; }
+  .tl .body .wk{ font-size:10px; color:var(--gold); font-weight:800; }
+
+  /* compliance two-col */
+  .comp{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .comp .cc{ border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+  .comp .cc .top{ padding:11px 14px; color:#fff; font-weight:800; font-size:12.5px; display:flex; align-items:center; gap:8px; }
+  .comp .cc.eg .top{ background:linear-gradient(135deg,#b91c1c,#dc2626); }
+  .comp .cc.sa .top{ background:linear-gradient(135deg,var(--emerald-d),var(--emerald)); }
+  .comp .cc ul{ list-style:none; padding:12px 14px; }
+  .comp .cc li{ position:relative; padding-left:18px; font-size:12px; color:var(--slate); line-height:1.85; }
+  .comp .cc li:before{ content:"◆"; position:absolute; left:0; top:1px; font-size:8px; color:var(--gold); }
+
+  /* trial box */
+  .trial{
+    border-radius:18px; overflow:hidden;
+    border:1px solid #064e3b; background:linear-gradient(140deg,#052e22,#04130f);
+    color:#fff; display:grid; grid-template-columns:1.1fr 1fr;
+  }
+  .trial .l{ padding:24px; }
+  .trial .l .t{ color:var(--gold-l); font-weight:800; font-size:13px; }
+  .trial .l h3{ font-size:23px; font-weight:900; margin:6px 0 10px; }
+  .trial .l p{ font-size:12px; color:#bfe2d5; line-height:1.8; }
+  .trial .r{ background:rgba(255,255,255,.04); border-left:1px solid rgba(255,255,255,.1); padding:24px; }
+  .cred{ display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px dashed rgba(255,255,255,.14); font-size:13px; }
+  .cred:last-child{ border-bottom:none; }
+  .cred .k{ color:#9fd3c1; }
+  .cred .v{ font-weight:800; color:#fff; letter-spacing:.4px; }
+
+  /* contacts */
+  .contacts{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:6px; }
+  .pcard{ border:1px solid var(--line); border-radius:16px; padding:18px 20px; background:linear-gradient(160deg,#fff,#f8fafc); break-inside:avoid; }
+  .pcard .role{ font-size:11px; color:var(--emerald-d); font-weight:800; }
+  .pcard .name{ font-size:17px; font-weight:900; color:var(--ink); margin:6px 0 4px; }
+  .pcard .phone{ font-size:14px; color:var(--slate); font-weight:700; letter-spacing:.5px; direction:ltr; text-align:left; }
+  .pcard .phone:before{ content:"📞 "; }
+
+  .closing{
+    margin-top:18px; background:linear-gradient(135deg,#ecfdf5,#f0fdfa);
+    border:1px solid #bbf7d0; border-radius:16px; padding:20px 22px; text-align:center;
+  }
+  .closing p{ color:var(--slate); font-size:13px; line-height:1.85; }
+  .closing .sig{ margin-top:12px; font-weight:900; color:var(--emerald-d); font-size:14px; }
+
+  .section-divider{ height:1px; background:var(--line); margin:18px 0; }
+</style>
+</head>
+<body>
+
+<!-- ====================== PAGE 1 — COVER ====================== -->
+<section class="page cover">
+  <div class="cover-inner">
+    <div class="topbar">
+      <img src="offer-assets/zacode-logo-dark.png" alt="Zacode">
+      <span class="badge">Specialized Technical Proposal · Occupational Health &amp; Safety · 2026</span>
+    </div>
+
+    <img class="watermark" src="offer-assets/zacode-mark-512.png" alt="">
+
+    <div class="hero">
+      <div class="kicker">ZACODE ERP</div>
+      <h1>Occupational <span class="accent">Health &amp; Safety</span><br>Management System</h1>
+      <div class="sub">An integrated digital platform to manage safety inside garment factories — protecting workers and ensuring full compliance.</div>
+      <div class="rule"></div>
+      <div class="lede">
+        A specialized module within Zacode ERP that connects incidents, risks, inspections, protective equipment, training and
+        emergencies in a single system — giving the safety department real-time visibility and a precise dashboard to take
+        preventive decisions before any hazard occurs.
+      </div>
+      <div class="pills">
+        <span class="pill">Incidents &amp; Injuries</span>
+        <span class="pill">Risk Assessment</span>
+        <span class="pill">PPE Management</span>
+        <span class="pill">Inspections &amp; CAPA</span>
+        <span class="pill">Training &amp; Emergency</span>
+        <span class="pill">Compliance &amp; ISO 45001</span>
+      </div>
+
+      <div class="meta">
+        <div><b>Submitted to</b>The Occupational Health &amp; Safety Manager — Alex Apparels</div>
+        <div><b>Prepared by</b>Zacode ERP Team</div>
+        <div><b>Document type</b>Specialized Technical Proposal</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== PAGE 2 — INTRO + KPIs + SCOPE ====================== -->
+<section class="page">
+  <div class="sec-head">
+    <div class="no">1</div>
+    <div><h2>Introduction &amp; Overview</h2><div class="tag">An integrated vision for occupational-safety management</div></div>
+  </div>
+  <div class="intro-card">
+    <p>We are pleased to present to the Occupational Health &amp; Safety department of <b>Alex Apparels</b> a specialized module
+    within the <b>Zacode ERP</b> system, designed to fully manage the safety ecosystem inside garment factories — from logging
+    incidents and assessing risks, to managing protective equipment, training, emergencies and compliance with local and
+    international standards.</p>
+    <p>The module operates in connection with the rest of the factory's departments (production, warehouses, human resources),
+    linking every worker, every production line and every machine to its own safety record, and transforming safety procedures
+    from scattered paperwork into a unified, measurable and real-time digital system.</p>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi alt"><div class="big">▼</div><div class="lbl">Injury Frequency Rate (LTIFR)</div></div>
+    <div class="kpi"><div class="big">▲</div><div class="lbl">Reported Near-Misses</div></div>
+    <div class="kpi"><div class="big">■</div><div class="lbl">Lost Work Days</div></div>
+    <div class="kpi alt"><div class="big">✓</div><div class="lbl">Corrective-Action Closure Rate</div></div>
+  </div>
+
+  <div class="sec-head" style="margin-top:6px">
+    <div class="no">✦</div>
+    <div><h2>Scope of the Safety Module</h2><div class="tag">A comprehensive system covering every aspect of safety</div></div>
+  </div>
+  <div class="bgrid">
+    <div class="bitem"><span class="chk">✓</span> Log and track incidents, injuries and near-misses</div>
+    <div class="bitem"><span class="chk">✓</span> A full hazard register per department, line and machine</div>
+    <div class="bitem"><span class="chk">✓</span> End-to-end management of the PPE lifecycle</div>
+    <div class="bitem"><span class="chk">✓</span> Inspection rounds and periodic checklists</div>
+    <div class="bitem"><span class="chk">✓</span> Training, certification and emergency-plan management</div>
+    <div class="bitem"><span class="chk">✓</span> A real-time safety dashboard for top management</div>
+  </div>
+
+  <div class="pfoot"><span class="brand">Zacode ERP</span><span><span class="gold-dot">●</span> Technical Proposal — Occupational Health &amp; Safety</span><span>Page 2</span></div>
+</section>
+
+<!-- ====================== PAGE 3 — CORE SAFETY OPERATIONS ====================== -->
+<section class="page">
+  <div class="sec-head">
+    <div class="no">2</div>
+    <div><h2>Safety Operations Management</h2><div class="tag">From detecting the hazard to closing the action</div></div>
+  </div>
+  <div class="fgrid">
+    <div class="fcard">
+      <div class="ico">🚨</div>
+      <h3>Incidents, Injuries &amp; Reports</h3>
+      <ul>
+        <li>Log incidents, injuries and near-misses (Near-Miss)</li>
+        <li>Classify each incident by type, severity and location</li>
+        <li>Investigate and analyze the root cause of each incident</li>
+        <li>Track lost work days and compensation</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">⚠️</div>
+      <h3>Risk Assessment &amp; Hazard Register</h3>
+      <ul>
+        <li>Hazard register per department, line and machine</li>
+        <li>Risk-level scoring (likelihood × impact)</li>
+        <li>Risk-control and mitigation plans to an acceptable level</li>
+        <li>Periodic review and continuous register updates</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">🦺</div>
+      <h3>Personal Protective Equipment (PPE)</h3>
+      <ul>
+        <li>Issue equipment per worker by size and task</li>
+        <li>Track equipment validity and replacement dates</li>
+        <li>Link issuance to inventory and cost</li>
+        <li>PPE-compliance reports</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">🔍</div>
+      <h3>Inspections &amp; Work Permits</h3>
+      <ul>
+        <li>Periodic inspection rounds with checklists</li>
+        <li>Permit to Work for hazardous tasks</li>
+        <li>Capture and document violations with photos</li>
+        <li>Automatic scheduling of periodic inspections</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">🛠️</div>
+      <h3>Corrective &amp; Preventive Actions (CAPA)</h3>
+      <ul>
+        <li>Open a corrective action for every violation or incident</li>
+        <li>Assign an owner and due date to each action</li>
+        <li>Track action status through to final closure</li>
+        <li>Automatic alerts for overdue actions</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">⚙️</div>
+      <h3>Machine Safety Maintenance</h3>
+      <ul>
+        <li>A safety card for every machine and piece of equipment</li>
+        <li>Scheduling of periodic preventive maintenance</li>
+        <li>Link breakdowns to safety hazards</li>
+        <li>Prevent operation of unsafe machines</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="pfoot"><span class="brand">Zacode ERP</span><span><span class="gold-dot">●</span> Technical Proposal — Occupational Health &amp; Safety</span><span>Page 3</span></div>
+</section>
+
+<!-- ====================== PAGE 4 — TRAINING / EMERGENCY / HEALTH + COMPLIANCE ====================== -->
+<section class="page">
+  <div class="sec-head">
+    <div class="no">3</div>
+    <div><h2>Training, Emergency &amp; Occupational Health</h2><div class="tag">Full readiness and continuous worker protection</div></div>
+  </div>
+  <div class="fgrid">
+    <div class="fcard">
+      <div class="ico">🎓</div>
+      <h3>Training &amp; Certifications</h3>
+      <ul>
+        <li>A safety-training record for each worker</li>
+        <li>Track certifications and their renewal dates</li>
+        <li>Alerts before certifications expire</li>
+        <li>Assess training comprehension</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">🔥</div>
+      <h3>Emergency, Evacuation &amp; Fire</h3>
+      <ul>
+        <li>Evacuation plans and assembly-point definition</li>
+        <li>Schedule periodic fire and evacuation drills</li>
+        <li>Track firefighting equipment and its validity</li>
+        <li>Document drill results and lessons learned</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">🧪</div>
+      <h3>Chemical Management (MSDS)</h3>
+      <ul>
+        <li>Register of chemicals used (dyeing / printing)</li>
+        <li>Safety data sheets (MSDS) for each material</li>
+        <li>Safe storage and handling requirements</li>
+        <li>Track stock and expiry dates</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <div class="ico">🩺</div>
+      <h3>Occupational Health &amp; Medical Exams</h3>
+      <ul>
+        <li>Record of periodic medical examinations for workers</li>
+        <li>Track occupational illnesses and special cases</li>
+        <li>Link the work environment to health hazards</li>
+        <li>Alerts for periodic-examination dates</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="section-divider"></div>
+
+  <div class="sec-head">
+    <div class="no">✦</div>
+    <div><h2>Compliance &amp; International Standards</h2><div class="tag">Full adherence to laws and standards</div></div>
+  </div>
+  <div class="comp">
+    <div class="cc eg">
+      <div class="top">📋 Local Compliance — Egyptian Labor Law</div>
+      <ul>
+        <li>Adherence to occupational health &amp; safety requirements</li>
+        <li>Work-environment requirements and safe working hours</li>
+        <li>Safety records required by regulatory authorities</li>
+        <li>Reports ready for government inspection</li>
+      </ul>
+    </div>
+    <div class="cc sa">
+      <div class="top">🌐 International Standards — ISO 45001</div>
+      <ul>
+        <li>Build a safety-management system per ISO 45001</li>
+        <li>The continuous-improvement cycle (Plan-Do-Check-Act)</li>
+        <li>Structured documentation of procedures and policies</li>
+        <li>Full readiness for audit and accreditation requirements</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="pfoot"><span class="brand">Zacode ERP</span><span><span class="gold-dot">●</span> Technical Proposal — Occupational Health &amp; Safety</span><span>Page 4</span></div>
+</section>
+
+<!-- ====================== PAGE 5 — BENEFITS + IMPLEMENTATION ====================== -->
+<section class="page">
+  <div class="sec-head">
+    <div class="no">4</div>
+    <div><h2>Benefits of Implementation</h2><div class="tag">A direct impact on the work environment and production</div></div>
+  </div>
+  <div class="bgrid">
+    <div class="bitem"><span class="chk">✓</span> Reduce incident and injury rates</div>
+    <div class="bitem"><span class="chk">✓</span> Protect workers and strengthen the safety culture</div>
+    <div class="bitem"><span class="chk">✓</span> Reduce lost work days and costs</div>
+    <div class="bitem"><span class="chk">✓</span> Full legal compliance and avoidance of fines</div>
+    <div class="bitem"><span class="chk">✓</span> Real-time visibility of all factory hazards</div>
+    <div class="bitem"><span class="chk">✓</span> Fast response to incidents and violations</div>
+    <div class="bitem"><span class="chk">✓</span> Unify safety records in a single system</div>
+    <div class="bitem"><span class="chk">✓</span> Permanent readiness for audit and accreditation</div>
+  </div>
+
+  <div class="section-divider"></div>
+
+  <div class="sec-head">
+    <div class="no">➜</div>
+    <div><h2>Implementation &amp; Training Plan</h2><div class="tag">A smooth launch within weeks</div></div>
+  </div>
+  <div class="tl">
+    <div class="step">
+      <div class="dot">1</div>
+      <div class="body"><h4>Study &amp; Analysis of the Work Environment</h4>
+        <p>Survey hazards, departments and machines and prepare the initial hazard register.</p>
+        <span class="wk">Week 1–2</span></div>
+    </div>
+    <div class="step">
+      <div class="dot">2</div>
+      <div class="body"><h4>Configuration &amp; Setup</h4>
+        <p>Configure checklists, incident types, protective equipment and permissions.</p>
+        <span class="wk">Week 2–3</span></div>
+    </div>
+    <div class="step">
+      <div class="dot">3</div>
+      <div class="body"><h4>Data Entry &amp; Pilot Run</h4>
+        <p>Enter current safety records and run a pilot to verify the accuracy of the system.</p>
+        <span class="wk">Week 3–4</span></div>
+    </div>
+    <div class="step">
+      <div class="dot">4</div>
+      <div class="body"><h4>Safety-Team Training</h4>
+        <p>Hands-on training for the safety department and supervisors on using the full module.</p>
+        <span class="wk">Week 4</span></div>
+    </div>
+    <div class="step">
+      <div class="dot">5</div>
+      <div class="body"><h4>Go-Live &amp; Continuous Support</h4>
+        <p>Official launch with direct technical support, periodic follow-up and continuous updates.</p>
+        <span class="wk">Ongoing</span></div>
+    </div>
+  </div>
+
+  <div class="pfoot"><span class="brand">Zacode ERP</span><span><span class="gold-dot">●</span> Technical Proposal — Occupational Health &amp; Safety</span><span>Page 5</span></div>
+</section>
+
+<!-- ====================== PAGE 6 — TRIAL + CONTACTS + CLOSING ====================== -->
+<section class="page">
+  <div class="sec-head">
+    <div class="no">🎁</div>
+    <div><h2>Free Trial</h2><div class="tag">Try the module before you decide</div></div>
+  </div>
+  <div class="trial">
+    <div class="l">
+      <div class="t">Special Offer</div>
+      <h3>A full-featured one-month free version</h3>
+      <p>We are pleased to offer a full-featured trial version to test the safety module on real factory data, with technical
+      support throughout the trial period.</p>
+    </div>
+    <div class="r">
+      <div class="cred"><span class="k">Login URL</span><span class="v">zacoderp.com</span></div>
+      <div class="cred"><span class="k">Company Code</span><span class="v">ZTC-31</span></div>
+      <div class="cred"><span class="k">Username</span><span class="v">demo</span></div>
+      <div class="cred"><span class="k">Password</span><span class="v">Demo@2026</span></div>
+      <div class="cred"><span class="k">Trial Period</span><span class="v">30 days</span></div>
+    </div>
+  </div>
+
+  <div class="section-divider"></div>
+
+  <div class="sec-head">
+    <div class="no">☎</div>
+    <div><h2>Contact Details</h2><div class="tag">The Zacode team at your service</div></div>
+  </div>
+  <div class="contacts">
+    <div class="pcard">
+      <div class="role">Legal Advisor</div>
+      <div class="name">Maj. Gen. Mohamed Kamal</div>
+      <div class="phone">01221679691</div>
+    </div>
+    <div class="pcard">
+      <div class="role">Chief Executive Officer</div>
+      <div class="name">Eng. Saeed Azzam</div>
+      <div class="phone">01000903159</div>
+    </div>
+  </div>
+
+  <div class="closing">
+    <p>We look forward to cooperating with you and presenting a practical demonstration of the occupational health &amp; safety
+    module, showing how <b>Zacode ERP</b> helps build a safe work environment, protect workers, and achieve full compliance with
+    local and international safety standards.</p>
+    <div class="sig">With sincere appreciation — The Zacode ERP Team</div>
+  </div>
+
+  <div class="pfoot"><span class="brand">Zacode ERP</span><span><span class="gold-dot">●</span> Technical Proposal — Occupational Health &amp; Safety</span><span>Page 6</span></div>
+</section>
+
+</body>
+</html>

@@ -275,3 +275,15 @@ id = "h6z3Rs8ddHmYxz-jwWczs"
 uri = "file://exports/Zacode-ERP-Technical-Offer-EN.pdf"
 type = "pdf"
 title = "Technical Proposal — English Version (incl. Occupational Health & Safety)"
+
+[[outputs]]
+id = "P6ohXcRbxJQxjfrL7DjzQ"
+uri = "file://exports/Zacode-Safety-Offer-AR.pdf"
+type = "pdf"
+title = "عرض السلامة والصحة المهنية — النسخة العربية (6 صفحات)"
+
+[[outputs]]
+id = "alcpQJL00x0FzFhGn0ofA"
+uri = "file://exports/Zacode-Safety-Offer-EN.pdf"
+type = "pdf"
+title = "Occupational Health & Safety Proposal — English (6 pages)"
