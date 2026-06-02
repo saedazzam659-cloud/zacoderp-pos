@@ -268,4 +268,10 @@ title = "كتالوج البقالة المصري (Excel، 624 صنف)"
 id = "bSFbefmoSvlzePuv0xABw"
 uri = "file://exports/Zacode-ERP-Technical-Offer.pdf"
 type = "pdf"
-title = "العرض التقني — Zacode ERP لمصانع الملابس (أليكس أباريلز)"
+title = "العرض التقني — النسخة العربية (مع قسم السلامة والصحة المهنية)"
+
+[[outputs]]
+id = "h6z3Rs8ddHmYxz-jwWczs"
+uri = "file://exports/Zacode-ERP-Technical-Offer-EN.pdf"
+type = "pdf"
+title = "Technical Proposal — English Version (incl. Occupational Health & Safety)"
