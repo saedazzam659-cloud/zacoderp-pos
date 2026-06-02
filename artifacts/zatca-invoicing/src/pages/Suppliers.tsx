@@ -60,6 +60,21 @@ const EMPTY_FORM = {
   accountId: "" as string,
 };
 
+function Field({ label, value, onChange, placeholder, dir }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; dir?: string }) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-sm font-medium">{label}</label>
+      <Input
+        placeholder={placeholder}
+        dir={dir}
+        className={dir === "ltr" ? "text-left font-mono" : undefined}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+      />
+    </div>
+  );
+}
+
 export default function Suppliers() {
   const { user, token } = useAuth();
   const { t } = useTranslation();
@@ -320,21 +335,6 @@ export default function Suppliers() {
     );
   }
 
-  function Field({ label, name, placeholder, dir: d }: { label: string; name: keyof typeof EMPTY_FORM; placeholder?: string; dir?: string }) {
-    return (
-      <div className="space-y-1.5">
-        <label className="text-sm font-medium">{label}</label>
-        <Input
-          placeholder={placeholder}
-          dir={d}
-          className={d === "ltr" ? "text-left font-mono" : undefined}
-          value={(editForm as any)[name]}
-          onChange={e => setEditForm(f => ({ ...f, [name]: e.target.value }))}
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6" dir="rtl">
       {/* Header */}
@@ -397,23 +397,23 @@ export default function Suppliers() {
             <div className="space-y-4">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2"><Truck className="h-3.5 w-3.5" />{t("pages.suppliers.commercialIdentity")}</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-                <Field label="رقم المورد" name="code" placeholder="SUP-001" dir="ltr" />
-                <Field label={`${t("pages.suppliers.supplierNameAr")} *`} name="nameAr" placeholder={t("pages.suppliers.supplierNameArPlaceholder")} />
-                <div className="md:col-span-2"><Field label={t("pages.suppliers.nameEnLabel")} name="nameEn" placeholder={t("pages.suppliers.nameEnPlaceholder")} dir="ltr" /></div>
-                <Field label={t("pages.suppliers.vatNumberLabel")} name="vatNumber" placeholder="310000000000003" dir="ltr" />
-                <Field label={t("pages.suppliers.crNumberLabel")} name="crNumber" placeholder="1010000001" dir="ltr" />
-                <Field label={t("pages.suppliers.emailLabel")} name="email" placeholder="info@supplier.com" dir="ltr" />
-                <Field label={t("pages.suppliers.phoneLabel")} name="phone" placeholder="0500000000" dir="ltr" />
+                <Field label="رقم المورد" value={editForm.code} onChange={v => setEditForm(f => ({ ...f, code: v }))} placeholder="SUP-001" dir="ltr" />
+                <Field label={`${t("pages.suppliers.supplierNameAr")} *`} value={editForm.nameAr} onChange={v => setEditForm(f => ({ ...f, nameAr: v }))} placeholder={t("pages.suppliers.supplierNameArPlaceholder")} />
+                <div className="md:col-span-2"><Field label={t("pages.suppliers.nameEnLabel")} value={editForm.nameEn} onChange={v => setEditForm(f => ({ ...f, nameEn: v }))} placeholder={t("pages.suppliers.nameEnPlaceholder")} dir="ltr" /></div>
+                <Field label={t("pages.suppliers.vatNumberLabel")} value={editForm.vatNumber} onChange={v => setEditForm(f => ({ ...f, vatNumber: v }))} placeholder="310000000000003" dir="ltr" />
+                <Field label={t("pages.suppliers.crNumberLabel")} value={editForm.crNumber} onChange={v => setEditForm(f => ({ ...f, crNumber: v }))} placeholder="1010000001" dir="ltr" />
+                <Field label={t("pages.suppliers.emailLabel")} value={editForm.email} onChange={v => setEditForm(f => ({ ...f, email: v }))} placeholder="info@supplier.com" dir="ltr" />
+                <Field label={t("pages.suppliers.phoneLabel")} value={editForm.phone} onChange={v => setEditForm(f => ({ ...f, phone: v }))} placeholder="0500000000" dir="ltr" />
               </div>
             </div>
             <div className="space-y-4">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2"><MapPin className="h-3.5 w-3.5" />{t("pages.suppliers.nationalAddress")}</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-                <Field label={t("pages.suppliers.streetName")} name="street" placeholder={t("pages.suppliers.streetPlaceholder")} />
-                <Field label={t("pages.suppliers.buildingNumber")} name="buildingNumber" placeholder="1234" dir="ltr" />
-                <Field label={t("pages.suppliers.district")} name="district" placeholder={t("pages.suppliers.districtPlaceholder")} />
-                <Field label={t("pages.suppliers.cityLabel")} name="city" placeholder={t("pages.suppliers.cityPlaceholder")} />
-                <Field label={t("pages.suppliers.postalCode")} name="postalCode" placeholder="12345" dir="ltr" />
+                <Field label={t("pages.suppliers.streetName")} value={editForm.street} onChange={v => setEditForm(f => ({ ...f, street: v }))} placeholder={t("pages.suppliers.streetPlaceholder")} />
+                <Field label={t("pages.suppliers.buildingNumber")} value={editForm.buildingNumber} onChange={v => setEditForm(f => ({ ...f, buildingNumber: v }))} placeholder="1234" dir="ltr" />
+                <Field label={t("pages.suppliers.district")} value={editForm.district} onChange={v => setEditForm(f => ({ ...f, district: v }))} placeholder={t("pages.suppliers.districtPlaceholder")} />
+                <Field label={t("pages.suppliers.cityLabel")} value={editForm.city} onChange={v => setEditForm(f => ({ ...f, city: v }))} placeholder={t("pages.suppliers.cityPlaceholder")} />
+                <Field label={t("pages.suppliers.postalCode")} value={editForm.postalCode} onChange={v => setEditForm(f => ({ ...f, postalCode: v }))} placeholder="12345" dir="ltr" />
               </div>
             </div>
             <div className="space-y-4">
