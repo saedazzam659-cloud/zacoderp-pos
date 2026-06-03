@@ -549,26 +549,50 @@ export default function JournalEntryForm() {
       return;
     }
 
-    let suggestion: { accountId: number | null; accountLabel: string; reasoning: string; source: "ai" | "rules" };
-    try {
-      suggestion = await taxEntryMutation.mutateAsync(direction);
-    } catch (e: any) {
-      toast({
-        title: "تعذر اقتراح حساب الضريبة",
-        description: e?.message ?? "حدث خطأ أثناء الاتصال بخدمة الذكاء الاصطناعي.",
-        variant: "destructive",
-      });
-      return;
+    // Route the VAT line to the account configured on the company's
+    // default tax FIRST: output VAT → salesTaxAccountId, input VAT →
+    // purchaseTaxAccountId, both falling back to the tax's generic
+    // accountId. The AI/rules suggestVatAccount endpoint is consulted
+    // ONLY when the default tax has no routed account, so companies
+    // that configured the tax catalog get deterministic routing while
+    // legacy companies keep the prior AI-assisted behaviour.
+    let resolvedAccountId: number | null = null;
+    let resolvedAccountLabel = "";
+    let resolvedSource: "tax" | "ai" | "rules" = "tax";
+    if (jeDefaultTax) {
+      const routed = direction === "output"
+        ? (jeDefaultTax.salesTaxAccountId ?? jeDefaultTax.accountId)
+        : (jeDefaultTax.purchaseTaxAccountId ?? jeDefaultTax.accountId);
+      if (routed) {
+        resolvedAccountId = routed;
+        resolvedAccountLabel = jeDefaultTax.nameAr || "ضريبة الشركة الافتراضية";
+      }
     }
-    if (!suggestion.accountId) {
-      toast({
-        title: direction === "input" ? "لم يتم العثور على حساب ضريبة المدخلات" : "لم يتم العثور على حساب ضريبة المخرجات",
-        description: suggestion.reasoning || "أنشئ الحساب في دليل الحسابات أو حدّده يدوياً.",
-        variant: "destructive",
-      });
-      return;
+    if (!resolvedAccountId) {
+      let suggestion: { accountId: number | null; accountLabel: string; reasoning: string; source: "ai" | "rules" };
+      try {
+        suggestion = await taxEntryMutation.mutateAsync(direction);
+      } catch (e: any) {
+        toast({
+          title: "تعذر اقتراح حساب الضريبة",
+          description: e?.message ?? "حدث خطأ أثناء الاتصال بخدمة الذكاء الاصطناعي.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!suggestion.accountId) {
+        toast({
+          title: direction === "input" ? "لم يتم العثور على حساب ضريبة المدخلات" : "لم يتم العثور على حساب ضريبة المخرجات",
+          description: suggestion.reasoning || "أنشئ الحساب في دليل الحسابات أو حدّده يدوياً.",
+          variant: "destructive",
+        });
+        return;
+      }
+      resolvedAccountId = suggestion.accountId;
+      resolvedAccountLabel = suggestion.accountLabel;
+      resolvedSource = suggestion.source;
     }
-    const vatAccountId = String(suggestion.accountId);
+    const vatAccountId = String(resolvedAccountId);
 
     // Build one VAT line per eligible source line, preserving the
     // source's costCenter so the tax follows the same dimension.
@@ -638,7 +662,7 @@ export default function JournalEntryForm() {
 
     toast({
       title: direction === "input" ? "تمت إضافة سطور ضريبة المدخلات" : "تمت إضافة سطور ضريبة المخرجات",
-      description: `${vatLines.length} سطر • إجمالي الضريبة ${totalVat.toFixed(2)} ${currency} • ${suggestion.accountLabel} • ${suggestion.source === "ai" ? "اقتراح ذكاء اصطناعي" : "قواعد محلية"}`,
+      description: `${vatLines.length} سطر • إجمالي الضريبة ${totalVat.toFixed(2)} ${currency} • ${resolvedAccountLabel} • ${resolvedSource === "tax" ? "حساب الضريبة المعرّف" : resolvedSource === "ai" ? "اقتراح ذكاء اصطناعي" : "قواعد محلية"}`,
     });
   }
 

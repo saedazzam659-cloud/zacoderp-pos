@@ -16,6 +16,7 @@ import {
 } from "@workspace/db";
 import { eq, and, asc, desc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread, multiBranchScopeSpread } from "../middleware/auth.js";
+import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
@@ -1065,6 +1066,7 @@ router.post("/purchase-invoices", async (req, res) => {
       createdById: (req as any).authUser?.id ?? null,
     }).returning();
     if (lines?.length) {
+      const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
       await db.insert(purchaseInvoiceLinesTable).values(
         lines.map((l: any) => ({
           invoiceId: inv.id, companyId: cid,
@@ -1077,7 +1079,7 @@ router.post("/purchase-invoices", async (req, res) => {
           freeQty: String(l.freeQty || "0"),
           weight: String(l.weight || "0"),
           unitPrice: String(l.unitPrice || "0"),
-          discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))), vatRate: String(l.vatRate || "15"),
+          discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))), vatRate: String(l.vatRate || resolvedRate),
           lineTotal: String(l.lineTotal || "0"),
           expenseShare: String(l.expenseShare || "0"),
           finalCost: String(l.finalCost || "0"),
@@ -1147,6 +1149,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
     if (lines !== undefined) {
       await db.delete(purchaseInvoiceLinesTable).where(eq(purchaseInvoiceLinesTable.invoiceId, id));
       if (lines.length) {
+        const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
         await db.insert(purchaseInvoiceLinesTable).values(
           lines.map((l: any) => ({
             invoiceId: id, companyId: cid,
@@ -1159,7 +1162,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
             freeQty: String(l.freeQty || "0"),
             weight: String(l.weight || "0"),
             unitPrice: String(l.unitPrice || "0"),
-            discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))), vatRate: String(l.vatRate || "15"),
+            discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))), vatRate: String(l.vatRate || resolvedRate),
             lineTotal: String(l.lineTotal || "0"),
             expenseShare: String(l.expenseShare || "0"),
             finalCost: String(l.finalCost || "0"),
@@ -1738,6 +1741,7 @@ router.post("/purchase-orders", async (req, res) => {
       taxId: taxId ? Number(taxId) : null,
     }).returning();
     if (lines?.length) {
+      const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
       await db.insert(purchaseOrderLinesTable).values(
         lines.map((l: any) => ({
           orderId: ord.id, companyId: cid,
@@ -1751,7 +1755,7 @@ router.post("/purchase-orders", async (req, res) => {
           weight: String(l.weight || "0"),
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
-          vatRate: String(l.vatRate || "15"),
+          vatRate: String(l.vatRate || resolvedRate),
           lineTotal: String(l.lineTotal || "0"),
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
           notes: l.notes || null,
@@ -1802,6 +1806,7 @@ router.put("/purchase-orders/:id", async (req, res) => {
     if (lines !== undefined) {
       await db.delete(purchaseOrderLinesTable).where(eq(purchaseOrderLinesTable.orderId, id));
       if (lines.length) {
+        const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
         await db.insert(purchaseOrderLinesTable).values(
           lines.map((l: any) => ({
             orderId: id, companyId: cid,
@@ -1815,7 +1820,7 @@ router.put("/purchase-orders/:id", async (req, res) => {
             weight: String(l.weight || "0"),
             unitPrice: String(l.unitPrice || "0"),
             discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
-            vatRate: String(l.vatRate || "15"),
+            vatRate: String(l.vatRate || resolvedRate),
             lineTotal: String(l.lineTotal || "0"),
             warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
             notes: l.notes || null,
@@ -2074,6 +2079,7 @@ router.post("/purchase-returns", async (req, res) => {
       status: "draft", notes: notes || null,
     }).returning();
     if (lines?.length) {
+      const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
       await db.insert(purchaseReturnLinesTable).values(
         lines.map((l: any) => ({
           returnId: ret.id, companyId: cid,
@@ -2086,7 +2092,7 @@ router.post("/purchase-returns", async (req, res) => {
           freeQty: String(l.freeQty || "0"),
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
-          vatRate: String(l.vatRate || "15"),
+          vatRate: String(l.vatRate || resolvedRate),
           lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
         }))
       );
@@ -2138,6 +2144,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
     if (lines !== undefined) {
       await db.delete(purchaseReturnLinesTable).where(eq(purchaseReturnLinesTable.returnId, id));
       if (lines.length) {
+        const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
         await db.insert(purchaseReturnLinesTable).values(
           lines.map((l: any) => ({
             returnId: id, companyId: cid,
@@ -2150,7 +2157,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
             freeQty: String(l.freeQty || "0"),
             unitPrice: String(l.unitPrice || "0"),
             discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
-            vatRate: String(l.vatRate || "15"),
+            vatRate: String(l.vatRate || resolvedRate),
             lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
           }))
         );

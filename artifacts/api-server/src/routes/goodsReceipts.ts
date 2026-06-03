@@ -11,6 +11,7 @@ import {
 import { inArray } from "drizzle-orm";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
+import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { loadMappings } from "../lib/accountingMappings.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
@@ -305,6 +306,7 @@ router.post("/", async (req, res) => {
     }).returning();
 
     if (lines?.length) {
+      const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
       await db.insert(goodsReceiptLinesTable).values(
         lines.map((l: any) => ({
           receiptId: gr.id, companyId: cid,
@@ -317,7 +319,7 @@ router.post("/", async (req, res) => {
           qty: String(l.qty || "1"),
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
-          vatRate: String(l.vatRate || "15"),
+          vatRate: String(l.vatRate || resolvedRate),
           lineTotal: String(l.lineTotal || "0"),
           batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
           expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
@@ -374,6 +376,7 @@ router.put("/:id", async (req, res) => {
     if (lines !== undefined) {
       await db.delete(goodsReceiptLinesTable).where(eq(goodsReceiptLinesTable.receiptId, id));
       if (lines.length) {
+        const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
         await db.insert(goodsReceiptLinesTable).values(
           lines.map((l: any) => ({
             receiptId: id, companyId: cid,
@@ -386,7 +389,7 @@ router.put("/:id", async (req, res) => {
             qty: String(l.qty || "1"),
             unitPrice: String(l.unitPrice || "0"),
             discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
-            vatRate: String(l.vatRate || "15"),
+            vatRate: String(l.vatRate || resolvedRate),
             lineTotal: String(l.lineTotal || "0"),
             batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
             expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,

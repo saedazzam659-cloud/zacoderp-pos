@@ -19,6 +19,7 @@ import {
 import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
 import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter, multiBranchScopeSpread } from "../middleware/auth.js";
+import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry, pickBatches, type BatchPick } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
@@ -545,7 +546,7 @@ router.get("/sales-invoices/:id/returned-by-item", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-function mapInvoiceLine(l: any, invoiceId: number, cid: number) {
+function mapInvoiceLine(l: any, invoiceId: number, cid: number, fallbackRate = "15") {
   return {
     invoiceId, companyId: cid,
     itemId:      l.itemId      ? Number(l.itemId)      : null,
@@ -560,7 +561,7 @@ function mapInvoiceLine(l: any, invoiceId: number, cid: number) {
     unitPrice:   String(l.unitPrice || "0"),
     discount:    String(l.discount  || "0"),
     discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
-    vatRate:     String(l.vatRate   || "15"),
+    vatRate:     String(l.vatRate   || fallbackRate),
     lineTotal:   String(l.lineTotal || "0"),
     notes:       l.notes || null,
     // Audit trail link to the line-level promotion that produced this
@@ -848,7 +849,8 @@ router.post("/sales-invoices", async (req, res) => {
       }
     }
     if (lines?.length) {
-      await db.insert(salesInvoiceLinesTable).values(lines.map((l: any) => mapInvoiceLine(l, inv.id, cid)));
+      const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
+      await db.insert(salesInvoiceLinesTable).values(lines.map((l: any) => mapInvoiceLine(l, inv.id, cid, resolvedRate)));
     }
     // Bump times_used once per distinct offer that influenced this invoice
     // (line-level + the doc-level header offer). Counter increments only
@@ -986,7 +988,8 @@ router.put("/sales-invoices/:id", async (req, res) => {
     if (lines !== undefined) {
       await db.delete(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.invoiceId, id));
       if (lines.length) {
-        await db.insert(salesInvoiceLinesTable).values(lines.map((l: any) => mapInvoiceLine(l, id, cid)));
+        const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
+        await db.insert(salesInvoiceLinesTable).values(lines.map((l: any) => mapInvoiceLine(l, id, cid, resolvedRate)));
       }
     }
     // Bump times_used for offers that are NEW to this invoice on this edit
@@ -1776,6 +1779,7 @@ router.post("/sales-returns", async (req, res) => {
       createdById: (req as any).authUser?.id ?? null,
     }).returning();
     if (lines?.length) {
+      const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
       await db.insert(salesReturnLinesTable).values(
         lines.map((l: any) => ({
           returnId: ret.id, companyId: cid,
@@ -1789,7 +1793,7 @@ router.post("/sales-returns", async (req, res) => {
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
           discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
-          vatRate: String(l.vatRate || "15"),
+          vatRate: String(l.vatRate || resolvedRate),
           lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
         }))
       );
@@ -1870,6 +1874,7 @@ router.put("/sales-returns/:id", async (req, res) => {
 
     await db.delete(salesReturnLinesTable).where(eq(salesReturnLinesTable.returnId, id));
     if (lines?.length) {
+      const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
       await db.insert(salesReturnLinesTable).values(
         lines.map((l: any) => ({
           returnId: id, companyId: cid,
@@ -1883,7 +1888,7 @@ router.put("/sales-returns/:id", async (req, res) => {
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
           discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
-          vatRate: String(l.vatRate || "15"),
+          vatRate: String(l.vatRate || resolvedRate),
           lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
         }))
       );
@@ -2380,7 +2385,7 @@ router.get("/sales-quotations/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-function mapQuotationLine(l: any, quotationId: number, cid: number) {
+function mapQuotationLine(l: any, quotationId: number, cid: number, fallbackRate = "15") {
   return {
     quotationId, companyId: cid,
     itemId:    l.itemId   ? Number(l.itemId)   : null,
@@ -2393,7 +2398,7 @@ function mapQuotationLine(l: any, quotationId: number, cid: number) {
     unitPrice: String(l.unitPrice || "0"),
     discount:  String(l.discount  || "0"),
     discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
-    vatRate:   String(l.vatRate   || "15"),
+    vatRate:   String(l.vatRate   || fallbackRate),
     lineTotal: String(l.lineTotal || "0"),
     notes:     l.notes || null,
   };
@@ -2420,7 +2425,8 @@ router.post("/sales-quotations", async (req, res) => {
       taxId: taxId ? Number(taxId) : null,
     }).returning();
     if (lines?.length) {
-      await db.insert(salesQuotationLinesTable).values(lines.map((l: any) => mapQuotationLine(l, q.id, cid)));
+      const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
+      await db.insert(salesQuotationLinesTable).values(lines.map((l: any) => mapQuotationLine(l, q.id, cid, resolvedRate)));
     }
     res.status(201).json(q);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
@@ -2450,7 +2456,8 @@ router.put("/sales-quotations/:id", async (req, res) => {
     if (lines !== undefined) {
       await db.delete(salesQuotationLinesTable).where(eq(salesQuotationLinesTable.quotationId, id));
       if (lines.length) {
-        await db.insert(salesQuotationLinesTable).values(lines.map((l: any) => mapQuotationLine(l, id, cid)));
+        const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
+        await db.insert(salesQuotationLinesTable).values(lines.map((l: any) => mapQuotationLine(l, id, cid, resolvedRate)));
       }
     }
     res.json(q);
@@ -2563,7 +2570,7 @@ router.delete("/sales-quotations/:id", async (req, res) => {
 // a DRAFT sales invoice — and that invoice goes through the normal posting
 // flow when the user explicitly posts it. Up until then, an order is just
 // a planning document.
-function mapOrderLine(l: any, orderId: number, cid: number) {
+function mapOrderLine(l: any, orderId: number, cid: number, fallbackRate = "15") {
   return {
     orderId, companyId: cid,
     itemId:           l.itemId      ? Number(l.itemId)      : null,
@@ -2578,7 +2585,7 @@ function mapOrderLine(l: any, orderId: number, cid: number) {
     unitPrice:        String(l.unitPrice || "0"),
     discount:         String(l.discount  || "0"),
     discountAmount:   String(Math.max(0, Number(l.discountAmount) || 0)),
-    vatRate:          String(l.vatRate   || "15"),
+    vatRate:          String(l.vatRate   || fallbackRate),
     lineTotal:        String(l.lineTotal || "0"),
     notes:            l.notes || null,
   };
@@ -2666,8 +2673,9 @@ router.post("/sales-orders", async (req, res) => {
     }).returning();
 
     if (lines?.length) {
+      const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
       await db.insert(salesOrderLinesTable).values(
-        lines.map((l: any) => mapOrderLine(l, o.id, cid))
+        lines.map((l: any) => mapOrderLine(l, o.id, cid, resolvedRate))
       );
     }
 
@@ -2729,8 +2737,9 @@ router.put("/sales-orders/:id", async (req, res) => {
     if (lines !== undefined) {
       await db.delete(salesOrderLinesTable).where(eq(salesOrderLinesTable.orderId, id));
       if (lines.length) {
+        const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
         await db.insert(salesOrderLinesTable).values(
-          lines.map((l: any) => mapOrderLine(l, id, cid))
+          lines.map((l: any) => mapOrderLine(l, id, cid, resolvedRate))
         );
       }
     }

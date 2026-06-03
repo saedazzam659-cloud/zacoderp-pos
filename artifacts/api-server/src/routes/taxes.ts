@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { taxesTable, accountsTable, branchesTable } from "@workspace/db";
+import { taxesTable, accountsTable, branchesTable, costCentersTable } from "@workspace/db";
 import { eq, and, asc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
@@ -30,6 +30,15 @@ async function branchOk(cid: number, id: any): Promise<boolean> {
   if (id === undefined || id === null || id === "") return true;
   const [row] = await db.select({ id: branchesTable.id }).from(branchesTable)
     .where(and(eq(branchesTable.id, Number(id)), eq(branchesTable.companyId, cid)));
+  return !!row;
+}
+// Cost center is stored as a CODE (text), mirroring journal_entry_lines.cost_center.
+// Validate that a cost center with this code exists for the same company (parity
+// with the account/branch ownership checks).
+async function costCenterOk(cid: number, code: any): Promise<boolean> {
+  if (code === undefined || code === null || String(code).trim() === "") return true;
+  const [row] = await db.select({ id: costCentersTable.id }).from(costCentersTable)
+    .where(and(eq(costCentersTable.code, String(code).trim()), eq(costCentersTable.companyId, cid)));
   return !!row;
 }
 
@@ -103,6 +112,7 @@ router.post("/", async (req, res) => {
     if (!(await accountOk(cid, b.salesTaxAccountId)))    { res.status(400).json({ error: "حساب ضريبة المبيعات غير صحيح" }); return; }
     if (!(await accountOk(cid, b.purchaseTaxAccountId))) { res.status(400).json({ error: "حساب ضريبة المشتريات غير صحيح" }); return; }
     if (!(await branchOk(cid, b.branchId)))              { res.status(400).json({ error: "الفرع المحدد غير صحيح" }); return; }
+    if (!(await costCenterOk(cid, b.costCenter)))        { res.status(400).json({ error: "مركز التكلفة المحدد غير صحيح" }); return; }
 
     const makeDefault = b.isDefault === true;
 
@@ -190,6 +200,7 @@ router.put("/:id", async (req, res) => {
     if (b.salesTaxAccountId !== undefined && !(await accountOk(cid, b.salesTaxAccountId)))       { res.status(400).json({ error: "حساب ضريبة المبيعات غير صحيح" }); return; }
     if (b.purchaseTaxAccountId !== undefined && !(await accountOk(cid, b.purchaseTaxAccountId))) { res.status(400).json({ error: "حساب ضريبة المشتريات غير صحيح" }); return; }
     if (b.branchId !== undefined && !(await branchOk(cid, b.branchId)))                          { res.status(400).json({ error: "الفرع المحدد غير صحيح" }); return; }
+    if (b.costCenter !== undefined && !(await costCenterOk(cid, b.costCenter)))                   { res.status(400).json({ error: "مركز التكلفة المحدد غير صحيح" }); return; }
 
     // System tax must remain active (it is the ZATCA fallback).
     const nextActive = existing.isSystem ? true : (b.isActive !== undefined ? b.isActive === true : existing.isActive);
