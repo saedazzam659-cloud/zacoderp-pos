@@ -14,6 +14,7 @@ import {
   safetyIncidentsTable,
   safetyIncidentActionsTable,
   workCentersTable,
+  productionOrdersTable,
   usersTable,
   employeesTable,
   SAFETY_HAZARD_CATEGORIES,
@@ -126,6 +127,27 @@ const idParam = (req: any) => {
   const id = Number(req.params.id);
   return Number.isInteger(id) && id > 0 ? id : null;
 };
+
+// Same-tenant ownership guard for foreign-key references supplied in a request
+// body (work center / production order / employee / responsible-or-owner user).
+// Prevents a caller from smuggling another company's row id into an OSH record.
+// Skips null/zero ids (clearing a ref is allowed); returns the first failing
+// reference's Arabic error message, or null when every supplied ref is valid.
+async function firstInvalidRef(
+  cid: number,
+  refs: { table: any; id: number | null | undefined; error: string }[],
+): Promise<string | null> {
+  for (const { table, id, error } of refs) {
+    if (id == null || id === 0) continue;
+    const [r] = await db
+      .select({ id: table.id })
+      .from(table)
+      .where(and(eq(table.id, id), eq(table.companyId, cid)))
+      .limit(1);
+    if (!r) return error;
+  }
+  return null;
+}
 
 // ════════════════════════════════════════════════════════════════════════
 // KPI DASHBOARD  (register literal route BEFORE any "/:id")
@@ -379,6 +401,15 @@ router.post("/risk-assessments", async (req, res) => {
     const rs = hasResidual ? clamp15(b.residualSeverity) : null;
     const residualScore = rl != null && rs != null ? rl * rs : null;
 
+    const refErr = await firstInvalidRef(cid, [
+      { table: workCentersTable, id: b.workCenterId ? num(b.workCenterId) : null, error: "مركز العمل غير موجود في الشركة" },
+      { table: usersTable, id: b.responsibleUserId ? num(b.responsibleUserId) : null, error: "المستخدم المسؤول غير موجود في الشركة" },
+    ]);
+    if (refErr) {
+      res.status(400).json({ error: refErr });
+      return;
+    }
+
     const code =
       typeof b.code === "string" && b.code.trim()
         ? b.code.trim()
@@ -445,6 +476,14 @@ router.patch("/risk-assessments/:id", async (req, res) => {
       return;
     }
     const b = req.body ?? {};
+    const refErr = await firstInvalidRef(cid, [
+      { table: workCentersTable, id: b.workCenterId ? num(b.workCenterId) : null, error: "مركز العمل غير موجود في الشركة" },
+      { table: usersTable, id: b.responsibleUserId ? num(b.responsibleUserId) : null, error: "المستخدم المسؤول غير موجود في الشركة" },
+    ]);
+    if (refErr) {
+      res.status(400).json({ error: refErr });
+      return;
+    }
     const updates: Record<string, unknown> = { updatedAt: new Date() };
     if (typeof b.title === "string") updates.title = b.title.trim();
     if (b.processArea !== undefined) updates.processArea = b.processArea?.trim() || null;
@@ -585,6 +624,13 @@ router.post("/risk-assessments/:id/controls", async (req, res) => {
       res.status(400).json({ error: "وصف الضابط مطلوب" });
       return;
     }
+    const refErr = await firstInvalidRef(cid, [
+      { table: usersTable, id: b.ownerUserId ? num(b.ownerUserId) : null, error: "المستخدم المسؤول غير موجود في الشركة" },
+    ]);
+    if (refErr) {
+      res.status(400).json({ error: refErr });
+      return;
+    }
     const [row] = await db
       .insert(safetyRiskControlsTable)
       .values({
@@ -631,6 +677,13 @@ router.patch("/controls/:id", async (req, res) => {
       return;
     }
     const b = req.body ?? {};
+    const refErr = await firstInvalidRef(cid, [
+      { table: usersTable, id: b.ownerUserId ? num(b.ownerUserId) : null, error: "المستخدم المسؤول غير موجود في الشركة" },
+    ]);
+    if (refErr) {
+      res.status(400).json({ error: refErr });
+      return;
+    }
     const updates: Record<string, unknown> = {};
     if (b.controlType !== undefined)
       updates.controlType = oneOf(SAFETY_CONTROL_TYPES, b.controlType, existing.controlType);
@@ -819,6 +872,16 @@ router.post("/incidents", async (req, res) => {
     const whys = Array.isArray(b.whys)
       ? b.whys.filter((w: unknown) => typeof w === "string").slice(0, 5)
       : [];
+    const refErr = await firstInvalidRef(cid, [
+      { table: workCentersTable, id: b.workCenterId ? num(b.workCenterId) : null, error: "مركز العمل غير موجود في الشركة" },
+      { table: productionOrdersTable, id: b.productionOrderId ? num(b.productionOrderId) : null, error: "أمر الإنتاج غير موجود في الشركة" },
+      { table: employeesTable, id: b.injuredEmployeeId ? num(b.injuredEmployeeId) : null, error: "الموظف المصاب غير موجود في الشركة" },
+    ]);
+    if (refErr) {
+      res.status(400).json({ error: refErr });
+      return;
+    }
+
     const code =
       typeof b.incidentNumber === "string" && b.incidentNumber.trim()
         ? b.incidentNumber.trim()
@@ -885,6 +948,15 @@ router.patch("/incidents/:id", async (req, res) => {
       return;
     }
     const b = req.body ?? {};
+    const refErr = await firstInvalidRef(cid, [
+      { table: workCentersTable, id: b.workCenterId ? num(b.workCenterId) : null, error: "مركز العمل غير موجود في الشركة" },
+      { table: productionOrdersTable, id: b.productionOrderId ? num(b.productionOrderId) : null, error: "أمر الإنتاج غير موجود في الشركة" },
+      { table: employeesTable, id: b.injuredEmployeeId ? num(b.injuredEmployeeId) : null, error: "الموظف المصاب غير موجود في الشركة" },
+    ]);
+    if (refErr) {
+      res.status(400).json({ error: refErr });
+      return;
+    }
     const updates: Record<string, unknown> = { updatedAt: new Date() };
     if (typeof b.title === "string") updates.title = b.title.trim();
     if (b.incidentType !== undefined)
@@ -1028,6 +1100,13 @@ router.post("/incidents/:id/actions", async (req, res) => {
       res.status(400).json({ error: "وصف الإجراء مطلوب" });
       return;
     }
+    const refErr = await firstInvalidRef(cid, [
+      { table: usersTable, id: b.ownerUserId ? num(b.ownerUserId) : null, error: "المستخدم المسؤول غير موجود في الشركة" },
+    ]);
+    if (refErr) {
+      res.status(400).json({ error: refErr });
+      return;
+    }
     const [row] = await db
       .insert(safetyIncidentActionsTable)
       .values({
@@ -1074,6 +1153,13 @@ router.patch("/actions/:id", async (req, res) => {
       return;
     }
     const b = req.body ?? {};
+    const refErr = await firstInvalidRef(cid, [
+      { table: usersTable, id: b.ownerUserId ? num(b.ownerUserId) : null, error: "المستخدم المسؤول غير موجود في الشركة" },
+    ]);
+    if (refErr) {
+      res.status(400).json({ error: refErr });
+      return;
+    }
     const updates: Record<string, unknown> = { updatedAt: new Date() };
     if (b.actionType !== undefined)
       updates.actionType = oneOf(SAFETY_ACTION_TYPES, b.actionType, existing.actionType);

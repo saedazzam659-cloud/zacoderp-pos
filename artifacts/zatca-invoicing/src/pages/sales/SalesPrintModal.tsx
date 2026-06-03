@@ -232,8 +232,7 @@ function totalRowsHtml(t: FullTotals, rowClass = "totals-row", grandClass = "gra
     <div class="${rowClass}"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(t.discountTotal)} ${t.currencySym}</span></div>
     <div class="${rowClass}"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currencySym}</span></div>
     <div class="${rowClass}"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(t.vatAmount)} ${t.currencySym}</span></div>
-    <div class="${rowClass} ${grandClass}"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}</span></div>
-    ${sarEqRowsHtml(t, rowClass)}`;
+    <div class="${rowClass} ${grandClass}"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}</span></div>`;
 }
 
 // Universal summary footer (tafqeet + total items + total qty inc. free) shown
@@ -504,8 +503,7 @@ function totalsBlock(doc: any, lines: any[], align: "right" | "left" = "right") 
     <div class="__totalsRow"><span style="color:#666">مبلغ الخصم — Discount</span><span class="mono" style="color:#b91c1c;">${fmt(t.discountTotal)} ${t.currencySym}</span></div>
     <div class="__totalsRow"><span style="color:#666">الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currencySym}</span></div>
     <div class="__totalsRow"><span style="color:#666">ضريبة القيمة المضافة — VAT</span><span class="mono" style="color:#b45309;">${fmt(t.vatAmount)} ${t.currencySym}</span></div>
-    <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}</span></div>
-    ${sarEqRowsHtml(t, "__totalsRow")}`;
+    <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}</span></div>`;
   return `
     <div style="display:flex;justify-content:${align === "right" ? "flex-start" : "flex-end"};gap:14px;align-items:flex-start;">
       <div style="${align === "right" ? "" : "margin-left:auto;"}">
@@ -1742,7 +1740,6 @@ function template13(d: PrintData): string {
           <div class="row"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(totals.netPreVat)} ${totals.currencySym}</span></div>
           <div class="row vat"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(totals.vatAmount)} ${totals.currencySym}</span></div>
           <div class="row grand"><span>الصافي شامل الضريبة — Total</span><span class="mono v">${fmt(totals.grandTotal)} ${totals.currencySym}</span></div>
-          ${sarEqRowsHtml(totals, "row")}
         </div>
         ${summaryFooterHtml(totals)}
       </div>

@@ -22,6 +22,10 @@ tax invoice to be expressed in SAR. Showing only the exchange rate is not enough
   also show nothing (no conversion needed).
 - In the sales print layer the gating lives in one place (a `showSarEq` flag on
   the computed totals = foreign AND tax-doc); the print TYPE is resolved from an
-  explicit arg or a value stamped onto the doc before any template renders. Any
-  NEW print template that builds its own totals rows must splice in the shared
-  SAR-equivalent renderer, or it will silently omit the required SAR VAT line.
+  explicit arg or a value stamped onto the doc before any template renders.
+- **Current scope (per user م/كرم request):** the SAR-equivalent block is wired
+  into **template14 («الأصلي») ONLY** — the single `sarEqRowsHtml(...)` call site.
+  It was deliberately removed from the shared `totalRowsHtml`/`totalsBlock`
+  helpers and from template13. The shared renderer still exists, so opting another
+  template in is a one-line splice; do NOT re-add it to the shared helpers (that
+  would re-enable it across all templates and undo the user's explicit scoping).
