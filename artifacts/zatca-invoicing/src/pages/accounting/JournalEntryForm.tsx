@@ -25,6 +25,7 @@ import { useTranslation } from "react-i18next";
 import { getSaveToastTitle } from "@/lib/saveToast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
+import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
 import { Sparkles, AlertTriangle, CheckCircle2, Receipt, Copy, Check } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
@@ -452,7 +453,15 @@ export default function JournalEntryForm() {
   // NOTE: the original amounts are intentionally left untouched, so
   // the entry will become unbalanced by the total VAT amount — the
   // user is expected to add the offsetting payable/receivable side.
-  const VAT_RATE = 0.15;
+  // Dynamic VAT rate — sourced from the company's DEFAULT tax in the dynamic
+  // tax catalog (الضرائب). Falls back to 0.15 (KSA standard) when no percent
+  // default exists, so existing Saudi tenants keep behaving exactly as before.
+  const { defaultTax: jeDefaultTax } = useCompanyTaxes();
+  const VAT_RATE = (() => {
+    const n = jeDefaultTax && jeDefaultTax.rateType === "percent" ? Number(jeDefaultTax.rate) : NaN;
+    return Number.isFinite(n) && n > 0 ? n / 100 : 0.15;
+  })();
+  const ratePctLabel = `${Number((VAT_RATE * 100).toFixed(2))}%`;
   // When true, "قيد الضريبة" treats source amounts as VAT-INCLUSIVE
   // (gross). For a 1000 line: VAT = 1000×15/115 = 130.43, source line
   // is rewritten down to the net 869.57 and a sibling VAT line of 130.43
@@ -463,7 +472,11 @@ export default function JournalEntryForm() {
   // Marker appended to the source line description after it has been
   // split into its net component, so a re-click of "قيد الضريبة" does
   // not extract VAT a second time from the already-net amount.
-  const NET_MARKER = " (صافٍ من ضريبة 15%)";
+  const NET_MARKER = ` (صافٍ من ضريبة ${ratePctLabel})`;
+  // Stable substring used ONLY for detecting an already-net line — must NOT
+  // include the rate so lines tagged under a previous/different rate (e.g. an
+  // older 15% tag) are still recognised and never double-taxed.
+  const NET_MARKER_PREFIX = "صافٍ من ضريبة";
   const taxEntryMutation = useMutation({
     mutationFn: (direction: "input" | "output") =>
       journalEntriesApi.suggestVatAccount({ direction, companyId: cid }),
@@ -515,7 +528,7 @@ export default function JournalEntryForm() {
         if (desc.startsWith("ضريبة المدخلات") || desc.startsWith("ضريبة المخرجات")) return false;
         // Inclusive mode marks net-extracted lines with NET_MARKER —
         // skip them on subsequent clicks so we don't re-tax the net.
-        if (desc.endsWith(NET_MARKER.trim()) || desc.includes(NET_MARKER)) return false;
+        if (desc.includes(NET_MARKER_PREFIX)) return false;
         const k = amount.toFixed(2);
         const left = remainingTaxed.get(k) ?? 0;
         if (left > 0) {
@@ -603,8 +616,8 @@ export default function JournalEntryForm() {
         debit:  direction === "input"  ? vatAmount.toFixed(2) : "",
         credit: direction === "output" ? vatAmount.toFixed(2) : "",
         description: direction === "input"
-          ? `ضريبة المدخلات 15%${incTag} ${vatInclusive ? "من" : "على"} ${baseForLabel.toFixed(2)}`
-          : `ضريبة المخرجات 15%${incTag} ${vatInclusive ? "من" : "على"} ${baseForLabel.toFixed(2)}`,
+          ? `ضريبة المدخلات ${ratePctLabel}${incTag} ${vatInclusive ? "من" : "على"} ${baseForLabel.toFixed(2)}`
+          : `ضريبة المخرجات ${ratePctLabel}${incTag} ${vatInclusive ? "من" : "على"} ${baseForLabel.toFixed(2)}`,
       });
     }
 
@@ -1616,7 +1629,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                     of adding it on top. Mirrors invoice behaviour. */}
                 <label
                   className="flex items-center gap-1.5 text-xs cursor-pointer select-none ml-1"
-                  title="عند التفعيل، يتم استخراج 15% من المبلغ الأصلي بدل إضافتها فوقه — مماثل لخيار (السعر شامل الضريبة) في الفواتير."
+                  title={`عند التفعيل، يتم استخراج ${ratePctLabel} من المبلغ الأصلي بدل إضافتها فوقه — مماثل لخيار (السعر شامل الضريبة) في الفواتير.`}
                 >
                   <Checkbox
                     checked={vatInclusive}
@@ -1633,8 +1646,8 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                       disabled={isLockedSourceEntry || taxEntryMutation.isPending}
                       className="h-7 gap-1 text-xs shrink-0"
                       title={vatInclusive
-                        ? "استخراج 15% ضريبة من داخل مبلغ السطر (المبلغ شامل الضريبة)"
-                        : "إضافة 15% ضريبة قيمة مضافة فوق مبلغ السطر"}
+                        ? `استخراج ${ratePctLabel} ضريبة من داخل مبلغ السطر (المبلغ شامل الضريبة)`
+                        : `إضافة ${ratePctLabel} ضريبة قيمة مضافة فوق مبلغ السطر`}
                     >
                       <Receipt className="h-3.5 w-3.5" />
                       {taxEntryMutation.isPending ? "جارٍ التحليل..." : "قيد الضريبة"}
@@ -1642,7 +1655,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-56">
-                    <DropdownMenuLabel className="text-xs">قيد ضريبة القيمة المضافة (15%)</DropdownMenuLabel>
+                    <DropdownMenuLabel className="text-xs">{`قيد ضريبة القيمة المضافة (${ratePctLabel})`}</DropdownMenuLabel>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onSelect={() => applyTaxEntry("input")}
@@ -1651,8 +1664,8 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                       <span className="font-semibold">مدين — ضريبة المدخلات</span>
                       <span className="text-[10px] text-muted-foreground">
                         {vatInclusive
-                          ? "استخراج 15% من داخل كل مبلغ مدين (شامل الضريبة)"
-                          : "إضافة 15% فوق كل مبلغ مدين"}
+                          ? `استخراج ${ratePctLabel} من داخل كل مبلغ مدين (شامل الضريبة)`
+                          : `إضافة ${ratePctLabel} فوق كل مبلغ مدين`}
                       </span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
@@ -1662,8 +1675,8 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                       <span className="font-semibold">دائن — ضريبة المخرجات</span>
                       <span className="text-[10px] text-muted-foreground">
                         {vatInclusive
-                          ? "استخراج 15% من داخل كل مبلغ دائن (شامل الضريبة)"
-                          : "إضافة 15% فوق كل مبلغ دائن"}
+                          ? `استخراج ${ratePctLabel} من داخل كل مبلغ دائن (شامل الضريبة)`
+                          : `إضافة ${ratePctLabel} فوق كل مبلغ دائن`}
                       </span>
                     </DropdownMenuItem>
                   </DropdownMenuContent>

@@ -1009,7 +1009,7 @@ router.post("/purchase-invoices", async (req, res) => {
     const { docNumber, supplierInvoiceNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
-            inventoryAccountId, taxAccountId, discountAccountId, costCenter } = req.body;
+            inventoryAccountId, taxAccountId, discountAccountId, costCenter, taxId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     // Required-fields gate (per company policy): every purchase invoice
     // must carry an explicit supplier + branch. Tightened from the older
@@ -1060,6 +1060,7 @@ router.post("/purchase-invoices", async (req, res) => {
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
       costCenter:         costCenter ? String(costCenter).trim() || null : null,
+      taxId:              taxId ? Number(taxId) : null,
       status: "draft", notes: notes || null,
       createdById: (req as any).authUser?.id ?? null,
     }).returning();
@@ -1110,7 +1111,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
     const { supplierInvoiceNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
-            inventoryAccountId, taxAccountId, discountAccountId, costCenter } = req.body;
+            inventoryAccountId, taxAccountId, discountAccountId, costCenter, taxId } = req.body;
     // Same required-fields gate as the POST path so a stale-draft PUT
     // can't strip supplier/branch off an existing purchase invoice.
     if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ الفاتورة", field: "supplierId" }); return; }
@@ -1139,6 +1140,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
       costCenter:         costCenter ? String(costCenter).trim() || null : null,
+      taxId:              taxId ? Number(taxId) : null,
       notes: notes || null, updatedAt: new Date(),
     }).where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid))).returning();
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
@@ -1697,7 +1699,7 @@ router.post("/purchase-orders", async (req, res) => {
     const { docNumber, supplierInvoiceNumber, orderDate, expectedDeliveryDate,
             supplierId, branchId, paymentType, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount,
-            notes, lines, priceIncludesVat } = req.body;
+            notes, lines, priceIncludesVat, taxId } = req.body;
     if (!orderDate)  { res.status(400).json({ error: "تاريخ الأمر مطلوب" }); return; }
     if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد" }); return; }
 
@@ -1733,6 +1735,7 @@ router.post("/purchase-orders", async (req, res) => {
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       status: "draft",
       notes: notes || null,
+      taxId: taxId ? Number(taxId) : null,
     }).returning();
     if (lines?.length) {
       await db.insert(purchaseOrderLinesTable).values(
@@ -1775,7 +1778,7 @@ router.put("/purchase-orders/:id", async (req, res) => {
     const { supplierInvoiceNumber, orderDate, expectedDeliveryDate,
             supplierId, branchId, paymentType, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount,
-            notes, lines, priceIncludesVat } = req.body;
+            notes, lines, priceIncludesVat, taxId } = req.body;
     if (!orderDate)  { res.status(400).json({ error: "تاريخ الأمر مطلوب" }); return; }
     if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد" }); return; }
     const [ord] = await db.update(purchaseOrdersTable).set({
@@ -1793,6 +1796,7 @@ router.put("/purchase-orders/:id", async (req, res) => {
       totalAmount: String(totalAmount || "0"),
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       notes: notes || null, updatedAt: new Date(),
+      taxId: taxId ? Number(taxId) : null,
     }).where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid))).returning();
     if (!ord) { res.status(404).json({ error: "أمر الشراء غير موجود" }); return; }
     if (lines !== undefined) {
@@ -1927,6 +1931,7 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
         ? [ord.notes, `(محوَّل من أمر شراء بعملة ${ord.currencyCode} بسعر صرف ${fxRate} ⇒ ${baseCurrency})`].filter(Boolean).join("\n")
         : ord.notes,
       createdById: req.authUser?.id ?? null,
+      taxId: (ord as any).taxId ?? null,
     }).returning();
     if (lines.length) {
       await db.insert(purchaseInvoiceLinesTable).values(
@@ -2020,7 +2025,7 @@ router.post("/purchase-returns", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, supplierInvoiceNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId,
             currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
-            inventoryAccountId, taxAccountId, discountAccountId } = req.body;
+            inventoryAccountId, taxAccountId, discountAccountId, taxId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     // Required-fields gate (per company policy): every purchase return
     // must carry an explicit supplier + branch. Tightened from the
@@ -2065,6 +2070,7 @@ router.post("/purchase-returns", async (req, res) => {
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      taxId:              taxId ? Number(taxId) : null,
       status: "draft", notes: notes || null,
     }).returning();
     if (lines?.length) {
@@ -2096,7 +2102,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
     // docNumber is intentionally not destructured — immutable on edit.
     const { supplierInvoiceNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId,
             currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
-            inventoryAccountId, taxAccountId, discountAccountId } = req.body;
+            inventoryAccountId, taxAccountId, discountAccountId, taxId } = req.body;
     const [existing] = await db.select().from(purchaseReturnsTable)
       .where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid)));
     if (!existing) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
@@ -2126,6 +2132,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      taxId:              taxId ? Number(taxId) : null,
       notes: notes || null, updatedAt: new Date(),
     }).where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid))).returning();
     if (lines !== undefined) {

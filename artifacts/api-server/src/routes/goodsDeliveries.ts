@@ -243,7 +243,7 @@ router.post("/", async (req, res) => {
     const {
       docNumber, customerOrderNumber, deliveryDate, customerId, branchId,
       currencyCode, exchangeRate, subtotal, vatAmount, discountAmount,
-      totalAmount, priceIncludesVat, notes, lines,
+      totalAmount, priceIncludesVat, notes, lines, taxId,
     } = req.body;
     if (!deliveryDate) { res.status(400).json({ error: "تاريخ التسليم مطلوب" }); return; }
 
@@ -284,6 +284,7 @@ router.post("/", async (req, res) => {
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       status: "draft",
       notes: notes || null,
+      taxId: taxId ? Number(taxId) : null,
       createdById: (req as any).authUser?.id ?? null,
     }).returning();
 
@@ -324,7 +325,7 @@ router.put("/:id", async (req, res) => {
     const {
       customerOrderNumber, deliveryDate, customerId, branchId,
       currencyCode, exchangeRate, subtotal, vatAmount, discountAmount,
-      totalAmount, priceIncludesVat, notes, lines,
+      totalAmount, priceIncludesVat, notes, lines, taxId,
     } = req.body;
 
     const tenantErr = await validateGdnTenantRefs(cid, {
@@ -349,6 +350,7 @@ router.put("/:id", async (req, res) => {
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       notes: notes || null,
       updatedAt: new Date(),
+      taxId: taxId ? Number(taxId) : null,
     }).where(and(eq(goodsDeliveriesTable.id, id), eq(goodsDeliveriesTable.companyId, cid))).returning();
 
     if (lines !== undefined) {
@@ -803,6 +805,7 @@ router.post("/:id/convert-to-invoice", async (req, res) => {
         sourceGdnId: id,
         notes: `فاتورة من إذن تسليم رقم ${gd.docNumber || gd.id}`,
         createdById: (req as any).authUser?.id ?? null,
+        taxId: (gd as any).taxId ?? null,
       } as any).returning();
 
       if (lines.length) {

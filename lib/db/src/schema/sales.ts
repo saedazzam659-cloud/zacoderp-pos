@@ -29,6 +29,9 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   totalAmount:    numeric("total_amount",    { precision: 15, scale: 2 }).notNull().default("0"),
   priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
+  // Dynamic tax catalog reference (soft ref to taxes.id). Drives the default
+  // vat_rate flowing into this document's lines. NULL = legacy/default 15%.
+  taxId:          integer("tax_id"),
   status:         salesInvoiceStatusEnum("status").notNull().default("draft"),
   notes:          text("notes"),
   // Accounts used to build the journal entry on posting
@@ -128,6 +131,7 @@ export const salesReturnsTable = pgTable("sales_returns", {
   vatAmount:    numeric("vat_amount",   { precision: 15, scale: 2 }).notNull().default("0"),
   discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
+  taxId:        integer("tax_id"),
   status:       text("status").notNull().default("draft"),
   notes:        text("notes"),
   // Manual (admin-created) session this return was recorded under, if any.
@@ -185,6 +189,7 @@ export const salesQuotationsTable = pgTable("sales_quotations", {
   discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   totalAmount:    numeric("total_amount",    { precision: 15, scale: 2 }).notNull().default("0"),
   priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
+  taxId:          integer("tax_id"),
   status:         salesQuotationStatusEnum("status").notNull().default("draft"),
   convertedInvoiceId: integer("converted_invoice_id").references(() => salesInvoicesTable.id),
   notes:          text("notes"),
@@ -242,6 +247,7 @@ export const salesOrdersTable = pgTable("sales_orders", {
   discountAmount:       numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   totalAmount:          numeric("total_amount",    { precision: 15, scale: 2 }).notNull().default("0"),
   priceIncludesVat:     boolean("price_includes_vat").notNull().default(false),
+  taxId:                integer("tax_id"),
   status:               salesOrderStatusEnum("status").notNull().default("draft"),
   convertedInvoiceId:   integer("converted_invoice_id").references(() => salesInvoicesTable.id),
   createdById:          integer("created_by_id"),

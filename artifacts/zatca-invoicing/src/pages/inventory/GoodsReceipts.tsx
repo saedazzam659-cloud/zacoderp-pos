@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
+import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -217,7 +218,7 @@ export default function GoodsReceipts() {
   }, [isNewGR, lines, headerWarehouseId]);
   // Clear header picker when the form is closed so re-opening starts fresh.
   useEffect(() => {
-    if (!showForm) setHeaderWarehouseId("");
+    if (!showForm) { setHeaderWarehouseId(""); setHeaderTaxId(""); }
   }, [showForm]);
   const hasEmptyWarehouse = lines.some((l: any) => !l.warehouseId);
   useEffect(() => {
@@ -228,6 +229,27 @@ export default function GoodsReceipts() {
     setHeaderWarehouseId(v);
     if (!v) return;
     setLines(prev => prev.map((l: any) => ({ ...l, warehouseId: v })));
+  }
+
+  // Header-level tax picker — dynamic tax catalog (الضرائب). Selecting a
+  // percent tax broadcasts its rate to every line's editable vatRate; the
+  // chosen taxId is persisted on the document header. ZATCA SAFETY: this only
+  // pre-fills the editable rate before issue; it never touches the stored
+  // vat_rate/vat_amount/tax_category that ZATCA XML/QR read at/after issue.
+  const { taxes: taxCatalog, defaultTax, comboItems: taxComboItems, percentRateOf } = useCompanyTaxes();
+  const [headerTaxId, setHeaderTaxId] = useState<string>("");
+  useEffect(() => {
+    if (!isNewGR || !defaultTax || headerTaxId) return;
+    setHeaderTaxId(String(defaultTax.id));
+  }, [isNewGR, defaultTax?.id]);
+  function applyHeaderTax(v: string) {
+    setHeaderTaxId(v);
+    const rate = percentRateOf(v);
+    if (rate === null) return; // fixed/none → leave line rates untouched
+    setLines(prev => prev.map(l => {
+      const u = { ...l, vatRate: String(rate) };
+      return { ...u, lineTotal: calcLineTotal(u, !!form.priceIncludesVat).toFixed(2) };
+    }));
   }
 
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
@@ -363,6 +385,7 @@ export default function GoodsReceipts() {
         discountAmount: String(full.discountAmount ?? "0"),
         priceIncludesVat: !!full.priceIncludesVat,
       });
+      setHeaderTaxId((full as any).taxId != null ? String((full as any).taxId) : "");
       setLines((full.lines ?? []).length ? full.lines.map((l: any) => ({
         _id:         crypto.randomUUID(),
         itemId:      l.itemId      ? String(l.itemId)      : "",
@@ -433,6 +456,7 @@ export default function GoodsReceipts() {
   function reset() {
     setForm({ ...EMPTY, priceIncludesVat: stickyPriceIncl.read() });
     setLines([newLine()]);
+    setHeaderTaxId("");
     setEditingId(null);
     setShowForm(false);
   }
@@ -544,6 +568,7 @@ export default function GoodsReceipts() {
       subtotal:    subtotalNet.toFixed(2),
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
+      taxId: headerTaxId ? Number(headerTaxId) : null,
       lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
     });
   }
@@ -1135,6 +1160,17 @@ ${sections}
                       placeholder="اختر المستودع"
                     />
                   </Field>
+                  {taxCatalog.length > 0 && (
+                    <Field label="الضريبة">
+                      <SearchCombobox
+                        items={taxComboItems}
+                        value={headerTaxId}
+                        onValueChange={applyHeaderTax}
+                        placeholder="اختر الضريبة"
+                      />
+                      <p className="text-[10px] text-muted-foreground">تُطبَّق نسبتها تلقائياً على كل سطور الأصناف.</p>
+                    </Field>
+                  )}
                   <Field label={tr("currency")}>
                     <SearchCombobox
                       items={currencies.map((c: any) => ({ value: c.code, label: `${c.code} — ${isRtl ? c.nameAr : c.nameEn}` }))}

@@ -256,7 +256,7 @@ router.post("/", async (req, res) => {
     const {
       docNumber, supplierInvoiceNumber, receiptDate, supplierId, branchId,
       currencyCode, exchangeRate, subtotal, vatAmount, discountAmount,
-      totalAmount, priceIncludesVat, notes, lines,
+      totalAmount, priceIncludesVat, notes, lines, taxId,
     } = req.body;
     if (!receiptDate) { res.status(400).json({ error: "تاريخ الاستلام مطلوب" }); return; }
 
@@ -300,6 +300,7 @@ router.post("/", async (req, res) => {
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       status: "draft",
       notes: notes || null,
+      taxId: taxId ? Number(taxId) : null,
       createdById: (req as any).authUser?.id ?? null,
     }).returning();
 
@@ -342,7 +343,7 @@ router.put("/:id", async (req, res) => {
     const {
       supplierInvoiceNumber, receiptDate, supplierId, branchId,
       currencyCode, exchangeRate, subtotal, vatAmount, discountAmount,
-      totalAmount, priceIncludesVat, notes, lines,
+      totalAmount, priceIncludesVat, notes, lines, taxId,
     } = req.body;
 
     const tenantErr = await validateGrnTenantRefs(cid, {
@@ -367,6 +368,7 @@ router.put("/:id", async (req, res) => {
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       notes: notes || null,
       updatedAt: new Date(),
+      taxId: taxId ? Number(taxId) : null,
     }).where(and(eq(goodsReceiptsTable.id, id), eq(goodsReceiptsTable.companyId, cid))).returning();
 
     if (lines !== undefined) {
@@ -833,6 +835,7 @@ router.post("/:id/convert-to-invoice", async (req, res) => {
         sourceGrnId: id,
         notes: `فاتورة من إذن استلام رقم ${gr.docNumber || gr.id}`,
         createdById: (req as any).authUser?.id ?? null,
+        taxId: (gr as any).taxId ?? null,
       } as any).returning();
 
       if (lines.length) {

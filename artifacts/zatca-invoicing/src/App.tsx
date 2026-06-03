@@ -293,6 +293,8 @@ import ForecastIncomeStatement from "@/pages/accounting/reports/ForecastIncomeSt
 import FiscalPeriods    from "@/pages/accounting/FiscalPeriods";
 import Adjustments      from "@/pages/accounting/Adjustments";
 import CostCenters     from "@/pages/accounting/CostCenters";
+import TaxesList       from "@/pages/accounting/TaxesList";
+import TaxForm         from "@/pages/accounting/TaxForm";
 // Purchasing
 import SupplierGroups       from "@/pages/purchasing/SupplierGroups";
 import LetterOfCredit       from "@/pages/purchasing/LetterOfCredit";
@@ -857,6 +859,9 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/accounting" component={AccountingHub} />}
             {!isSuperAdmin && <PermRoute path="/accounting/accounts"       module="accounts"        component={ChartOfAccounts} />}
             {!isSuperAdmin && <PermRoute path="/accounting/cost-centers"   module="accounts"        component={CostCenters} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/taxes/new"      module="accounts" action="create" component={TaxForm} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/taxes/:id"      module="accounts"        component={TaxForm} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/taxes"          module="accounts"        component={TaxesList} />}
             {!isSuperAdmin && <PermRoute path="/accounting/fiscal-periods" module="accounts"        component={FiscalPeriods} />}
             {!isSuperAdmin && <PermRoute path="/accounting/adjustments"    module="journal_entries" component={Adjustments} />}
             {!isSuperAdmin && <PermRoute path="/accounting/journals"       module="journal_entries" component={JournalEntries} />}

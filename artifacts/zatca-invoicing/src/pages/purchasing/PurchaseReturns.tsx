@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
+import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -241,7 +242,7 @@ export default function PurchaseReturns() {
     if (firstWh) setHeaderWarehouseId(String(firstWh));
   }, [isNewPR, lines, headerWarehouseId]);
   useEffect(() => {
-    if (!showForm) setHeaderWarehouseId("");
+    if (!showForm) { setHeaderWarehouseId(""); setHeaderTaxId(""); }
   }, [showForm]);
   const hasEmptyWarehouse = lines.some((l: any) => !l.warehouseId);
   useEffect(() => {
@@ -252,6 +253,27 @@ export default function PurchaseReturns() {
     setHeaderWarehouseId(v);
     if (!v) return;
     setLines(prev => prev.map((l: any) => ({ ...l, warehouseId: v })));
+  }
+
+  // Header-level tax picker — dynamic tax catalog (الضرائب). Selecting a
+  // percent tax broadcasts its rate to every line's editable vatRate. The
+  // chosen taxId is persisted on the document header. ZATCA SAFETY: this
+  // only pre-fills the editable rate before issue; it never touches the
+  // stored vat_rate/vat_amount/tax_category that ZATCA XML/QR read.
+  const { taxes: taxCatalog, defaultTax, comboItems: taxComboItems, percentRateOf } = useCompanyTaxes();
+  const [headerTaxId, setHeaderTaxId] = useState<string>("");
+  useEffect(() => {
+    if (!isNewPR || !defaultTax || headerTaxId) return;
+    setHeaderTaxId(String(defaultTax.id));
+  }, [isNewPR, defaultTax?.id]);
+  function applyHeaderTax(v: string) {
+    setHeaderTaxId(v);
+    const rate = percentRateOf(v);
+    if (rate === null) return; // fixed/none → leave line rates untouched
+    setLines(prev => prev.map((l: any) => {
+      const u = { ...l, vatRate: String(rate) };
+      return { ...u, lineTotal: calcLineTotal(u, !!form.priceIncludesVat).toFixed(2) };
+    }));
   }
 
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
@@ -339,6 +361,7 @@ export default function PurchaseReturns() {
       if (!res.ok) { toast({ title: tr("toasts.loadFail"), variant: "destructive" }); return; }
       const full = await res.json();
       setEditingId(retId);
+      setHeaderTaxId(full.taxId != null ? String(full.taxId) : "");
       setForm({
         docNumber:    full.docNumber ?? "",
         supplierInvoiceNumber: full.supplierInvoiceNumber ?? "",
@@ -723,6 +746,7 @@ export default function PurchaseReturns() {
       inventoryAccountId: form.inventoryAccountId ? Number(form.inventoryAccountId) : null,
       taxAccountId:       form.taxAccountId       ? Number(form.taxAccountId)       : null,
       discountAccountId:  form.discountAccountId  ? Number(form.discountAccountId)  : null,
+      taxId: headerTaxId ? Number(headerTaxId) : null,
       discountAmount: docDiscountAmt.toFixed(2),
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
@@ -1301,6 +1325,16 @@ ${sections}
                   placeholder="اختر المستودع"
                 />
               </Field>
+              {taxCatalog.length > 0 && (
+                <Field label="الضريبة">
+                  <SearchCombobox
+                    items={taxComboItems}
+                    value={headerTaxId}
+                    onValueChange={applyHeaderTax}
+                    placeholder="اختر الضريبة"
+                  />
+                </Field>
+              )}
               <Field label={tr("currency")}>
                 {currencies.length > 0 ? (
                   <Select value={form.currencyCode || undefined} onValueChange={handleCurrencyChange}>

@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getSaveToastTitle } from "@/lib/saveToast";
 import { ensurePrinterReady } from "@/lib/printerGuard";
 import { useNextSequenceNumber, type SequenceTxType } from "@/hooks/useNextSequenceNumber";
+import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -518,12 +519,35 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     if (!v) return;
     setLines(prev => prev.map(l => ({ ...l, warehouseId: v })));
   }
+  // Header-level tax picker — dynamic tax catalog (الضرائب). Selecting a
+  // percent tax broadcasts its rate to every line's editable vatRate (which
+  // is what flows into the pre-issue VAT calc). The chosen taxId is persisted
+  // on the document header. ZATCA SAFETY: this only pre-fills the editable
+  // rate before issue; it never touches the stored vat_rate/vat_amount/
+  // tax_category that ZATCA XML/QR read at/after issue.
+  const { taxes: taxCatalog, defaultTax, comboItems: taxComboItems, percentRateOf } = useCompanyTaxes();
+  const [headerTaxId, setHeaderTaxId] = useState<string>("");
+  useEffect(() => {
+    if (!isNew || !defaultTax || headerTaxId) return;
+    setHeaderTaxId(String(defaultTax.id));
+  }, [isNew, defaultTax?.id]);
+  function applyHeaderTax(v: string) {
+    setHeaderTaxId(v);
+    const rate = percentRateOf(v);
+    if (rate === null) return; // fixed/none → leave line rates untouched
+    setLines(prev => prev.map(l => {
+      const updated = { ...l, vatRate: String(rate) };
+      const { lineTotal } = calcLine(updated, priceIncludesVat, taxMode);
+      return { ...updated, lineTotal: lineTotal.toFixed(2) };
+    }));
+  }
   // Route-transition safeguard: when the user navigates from one doc to
   // another while this component stays mounted (edit→edit, edit→new, etc.),
   // clear the header value so the init/derive effects re-populate from the
   // freshly loaded doc instead of leaking the previous selection.
   useEffect(() => {
     setHeaderWarehouseId("");
+    setHeaderTaxId("");
   }, [editId, isNew]);
 
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
@@ -654,6 +678,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       invoiceTypeUserPickedRef.current = true;
     }
     setDocDiscount(String(existing.discountAmount ?? "0"));
+    if ((existing as any).taxId != null) setHeaderTaxId(String((existing as any).taxId));
     if (isInvoice) {
       setCogsAccountId(existing.cogsAccountId ? String(existing.cogsAccountId) : "");
       setInventoryAccountId(existing.inventoryAccountId ? String(existing.inventoryAccountId) : "");
@@ -1262,6 +1287,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     }
     const base: any = {
       companyId: cid, docNumber: docNumber || null,
+      taxId: headerTaxId ? Number(headerTaxId) : null,
       customerId: customerId || null, currencyCode, exchangeRate,
       subtotal: subtotal.toFixed(2), vatAmount: vatAmount.toFixed(2),
       discountAmount: discountAmt.toFixed(2), totalAmount: totalAmount.toFixed(2),
@@ -2483,6 +2509,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   />
                   <p className="text-[10px] text-muted-foreground">يُعبَّأ تلقائياً على كل سطور الأصناف عند الاختيار.</p>
                 </div>
+                {taxCatalog.length > 0 && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">الضريبة</Label>
+                    <SearchCombobox
+                      items={taxComboItems}
+                      value={headerTaxId}
+                      onValueChange={applyHeaderTax}
+                      placeholder="اختر الضريبة"
+                    />
+                    <p className="text-[10px] text-muted-foreground">تُطبَّق نسبتها تلقائياً على كل سطور الأصناف.</p>
+                  </div>
+                )}
               </div>
 
               <div className="border-t pt-4 mt-2 flex items-center gap-2 text-sm font-semibold text-foreground/80">

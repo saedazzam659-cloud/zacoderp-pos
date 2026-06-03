@@ -12,7 +12,7 @@ import {
   Search, Home, HelpCircle, ChevronLeft, Mic,
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator, LogIn,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck, Stethoscope, Video,
-  ScrollText, Database, ListOrdered, HardDrive, Trash2, BadgePercent,
+  ScrollText, Database, ListOrdered, HardDrive, Trash2, BadgePercent, Percent,
   Gift, ReceiptText,
   Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat, Boxes, Megaphone,
   Server, Camera, Monitor,
@@ -473,6 +473,7 @@ const accountingSubNav: NavDef[] = [
   { nameKey: "nav.chartOfAccounts", href: "/accounting/accounts",       icon: BookMarked,    permKey: "accounts" },
   // cost_centers + fiscal_periods piggy-back on accounts (no dedicated module key).
   { nameKey: "nav.costCenters",     href: "/accounting/cost-centers",   icon: Target,        permKey: "accounts" },
+  { nameKey: "nav.taxes",           href: "/accounting/taxes",          icon: Percent,       permKey: "accounts" },
   { nameKey: "nav.fiscalPeriods",   href: "/accounting/fiscal-periods", icon: CalendarRange, permKey: "accounts" },
   { nameKey: "nav.journals",        href: "/accounting/journals",       icon: BookOpen,      permKey: "journal_entries" },
   { nameKey: "nav.postingCenter",   href: "/accounting/posting-center", icon: Layers,        permKey: "journal_entries" },

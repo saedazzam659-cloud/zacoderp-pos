@@ -661,7 +661,7 @@ router.post("/sales-invoices", async (req, res) => {
     const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
-            posSessionId, salesRepId, documentOfferId, sourceQuotationId, costCenter } = req.body;
+            posSessionId, salesRepId, documentOfferId, sourceQuotationId, costCenter, taxId } = req.body;
     // If the user picked an existing quotation as the source via the
     // "بناءً على عرض سعر" combobox on the new-invoice form, validate it
     // BEFORE we INSERT the invoice (rules mirror the /convert endpoint
@@ -833,6 +833,7 @@ router.post("/sales-invoices", async (req, res) => {
       commissionAmount:   repInfo.commissionAmount,
       documentOfferId:    documentOfferId ? Number(documentOfferId) : null,
       costCenter:         costCenter ? String(costCenter).trim() || null : null,
+      taxId:              taxId ? Number(taxId) : null,
     }).returning();
     // Validate posSessionId belongs to the same company before linking — prevents cross-tenant pollution.
     if (posSessionId) {
@@ -914,7 +915,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
     const { invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
-            documentOfferId, costCenter } = req.body;
+            documentOfferId, costCenter, taxId } = req.body;
     // Same required-fields gate as the POST path so a direct PUT (e.g.
     // from a script or a stale draft that pre-dates the policy) cannot
     // strip the customer/branch off an existing invoice on edit.
@@ -978,6 +979,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
       // write is fine here and keeps the audit trail honest.
       documentOfferId:    documentOfferId ? Number(documentOfferId) : null,
       costCenter:         costCenter ? String(costCenter).trim() || null : null,
+      taxId:              taxId ? Number(taxId) : null,
       ...repPatch,
     }).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid))).returning();
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
@@ -1673,7 +1675,7 @@ router.post("/sales-returns", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat, salesRepId,
-            cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
+            cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId, taxId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     if (!(await validateSalesReturnPayload(res, req.body, { cid, excludeReturnId: null }))) return;
     // Required-fields gate: every sales return must carry an explicit
@@ -1770,6 +1772,7 @@ router.post("/sales-returns", async (req, res) => {
       salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      taxId:              taxId ? Number(taxId) : null,
       createdById: (req as any).authUser?.id ?? null,
     }).returning();
     if (lines?.length) {
@@ -1807,7 +1810,7 @@ router.put("/sales-returns/:id", async (req, res) => {
     // docNumber is intentionally not destructured — immutable on edit.
     const { returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat, salesRepId,
-            cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
+            cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId, taxId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     // Same required-fields gate as the POST path so a stale-draft PUT
     // can't strip customer/branch off an existing sales return.
@@ -1861,6 +1864,7 @@ router.put("/sales-returns/:id", async (req, res) => {
       salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      taxId:              taxId ? Number(taxId) : null,
       updatedAt: new Date(),
     }).where(eq(salesReturnsTable.id, id)).returning();
 
@@ -2399,7 +2403,7 @@ router.post("/sales-quotations", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, quotationDate, validUntil, customerId, currencyCode, exchangeRate,
-            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines } = req.body;
+            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines, taxId } = req.body;
     if (!quotationDate) { res.status(400).json({ error: "تاريخ العرض مطلوب" }); return; }
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     const [q] = await db.insert(salesQuotationsTable).values({
@@ -2413,6 +2417,7 @@ router.post("/sales-quotations", async (req, res) => {
       totalAmount: totals.totalAmount,
       priceIncludesVat: asBool(priceIncludesVat),
       status: "draft", notes: notes || null,
+      taxId: taxId ? Number(taxId) : null,
     }).returning();
     if (lines?.length) {
       await db.insert(salesQuotationLinesTable).values(lines.map((l: any) => mapQuotationLine(l, q.id, cid)));
@@ -2426,7 +2431,7 @@ router.put("/sales-quotations/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const { docNumber, quotationDate, validUntil, customerId, currencyCode, exchangeRate,
-            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines } = req.body;
+            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines, taxId } = req.body;
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     const [q] = await db.update(salesQuotationsTable).set({
       docNumber: docNumber || null, quotationDate,
@@ -2439,6 +2444,7 @@ router.put("/sales-quotations/:id", async (req, res) => {
       totalAmount: totals.totalAmount,
       priceIncludesVat: asBool(priceIncludesVat),
       notes: notes || null, updatedAt: new Date(),
+      taxId: taxId ? Number(taxId) : null,
     }).where(and(eq(salesQuotationsTable.id, id), eq(salesQuotationsTable.companyId, cid))).returning();
     if (!q) { res.status(404).json({ error: "العرض غير موجود" }); return; }
     if (lines !== undefined) {
@@ -2509,6 +2515,7 @@ router.post("/sales-quotations/:id/convert", async (req, res) => {
       priceIncludesVat: q.priceIncludesVat,
       status: "draft", notes: `محوّل من عرض السعر ${q.docNumber ?? `SQ-${q.id}`}`,
       createdById: req.authUser?.id ?? null,
+      taxId: (q as any).taxId ?? null,
     }).returning();
 
     if (lines.length) {
@@ -2609,7 +2616,7 @@ router.post("/sales-orders", async (req, res) => {
     const { docNumber, orderDate, expectedDeliveryDate, customerId, branchId,
             paymentType, cashBoxId, bankAccountId, salesRepId,
             currencyCode, exchangeRate, subtotal, vatAmount, discountAmount,
-            totalAmount, priceIncludesVat, notes, lines } = req.body;
+            totalAmount, priceIncludesVat, notes, lines, taxId } = req.body;
     if (!orderDate) { res.status(400).json({ error: "تاريخ أمر البيع مطلوب" }); return; }
     const pType = paymentType || "credit";
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
@@ -2654,6 +2661,7 @@ router.post("/sales-orders", async (req, res) => {
       priceIncludesVat:     asBool(priceIncludesVat),
       status:               "draft",
       notes:                notes || null,
+      taxId:                taxId ? Number(taxId) : null,
       createdById:          req.authUser?.id ?? null,
     }).returning();
 
@@ -2691,7 +2699,7 @@ router.put("/sales-orders/:id", async (req, res) => {
     const { docNumber, orderDate, expectedDeliveryDate, customerId, branchId,
             paymentType, cashBoxId, bankAccountId, salesRepId,
             currencyCode, exchangeRate, subtotal, vatAmount, discountAmount,
-            totalAmount, priceIncludesVat, notes, lines } = req.body;
+            totalAmount, priceIncludesVat, notes, lines, taxId } = req.body;
     const pType = paymentType || "credit";
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
 
@@ -2714,6 +2722,7 @@ router.put("/sales-orders/:id", async (req, res) => {
       priceIncludesVat:     asBool(priceIncludesVat),
       notes:                notes || null,
       updatedAt:            new Date(),
+      taxId:                taxId ? Number(taxId) : null,
     }).where(and(eq(salesOrdersTable.id, id), eq(salesOrdersTable.companyId, cid))).returning();
     if (!o) { res.status(404).json({ error: "أمر البيع غير موجود" }); return; }
 
@@ -2802,6 +2811,7 @@ router.post("/sales-orders/:id/convert", async (req, res) => {
       notes:            `محوّل من أمر البيع ${o.docNumber ?? `SO-${o.id}`}`,
       createdById:      req.authUser?.id ?? null,
       salesRepId:       o.salesRepId,
+      taxId:            (o as any).taxId ?? null,
     }).returning();
 
     if (lines.length) {

@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
+import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
 import { useFormatters, currencySymbol } from "@/lib/format";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { Button } from "@/components/ui/button";
@@ -294,7 +295,7 @@ export default function SalesReturns() {
     if (firstWh) setHeaderWarehouseId(String(firstWh));
   }, [isNewSR, lines, headerWarehouseId]);
   useEffect(() => {
-    if (!showForm) setHeaderWarehouseId("");
+    if (!showForm) { setHeaderWarehouseId(""); setHeaderTaxId(""); }
   }, [showForm]);
   const hasEmptyWarehouse = lines.some((l: any) => !l.warehouseId);
   useEffect(() => {
@@ -305,6 +306,27 @@ export default function SalesReturns() {
     setHeaderWarehouseId(v);
     if (!v) return;
     setLines(prev => prev.map((l: any) => ({ ...l, warehouseId: v })));
+  }
+
+  // Header-level tax picker — dynamic tax catalog (الضرائب). Selecting a
+  // percent tax broadcasts its rate to every line's editable vatRate; the
+  // chosen taxId is persisted on the document header. ZATCA SAFETY: this only
+  // pre-fills the editable rate before issue; it never touches the stored
+  // vat_rate/vat_amount/tax_category that ZATCA XML/QR read at/after issue.
+  const { taxes: taxCatalog, defaultTax, comboItems: taxComboItems, percentRateOf } = useCompanyTaxes();
+  const [headerTaxId, setHeaderTaxId] = useState<string>("");
+  useEffect(() => {
+    if (!isNewSR || !defaultTax || headerTaxId) return;
+    setHeaderTaxId(String(defaultTax.id));
+  }, [isNewSR, defaultTax?.id]);
+  function applyHeaderTax(v: string) {
+    setHeaderTaxId(v);
+    const rate = percentRateOf(v);
+    if (rate === null) return; // fixed/none → leave line rates untouched
+    setLines(prev => prev.map(l => {
+      const u = { ...l, vatRate: String(rate) };
+      return { ...u, lineTotal: calcLineTotal(u, !!form.priceIncludesVat).toFixed(2) };
+    }));
   }
 
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
@@ -441,6 +463,7 @@ export default function SalesReturns() {
   function reset() {
     setForm({ ...EMPTY, ...loadAcctDefaults(), priceIncludesVat: stickyPriceIncl.read() });
     setLines([newLine()]);
+    setHeaderTaxId("");
     setShowForm(false);
     setEditingId(null);
     const url = new URL(window.location.href);
@@ -475,6 +498,7 @@ export default function SalesReturns() {
         taxAccountId:       r.taxAccountId       ? String(r.taxAccountId)       : "",
         discountAccountId:  r.discountAccountId  ? String(r.discountAccountId)  : "",
       });
+      setHeaderTaxId((r as any).taxId != null ? String((r as any).taxId) : "");
       setLines((r.lines ?? []).length
         ? r.lines.map((l: any) => ({
             _id: `e-${l.id}-${Math.random().toString(36).slice(2,7)}`,
@@ -1016,6 +1040,7 @@ export default function SalesReturns() {
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
       discountAmount: docDiscountAmt.toFixed(2),
+      taxId: headerTaxId ? Number(headerTaxId) : null,
       lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined, _pricingNote: undefined })),
     });
   }
@@ -1678,6 +1703,17 @@ ${sections}
                   placeholder="اختر المستودع"
                 />
               </Field>
+              {taxCatalog.length > 0 && (
+                <Field label="الضريبة">
+                  <SearchCombobox
+                    items={taxComboItems}
+                    value={headerTaxId}
+                    onValueChange={applyHeaderTax}
+                    placeholder="اختر الضريبة"
+                  />
+                  <p className="text-[10px] text-muted-foreground">تُطبَّق نسبتها تلقائياً على كل سطور الأصناف.</p>
+                </Field>
+              )}
               <Field label={t("salesReturns.currency")}>
                 {currencies.length > 0 ? (
                   <Select value={form.currencyCode || undefined} onValueChange={handleCurrencyChange}>

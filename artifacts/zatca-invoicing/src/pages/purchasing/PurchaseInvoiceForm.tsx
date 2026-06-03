@@ -9,6 +9,7 @@ import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useToast } from "@/hooks/use-toast";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
+import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -265,10 +266,32 @@ export default function PurchaseInvoiceForm() {
     if (!v) return;
     setLines(prev => prev.map(l => ({ ...l, warehouseId: v })));
   }
+  // Header-level tax picker — dynamic tax catalog (الضرائب). Selecting a
+  // percent tax broadcasts its rate to every line's editable vatRate. The
+  // chosen taxId is persisted on the document header. ZATCA SAFETY: this
+  // only pre-fills the editable rate before issue; it never touches the
+  // stored vat_rate/vat_amount/tax_category that ZATCA XML/QR read.
+  const { taxes: taxCatalog, defaultTax, comboItems: taxComboItems, percentRateOf } = useCompanyTaxes();
+  const [headerTaxId, setHeaderTaxId] = useState<string>("");
+  useEffect(() => {
+    if (!isNew || !defaultTax || headerTaxId) return;
+    setHeaderTaxId(String(defaultTax.id));
+  }, [isNew, defaultTax?.id]);
+  function applyHeaderTax(v: string) {
+    setHeaderTaxId(v);
+    const rate = percentRateOf(v);
+    if (rate === null) return; // fixed/none → leave line rates untouched
+    setLines(prev => prev.map(l => {
+      const updated = { ...l, vatRate: String(rate) };
+      const { lineTotal } = calcLine(updated, priceIncludesVat);
+      return { ...updated, lineTotal: lineTotal.toFixed(2), finalCost: (lineTotal + Number(updated.expenseShare || 0)).toFixed(2) };
+    }));
+  }
   // Route-transition safeguard — clear header on doc-id change so init/derive
   // effects re-populate from the freshly loaded doc.
   useEffect(() => {
     setHeaderWarehouseId("");
+    setHeaderTaxId("");
   }, [editId, isNew]);
 
   const { data: supplierBalances = [] } = useQuery<any[]>({
@@ -372,6 +395,7 @@ export default function PurchaseInvoiceForm() {
     setInventoryAccountId(existing.inventoryAccountId ? String(existing.inventoryAccountId) : "");
     setTaxAccountId(existing.taxAccountId ? String(existing.taxAccountId) : "");
     setDiscountAccountId(existing.discountAccountId ? String(existing.discountAccountId) : "");
+    setHeaderTaxId((existing as any).taxId != null ? String((existing as any).taxId) : "");
     setLines(existing.lines?.length ? existing.lines.map((l: any) => ({
       freeQty:     String(l.freeQty ?? "0"),
       _id: crypto.randomUUID(),
@@ -709,6 +733,7 @@ export default function PurchaseInvoiceForm() {
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      taxId: headerTaxId ? Number(headerTaxId) : null,
       subtotal: subtotal.toFixed(2), vatAmount: vatAmount.toFixed(2),
       discountAmount: docDiscountAmt.toFixed(2), totalExpensesLoaded: totalExpLoaded.toFixed(2),
       totalAmount: (totalAmount + totalExpLoaded).toFixed(2),
@@ -919,6 +944,18 @@ export default function PurchaseInvoiceForm() {
                   />
                   <p className="text-[10px] text-muted-foreground">يُعبَّأ تلقائياً على كل سطور الأصناف عند الاختيار.</p>
                 </div>
+                {taxCatalog.length > 0 && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">الضريبة</Label>
+                    <SearchCombobox
+                      items={taxComboItems}
+                      value={headerTaxId}
+                      onValueChange={applyHeaderTax}
+                      placeholder="اختر الضريبة"
+                    />
+                    <p className="text-[10px] text-muted-foreground">تُطبَّق نسبتها تلقائياً على كل سطور الأصناف.</p>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

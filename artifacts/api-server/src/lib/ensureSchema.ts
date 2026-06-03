@@ -1226,6 +1226,37 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       )` },
     { label: "safety_act_incident_idx",
       sql:   `CREATE INDEX IF NOT EXISTS safety_act_incident_idx ON safety_incident_actions (incident_id)` },
+
+    // ─── taxes: dynamic tax catalog (see schema/taxes.ts). ensureColumns only
+    // ALTERs existing tables, never CREATEs new ones, so we materialise the
+    // table here. Idempotent — safe to re-run on every boot.
+    { label: "create taxes table",
+      sql:   `CREATE TABLE IF NOT EXISTS taxes (
+        id                      SERIAL PRIMARY KEY,
+        company_id              INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        code                    TEXT NOT NULL,
+        name_ar                 TEXT NOT NULL,
+        name_en                 TEXT,
+        rate                    NUMERIC(9,4) NOT NULL DEFAULT '15',
+        rate_type               TEXT NOT NULL DEFAULT 'percent',
+        currency_code           TEXT,
+        branch_id               INTEGER,
+        cost_center             TEXT,
+        account_id              INTEGER,
+        sales_tax_account_id    INTEGER,
+        purchase_tax_account_id INTEGER,
+        is_active               BOOLEAN NOT NULL DEFAULT TRUE,
+        is_default              BOOLEAN NOT NULL DEFAULT FALSE,
+        is_system               BOOLEAN NOT NULL DEFAULT FALSE,
+        notes                   TEXT,
+        created_at              TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at              TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "taxes_company_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS taxes_company_idx ON taxes (company_id)` },
+    // At most one default tax per company.
+    { label: "taxes_company_default_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS taxes_company_default_uniq ON taxes (company_id) WHERE is_default = TRUE` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {
