@@ -8,7 +8,7 @@
 // Versioning: bump CACHE_VERSION whenever shipping a layout change so old
 // cached shells get evicted on next visit.
 
-const CACHE_VERSION = "zacod-pos-v0.2.1";
+const CACHE_VERSION = "zacod-pos-v0.2.2";
 const APP_SHELL = ["./", "./manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {

@@ -27,18 +27,51 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
-      // Register the service worker after the page is interactive so it
-      // never blocks first paint. Disabled in Tauri (native shell handles
-      // offline natively via SQLite).
-      if ("serviceWorker" in navigator && !window.__TAURI__) {
-        window.addEventListener("load", () => {
-          const base = document.querySelector("base")?.href || location.pathname;
-          const swUrl = new URL("sw.js", base).pathname;
-          navigator.serviceWorker.register(swUrl).catch(() => {
-            /* silent — PWA install still works without active SW */
+      // Service-worker lifecycle. Hardened so it can NEVER blank the app:
+      //   • Tauri shells skip it entirely (native SQLite handles offline).
+      //   • In the Replit dev/preview environment we proactively UNREGISTER any
+      //     existing SW and clear its caches — a stale SW serving an old app
+      //     shell is the classic cause of a recurring blank white screen.
+      //   • In production we register using document.baseURI (always an
+      //     absolute URL) instead of location.pathname, which was throwing
+      //     "Failed to construct 'URL': Invalid base URL" on every load.
+      //   • The whole thing is wrapped so a SW failure never breaks first paint.
+      (function () {
+        try {
+          if (!("serviceWorker" in navigator) || window.__TAURI__) return;
+          var host = location.hostname;
+          var isDevPreview =
+            host === "localhost" ||
+            host === "127.0.0.1" ||
+            host.endsWith(".replit.dev") ||
+            host.endsWith(".repl.co") ||
+            host.indexOf("picard") !== -1;
+          if (isDevPreview) {
+            navigator.serviceWorker
+              .getRegistrations()
+              .then(function (regs) { regs.forEach(function (r) { r.unregister(); }); })
+              .catch(function () {});
+            if (window.caches && caches.keys) {
+              caches.keys()
+                .then(function (keys) { keys.forEach(function (k) { caches.delete(k); }); })
+                .catch(function () {});
+            }
+            return;
+          }
+          window.addEventListener("load", function () {
+            try {
+              var swUrl = new URL("sw.js", document.baseURI).href;
+              navigator.serviceWorker.register(swUrl).catch(function () {
+                /* silent — PWA install still works without an active SW */
+              });
+            } catch (e) {
+              /* never let SW setup break the app */
+            }
           });
-        });
-      }
+        } catch (e) {
+          /* defensive: SW is optional, the app must always boot */
+        }
+      })();
     </script>
   </body>
 </html>
