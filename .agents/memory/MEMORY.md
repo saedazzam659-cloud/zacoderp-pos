@@ -33,3 +33,4 @@
 - [Currency symbol display](currency-symbol-display.md) — amounts show the SYMBOL via lib/format currencySymbol (hooks in screens, pure fn in print builders); "العملة:" field + SAR amount-in-words keep the CODE; SaaS/ZATCA/base-only screens excluded.
 - [Child-row tenant + branch scope](child-row-tenant-scope.md) — controls/actions have no own branch_id; mutate/read/aggregate must resolve PARENT scope, not just child companyId.
 - [Global ErrorBoundary prevents white-screen](error-boundary-whitescreen.md) — app had NO boundary; one render error blanked everything. Logged-out OK + logged-in blank ⇒ authed render path, not cache.
+- [GROUP_PERMISSION_KEYS sync](group-permission-keys-sync.md) — every isGroupAllowed("<group>") in Layout.tsx needs a GROUP_PERMISSION_KEYS entry or undefined.some() white-screens all logged-in non-SA users.

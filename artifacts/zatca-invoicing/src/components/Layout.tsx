@@ -805,6 +805,7 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   accounting:  ["accounting", "accounts", "accounting_reports", "accounting_maintenance"],
   hr:          ["hr", "hr_module"],
   production:  ["production"],
+  safety:      ["safety", "safety_dashboard", "safety_risk", "safety_incidents"],
   contracting: ["contracting"],
   maintenance: ["maintenance"],
   installments: ["installments"],
@@ -845,7 +846,10 @@ function isGroupAllowed(
   user?: { role?: string; permissions?: Record<string, any> } | null,
 ): boolean {
   if (isSuperAdmin) return true;
-  const keys = GROUP_PERMISSION_KEYS[group];
+  // Defensive: a group whose key is missing from GROUP_PERMISSION_KEYS must
+  // never crash the whole sidebar (a single `undefined.some()` here white-screens
+  // the entire authenticated app). Fall back to an empty key set → group hides.
+  const keys = GROUP_PERMISSION_KEYS[group] ?? [];
   // Company-level gate (existing behavior).
   if (!keys.some(k => menuPerms[k] === true)) return false;
   // Admin bypasses per-user perm check (matches `usePermission` policy).
