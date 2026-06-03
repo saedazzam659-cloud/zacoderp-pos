@@ -131,6 +131,9 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   contracting:        "contracting",
   production:         "production",
   safety:             null,            // OSH module — toggle is the on/off switch, no separate billable module
+  safety_dashboard:   null,            // OSH per-screen key — rolls up to the `safety` toggle
+  safety_risk:        null,            // OSH per-screen key — rolls up to the `safety` toggle
+  safety_incidents:   null,            // OSH per-screen key — rolls up to the `safety` toggle
   maintenance:        "maintenance",
   hotel:              "hotel",
   hospital:           "hospital",

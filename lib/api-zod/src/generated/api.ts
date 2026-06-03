@@ -1150,3 +1150,567 @@ export const GetMonthlyStatsResponseItem = zod.object({
   vatAmount: zod.number(),
 });
 export const GetMonthlyStatsResponse = zod.array(GetMonthlyStatsResponseItem);
+
+/**
+ * @summary OSH KPI dashboard (TRIR / LTIFR / severity rate / days-since-LTI)
+ */
+export const GetSafetyKpisQueryParams = zod.object({
+  manHours: zod.coerce.number().optional(),
+});
+
+export const GetSafetyKpisResponse = zod.object({
+  manHours: zod.number().nullish(),
+  incidents: zod.object({
+    total: zod.number(),
+    nearMiss: zod.number(),
+    recordable: zod.number(),
+    lostTime: zod.number(),
+    fatalities: zod.number(),
+    open: zod.number(),
+    totalLostDays: zod.number(),
+  }),
+  daysSinceLastLti: zod.number().nullish(),
+  rates: zod.object({
+    trir: zod.number().nullable(),
+    ltifr: zod.number().nullable(),
+    severityRate: zod.number().nullable(),
+  }),
+  risks: zod.object({
+    byLevel: zod.record(zod.string(), zod.number()),
+    open: zod.number(),
+    total: zod.number(),
+  }),
+  capa: zod.object({
+    open: zod.number(),
+    overdue: zod.number(),
+    total: zod.number(),
+  }),
+});
+
+/**
+ * @summary List risk assessments
+ */
+export const ListRiskAssessmentsQueryParams = zod.object({
+  status: zod.coerce.string().optional(),
+  q: zod.coerce.string().optional(),
+});
+
+export const ListRiskAssessmentsResponseItem = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  branchId: zod.number().nullish(),
+  code: zod.string(),
+  title: zod.string(),
+  processArea: zod.string().nullish(),
+  workCenterId: zod.number().nullish(),
+  workCenterName: zod.string().nullish(),
+  hazardDescription: zod.string().nullish(),
+  hazardCategory: zod.string(),
+  likelihood: zod.number(),
+  severity: zod.number(),
+  riskScore: zod.number(),
+  riskLevel: zod.string(),
+  existingControls: zod.string().nullish(),
+  residualLikelihood: zod.number().nullish(),
+  residualSeverity: zod.number().nullish(),
+  residualScore: zod.number().nullish(),
+  residualLevel: zod.string().nullish(),
+  responsibleUserId: zod.number().nullish(),
+  responsibleName: zod.string().nullish(),
+  assessmentDate: zod.string().nullish(),
+  reviewDate: zod.string().nullish(),
+  status: zod.string(),
+  notes: zod.string().nullish(),
+  createdAt: zod.coerce.date().optional(),
+  updatedAt: zod.coerce.date().optional(),
+  controls: zod
+    .array(
+      zod.object({
+        id: zod.number(),
+        companyId: zod.number(),
+        assessmentId: zod.number(),
+        controlType: zod.string(),
+        description: zod.string(),
+        status: zod.string(),
+        ownerUserId: zod.number().nullish(),
+        dueDate: zod.string().nullish(),
+        createdAt: zod.coerce.date().optional(),
+      }),
+    )
+    .optional(),
+});
+export const ListRiskAssessmentsResponse = zod.array(
+  ListRiskAssessmentsResponseItem,
+);
+
+/**
+ * @summary Create a risk assessment
+ */
+export const CreateRiskAssessmentBody = zod.object({
+  title: zod.string(),
+  branchId: zod.number().nullish(),
+  code: zod.string().optional(),
+  processArea: zod.string().nullish(),
+  workCenterId: zod.number().nullish(),
+  hazardDescription: zod.string().nullish(),
+  hazardCategory: zod.string().optional(),
+  likelihood: zod.number().optional(),
+  severity: zod.number().optional(),
+  existingControls: zod.string().nullish(),
+  residualLikelihood: zod.number().nullish(),
+  residualSeverity: zod.number().nullish(),
+  responsibleUserId: zod.number().nullish(),
+  assessmentDate: zod.string().nullish(),
+  reviewDate: zod.string().nullish(),
+  status: zod.string().optional(),
+  notes: zod.string().nullish(),
+});
+
+/**
+ * @summary Get a risk assessment (with controls)
+ */
+export const GetRiskAssessmentParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetRiskAssessmentResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  branchId: zod.number().nullish(),
+  code: zod.string(),
+  title: zod.string(),
+  processArea: zod.string().nullish(),
+  workCenterId: zod.number().nullish(),
+  workCenterName: zod.string().nullish(),
+  hazardDescription: zod.string().nullish(),
+  hazardCategory: zod.string(),
+  likelihood: zod.number(),
+  severity: zod.number(),
+  riskScore: zod.number(),
+  riskLevel: zod.string(),
+  existingControls: zod.string().nullish(),
+  residualLikelihood: zod.number().nullish(),
+  residualSeverity: zod.number().nullish(),
+  residualScore: zod.number().nullish(),
+  residualLevel: zod.string().nullish(),
+  responsibleUserId: zod.number().nullish(),
+  responsibleName: zod.string().nullish(),
+  assessmentDate: zod.string().nullish(),
+  reviewDate: zod.string().nullish(),
+  status: zod.string(),
+  notes: zod.string().nullish(),
+  createdAt: zod.coerce.date().optional(),
+  updatedAt: zod.coerce.date().optional(),
+  controls: zod
+    .array(
+      zod.object({
+        id: zod.number(),
+        companyId: zod.number(),
+        assessmentId: zod.number(),
+        controlType: zod.string(),
+        description: zod.string(),
+        status: zod.string(),
+        ownerUserId: zod.number().nullish(),
+        dueDate: zod.string().nullish(),
+        createdAt: zod.coerce.date().optional(),
+      }),
+    )
+    .optional(),
+});
+
+/**
+ * @summary Update a risk assessment
+ */
+export const UpdateRiskAssessmentParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateRiskAssessmentBody = zod.object({
+  title: zod.string().optional(),
+  processArea: zod.string().nullish(),
+  workCenterId: zod.number().nullish(),
+  hazardDescription: zod.string().nullish(),
+  hazardCategory: zod.string().optional(),
+  likelihood: zod.number().optional(),
+  severity: zod.number().optional(),
+  existingControls: zod.string().nullish(),
+  residualLikelihood: zod.number().nullish(),
+  residualSeverity: zod.number().nullish(),
+  responsibleUserId: zod.number().nullish(),
+  assessmentDate: zod.string().nullish(),
+  reviewDate: zod.string().nullish(),
+  status: zod.string().optional(),
+  notes: zod.string().nullish(),
+});
+
+export const UpdateRiskAssessmentResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  branchId: zod.number().nullish(),
+  code: zod.string(),
+  title: zod.string(),
+  processArea: zod.string().nullish(),
+  workCenterId: zod.number().nullish(),
+  workCenterName: zod.string().nullish(),
+  hazardDescription: zod.string().nullish(),
+  hazardCategory: zod.string(),
+  likelihood: zod.number(),
+  severity: zod.number(),
+  riskScore: zod.number(),
+  riskLevel: zod.string(),
+  existingControls: zod.string().nullish(),
+  residualLikelihood: zod.number().nullish(),
+  residualSeverity: zod.number().nullish(),
+  residualScore: zod.number().nullish(),
+  residualLevel: zod.string().nullish(),
+  responsibleUserId: zod.number().nullish(),
+  responsibleName: zod.string().nullish(),
+  assessmentDate: zod.string().nullish(),
+  reviewDate: zod.string().nullish(),
+  status: zod.string(),
+  notes: zod.string().nullish(),
+  createdAt: zod.coerce.date().optional(),
+  updatedAt: zod.coerce.date().optional(),
+  controls: zod
+    .array(
+      zod.object({
+        id: zod.number(),
+        companyId: zod.number(),
+        assessmentId: zod.number(),
+        controlType: zod.string(),
+        description: zod.string(),
+        status: zod.string(),
+        ownerUserId: zod.number().nullish(),
+        dueDate: zod.string().nullish(),
+        createdAt: zod.coerce.date().optional(),
+      }),
+    )
+    .optional(),
+});
+
+/**
+ * @summary Delete a risk assessment
+ */
+export const DeleteRiskAssessmentParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const DeleteRiskAssessmentResponse = zod.object({
+  ok: zod.boolean(),
+});
+
+/**
+ * @summary Add a control to a risk assessment
+ */
+export const AddRiskControlParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const AddRiskControlBody = zod.object({
+  description: zod.string(),
+  controlType: zod.string().optional(),
+  status: zod.string().optional(),
+  ownerUserId: zod.number().nullish(),
+  dueDate: zod.string().nullish(),
+});
+
+/**
+ * @summary Update a control
+ */
+export const UpdateRiskControlParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateRiskControlBody = zod.object({
+  description: zod.string().optional(),
+  controlType: zod.string().optional(),
+  status: zod.string().optional(),
+  ownerUserId: zod.number().nullish(),
+  dueDate: zod.string().nullish(),
+});
+
+export const UpdateRiskControlResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  assessmentId: zod.number(),
+  controlType: zod.string(),
+  description: zod.string(),
+  status: zod.string(),
+  ownerUserId: zod.number().nullish(),
+  dueDate: zod.string().nullish(),
+  createdAt: zod.coerce.date().optional(),
+});
+
+/**
+ * @summary Delete a control
+ */
+export const DeleteRiskControlParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const DeleteRiskControlResponse = zod.object({
+  ok: zod.boolean(),
+});
+
+/**
+ * @summary List incidents
+ */
+export const ListIncidentsQueryParams = zod.object({
+  status: zod.coerce.string().optional(),
+  type: zod.coerce.string().optional(),
+  q: zod.coerce.string().optional(),
+});
+
+export const ListIncidentsResponseItem = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  branchId: zod.number().nullish(),
+  incidentNumber: zod.string(),
+  incidentType: zod.string(),
+  severityClass: zod.string(),
+  title: zod.string(),
+  description: zod.string().nullish(),
+  location: zod.string().nullish(),
+  workCenterId: zod.number().nullish(),
+  workCenterName: zod.string().nullish(),
+  productionOrderId: zod.number().nullish(),
+  injuredEmployeeId: zod.number().nullish(),
+  employeeName: zod.string().nullish(),
+  occurredAt: zod.string(),
+  reportedAt: zod.string(),
+  reportedByUserId: zod.number().nullish(),
+  immediateActions: zod.string().nullish(),
+  rootCause: zod.string().nullish(),
+  whys: zod.array(zod.string()).optional(),
+  lostDays: zod.number(),
+  isRecordable: zod.boolean(),
+  status: zod.string(),
+  createdAt: zod.coerce.date().optional(),
+  updatedAt: zod.coerce.date().optional(),
+  actions: zod
+    .array(
+      zod.object({
+        id: zod.number(),
+        companyId: zod.number(),
+        incidentId: zod.number(),
+        actionType: zod.string(),
+        description: zod.string(),
+        ownerUserId: zod.number().nullish(),
+        dueDate: zod.string().nullish(),
+        status: zod.string(),
+        completedAt: zod.string().nullish(),
+        createdAt: zod.coerce.date().optional(),
+        updatedAt: zod.coerce.date().optional(),
+      }),
+    )
+    .optional(),
+});
+export const ListIncidentsResponse = zod.array(ListIncidentsResponseItem);
+
+/**
+ * @summary Create an incident
+ */
+export const CreateIncidentBody = zod.object({
+  title: zod.string(),
+  occurredAt: zod.string(),
+  branchId: zod.number().nullish(),
+  incidentType: zod.string().optional(),
+  severityClass: zod.string().optional(),
+  description: zod.string().nullish(),
+  location: zod.string().nullish(),
+  workCenterId: zod.number().nullish(),
+  productionOrderId: zod.number().nullish(),
+  injuredEmployeeId: zod.number().nullish(),
+  immediateActions: zod.string().nullish(),
+  rootCause: zod.string().nullish(),
+  whys: zod.array(zod.string()).optional(),
+  lostDays: zod.number().optional(),
+  status: zod.string().optional(),
+});
+
+/**
+ * @summary Get an incident (with CAPA actions)
+ */
+export const GetIncidentParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetIncidentResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  branchId: zod.number().nullish(),
+  incidentNumber: zod.string(),
+  incidentType: zod.string(),
+  severityClass: zod.string(),
+  title: zod.string(),
+  description: zod.string().nullish(),
+  location: zod.string().nullish(),
+  workCenterId: zod.number().nullish(),
+  workCenterName: zod.string().nullish(),
+  productionOrderId: zod.number().nullish(),
+  injuredEmployeeId: zod.number().nullish(),
+  employeeName: zod.string().nullish(),
+  occurredAt: zod.string(),
+  reportedAt: zod.string(),
+  reportedByUserId: zod.number().nullish(),
+  immediateActions: zod.string().nullish(),
+  rootCause: zod.string().nullish(),
+  whys: zod.array(zod.string()).optional(),
+  lostDays: zod.number(),
+  isRecordable: zod.boolean(),
+  status: zod.string(),
+  createdAt: zod.coerce.date().optional(),
+  updatedAt: zod.coerce.date().optional(),
+  actions: zod
+    .array(
+      zod.object({
+        id: zod.number(),
+        companyId: zod.number(),
+        incidentId: zod.number(),
+        actionType: zod.string(),
+        description: zod.string(),
+        ownerUserId: zod.number().nullish(),
+        dueDate: zod.string().nullish(),
+        status: zod.string(),
+        completedAt: zod.string().nullish(),
+        createdAt: zod.coerce.date().optional(),
+        updatedAt: zod.coerce.date().optional(),
+      }),
+    )
+    .optional(),
+});
+
+/**
+ * @summary Update an incident
+ */
+export const UpdateIncidentParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateIncidentBody = zod.object({
+  title: zod.string().optional(),
+  occurredAt: zod.string().optional(),
+  incidentType: zod.string().optional(),
+  severityClass: zod.string().optional(),
+  description: zod.string().nullish(),
+  location: zod.string().nullish(),
+  workCenterId: zod.number().nullish(),
+  productionOrderId: zod.number().nullish(),
+  injuredEmployeeId: zod.number().nullish(),
+  immediateActions: zod.string().nullish(),
+  rootCause: zod.string().nullish(),
+  whys: zod.array(zod.string()).optional(),
+  lostDays: zod.number().optional(),
+  status: zod.string().optional(),
+});
+
+export const UpdateIncidentResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  branchId: zod.number().nullish(),
+  incidentNumber: zod.string(),
+  incidentType: zod.string(),
+  severityClass: zod.string(),
+  title: zod.string(),
+  description: zod.string().nullish(),
+  location: zod.string().nullish(),
+  workCenterId: zod.number().nullish(),
+  workCenterName: zod.string().nullish(),
+  productionOrderId: zod.number().nullish(),
+  injuredEmployeeId: zod.number().nullish(),
+  employeeName: zod.string().nullish(),
+  occurredAt: zod.string(),
+  reportedAt: zod.string(),
+  reportedByUserId: zod.number().nullish(),
+  immediateActions: zod.string().nullish(),
+  rootCause: zod.string().nullish(),
+  whys: zod.array(zod.string()).optional(),
+  lostDays: zod.number(),
+  isRecordable: zod.boolean(),
+  status: zod.string(),
+  createdAt: zod.coerce.date().optional(),
+  updatedAt: zod.coerce.date().optional(),
+  actions: zod
+    .array(
+      zod.object({
+        id: zod.number(),
+        companyId: zod.number(),
+        incidentId: zod.number(),
+        actionType: zod.string(),
+        description: zod.string(),
+        ownerUserId: zod.number().nullish(),
+        dueDate: zod.string().nullish(),
+        status: zod.string(),
+        completedAt: zod.string().nullish(),
+        createdAt: zod.coerce.date().optional(),
+        updatedAt: zod.coerce.date().optional(),
+      }),
+    )
+    .optional(),
+});
+
+/**
+ * @summary Delete an incident
+ */
+export const DeleteIncidentParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const DeleteIncidentResponse = zod.object({
+  ok: zod.boolean(),
+});
+
+/**
+ * @summary Add a CAPA action to an incident
+ */
+export const AddIncidentActionParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const AddIncidentActionBody = zod.object({
+  description: zod.string(),
+  actionType: zod.string().optional(),
+  ownerUserId: zod.number().nullish(),
+  dueDate: zod.string().nullish(),
+  status: zod.string().optional(),
+});
+
+/**
+ * @summary Update a CAPA action
+ */
+export const UpdateIncidentActionParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateIncidentActionBody = zod.object({
+  description: zod.string().optional(),
+  actionType: zod.string().optional(),
+  ownerUserId: zod.number().nullish(),
+  dueDate: zod.string().nullish(),
+  status: zod.string().optional(),
+});
+
+export const UpdateIncidentActionResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  incidentId: zod.number(),
+  actionType: zod.string(),
+  description: zod.string(),
+  ownerUserId: zod.number().nullish(),
+  dueDate: zod.string().nullish(),
+  status: zod.string(),
+  completedAt: zod.string().nullish(),
+  createdAt: zod.coerce.date().optional(),
+  updatedAt: zod.coerce.date().optional(),
+});
+
+/**
+ * @summary Delete a CAPA action
+ */
+export const DeleteIncidentActionParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const DeleteIncidentActionResponse = zod.object({
+  ok: zod.boolean(),
+});

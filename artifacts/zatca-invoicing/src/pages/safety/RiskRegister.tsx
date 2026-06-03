@@ -1,4 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useListRiskAssessments, useGetRiskAssessment,
+  useCreateRiskAssessment, useUpdateRiskAssessment, useDeleteRiskAssessment,
+  useAddRiskControl, useUpdateRiskControl, useDeleteRiskControl,
+  getListRiskAssessmentsQueryKey, getGetRiskAssessmentQueryKey,
+  type RiskAssessment, type RiskControl,
+  type CreateRiskAssessmentBody, type CreateRiskControlBody,
+} from "@workspace/api-client-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { useToast } from "@/hooks/use-toast";
@@ -13,9 +21,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import {
-  safetyApi, type RiskAssessment, type RiskControl,
   HAZARD_CATEGORIES, RISK_STATUSES, CONTROL_TYPES, CONTROL_STATUSES,
-} from "@/lib/safetyApi";
+} from "@/lib/safetyConstants";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -70,36 +77,45 @@ type Usr = { id: number; username: string };
 export default function RiskRegister() {
   const { token } = useAuth() as any;
   const { toast } = useToast();
-  const [rows, setRows] = useState<RiskAssessment[] | null>(null);
-  const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [editing, setEditing] = useState<Editing | null>(null);
-  const [saving, setSaving] = useState(false);
   const [workCenters, setWorkCenters] = useState<WC[]>([]);
   const [users, setUsers] = useState<Usr[]>([]);
 
-  // Controls drawer (only available for a saved RA)
-  const [controlsFor, setControlsFor] = useState<RiskAssessment | null>(null);
-  const [controls, setControls] = useState<RiskControl[]>([]);
+  // Debounced params drive the generated list query.
+  const [params, setParams] = useState<{ q?: string; status?: string }>({});
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setParams({ q: q.trim() || undefined, status: statusFilter || undefined });
+    }, 300);
+    return () => clearTimeout(id);
+  }, [q, statusFilter]);
+
+  const risksQuery = useListRiskAssessments(params, {
+    query: { enabled: !!token, queryKey: getListRiskAssessmentsQueryKey(params) },
+  });
+  const rows = risksQuery.data ?? null;
+  const loading = risksQuery.isLoading;
+
+  // Controls drawer — full RA (with controls) fetched on demand.
+  const [controlsForId, setControlsForId] = useState<number | null>(null);
+  const [controlsForTitle, setControlsForTitle] = useState<string>("");
+  const raDetailQuery = useGetRiskAssessment(controlsForId ?? 0, {
+    query: { enabled: controlsForId != null, queryKey: getGetRiskAssessmentQueryKey(controlsForId ?? 0) },
+  });
+  const controls: RiskControl[] = raDetailQuery.data?.controls ?? [];
   const [newControl, setNewControl] = useState<Partial<RiskControl>>({
     controlType: "administrative", description: "", status: "planned",
   });
 
-  const load = useCallback(async () => {
-    if (!token) return;
-    setLoading(true);
-    try {
-      const data = await safetyApi.listRiskAssessments({
-        q: q.trim() || undefined, status: statusFilter || undefined,
-      });
-      setRows(data);
-    } catch (e: any) {
-      toast({ title: "خطأ", description: e?.message, variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
-  }, [token, q, statusFilter, toast]);
+  const createMut = useCreateRiskAssessment();
+  const updateMut = useUpdateRiskAssessment();
+  const deleteMut = useDeleteRiskAssessment();
+  const addControlMut = useAddRiskControl();
+  const updateControlMut = useUpdateRiskControl();
+  const deleteControlMut = useDeleteRiskControl();
+  const saving = createMut.isPending || updateMut.isPending;
 
   const loadLookups = useCallback(async () => {
     if (!token) return;
@@ -119,16 +135,8 @@ export default function RiskRegister() {
 
   useEffect(() => {
     if (!token) return;
-    void load();
     void loadLookups();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, loadLookups]);
-
-  useEffect(() => {
-    const id = setTimeout(() => { if (token) void load(); }, 300);
-    return () => clearTimeout(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, statusFilter]);
 
   async function save() {
     if (!editing) return;
@@ -136,53 +144,67 @@ export default function RiskRegister() {
       toast({ title: "العنوان مطلوب", variant: "destructive" });
       return;
     }
-    setSaving(true);
     try {
-      const payload = { ...editing, title: editing.title.trim() };
-      if (editing.id) await safetyApi.updateRiskAssessment(editing.id, payload);
-      else await safetyApi.createRiskAssessment(payload as any);
+      const body: CreateRiskAssessmentBody = {
+        title: editing.title.trim(),
+        processArea: editing.processArea ?? null,
+        workCenterId: editing.workCenterId ?? null,
+        hazardDescription: editing.hazardDescription ?? null,
+        hazardCategory: editing.hazardCategory,
+        likelihood: editing.likelihood,
+        severity: editing.severity,
+        existingControls: editing.existingControls ?? null,
+        residualLikelihood: editing.residualLikelihood ?? null,
+        residualSeverity: editing.residualSeverity ?? null,
+        responsibleUserId: editing.responsibleUserId ?? null,
+        assessmentDate: editing.assessmentDate ?? null,
+        reviewDate: editing.reviewDate ?? null,
+        status: editing.status,
+        notes: editing.notes ?? null,
+      };
+      if (editing.id) await updateMut.mutateAsync({ id: editing.id, data: body });
+      else await createMut.mutateAsync({ data: body });
       toast({ title: editing.id ? "✓ تم التحديث" : "✓ تم الإنشاء" });
       setEditing(null);
-      await load();
+      await risksQuery.refetch();
     } catch (e: any) {
       toast({ title: "خطأ", description: e?.message, variant: "destructive" });
-    } finally {
-      setSaving(false);
     }
   }
 
   async function remove(r: RiskAssessment) {
     if (!confirm(`حذف تقييم المخاطر "${r.title}"؟`)) return;
     try {
-      await safetyApi.deleteRiskAssessment(r.id);
+      await deleteMut.mutateAsync({ id: r.id });
       toast({ title: "✓ تم الحذف" });
-      await load();
+      await risksQuery.refetch();
     } catch (e: any) {
       toast({ title: "تعذّر الحذف", description: e?.message, variant: "destructive" });
     }
   }
 
-  async function openControls(r: RiskAssessment) {
-    setControlsFor(r);
-    try {
-      const full = await safetyApi.getRiskAssessment(r.id);
-      setControls(full.controls ?? []);
-    } catch (e: any) {
-      toast({ title: "خطأ", description: e?.message, variant: "destructive" });
-    }
+  function openControls(r: RiskAssessment) {
+    setControlsForTitle(r.title ?? "");
+    setControlsForId(r.id);
   }
 
   async function addControl() {
-    if (!controlsFor) return;
+    if (controlsForId == null) return;
     if (!newControl.description?.trim()) {
       toast({ title: "وصف الضابط مطلوب", variant: "destructive" });
       return;
     }
     try {
-      await safetyApi.addControl(controlsFor.id, newControl as any);
+      const body: CreateRiskControlBody = {
+        description: newControl.description.trim(),
+        controlType: newControl.controlType,
+        ownerUserId: newControl.ownerUserId ?? null,
+        dueDate: newControl.dueDate ?? null,
+        status: newControl.status,
+      };
+      await addControlMut.mutateAsync({ id: controlsForId, data: body });
       setNewControl({ controlType: "administrative", description: "", status: "planned" });
-      const full = await safetyApi.getRiskAssessment(controlsFor.id);
-      setControls(full.controls ?? []);
+      await raDetailQuery.refetch();
     } catch (e: any) {
       toast({ title: "خطأ", description: e?.message, variant: "destructive" });
     }
@@ -192,11 +214,8 @@ export default function RiskRegister() {
     const order = ["planned", "in_progress", "done"];
     const next = order[(order.indexOf(c.status) + 1) % order.length];
     try {
-      await safetyApi.updateControl(c.id, { status: next });
-      if (controlsFor) {
-        const full = await safetyApi.getRiskAssessment(controlsFor.id);
-        setControls(full.controls ?? []);
-      }
+      await updateControlMut.mutateAsync({ id: c.id, data: { status: next } });
+      await raDetailQuery.refetch();
     } catch (e: any) {
       toast({ title: "خطأ", description: e?.message, variant: "destructive" });
     }
@@ -204,11 +223,8 @@ export default function RiskRegister() {
 
   async function deleteControl(c: RiskControl) {
     try {
-      await safetyApi.deleteControl(c.id);
-      if (controlsFor) {
-        const full = await safetyApi.getRiskAssessment(controlsFor.id);
-        setControls(full.controls ?? []);
-      }
+      await deleteControlMut.mutateAsync({ id: c.id });
+      await raDetailQuery.refetch();
     } catch (e: any) {
       toast({ title: "خطأ", description: e?.message, variant: "destructive" });
     }
@@ -504,13 +520,13 @@ export default function RiskRegister() {
       )}
 
       {/* Controls drawer */}
-      {controlsFor && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex justify-end" onClick={() => setControlsFor(null)}>
+      {controlsForId != null && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex justify-end" onClick={() => setControlsForId(null)}>
           <div className="bg-white w-full max-w-lg h-full overflow-y-auto p-5 space-y-4 shadow-xl"
             onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold">ضوابط: {controlsFor.title}</h2>
-              <Button size="sm" variant="ghost" onClick={() => setControlsFor(null)}><X className="h-4 w-4" /></Button>
+              <h2 className="text-lg font-bold">ضوابط: {controlsForTitle}</h2>
+              <Button size="sm" variant="ghost" onClick={() => setControlsForId(null)}><X className="h-4 w-4" /></Button>
             </div>
             <p className="text-xs text-slate-500">
               هرمية الضوابط (من الأعلى فعالية): الإزالة ← الاستبدال ← الهندسية ← الإدارية ← معدات الوقاية.
@@ -528,6 +544,16 @@ export default function RiskRegister() {
               <Input value={newControl.description ?? ""}
                 onChange={(e) => setNewControl({ ...newControl, description: e.target.value })}
                 placeholder="وصف الضابط…" data-testid="input-control-desc" />
+              <SearchCombobox
+                value={newControl.ownerUserId == null ? "" : String(newControl.ownerUserId)}
+                onValueChange={(v) => setNewControl({ ...newControl, ownerUserId: v === "" ? null : Number(v) })}
+                placeholder="المسؤول — غير محدد —"
+                searchPlaceholder="ابحث…"
+                items={[{ value: "", label: "— غير محدد —" },
+                  ...users.map((u) => ({ value: String(u.id), label: u.username }))]}
+              />
+              <Input type="date" value={newControl.dueDate ?? ""}
+                onChange={(e) => setNewControl({ ...newControl, dueDate: e.target.value || null })} />
               <Button size="sm" onClick={addControl} data-testid="btn-add-control">
                 <Plus className="h-4 w-4 me-1" /> إضافة
               </Button>

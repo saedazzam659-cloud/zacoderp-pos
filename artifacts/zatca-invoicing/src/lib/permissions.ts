@@ -27,6 +27,7 @@ const G = {
   pos:         "perms.groups.pos",
   hr:          "perms.groups.hr",
   production:  "perms.groups.production",
+  safety:      "perms.groups.safety",
   contracting: "perms.groups.contracting",
   maintenance: "perms.groups.maintenance",
   hotel:       "perms.groups.hotel",
@@ -100,6 +101,13 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // Production & Manufacturing — backend key is "production"; one logical
   // module covers dashboard / orders / resources behind a single permission.
   { key: "production",           label: "perms.modules.production",           group: G.production,  actions: ALL },
+
+  // Occupational Safety & Health (OSH / ISO 45001) — per-screen permission
+  // keys. All three roll up to the single company-level `safety` module gate
+  // (see COMPANY_MODULE_GATE backend + companyModuleGate.ts frontend).
+  { key: "safety_dashboard",     label: "perms.modules.safety_dashboard",     group: G.safety,      actions: VO },
+  { key: "safety_risk",          label: "perms.modules.safety_risk",          group: G.safety,      actions: VC },
+  { key: "safety_incidents",     label: "perms.modules.safety_incidents",     group: G.safety,      actions: VC },
 
   // Contracting Management — backend key is "contracting"; covers projects,
   // contractors, bills, and the contracting dashboard behind a single permission.

@@ -17,6 +17,8 @@ tags:
     description: Customer management
   - name: dashboard
     description: Dashboard & analytics
+  - name: safety
+    description: Occupational Safety & Health (OSH / ISO 45001)
 paths:
   /healthz:
     get:
@@ -416,6 +418,362 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/MonthlyStat"
+
+  /safety/kpis:
+    get:
+      operationId: getSafetyKpis
+      tags: [safety]
+      summary: OSH KPI dashboard (TRIR / LTIFR / severity rate / days-since-LTI)
+      parameters:
+        - name: manHours
+          in: query
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Safety KPIs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SafetyKpis"
+
+  /safety/risk-assessments:
+    get:
+      operationId: listRiskAssessments
+      tags: [safety]
+      summary: List risk assessments
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: q
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of risk assessments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RiskAssessment"
+    post:
+      operationId: createRiskAssessment
+      tags: [safety]
+      summary: Create a risk assessment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRiskAssessmentBody"
+      responses:
+        "201":
+          description: Created risk assessment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskAssessment"
+
+  /safety/risk-assessments/{id}:
+    get:
+      operationId: getRiskAssessment
+      tags: [safety]
+      summary: Get a risk assessment (with controls)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Risk assessment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskAssessment"
+    patch:
+      operationId: updateRiskAssessment
+      tags: [safety]
+      summary: Update a risk assessment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRiskAssessmentBody"
+      responses:
+        "200":
+          description: Updated risk assessment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskAssessment"
+    delete:
+      operationId: deleteRiskAssessment
+      tags: [safety]
+      summary: Delete a risk assessment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+
+  /safety/risk-assessments/{id}/controls:
+    post:
+      operationId: addRiskControl
+      tags: [safety]
+      summary: Add a control to a risk assessment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRiskControlBody"
+      responses:
+        "201":
+          description: Created control
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskControl"
+
+  /safety/controls/{id}:
+    patch:
+      operationId: updateRiskControl
+      tags: [safety]
+      summary: Update a control
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRiskControlBody"
+      responses:
+        "200":
+          description: Updated control
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskControl"
+    delete:
+      operationId: deleteRiskControl
+      tags: [safety]
+      summary: Delete a control
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+
+  /safety/incidents:
+    get:
+      operationId: listIncidents
+      tags: [safety]
+      summary: List incidents
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: q
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of incidents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Incident"
+    post:
+      operationId: createIncident
+      tags: [safety]
+      summary: Create an incident
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIncidentBody"
+      responses:
+        "201":
+          description: Created incident
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Incident"
+
+  /safety/incidents/{id}:
+    get:
+      operationId: getIncident
+      tags: [safety]
+      summary: Get an incident (with CAPA actions)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Incident
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Incident"
+    patch:
+      operationId: updateIncident
+      tags: [safety]
+      summary: Update an incident
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateIncidentBody"
+      responses:
+        "200":
+          description: Updated incident
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Incident"
+    delete:
+      operationId: deleteIncident
+      tags: [safety]
+      summary: Delete an incident
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+
+  /safety/incidents/{id}/actions:
+    post:
+      operationId: addIncidentAction
+      tags: [safety]
+      summary: Add a CAPA action to an incident
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIncidentActionBody"
+      responses:
+        "201":
+          description: Created action
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncidentAction"
+
+  /safety/actions/{id}:
+    patch:
+      operationId: updateIncidentAction
+      tags: [safety]
+      summary: Update a CAPA action
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateIncidentActionBody"
+      responses:
+        "200":
+          description: Updated action
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncidentAction"
+    delete:
+      operationId: deleteIncidentAction
+      tags: [safety]
+      summary: Delete a CAPA action
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
 
 components:
   schemas:
@@ -878,3 +1236,591 @@ components:
         - invoiceCount
         - revenue
         - vatAmount
+
+    OkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+      required:
+        - ok
+
+    RiskControl:
+      type: object
+      properties:
+        id:
+          type: integer
+        companyId:
+          type: integer
+        assessmentId:
+          type: integer
+        controlType:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+        ownerUserId:
+          type: integer
+          nullable: true
+        dueDate:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - companyId
+        - assessmentId
+        - controlType
+        - description
+        - status
+
+    RiskAssessment:
+      type: object
+      properties:
+        id:
+          type: integer
+        companyId:
+          type: integer
+        branchId:
+          type: integer
+          nullable: true
+        code:
+          type: string
+        title:
+          type: string
+        processArea:
+          type: string
+          nullable: true
+        workCenterId:
+          type: integer
+          nullable: true
+        workCenterName:
+          type: string
+          nullable: true
+        hazardDescription:
+          type: string
+          nullable: true
+        hazardCategory:
+          type: string
+        likelihood:
+          type: integer
+        severity:
+          type: integer
+        riskScore:
+          type: integer
+        riskLevel:
+          type: string
+        existingControls:
+          type: string
+          nullable: true
+        residualLikelihood:
+          type: integer
+          nullable: true
+        residualSeverity:
+          type: integer
+          nullable: true
+        residualScore:
+          type: integer
+          nullable: true
+        residualLevel:
+          type: string
+          nullable: true
+        responsibleUserId:
+          type: integer
+          nullable: true
+        responsibleName:
+          type: string
+          nullable: true
+        assessmentDate:
+          type: string
+          nullable: true
+        reviewDate:
+          type: string
+          nullable: true
+        status:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        controls:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskControl"
+      required:
+        - id
+        - companyId
+        - code
+        - title
+        - hazardCategory
+        - likelihood
+        - severity
+        - riskScore
+        - riskLevel
+        - status
+
+    CreateRiskAssessmentBody:
+      type: object
+      properties:
+        title:
+          type: string
+        branchId:
+          type: integer
+          nullable: true
+        code:
+          type: string
+        processArea:
+          type: string
+          nullable: true
+        workCenterId:
+          type: integer
+          nullable: true
+        hazardDescription:
+          type: string
+          nullable: true
+        hazardCategory:
+          type: string
+        likelihood:
+          type: integer
+        severity:
+          type: integer
+        existingControls:
+          type: string
+          nullable: true
+        residualLikelihood:
+          type: integer
+          nullable: true
+        residualSeverity:
+          type: integer
+          nullable: true
+        responsibleUserId:
+          type: integer
+          nullable: true
+        assessmentDate:
+          type: string
+          nullable: true
+        reviewDate:
+          type: string
+          nullable: true
+        status:
+          type: string
+        notes:
+          type: string
+          nullable: true
+      required:
+        - title
+
+    UpdateRiskAssessmentBody:
+      type: object
+      properties:
+        title:
+          type: string
+        processArea:
+          type: string
+          nullable: true
+        workCenterId:
+          type: integer
+          nullable: true
+        hazardDescription:
+          type: string
+          nullable: true
+        hazardCategory:
+          type: string
+        likelihood:
+          type: integer
+        severity:
+          type: integer
+        existingControls:
+          type: string
+          nullable: true
+        residualLikelihood:
+          type: integer
+          nullable: true
+        residualSeverity:
+          type: integer
+          nullable: true
+        responsibleUserId:
+          type: integer
+          nullable: true
+        assessmentDate:
+          type: string
+          nullable: true
+        reviewDate:
+          type: string
+          nullable: true
+        status:
+          type: string
+        notes:
+          type: string
+          nullable: true
+
+    CreateRiskControlBody:
+      type: object
+      properties:
+        description:
+          type: string
+        controlType:
+          type: string
+        status:
+          type: string
+        ownerUserId:
+          type: integer
+          nullable: true
+        dueDate:
+          type: string
+          nullable: true
+      required:
+        - description
+
+    UpdateRiskControlBody:
+      type: object
+      properties:
+        description:
+          type: string
+        controlType:
+          type: string
+        status:
+          type: string
+        ownerUserId:
+          type: integer
+          nullable: true
+        dueDate:
+          type: string
+          nullable: true
+
+    IncidentAction:
+      type: object
+      properties:
+        id:
+          type: integer
+        companyId:
+          type: integer
+        incidentId:
+          type: integer
+        actionType:
+          type: string
+        description:
+          type: string
+        ownerUserId:
+          type: integer
+          nullable: true
+        dueDate:
+          type: string
+          nullable: true
+        status:
+          type: string
+        completedAt:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - companyId
+        - incidentId
+        - actionType
+        - description
+        - status
+
+    Incident:
+      type: object
+      properties:
+        id:
+          type: integer
+        companyId:
+          type: integer
+        branchId:
+          type: integer
+          nullable: true
+        incidentNumber:
+          type: string
+        incidentType:
+          type: string
+        severityClass:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+        workCenterId:
+          type: integer
+          nullable: true
+        workCenterName:
+          type: string
+          nullable: true
+        productionOrderId:
+          type: integer
+          nullable: true
+        injuredEmployeeId:
+          type: integer
+          nullable: true
+        employeeName:
+          type: string
+          nullable: true
+        occurredAt:
+          type: string
+        reportedAt:
+          type: string
+        reportedByUserId:
+          type: integer
+          nullable: true
+        immediateActions:
+          type: string
+          nullable: true
+        rootCause:
+          type: string
+          nullable: true
+        whys:
+          type: array
+          items:
+            type: string
+        lostDays:
+          type: integer
+        isRecordable:
+          type: boolean
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/IncidentAction"
+      required:
+        - id
+        - companyId
+        - incidentNumber
+        - incidentType
+        - severityClass
+        - title
+        - occurredAt
+        - reportedAt
+        - lostDays
+        - isRecordable
+        - status
+
+    CreateIncidentBody:
+      type: object
+      properties:
+        title:
+          type: string
+        occurredAt:
+          type: string
+        branchId:
+          type: integer
+          nullable: true
+        incidentType:
+          type: string
+        severityClass:
+          type: string
+        description:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+        workCenterId:
+          type: integer
+          nullable: true
+        productionOrderId:
+          type: integer
+          nullable: true
+        injuredEmployeeId:
+          type: integer
+          nullable: true
+        immediateActions:
+          type: string
+          nullable: true
+        rootCause:
+          type: string
+          nullable: true
+        whys:
+          type: array
+          items:
+            type: string
+        lostDays:
+          type: integer
+        status:
+          type: string
+      required:
+        - title
+        - occurredAt
+
+    UpdateIncidentBody:
+      type: object
+      properties:
+        title:
+          type: string
+        occurredAt:
+          type: string
+        incidentType:
+          type: string
+        severityClass:
+          type: string
+        description:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+        workCenterId:
+          type: integer
+          nullable: true
+        productionOrderId:
+          type: integer
+          nullable: true
+        injuredEmployeeId:
+          type: integer
+          nullable: true
+        immediateActions:
+          type: string
+          nullable: true
+        rootCause:
+          type: string
+          nullable: true
+        whys:
+          type: array
+          items:
+            type: string
+        lostDays:
+          type: integer
+        status:
+          type: string
+
+    CreateIncidentActionBody:
+      type: object
+      properties:
+        description:
+          type: string
+        actionType:
+          type: string
+        ownerUserId:
+          type: integer
+          nullable: true
+        dueDate:
+          type: string
+          nullable: true
+        status:
+          type: string
+      required:
+        - description
+
+    UpdateIncidentActionBody:
+      type: object
+      properties:
+        description:
+          type: string
+        actionType:
+          type: string
+        ownerUserId:
+          type: integer
+          nullable: true
+        dueDate:
+          type: string
+          nullable: true
+        status:
+          type: string
+
+    SafetyKpis:
+      type: object
+      properties:
+        manHours:
+          type: number
+          nullable: true
+        incidents:
+          type: object
+          properties:
+            total:
+              type: integer
+            nearMiss:
+              type: integer
+            recordable:
+              type: integer
+            lostTime:
+              type: integer
+            fatalities:
+              type: integer
+            open:
+              type: integer
+            totalLostDays:
+              type: integer
+          required:
+            - total
+            - nearMiss
+            - recordable
+            - lostTime
+            - fatalities
+            - open
+            - totalLostDays
+        daysSinceLastLti:
+          type: integer
+          nullable: true
+        rates:
+          type: object
+          properties:
+            trir:
+              type: number
+              nullable: true
+            ltifr:
+              type: number
+              nullable: true
+            severityRate:
+              type: number
+              nullable: true
+          required:
+            - trir
+            - ltifr
+            - severityRate
+        risks:
+          type: object
+          properties:
+            byLevel:
+              type: object
+              additionalProperties:
+                type: integer
+            open:
+              type: integer
+            total:
+              type: integer
+          required:
+            - byLevel
+            - open
+            - total
+        capa:
+          type: object
+          properties:
+            open:
+              type: integer
+            overdue:
+              type: integer
+            total:
+              type: integer
+          required:
+            - open
+            - overdue
+            - total
+      required:
+        - incidents
+        - rates
+        - risks
+        - capa

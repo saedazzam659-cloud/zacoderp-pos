@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useAuth } from "@/contexts/AuthContext";
-import { useToast } from "@/hooks/use-toast";
+import { useEffect, useMemo, useState } from "react";
+import { useGetSafetyKpis } from "@workspace/api-client-react";
 import {
   ShieldAlert, AlertTriangle, Activity, CalendarClock, ClipboardList,
   HeartPulse, Skull, ListChecks,
@@ -9,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { safetyApi, type SafetyKpis } from "@/lib/safetyApi";
 
 const RISK_COLORS: Record<string, string> = {
   low: "bg-emerald-100 text-emerald-700",
@@ -27,39 +25,20 @@ function fmt(n: number | null, digits = 2): string {
 }
 
 export default function SafetyDashboard() {
-  const { token } = useAuth() as any;
-  const { toast } = useToast();
-  const [kpis, setKpis] = useState<SafetyKpis | null>(null);
-  const [loading, setLoading] = useState(false);
   const [manHours, setManHours] = useState("");
-
-  const load = useCallback(async () => {
-    if (!token) return;
-    setLoading(true);
-    try {
+  // Debounce the man-hours field so the rate metrics refetch 400ms after it settles.
+  const [manHoursParam, setManHoursParam] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    const id = setTimeout(() => {
       const mh = Number(manHours);
-      const data = await safetyApi.kpis(
-        Number.isFinite(mh) && mh > 0 ? { manHours: mh } : {},
-      );
-      setKpis(data);
-    } catch (e: any) {
-      toast({ title: "خطأ", description: e?.message, variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
-  }, [token, manHours, toast]);
-
-  useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
-
-  // Re-fetch the rate metrics 400ms after the man-hours field settles.
-  useEffect(() => {
-    const id = setTimeout(() => { if (token) void load(); }, 400);
+      setManHoursParam(Number.isFinite(mh) && mh > 0 ? mh : undefined);
+    }, 400);
     return () => clearTimeout(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manHours]);
+
+  const { data: kpis, isLoading: loading } = useGetSafetyKpis(
+    manHoursParam ? { manHours: manHoursParam } : undefined,
+  );
 
   const inc = kpis?.incidents;
   const risks = kpis?.risks;

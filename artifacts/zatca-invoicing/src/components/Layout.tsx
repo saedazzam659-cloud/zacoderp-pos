@@ -241,14 +241,16 @@ const productionSubNav: NavDef[] = [
   { nameKey: "nav.productionTraceability", href: "/production/traceability",   icon: GitBranch,     permKey: "production" },
 ];
 const PRODUCTION_GROUP_PERMS = ["production"];
-// Occupational Safety & Health (OSH / ISO 45001) — single `safety` permission
-// key matching MODULE_PERMISSIONS in api-server/auth.ts.
+// Occupational Safety & Health (OSH / ISO 45001) — per-screen permission keys
+// (safety_dashboard / safety_risk / safety_incidents). All three roll up to the
+// single `safety` company-module toggle (see companyModuleGate.ts) but are
+// independently grantable per user, mirroring the per-screen PermRoute gates.
 const safetySubNav: NavDef[] = [
-  { nameKey: "nav.safetyDashboard",   href: "/safety",                  icon: BarChart3,     permKey: "safety", exact: true },
-  { nameKey: "nav.safetyRiskRegister", href: "/safety/risk-assessments", icon: ClipboardList, permKey: "safety" },
-  { nameKey: "nav.safetyIncidents",   href: "/safety/incidents",        icon: AlertTriangle, permKey: "safety" },
+  { nameKey: "nav.safetyDashboard",   href: "/safety",                  icon: BarChart3,     permKey: "safety_dashboard", exact: true },
+  { nameKey: "nav.safetyRiskRegister", href: "/safety/risk-assessments", icon: ClipboardList, permKey: "safety_risk" },
+  { nameKey: "nav.safetyIncidents",   href: "/safety/incidents",        icon: AlertTriangle, permKey: "safety_incidents" },
 ];
-const SAFETY_GROUP_PERMS = ["safety"];
+const SAFETY_GROUP_PERMS = ["safety_dashboard", "safety_risk", "safety_incidents"];
 // Contracting/Construction ERP — gated by a single `contracting` permission key
 // matching MODULE_PERMISSIONS in api-server/auth.ts.
 const contractingSubNav: NavDef[] = [

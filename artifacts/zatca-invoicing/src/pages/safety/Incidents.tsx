@@ -1,4 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useListIncidents, useGetIncident,
+  useCreateIncident, useUpdateIncident, useDeleteIncident,
+  useAddIncidentAction, useUpdateIncidentAction, useDeleteIncidentAction,
+  getListIncidentsQueryKey, getGetIncidentQueryKey,
+  type Incident, type IncidentAction,
+  type CreateIncidentBody, type CreateIncidentActionBody,
+} from "@workspace/api-client-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { useToast } from "@/hooks/use-toast";
@@ -13,9 +21,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import {
-  safetyApi, type Incident, type IncidentAction,
   INCIDENT_TYPES, SEVERITY_CLASSES, INCIDENT_STATUSES, ACTION_TYPES,
-} from "@/lib/safetyApi";
+} from "@/lib/safetyConstants";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -58,48 +65,66 @@ function toLocalInput(iso: string): string {
 type Editing = Partial<Incident> & { occurredLocal: string };
 const EMPTY: Editing = {
   title: "", incidentType: "near_miss", severityClass: "no_treatment",
-  description: "", location: "", workCenterId: null, injuredEmployeeId: null,
+  description: "", location: "", workCenterId: null, productionOrderId: null,
+  injuredEmployeeId: null,
   occurredLocal: toLocalInput(new Date().toISOString()), immediateActions: "",
   rootCause: "", whys: [], lostDays: 0, status: "open",
 };
 
 type WC = { id: number; nameAr: string };
 type Emp = { id: number; nameAr: string };
+type Usr = { id: number; username?: string; fullName?: string };
+type PO = { id: number; orderNumber?: string; title?: string };
 
 export default function Incidents() {
   const { token } = useAuth() as any;
   const { toast } = useToast();
-  const [rows, setRows] = useState<Incident[] | null>(null);
-  const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [editing, setEditing] = useState<Editing | null>(null);
-  const [saving, setSaving] = useState(false);
   const [workCenters, setWorkCenters] = useState<WC[]>([]);
   const [employees, setEmployees] = useState<Emp[]>([]);
+  const [users, setUsers] = useState<Usr[]>([]);
+  const [productionOrders, setProductionOrders] = useState<PO[]>([]);
 
-  // CAPA drawer
-  const [capaFor, setCapaFor] = useState<Incident | null>(null);
-  const [actions, setActions] = useState<IncidentAction[]>([]);
+  // Debounced params drive the generated list query.
+  const [params, setParams] = useState<{ q?: string; status?: string; type?: string }>({});
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setParams({
+        q: q.trim() || undefined,
+        status: statusFilter || undefined,
+        type: typeFilter || undefined,
+      });
+    }, 300);
+    return () => clearTimeout(id);
+  }, [q, statusFilter, typeFilter]);
+
+  const incidentsQuery = useListIncidents(params, {
+    query: { enabled: !!token, queryKey: getListIncidentsQueryKey(params) },
+  });
+  const rows = incidentsQuery.data ?? null;
+  const loading = incidentsQuery.isLoading;
+
+  // CAPA drawer — full incident (with actions) fetched on demand.
+  const [capaForId, setCapaForId] = useState<number | null>(null);
+  const [capaForNumber, setCapaForNumber] = useState<string>("");
+  const incidentDetailQuery = useGetIncident(capaForId ?? 0, {
+    query: { enabled: capaForId != null, queryKey: getGetIncidentQueryKey(capaForId ?? 0) },
+  });
+  const actions: IncidentAction[] = incidentDetailQuery.data?.actions ?? [];
   const [newAction, setNewAction] = useState<Partial<IncidentAction>>({
     actionType: "corrective", description: "", status: "open",
   });
 
-  const load = useCallback(async () => {
-    if (!token) return;
-    setLoading(true);
-    try {
-      const data = await safetyApi.listIncidents({
-        q: q.trim() || undefined, status: statusFilter || undefined, type: typeFilter || undefined,
-      });
-      setRows(data);
-    } catch (e: any) {
-      toast({ title: "خطأ", description: e?.message, variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
-  }, [token, q, statusFilter, typeFilter, toast]);
+  const createMut = useCreateIncident();
+  const updateMut = useUpdateIncident();
+  const deleteMut = useDeleteIncident();
+  const addActionMut = useAddIncidentAction();
+  const updateActionMut = useUpdateIncidentAction();
+  const deleteActionMut = useDeleteIncidentAction();
+  const saving = createMut.isPending || updateMut.isPending;
 
   const loadLookups = useCallback(async () => {
     if (!token) return;
@@ -107,28 +132,24 @@ export default function Incidents() {
     const h: Record<string, string> = { Authorization: `Bearer ${token}` };
     if (actingCompanyId) h["x-acting-company-id"] = actingCompanyId;
     try {
-      const [wc, emp] = await Promise.all([
+      const [wc, emp, usr, po] = await Promise.all([
         fetch(`${API}/api/production/work-centers`, { headers: h }).then((r) => (r.ok ? r.json() : [])),
         fetch(`${API}/api/employees`, { headers: h }).then((r) => (r.ok ? r.json() : [])),
+        fetch(`${API}/api/users`, { headers: h }).then((r) => (r.ok ? r.json() : [])),
+        fetch(`${API}/api/production/orders`, { headers: h }).then((r) => (r.ok ? r.json() : [])),
       ]);
       setWorkCenters(Array.isArray(wc) ? wc : wc?.rows ?? []);
       setEmployees(Array.isArray(emp) ? emp : emp?.rows ?? []);
+      setUsers(Array.isArray(usr) ? usr : usr?.rows ?? []);
+      setProductionOrders(Array.isArray(po) ? po : po?.rows ?? []);
     } catch { /* silent */ }
   }, [token]);
   useRefetchOnFocus(loadLookups);
 
   useEffect(() => {
     if (!token) return;
-    void load();
     void loadLookups();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, loadLookups]);
-
-  useEffect(() => {
-    const id = setTimeout(() => { if (token) void load(); }, 300);
-    return () => clearTimeout(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, statusFilter, typeFilter]);
 
   function setWhy(idx: number, val: string) {
     if (!editing) return;
@@ -147,60 +168,67 @@ export default function Incidents() {
       toast({ title: "تاريخ ووقت الحادث مطلوب", variant: "destructive" });
       return;
     }
-    setSaving(true);
     try {
       const whys = (editing.whys ?? []).map((w) => (w ?? "").trim()).filter(Boolean);
-      const payload: any = {
-        ...editing,
+      const body: CreateIncidentBody = {
         title: editing.title.trim(),
         occurredAt: new Date(editing.occurredLocal).toISOString(),
+        incidentType: editing.incidentType,
+        severityClass: editing.severityClass,
+        description: editing.description ?? null,
+        location: editing.location ?? null,
+        workCenterId: editing.workCenterId ?? null,
+        productionOrderId: editing.productionOrderId ?? null,
+        injuredEmployeeId: editing.injuredEmployeeId ?? null,
+        immediateActions: editing.immediateActions ?? null,
+        rootCause: editing.rootCause ?? null,
         whys,
+        lostDays: editing.lostDays ?? 0,
+        status: editing.status,
       };
-      delete payload.occurredLocal;
-      if (editing.id) await safetyApi.updateIncident(editing.id, payload);
-      else await safetyApi.createIncident(payload);
+      if (editing.id) await updateMut.mutateAsync({ id: editing.id, data: body });
+      else await createMut.mutateAsync({ data: body });
       toast({ title: editing.id ? "✓ تم التحديث" : "✓ تم تسجيل الحادث" });
       setEditing(null);
-      await load();
+      await incidentsQuery.refetch();
     } catch (e: any) {
       toast({ title: "خطأ", description: e?.message, variant: "destructive" });
-    } finally {
-      setSaving(false);
     }
   }
 
   async function remove(r: Incident) {
     if (!confirm(`حذف الحادث "${r.title}"؟`)) return;
     try {
-      await safetyApi.deleteIncident(r.id);
+      await deleteMut.mutateAsync({ id: r.id });
       toast({ title: "✓ تم الحذف" });
-      await load();
+      await incidentsQuery.refetch();
     } catch (e: any) {
       toast({ title: "تعذّر الحذف", description: e?.message, variant: "destructive" });
     }
   }
 
-  async function openCapa(r: Incident) {
-    setCapaFor(r);
-    try {
-      const full = await safetyApi.getIncident(r.id);
-      setActions(full.actions ?? []);
-    } catch (e: any) {
-      toast({ title: "خطأ", description: e?.message, variant: "destructive" });
-    }
+  function openCapa(r: Incident) {
+    setCapaForNumber(r.incidentNumber ?? "");
+    setCapaForId(r.id);
   }
 
   async function addAction() {
-    if (!capaFor) return;
+    if (capaForId == null) return;
     if (!newAction.description?.trim()) {
       toast({ title: "وصف الإجراء مطلوب", variant: "destructive" });
       return;
     }
     try {
-      await safetyApi.addAction(capaFor.id, newAction as any);
+      const body: CreateIncidentActionBody = {
+        description: newAction.description.trim(),
+        actionType: newAction.actionType,
+        ownerUserId: newAction.ownerUserId ?? null,
+        dueDate: newAction.dueDate ?? null,
+        status: newAction.status,
+      };
+      await addActionMut.mutateAsync({ id: capaForId, data: body });
       setNewAction({ actionType: "corrective", description: "", status: "open" });
-      const full = await safetyApi.getIncident(capaFor.id);
-      setActions(full.actions ?? []);
+      await incidentDetailQuery.refetch();
     } catch (e: any) {
       toast({ title: "خطأ", description: e?.message, variant: "destructive" });
     }
@@ -210,11 +238,8 @@ export default function Incidents() {
     const order = ["open", "in_progress", "done"];
     const next = order[(order.indexOf(a.status) + 1) % order.length];
     try {
-      await safetyApi.updateAction(a.id, { status: next });
-      if (capaFor) {
-        const full = await safetyApi.getIncident(capaFor.id);
-        setActions(full.actions ?? []);
-      }
+      await updateActionMut.mutateAsync({ id: a.id, data: { status: next } });
+      await incidentDetailQuery.refetch();
     } catch (e: any) {
       toast({ title: "خطأ", description: e?.message, variant: "destructive" });
     }
@@ -222,11 +247,8 @@ export default function Incidents() {
 
   async function deleteAction(a: IncidentAction) {
     try {
-      await safetyApi.deleteAction(a.id);
-      if (capaFor) {
-        const full = await safetyApi.getIncident(capaFor.id);
-        setActions(full.actions ?? []);
-      }
+      await deleteActionMut.mutateAsync({ id: a.id });
+      await incidentDetailQuery.refetch();
     } catch (e: any) {
       toast({ title: "خطأ", description: e?.message, variant: "destructive" });
     }
@@ -336,6 +358,17 @@ export default function Incidents() {
                 placeholder="— غير محدد —" searchPlaceholder="ابحث…"
                 items={[{ value: "", label: "— غير محدد —" },
                   ...employees.map((e) => ({ value: String(e.id), label: e.nameAr }))]} />
+            </div>
+            <div>
+              <Label>أمر الإنتاج المرتبط</Label>
+              <SearchCombobox value={editing.productionOrderId == null ? "" : String(editing.productionOrderId)}
+                onValueChange={(v) => setEditing({ ...editing, productionOrderId: v === "" ? null : Number(v) })}
+                placeholder="— غير محدد —" searchPlaceholder="ابحث…"
+                items={[{ value: "", label: "— غير محدد —" },
+                  ...productionOrders.map((p) => ({
+                    value: String(p.id),
+                    label: [p.orderNumber, p.title].filter(Boolean).join(" — ") || `#${p.id}`,
+                  }))]} />
             </div>
             <div>
               <Label>أيام العمل المفقودة</Label>
@@ -471,13 +504,13 @@ export default function Incidents() {
       )}
 
       {/* CAPA drawer */}
-      {capaFor && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex justify-end" onClick={() => setCapaFor(null)}>
+      {capaForId != null && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex justify-end" onClick={() => setCapaForId(null)}>
           <div className="bg-white w-full max-w-lg h-full overflow-y-auto p-5 space-y-4 shadow-xl"
             onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold">إجراءات: {capaFor.incidentNumber}</h2>
-              <Button size="sm" variant="ghost" onClick={() => setCapaFor(null)}><X className="h-4 w-4" /></Button>
+              <h2 className="text-lg font-bold">إجراءات: {capaForNumber}</h2>
+              <Button size="sm" variant="ghost" onClick={() => setCapaForId(null)}><X className="h-4 w-4" /></Button>
             </div>
             <p className="text-xs text-slate-500">
               الإجراءات التصحيحية تعالج الحادث الحالي، والوقائية تمنع تكراره مستقبلاً.
@@ -492,6 +525,11 @@ export default function Incidents() {
               <Input value={newAction.description ?? ""}
                 onChange={(e) => setNewAction({ ...newAction, description: e.target.value })}
                 placeholder="وصف الإجراء…" data-testid="input-action-desc" />
+              <SearchCombobox value={newAction.ownerUserId == null ? "" : String(newAction.ownerUserId)}
+                onValueChange={(v) => setNewAction({ ...newAction, ownerUserId: v === "" ? null : Number(v) })}
+                placeholder="المسؤول — غير محدد —" searchPlaceholder="ابحث…"
+                items={[{ value: "", label: "— غير محدد —" },
+                  ...users.map((u) => ({ value: String(u.id), label: u.fullName || u.username || `#${u.id}` }))]} />
               <Input type="date" value={newAction.dueDate ?? ""}
                 onChange={(e) => setNewAction({ ...newAction, dueDate: e.target.value || null })} />
               <Button size="sm" onClick={addAction} data-testid="btn-add-action">

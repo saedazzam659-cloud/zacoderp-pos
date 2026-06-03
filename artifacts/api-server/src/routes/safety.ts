@@ -35,17 +35,24 @@ import {
   intersectBranchRequest,
 } from "../middleware/auth.js";
 import {
-  requireModulePermission,
-  moduleAudit,
+  pathRbac,
 } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
-// Module-level RBAC gate — users without the `safety` company module (or the
-// per-user permission) cannot hit these endpoints directly, mirroring the
-// PermRoute module="safety" gate on the frontend.
-router.use(requireModulePermission("safety"));
-router.use(moduleAudit("safety"));
+// Per-screen RBAC gate + audit. Each route group maps to its own granular
+// permission key (all three roll up to the single `safety` company-module
+// toggle via COMPANY_MODULE_GATE). pathRbac matches req.path (relative to the
+// /safety mount) by longest-prefix order and combines the company gate, the
+// per-user action gate (mutations only), and the audit logger. Mirrors the
+// per-screen PermRoute module gates on the frontend.
+router.use(pathRbac([
+  ["/kpis",             "safety_dashboard"],
+  ["/risk-assessments", "safety_risk"],
+  ["/controls",         "safety_risk"],
+  ["/incidents",        "safety_incidents"],
+  ["/actions",          "safety_incidents"],
+]));
 
 // ─── helpers ─────────────────────────────────────────────────────────────
 function guard(req: any, res: any): number | null {

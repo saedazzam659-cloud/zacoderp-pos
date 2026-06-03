@@ -79,11 +79,16 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   // Operations
   contracting: "contracting",
   production: "production",
-  // Occupational Safety & Health (OSH / ISO 45001). Standalone gate keyed
-  // `safety`; mirror in frontend COMPANY_MODULE_GATE. Disabling it hides the
-  // sidebar group AND 403s every /api/safety/* call regardless of per-user
-  // grants.
+  // Occupational Safety & Health (OSH / ISO 45001). Standalone company gate
+  // keyed `safety`; mirror in frontend COMPANY_MODULE_GATE. Disabling it hides
+  // the sidebar group AND 403s every /api/safety/* call regardless of per-user
+  // grants. The three per-screen permission keys (dashboard / risk / incidents)
+  // all roll up to the single `safety` company toggle while remaining
+  // independently grantable per user.
   safety: "safety",
+  safety_dashboard: "safety",
+  safety_risk: "safety",
+  safety_incidents: "safety",
   maintenance: "maintenance",
   installments: "installments",
   hotel: "hotel",

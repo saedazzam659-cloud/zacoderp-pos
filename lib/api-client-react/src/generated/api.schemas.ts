@@ -247,6 +247,240 @@ export interface MonthlyStat {
   vatAmount: number;
 }
 
+export interface OkResponse {
+  ok: boolean;
+}
+
+export interface RiskControl {
+  id: number;
+  companyId: number;
+  assessmentId: number;
+  controlType: string;
+  description: string;
+  status: string;
+  ownerUserId?: number | null;
+  dueDate?: string | null;
+  createdAt?: string;
+}
+
+export interface RiskAssessment {
+  id: number;
+  companyId: number;
+  branchId?: number | null;
+  code: string;
+  title: string;
+  processArea?: string | null;
+  workCenterId?: number | null;
+  workCenterName?: string | null;
+  hazardDescription?: string | null;
+  hazardCategory: string;
+  likelihood: number;
+  severity: number;
+  riskScore: number;
+  riskLevel: string;
+  existingControls?: string | null;
+  residualLikelihood?: number | null;
+  residualSeverity?: number | null;
+  residualScore?: number | null;
+  residualLevel?: string | null;
+  responsibleUserId?: number | null;
+  responsibleName?: string | null;
+  assessmentDate?: string | null;
+  reviewDate?: string | null;
+  status: string;
+  notes?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  controls?: RiskControl[];
+}
+
+export interface CreateRiskAssessmentBody {
+  title: string;
+  branchId?: number | null;
+  code?: string;
+  processArea?: string | null;
+  workCenterId?: number | null;
+  hazardDescription?: string | null;
+  hazardCategory?: string;
+  likelihood?: number;
+  severity?: number;
+  existingControls?: string | null;
+  residualLikelihood?: number | null;
+  residualSeverity?: number | null;
+  responsibleUserId?: number | null;
+  assessmentDate?: string | null;
+  reviewDate?: string | null;
+  status?: string;
+  notes?: string | null;
+}
+
+export interface UpdateRiskAssessmentBody {
+  title?: string;
+  processArea?: string | null;
+  workCenterId?: number | null;
+  hazardDescription?: string | null;
+  hazardCategory?: string;
+  likelihood?: number;
+  severity?: number;
+  existingControls?: string | null;
+  residualLikelihood?: number | null;
+  residualSeverity?: number | null;
+  responsibleUserId?: number | null;
+  assessmentDate?: string | null;
+  reviewDate?: string | null;
+  status?: string;
+  notes?: string | null;
+}
+
+export interface CreateRiskControlBody {
+  description: string;
+  controlType?: string;
+  status?: string;
+  ownerUserId?: number | null;
+  dueDate?: string | null;
+}
+
+export interface UpdateRiskControlBody {
+  description?: string;
+  controlType?: string;
+  status?: string;
+  ownerUserId?: number | null;
+  dueDate?: string | null;
+}
+
+export interface IncidentAction {
+  id: number;
+  companyId: number;
+  incidentId: number;
+  actionType: string;
+  description: string;
+  ownerUserId?: number | null;
+  dueDate?: string | null;
+  status: string;
+  completedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Incident {
+  id: number;
+  companyId: number;
+  branchId?: number | null;
+  incidentNumber: string;
+  incidentType: string;
+  severityClass: string;
+  title: string;
+  description?: string | null;
+  location?: string | null;
+  workCenterId?: number | null;
+  workCenterName?: string | null;
+  productionOrderId?: number | null;
+  injuredEmployeeId?: number | null;
+  employeeName?: string | null;
+  occurredAt: string;
+  reportedAt: string;
+  reportedByUserId?: number | null;
+  immediateActions?: string | null;
+  rootCause?: string | null;
+  whys?: string[];
+  lostDays: number;
+  isRecordable: boolean;
+  status: string;
+  createdAt?: string;
+  updatedAt?: string;
+  actions?: IncidentAction[];
+}
+
+export interface CreateIncidentBody {
+  title: string;
+  occurredAt: string;
+  branchId?: number | null;
+  incidentType?: string;
+  severityClass?: string;
+  description?: string | null;
+  location?: string | null;
+  workCenterId?: number | null;
+  productionOrderId?: number | null;
+  injuredEmployeeId?: number | null;
+  immediateActions?: string | null;
+  rootCause?: string | null;
+  whys?: string[];
+  lostDays?: number;
+  status?: string;
+}
+
+export interface UpdateIncidentBody {
+  title?: string;
+  occurredAt?: string;
+  incidentType?: string;
+  severityClass?: string;
+  description?: string | null;
+  location?: string | null;
+  workCenterId?: number | null;
+  productionOrderId?: number | null;
+  injuredEmployeeId?: number | null;
+  immediateActions?: string | null;
+  rootCause?: string | null;
+  whys?: string[];
+  lostDays?: number;
+  status?: string;
+}
+
+export interface CreateIncidentActionBody {
+  description: string;
+  actionType?: string;
+  ownerUserId?: number | null;
+  dueDate?: string | null;
+  status?: string;
+}
+
+export interface UpdateIncidentActionBody {
+  description?: string;
+  actionType?: string;
+  ownerUserId?: number | null;
+  dueDate?: string | null;
+  status?: string;
+}
+
+export type SafetyKpisIncidents = {
+  total: number;
+  nearMiss: number;
+  recordable: number;
+  lostTime: number;
+  fatalities: number;
+  open: number;
+  totalLostDays: number;
+};
+
+export type SafetyKpisRates = {
+  trir: number | null;
+  ltifr: number | null;
+  severityRate: number | null;
+};
+
+export type SafetyKpisRisksByLevel = { [key: string]: number };
+
+export type SafetyKpisRisks = {
+  byLevel: SafetyKpisRisksByLevel;
+  open: number;
+  total: number;
+};
+
+export type SafetyKpisCapa = {
+  open: number;
+  overdue: number;
+  total: number;
+};
+
+export interface SafetyKpis {
+  manHours?: number | null;
+  incidents: SafetyKpisIncidents;
+  daysSinceLastLti?: number | null;
+  rates: SafetyKpisRates;
+  risks: SafetyKpisRisks;
+  capa: SafetyKpisCapa;
+}
+
 export type ListCustomersParams = {
   companyId?: number;
 };
@@ -286,4 +520,19 @@ export type GetRecentInvoicesParams = {
 export type GetMonthlyStatsParams = {
   companyId?: number;
   year?: number;
+};
+
+export type GetSafetyKpisParams = {
+  manHours?: number;
+};
+
+export type ListRiskAssessmentsParams = {
+  status?: string;
+  q?: string;
+};
+
+export type ListIncidentsParams = {
+  status?: string;
+  type?: string;
+  q?: string;
 };

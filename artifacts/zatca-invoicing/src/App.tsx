@@ -732,10 +732,10 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/production/approvals"          module="production"     component={PendingApprovals} />}
             {!isSuperAdmin && <PermRoute path="/production/kpis"               module="production"     component={ManufacturingKpis} />}
 
-            {/* Occupational Safety & Health (OSH / ISO 45001) — gated by `safety` permission. */}
-            {!isSuperAdmin && <PermRoute path="/safety"                        module="safety"         component={SafetyDashboard} />}
-            {!isSuperAdmin && <PermRoute path="/safety/risk-assessments"       module="safety"         component={RiskRegister} />}
-            {!isSuperAdmin && <PermRoute path="/safety/incidents"              module="safety"         component={SafetyIncidents} />}
+            {/* Occupational Safety & Health (OSH / ISO 45001) — per-screen permission keys, all gated by the `safety` company module. */}
+            {!isSuperAdmin && <PermRoute path="/safety"                        module="safety_dashboard"  component={SafetyDashboard} />}
+            {!isSuperAdmin && <PermRoute path="/safety/risk-assessments"       module="safety_risk"       component={RiskRegister} />}
+            {!isSuperAdmin && <PermRoute path="/safety/incidents"              module="safety_incidents"  component={SafetyIncidents} />}
 
             {/* Contracting / Construction ERP — gated by `contracting` permission. */}
             {!isSuperAdmin && <PermRoute path="/contracting"                  module="contracting"    component={ContractingDashboard} />}

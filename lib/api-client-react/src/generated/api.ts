@@ -20,17 +20,34 @@ import type {
   Company,
   CreateCompanyBody,
   CreateCustomerBody,
+  CreateIncidentActionBody,
+  CreateIncidentBody,
   CreateInvoiceBody,
+  CreateRiskAssessmentBody,
+  CreateRiskControlBody,
   Customer,
   DashboardSummary,
   GetDashboardSummaryParams,
   GetMonthlyStatsParams,
   GetRecentInvoicesParams,
+  GetSafetyKpisParams,
   HealthStatus,
+  Incident,
+  IncidentAction,
   Invoice,
   ListCustomersParams,
+  ListIncidentsParams,
   ListInvoicesParams,
+  ListRiskAssessmentsParams,
   MonthlyStat,
+  OkResponse,
+  RiskAssessment,
+  RiskControl,
+  SafetyKpis,
+  UpdateIncidentActionBody,
+  UpdateIncidentBody,
+  UpdateRiskAssessmentBody,
+  UpdateRiskControlBody,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -1873,3 +1890,1498 @@ export function useGetMonthlyStats<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary OSH KPI dashboard (TRIR / LTIFR / severity rate / days-since-LTI)
+ */
+export const getGetSafetyKpisUrl = (params?: GetSafetyKpisParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/safety/kpis?${stringifiedParams}`
+    : `/api/safety/kpis`;
+};
+
+export const getSafetyKpis = async (
+  params?: GetSafetyKpisParams,
+  options?: RequestInit,
+): Promise<SafetyKpis> => {
+  return customFetch<SafetyKpis>(getGetSafetyKpisUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSafetyKpisQueryKey = (params?: GetSafetyKpisParams) => {
+  return [`/api/safety/kpis`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetSafetyKpisQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSafetyKpis>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetSafetyKpisParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSafetyKpis>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetSafetyKpisQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getSafetyKpis>>> = ({
+    signal,
+  }) => getSafetyKpis(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSafetyKpis>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSafetyKpisQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSafetyKpis>>
+>;
+export type GetSafetyKpisQueryError = ErrorType<unknown>;
+
+/**
+ * @summary OSH KPI dashboard (TRIR / LTIFR / severity rate / days-since-LTI)
+ */
+
+export function useGetSafetyKpis<
+  TData = Awaited<ReturnType<typeof getSafetyKpis>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetSafetyKpisParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSafetyKpis>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSafetyKpisQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List risk assessments
+ */
+export const getListRiskAssessmentsUrl = (
+  params?: ListRiskAssessmentsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/safety/risk-assessments?${stringifiedParams}`
+    : `/api/safety/risk-assessments`;
+};
+
+export const listRiskAssessments = async (
+  params?: ListRiskAssessmentsParams,
+  options?: RequestInit,
+): Promise<RiskAssessment[]> => {
+  return customFetch<RiskAssessment[]>(getListRiskAssessmentsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListRiskAssessmentsQueryKey = (
+  params?: ListRiskAssessmentsParams,
+) => {
+  return [`/api/safety/risk-assessments`, ...(params ? [params] : [])] as const;
+};
+
+export const getListRiskAssessmentsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listRiskAssessments>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListRiskAssessmentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listRiskAssessments>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListRiskAssessmentsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listRiskAssessments>>
+  > = ({ signal }) =>
+    listRiskAssessments(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listRiskAssessments>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListRiskAssessmentsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listRiskAssessments>>
+>;
+export type ListRiskAssessmentsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List risk assessments
+ */
+
+export function useListRiskAssessments<
+  TData = Awaited<ReturnType<typeof listRiskAssessments>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListRiskAssessmentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listRiskAssessments>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListRiskAssessmentsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a risk assessment
+ */
+export const getCreateRiskAssessmentUrl = () => {
+  return `/api/safety/risk-assessments`;
+};
+
+export const createRiskAssessment = async (
+  createRiskAssessmentBody: CreateRiskAssessmentBody,
+  options?: RequestInit,
+): Promise<RiskAssessment> => {
+  return customFetch<RiskAssessment>(getCreateRiskAssessmentUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createRiskAssessmentBody),
+  });
+};
+
+export const getCreateRiskAssessmentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createRiskAssessment>>,
+    TError,
+    { data: BodyType<CreateRiskAssessmentBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createRiskAssessment>>,
+  TError,
+  { data: BodyType<CreateRiskAssessmentBody> },
+  TContext
+> => {
+  const mutationKey = ["createRiskAssessment"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createRiskAssessment>>,
+    { data: BodyType<CreateRiskAssessmentBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createRiskAssessment(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateRiskAssessmentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createRiskAssessment>>
+>;
+export type CreateRiskAssessmentMutationBody =
+  BodyType<CreateRiskAssessmentBody>;
+export type CreateRiskAssessmentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create a risk assessment
+ */
+export const useCreateRiskAssessment = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createRiskAssessment>>,
+    TError,
+    { data: BodyType<CreateRiskAssessmentBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createRiskAssessment>>,
+  TError,
+  { data: BodyType<CreateRiskAssessmentBody> },
+  TContext
+> => {
+  return useMutation(getCreateRiskAssessmentMutationOptions(options));
+};
+
+/**
+ * @summary Get a risk assessment (with controls)
+ */
+export const getGetRiskAssessmentUrl = (id: number) => {
+  return `/api/safety/risk-assessments/${id}`;
+};
+
+export const getRiskAssessment = async (
+  id: number,
+  options?: RequestInit,
+): Promise<RiskAssessment> => {
+  return customFetch<RiskAssessment>(getGetRiskAssessmentUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetRiskAssessmentQueryKey = (id: number) => {
+  return [`/api/safety/risk-assessments/${id}`] as const;
+};
+
+export const getGetRiskAssessmentQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRiskAssessment>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRiskAssessment>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRiskAssessmentQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getRiskAssessment>>
+  > = ({ signal }) => getRiskAssessment(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRiskAssessment>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetRiskAssessmentQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRiskAssessment>>
+>;
+export type GetRiskAssessmentQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get a risk assessment (with controls)
+ */
+
+export function useGetRiskAssessment<
+  TData = Awaited<ReturnType<typeof getRiskAssessment>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRiskAssessment>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetRiskAssessmentQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update a risk assessment
+ */
+export const getUpdateRiskAssessmentUrl = (id: number) => {
+  return `/api/safety/risk-assessments/${id}`;
+};
+
+export const updateRiskAssessment = async (
+  id: number,
+  updateRiskAssessmentBody: UpdateRiskAssessmentBody,
+  options?: RequestInit,
+): Promise<RiskAssessment> => {
+  return customFetch<RiskAssessment>(getUpdateRiskAssessmentUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateRiskAssessmentBody),
+  });
+};
+
+export const getUpdateRiskAssessmentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateRiskAssessment>>,
+    TError,
+    { id: number; data: BodyType<UpdateRiskAssessmentBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateRiskAssessment>>,
+  TError,
+  { id: number; data: BodyType<UpdateRiskAssessmentBody> },
+  TContext
+> => {
+  const mutationKey = ["updateRiskAssessment"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateRiskAssessment>>,
+    { id: number; data: BodyType<UpdateRiskAssessmentBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateRiskAssessment(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateRiskAssessmentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateRiskAssessment>>
+>;
+export type UpdateRiskAssessmentMutationBody =
+  BodyType<UpdateRiskAssessmentBody>;
+export type UpdateRiskAssessmentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update a risk assessment
+ */
+export const useUpdateRiskAssessment = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateRiskAssessment>>,
+    TError,
+    { id: number; data: BodyType<UpdateRiskAssessmentBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateRiskAssessment>>,
+  TError,
+  { id: number; data: BodyType<UpdateRiskAssessmentBody> },
+  TContext
+> => {
+  return useMutation(getUpdateRiskAssessmentMutationOptions(options));
+};
+
+/**
+ * @summary Delete a risk assessment
+ */
+export const getDeleteRiskAssessmentUrl = (id: number) => {
+  return `/api/safety/risk-assessments/${id}`;
+};
+
+export const deleteRiskAssessment = async (
+  id: number,
+  options?: RequestInit,
+): Promise<OkResponse> => {
+  return customFetch<OkResponse>(getDeleteRiskAssessmentUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteRiskAssessmentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteRiskAssessment>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteRiskAssessment>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["deleteRiskAssessment"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteRiskAssessment>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteRiskAssessment(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteRiskAssessmentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteRiskAssessment>>
+>;
+
+export type DeleteRiskAssessmentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a risk assessment
+ */
+export const useDeleteRiskAssessment = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteRiskAssessment>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteRiskAssessment>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeleteRiskAssessmentMutationOptions(options));
+};
+
+/**
+ * @summary Add a control to a risk assessment
+ */
+export const getAddRiskControlUrl = (id: number) => {
+  return `/api/safety/risk-assessments/${id}/controls`;
+};
+
+export const addRiskControl = async (
+  id: number,
+  createRiskControlBody: CreateRiskControlBody,
+  options?: RequestInit,
+): Promise<RiskControl> => {
+  return customFetch<RiskControl>(getAddRiskControlUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createRiskControlBody),
+  });
+};
+
+export const getAddRiskControlMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addRiskControl>>,
+    TError,
+    { id: number; data: BodyType<CreateRiskControlBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof addRiskControl>>,
+  TError,
+  { id: number; data: BodyType<CreateRiskControlBody> },
+  TContext
+> => {
+  const mutationKey = ["addRiskControl"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof addRiskControl>>,
+    { id: number; data: BodyType<CreateRiskControlBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return addRiskControl(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AddRiskControlMutationResult = NonNullable<
+  Awaited<ReturnType<typeof addRiskControl>>
+>;
+export type AddRiskControlMutationBody = BodyType<CreateRiskControlBody>;
+export type AddRiskControlMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Add a control to a risk assessment
+ */
+export const useAddRiskControl = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addRiskControl>>,
+    TError,
+    { id: number; data: BodyType<CreateRiskControlBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof addRiskControl>>,
+  TError,
+  { id: number; data: BodyType<CreateRiskControlBody> },
+  TContext
+> => {
+  return useMutation(getAddRiskControlMutationOptions(options));
+};
+
+/**
+ * @summary Update a control
+ */
+export const getUpdateRiskControlUrl = (id: number) => {
+  return `/api/safety/controls/${id}`;
+};
+
+export const updateRiskControl = async (
+  id: number,
+  updateRiskControlBody: UpdateRiskControlBody,
+  options?: RequestInit,
+): Promise<RiskControl> => {
+  return customFetch<RiskControl>(getUpdateRiskControlUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateRiskControlBody),
+  });
+};
+
+export const getUpdateRiskControlMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateRiskControl>>,
+    TError,
+    { id: number; data: BodyType<UpdateRiskControlBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateRiskControl>>,
+  TError,
+  { id: number; data: BodyType<UpdateRiskControlBody> },
+  TContext
+> => {
+  const mutationKey = ["updateRiskControl"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateRiskControl>>,
+    { id: number; data: BodyType<UpdateRiskControlBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateRiskControl(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateRiskControlMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateRiskControl>>
+>;
+export type UpdateRiskControlMutationBody = BodyType<UpdateRiskControlBody>;
+export type UpdateRiskControlMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update a control
+ */
+export const useUpdateRiskControl = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateRiskControl>>,
+    TError,
+    { id: number; data: BodyType<UpdateRiskControlBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateRiskControl>>,
+  TError,
+  { id: number; data: BodyType<UpdateRiskControlBody> },
+  TContext
+> => {
+  return useMutation(getUpdateRiskControlMutationOptions(options));
+};
+
+/**
+ * @summary Delete a control
+ */
+export const getDeleteRiskControlUrl = (id: number) => {
+  return `/api/safety/controls/${id}`;
+};
+
+export const deleteRiskControl = async (
+  id: number,
+  options?: RequestInit,
+): Promise<OkResponse> => {
+  return customFetch<OkResponse>(getDeleteRiskControlUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteRiskControlMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteRiskControl>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteRiskControl>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["deleteRiskControl"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteRiskControl>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteRiskControl(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteRiskControlMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteRiskControl>>
+>;
+
+export type DeleteRiskControlMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a control
+ */
+export const useDeleteRiskControl = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteRiskControl>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteRiskControl>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeleteRiskControlMutationOptions(options));
+};
+
+/**
+ * @summary List incidents
+ */
+export const getListIncidentsUrl = (params?: ListIncidentsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/safety/incidents?${stringifiedParams}`
+    : `/api/safety/incidents`;
+};
+
+export const listIncidents = async (
+  params?: ListIncidentsParams,
+  options?: RequestInit,
+): Promise<Incident[]> => {
+  return customFetch<Incident[]>(getListIncidentsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListIncidentsQueryKey = (params?: ListIncidentsParams) => {
+  return [`/api/safety/incidents`, ...(params ? [params] : [])] as const;
+};
+
+export const getListIncidentsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listIncidents>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListIncidentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listIncidents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListIncidentsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listIncidents>>> = ({
+    signal,
+  }) => listIncidents(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listIncidents>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListIncidentsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listIncidents>>
+>;
+export type ListIncidentsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List incidents
+ */
+
+export function useListIncidents<
+  TData = Awaited<ReturnType<typeof listIncidents>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListIncidentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listIncidents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListIncidentsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create an incident
+ */
+export const getCreateIncidentUrl = () => {
+  return `/api/safety/incidents`;
+};
+
+export const createIncident = async (
+  createIncidentBody: CreateIncidentBody,
+  options?: RequestInit,
+): Promise<Incident> => {
+  return customFetch<Incident>(getCreateIncidentUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createIncidentBody),
+  });
+};
+
+export const getCreateIncidentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createIncident>>,
+    TError,
+    { data: BodyType<CreateIncidentBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createIncident>>,
+  TError,
+  { data: BodyType<CreateIncidentBody> },
+  TContext
+> => {
+  const mutationKey = ["createIncident"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createIncident>>,
+    { data: BodyType<CreateIncidentBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createIncident(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateIncidentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createIncident>>
+>;
+export type CreateIncidentMutationBody = BodyType<CreateIncidentBody>;
+export type CreateIncidentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create an incident
+ */
+export const useCreateIncident = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createIncident>>,
+    TError,
+    { data: BodyType<CreateIncidentBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createIncident>>,
+  TError,
+  { data: BodyType<CreateIncidentBody> },
+  TContext
+> => {
+  return useMutation(getCreateIncidentMutationOptions(options));
+};
+
+/**
+ * @summary Get an incident (with CAPA actions)
+ */
+export const getGetIncidentUrl = (id: number) => {
+  return `/api/safety/incidents/${id}`;
+};
+
+export const getIncident = async (
+  id: number,
+  options?: RequestInit,
+): Promise<Incident> => {
+  return customFetch<Incident>(getGetIncidentUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetIncidentQueryKey = (id: number) => {
+  return [`/api/safety/incidents/${id}`] as const;
+};
+
+export const getGetIncidentQueryOptions = <
+  TData = Awaited<ReturnType<typeof getIncident>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getIncident>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetIncidentQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getIncident>>> = ({
+    signal,
+  }) => getIncident(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getIncident>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetIncidentQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getIncident>>
+>;
+export type GetIncidentQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get an incident (with CAPA actions)
+ */
+
+export function useGetIncident<
+  TData = Awaited<ReturnType<typeof getIncident>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getIncident>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetIncidentQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update an incident
+ */
+export const getUpdateIncidentUrl = (id: number) => {
+  return `/api/safety/incidents/${id}`;
+};
+
+export const updateIncident = async (
+  id: number,
+  updateIncidentBody: UpdateIncidentBody,
+  options?: RequestInit,
+): Promise<Incident> => {
+  return customFetch<Incident>(getUpdateIncidentUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateIncidentBody),
+  });
+};
+
+export const getUpdateIncidentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateIncident>>,
+    TError,
+    { id: number; data: BodyType<UpdateIncidentBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateIncident>>,
+  TError,
+  { id: number; data: BodyType<UpdateIncidentBody> },
+  TContext
+> => {
+  const mutationKey = ["updateIncident"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateIncident>>,
+    { id: number; data: BodyType<UpdateIncidentBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateIncident(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateIncidentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateIncident>>
+>;
+export type UpdateIncidentMutationBody = BodyType<UpdateIncidentBody>;
+export type UpdateIncidentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update an incident
+ */
+export const useUpdateIncident = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateIncident>>,
+    TError,
+    { id: number; data: BodyType<UpdateIncidentBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateIncident>>,
+  TError,
+  { id: number; data: BodyType<UpdateIncidentBody> },
+  TContext
+> => {
+  return useMutation(getUpdateIncidentMutationOptions(options));
+};
+
+/**
+ * @summary Delete an incident
+ */
+export const getDeleteIncidentUrl = (id: number) => {
+  return `/api/safety/incidents/${id}`;
+};
+
+export const deleteIncident = async (
+  id: number,
+  options?: RequestInit,
+): Promise<OkResponse> => {
+  return customFetch<OkResponse>(getDeleteIncidentUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteIncidentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteIncident>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteIncident>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["deleteIncident"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteIncident>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteIncident(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteIncidentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteIncident>>
+>;
+
+export type DeleteIncidentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete an incident
+ */
+export const useDeleteIncident = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteIncident>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteIncident>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeleteIncidentMutationOptions(options));
+};
+
+/**
+ * @summary Add a CAPA action to an incident
+ */
+export const getAddIncidentActionUrl = (id: number) => {
+  return `/api/safety/incidents/${id}/actions`;
+};
+
+export const addIncidentAction = async (
+  id: number,
+  createIncidentActionBody: CreateIncidentActionBody,
+  options?: RequestInit,
+): Promise<IncidentAction> => {
+  return customFetch<IncidentAction>(getAddIncidentActionUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createIncidentActionBody),
+  });
+};
+
+export const getAddIncidentActionMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addIncidentAction>>,
+    TError,
+    { id: number; data: BodyType<CreateIncidentActionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof addIncidentAction>>,
+  TError,
+  { id: number; data: BodyType<CreateIncidentActionBody> },
+  TContext
+> => {
+  const mutationKey = ["addIncidentAction"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof addIncidentAction>>,
+    { id: number; data: BodyType<CreateIncidentActionBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return addIncidentAction(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AddIncidentActionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof addIncidentAction>>
+>;
+export type AddIncidentActionMutationBody = BodyType<CreateIncidentActionBody>;
+export type AddIncidentActionMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Add a CAPA action to an incident
+ */
+export const useAddIncidentAction = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addIncidentAction>>,
+    TError,
+    { id: number; data: BodyType<CreateIncidentActionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof addIncidentAction>>,
+  TError,
+  { id: number; data: BodyType<CreateIncidentActionBody> },
+  TContext
+> => {
+  return useMutation(getAddIncidentActionMutationOptions(options));
+};
+
+/**
+ * @summary Update a CAPA action
+ */
+export const getUpdateIncidentActionUrl = (id: number) => {
+  return `/api/safety/actions/${id}`;
+};
+
+export const updateIncidentAction = async (
+  id: number,
+  updateIncidentActionBody: UpdateIncidentActionBody,
+  options?: RequestInit,
+): Promise<IncidentAction> => {
+  return customFetch<IncidentAction>(getUpdateIncidentActionUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateIncidentActionBody),
+  });
+};
+
+export const getUpdateIncidentActionMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateIncidentAction>>,
+    TError,
+    { id: number; data: BodyType<UpdateIncidentActionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateIncidentAction>>,
+  TError,
+  { id: number; data: BodyType<UpdateIncidentActionBody> },
+  TContext
+> => {
+  const mutationKey = ["updateIncidentAction"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateIncidentAction>>,
+    { id: number; data: BodyType<UpdateIncidentActionBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateIncidentAction(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateIncidentActionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateIncidentAction>>
+>;
+export type UpdateIncidentActionMutationBody =
+  BodyType<UpdateIncidentActionBody>;
+export type UpdateIncidentActionMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update a CAPA action
+ */
+export const useUpdateIncidentAction = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateIncidentAction>>,
+    TError,
+    { id: number; data: BodyType<UpdateIncidentActionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateIncidentAction>>,
+  TError,
+  { id: number; data: BodyType<UpdateIncidentActionBody> },
+  TContext
+> => {
+  return useMutation(getUpdateIncidentActionMutationOptions(options));
+};
+
+/**
+ * @summary Delete a CAPA action
+ */
+export const getDeleteIncidentActionUrl = (id: number) => {
+  return `/api/safety/actions/${id}`;
+};
+
+export const deleteIncidentAction = async (
+  id: number,
+  options?: RequestInit,
+): Promise<OkResponse> => {
+  return customFetch<OkResponse>(getDeleteIncidentActionUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteIncidentActionMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteIncidentAction>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteIncidentAction>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["deleteIncidentAction"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteIncidentAction>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteIncidentAction(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteIncidentActionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteIncidentAction>>
+>;
+
+export type DeleteIncidentActionMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a CAPA action
+ */
+export const useDeleteIncidentAction = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteIncidentAction>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteIncidentAction>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeleteIncidentActionMutationOptions(options));
+};
