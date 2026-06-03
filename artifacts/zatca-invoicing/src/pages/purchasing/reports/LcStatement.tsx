@@ -79,7 +79,7 @@ export default function LcStatement() {
   const { fmt } = useFmt();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const tr = (k: string) => t(`purchasingReports.lcStatement.${k}`) as string;
+  const tr = (k: string, opts?: Record<string, unknown>) => t(`purchasingReports.lcStatement.${k}`, opts) as string;
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
 
@@ -248,7 +248,7 @@ export default function LcStatement() {
       {/* KPI summary */}
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <KpiCard icon={Layers}    tone="primary" label={tr("kpi.count")}     value={String(summary.count ?? 0)} sub={tr("kpi.countSub", { count: summary.invoiceCount ?? 0 } as any)} />
+          <KpiCard icon={Layers}    tone="primary" label={tr("kpi.count")}     value={String(summary.count ?? 0)} sub={tr("kpi.countSub", { count: summary.invoiceCount ?? 0 })} />
           <KpiCard icon={Wallet}    tone="sky"     label={tr("kpi.totalBase")}  value={fmt(summary.totalBase)}     sub={baseCcy} />
           <KpiCard icon={Receipt}   tone="amber"   label={tr("kpi.expenses")}   value={fmt(summary.expensesBase)}  sub={baseCcy} />
           <KpiCard icon={Banknote}  tone="indigo"  label={tr("kpi.used")}       value={fmt(summary.usedBase)}      sub={baseCcy} />

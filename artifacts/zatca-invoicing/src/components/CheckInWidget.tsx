@@ -183,7 +183,7 @@ export default function CheckInWidget() {
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)} disabled={checkinMut.isPending}>إلغاء</Button>
             <Button
-              onClick={() => checkinMut.mutate()}
+              onClick={() => checkinMut.mutate({})}
               disabled={checkinMut.isPending}
               className="gap-2"
             >

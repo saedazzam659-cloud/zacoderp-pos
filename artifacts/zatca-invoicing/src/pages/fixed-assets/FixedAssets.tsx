@@ -76,7 +76,7 @@ export default function FixedAssets() {
   const [form, setForm] = useState(EMPTY);
   const [del, setDel] = useState<Asset | null>(null);
   const [showQr, setShowQr] = useState<Asset | null>(null);
-  const [activeTab, setActiveTab] = useState<"basic"|"purchase"|"tech"|"depreciation"|"insurance"|"extra">("basic");
+  const [activeTab, setActiveTab] = useState<"basic"|"purchase"|"tech"|"depreciation"|"insurance"|"extra"|"tax">("basic");
 
   const { data: rows = [], isLoading } = useQuery<Asset[]>({
     queryKey:["fa/assets", cid],

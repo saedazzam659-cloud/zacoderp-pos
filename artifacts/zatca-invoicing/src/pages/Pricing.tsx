@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Helmet } from "react-helmet-async";
@@ -52,7 +52,7 @@ type ApiArticle = {
   updatedAt:       string;
 };
 
-const STYLE_BY_KEY: Record<string, { icon: JSX.Element; ring: string; chip: string; accent: string }> = {
+const STYLE_BY_KEY: Record<string, { icon: ReactNode; ring: string; chip: string; accent: string }> = {
   starter:      { icon: <Package className="h-7 w-7" />,   ring: "ring-blue-200",   chip: "bg-blue-100 text-blue-700",   accent: "from-blue-50 to-white" },
   professional: { icon: <Star className="h-7 w-7" />,      ring: "ring-primary/30", chip: "bg-primary/10 text-primary",  accent: "from-primary/5 to-white" },
   enterprise:   { icon: <Crown className="h-7 w-7" />,     ring: "ring-amber-200",  chip: "bg-amber-100 text-amber-700", accent: "from-amber-50 to-white" },

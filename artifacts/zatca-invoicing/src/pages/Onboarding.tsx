@@ -241,7 +241,7 @@ export default function Onboarding() {
                         التالية
                       </Badge>
                     )}
-                    {step.critical && !isDone && (
+                    {(step as { critical?: boolean }).critical && !isDone && (
                       <Badge variant="destructive" className="bg-red-100 text-red-700 hover:bg-red-100">
                         مهمة
                       </Badge>

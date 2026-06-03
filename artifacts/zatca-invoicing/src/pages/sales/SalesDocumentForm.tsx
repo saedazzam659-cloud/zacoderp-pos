@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useRegisterScreenActions, type ScreenActionsRegistration } from "@/contexts/ScreenActionsContext";
+import { useRegisterScreenActions, type ScreenActionsRegistration, type ScreenFieldDef } from "@/contexts/ScreenActionsContext";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { validateInvoiceLines } from "@/lib/lineValidation";
 import { syncLineDiscount, effectiveLineDiscount } from "@/lib/lineDiscountSync";
@@ -1795,7 +1795,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 type: "lookup",
                 lookup: "salesReps",
               },
-            ] as const)
+            ] as ScreenFieldDef[])
           : []),
         {
           name: "docDate",

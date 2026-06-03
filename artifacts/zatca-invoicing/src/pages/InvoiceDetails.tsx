@@ -59,7 +59,7 @@ export default function InvoiceDetails() {
 
   const handleIssue = () => {
     if (!confirm("هل أنت متأكد من إصدار هذه الفاتورة؟ سيتم توليد XML وQR Code ولا يمكن تعديلها بعد ذلك.")) return;
-    issueInvoice.mutate({ data: { invoiceId: id } }, {
+    issueInvoice.mutate({ id }, {
       onSuccess: () => {
         toast({ title: "تم الإصدار بنجاح", description: "تم توليد QR Code وXML UBL 2.1 بنجاح." });
         queryClient.invalidateQueries({ queryKey: ["invoice", id] });
@@ -325,8 +325,8 @@ export default function InvoiceDetails() {
                             <p className="font-medium truncate">{item.description}</p>
                           </div>
                           <p className="text-xs text-muted-foreground mt-0.5 mr-6">
-                            {Number(item.quantity)} {item.unitCode ?? "PCE"} × {formatCurrency(item.unitPrice)}
-                            {Number(item.discountAmount) > 0 && ` — خصم ${formatCurrency(item.discountAmount)}`}
+                            {Number(item.quantity)} {(item as { unitCode?: string }).unitCode ?? "PCE"} × {formatCurrency(item.unitPrice)}
+                            {Number(item.discountAmount) > 0 && ` — خصم ${formatCurrency(item.discountAmount ?? 0)}`}
                             {" "}<span className={`inline-block px-1 rounded text-[10px] font-medium ${
                               (item as { taxCategory?: string }).taxCategory === "Z" ? "bg-blue-100 text-blue-700" :
                               (item as { taxCategory?: string }).taxCategory === "E" ? "bg-gray-100 text-gray-600" :
@@ -354,7 +354,7 @@ export default function InvoiceDetails() {
                   {Number(invoice.discountTotal) > 0 && (
                     <div className="flex justify-between text-red-600">
                       <span>الخصم الإجمالي</span>
-                      <span dir="ltr">− {formatCurrency(invoice.discountTotal)}</span>
+                      <span dir="ltr">− {formatCurrency(invoice.discountTotal ?? 0)}</span>
                     </div>
                   )}
                   <div className="flex justify-between text-muted-foreground">
@@ -587,8 +587,8 @@ export default function InvoiceDetails() {
             status: invoice.status,
             notes: invoice.notes,
             subtotal: invoice.subtotal,
-            taxAmount: invoice.taxAmount,
-            total: invoice.total,
+            taxAmount: invoice.vatTotal,
+            total: invoice.grandTotal,
             currencyCode: (invoice as any).currencyCode,
             discountAmount: (invoice as any).discountAmount,
             qrCode: invoice.qrCode,

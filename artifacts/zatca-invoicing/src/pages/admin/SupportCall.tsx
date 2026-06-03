@@ -50,7 +50,7 @@ export default function SupportCall() {
   const { toast } = useToast();
 
   const [room, setRoom]               = useState<string>(() => makeRoomName());
-  const [displayName, setDisplayName] = useState<string>(user?.fullName ?? user?.username ?? "الدعم الفني");
+  const [displayName, setDisplayName] = useState<string>(user?.username ?? "الدعم الفني");
   const [callActive, setCallActive]   = useState(false);
   const [startedAt, setStartedAt]     = useState<number | null>(null);
   const [elapsed, setElapsed]         = useState(0);

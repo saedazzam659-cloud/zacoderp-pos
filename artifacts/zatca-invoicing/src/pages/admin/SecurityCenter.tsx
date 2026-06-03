@@ -830,7 +830,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                           )}
                         </td>
                         <td className="px-3 py-2 text-xs text-muted-foreground">
-                          {r.metadata?.reason ?? r.metadata?.attemptedAction ?? (r.action === "denied" ? "—" : "")}
+                          {(r.metadata as { reason?: string; attemptedAction?: string } | null | undefined)?.reason ?? (r.metadata as { reason?: string; attemptedAction?: string } | null | undefined)?.attemptedAction ?? (r.action === "denied" ? "—" : "")}
                         </td>
                         <td className="px-3 py-2" data-testid={`history-country-${r.id}`}>
                           {r.country ? (

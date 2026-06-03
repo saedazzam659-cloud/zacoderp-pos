@@ -120,7 +120,7 @@ const SECTIONS: Section[] = [
   },
 ];
 
-const PRODUCTS = [
+const PRODUCTS: { key: string; name: string; tagline: string; color: string; isHero?: boolean }[] = [
   { key: "zacod", name: "زاكود", tagline: "ERP سعودي متكامل", color: "from-primary to-emerald-500", isHero: true },
   { key: "qoyod", name: "قيود",   tagline: "محاسبة مبسطة",        color: "from-slate-400 to-slate-500" },
   { key: "wafeq", name: "وافق",   tagline: "أتمتة للناشئة",       color: "from-slate-400 to-slate-500" },
