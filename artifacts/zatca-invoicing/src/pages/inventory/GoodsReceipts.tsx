@@ -238,7 +238,7 @@ export default function GoodsReceipts() {
   // chosen taxId is persisted on the document header. ZATCA SAFETY: this only
   // pre-fills the editable rate before issue; it never touches the stored
   // vat_rate/vat_amount/tax_category that ZATCA XML/QR read at/after issue.
-  const { taxes: taxCatalog, defaultTax, comboItems: taxComboItems, percentRateOf } = useCompanyTaxes();
+  const { taxes: taxCatalog, defaultPercentTax: defaultTax, comboItemsPercent: taxComboItems, percentRateOf } = useCompanyTaxes();
   const [headerTaxId, setHeaderTaxId] = useState<string>("");
   useEffect(() => {
     if (!isNewGR || !defaultTax || headerTaxId) return;

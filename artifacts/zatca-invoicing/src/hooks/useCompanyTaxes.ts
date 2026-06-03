@@ -39,9 +39,25 @@ export function useCompanyTaxes() {
   });
 
   const taxes = useMemo(() => taxesAll.filter(t => t.isActive), [taxesAll]);
+  /**
+   * Active PERCENT-only taxes. The document/JE VAT-rate flows compute VAT as a
+   * percentage of the line/base, so a `fixed` (flat-amount) tax has no defined
+   * behaviour there. These flows must pick from `taxesPercent` only — never
+   * offer a fixed tax that would be silently ignored.
+   */
+  const taxesPercent = useMemo(() => taxes.filter(t => t.rateType === "percent"), [taxes]);
   const defaultTax = useMemo(
     () => taxesAll.find(t => t.isDefault) ?? taxesAll.find(t => t.isSystem) ?? null,
     [taxesAll],
+  );
+  /** Default tax restricted to percent — for VAT-rate flows (docs/JE). */
+  const defaultPercentTax = useMemo(
+    () =>
+      taxesAll.find(t => t.isDefault && t.rateType === "percent") ??
+      taxesAll.find(t => t.isSystem && t.rateType === "percent") ??
+      taxesPercent[0] ??
+      null,
+    [taxesAll, taxesPercent],
   );
   const byId = useMemo(() => {
     const m = new Map<number, CompanyTax>();
@@ -57,6 +73,15 @@ export function useCompanyTaxes() {
     })),
   ]), [taxes]);
 
+  /** Combobox items for VAT-rate flows: «بدون» + PERCENT taxes only. */
+  const comboItemsPercent = useMemo(() => ([
+    { value: "", label: "— بدون ضريبة —" },
+    ...taxesPercent.map(t => ({
+      value: String(t.id),
+      label: `${t.nameAr} (${t.rate}%)`,
+    })),
+  ]), [taxesPercent]);
+
   /** Resolve the percent rate (number) for a tax id, or null for fixed/unknown. */
   const percentRateOf = (taxId: string | number | null | undefined): number | null => {
     if (taxId === null || taxId === undefined || taxId === "") return null;
@@ -66,5 +91,5 @@ export function useCompanyTaxes() {
     return Number.isFinite(n) ? n : null;
   };
 
-  return { taxes, taxesAll, defaultTax, byId, comboItems, percentRateOf, isLoading };
+  return { taxes, taxesPercent, taxesAll, defaultTax, defaultPercentTax, byId, comboItems, comboItemsPercent, percentRateOf, isLoading };
 }

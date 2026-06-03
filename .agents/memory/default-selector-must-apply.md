@@ -22,3 +22,13 @@ never broadcast the rate, so new docs saved 15% even when the default was 14%.
 3. Server-side fallback (resolveTaxRate) only helps when the line value is
    empty/falsy — an explicit hardcoded "15" defeats it, so the client must
    pre-fill correctly.
+
+**Percentage-flow pickers must exclude flat/fixed-amount options.** A tax
+catalog with both `percent` and `fixed` rate types must NOT offer the `fixed`
+entries in any flow that computes VAT as a percentage of a base (document line
+vatRate, JE «قيد الضريبة»). A fixed tax has no defined per-line percentage, so
+selecting it either does nothing (percentRateOf returns null) or silently falls
+back to the hardcoded default rate — a code-review blocker. Provide percent-only
+variants (taxesPercent / comboItemsPercent / defaultPercentTax) and feed the
+VAT-rate pickers from those; keep the full catalog (taxesAll) only for
+management screens. Same applies to any future rate-type split.

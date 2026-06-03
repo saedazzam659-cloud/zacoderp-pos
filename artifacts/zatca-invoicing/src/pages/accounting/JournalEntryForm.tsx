@@ -456,7 +456,7 @@ export default function JournalEntryForm() {
   // Dynamic VAT rate — sourced from the company's DEFAULT tax in the dynamic
   // tax catalog (الضرائب). Falls back to 0.15 (KSA standard) when no percent
   // default exists, so existing Saudi tenants keep behaving exactly as before.
-  const { taxes: jeTaxes, defaultTax: jeDefaultTax, byId: jeTaxById, comboItems: jeTaxComboItems } = useCompanyTaxes();
+  const { taxesPercent: jeTaxes, defaultPercentTax: jeDefaultTax, byId: jeTaxById, comboItemsPercent: jeTaxComboItems } = useCompanyTaxes();
   // The tax applied by "قيد الضريبة" is user-selectable from the company tax
   // catalog and defaults to the company's default tax. The selected tax drives
   // BOTH the percent rate AND the routed VAT account (sales/purchase/generic).
