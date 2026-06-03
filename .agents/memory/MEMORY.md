@@ -32,3 +32,4 @@
 - [POS Desktop print isolation](pos-desktop-print-isolation.md) — print via a standalone HTML iframe document, NOT an in-DOM @media-print overlay; the absolute overlay gets clipped by PosShell flex/overflow ancestors and prints cropped.
 - [Currency symbol display](currency-symbol-display.md) — amounts show the SYMBOL via lib/format currencySymbol (hooks in screens, pure fn in print builders); "العملة:" field + SAR amount-in-words keep the CODE; SaaS/ZATCA/base-only screens excluded.
 - [Child-row tenant + branch scope](child-row-tenant-scope.md) — controls/actions have no own branch_id; mutate/read/aggregate must resolve PARENT scope, not just child companyId.
+- [Global ErrorBoundary prevents white-screen](error-boundary-whitescreen.md) — app had NO boundary; one render error blanked everything. Logged-out OK + logged-in blank ⇒ authed render path, not cache.
