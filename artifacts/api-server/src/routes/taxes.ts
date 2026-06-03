@@ -8,7 +8,13 @@ import { ensureCompanyTaxes } from "../lib/companyTaxes.js";
 
 const router = Router();
 router.use(extractAuth);
-router.use(requireModulePermission("taxes"));
+// Permission gate uses the "accounts" module key to match the frontend
+// (App.tsx PermRoute module="accounts" + Layout nav permKey "accounts").
+// Taxes live UNDER «الحسابات العامة» and have no separate grantable
+// permission key, so gating on "taxes" would let a user SEE the screen
+// (granted "accounts") yet hit 403 on every tax mutation. Company-level
+// gate is identical either way (COMPANY_MODULE_GATE maps both to "accounts").
+router.use(requireModulePermission("accounts"));
 router.use(moduleAudit("taxes"));
 
 function guard(req: any, res: any): number | null {

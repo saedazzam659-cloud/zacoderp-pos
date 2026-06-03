@@ -147,6 +147,8 @@ export default function PurchaseInvoiceForm() {
   }, [lines, focusLineId]);
   const addLine = () => {
     const l = newLine();
+    const r = percentRateOf(headerTaxId);
+    if (r !== null) l.vatRate = String(r);
     setLines(p => [...p, l]);
     setFocusLineId(l._id);
   };
@@ -275,7 +277,7 @@ export default function PurchaseInvoiceForm() {
   const [headerTaxId, setHeaderTaxId] = useState<string>("");
   useEffect(() => {
     if (!isNew || !defaultTax || headerTaxId) return;
-    setHeaderTaxId(String(defaultTax.id));
+    applyHeaderTax(String(defaultTax.id));
   }, [isNew, defaultTax?.id]);
   function applyHeaderTax(v: string) {
     setHeaderTaxId(v);

@@ -124,6 +124,8 @@ export default function PurchaseReturns() {
   }, [lines, focusLineId]);
   const addLine = () => {
     const l = newLine();
+    const r = percentRateOf(headerTaxId);
+    if (r !== null) l.vatRate = String(r);
     setLines(p => [...p, l]);
     setFocusLineId(l._id);
   };
@@ -264,7 +266,7 @@ export default function PurchaseReturns() {
   const [headerTaxId, setHeaderTaxId] = useState<string>("");
   useEffect(() => {
     if (!isNewPR || !defaultTax || headerTaxId) return;
-    setHeaderTaxId(String(defaultTax.id));
+    applyHeaderTax(String(defaultTax.id));
   }, [isNewPR, defaultTax?.id]);
   function applyHeaderTax(v: string) {
     setHeaderTaxId(v);

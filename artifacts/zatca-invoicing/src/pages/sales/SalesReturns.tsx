@@ -187,6 +187,8 @@ export default function SalesReturns() {
   }, [lines, focusLineId]);
   const addLine = () => {
     const l = newLine();
+    const r = percentRateOf(headerTaxId);
+    if (r !== null) l.vatRate = String(r);
     setLines(p => [...p, l]);
     setFocusLineId(l._id);
   };
@@ -317,7 +319,7 @@ export default function SalesReturns() {
   const [headerTaxId, setHeaderTaxId] = useState<string>("");
   useEffect(() => {
     if (!isNewSR || !defaultTax || headerTaxId) return;
-    setHeaderTaxId(String(defaultTax.id));
+    applyHeaderTax(String(defaultTax.id));
   }, [isNewSR, defaultTax?.id]);
   function applyHeaderTax(v: string) {
     setHeaderTaxId(v);

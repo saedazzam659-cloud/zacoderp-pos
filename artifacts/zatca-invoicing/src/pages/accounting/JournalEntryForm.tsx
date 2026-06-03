@@ -456,9 +456,17 @@ export default function JournalEntryForm() {
   // Dynamic VAT rate — sourced from the company's DEFAULT tax in the dynamic
   // tax catalog (الضرائب). Falls back to 0.15 (KSA standard) when no percent
   // default exists, so existing Saudi tenants keep behaving exactly as before.
-  const { defaultTax: jeDefaultTax } = useCompanyTaxes();
+  const { taxes: jeTaxes, defaultTax: jeDefaultTax, byId: jeTaxById, comboItems: jeTaxComboItems } = useCompanyTaxes();
+  // The tax applied by "قيد الضريبة" is user-selectable from the company tax
+  // catalog and defaults to the company's default tax. The selected tax drives
+  // BOTH the percent rate AND the routed VAT account (sales/purchase/generic).
+  const [jeTaxId, setJeTaxId] = useState<string>("");
+  useEffect(() => {
+    if (!jeTaxId && jeDefaultTax) setJeTaxId(String(jeDefaultTax.id));
+  }, [jeDefaultTax?.id]);
+  const selectedJeTax = (jeTaxId ? jeTaxById.get(Number(jeTaxId)) : null) ?? jeDefaultTax ?? null;
   const VAT_RATE = (() => {
-    const n = jeDefaultTax && jeDefaultTax.rateType === "percent" ? Number(jeDefaultTax.rate) : NaN;
+    const n = selectedJeTax && selectedJeTax.rateType === "percent" ? Number(selectedJeTax.rate) : NaN;
     return Number.isFinite(n) && n > 0 ? n / 100 : 0.15;
   })();
   const ratePctLabel = `${Number((VAT_RATE * 100).toFixed(2))}%`;
@@ -559,13 +567,13 @@ export default function JournalEntryForm() {
     let resolvedAccountId: number | null = null;
     let resolvedAccountLabel = "";
     let resolvedSource: "tax" | "ai" | "rules" = "tax";
-    if (jeDefaultTax) {
+    if (selectedJeTax) {
       const routed = direction === "output"
-        ? (jeDefaultTax.salesTaxAccountId ?? jeDefaultTax.accountId)
-        : (jeDefaultTax.purchaseTaxAccountId ?? jeDefaultTax.accountId);
+        ? (selectedJeTax.salesTaxAccountId ?? selectedJeTax.accountId)
+        : (selectedJeTax.purchaseTaxAccountId ?? selectedJeTax.accountId);
       if (routed) {
         resolvedAccountId = routed;
-        resolvedAccountLabel = jeDefaultTax.nameAr || "ضريبة الشركة الافتراضية";
+        resolvedAccountLabel = selectedJeTax.nameAr || "ضريبة الشركة الافتراضية";
       }
     }
     if (!resolvedAccountId) {
@@ -1648,6 +1656,23 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
             <CardContent className="p-0">
               {/* Toolbar */}
               <div className="flex items-center justify-end gap-2 px-4 py-2 border-b bg-muted/10">
+                {/* الضريبة — user-selectable tax from the company catalog,
+                    defaulting to the company default. Drives both the percent
+                    rate and the routed VAT account used by "قيد الضريبة". */}
+                {jeTaxes.length > 0 && (
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="font-medium text-muted-foreground">الضريبة</span>
+                    <div className="w-44">
+                      <SearchCombobox
+                        items={jeTaxComboItems}
+                        value={jeTaxId}
+                        onValueChange={setJeTaxId}
+                        placeholder="اختر الضريبة"
+                        disabled={isLockedSourceEntry || taxEntryMutation.isPending}
+                      />
+                    </div>
+                  </div>
+                )}
                 {/* المبلغ شامل الضريبة — when checked, "قيد الضريبة"
                     extracts 15% from inside each source amount instead
                     of adding it on top. Mirrors invoice behaviour. */}

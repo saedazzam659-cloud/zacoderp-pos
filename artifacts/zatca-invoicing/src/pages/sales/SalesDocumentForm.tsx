@@ -235,6 +235,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [focusLineId, setFocusLineId] = useState<string>(() => lines[0]?._id ?? "");
   const addLine = () => {
     const l = newLine();
+    const r = percentRateOf(headerTaxId);
+    if (r !== null) l.vatRate = String(r);
     setLines(p => [...p, l]);
     setFocusLineId(l._id);
   };
@@ -529,7 +531,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [headerTaxId, setHeaderTaxId] = useState<string>("");
   useEffect(() => {
     if (!isNew || !defaultTax || headerTaxId) return;
-    setHeaderTaxId(String(defaultTax.id));
+    applyHeaderTax(String(defaultTax.id));
   }, [isNew, defaultTax?.id]);
   function applyHeaderTax(v: string) {
     setHeaderTaxId(v);
