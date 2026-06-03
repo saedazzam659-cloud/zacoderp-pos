@@ -144,8 +144,19 @@ interface FullTotals {
   currency: string;
   currencySym: string;
   amountWords: string;
+  // ── Base-currency (SAR) equivalents — ZATCA requires the VAT amount (and we
+  // also surface the grand total) in the company's base currency whenever a
+  // TAX document is issued in a foreign currency. `showSarEq` already folds in
+  // the foreign-currency + tax-document gating so callers can render blindly.
+  exchangeRate: number;
+  baseCurrency: string;
+  baseSym: string;
+  isForeign: boolean;
+  vatAmountBase: number;
+  grandTotalBase: number;
+  showSarEq: boolean;
 }
-function computeFullTotals(doc: any, lines: any[]): FullTotals {
+function computeFullTotals(doc: any, lines: any[], printType?: SalesPrintType): FullTotals {
   let subtotalPreDiscount = 0, discountTotal = 0, netPreVat = 0, vatAmount = 0;
   let totalQty = 0, totalFreeQty = 0;
   for (const l of (lines ?? [])) {
@@ -170,12 +181,46 @@ function computeFullTotals(doc: any, lines: any[]): FullTotals {
   }
   const grandTotal = netPreVat + vatAmount;
   const currency = doc?.currencyCode ?? "SAR";
+  // ── Base-currency (SAR) equivalents ────────────────────────────────────────
+  // The document is denominated in `currency`; the company books everything in
+  // SAR. base = foreign × exchangeRate (rate is "1 foreign = X SAR").
+  const baseCurrency = "SAR";
+  const exchangeRate = Number(doc?.exchangeRate) || 1;
+  const isForeign = !!currency && currency.toUpperCase() !== baseCurrency;
+  // Resolve the print TYPE — explicit arg wins, else the value stamped onto the
+  // doc in handlePrint (`doc.__printType`). Quotations / sales orders are NOT
+  // tax documents, so they never show the SAR-equivalent block.
+  const resolvedType: SalesPrintType | undefined = printType ?? (doc?.__printType as SalesPrintType | undefined);
+  const isTaxDoc = resolvedType ? (resolvedType === "invoice" || resolvedType === "return") : true;
+  const vatAmountBase = vatAmount * exchangeRate;
+  const grandTotalBase = grandTotal * exchangeRate;
   return {
     subtotalPreDiscount, discountTotal, netPreVat, vatAmount, grandTotal,
     totalQty, totalFreeQty, itemsCount: (lines ?? []).length, currency,
     currencySym: currencySymbol(currency),
     amountWords: numberToArabicWords(grandTotal),
+    exchangeRate, baseCurrency, baseSym: currencySymbol(baseCurrency),
+    isForeign, vatAmountBase, grandTotalBase,
+    showSarEq: isForeign && isTaxDoc,
   };
+}
+
+// SAR-equivalent rows appended after the grand-total line. Renders ONLY for a
+// foreign-currency tax document (gated via `t.showSarEq`); returns "" otherwise
+// so every template can splice it in unconditionally. `tl` lets template14
+// pass its bilingual / EN-only labeller and `nf` its locale number formatter;
+// the defaults keep the AR "عربي — English" pairing used by the other templates.
+function sarEqRowsHtml(
+  t: FullTotals,
+  rowClass = "totals-row",
+  tl: (ar: string, en: string) => string = (ar, en) => `${ar} — ${en}`,
+  nf: (n: number) => string = fmt,
+): string {
+  if (!t.showSarEq) return "";
+  return `
+    <div class="${rowClass}" style="border-top:1px dashed #cbd5e1;margin-top:4px;padding-top:6px;"><span>${tl("ضريبة القيمة المضافة (بالريال)", "VAT (in SAR)")}</span><span class="mono">${nf(t.vatAmountBase)} ${t.baseSym}</span></div>
+    <div class="${rowClass}"><span>${tl("الإجمالي شامل الضريبة (بالريال)", "Total (in SAR)")}</span><span class="mono">${nf(t.grandTotalBase)} ${t.baseSym}</span></div>
+    <div class="${rowClass}" style="font-size:9px;opacity:.65;"><span>${tl("سعر الصرف", "Exchange rate")}</span><span class="mono">1 ${t.currency} = ${nf(t.exchangeRate)} ${t.baseSym}</span></div>`;
 }
 
 // Standardised 5‑row totals body matching the screenshot reference. Caller
@@ -187,7 +232,8 @@ function totalRowsHtml(t: FullTotals, rowClass = "totals-row", grandClass = "gra
     <div class="${rowClass}"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(t.discountTotal)} ${t.currencySym}</span></div>
     <div class="${rowClass}"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currencySym}</span></div>
     <div class="${rowClass}"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(t.vatAmount)} ${t.currencySym}</span></div>
-    <div class="${rowClass} ${grandClass}"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}</span></div>`;
+    <div class="${rowClass} ${grandClass}"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}</span></div>
+    ${sarEqRowsHtml(t, rowClass)}`;
 }
 
 // Universal summary footer (tafqeet + total items + total qty inc. free) shown
@@ -458,7 +504,8 @@ function totalsBlock(doc: any, lines: any[], align: "right" | "left" = "right") 
     <div class="__totalsRow"><span style="color:#666">مبلغ الخصم — Discount</span><span class="mono" style="color:#b91c1c;">${fmt(t.discountTotal)} ${t.currencySym}</span></div>
     <div class="__totalsRow"><span style="color:#666">الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currencySym}</span></div>
     <div class="__totalsRow"><span style="color:#666">ضريبة القيمة المضافة — VAT</span><span class="mono" style="color:#b45309;">${fmt(t.vatAmount)} ${t.currencySym}</span></div>
-    <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}</span></div>`;
+    <div class="__totalsRow grand"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}</span></div>
+    ${sarEqRowsHtml(t, "__totalsRow")}`;
   return `
     <div style="display:flex;justify-content:${align === "right" ? "flex-start" : "flex-end"};gap:14px;align-items:flex-start;">
       <div style="${align === "right" ? "" : "margin-left:auto;"}">
@@ -1695,6 +1742,7 @@ function template13(d: PrintData): string {
           <div class="row"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(totals.netPreVat)} ${totals.currencySym}</span></div>
           <div class="row vat"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(totals.vatAmount)} ${totals.currencySym}</span></div>
           <div class="row grand"><span>الصافي شامل الضريبة — Total</span><span class="mono v">${fmt(totals.grandTotal)} ${totals.currencySym}</span></div>
+          ${sarEqRowsHtml(totals, "row")}
         </div>
         ${summaryFooterHtml(totals)}
       </div>
@@ -2227,6 +2275,7 @@ function template14(d: PrintData): string {
               <div class="__totalsRow"><span>${tl("الصافي بدون الضريبة", "Net")}</span><span class="mono">${nf(totals.netPreVat)}</span></div>
               <div class="__totalsRow"><span>${tl("ضريبة القيمة المضافة", "VAT")}</span><span class="mono" style="color:#b45309;">${nf(totals.vatAmount)}</span></div>
               <div class="__totalsRow grand"><span>${tl("الصافي شامل الضريبة", "Total")}</span><span class="mono">${nf(totals.grandTotal)}</span></div>
+              ${sarEqRowsHtml(totals, "__totalsRow", tl, nf)}
               ${isEn ? summaryFooterHtmlEn(totals) : summaryFooterHtml(totals)}
             </div>
             <div class="qr-card">
@@ -2411,6 +2460,10 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     // template can render it as a normal <img> — async so the QR png
     // is ready before the iframe document is built (otherwise the
     // print job would capture a placeholder).
+    // Stamp the print TYPE onto the doc so the shared totals helpers can gate
+    // the SAR-equivalent block to tax documents (invoice/return) only — every
+    // template reads `doc` (directly or via {...doc}) so this reaches them all.
+    (data.doc as any).__printType = data.type;
     try {
       const totals = computeFullTotals(data.doc, data.lines);
       const qr = await buildZatcaQrDataUrl(data.company, data.doc, totals);
