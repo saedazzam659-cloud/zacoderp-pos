@@ -492,20 +492,28 @@ router.put("/:id", async (req, res) => {
 });
 
 // ─── POST /:id/post — flip status from draft → posted ───────────────────────
-// Used by the unified Posting Center. We require the entry to be balanced
-// (sum debit === sum credit) and not auto-locked. Auto-generated JEs are
-// already posted by their source document, so manually flipping their status
-// is rejected.
+// Used by the unified Posting Center AND the journal-log "ترحيل" button. We
+// require the entry to be balanced (sum debit === sum credit) with ≥2 valid
+// lines and an open period. Source-document JEs left as drafts (auto-posting
+// OFF) ARE postable here — see the NOTE in the handler.
 router.post("/:id/post", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
 
-    const lockCheck = await ensureNotLocked(id, cid);
-    if (!lockCheck.ok) {
-      res.status(403).json({ error: "هذا القيد تم إنشاؤه تلقائياً من مستند مصدر — غير قابل للترحيل اليدوي" });
-      return;
-    }
+    // NOTE: source-document JEs (sales_invoice, purchase_invoice, …) are
+    // intentionally POSTABLE here even though they remain locked from
+    // edit/delete/unpost. When a company has auto-posting OFF
+    // (resolvePostingStatus → "draft"), the source document is posted but its
+    // JE is deliberately left as a draft for a later review-and-post step
+    // (segregation of duties). The ONLY safe way to complete that step is to
+    // flip the existing, already-correct JE draft → posted — which is exactly
+    // what this endpoint does (the balance + period + ≥2-line checks below
+    // still apply). Editing/deleting/unposting such a JE stays blocked (see
+    // ensureNotLocked on PUT /:id, DELETE /:id, POST /:id/unpost) so the JE can
+    // never drift out of sync with its source document. Before this, turning
+    // auto-posting off produced draft source-document JEs that no screen could
+    // ever post — they never reached the financial reports.
 
     const [existing] = await db.select().from(journalEntriesTable)
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
