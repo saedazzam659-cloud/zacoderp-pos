@@ -7,7 +7,7 @@
     "noBranches": "No branches available",
     "selectAll": "Select All",
     "clear": "Clear",
-    "loading": "Loading…",
+    "loading": "Loading...",
     "save": "Save",
     "cancel": "Cancel",
     "delete": "Delete",
@@ -15,7 +15,6 @@
     "add": "Add",
     "new": "New",
     "search": "Search",
-    "loading": "Loading...",
     "noResults": "No results",
     "yes": "Yes",
     "no": "No",
@@ -65,7 +64,14 @@
       "savedAndPrinted": "Saved and printed successfully",
       "savedAndPosted": "Saved and posted successfully",
       "savedAndPostedAndPrinted": "Saved, posted, and printed successfully"
-    }
+    },
+    "error": "Error",
+    "errorTitle": "Error",
+    "saved": "Saved",
+    "deleted": "Deleted",
+    "create": "Create",
+    "refresh": "Refresh",
+    "balance": "Balance"
   },
   "pagination": {
     "rowsPerPage": "Rows per page:",
@@ -237,7 +243,9 @@
       "next": "Next",
       "prevDisabled": "You're at the oldest invoice",
       "nextDisabled": "You're at the newest invoice"
-    }
+    },
+    "docDate": "Document date",
+    "priceIncludesVat": "Price includes VAT"
   },
   "salesQuotations": {
     "title": "Quotations",
@@ -799,7 +807,44 @@
       "needImage": "Please upload an image first",
       "visionApplied": "Image analyzed and fields filled",
       "visionNoConcern": "Image shows no clear security concern",
-      "visionFailed": "Failed to analyze image"
+      "visionFailed": "Failed to analyze image",
+      "title": "Security AI",
+      "last7": "Last 7 days",
+      "last30": "Last 30 days",
+      "last90": "Last 90 days",
+      "evaluating": "Evaluating...",
+      "evaluateRules": "Evaluate Rules",
+      "evaluated": "Rules evaluated",
+      "generatedN": "{{n}} event(s) generated",
+      "totalEvents": "Total Events",
+      "mttr": "Mean Time to Resolve",
+      "aiSourced": "AI-Sourced",
+      "actionsTaken": "Actions Taken",
+      "byModule": "By Module",
+      "bySource": "By Source",
+      "topTypes": "Top Types",
+      "heatmap": "Events Heatmap",
+      "openEventsRec": "Recommendations for Open Events",
+      "noOpen": "No open events",
+      "actionsLog": "Actions Log",
+      "col": {
+        "when": "When",
+        "kind": "Kind",
+        "module": "Module",
+        "title": "Title",
+        "event": "Event"
+      },
+      "kind": {
+        "notify": "Notify",
+        "task": "Task"
+      },
+      "noActions": "No actions",
+      "dispatched": "Action dispatched",
+      "analyzing": "Analyzing...",
+      "analyze": "Analyze",
+      "dispatch": "Dispatch",
+      "action": "Action",
+      "reasons": "Reasons"
     },
     "module": {
       "hr": "HR",
@@ -3200,7 +3245,8 @@
       "exportTitle": "Cost Centers Analysis",
       "exportSubtitleSingle": "{{center}} — {{from}} to {{to}}",
       "exportSubtitleMulti": "{{count}} centers — {{from}} to {{to}}",
-      "centersHeader": "Selected centers"
+      "centersHeader": "Selected centers",
+      "total": "Total"
     }
   },
   "fiscalPeriods": {

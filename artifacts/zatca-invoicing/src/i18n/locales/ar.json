@@ -7,7 +7,7 @@
     "noBranches": "لا توجد فروع متاحة",
     "selectAll": "اختيار الكل",
     "clear": "مسح",
-    "loading": "جارٍ التحميل…",
+    "loading": "جاري التحميل...",
     "save": "حفظ",
     "cancel": "إلغاء",
     "delete": "حذف",
@@ -15,7 +15,6 @@
     "add": "إضافة",
     "new": "جديد",
     "search": "بحث",
-    "loading": "جاري التحميل...",
     "noResults": "لا توجد نتائج",
     "yes": "نعم",
     "no": "لا",
@@ -65,7 +64,14 @@
       "savedAndPrinted": "تم الحفظ والطباعة بنجاح",
       "savedAndPosted": "تم الحفظ والترحيل بنجاح",
       "savedAndPostedAndPrinted": "تم الحفظ والترحيل والطباعة بنجاح"
-    }
+    },
+    "error": "خطأ",
+    "errorTitle": "خطأ",
+    "saved": "تم الحفظ",
+    "deleted": "تم الحذف",
+    "create": "إنشاء",
+    "refresh": "تحديث",
+    "balance": "الرصيد"
   },
   "pagination": {
     "rowsPerPage": "صفوف لكل صفحة:",
@@ -237,7 +243,9 @@
       "next": "التالي",
       "prevDisabled": "أنت في أقدم فاتورة",
       "nextDisabled": "أنت في أحدث فاتورة"
-    }
+    },
+    "docDate": "تاريخ المستند",
+    "priceIncludesVat": "السعر شامل الضريبة"
   },
   "salesQuotations": {
     "title": "عروض الأسعار",
@@ -794,7 +802,44 @@
       "needImage": "يرجى رفع صورة أولاً",
       "visionApplied": "تم تحليل الصورة وتعبئة الحقول",
       "visionNoConcern": "الصورة لا تظهر مشكلة أمنية واضحة",
-      "visionFailed": "تعذّر تحليل الصورة"
+      "visionFailed": "تعذّر تحليل الصورة",
+      "title": "الذكاء الأمني",
+      "last7": "آخر ٧ أيام",
+      "last30": "آخر ٣٠ يوماً",
+      "last90": "آخر ٩٠ يوماً",
+      "evaluating": "جارٍ التقييم...",
+      "evaluateRules": "تقييم القواعد",
+      "evaluated": "تم تقييم القواعد",
+      "generatedN": "تم إنشاء {{n}} حدثاً",
+      "totalEvents": "إجمالي الأحداث",
+      "mttr": "متوسط زمن الحل",
+      "aiSourced": "من الذكاء الاصطناعي",
+      "actionsTaken": "الإجراءات المتخذة",
+      "byModule": "حسب الوحدة",
+      "bySource": "حسب المصدر",
+      "topTypes": "أكثر الأنواع",
+      "heatmap": "الخريطة الحرارية للأحداث",
+      "openEventsRec": "توصيات للأحداث المفتوحة",
+      "noOpen": "لا توجد أحداث مفتوحة",
+      "actionsLog": "سجل الإجراءات",
+      "col": {
+        "when": "التاريخ",
+        "kind": "النوع",
+        "module": "الوحدة",
+        "title": "العنوان",
+        "event": "الحدث"
+      },
+      "kind": {
+        "notify": "إشعار",
+        "task": "مهمة"
+      },
+      "noActions": "لا توجد إجراءات",
+      "dispatched": "تم إرسال الإجراء",
+      "analyzing": "جارٍ التحليل...",
+      "analyze": "تحليل",
+      "dispatch": "إرسال الإجراء",
+      "action": "الإجراء",
+      "reasons": "الأسباب"
     },
     "module": {
       "hr": "الموارد البشرية",
@@ -3203,7 +3248,8 @@
       "exportTitle": "تحليل مراكز التكلفة",
       "exportSubtitleSingle": "{{center}} — من {{from}} إلى {{to}}",
       "exportSubtitleMulti": "{{count}} مراكز — من {{from}} إلى {{to}}",
-      "centersHeader": "المراكز المحددة"
+      "centersHeader": "المراكز المحددة",
+      "total": "الإجمالي"
     }
   },
   "fiscalPeriods": {
