@@ -19,11 +19,18 @@ import {
 } from "@workspace/db";
 import { and, eq, desc, asc, inArray, sql, gt, isNull, or, ne } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
-import { requireModulePermission } from "../middleware/permissions.js";
+import { requirePermission } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
-router.use(requireModulePermission("chat"));
+// Internal chat is gated as a single access unit: any user the company admin
+// has granted `chat` (view) to may fully participate — read, send, and use the
+// AI tools. The per-message DELETE handler still enforces ownership (only the
+// sender or an admin can erase a message). We intentionally do NOT use
+// requireModulePermission here: it would demand chat.create/edit/delete for
+// mutations, but the `chat` permission module only exposes `view`, so regular
+// users could never send a message (403 "صلاحيات غير كافية للوصول إلى chat").
+router.use(requirePermission("chat", "view"));
 
 function getCid(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.query.companyId ?? req.body?.companyId ?? req.authUser?.companyId);

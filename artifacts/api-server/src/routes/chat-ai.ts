@@ -20,12 +20,16 @@ import {
 } from "@workspace/db";
 import { and, eq, sql, desc, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
-import { requireModulePermission } from "../middleware/permissions.js";
+import { requirePermission } from "../middleware/permissions.js";
 import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const router = Router();
 router.use(extractAuth);
-router.use(requireModulePermission("chat"));
+// Same single-access-unit gate as routes/chat.ts: any user granted `chat`
+// (view) may use the chat AI tools. requireModulePermission would 403 these
+// POST endpoints because it demands chat.create, which the view-only `chat`
+// permission module never exposes.
+router.use(requirePermission("chat", "view"));
 
 import { chat as aiChat } from "../lib/aiClient.js";
 
