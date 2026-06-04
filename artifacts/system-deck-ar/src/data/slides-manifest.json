@@ -1,1 +1,122 @@
-[]
+[
+  {
+    "id": "60ba620e-8ea6-4c7d-9cb7-875e776e0df0",
+    "position": 1,
+    "filepath": "src/pages/slides/Cover.tsx",
+    "title": "الغلاف — زاكود ERP",
+    "description": "شريحة الغلاف الرئيسية للعرض",
+    "speakerNotes": ""
+  },
+  {
+    "id": "1aab7684-ace7-4dc8-a3d5-f15f81891b91",
+    "position": 2,
+    "filepath": "src/pages/slides/Overview.tsx",
+    "title": "نظرة عامة",
+    "description": "نظرة عامة على المنظومة وركائزها",
+    "speakerNotes": ""
+  },
+  {
+    "id": "1f88bac9-9573-45f0-8e7c-7551aab7651a",
+    "position": 3,
+    "filepath": "src/pages/slides/Zatca.tsx",
+    "title": "الفاتورة الإلكترونية والامتثال",
+    "description": "وحدة ZATCA والامتثال الضريبي",
+    "speakerNotes": ""
+  },
+  {
+    "id": "7c0c007a-ca99-4e8d-8108-af287440f5db",
+    "position": 4,
+    "filepath": "src/pages/slides/Accounting.tsx",
+    "title": "المحاسبة والإدارة المالية",
+    "description": "وحدة المحاسبة والتقارير المالية",
+    "speakerNotes": ""
+  },
+  {
+    "id": "e4ef6fbc-037a-458a-8b33-dbc8c82c4681",
+    "position": 5,
+    "filepath": "src/pages/slides/Sales.tsx",
+    "title": "المبيعات ونقاط البيع",
+    "description": "وحدة المبيعات ونقاط البيع",
+    "speakerNotes": ""
+  },
+  {
+    "id": "761e5fd1-1057-4cae-94c5-fcf4a5614e36",
+    "position": 6,
+    "filepath": "src/pages/slides/Purchasing.tsx",
+    "title": "المشتريات والاعتمادات",
+    "description": "وحدة المشتريات والاعتمادات المستندية",
+    "speakerNotes": ""
+  },
+  {
+    "id": "9ac9c08c-748b-4c63-87b5-ee777df4c7ee",
+    "position": 7,
+    "filepath": "src/pages/slides/Inventory.tsx",
+    "title": "المخزون والمستودعات",
+    "description": "وحدة المخزون والمستودعات",
+    "speakerNotes": ""
+  },
+  {
+    "id": "d387ee1e-164c-44a9-aca3-9be75196d996",
+    "position": 8,
+    "filepath": "src/pages/slides/Manufacturing.tsx",
+    "title": "التصنيع وإدارة الإنتاج",
+    "description": "وحدة التصنيع والإنتاج",
+    "speakerNotes": ""
+  },
+  {
+    "id": "a8877133-c3eb-410e-8af6-faed1c132845",
+    "position": 9,
+    "filepath": "src/pages/slides/SisterCompanies.tsx",
+    "title": "الشركات الشقيقة",
+    "description": "وحدة الشركات الشقيقة",
+    "speakerNotes": ""
+  },
+  {
+    "id": "074b3a7b-e444-4b40-b540-f0493b798fa1",
+    "position": 10,
+    "filepath": "src/pages/slides/OnlineStore.tsx",
+    "title": "المتجر الإلكتروني",
+    "description": "وحدة المتجر الإلكتروني",
+    "speakerNotes": ""
+  },
+  {
+    "id": "a84fb1e6-dab3-4e63-883e-cbbfd4bb316f",
+    "position": 11,
+    "filepath": "src/pages/slides/Security.tsx",
+    "title": "الأمن والمراقبة",
+    "description": "وحدة الأمن وسجل التدقيق",
+    "speakerNotes": ""
+  },
+  {
+    "id": "5db0b262-592a-41ac-8f74-b333235be6f1",
+    "position": 12,
+    "filepath": "src/pages/slides/AI.tsx",
+    "title": "الذكاء الاصطناعي المدمج",
+    "description": "وحدة الذكاء الاصطناعي",
+    "speakerNotes": ""
+  },
+  {
+    "id": "5d8de793-5c54-4f24-b79e-e7d859ab61ef",
+    "position": 13,
+    "filepath": "src/pages/slides/Access.tsx",
+    "title": "تعدد الشركات والصلاحيات",
+    "description": "تعدد الشركات وإدارة الصلاحيات",
+    "speakerNotes": ""
+  },
+  {
+    "id": "bdf873bd-d408-4fdb-b697-b18e1d2f8ee1",
+    "position": 14,
+    "filepath": "src/pages/slides/WhyZacod.tsx",
+    "title": "لماذا زاكود ERP",
+    "description": "القيمة المضافة للمنظومة",
+    "speakerNotes": ""
+  },
+  {
+    "id": "f13fc058-2f0a-4ad4-b6ed-f77588800f98",
+    "position": 15,
+    "filepath": "src/pages/slides/Contact.tsx",
+    "title": "للتواصل والشراكة",
+    "description": "شريحة الختام ومعلومات التواصل",
+    "speakerNotes": ""
+  }
+]

@@ -3,23 +3,30 @@
 @theme inline {
   --color-primary: var(--slide-primary);
   --color-accent: var(--slide-accent);
+  --color-violet: var(--slide-violet);
+  --color-amber: var(--slide-amber);
+  --color-teal: var(--slide-teal);
   --color-bg: var(--slide-bg);
-  --color-text: var(--slide-text);
+  --color-bg2: var(--slide-bg2);
+  --color-ink: var(--slide-text);
   --color-muted: var(--slide-muted);
   --font-display: var(--font-display-family);
   --font-body: var(--font-body-family);
 }
 
 :root {
-  /* Replace these with brand colors */
-  --slide-primary: #4f46e5;
-  --slide-accent: #06b6d4;
-  --slide-bg: #f8fafc;
-  --slide-text: #0f172a;
-  --slide-muted: #64748b;
-  --font-display-family: "Inter", system-ui, sans-serif;
-  --font-body-family: "Inter", system-ui, sans-serif;
-  color-scheme: light;
+  --slide-primary: #5468ff;
+  --slide-violet: #7c3aed;
+  --slide-accent: #ff5e5b;
+  --slide-amber: #ffb020;
+  --slide-teal: #2dd4bf;
+  --slide-bg: #0b1029;
+  --slide-bg2: #141a3d;
+  --slide-text: #f5f7ff;
+  --slide-muted: #a9b2d9;
+  --font-display-family: "Cairo", system-ui, sans-serif;
+  --font-body-family: "Cairo", system-ui, sans-serif;
+  color-scheme: dark;
 }
 
 html,
