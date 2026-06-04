@@ -146,6 +146,12 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // security hub, events log, and notification rules.
   { key: "security_events",      label: "perms.modules.security_events",      group: G.security,    actions: VC },
 
+  // ─── AI Tools (أدوات الذكاء الاصطناعي) ───────────────────────────────
+  // The remaining AI Tools group (AI Reports + the in-app inbox). The
+  // per-user `ai_tools` toggle governs who can reach the group; the Layout
+  // gates the whole group via GROUP_PERMISSION_KEYS.aiTools = ["ai_tools"].
+  { key: "ai_tools",             label: "perms.modules.ai_tools",             group: G.aiTools,            actions: VO },
+
   // ─── Voice Assistant / Sessions / Chat / Company Maintenance ─────────
   // These four screens were split out of the old "أدوات الذكاء الاصطناعي"
   // group into their own top-level sidebar groups, each with its own
