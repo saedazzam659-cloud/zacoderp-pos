@@ -400,26 +400,41 @@ const LIVE_MONITORING_GROUP_PERMS = ["user_tracking"];
 // control-panel group so they live in their own visible category in the
 // sidebar: Voice Assistant Settings, AI Reports, Sessions admin, Work-Sessions
 // log, Inbox, and Import/Export Data. Each item's perm gate is preserved.
+// "أدوات الذكاء الاصطناعي" — leftover group after the voice-assistant,
+// sessions, chat, and data-io screens were promoted to their own top-level
+// groups. Keeps AI Reports (admin-only) + the universal in-app inbox.
 const aiToolsSubNav: NavDef[] = [
-  // Voice Assistant — admin-only screen for company-wide voice activation,
-  // AI model + a recent-commands log. Hidden from superadmin (no companyId).
-  { nameKey: "nav.voiceAssistantSettings", href: "/voice-assistant/settings", icon: Mic, permKey: "voiceAssistant", requireAdmin: true },
   // AI Reports — admin-only natural-language report generator.
   { nameKey: "nav.aiReports",       href: "/ai-reports",          icon: Sparkles,  requireAdmin: true },
-  // Manual Sessions admin: admin creates sessions and assigns users; each
-  // user picks one at login and operations are tagged with it. Gated on the
-  // "sessions" perm key — admins always pass.
-  { nameKey: "nav.sessionsAdmin",   href: "/sessions",            icon: Briefcase, permKey: "sessions", requireAdmin: true },
-  // Work-sessions: visible to every company user (each sees their own
-  // sessions; admins see the whole company). No requireAdmin gate.
-  // Hidden from superadmin entirely — superadmin has no companyId so the
-  // feature does not apply to them.
-  { nameKey: "nav.workSessions",    href: "/work-sessions",       icon: Clock },
   // In-app inbox — every company user has one (reports, system messages).
   { nameKey: "nav.inbox",           href: "/inbox",               icon: Inbox },
-  // Internal Chat — real-time messaging between company colleagues.
+];
+
+// "إعدادات المساعد الصوتي" — admin-only voice-assistant settings screen
+// (company-wide voice activation, AI model + a recent-commands log). Hidden
+// from superadmin (no companyId).
+const voiceAssistantSubNav: NavDef[] = [
+  { nameKey: "nav.voiceAssistantSettings", href: "/voice-assistant/settings", icon: Mic, permKey: "voiceAssistant", requireAdmin: true },
+];
+
+// "الجلسات" — manual sessions admin (admin-only: creates sessions + assigns
+// users) plus the work-sessions log. The log carries no perm gate so every
+// company user keeps access to their own session history; admins see the
+// whole company. The whole group is bounded by the `sessions` company toggle
+// and per-user perm via isGroupAllowed one level up.
+const sessionsSubNav: NavDef[] = [
+  { nameKey: "nav.sessionsAdmin",   href: "/sessions",            icon: Briefcase, permKey: "sessions", requireAdmin: true },
+  { nameKey: "nav.workSessions",    href: "/work-sessions",       icon: Clock },
+];
+
+// "الاتصال الداخلي" — real-time messaging between company colleagues.
+const chatSubNav: NavDef[] = [
   { nameKey: "nav.chat",            href: "/chat",                icon: MessageSquare, permKey: "chat" },
-  // Import / export the company's data sets — gated by the data_io permission.
+];
+
+// "صيانة الشركات" — import / export the company's data sets, gated by the
+// data_io permission.
+const companyMaintenanceSubNav: NavDef[] = [
   { nameKey: "nav.dataIo",          href: "/settings/data-io",    icon: Database,  permKey: "data_io" },
 ];
 
@@ -817,6 +832,10 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   pos:         ["pos"],
   security:    ["security", "security_events"],
   aiTools:     ["ai_tools"],
+  voiceAssistant: ["voice_assistant"],
+  sessions:    ["sessions"],
+  chat:        ["chat"],
+  companyMaintenance: ["company_maintenance"],
   multiLink:   ["multi_link"],
   liveMonitoring: LIVE_MONITORING_GROUP_PERMS,
 };
@@ -1874,14 +1893,10 @@ function AIToolsNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  // Hide the entire "أدوات الذكاء الاصطناعي" group unless the user holds
-  // at least one of the *real* AI permissions. Without this, sales reps
-  // (who have none of these) would still see the group purely because
-  // workSessions / inbox are unguarded utility items inside it — and the
-  // group's hub link would 404 since they can't actually reach any
-  // meaningful child. Admin / superadmin always pass via groupVisible.
-  const AI_OWN_PERMS = ["voiceAssistant", "sessions", "chat", "data_io"];
-  if (!groupVisible(user, AI_OWN_PERMS)) return null;
+  // AI Reports (admin-only) + the universal in-app inbox. The group hides
+  // only when every child is filtered out; the inbox carries no perm gate so
+  // every company user keeps access to it. The company-level menu gate is
+  // enforced one level up by isGroupAllowed(menuPerms, "aiTools", …).
   const visibleChildren = filterNav(aiToolsSubNav, user);
   if (visibleChildren.length === 0) return null;
   const isOnSub = aiToolsSubNav.some(i => location.startsWith(i.href));
@@ -1891,6 +1906,141 @@ function AIToolsNavGroup({
         hubHref={visibleChildren[0].href}
         icon={Sparkles}
         label={t("nav.aiToolsGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {visibleChildren.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── VoiceAssistantNavGroup ──────────────────────────────────────────────────
+// Top-level "إعدادات المساعد الصوتي" group. Single admin-only child; the group
+// hides for non-admins (child filtered out) and when the company toggle is off
+// (handled by isGroupAllowed one level up).
+function VoiceAssistantNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const visibleChildren = filterNav(voiceAssistantSubNav, user);
+  if (visibleChildren.length === 0) return null;
+  const isOnSub = voiceAssistantSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref={visibleChildren[0].href}
+        icon={Mic}
+        label={t("nav.voiceAssistantGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {visibleChildren.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SessionsNavGroup ────────────────────────────────────────────────────────
+// Top-level "الجلسات" group — sessions admin (admin-only) + the work-sessions
+// log (visible to every company user). Hides only when all children filter out.
+function SessionsNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const visibleChildren = filterNav(sessionsSubNav, user);
+  if (visibleChildren.length === 0) return null;
+  const isOnSub = sessionsSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref={visibleChildren[0].href}
+        icon={Briefcase}
+        label={t("nav.sessionsGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {visibleChildren.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── ChatNavGroup ────────────────────────────────────────────────────────────
+// Top-level "الاتصال الداخلي" group — internal real-time messaging.
+function ChatNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const visibleChildren = filterNav(chatSubNav, user);
+  if (visibleChildren.length === 0) return null;
+  const isOnSub = chatSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref={visibleChildren[0].href}
+        icon={MessageSquare}
+        label={t("nav.chatGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {visibleChildren.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── CompanyMaintenanceNavGroup ──────────────────────────────────────────────
+// Top-level "صيانة الشركات" group — data import / export (gated by data_io).
+function CompanyMaintenanceNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const visibleChildren = filterNav(companyMaintenanceSubNav, user);
+  if (visibleChildren.length === 0) return null;
+  const isOnSub = companyMaintenanceSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref={visibleChildren[0].href}
+        icon={Database}
+        label={t("nav.companyMaintenanceGroup")}
         isOn={isOnSub}
         open={open}
         onToggle={onToggle}
@@ -2041,6 +2191,14 @@ function SidebarInner({
   onSecurityToggle,
   aiToolsOpen,
   onAiToolsToggle,
+  voiceAssistantOpen,
+  onVoiceAssistantToggle,
+  sessionsOpen,
+  onSessionsToggle,
+  chatOpen,
+  onChatToggle,
+  companyMaintenanceOpen,
+  onCompanyMaintenanceToggle,
   liveMonitoringOpen,
   onLiveMonitoringToggle,
   onNavigate,
@@ -2105,6 +2263,14 @@ function SidebarInner({
   onSecurityToggle: () => void;
   aiToolsOpen: boolean;
   onAiToolsToggle: () => void;
+  voiceAssistantOpen: boolean;
+  onVoiceAssistantToggle: () => void;
+  sessionsOpen: boolean;
+  onSessionsToggle: () => void;
+  chatOpen: boolean;
+  onChatToggle: () => void;
+  companyMaintenanceOpen: boolean;
+  onCompanyMaintenanceToggle: () => void;
   liveMonitoringOpen: boolean;
   onLiveMonitoringToggle: () => void;
   onNavigate: () => void;
@@ -2465,6 +2631,50 @@ function SidebarInner({
               </div>
             )}
 
+            {isGroupAllowed(menuPerms, "voiceAssistant", isSuperAdmin, user) && (
+              <div className="space-y-0.5">
+                <VoiceAssistantNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={voiceAssistantOpen}
+                  onToggle={onVoiceAssistantToggle}
+                />
+              </div>
+            )}
+
+            {isGroupAllowed(menuPerms, "sessions", isSuperAdmin, user) && (
+              <div className="space-y-0.5">
+                <SessionsNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={sessionsOpen}
+                  onToggle={onSessionsToggle}
+                />
+              </div>
+            )}
+
+            {isGroupAllowed(menuPerms, "chat", isSuperAdmin, user) && (
+              <div className="space-y-0.5">
+                <ChatNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={chatOpen}
+                  onToggle={onChatToggle}
+                />
+              </div>
+            )}
+
+            {isGroupAllowed(menuPerms, "companyMaintenance", isSuperAdmin, user) && (
+              <div className="space-y-0.5">
+                <CompanyMaintenanceNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={companyMaintenanceOpen}
+                  onToggle={onCompanyMaintenanceToggle}
+                />
+              </div>
+            )}
+
             {isGroupAllowed(menuPerms, "liveMonitoring", isSuperAdmin, user) && (
               <div className="space-y-0.5">
                 <LiveMonitoringNavGroup
@@ -2589,6 +2799,10 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
   const all = [
     ...dashboardSubNav,
     ...aiToolsSubNav,
+    ...voiceAssistantSubNav,
+    ...sessionsSubNav,
+    ...chatSubNav,
+    ...companyMaintenanceSubNav,
     ...purchasingSubNav.map(i => ({ ...i, parent: "/purchasing" })),
     ...salesSubNav.map(i => ({ ...i, parent: "/sales" })),
     ...companySystemNav.map(i => ({ ...i, parent: "/accounting" })),
@@ -2897,13 +3111,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     location.startsWith("/pos-monitoring") || location.startsWith("/pos-terminals") || location.startsWith("/pos-settings")
   );
   const [securityOpen,   setSecurityOpen]     = useState(() => location.startsWith("/security"));
-  // AI Tools: auto-expand when the user lands on any of the contained routes.
+  // AI Tools: auto-expand when the user lands on any of the contained routes
+  // (now only AI Reports + the inbox after the spin-out groups were extracted).
   const [aiToolsOpen,    setAiToolsOpen]      = useState(() =>
-    location.startsWith("/voice-assistant") ||
     location.startsWith("/ai-reports") ||
-    location.startsWith("/sessions") ||
-    location.startsWith("/work-sessions") ||
-    location.startsWith("/inbox") ||
+    location.startsWith("/inbox")
+  );
+  const [voiceAssistantOpen, setVoiceAssistantOpen] = useState(() =>
+    location.startsWith("/voice-assistant")
+  );
+  const [sessionsOpen,   setSessionsOpen]     = useState(() =>
+    location.startsWith("/sessions") || location.startsWith("/work-sessions")
+  );
+  const [chatOpen,       setChatOpen]         = useState(() =>
+    location.startsWith("/chat")
+  );
+  const [companyMaintenanceOpen, setCompanyMaintenanceOpen] = useState(() =>
     location.startsWith("/settings/data-io")
   );
   const [liveMonitoringOpen, setLiveMonitoringOpen] = useState(() =>
@@ -2924,7 +3147,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "sister" | "accounting"
     | "purchasing" | "sales" | "cash" | "hr" | "production" | "safety" | "contracting" | "maintenance" | "installments" | "hotel" | "hospital" | "crm" | "fixedAssets"
-    | "multiLink" | "pos" | "security" | "aiTools" | "liveMonitoring";
+    | "multiLink" | "pos" | "security" | "aiTools" | "voiceAssistant" | "sessions" | "chat" | "companyMaintenance" | "liveMonitoring";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
     if (keep !== "zatcaGroup") setZatcaGroupOpen(false);
@@ -2948,6 +3171,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (keep !== "pos")         setPosOpen(false);
     if (keep !== "security")    setSecurityOpen(false);
     if (keep !== "aiTools")     setAiToolsOpen(false);
+    if (keep !== "voiceAssistant") setVoiceAssistantOpen(false);
+    if (keep !== "sessions")    setSessionsOpen(false);
+    if (keep !== "chat")        setChatOpen(false);
+    if (keep !== "companyMaintenance") setCompanyMaintenanceOpen(false);
     if (keep !== "liveMonitoring") setLiveMonitoringOpen(false);
   };
   // Each top-level toggle: flip its own state. When the row is currently
@@ -2988,6 +3215,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handlePosToggle         = makeAccordionToggle("pos",         posOpen,         setPosOpen);
   const handleSecurityToggle   = makeAccordionToggle("security",   securityOpen,   setSecurityOpen);
   const handleAiToolsToggle    = makeAccordionToggle("aiTools",    aiToolsOpen,    setAiToolsOpen);
+  const handleVoiceAssistantToggle = makeAccordionToggle("voiceAssistant", voiceAssistantOpen, setVoiceAssistantOpen);
+  const handleSessionsToggle   = makeAccordionToggle("sessions",   sessionsOpen,   setSessionsOpen);
+  const handleChatToggle       = makeAccordionToggle("chat",       chatOpen,       setChatOpen);
+  const handleCompanyMaintenanceToggle = makeAccordionToggle("companyMaintenance", companyMaintenanceOpen, setCompanyMaintenanceOpen);
   const handleLiveMonitoringToggle = makeAccordionToggle("liveMonitoring", liveMonitoringOpen, setLiveMonitoringOpen);
   // Sub-group toggles (nested reports) — independent of the accordion.
   const handleInvReportsToggle        = () => setInvReportsOpen(v => !v);
@@ -3050,13 +3281,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     else if (location.startsWith("/hr/") || location === "/hr") target = "hr";
     else if (location.startsWith("/security")) target = "security";
     else if (location.startsWith("/user-tracking")) target = "liveMonitoring";
+    else if (location.startsWith("/voice-assistant")) target = "voiceAssistant";
+    else if (location.startsWith("/sessions") || location.startsWith("/work-sessions")) target = "sessions";
+    else if (location.startsWith("/chat")) target = "chat";
+    else if (location.startsWith("/settings/data-io")) target = "companyMaintenance";
     else if (
-      location.startsWith("/voice-assistant") ||
       location.startsWith("/ai-reports") ||
-      location.startsWith("/sessions") ||
-      location.startsWith("/work-sessions") ||
-      location.startsWith("/inbox") ||
-      location.startsWith("/settings/data-io")
+      location.startsWith("/inbox")
     ) target = "aiTools";
     else if (
       location.startsWith("/pos-monitoring") ||
@@ -3095,6 +3326,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         pos:         setPosOpen,
         security:    setSecurityOpen,
         aiTools:     setAiToolsOpen,
+        voiceAssistant: setVoiceAssistantOpen,
+        sessions:    setSessionsOpen,
+        chat:        setChatOpen,
+        companyMaintenance: setCompanyMaintenanceOpen,
         liveMonitoring: setLiveMonitoringOpen,
       };
       setterByGroup[target](true);
@@ -3161,6 +3396,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onSecurityToggle: handleSecurityToggle,
     aiToolsOpen,
     onAiToolsToggle: handleAiToolsToggle,
+    voiceAssistantOpen,
+    onVoiceAssistantToggle: handleVoiceAssistantToggle,
+    sessionsOpen,
+    onSessionsToggle: handleSessionsToggle,
+    chatOpen,
+    onChatToggle: handleChatToggle,
+    companyMaintenanceOpen,
+    onCompanyMaintenanceToggle: handleCompanyMaintenanceToggle,
     liveMonitoringOpen,
     onLiveMonitoringToggle: handleLiveMonitoringToggle,
     onNavigate: closeMobile,

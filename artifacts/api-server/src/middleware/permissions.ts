@@ -101,12 +101,16 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   // /api/admin/seo router. Disabling this gate hides the entire SEO dashboard
   // for that company AND 403s any /api/seo/* call.
   seo_dashboard: "seo_dashboard",
-  // AI Tools — keep in sync with frontend gate. Disabling the company
-  // ai_tools toggle hides the entire AI Tools sidebar group AND 403s
-  // any backend access to its gated modules.
-  data_io: "ai_tools",
-  voiceAssistant: "ai_tools",
-  sessions: "ai_tools",
+  // AI Tools & spun-out groups — keep in sync with frontend gate. AI Reports
+  // stays under the `ai_tools` company toggle; the voice assistant, sessions,
+  // internal chat, and data import/export screens each have their own
+  // top-level company toggle now (voice_assistant / sessions / chat /
+  // company_maintenance). Disabling a toggle hides its sidebar group AND
+  // 403s any backend access to its gated modules.
+  data_io: "company_maintenance",
+  voiceAssistant: "voice_assistant",
+  sessions: "sessions",
+  chat: "chat",
   ai_reports: "ai_tools",
   // VAT / general invoices
   vat_declaration: "reports",

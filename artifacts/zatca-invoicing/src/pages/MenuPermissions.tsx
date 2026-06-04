@@ -12,7 +12,7 @@ import {
   ShieldCheck, BarChart3, Warehouse, ShoppingCart, ShoppingBag, Wallet, BookOpen,
   PieChart, Smartphone, CheckCircle2, XCircle, Save, Copy, RotateCcw, Sparkles,
   ChevronDown, ChevronUp, UserCog, HardHat, Factory, ShieldAlert, TrendingUp,
-  Wrench, Hotel, Stethoscope, MapPin,
+  Wrench, Hotel, Stethoscope, MapPin, Mic, Briefcase, MessageSquare, Database,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MENU_ITEMS as MENU_ITEMS_BASE, SECTIONS } from "@/lib/menuItems";
@@ -55,6 +55,10 @@ const MENU_ICONS: Record<string, React.ElementType> = {
   security_events:    ShieldAlert,
   seo_dashboard:      TrendingUp,
   ai_tools:           Sparkles,
+  voice_assistant:    Mic,
+  sessions:           Briefcase,
+  chat:               MessageSquare,
+  company_maintenance: Database,
   field_service:      MapPin,
   zatca:              Link2,
   multi_link:         Link2,

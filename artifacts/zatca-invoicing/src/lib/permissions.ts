@@ -36,6 +36,10 @@ const G = {
   fixedAssets: "perms.groups.fixedAssets",
   security:    "perms.groups.security",
   aiTools:     "perms.groups.aiTools",
+  voiceAssistant: "perms.groups.voiceAssistant",
+  sessions:     "perms.groups.sessions",
+  chat:         "perms.groups.chat",
+  companyMaintenance: "perms.groups.companyMaintenance",
   fieldService: "perms.groups.fieldService",
   multiLink:    "perms.groups.multiLink",
 };
@@ -142,14 +146,16 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // security hub, events log, and notification rules.
   { key: "security_events",      label: "perms.modules.security_events",      group: G.security,    actions: VC },
 
-  // ─── AI Tools ──────────────────────────────────────────────────────
-  // Group covers the screens moved out of the Control Panel into the
-  // dedicated "أدوات الذكاء الاصطناعي" sidebar group. Note that voice
-  // assistant, AI reports, and sessions admin are admin-only at the nav
-  // level (requireAdmin) so they don't need per-user toggles — the only
-  // screen with non-admin access that needs a permission gate is the
-  // import/export data utility.
-  { key: "data_io",              label: "perms.modules.data_io",              group: G.aiTools,     actions: ["view", "create", "export"] },
+  // ─── Voice Assistant / Sessions / Chat / Company Maintenance ─────────
+  // These four screens were split out of the old "أدوات الذكاء الاصطناعي"
+  // group into their own top-level sidebar groups, each with its own
+  // company-level menu toggle. Per-user toggles let the company admin
+  // govern who can reach each one. Voice assistant + sessions admin are
+  // also requireAdmin at the nav level.
+  { key: "voiceAssistant",       label: "perms.modules.voiceAssistant",       group: G.voiceAssistant,     actions: VO },
+  { key: "sessions",             label: "perms.modules.sessions",             group: G.sessions,           actions: VC },
+  { key: "chat",                 label: "perms.modules.chat",                 group: G.chat,               actions: VO },
+  { key: "data_io",              label: "perms.modules.data_io",              group: G.companyMaintenance, actions: ["view", "create", "export"] },
 
   // ─── Field Service Management (FSM) ──────────────────────────────────
   // Standalone billable module gated by `field_service` company toggle.

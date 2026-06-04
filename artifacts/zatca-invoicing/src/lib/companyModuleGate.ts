@@ -80,13 +80,16 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   security_events: "security_events",
   // SEO Manager — site analytics dashboard granted per company.
   seo_dashboard: "seo_dashboard",
-  // AI Tools — covers data import/export plus the admin-only voice
-  // assistant, AI reports, and sessions admin screens. Disabling the
-  // ai_tools company toggle hides the entire group and 403s any
-  // backend access to its gated modules.
-  data_io: "ai_tools",
-  voiceAssistant: "ai_tools",
-  sessions: "ai_tools",
+  // AI Tools & spun-out groups — AI Reports stays under the `ai_tools`
+  // company toggle; the voice assistant, sessions, internal chat, and data
+  // import/export screens each have their own top-level company toggle now
+  // (voice_assistant / sessions / chat / company_maintenance). Disabling a
+  // toggle hides its sidebar group and 403s any backend access to its gated
+  // modules. Keep in sync with the backend COMPANY_MODULE_GATE.
+  data_io: "company_maintenance",
+  voiceAssistant: "voice_assistant",
+  sessions: "sessions",
+  chat: "chat",
   ai_reports: "ai_tools",
   // Tax / general invoices
   vat_declaration: "reports",

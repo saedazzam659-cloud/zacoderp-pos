@@ -70,7 +70,13 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "ai_tools",           label: "أدوات الذكاء الاصطناعي",     section: "أدوات الذكاء الاصطناعي" },
 
+  { key: "voice_assistant",    label: "إعدادات المساعد الصوتي",     section: "إعدادات المساعد الصوتي" },
+
+  { key: "sessions",           label: "الجلسات",                    section: "الجلسات" },
+
   { key: "chat",               label: "الاتصال الداخلي",            section: "الاتصال الداخلي" },
+
+  { key: "company_maintenance", label: "صيانة الشركات",             section: "صيانة الشركات" },
 
   { key: "installments",       label: "البيع بالتقسيط الذكي",       section: "البيع بالتقسيط" },
 
@@ -144,6 +150,9 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   online_store:       null,           // included for now (no separate billable module)
   field_service:      "field_service", // standalone billable module — Field Service Management (FSM)
   ai_tools:           null,           // SuperAdmin tool, not billed per-company
+  voice_assistant:    null,           // admin-only settings screen, no separate billable module
+  sessions:           null,           // sessions group, no separate billable module
+  company_maintenance: null,          // data import/export, no separate billable module
   installments:       "installments",
   user_tracking:      null,
   zatca:              "zatca",
@@ -186,6 +195,9 @@ export const SECTION_THEME: Record<string, { bg: string; text: string; border: s
   "الأمن والمراقبة":       { bg: "bg-slate-50",    text: "text-slate-700",    border: "border-slate-200" },
   "تحليلات SEO":           { bg: "bg-fuchsia-50",  text: "text-fuchsia-700",  border: "border-fuchsia-200" },
   "أدوات الذكاء الاصطناعي": { bg: "bg-violet-50",   text: "text-violet-700",   border: "border-violet-200" },
+  "إعدادات المساعد الصوتي": { bg: "bg-violet-50",   text: "text-violet-700",   border: "border-violet-200" },
+  "الجلسات":              { bg: "bg-indigo-50",   text: "text-indigo-700",   border: "border-indigo-200" },
+  "صيانة الشركات":         { bg: "bg-slate-50",    text: "text-slate-700",    border: "border-slate-200" },
   "النظام":               { bg: "bg-purple-50",   text: "text-purple-700",   border: "border-purple-200" },
   "الاتصال الداخلي":       { bg: "bg-green-50",    text: "text-green-700",    border: "border-green-200" },
   "البيع بالتقسيط":         { bg: "bg-lime-50",     text: "text-lime-700",     border: "border-lime-200" },
