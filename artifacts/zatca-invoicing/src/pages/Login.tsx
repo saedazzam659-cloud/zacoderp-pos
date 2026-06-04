@@ -10,7 +10,7 @@ import {
   KeyRound, Smartphone, RefreshCw, ArrowLeft, Clock,
   Wallet, Boxes, ShoppingCart, Truck, Users, Factory,
   Landmark, Building2, FolderKanban, HardHat, Wrench, Hotel, Hospital,
-  Sparkles, TrendingUp, BarChart3, Brain, Globe2, Zap, LayoutGrid, Play,
+  Sparkles, TrendingUp, BarChart3, Brain, Globe2, Zap, LayoutGrid,
 } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { CountrySelector } from "@/components/CountrySelector";
@@ -403,10 +403,6 @@ export default function Login() {
   // brand block. Auto-detected on first paint; user can override via the
   // CountrySelector at the top of the page.
   const [visitorCountry] = useVisitorCountry();
-  // Click-to-play poster pattern, mirrors the Home hero. The iframe
-  // is heavy (Framer Motion + GSAP scenes) so we defer its mount until
-  // the visitor actually hits Play. Same standalone artifact as Home.
-  const [videoStarted, setVideoStarted] = useState(false);
   const countryInfo = getCountryByCode(visitorCountry);
 
   const modules = [
@@ -499,49 +495,6 @@ export default function Login() {
                   </div>
                 ))}
               </div>
-            </div>
-
-            {/* Ease-of-use + AI video — same artifact as Home so the
-                positioning stays consistent between the marketing page
-                and the auth page. Click-to-play to keep the form-side
-                of the screen snappy. */}
-            <div
-              className="relative aspect-video rounded-2xl overflow-hidden border shadow-lg bg-gradient-to-br from-slate-900 via-primary/30 to-slate-900"
-              data-testid="login-video"
-            >
-              {videoStarted ? (
-                <iframe
-                  src="/install-guide-video/"
-                  title="نظام محاسبة ذكي وسهل الاستخدام"
-                  className="absolute inset-0 w-full h-full"
-                  allow="autoplay; fullscreen"
-                  data-testid="login-video-iframe"
-                />
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setVideoStarted(true)}
-                  className="absolute inset-0 w-full h-full flex flex-col items-center justify-center text-white group"
-                  data-testid="login-video-play"
-                  aria-label="شغّل الفيديو التعريفي"
-                >
-                  <span className="absolute inset-0 bg-black/40 group-hover:bg-black/30 transition-colors" />
-                  <span className="relative inline-flex h-14 w-14 items-center justify-center rounded-full bg-primary shadow-xl group-hover:scale-110 transition-transform">
-                    <Play className="h-6 w-6 ms-1 fill-white text-white" />
-                  </span>
-                  <span className="relative mt-3 text-sm font-bold text-center px-4">
-                    شاهد كيف يجمع نظامنا بين السهولة والذكاء الاصطناعي
-                  </span>
-                  <span className="relative mt-2 flex flex-wrap justify-center gap-1.5 text-[10px]">
-                    <span className="rounded-full bg-white/15 backdrop-blur px-2 py-0.5 inline-flex items-center gap-1">
-                      <Sparkles className="h-2.5 w-2.5" /> ذكاء اصطناعي
-                    </span>
-                    <span className="rounded-full bg-white/15 backdrop-blur px-2 py-0.5 inline-flex items-center gap-1">
-                      <Zap className="h-2.5 w-2.5" /> ≤ ٩٠ ث
-                    </span>
-                  </span>
-                </button>
-              )}
             </div>
 
             {/* AI capabilities strip */}

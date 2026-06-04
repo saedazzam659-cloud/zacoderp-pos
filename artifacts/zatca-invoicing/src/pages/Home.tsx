@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Helmet } from "react-helmet-async";
 import {
   ShieldCheck, Sparkles, ArrowLeft, Check, FileText, BarChart3,
-  Users, Package, Zap, Globe2, Brain, Building2, Play,
+  Users, Package, Zap, Globe2, Brain, Building2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -51,11 +51,6 @@ export default function Home() {
   // changes whenever the visitor flips countries).
   const [visitorCountry, , countryExplicit] = useVisitorCountry();
   const countryInfo = getCountryByCode(visitorCountry);
-
-  // Click-to-play video poster: the heavy iframe (Framer Motion + GSAP +
-  // multiple gradient layers) is only mounted after the user clicks Play
-  // so the homepage stays light on first paint and Lighthouse stays happy.
-  const [videoStarted, setVideoStarted] = useState(false);
 
   // Fetch latest published articles to feature in the "أحدث المقالات"
   // section — both for visitors and as internal links Google can follow
@@ -305,52 +300,6 @@ export default function Home() {
           <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5 text-primary" /> تكامل ZATCA UBL 2.1</span>
         </div>
 
-        {/* ── Hero video ─────────────────────────────────────────────
-            Click-to-play poster pattern (lightweight static markup
-            until clicked, then mounts the iframe pointing at the
-            standalone install-guide-video artifact). The video is a
-            ≤90s ease-of-use + AI piece — the poster surfaces both of
-            those promises with two badges and a clear Play target. */}
-        <div className="mt-10 mx-auto max-w-3xl">
-          <div
-            className="relative aspect-video rounded-2xl overflow-hidden border shadow-xl bg-gradient-to-br from-slate-900 via-primary/30 to-slate-900"
-            data-testid="home-video"
-          >
-            {videoStarted ? (
-              <iframe
-                src="/install-guide-video/"
-                title="نظام محاسبة ذكي وسهل الاستخدام"
-                className="absolute inset-0 w-full h-full"
-                allow="autoplay; fullscreen"
-                data-testid="home-video-iframe"
-              />
-            ) : (
-              <button
-                type="button"
-                onClick={() => setVideoStarted(true)}
-                className="absolute inset-0 w-full h-full flex flex-col items-center justify-center text-white group"
-                data-testid="home-video-play"
-                aria-label="شغّل الفيديو التعريفي"
-              >
-                <span className="absolute inset-0 bg-black/40 group-hover:bg-black/30 transition-colors" />
-                <span className="relative inline-flex h-20 w-20 items-center justify-center rounded-full bg-primary shadow-2xl group-hover:scale-110 transition-transform">
-                  <Play className="h-9 w-9 ms-1 fill-white text-white" />
-                </span>
-                <span className="relative mt-5 text-lg md:text-xl font-bold">
-                  شاهد كيف يجمع نظامنا بين السهولة والذكاء الاصطناعي
-                </span>
-                <span className="relative mt-3 flex flex-wrap justify-center gap-2 text-xs">
-                  <span className="rounded-full bg-white/15 backdrop-blur px-3 py-1 inline-flex items-center gap-1">
-                    <Sparkles className="h-3 w-3" /> ذكاء اصطناعي مدمج
-                  </span>
-                  <span className="rounded-full bg-white/15 backdrop-blur px-3 py-1 inline-flex items-center gap-1">
-                    <Zap className="h-3 w-3" /> أقل من ٩٠ ثانية
-                  </span>
-                </span>
-              </button>
-            )}
-          </div>
-        </div>
       </section>
 
       {/* Why-us / Trust strip */}

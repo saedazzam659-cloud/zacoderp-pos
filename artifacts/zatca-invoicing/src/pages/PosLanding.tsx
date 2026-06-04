@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { Helmet } from "react-helmet-async";
 import {
-  ShieldCheck, Sparkles, ArrowLeft, Check, ChevronDown, Play,
+  ShieldCheck, Sparkles, ArrowLeft, Check, ChevronDown,
   Smartphone, Wifi, Receipt, BarChart3, Package, CreditCard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,6 @@ export default function PosLanding() {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const canonical = `${origin}/pos-system`;
   const [openFaq, setOpenFaq] = useState<number | null>(0);
-  const [videoStarted, setVideoStarted] = useState(false);
 
   const faqs = useMemo(() => [
     {
@@ -191,45 +190,6 @@ export default function PosLanding() {
           <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5 text-primary" /> بدون بطاقة دفع</span>
           <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5 text-primary" /> دعم عربي</span>
           <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5 text-primary" /> Offline mode</span>
-        </div>
-      </section>
-
-      {/* Video — embedded professional Saudi-market motion-graphics piece.
-         Hosted by the install-guide-video artifact at /install-guide-video/.
-         Click-to-play poster pattern keeps the landing page fast (no iframe
-         requested until the user opts in, so no extra TBT on first paint). */}
-      <section className="max-w-5xl mx-auto px-4 py-10">
-        <div
-          className="relative aspect-video w-full overflow-hidden rounded-2xl border bg-black shadow-xl"
-          data-testid="pos-video-embed"
-        >
-          {videoStarted ? (
-            <iframe
-              src="/install-guide-video/"
-              title="نظام نقاط البيع السعودي — فيديو تعريفي"
-              className="absolute inset-0 h-full w-full"
-              loading="lazy"
-              allow="autoplay; fullscreen"
-              allowFullScreen
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={() => setVideoStarted(true)}
-              className="group absolute inset-0 flex items-center justify-center bg-gradient-to-br from-[#0d2a2a] via-[#0a1f1f] to-black text-white"
-              aria-label="تشغيل الفيديو التعريفي"
-              data-testid="pos-video-play"
-            >
-              <span className="absolute inset-0 opacity-30 [background:radial-gradient(circle_at_30%_30%,#0d9488,transparent_55%),radial-gradient(circle_at_70%_70%,#d4a017,transparent_60%)]" />
-              <span className="relative flex flex-col items-center gap-3">
-                <span className="flex h-20 w-20 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm ring-1 ring-white/20 transition-transform group-hover:scale-110">
-                  <Play className="h-9 w-9 translate-x-0.5 fill-white text-white" />
-                </span>
-                <span className="text-base font-semibold">شاهد كيف يعمل النظام في 30 ثانية</span>
-                <span className="text-xs text-white/70">فيديو تعريفي قصير — يبدأ بنقرة واحدة</span>
-              </span>
-            </button>
-          )}
         </div>
       </section>
 
