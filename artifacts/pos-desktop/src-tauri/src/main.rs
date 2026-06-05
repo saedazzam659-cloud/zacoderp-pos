@@ -14,6 +14,7 @@ mod lan;
 mod license;
 mod peripherals;
 mod permissions;
+mod salespersons;
 mod scale;
 mod standalone;
 mod sync;
@@ -381,6 +382,10 @@ fn main() {
             customers::upsert_customers_from_cloud,
             customers::create_customer_local,
             customers::update_customer_local,
+            salespersons::list_salespersons,
+            salespersons::create_salesperson_local,
+            salespersons::update_salesperson_local,
+            salespersons::delete_salesperson_local,
             invoices::save_offline_invoice,
             invoices::list_pending_invoices,
             invoices::list_all_invoices,

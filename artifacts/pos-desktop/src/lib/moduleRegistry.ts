@@ -28,6 +28,7 @@ export type WindowsView =
   | "customers" | "items" | "uom" | "dashboard" | "updates" | "users"
   | "expiry" | "scale" | "stock_import" | "low_stock" | "network"
   | "suppliers" | "purchases" | "purchase_returns"
+  | "salespersons"
   | "sales_invoices" | "sales_returns" | "invoice_import"
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
@@ -95,6 +96,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   suppliers:         { module: "purchasing", profile: "erp" },
   purchases:         { module: "purchasing", profile: "erp" },
   purchase_returns:  { module: "purchasing", profile: "erp" },
+  salespersons:      { module: "sales_docs", profile: "erp" },
   sales_invoices:    { module: "sales_docs", profile: "erp" },
   sales_returns:     { module: "sales_docs", profile: "erp" },
   cash_boxes:        { module: "cash_banks", profile: "erp" },

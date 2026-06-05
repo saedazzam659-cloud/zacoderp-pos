@@ -75,12 +75,19 @@ export async function bridgeSalesInvoiceToZatca(input: BridgeInput): Promise<Bri
   const vat = r2(inv.vatTotal);
   const grandTotal = r2(inv.grandTotal);
 
+  // Prefer the PERSISTED buyer snapshot (frozen at save, used for B2B standard
+  // invoices) over the live caller hints. A "standard" doc with a buyer VAT is a
+  // B2B tax invoice; anything else stays simplified (B2C).
+  const isStandard = (inv.invoiceType ?? "simplified") === "standard";
+  const buyerName = inv.buyerName || input.customerName || inv.customerName || undefined;
+  const buyerVat = inv.buyerVat || input.customerVat || undefined;
+
   const payload: OfflineInvoicePayload = {
-    customerName: input.customerName ?? inv.customerName ?? undefined,
-    // Buyer VAT (when supplied) drives standard-vs-simplified classification on
-    // the cloud; fall back to the seller VAT to mirror the register's
-    // simplified-invoice behaviour when no buyer VAT is present.
-    vatNumber: input.customerVat || sellerVat || undefined,
+    customerName: buyerName,
+    // Buyer VAT drives standard-vs-simplified classification on the cloud: only
+    // a B2B (standard) doc forwards the buyer VAT; simplified (B2C) falls back to
+    // the seller VAT, mirroring the register's simplified-invoice behaviour.
+    vatNumber: (isStandard ? buyerVat : undefined) || sellerVat || undefined,
     paymentMethod: input.paymentMethod === "cash" ? "cash" : "card",
     timestamp: new Date(`${inv.invoiceDate}T00:00:00Z`).toISOString(),
     subtotal,

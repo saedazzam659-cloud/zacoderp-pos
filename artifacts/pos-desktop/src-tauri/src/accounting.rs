@@ -1421,6 +1421,16 @@ pub struct SalesLine {
     pub uom_name: Option<String>,
     #[serde(default = "default_conversion_factor")]
     pub conversion_factor: f64,
+    /// Free / bonus units given with this line. They generate NO revenue and
+    /// NO VAT, but DO consume stock and add to COGS (qty + free_qty) × factor.
+    #[serde(default)]
+    pub free_qty: f64,
+    /// Optional per-line note.
+    #[serde(default)]
+    pub note: Option<String>,
+    /// Per-line warehouse override. None → header/default warehouse.
+    #[serde(default)]
+    pub warehouse_id: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1440,6 +1450,23 @@ pub struct SalesInvoice {
     pub bank_id: Option<i64>,
     pub je_id: Option<i64>,
     pub notes: Option<String>,
+    /// Salesperson / rep attribution + commission % snapshot (back-office only).
+    #[serde(default)]
+    pub sales_rep_id: Option<i64>,
+    #[serde(default)]
+    pub sales_rep_name: Option<String>,
+    #[serde(default)]
+    pub commission_pct: f64,
+    /// ZATCA document type: "standard" (B2B) or "simplified" (B2C).
+    #[serde(default)]
+    pub invoice_type: Option<String>,
+    /// Frozen buyer snapshot (filled at save from the customer, editable).
+    #[serde(default)]
+    pub buyer_name: Option<String>,
+    #[serde(default)]
+    pub buyer_vat: Option<String>,
+    #[serde(default)]
+    pub buyer_address: Option<String>,
     pub lines: Vec<SalesLine>,
     /// Cached ZATCA TLV QR (base64). Loaded by `sales_invoice_get`; left None
     /// in the list query to avoid shipping multi-hundred-byte blobs per row.
@@ -1464,6 +1491,18 @@ pub struct SalesInvoiceInput {
     pub branch_id: Option<i64>,
     #[serde(default)]
     pub cost_center_id: Option<i64>,
+    #[serde(default)]
+    pub sales_rep_id: Option<i64>,
+    #[serde(default)]
+    pub commission_pct: Option<f64>,
+    #[serde(default)]
+    pub invoice_type: Option<String>,
+    #[serde(default)]
+    pub buyer_name: Option<String>,
+    #[serde(default)]
+    pub buyer_vat: Option<String>,
+    #[serde(default)]
+    pub buyer_address: Option<String>,
     pub lines: Vec<SalesLine>,
 }
 
@@ -1522,9 +1561,11 @@ pub fn sales_invoices_list(limit: Option<i64>) -> Result<Vec<SalesInvoice>, Stri
     let mut stmt = conn.prepare(
         "SELECT s.id,s.invoice_no,s.customer_id,c.name_ar,s.invoice_date,s.subtotal,s.vat_total,s.grand_total,
                 s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes,
+                s.sales_rep_id,sp.name_ar,s.commission_pct,s.invoice_type,s.buyer_name,s.buyer_vat,s.buyer_address,
                 oi.sync_status
          FROM sales_invoices_local s
          LEFT JOIN customers_local c ON c.id=s.customer_id
+         LEFT JOIN salespersons_local sp ON sp.id=s.sales_rep_id
          LEFT JOIN offline_invoices oi ON oi.local_uuid=s.zatca_offline_uuid
          ORDER BY s.id DESC LIMIT ?1"
     ).map_err(|e| e.to_string())?;
@@ -1532,8 +1573,11 @@ pub fn sales_invoices_list(limit: Option<i64>) -> Result<Vec<SalesInvoice>, Stri
         id: r.get(0)?, invoice_no: r.get(1)?, customer_id: r.get(2)?, customer_name: r.get(3)?,
         invoice_date: r.get(4)?, subtotal: r.get(5)?, vat_total: r.get(6)?, grand_total: r.get(7)?,
         cogs_total: r.get(8)?, payment_method: r.get(9)?, cash_box_id: r.get(10)?, bank_id: r.get(11)?,
-        je_id: r.get(12)?, notes: r.get(13)?, lines: Vec::new(),
-        zatca_qr_base64: None, zatca_status: r.get(14)?,
+        je_id: r.get(12)?, notes: r.get(13)?,
+        sales_rep_id: r.get(14)?, sales_rep_name: r.get(15)?, commission_pct: r.get(16)?,
+        invoice_type: r.get(17)?, buyer_name: r.get(18)?, buyer_vat: r.get(19)?, buyer_address: r.get(20)?,
+        lines: Vec::new(),
+        zatca_qr_base64: None, zatca_status: r.get(21)?,
     })).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows { out.push(r.map_err(|e| e.to_string())?); }
@@ -1546,21 +1590,26 @@ pub fn sales_invoice_get(id: i64) -> Result<SalesInvoice, String> {
     let mut s: SalesInvoice = conn.query_row(
         "SELECT s.id,s.invoice_no,s.customer_id,c.name_ar,s.invoice_date,s.subtotal,s.vat_total,s.grand_total,
                 s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes,
+                s.sales_rep_id,sp.name_ar,s.commission_pct,s.invoice_type,s.buyer_name,s.buyer_vat,s.buyer_address,
                 s.zatca_qr_base64,oi.sync_status
          FROM sales_invoices_local s
          LEFT JOIN customers_local c ON c.id=s.customer_id
+         LEFT JOIN salespersons_local sp ON sp.id=s.sales_rep_id
          LEFT JOIN offline_invoices oi ON oi.local_uuid=s.zatca_offline_uuid
          WHERE s.id=?1",
         params![id], |r| Ok(SalesInvoice {
             id: r.get(0)?, invoice_no: r.get(1)?, customer_id: r.get(2)?, customer_name: r.get(3)?,
             invoice_date: r.get(4)?, subtotal: r.get(5)?, vat_total: r.get(6)?, grand_total: r.get(7)?,
             cogs_total: r.get(8)?, payment_method: r.get(9)?, cash_box_id: r.get(10)?, bank_id: r.get(11)?,
-            je_id: r.get(12)?, notes: r.get(13)?, lines: Vec::new(),
-            zatca_qr_base64: r.get(14)?, zatca_status: r.get(15)?,
+            je_id: r.get(12)?, notes: r.get(13)?,
+            sales_rep_id: r.get(14)?, sales_rep_name: r.get(15)?, commission_pct: r.get(16)?,
+            invoice_type: r.get(17)?, buyer_name: r.get(18)?, buyer_vat: r.get(19)?, buyer_address: r.get(20)?,
+            lines: Vec::new(),
+            zatca_qr_base64: r.get(21)?, zatca_status: r.get(22)?,
         })
     ).map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT sl.id,sl.item_id,i.name_ar,sl.qty,sl.unit_price,sl.vat_rate,sl.line_total,sl.uom_id,sl.uom_name,sl.conversion_factor
+        "SELECT sl.id,sl.item_id,i.name_ar,sl.qty,sl.unit_price,sl.vat_rate,sl.line_total,sl.uom_id,sl.uom_name,sl.conversion_factor,sl.free_qty,sl.note,sl.warehouse_id
          FROM sales_invoice_lines_local sl JOIN items_local i ON i.id=sl.item_id
          WHERE sl.invoice_id=?1 ORDER BY sl.id"
     ).map_err(|e| e.to_string())?;
@@ -1568,6 +1617,7 @@ pub fn sales_invoice_get(id: i64) -> Result<SalesInvoice, String> {
         id: r.get(0)?, item_id: r.get(1)?, item_name: r.get(2)?, qty: r.get(3)?,
         unit_price: r.get(4)?, vat_rate: r.get(5)?, line_total: r.get(6)?,
         uom_id: r.get(7)?, uom_name: r.get(8)?, conversion_factor: r.get(9)?,
+        free_qty: r.get(10)?, note: r.get(11)?, warehouse_id: r.get(12)?,
     })).map_err(|e| e.to_string())?;
     for r in rows { s.lines.push(r.map_err(|e| e.to_string())?); }
     Ok(s)
@@ -1674,11 +1724,20 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
     }
 
     let invoice_no = next_sales_no(&tx).map_err(|e| e.to_string())?;
+    // ZATCA doc type: default simplified (B2C); only "standard" is the other
+    // accepted value. commission_pct clamps to a sane 0..=100 range.
+    let invoice_type = match input.invoice_type.as_deref() {
+        Some("standard") => "standard",
+        _ => "simplified",
+    };
+    let commission_pct = input.commission_pct.unwrap_or(0.0).clamp(0.0, 100.0);
+    let sales_rep_id = match input.sales_rep_id { Some(r) if r > 0 => Some(r), _ => None };
     tx.execute(
-        "INSERT INTO sales_invoices_local(invoice_no,customer_id,invoice_date,subtotal,vat_total,grand_total,cogs_total,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+        "INSERT INTO sales_invoices_local(invoice_no,customer_id,invoice_date,subtotal,vat_total,grand_total,cogs_total,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id,sales_rep_id,commission_pct,invoice_type,buyer_name,buyer_vat,buyer_address)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
         params![invoice_no, input.customer_id, input.invoice_date, subtotal, vat_total, grand_total, 0.0,
-                input.payment_method, input.cash_box_id, input.bank_id, input.notes, input.branch_id, input.cost_center_id],
+                input.payment_method, input.cash_box_id, input.bank_id, input.notes, input.branch_id, input.cost_center_id,
+                sales_rep_id, commission_pct, invoice_type, input.buyer_name, input.buyer_vat, input.buyer_address],
     ).map_err(|e| e.to_string())?;
     let invoice_id = tx.last_insert_rowid();
 
@@ -1688,16 +1747,22 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
         let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
         let line_sub = l.qty * l.unit_price;
         let lt = line_sub + line_sub * l.vat_rate / 100.0;
-        // unit_cost is the moving cost PER BASE UNIT; base qty sold = qty × factor.
-        let unit_cost = item_cost_in_tx(&tx, l.item_id, default_wh);
-        cogs_total += unit_cost * l.qty * factor;
+        // Per-line warehouse override → fall back to the header/default one.
+        let line_wh = match l.warehouse_id { Some(w) if w > 0 => w, _ => default_wh };
+        // Free (bonus) units: no revenue/VAT, but consume stock + add COGS.
+        let free_qty = if l.free_qty > 0.0 { l.free_qty } else { 0.0 };
+        let total_base_qty = (l.qty + free_qty) * factor;
+        // unit_cost is the moving cost PER BASE UNIT (from the LINE warehouse).
+        let unit_cost = item_cost_in_tx(&tx, l.item_id, line_wh);
+        cogs_total += unit_cost * total_base_qty;
         tx.execute(
-            "INSERT INTO sales_invoice_lines_local(invoice_id,item_id,qty,unit_price,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-            params![invoice_id, l.item_id, l.qty, l.unit_price, unit_cost, l.vat_rate, lt, l.uom_id, l.uom_name, factor],
+            "INSERT INTO sales_invoice_lines_local(invoice_id,item_id,qty,unit_price,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor,free_qty,note,warehouse_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+            params![invoice_id, l.item_id, l.qty, l.unit_price, unit_cost, l.vat_rate, lt, l.uom_id, l.uom_name, factor, free_qty, l.note, line_wh],
         ).map_err(|e| e.to_string())?;
-        // Stock OUT: BASE units (qty × factor) at the per-base moving cost.
+        // Stock OUT: BASE units ((qty + free_qty) × factor) at per-base cost,
+        // from the line's resolved warehouse.
         crate::inventory::ledger_push_in_tx(
-            &tx, l.item_id, default_wh, -l.qty * factor, unit_cost,
+            &tx, l.item_id, line_wh, -total_base_qty, unit_cost,
             "sale", Some(invoice_id), &input.invoice_date,
         )?;
     }
@@ -1841,6 +1906,7 @@ pub fn sales_return_get(id: i64) -> Result<SalesReturn, String> {
         id: r.get(0)?, item_id: r.get(1)?, item_name: r.get(2)?, qty: r.get(3)?,
         unit_price: r.get(4)?, vat_rate: r.get(5)?, line_total: r.get(6)?,
         uom_id: r.get(7)?, uom_name: r.get(8)?, conversion_factor: r.get(9)?,
+        free_qty: 0.0, note: None, warehouse_id: None,
     })).map_err(|e| e.to_string())?;
     for r in rows { p.lines.push(r.map_err(|e| e.to_string())?); }
     Ok(p)

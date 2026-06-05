@@ -3,6 +3,7 @@
 - [Module gate keys live in two places](module-gate-sync.md) — backend `COMPANY_MODULE_GATE` (permissions.ts) AND frontend group-perms arrays in `Layout.tsx` must both list any new module key, or sidebar/company-toggle silently breaks.
 - [POS Desktop new-screen wiring](pos-desktop-screen-wiring.md) — a new PosShell screen needs View type + nav + permission + the render branch in the content switch; the render branch is the one tsc won't catch.
 - [POS Desktop Rust compiles only in CI](pos-desktop-no-local-cargo.md) — no local cargo; tsc+architect miss Rust errors. Hand-check dup serde-default helpers, unused imports, column/param drift before tagging.
+- [POS Desktop shared row-mapped struct](pos-desktop-shared-row-struct.md) — adding a field to a Rust struct built by >1 query_map closure needs EVERY reader updated; serde(default) doesn't make struct literals optional; CI-only catch.
 - [POS Desktop sticky footer](pos-desktop-sticky-footer.md) — cart pane uses a 3-child flex column; only `linesScroll` may scroll, footer must be flex-shrink:0 or payment buttons vanish below the fold.
 - [POS Desktop pull must persist](pos-desktop-pull-must-persist.md) — `/api/sync/pull` response counts ≠ local catalog; always go through `lib/sync.ts → pullAndPersist`, never call `api.pull` directly from a component.
 - [POS Desktop two-layer auth](pos-desktop-two-auth-layers.md) — device token + cashier token live in SEPARATE keyring slots; logging out a cashier must never wipe the device binding.

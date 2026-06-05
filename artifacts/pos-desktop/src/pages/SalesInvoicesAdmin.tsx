@@ -7,6 +7,7 @@ import { listCustomers, type LocalCustomer } from "../lib/customers";
 import { listItems, type LocalItem } from "../lib/items";
 import { listUom, type Uom } from "../lib/uom";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
+import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
@@ -28,7 +29,7 @@ export default function SalesInvoicesAdmin() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<SalesInvoice | null>(null);
   const [creating, setCreating] = useState(false);
-  const [deps, setDeps] = useState<{ customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[] } | null>(null);
+  const [deps, setDeps] = useState<{ customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[]; salespersons: Salesperson[] } | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
@@ -36,8 +37,8 @@ export default function SalesInvoicesAdmin() {
   useEffect(() => {
     void refresh();
     void (async () => {
-      const [customers, cashBoxes, banks, items, warehouses] = await Promise.all([listCustomers(), listCashBoxes(), listBanks(), listItems(), listWarehouses()]);
-      setDeps({ customers, cashBoxes, banks, items, warehouses });
+      const [customers, cashBoxes, banks, items, warehouses, salespersons] = await Promise.all([listCustomers(), listCashBoxes(), listBanks(), listItems(), listWarehouses(), listSalespersons(false)]);
+      setDeps({ customers, cashBoxes, banks, items, warehouses, salespersons });
     })();
   }, []);
 
@@ -182,7 +183,7 @@ function SalesDetail({ p }: { p: SalesInvoice }) {
 }
 
 function CreateForm({ deps, onCancel, onDone }: {
-  deps: { customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[] };
+  deps: { customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[]; salespersons: Salesperson[] };
   onCancel: () => void; onDone: () => void;
 }) {
   const [customerId, setCustomerId] = useState<number>(0);
@@ -196,6 +197,12 @@ function CreateForm({ deps, onCancel, onDone }: {
   const { branches, costCenters } = useDimensions();
   const [branchId, setBranchId] = useState<number | "">("");
   const [costCenterId, setCostCenterId] = useState<number | "">("");
+  const [salesRepId, setSalesRepId] = useState<number | "">("");
+  // ZATCA doc type: simplified (B2C) default, standard (B2B) requires buyer VAT.
+  const [invoiceType, setInvoiceType] = useState<"simplified" | "standard">("simplified");
+  const [buyerName, setBuyerName] = useState("");
+  const [buyerVat, setBuyerVat] = useState("");
+  const [buyerAddress, setBuyerAddress] = useState("");
   const [notes, setNotes] = useState("");
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
@@ -218,6 +225,21 @@ function CreateForm({ deps, onCancel, onDone }: {
   const { taxes, taxId, setTaxId, taxOptions, selectedRate } = useInvoiceTaxes("sales");
 
   const selectedCustomer = deps.customers.find((c) => c.id === customerId) ?? null;
+
+  // Freeze a buyer snapshot from the chosen customer (editable afterwards), and
+  // auto-pick the ZATCA doc type: a customer with a VAT number ⇒ standard (B2B).
+  useEffect(() => {
+    if (!selectedCustomer) {
+      setBuyerName(""); setBuyerVat(""); setBuyerAddress(""); setInvoiceType("simplified");
+      return;
+    }
+    setBuyerName(selectedCustomer.nameAr ?? "");
+    setBuyerVat(selectedCustomer.vatNumber ?? "");
+    const addr = [selectedCustomer.street, selectedCustomer.district, selectedCustomer.city]
+      .filter((x) => x && String(x).trim()).join("، ");
+    setBuyerAddress(addr);
+    setInvoiceType(selectedCustomer.vatNumber ? "standard" : "simplified");
+  }, [customerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function setLine(i: number, patch: Partial<FLine>) {
     setLines((ls) => ls.map((l, k) => {
@@ -296,6 +318,7 @@ function CreateForm({ deps, onCancel, onDone }: {
           itemId: l.itemId, itemName: l.itemName, qty: l.qty, unitPrice: net, vatRate: l.vatRate,
           lineTotal: l.qty * net * (1 + (Number(l.vatRate) || 0) / 100),
           uomId: l.uomId, uomName: l.uomName, conversionFactor: l.conversionFactor,
+          freeQty: l.freeQty || 0, note: l.note?.trim() ? l.note.trim() : null,
         };
       });
       // Persist once; on a ZATCA-bridge retry `savedId` is already set so we
@@ -309,6 +332,12 @@ function CreateForm({ deps, onCancel, onDone }: {
           warehouseId: warehouseId || null,
           branchId: branchId === "" ? null : branchId,
           costCenterId: costCenterId === "" ? null : costCenterId,
+          salesRepId: salesRepId === "" ? null : salesRepId,
+          commissionPct: salesRepId === "" ? null : (deps.salespersons.find((s) => s.id === salesRepId)?.commissionPct ?? 0),
+          invoiceType,
+          buyerName: invoiceType === "standard" ? (buyerName.trim() || null) : null,
+          buyerVat: invoiceType === "standard" ? (buyerVat.trim() || null) : null,
+          buyerAddress: invoiceType === "standard" ? (buyerAddress.trim() || null) : null,
           notes: notes || null, lines: payloadLines,
         });
         setSavedId(id);
@@ -392,6 +421,46 @@ function CreateForm({ deps, onCancel, onDone }: {
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
       </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+        <Field label="مندوب المبيعات">
+          <SearchCombobox
+            value={salesRepId}
+            onChange={(v) => setSalesRepId(v === "" ? "" : Number(v))}
+            style={input}
+            options={[
+              { value: "", label: "— بدون —" },
+              ...deps.salespersons.map((s) => ({ value: s.id, label: s.nameAr })),
+            ]}
+          />
+        </Field>
+        <Field label="نوع الفاتورة (زاتكا)">
+          <SearchCombobox
+            value={invoiceType}
+            onChange={(v) => setInvoiceType(v as "simplified" | "standard")}
+            style={input}
+            options={[
+              { value: "simplified", label: "مبسّطة (B2C)" },
+              { value: "standard", label: "ضريبية (B2B)" },
+            ]}
+          />
+        </Field>
+      </div>
+      {invoiceType === "standard" && (
+        <div style={{ marginTop: 10, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>بيانات المشتري (للفاتورة الضريبية)</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="اسم المشتري">
+              <input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} style={input} />
+            </Field>
+            <Field label="الرقم الضريبي للمشتري">
+              <input value={buyerVat} onChange={(e) => setBuyerVat(e.target.value)} style={input} />
+            </Field>
+          </div>
+          <Field label="عنوان المشتري" style={{ marginTop: 8 }}>
+            <input value={buyerAddress} onChange={(e) => setBuyerAddress(e.target.value)} style={input} />
+          </Field>
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "200px 200px", gap: 10, marginTop: 10 }}>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
       </div>
@@ -432,9 +501,11 @@ function CreateForm({ deps, onCancel, onDone }: {
           <Th style={{ minWidth: 240 }}>الصنف</Th>
           <Th style={{ width: 130 }}>الوحدة</Th>
           <Th style={{ width: 90 }}>الكمية</Th>
+          <Th style={{ width: 80 }}>مجاني</Th>
           <Th style={{ width: 120 }}>سعر الوحدة</Th>
           <Th style={{ width: 170 }}>الخصم</Th>
           <Th style={{ width: 80 }}>ض. %</Th>
+          <Th style={{ width: 150 }}>ملاحظة</Th>
           <Th style={{ width: 120, textAlign: "left" }}>الإجمالي</Th>
           <Th style={{ width: 40 }}></Th>
         </tr></thead>
@@ -461,9 +532,11 @@ function CreateForm({ deps, onCancel, onDone }: {
                 />
               </Td>
               <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={input} /></Td>
+              <Td><input type="number" step="0.001" value={l.freeQty ?? 0} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={input} /></Td>
               <Td><input type="number" step="0.01" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={input} /></Td>
               <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} /></Td>
               <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={input} /></Td>
+              <Td><input value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} style={input} /></Td>
               <Td num>{fmt(l.lineTotal)}</Td>
               <Td><button onClick={() => removeLine(i)} style={{ ...btnLink, color: "#dc2626" }}>×</button></Td>
             </tr>

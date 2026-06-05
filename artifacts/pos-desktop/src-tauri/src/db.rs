@@ -134,6 +134,22 @@ pub fn initialize() -> Result<()> {
             created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
 
+        -- Salespersons / sales reps (مندوبو المبيعات). Full master mirroring
+        -- the web module: linked to back-office sales invoices via
+        -- sales_invoices_local.sales_rep_id with an optional commission %.
+        CREATE TABLE IF NOT EXISTS salespersons_local (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            code           TEXT UNIQUE,
+            name_ar        TEXT NOT NULL,
+            name_en        TEXT,
+            phone          TEXT,
+            email          TEXT,
+            commission_pct REAL NOT NULL DEFAULT 0,
+            is_active      INTEGER NOT NULL DEFAULT 1,
+            notes          TEXT,
+            created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
         -- Cash boxes (الخزن).
         CREATE TABLE IF NOT EXISTS cash_boxes_local (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -714,6 +730,22 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE accounts_local ADD COLUMN level INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE accounts_local ADD COLUMN notes TEXT",
         "ALTER TABLE accounts_local ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1",
+        // ── Back-office sales invoice parity with the web app (T1B) ──
+        // Header: salesperson link + commission snapshot, ZATCA document type
+        // (standard B2B vs simplified B2C) and a frozen buyer snapshot so the
+        // invoice keeps what was billed even if the customer record changes.
+        "ALTER TABLE sales_invoices_local ADD COLUMN sales_rep_id INTEGER",
+        "ALTER TABLE sales_invoices_local ADD COLUMN commission_pct REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE sales_invoices_local ADD COLUMN invoice_type TEXT NOT NULL DEFAULT 'simplified'",
+        "ALTER TABLE sales_invoices_local ADD COLUMN buyer_name TEXT",
+        "ALTER TABLE sales_invoices_local ADD COLUMN buyer_vat TEXT",
+        "ALTER TABLE sales_invoices_local ADD COLUMN buyer_address TEXT",
+        // Lines: free (bonus) qty — no revenue/VAT but still consumes stock &
+        // COGS; an optional per-line note; and a per-line warehouse override
+        // (NULL → falls back to the header/default warehouse).
+        "ALTER TABLE sales_invoice_lines_local ADD COLUMN free_qty REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE sales_invoice_lines_local ADD COLUMN note TEXT",
+        "ALTER TABLE sales_invoice_lines_local ADD COLUMN warehouse_id INTEGER",
     ];
     for sql in alters { let _ = conn.execute(sql, []); }
 

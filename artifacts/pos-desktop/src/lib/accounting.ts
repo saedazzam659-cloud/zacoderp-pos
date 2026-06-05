@@ -121,12 +121,20 @@ export type SalesLine = {
   // conversionFactor (= uom.baseQty) converts qty to BASE units for stock &
   // COGS only — it does NOT change the monetary line total.
   uomId?: number | null; uomName?: string | null; conversionFactor?: number;
+  // Free / bonus units: no revenue & no VAT, but consume stock + add COGS on
+  // (qty + freeQty) × factor. Per-line warehouse override (null → header/default).
+  freeQty?: number; note?: string | null; warehouseId?: number | null;
 };
 export type SalesInvoice = {
   id: number; invoiceNo: string; customerId: number | null; customerName: string | null;
   invoiceDate: string; subtotal: number; vatTotal: number; grandTotal: number; cogsTotal: number;
   paymentMethod: PaymentMethod; cashBoxId: number | null; bankId: number | null;
-  jeId: number | null; notes: string | null; lines: SalesLine[];
+  jeId: number | null; notes: string | null;
+  // Salesperson attribution + commission snapshot, ZATCA doc type, frozen buyer.
+  salesRepId?: number | null; salesRepName?: string | null; commissionPct?: number;
+  invoiceType?: string | null;
+  buyerName?: string | null; buyerVat?: string | null; buyerAddress?: string | null;
+  lines: SalesLine[];
   // ZATCA bridge: cached TLV QR (base64, loaded only by getSalesInvoice) and the
   // sync status of the linked offline_invoices row (null when not bridged / non-SA).
   zatcaQrBase64?: string | null; zatcaStatus?: string | null;
@@ -136,6 +144,9 @@ export type SalesInvoiceInput = {
   cashBoxId: number | null; bankId: number | null; notes: string | null;
   warehouseId?: number | null;
   branchId?: number | null; costCenterId?: number | null;
+  salesRepId?: number | null; commissionPct?: number | null;
+  invoiceType?: string | null;
+  buyerName?: string | null; buyerVat?: string | null; buyerAddress?: string | null;
   lines: SalesLine[];
 };
 
