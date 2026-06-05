@@ -28,7 +28,7 @@ export type WindowsView =
   | "customers" | "items" | "uom" | "dashboard" | "updates" | "users"
   | "expiry" | "scale" | "stock_import" | "low_stock" | "network"
   | "suppliers" | "purchases" | "purchase_returns"
-  | "sales_invoices" | "sales_returns"
+  | "sales_invoices" | "sales_returns" | "invoice_import"
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "user_permissions"
@@ -78,6 +78,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   uom:          { module: "inventory", profile: "pos" },
   low_stock:    { module: "inventory", profile: "pos" },
   stock_import: { module: "inventory", profile: "pos" },
+  invoice_import: { module: "pos", profile: "pos" },
   expiry:       { module: "inventory", profile: "pos" },
   scale:        { module: "control",   profile: "pos" },
   network:      { module: "control",   profile: "pos" },

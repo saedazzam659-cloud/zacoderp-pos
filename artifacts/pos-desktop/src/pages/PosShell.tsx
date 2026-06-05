@@ -64,6 +64,7 @@ import { isModuleEnabled, loadWindowsModuleFlags } from "../lib/windowsModules";
 import { getAppProfile } from "../lib/standalone";
 import ExpiryReport from "./ExpiryReport";
 import StockImport from "./StockImport";
+import InvoiceImport from "./InvoiceImport";
 import LowStockReport, { countLowStockTracked } from "./LowStockReport";
 import { listItems, bulkImportLocalItems, type CreateItemInput } from "../lib/items";
 import { useTaxSettings, defaultRateForCountry } from "../lib/taxSettings";
@@ -177,7 +178,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     key: "selling",
     icon: "🧾",
     label: "المبيعات والعملاء",
-    members: ["sales_invoices", "sales_returns"],
+    members: ["sales_invoices", "sales_returns", "invoice_import"],
   },
   {
     key: "cash_banks",
@@ -490,6 +491,7 @@ export default function PosShell({
     { id: "purchase_returns", icon: "🔁", label: "مرتجع الشراء", perm: "purchase_returns" },
     { id: "sales_invoices",   icon: "🧾", label: "فواتير المبيعات", perm: "sales_invoices" },
     { id: "sales_returns",    icon: "🔁", label: "مرتجع المبيعات", perm: "sales_returns" },
+    { id: "invoice_import",   icon: "📂", label: "استيراد الفواتير", perm: "invoice_import" },
     { id: "cash_boxes",       icon: "💰", label: "الخزن", perm: "cash_boxes" },
     { id: "banks",            icon: "🏦", label: "البنوك", perm: "banks" },
     { id: "financial_tx",     icon: "💸", label: "المعاملات المالية", perm: "financial_tx" },
@@ -541,6 +543,7 @@ export default function PosShell({
     { id: "customers", icon: "👥", label: "العملاء" },
     { id: "items",     icon: "📦", label: "الأصناف" },
     { id: "stock_import", icon: "📥", label: "استيراد الأرصدة" },
+    { id: "invoice_import", icon: "📂", label: "استيراد الفواتير" },
     { id: "low_stock", icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined },
     { id: "uom",       icon: "📐", label: "وحدات القياس" },
     { id: "scale",     icon: "⚖️", label: "الميزان" },
@@ -793,6 +796,7 @@ export default function PosShell({
           {view === "customers" && <div style={S.pagePad}><CustomersAdmin /></div>}
           {view === "items" && <div style={S.pagePad}><ItemsAdmin /></div>}
           {view === "stock_import" && <div style={S.pagePad}><StockImport onDone={() => void refreshLowStock()} /></div>}
+          {view === "invoice_import" && <div style={S.pagePad}><InvoiceImport sellerName={effectiveCompanyName} /></div>}
           {view === "low_stock" && <div style={S.pagePad}><LowStockReport onGoToImport={() => setView("stock_import")} /></div>}
           {view === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
           {view === "scale" && <div style={S.pagePad}><ScaleSettings /></div>}
@@ -943,6 +947,7 @@ function labelFor(v: View): string {
     purchase_returns: "مرتجع الشراء",
     sales_invoices: "فواتير المبيعات",
     sales_returns: "مرتجع المبيعات",
+    invoice_import: "استيراد الفواتير من ملف",
     cash_boxes: "الخزن",
     banks: "البنوك",
     financial_tx: "المعاملات المالية",
