@@ -50,6 +50,10 @@ import DailySalesReport from "./DailySalesReport";
 import SalesByPeriodReport from "./SalesByPeriodReport";
 import SalesByItemReport from "./SalesByItemReport";
 import SalesByCustomerReport from "./SalesByCustomerReport";
+import DailyDetailedSalesReport from "./DailyDetailedSalesReport";
+import SalesByPaymentMethodReport from "./SalesByPaymentMethodReport";
+import SalesReturnsReport from "./SalesReturnsReport";
+import TopCustomersReport from "./TopCustomersReport";
 import SalespersonsAdmin from "./SalespersonsAdmin";
 import SalesReturnsAdmin from "./SalesReturnsAdmin";
 import WarehousesAdmin from "./WarehousesAdmin";
@@ -181,7 +185,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     key: "selling",
     icon: "🧾",
     label: "المبيعات والعملاء",
-    members: ["salespersons", "quotations", "sales_orders", "sales_invoices", "sales_returns", "invoice_import", "report_sales_daily", "report_sales_by_period", "report_sales_by_item", "report_sales_by_customer"],
+    members: ["salespersons", "quotations", "sales_orders", "sales_invoices", "sales_returns", "invoice_import", "report_sales_daily", "report_sales_by_period", "report_sales_by_item", "report_sales_by_customer", "report_sales_daily_detailed", "report_sales_payment_mix", "report_sales_returns", "report_sales_top_customers"],
   },
   {
     key: "purchasing",
@@ -508,6 +512,10 @@ export default function PosShell({
     { id: "report_sales_by_period",   icon: "🗓️", label: "المبيعات حسب الفترة", perm: "report_sales_by_period" },
     { id: "report_sales_by_item",     icon: "📦", label: "المبيعات حسب الصنف", perm: "report_sales_by_item" },
     { id: "report_sales_by_customer", icon: "👥", label: "المبيعات حسب العميل", perm: "report_sales_by_customer" },
+    { id: "report_sales_daily_detailed", icon: "📑", label: "المبيعات اليومي التفصيلي", perm: "report_sales_daily_detailed" },
+    { id: "report_sales_payment_mix", icon: "💳", label: "المبيعات حسب طريقة الدفع", perm: "report_sales_payment_mix" },
+    { id: "report_sales_returns", icon: "↩️", label: "مرتجعات المبيعات", perm: "report_sales_returns" },
+    { id: "report_sales_top_customers", icon: "🏆", label: "أفضل العملاء", perm: "report_sales_top_customers" },
     { id: "cash_boxes",       icon: "💰", label: "الخزن", perm: "cash_boxes" },
     { id: "banks",            icon: "🏦", label: "البنوك", perm: "banks" },
     { id: "financial_tx",     icon: "💸", label: "المعاملات المالية", perm: "financial_tx" },
@@ -885,6 +893,18 @@ export default function PosShell({
           {standalone && view === "report_sales_by_customer" && (isAdmin || can("report_sales_by_customer")) && (
             <div style={S.pagePad}><SalesByCustomerReport /></div>
           )}
+          {standalone && view === "report_sales_daily_detailed" && (isAdmin || can("report_sales_daily_detailed")) && (
+            <div style={S.pagePad}><DailyDetailedSalesReport /></div>
+          )}
+          {standalone && view === "report_sales_payment_mix" && (isAdmin || can("report_sales_payment_mix")) && (
+            <div style={S.pagePad}><SalesByPaymentMethodReport /></div>
+          )}
+          {standalone && view === "report_sales_returns" && (isAdmin || can("report_sales_returns")) && (
+            <div style={S.pagePad}><SalesReturnsReport /></div>
+          )}
+          {standalone && view === "report_sales_top_customers" && (isAdmin || can("report_sales_top_customers")) && (
+            <div style={S.pagePad}><TopCustomersReport /></div>
+          )}
           {standalone && view === "cash_boxes" && (isAdmin || can("cash_boxes")) && (
             <div style={S.pagePad}><CashBoxesAdmin /></div>
           )}
@@ -998,6 +1018,10 @@ function labelFor(v: View): string {
     report_sales_by_period: "المبيعات حسب الفترة",
     report_sales_by_item: "المبيعات حسب الصنف",
     report_sales_by_customer: "المبيعات حسب العميل",
+    report_sales_daily_detailed: "المبيعات اليومي التفصيلي",
+    report_sales_payment_mix: "المبيعات حسب طريقة الدفع",
+    report_sales_returns: "مرتجعات المبيعات",
+    report_sales_top_customers: "أفضل العملاء",
     cash_boxes: "الخزن",
     banks: "البنوك",
     financial_tx: "المعاملات المالية",

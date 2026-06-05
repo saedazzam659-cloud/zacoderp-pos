@@ -32,5 +32,12 @@ typecheckable + architect-reviewable locally.
   (module:"sales_docs", profile:"erp" for sales reports) in moduleRegistry.ts,
   ScreenKey union + SCREEN_KEYS (group "تقارير المبيعات") in permissions.ts,
   NAV_GROUPS members + nav items + render branch + labelFor in PosShell.tsx.
-- Customer/supplier balance/aging/statement reports need AR/AP computation
-  (credit invoices − receipts, FIFO) — deferred to later waves.
+- Reports that only re-slice invoices/lines/returns (by customer, payment
+  method, item, period; returns summaries; top-N rankings; invoice+line
+  drilldowns) need NO new Rust — reuse the 3 raw-row commands and they stay
+  fully local-typecheckable + architect-reviewable. Prefer this for a whole wave.
+- Still need NEW Rust (deferred): customer/supplier balance/aging/statement
+  (AR/AP = credit invoices − receipts, FIFO + a receipts/settlements raw reader),
+  profitability (per-line FIFO cost), and free-quantity returns (a
+  report_sales_return_lines reader — header-only reportSalesReturns can't show
+  free qty).
