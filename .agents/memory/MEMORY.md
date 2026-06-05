@@ -42,3 +42,4 @@
 - [POS Desktop ZATCA bridge](pos-desktop-zatca-bridge.md) — back-office sales invoices reuse the register's offline_invoices→sync pipeline; build QR/payload from the PERSISTED invoice (not form) to avoid drift; idempotency key sinv-<id>.
 - [companies.ts router only blocks anonymous](companies-router-auth-gap.md) — its router middleware does NOT enforce superadmin; every new cross-tenant policy-write route needs its own role guard.
 - [ZATCA app English localization](zatca-i18n-localization.md) — parallel i18n via per-page FRAGMENT json + single-writer merge (no JSON race); full-English needs language-aware pickName(nameAr,nameEn), not just t() on UI strings.
+- [POS Desktop standalone ZATCA pipeline](pos-desktop-standalone-zatca-pipeline.md) — device does full EGS onboarding+sign+submit, no cloud; record-before-submit chain, QR injected post-sign into the empty EmbeddedDocumentBinaryObject, genesis PIH length differs by design.

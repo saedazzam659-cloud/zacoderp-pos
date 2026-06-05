@@ -36,7 +36,7 @@ export type WindowsView =
   | "report_account_statement" | "report_income_statement"
   | "report_balance_sheet" | "report_trial_balance"
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
-  | "number_series" | "settings_guide";
+  | "number_series" | "settings_guide" | "zatca";
 
 export type WindowsModuleKey =
   | "pos"          // cash-register core: sales, returns, parked, daily, pending
@@ -85,6 +85,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   dashboard:    { module: "control",   profile: "pos" },
   updates:      { module: "control",   profile: "pos" },
   settings_guide: { module: "control", profile: "pos" },
+  zatca: { module: "control", profile: "pos" },
   // ── ERP-only screens (hidden in the "POS only" profile) ─────────────
   warehouses:        { module: "inventory", profile: "erp" },
   stocktakes:        { module: "inventory", profile: "erp" },

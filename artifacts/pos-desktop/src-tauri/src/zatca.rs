@@ -23,6 +23,9 @@
 // semantics (which also produce an invalid TLV beyond 255).
 
 use base64::Engine;
+use crate::db;
+use rusqlite::{params, OptionalExtension};
+use std::collections::HashMap;
 
 /// Encodes a single (tag, value) pair as a TLV byte sequence.
 fn encode_tlv(tag: u8, value: &str) -> Vec<u8> {
@@ -224,4 +227,417 @@ mod tests {
         let r = decode_zatca_qr("AQ==");
         assert!(r.is_err(), "expected truncated error, got {:?}", r);
     }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Standalone ZATCA: secret storage + onboarding state + per-invoice chain
+// + direct-to-gateway HTTPS proxy. (Task #233)
+//
+// The webview ports the heavy crypto (keygen / CSR / UBL / XAdES / QR) in
+// src/lib/zatca/*. Rust owns only what the webview cannot safely do:
+//   1. Persist the EGS private key + CSID material in the OS keyring.
+//   2. Persist non-secret onboarding lifecycle state + the PIH/ICV chain
+//      in the local SQLite DB.
+//   3. Make the actual HTTPS calls to the ZATCA gateway (CORS + client TLS
+//      make this impossible from the webview).
+// ════════════════════════════════════════════════════════════════════
+
+const ZATCA_KEYRING_SERVICE: &str = "com.zacoderp.pos";
+
+fn now_iso() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+/// Maps a short, frontend-facing slot alias to its keyring account name.
+/// Only these three slots are addressable — a compromised webview can NOT
+/// reach the device / cashier auth tokens (different slots in main.rs), so
+/// clearing a ZATCA enrolment never disturbs the device binding.
+fn zatca_slot_account(slot: &str) -> Result<&'static str, String> {
+    match slot {
+        // EGS private key — hex-encoded secp256k1 scalar.
+        "privkey" => Ok("zatca-privkey-v1"),
+        // Compliance CSID bundle (binarySecurityToken + secret + requestID), JSON.
+        "compliance" => Ok("zatca-compliance-csid-v1"),
+        // Production CSID bundle (binarySecurityToken + secret + requestID), JSON.
+        "production" => Ok("zatca-production-csid-v1"),
+        _ => Err(format!("unknown ZATCA secret slot '{slot}'")),
+    }
+}
+
+/// ACL-restricted file fallback for the keyring (same rationale as the
+/// device token in main.rs — Windows Credential Manager can silently fail
+/// on unsigned MSI installs / locked-down group policy).
+fn zatca_secret_file(account: &str) -> Result<std::path::PathBuf, String> {
+    let mut p = dirs::data_dir().ok_or_else(|| "no data dir available".to_string())?;
+    p.push("ZACOD-POS");
+    p.push("zatca");
+    std::fs::create_dir_all(&p).map_err(|e| e.to_string())?;
+    p.push(account);
+    Ok(p)
+}
+
+#[tauri::command]
+pub fn zatca_save_secret(slot: String, value: String) -> Result<(), String> {
+    let account = zatca_slot_account(&slot)?;
+    // Best-effort keyring write.
+    if let Ok(entry) = keyring::Entry::new(ZATCA_KEYRING_SERVICE, account) {
+        let _ = entry.set_password(&value);
+    }
+    // File write IS the source of truth — must succeed.
+    let p = zatca_secret_file(account)?;
+    std::fs::write(&p, value).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn zatca_load_secret(slot: String) -> Result<Option<String>, String> {
+    let account = zatca_slot_account(&slot)?;
+    if let Ok(entry) = keyring::Entry::new(ZATCA_KEYRING_SERVICE, account) {
+        if let Ok(v) = entry.get_password() {
+            return Ok(Some(v));
+        }
+    }
+    let p = zatca_secret_file(account)?;
+    if !p.exists() {
+        return Ok(None);
+    }
+    match std::fs::read_to_string(&p) {
+        Ok(v) => {
+            let v = v.trim().to_string();
+            if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+pub fn zatca_clear_secret(slot: String) -> Result<(), String> {
+    let account = zatca_slot_account(&slot)?;
+    if let Ok(entry) = keyring::Entry::new(ZATCA_KEYRING_SERVICE, account) {
+        let _ = entry.delete_credential();
+    }
+    let p = zatca_secret_file(account)?;
+    if p.exists() {
+        std::fs::remove_file(&p).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+// ── Onboarding lifecycle state (singleton row id=1) ──────────────────
+
+#[tauri::command]
+pub fn zatca_get_onboarding() -> Result<serde_json::Value, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let row = conn
+        .query_row(
+            "SELECT environment, status, csr_pem, org_json, compliance_request_id,
+                    production_request_id, last_error, updated_at
+             FROM zatca_onboarding WHERE id = 1",
+            [],
+            |r| {
+                Ok(serde_json::json!({
+                    "environment": r.get::<_, String>(0)?,
+                    "status": r.get::<_, String>(1)?,
+                    "csrPem": r.get::<_, Option<String>>(2)?,
+                    "orgJson": r.get::<_, Option<String>>(3)?,
+                    "complianceRequestId": r.get::<_, Option<String>>(4)?,
+                    "productionRequestId": r.get::<_, Option<String>>(5)?,
+                    "lastError": r.get::<_, Option<String>>(6)?,
+                    "updatedAt": r.get::<_, Option<String>>(7)?,
+                }))
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(row.unwrap_or_else(|| {
+        serde_json::json!({
+            "environment": "sandbox",
+            "status": "none",
+            "csrPem": serde_json::Value::Null,
+            "orgJson": serde_json::Value::Null,
+            "complianceRequestId": serde_json::Value::Null,
+            "productionRequestId": serde_json::Value::Null,
+            "lastError": serde_json::Value::Null,
+            "updatedAt": serde_json::Value::Null,
+        })
+    }))
+}
+
+/// Upsert the singleton onboarding row. A `None` field PRESERVES the stored
+/// value (COALESCE) — mirroring the web "b.X !== undefined" guard — EXCEPT
+/// `last_error`, which is always written verbatim so a successful step can
+/// clear a previous error by passing null.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn zatca_save_onboarding(
+    environment: Option<String>,
+    status: Option<String>,
+    csr_pem: Option<String>,
+    org_json: Option<String>,
+    compliance_request_id: Option<String>,
+    production_request_id: Option<String>,
+    last_error: Option<String>,
+) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO zatca_onboarding(id) VALUES(1) ON CONFLICT(id) DO NOTHING",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE zatca_onboarding SET
+            environment = COALESCE(?1, environment),
+            status = COALESCE(?2, status),
+            csr_pem = COALESCE(?3, csr_pem),
+            org_json = COALESCE(?4, org_json),
+            compliance_request_id = COALESCE(?5, compliance_request_id),
+            production_request_id = COALESCE(?6, production_request_id),
+            last_error = ?7,
+            updated_at = ?8
+         WHERE id = 1",
+        params![
+            environment,
+            status,
+            csr_pem,
+            org_json,
+            compliance_request_id,
+            production_request_id,
+            last_error,
+            now_iso(),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ── Per-invoice PIH/ICV chain + submission status ────────────────────
+
+/// Returns `{ icv, invoiceHash }` of the latest invoice in the chain, or
+/// `null` if no invoice has been signed yet (caller seeds the genesis PIH).
+#[tauri::command]
+pub fn zatca_chain_head() -> Result<serde_json::Value, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let row = conn
+        .query_row(
+            "SELECT icv, invoice_hash FROM zatca_invoices ORDER BY icv DESC LIMIT 1",
+            [],
+            |r| {
+                Ok(serde_json::json!({
+                    "icv": r.get::<_, i64>(0)?,
+                    "invoiceHash": r.get::<_, String>(1)?,
+                }))
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(row.unwrap_or(serde_json::Value::Null))
+}
+
+/// Insert (or idempotently re-record on retry) a signed invoice into the
+/// chain. A duplicate `icv` for a DIFFERENT uuid is rejected (the UNIQUE
+/// index protects the chain ordering); re-recording the SAME uuid updates
+/// in place.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn zatca_record_invoice(
+    local_uuid: String,
+    icv: i64,
+    pih: String,
+    invoice_hash: String,
+    invoice_no: Option<String>,
+    invoice_type: Option<String>,
+    signed_xml: Option<String>,
+    qr_base64: Option<String>,
+    status: Option<String>,
+) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO zatca_invoices
+            (local_uuid, icv, pih, invoice_hash, invoice_no, invoice_type,
+             signed_xml, qr_base64, status)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8, COALESCE(?9,'pending'))
+         ON CONFLICT(local_uuid) DO UPDATE SET
+            icv = excluded.icv,
+            pih = excluded.pih,
+            invoice_hash = excluded.invoice_hash,
+            invoice_no = excluded.invoice_no,
+            invoice_type = excluded.invoice_type,
+            signed_xml = excluded.signed_xml,
+            qr_base64 = excluded.qr_base64,
+            status = excluded.status",
+        params![
+            local_uuid,
+            icv,
+            pih,
+            invoice_hash,
+            invoice_no,
+            invoice_type,
+            signed_xml,
+            qr_base64,
+            status
+        ],
+    )
+    .map_err(|e| {
+        let s = e.to_string();
+        if s.contains("idx_zatca_inv_icv") || s.contains("UNIQUE") {
+            "تعارض في تسلسل الفاتورة (ICV مكرر)".to_string()
+        } else {
+            s
+        }
+    })?;
+    Ok(())
+}
+
+/// Update the submission status of a recorded invoice. `zatca_status`,
+/// `warnings_json`, `response_json` preserve-on-None; `status` + a fresh
+/// `submitted_at` are always written.
+#[tauri::command]
+pub fn zatca_update_invoice_status(
+    local_uuid: String,
+    status: String,
+    zatca_status: Option<String>,
+    warnings_json: Option<String>,
+    response_json: Option<String>,
+) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let n = conn
+        .execute(
+            "UPDATE zatca_invoices SET
+                status = ?2,
+                zatca_status = COALESCE(?3, zatca_status),
+                warnings_json = COALESCE(?4, warnings_json),
+                response_json = COALESCE(?5, response_json),
+                submitted_at = ?6
+             WHERE local_uuid = ?1",
+            params![local_uuid, status, zatca_status, warnings_json, response_json, now_iso()],
+        )
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err("الفاتورة غير موجودة في سجل زاتكا".into());
+    }
+    Ok(())
+}
+
+fn row_to_zatca_invoice(r: &rusqlite::Row<'_>) -> rusqlite::Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "localUuid": r.get::<_, String>(0)?,
+        "icv": r.get::<_, i64>(1)?,
+        "pih": r.get::<_, String>(2)?,
+        "invoiceHash": r.get::<_, String>(3)?,
+        "invoiceNo": r.get::<_, Option<String>>(4)?,
+        "invoiceType": r.get::<_, Option<String>>(5)?,
+        "qrBase64": r.get::<_, Option<String>>(6)?,
+        "status": r.get::<_, String>(7)?,
+        "zatcaStatus": r.get::<_, Option<String>>(8)?,
+        "warningsJson": r.get::<_, Option<String>>(9)?,
+        "responseJson": r.get::<_, Option<String>>(10)?,
+        "submittedAt": r.get::<_, Option<String>>(11)?,
+        "createdAt": r.get::<_, String>(12)?,
+    }))
+}
+
+/// List invoices (newest ICV first), optionally filtered by status. Omits
+/// the (potentially large) signed XML — use `zatca_get_invoice` for that.
+#[tauri::command]
+pub fn zatca_list_invoices(status: Option<String>) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let cols = "local_uuid, icv, pih, invoice_hash, invoice_no, invoice_type,
+                qr_base64, status, zatca_status, warnings_json, response_json,
+                submitted_at, created_at";
+    let mut out = Vec::new();
+    match status {
+        Some(s) => {
+            let sql = format!(
+                "SELECT {cols} FROM zatca_invoices WHERE status = ?1 ORDER BY icv DESC"
+            );
+            let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![s], row_to_zatca_invoice)
+                .map_err(|e| e.to_string())?;
+            for r in rows {
+                out.push(r.map_err(|e| e.to_string())?);
+            }
+        }
+        None => {
+            let sql = format!("SELECT {cols} FROM zatca_invoices ORDER BY icv DESC");
+            let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], row_to_zatca_invoice)
+                .map_err(|e| e.to_string())?;
+            for r in rows {
+                out.push(r.map_err(|e| e.to_string())?);
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn zatca_get_invoice(local_uuid: String) -> Result<Option<serde_json::Value>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let row = conn
+        .query_row(
+            "SELECT local_uuid, icv, pih, invoice_hash, invoice_no, invoice_type,
+                    signed_xml, qr_base64, status, zatca_status, warnings_json,
+                    response_json, submitted_at, created_at
+             FROM zatca_invoices WHERE local_uuid = ?1",
+            params![local_uuid],
+            |r| {
+                Ok(serde_json::json!({
+                    "localUuid": r.get::<_, String>(0)?,
+                    "icv": r.get::<_, i64>(1)?,
+                    "pih": r.get::<_, String>(2)?,
+                    "invoiceHash": r.get::<_, String>(3)?,
+                    "invoiceNo": r.get::<_, Option<String>>(4)?,
+                    "invoiceType": r.get::<_, Option<String>>(5)?,
+                    "signedXml": r.get::<_, Option<String>>(6)?,
+                    "qrBase64": r.get::<_, Option<String>>(7)?,
+                    "status": r.get::<_, String>(8)?,
+                    "zatcaStatus": r.get::<_, Option<String>>(9)?,
+                    "warningsJson": r.get::<_, Option<String>>(10)?,
+                    "responseJson": r.get::<_, Option<String>>(11)?,
+                    "submittedAt": r.get::<_, Option<String>>(12)?,
+                    "createdAt": r.get::<_, String>(13)?,
+                }))
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(row)
+}
+
+// ── Direct HTTPS proxy to the ZATCA gateway ──────────────────────────
+
+/// POST to the ZATCA gateway on behalf of the webview (which can't make the
+/// call itself: CORS + mutual TLS). Locked to *.zatca.gov.sa so a
+/// compromised webview can't repurpose this as a generic SSRF primitive.
+/// All ZATCA-required headers (Authorization, Accept-Version, Content-Type,
+/// OTP, …) are supplied by the caller. Returns `{ status, body }` — the
+/// caller parses the JSON body.
+#[tauri::command]
+pub async fn zatca_https_post(
+    url: String,
+    headers: HashMap<String, String>,
+    body: String,
+) -> Result<serde_json::Value, String> {
+    let host = url
+        .strip_prefix("https://")
+        .ok_or_else(|| "ZATCA URL must use https".to_string())?
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("");
+    if !(host == "zatca.gov.sa" || host.ends_with(".zatca.gov.sa")) {
+        return Err(format!("host '{host}' is not a ZATCA gateway"));
+    }
+    let client = reqwest::Client::new();
+    let mut req = client.post(&url).body(body);
+    for (k, v) in headers.iter() {
+        req = req.header(k.as_str(), v.as_str());
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "status": status, "body": text }))
 }

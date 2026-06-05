@@ -542,6 +542,59 @@ pub fn initialize() -> Result<()> {
             created_at               TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_taxes_account ON taxes_local(account_id);
+
+        -- ── Standalone ZATCA onboarding state (Task #233) ──
+        -- Single-row (id=1) snapshot of the device's direct-to-ZATCA
+        -- onboarding. The actual secrets (EGS private key + compliance /
+        -- production CSID binary security tokens + API secrets) live in the
+        -- OS keyring (see zatca.rs), NOT here. This table only holds the
+        -- non-secret lifecycle state so the UI can resume an interrupted
+        -- onboarding and show which environment is active.
+        --   environment           — 'sandbox' | 'simulation' | 'production'
+        --   status                — 'none' | 'csr' | 'compliance' | 'production'
+        --   csr_pem               — the generated PKCS#10 CSR (public, re-issuable)
+        --   org_json              — cached CSR params (CN/VAT/serial/address...)
+        --   compliance_request_id — requestID returned by the compliance CSID call
+        --   production_request_id — requestID returned by the production CSID call
+        CREATE TABLE IF NOT EXISTS zatca_onboarding (
+            id                     INTEGER PRIMARY KEY CHECK (id = 1),
+            environment            TEXT NOT NULL DEFAULT 'sandbox',
+            status                 TEXT NOT NULL DEFAULT 'none',
+            csr_pem                TEXT,
+            org_json               TEXT,
+            compliance_request_id  TEXT,
+            production_request_id  TEXT,
+            last_error             TEXT,
+            updated_at             TEXT
+        );
+
+        -- ── Per-invoice ZATCA submission status + PIH/ICV chain (Task #233) ──
+        -- One row per locally-signed e-invoice. The chain is ordered by `icv`
+        -- (Invoice Counter Value, strictly monotonic per device); `pih` is the
+        -- Previous Invoice Hash (base64 sha256 of the prior signed XML, or the
+        -- genesis hash for icv=1). `invoice_hash` is THIS invoice's base64
+        -- hash, which becomes the next row's pih. status tracks the direct
+        -- submission lifecycle so the offline queue can retry.
+        --   status        — 'pending' | 'reported' | 'cleared' | 'rejected' | 'queued'
+        --   invoice_type  — 'simplified' (reporting) | 'standard' (clearance)
+        CREATE TABLE IF NOT EXISTS zatca_invoices (
+            local_uuid     TEXT PRIMARY KEY,
+            icv            INTEGER NOT NULL,
+            pih            TEXT NOT NULL,
+            invoice_hash   TEXT NOT NULL,
+            invoice_no     TEXT,
+            invoice_type   TEXT,
+            signed_xml     TEXT,
+            qr_base64      TEXT,
+            status         TEXT NOT NULL DEFAULT 'pending',
+            zatca_status   TEXT,
+            warnings_json  TEXT,
+            response_json  TEXT,
+            submitted_at   TEXT,
+            created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_zatca_inv_icv ON zatca_invoices(icv);
+        CREATE INDEX IF NOT EXISTS idx_zatca_inv_status ON zatca_invoices(status);
         "#,
     )?;
     let _ = conn.execute("ALTER TABLE offline_invoices ADD COLUMN synced_at TEXT", []);

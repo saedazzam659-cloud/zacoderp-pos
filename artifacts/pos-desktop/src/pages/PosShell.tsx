@@ -55,6 +55,8 @@ import FinancialTransactionsAdmin from "./FinancialTransactionsAdmin";
 import UserPermissionsAdmin from "./UserPermissionsAdmin";
 import NumberSeriesAdmin from "./NumberSeriesAdmin";
 import SettingsGuide from "./SettingsGuide";
+import ZatcaOnboarding from "./ZatcaOnboarding";
+import { isZatcaCountry } from "../lib/zatcaBridge";
 import {
   listUserPermissions, computeAllowed, persistAllowedToLS, clearAllowedLS,
   loadAllowedFromLS, defaultsForRole, type ScreenKey,
@@ -203,7 +205,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     label: "التحكم العام",
     members: [
       "branches", "currencies", "exchange_rates", "dashboard",
-      "users", "user_permissions", "network", "number_series", "settings_guide", "updates",
+      "users", "user_permissions", "network", "number_series", "settings_guide", "zatca", "updates",
     ],
   },
 ];
@@ -524,6 +526,9 @@ export default function PosShell({
       : []),
     { id: "dashboard", icon: "⚙️", label: "لوحة التحكم" },
     { id: "settings_guide", icon: "🏢", label: "دليل الإعدادات", perm: "settings_guide" },
+    ...(isZatcaCountry()
+      ? [{ id: "zatca" as View, icon: "🧾", label: "تسجيل زاتكا (مستقل)", perm: "zatca" as const }]
+      : []),
     // Updates entry — even standalone users want to install newer app
     // versions (the device usually has occasional internet for this).
     // The Updates screen itself gracefully handles offline by showing
@@ -915,6 +920,9 @@ export default function PosShell({
           {standalone && view === "settings_guide" && (isAdmin || can("settings_guide")) && (
             <div style={S.pagePad}><SettingsGuide /></div>
           )}
+          {standalone && view === "zatca" && isZatcaCountry() && (isAdmin || can("zatca")) && (
+            <div style={S.pagePad}><ZatcaOnboarding /></div>
+          )}
         </main>
       </div>
 
@@ -970,6 +978,7 @@ function labelFor(v: View): string {
     treasury_transfers: "تحويل الخزن",
     number_series: "أرقام المسلسلات",
     settings_guide: "دليل الإعدادات",
+    zatca: "تسجيل زاتكا (مستقل)",
   }[v];
 }
 
