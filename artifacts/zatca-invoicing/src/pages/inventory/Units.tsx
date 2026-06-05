@@ -65,7 +65,7 @@ export default function Units() {
   }
 
   const filtered = data.filter((u: any) =>
-    u.nameAr.includes(search) || u.code.includes(search) || (u.nameEn ?? "").toLowerCase().includes(search.toLowerCase())
+    (u.nameAr ?? "").toLowerCase().includes(search.toLowerCase()) || (u.code ?? "").toLowerCase().includes(search.toLowerCase()) || (u.nameEn ?? "").toLowerCase().includes(search.toLowerCase())
   );
 
   const pager = usePagination(filtered);
@@ -86,25 +86,21 @@ export default function Units() {
         <div className="flex items-start gap-3">
           <Info className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
           <div className="space-y-2">
-            <p className="text-sm font-semibold text-blue-800">{isRtl ? "كيف تعمل وحدات القياس المتعددة؟" : "How do multi-units work?"}</p>
-            <p className="text-xs text-blue-700">
-              {isRtl
-                ? "هنا تُعرِّف الوحدات العامة (قطعة، كرتونة، كيلو...). بعدها في صفحة الأصناف، تربط كل صنف بالوحدات التي يُباع بها مع تحديد معامل التحويل والسعر لكل وحدة."
-                : "Define general units here (piece, carton, kg...). Then in the items page, link each item to the units it is sold in, specifying the conversion factor and price for each unit."}
-            </p>
+            <p className="text-sm font-semibold text-blue-800">{tr("infoTitle")}</p>
+            <p className="text-xs text-blue-700">{tr("infoBody")}</p>
             <div className="flex flex-wrap gap-3 mt-1">
               <div className="bg-white border border-blue-200 rounded-lg px-3 py-2 text-xs">
-                <p className="font-semibold text-blue-800 mb-1">{isRtl ? "مثال — صنف: سكر" : "Example — Item: Sugar"}</p>
+                <p className="font-semibold text-blue-800 mb-1">{tr("exampleTitle")}</p>
                 <div className="space-y-1 text-blue-700">
                   <div className="flex items-center gap-2">
-                    <span className="bg-green-100 text-green-700 rounded px-1.5 py-0.5 font-mono font-bold">{isRtl ? "واحدة" : "Each"}</span>
+                    <span className="bg-green-100 text-green-700 rounded px-1.5 py-0.5 font-mono font-bold">{tr("exampleEach")}</span>
                     <ArrowRight className="h-3 w-3" />
-                    <span>{isRtl ? "معامل ×1 — تكلفة 5 ر.س" : "Factor ×1 — Cost 5 SAR"}</span>
+                    <span>{tr("exampleEachDetail")}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="bg-purple-100 text-purple-700 rounded px-1.5 py-0.5 font-mono font-bold">{isRtl ? "كرتونة" : "Carton"}</span>
+                    <span className="bg-purple-100 text-purple-700 rounded px-1.5 py-0.5 font-mono font-bold">{tr("exampleCarton")}</span>
                     <ArrowRight className="h-3 w-3" />
-                    <span>{isRtl ? "معامل ×12 — تكلفة 60 ر.س" : "Factor ×12 — Cost 60 SAR"}</span>
+                    <span>{tr("exampleCartonDetail")}</span>
                   </div>
                 </div>
               </div>
@@ -114,7 +110,7 @@ export default function Units() {
       </div>
 
       <div className="rounded-xl border bg-card p-4">
-        <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">{isRtl ? "وحدات شائعة — انقر للإضافة السريعة" : "Common Units — Click to add quickly"}</p>
+        <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">{tr("commonUnitsLabel")}</p>
         <div className="flex flex-wrap gap-2">
           {PRESETS.map(p => (
             <button

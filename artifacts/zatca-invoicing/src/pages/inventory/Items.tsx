@@ -415,16 +415,17 @@ function ItemHistoryDialog({ open, onOpenChange, item }: { open: boolean; onOpen
 }
 
 function ItemImageUpload({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const { t } = useTranslation();
   const { toast } = useToast();
   const [uploading, setUploading] = useState(false);
 
   async function handleFile(file: File) {
     if (!file.type.startsWith("image/")) {
-      toast({ title: "نوع ملف غير مدعوم", description: "يرجى اختيار صورة فقط", variant: "destructive" });
+      toast({ title: t("inventoryMaster.items.imageTypeUnsupportedTitle"), description: t("inventoryMaster.items.imageTypeUnsupportedDesc"), variant: "destructive" });
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      toast({ title: "حجم الصورة كبير", description: "الحد الأقصى 5 ميجابايت", variant: "destructive" });
+      toast({ title: t("inventoryMaster.items.imageTooLargeTitle"), description: t("inventoryMaster.items.imageTooLargeDesc"), variant: "destructive" });
       return;
     }
     setUploading(true);
@@ -434,14 +435,14 @@ function ItemImageUpload({ value, onChange }: { value: string; onChange: (v: str
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("zatca_token") ?? ""}` },
         body: JSON.stringify({ name: file.name, size: file.size, contentType: file.type }),
       });
-      if (!res.ok) throw new Error("فشل تجهيز رابط الرفع");
+      if (!res.ok) throw new Error(t("inventoryMaster.items.imageUploadUrlFailed"));
       const { uploadURL, objectPath } = await res.json();
       const putRes = await fetch(uploadURL, { method: "PUT", headers: { "Content-Type": file.type }, body: file });
-      if (!putRes.ok) throw new Error("فشل رفع الصورة");
+      if (!putRes.ok) throw new Error(t("inventoryMaster.items.imageUploadFailed"));
       onChange(objectPath);
-      toast({ title: "تم رفع الصورة" });
+      toast({ title: t("inventoryMaster.items.imageUploaded") });
     } catch (e: any) {
-      toast({ title: "تعذّر رفع الصورة", description: String(e?.message ?? e), variant: "destructive" });
+      toast({ title: t("inventoryMaster.items.imageUploadError"), description: String(e?.message ?? e), variant: "destructive" });
     } finally {
       setUploading(false);
     }
@@ -468,7 +469,7 @@ function ItemImageUpload({ value, onChange }: { value: string; onChange: (v: str
             onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ""; }}
           />
           <span className="inline-flex items-center gap-1.5 text-xs h-8 px-3 rounded-md border bg-background hover:bg-accent transition">
-            {uploading ? "جارٍ الرفع..." : value ? "تغيير الصورة" : "رفع صورة"}
+            {uploading ? t("inventoryMaster.items.imageUploading") : value ? t("inventoryMaster.items.imageChange") : t("inventoryMaster.items.imageUpload")}
           </span>
         </label>
         {value && (
@@ -477,7 +478,7 @@ function ItemImageUpload({ value, onChange }: { value: string; onChange: (v: str
             className="text-xs text-destructive hover:underline text-right"
             onClick={() => onChange("")}
           >
-            إزالة الصورة
+            {t("inventoryMaster.items.imageRemove")}
           </button>
         )}
       </div>
@@ -552,7 +553,9 @@ function ItemAnalyticsPanel({ itemId, unitCode }: { itemId: number; unitCode: st
 }
 
 function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const qc = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
@@ -680,7 +683,7 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
               )}
               <div className="flex items-center gap-1.5 mb-0.5">
                 <span className="text-xs font-bold font-mono text-primary">{up.unit?.code ?? "—"}</span>
-                <span className="text-xs font-medium">{up.unit?.nameAr ?? "—"}</span>
+                <span className="text-xs font-medium">{pickName(up.unit?.nameAr, up.unit?.nameEn) || "—"}</span>
               </div>
               <div className="grid grid-cols-3 gap-1 text-[10px]">
                 <div className="bg-muted/50 rounded px-1.5 py-1 text-center">
@@ -927,7 +930,9 @@ function AIAssistDialog({
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 export default function Items() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const { user } = useAuth();
   const { fmt, fmtQty } = useFmt();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
@@ -971,9 +976,9 @@ export default function Items() {
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["items"] });
   const errToast = (title: string) => (e: any) => toast({ title, description: parseError(e), variant: "destructive" });
-  const createMut = useMutation({ mutationFn: inventoryApi.createItem, onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.items.itemSaved") }); }, onError: errToast("تعذّر حفظ الصنف") });
-  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => inventoryApi.updateItem(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.items.itemUpdated") }); }, onError: errToast("تعذّر تعديل الصنف") });
-  const deleteMut = useMutation({ mutationFn: inventoryApi.deleteItem, onSuccess: () => { invalidate(); toast({ title: t("pages.items.deleted") }); }, onError: errToast("تعذّر الحذف") });
+  const createMut = useMutation({ mutationFn: inventoryApi.createItem, onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.items.itemSaved") }); }, onError: errToast(t("inventoryMaster.items.saveItemFailed")) });
+  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => inventoryApi.updateItem(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.items.itemUpdated") }); }, onError: errToast(t("inventoryMaster.items.updateItemFailed")) });
+  const deleteMut = useMutation({ mutationFn: inventoryApi.deleteItem, onSuccess: () => { invalidate(); toast({ title: t("pages.items.deleted") }); }, onError: errToast(t("inventoryMaster.items.deleteItemFailed")) });
   // PRO Extension #15 — manual low-stock scan that creates broadcast
   // notifications. Server is idempotent per-item per-day so re-clicking
   // a few seconds later is safe and the toast clearly explains the result.
@@ -1037,7 +1042,7 @@ export default function Items() {
     // "المتغيّرات" tab in the expanded row.
     if (it.parentItemId != null) return false;
     const s = search.toLowerCase();
-    const matchText = it.nameAr.includes(search)
+    const matchText = (it.nameAr ?? "").toLowerCase().includes(s)
       || it.code.includes(search)
       || (it.nameEn ?? "").toLowerCase().includes(s)
       || (it.barcode ?? "").includes(search)
@@ -1069,8 +1074,8 @@ export default function Items() {
     nameEn:       it.nameEn ?? "",
     barcode:      it.barcode ?? "",
     itemType:     it.itemType === "stock" ? t("pages.items.stock") : t("pages.items.service"),
-    groupName:    it.group?.nameAr ?? "",
-    unitName:     it.unit?.nameAr ?? "",
+    groupName:    pickName(it.group?.nameAr, it.group?.nameEn),
+    unitName:     pickName(it.unit?.nameAr, it.unit?.nameEn),
     costPrice:    fmt(it.costPrice),
     salePrice:    fmt(it.salePrice),
     reorderLevel: fmtQty(it.reorderLevel),
@@ -1162,7 +1167,7 @@ export default function Items() {
             <TabsList className="w-full h-9 mb-5">
               <TabsTrigger value="basic"    className="flex-1 text-xs gap-1.5"><Package   className="h-3.5 w-3.5" />{t("pages.items.basicData")}</TabsTrigger>
               <TabsTrigger value="pricing"  className="flex-1 text-xs gap-1.5"><Ruler      className="h-3.5 w-3.5" />{t("pages.items.pricingAndControl")}</TabsTrigger>
-              <TabsTrigger value="pos"      className="flex-1 text-xs gap-1.5"><Store      className="h-3.5 w-3.5" />نقطة البيع</TabsTrigger>
+              <TabsTrigger value="pos"      className="flex-1 text-xs gap-1.5"><Store      className="h-3.5 w-3.5" />{t("inventoryMaster.items.posTab")}</TabsTrigger>
               <TabsTrigger value="accounts" className="flex-1 text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />{t("pages.items.accountingLink")}</TabsTrigger>
             </TabsList>
             <TabsContent value="basic" className="mt-0">
@@ -1174,18 +1179,18 @@ export default function Items() {
                 <Field label={t("pages.items.itemType")}>
                   <SearchCombobox items={[{ value: "stock", label: t("pages.items.stock") }, { value: "service", label: t("pages.items.service") }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v }))} placeholder={t("pages.items.itemType")} />
                 </Field>
-                <Field label="طبيعة الصنف" hint="يساعد في تمييز الخامات عن البضاعة الجاهزة في شاشات التصنيع">
+                <Field label={t("inventoryMaster.items.natureFieldLabel")} hint={t("inventoryMaster.items.natureFieldHint")}>
                   <SearchCombobox
                     items={[
-                      { value: "raw",         label: "خامات (مواد أولية)" },
-                      { value: "semi",        label: "نصف مصنّع" },
-                      { value: "finished",    label: "تام الصنع" },
-                      { value: "consumable",  label: "مستهلكات" },
-                      { value: "merchandise", label: "بضاعة عادية" },
+                      { value: "raw",         label: t("inventoryMaster.items.natureRawLong") },
+                      { value: "semi",        label: t("inventoryMaster.items.natureSemi") },
+                      { value: "finished",    label: t("inventoryMaster.items.natureFinished") },
+                      { value: "consumable",  label: t("inventoryMaster.items.natureConsumable") },
+                      { value: "merchandise", label: t("inventoryMaster.items.natureMerchandiseLong") },
                     ]}
                     value={form.itemNature || "merchandise"}
                     onValueChange={v => setForm((p: any) => ({ ...p, itemNature: v }))}
-                    placeholder="طبيعة الصنف"
+                    placeholder={t("inventoryMaster.items.natureFieldLabel")}
                   />
                 </Field>
                 <Field label={t("pages.items.group")}>
@@ -1197,7 +1202,7 @@ export default function Items() {
                 <Field label={t("common.status")}>
                   <SearchCombobox items={[{ value: "active", label: t("pages.items.active") }, { value: "inactive", label: t("pages.items.inactive") }]} value={form.status} onValueChange={v => setForm((p: any) => ({ ...p, status: v }))} placeholder={t("common.status")} />
                 </Field>
-                <Field label="صورة الصنف" className="md:col-span-2">
+                <Field label={t("inventoryMaster.items.itemImageLabel")} className="md:col-span-2">
                   <ItemImageUpload value={form.imageUrl ?? ""} onChange={(v) => setForm((p: any) => ({ ...p, imageUrl: v }))} />
                 </Field>
                 <Field label={t("pages.items.tagsLabel")} hint={t("pages.items.tagsHint")} className="md:col-span-2">
@@ -1278,7 +1283,7 @@ export default function Items() {
             </TabsContent>
             <TabsContent value="pos" className="mt-0 space-y-6">
               <div>
-                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">إعدادات نقطة البيع</p>
+                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">{t("inventoryMaster.items.posSettingsTitle")}</p>
                 <div className="rounded-lg border border-border bg-card p-4 space-y-3">
                   <label className="flex items-start gap-3 cursor-pointer select-none">
                     <Checkbox
@@ -1287,21 +1292,20 @@ export default function Items() {
                       className="mt-0.5"
                     />
                     <div className="space-y-0.5">
-                      <div className="text-sm font-medium">إظهار الصنف في شاشة نقاط البيع (POS)</div>
+                      <div className="text-sm font-medium">{t("inventoryMaster.items.showInPosLabel")}</div>
                       <div className="text-xs text-muted-foreground">
-                        عند إلغاء التحديد، لن يظهر هذا الصنف في شاشات الكاشير والسوبرماركت والمطاعم،
-                        لكنه يبقى متوفّراً في المخزون وفواتير المبيعات والمشتريات.
+                        {t("inventoryMaster.items.showInPosHint")}
                       </div>
                     </div>
                   </label>
                 </div>
               </div>
               <div>
-                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">تاريخ الانتهاء (للأصناف ذات قائمة المكوّنات / BOM)</p>
+                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">{t("inventoryMaster.items.expiryDateSectionTitle")}</p>
                 <FormGrid>
                   <Field
-                    label="تاريخ انتهاء الصنف"
-                    hint={form.isBundle ? "صنف مركَّب (BOM) — يمكن تسجيل تاريخ الانتهاء." : "متاح لكل الأصناف، لكنه يُستخدم عادةً للأصناف المُصنّعة (التي لها مكوّنات BOM)."}
+                    label={t("inventoryMaster.items.expiryDateLabel")}
+                    hint={form.isBundle ? t("inventoryMaster.items.expiryDateHintBundle") : t("inventoryMaster.items.expiryDateHintDefault")}
                   >
                     <Input
                       type="date"
@@ -1314,21 +1318,21 @@ export default function Items() {
                 </FormGrid>
               </div>
               <div>
-                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">تتبّع التشغيلات (FIFO / FEFO)</p>
+                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">{t("inventoryMaster.items.batchTrackingSectionTitle")}</p>
                 <FormGrid>
                   <Field
-                    label="نمط سحب التشغيلات على الصرف"
-                    hint="عند بدء الإنتاج، يتم سحب الكمية المطلوبة من تشغيلات الخامة وفق هذا الترتيب. الوضع الافتراضي (بدون تتبّع) يُبقي الحركة الحالية كسطر واحد بالتكلفة المتوسطة."
+                    label={t("inventoryMaster.items.batchTrackingLabel")}
+                    hint={t("inventoryMaster.items.batchTrackingHint")}
                   >
                     <SearchCombobox
                       items={[
-                        { value: "none", label: "بدون تتبّع — التكلفة المتوسطة (الوضع الحالي)" },
-                        { value: "fifo", label: "FIFO — الأقدم استلاماً أولاً" },
-                        { value: "fefo", label: "FEFO — الأقرب انتهاءً أولاً (مناسب للمنتجات القابلة للتلف)" },
+                        { value: "none", label: t("inventoryMaster.items.batchTrackingNone") },
+                        { value: "fifo", label: t("inventoryMaster.items.batchTrackingFifo") },
+                        { value: "fefo", label: t("inventoryMaster.items.batchTrackingFefo") },
                       ]}
                       value={form.batchTrackingMode ?? "none"}
                       onValueChange={(v) => setForm((p: any) => ({ ...p, batchTrackingMode: v }))}
-                      placeholder="اختر نمط السحب"
+                      placeholder={t("inventoryMaster.items.batchTrackingPlaceholder")}
                     />
                   </Field>
                 </FormGrid>
@@ -1372,12 +1376,12 @@ export default function Items() {
         {/* Item nature filter — لتمييز الخامات / تام الصنع / المستهلكات بسرعة */}
         <div className="flex gap-1 bg-muted/50 p-1 rounded-lg border" data-testid="filter-nature">
           {([
-            { v: "all",         label: "الكل" },
-            { v: "raw",         label: "خامات" },
-            { v: "semi",        label: "نصف مصنّع" },
-            { v: "finished",    label: "تام الصنع" },
-            { v: "consumable",  label: "مستهلكات" },
-            { v: "merchandise", label: "بضاعة" },
+            { v: "all",         label: t("inventoryMaster.items.natureAll") },
+            { v: "raw",         label: t("inventoryMaster.items.natureRaw") },
+            { v: "semi",        label: t("inventoryMaster.items.natureSemi") },
+            { v: "finished",    label: t("inventoryMaster.items.natureFinished") },
+            { v: "consumable",  label: t("inventoryMaster.items.natureConsumable") },
+            { v: "merchandise", label: t("inventoryMaster.items.natureMerchandise") },
           ] as const).map(n => (
             <button key={n.v} onClick={() => setFilterNature(n.v as any)} className={cn("px-3 py-1.5 rounded-md text-xs font-medium transition-all", filterNature === n.v ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")} data-testid={`filter-nature-${n.v}`}>
               {n.label}
@@ -1391,9 +1395,9 @@ export default function Items() {
         {(() => {
           const items: LegendItem[] = [
             { kind: "active",   count: filtered.filter((it: any) => it.status === "active").length,
-              labelOverride: "نشط", hintOverride: "صنف نشط — يظهر في فواتير البيع/الشراء وحركات المخزون" },
+              labelOverride: t("pages.items.active"), hintOverride: t("inventoryMaster.items.activeHint") },
             { kind: "inactive", count: filtered.filter((it: any) => it.status !== "active").length,
-              labelOverride: "غير نشط", hintOverride: "صنف موقوف — لا يظهر في الإدخال" },
+              labelOverride: t("pages.items.inactive"), hintOverride: t("inventoryMaster.items.inactiveHint") },
           ];
           return <DocColorLegend items={items} />;
         })()}
@@ -1480,8 +1484,8 @@ export default function Items() {
                             </div>
                           )}
                           <div className="min-w-0">
-                            <p className="font-medium">{it.nameAr}</p>
-                            {it.nameEn && <p className="text-xs text-muted-foreground">{it.nameEn}</p>}
+                            <p className="font-medium">{pickName(it.nameAr, it.nameEn)}</p>
+                            {(isRtl ? it.nameEn : it.nameAr) && <p className="text-xs text-muted-foreground">{isRtl ? it.nameEn : it.nameAr}</p>}
                             {it.barcode && <p className="text-[10px] text-muted-foreground/70 font-mono">🔖 {it.barcode}</p>}
                             {it.tags && tagsToArray(it.tags).length > 0 && (
                               <div className="flex flex-wrap gap-1 mt-1">
@@ -1498,7 +1502,7 @@ export default function Items() {
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground text-xs">{it.group?.nameAr ?? "—"}</td>
+                      <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground text-xs">{pickName(it.group?.nameAr, it.group?.nameEn) || "—"}</td>
                       <td className="px-4 py-3 hidden md:table-cell">
                         {it.unit ? (
                           <span className="text-xs font-mono font-bold text-primary bg-primary/5 rounded px-1.5 py-0.5">{it.unit.code}</span>
@@ -1521,10 +1525,10 @@ export default function Items() {
                             : nat === "consumable" ? "bg-rose-50 text-rose-700 border-rose-200"
                             : "bg-slate-50 text-slate-700 border-slate-200";
                             const label =
-                              nat === "raw"        ? "خامات"
-                            : nat === "semi"       ? "نصف مصنّع"
-                            : nat === "finished"   ? "تام الصنع"
-                            : nat === "consumable" ? "مستهلكات" : "بضاعة";
+                              nat === "raw"        ? t("inventoryMaster.items.natureRaw")
+                            : nat === "semi"       ? t("inventoryMaster.items.natureSemi")
+                            : nat === "finished"   ? t("inventoryMaster.items.natureFinished")
+                            : nat === "consumable" ? t("inventoryMaster.items.natureConsumable") : t("inventoryMaster.items.natureMerchandise");
                             return <span className={cn("text-[9px] font-medium rounded-full px-2 py-0.5 border", cls)} data-testid={`badge-nature-${it.id}`}>{label}</span>;
                           })()}
                         </div>
@@ -1628,7 +1632,7 @@ export default function Items() {
                               className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
                                 expandedTab === "batches" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
                             >
-                              <FlaskConical className="h-3.5 w-3.5" />الدفعات
+                              <FlaskConical className="h-3.5 w-3.5" />{t("inventoryMaster.items.batchesTab")}
                             </button>
                             {/* PRO Extension #16 — Smart reorder suggestion */}
                             <button
@@ -1658,7 +1662,7 @@ export default function Items() {
                                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                                     {itemDetail.balances.map((b: any) => (
                                       <div key={b.id} className="rounded-lg border bg-background p-3">
-                                        <p className="text-xs font-medium truncate">{b.warehouse?.nameAr ?? "—"}</p>
+                                        <p className="text-xs font-medium truncate">{pickName(b.warehouse?.nameAr, b.warehouse?.nameEn) || "—"}</p>
                                         <div className="flex items-end gap-1 mt-1">
                                           <span className="text-lg font-bold tabular-nums">{fmtQty(b.qty)}</span>
                                           <span className="text-xs text-muted-foreground mb-0.5">{it.unit?.code ?? ""}</span>
@@ -3190,7 +3194,7 @@ function ItemReorderPanel({ itemId, unitCode }: { itemId: number; unitCode: stri
 // only, no FIFO/FEFO lot tracking), so we show *received* qty + expiry
 // status — not "remaining per batch".
 function ItemBatchesPanel({ itemId, unitCode }: { itemId: number; unitCode: string }) {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const { fmt, fmtQty } = useFmt();
   const { data, isLoading, isError } = useQuery({
@@ -3201,43 +3205,43 @@ function ItemBatchesPanel({ itemId, unitCode }: { itemId: number; unitCode: stri
   if (isLoading) return <Skeleton className="h-32 w-full" />;
   if (isError || !data) return (
     <div className="text-center text-xs text-destructive py-4 border border-dashed border-destructive/30 rounded-lg">
-      تعذّر تحميل الدفعات
+      {t("inventoryMaster.items.batchesLoadError")}
     </div>
   );
 
   if (!data.batches.length) return (
     <div className="text-xs text-muted-foreground py-6 text-center border border-dashed rounded-lg">
       <FlaskConical className="h-6 w-6 mx-auto mb-1.5 opacity-30" />
-      لا توجد دفعات مسجّلة لهذا الصنف بعد.
-      <p className="text-[10px] mt-1 opacity-70">أدخل رقم الدفعة وتاريخ الانتهاء في فاتورة المشتريات أو سند الاستلام، وستظهر هنا.</p>
+      {t("inventoryMaster.items.batchesEmpty")}
+      <p className="text-[10px] mt-1 opacity-70">{t("inventoryMaster.items.batchesEmptyHint")}</p>
     </div>
   );
 
   const s = data.summary;
   const statusBadge = (st: string) => {
-    if (st === "expired")        return { cls: "bg-red-100 text-red-700 border-red-200",         label: "منتهية" };
-    if (st === "expiring_soon")  return { cls: "bg-amber-100 text-amber-800 border-amber-200",   label: "قاربت على الانتهاء" };
-    if (st === "active")         return { cls: "bg-emerald-100 text-emerald-700 border-emerald-200", label: "صالحة" };
-    return                          { cls: "bg-slate-100 text-slate-600 border-slate-200",      label: "بدون انتهاء" };
+    if (st === "expired")        return { cls: "bg-red-100 text-red-700 border-red-200",         label: t("inventoryMaster.items.batchStatusExpired") };
+    if (st === "expiring_soon")  return { cls: "bg-amber-100 text-amber-800 border-amber-200",   label: t("inventoryMaster.items.batchStatusExpiringSoon") };
+    if (st === "active")         return { cls: "bg-emerald-100 text-emerald-700 border-emerald-200", label: t("inventoryMaster.items.batchStatusActive") };
+    return                          { cls: "bg-slate-100 text-slate-600 border-slate-200",      label: t("inventoryMaster.items.batchStatusNoExpiry") };
   };
 
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="rounded-lg border bg-background p-3">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">إجمالي الدفعات</p>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("inventoryMaster.items.batchTotalBatches")}</p>
           <p className="text-lg font-bold tabular-nums mt-0.5">{s.totalBatches}</p>
         </div>
         <div className="rounded-lg border bg-emerald-50 dark:bg-emerald-900/10 p-3">
-          <p className="text-[10px] uppercase tracking-wide text-emerald-700">صالحة</p>
+          <p className="text-[10px] uppercase tracking-wide text-emerald-700">{t("inventoryMaster.items.batchStatusActive")}</p>
           <p className="text-lg font-bold tabular-nums mt-0.5 text-emerald-700">{s.activeCount}</p>
         </div>
         <div className="rounded-lg border bg-amber-50 dark:bg-amber-900/10 p-3">
-          <p className="text-[10px] uppercase tracking-wide text-amber-700">تنتهي خلال 30 يوم</p>
+          <p className="text-[10px] uppercase tracking-wide text-amber-700">{t("inventoryMaster.items.batchExpiringSoon30")}</p>
           <p className="text-lg font-bold tabular-nums mt-0.5 text-amber-700">{s.expiringSoonCount}</p>
         </div>
         <div className="rounded-lg border bg-red-50 dark:bg-red-900/10 p-3">
-          <p className="text-[10px] uppercase tracking-wide text-red-700">منتهية</p>
+          <p className="text-[10px] uppercase tracking-wide text-red-700">{t("inventoryMaster.items.batchStatusExpired")}</p>
           <p className="text-lg font-bold tabular-nums mt-0.5 text-red-700">{s.expiredCount}</p>
         </div>
       </div>
@@ -3246,14 +3250,14 @@ function ItemBatchesPanel({ itemId, unitCode }: { itemId: number; unitCode: stri
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
             <tr>
-              <th className={cn("px-3 py-2 font-semibold text-muted-foreground text-xs", isRtl ? "text-right" : "text-left")}>رقم الدفعة</th>
-              <th className={cn("px-3 py-2 font-semibold text-muted-foreground text-xs", isRtl ? "text-right" : "text-left")}>تاريخ الانتهاء</th>
-              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">الحالة</th>
-              <th className={cn("px-3 py-2 font-semibold text-muted-foreground text-xs", isRtl ? "text-right" : "text-left")}>المستودع</th>
-              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">الكمية المستلمة</th>
-              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">متوسط التكلفة</th>
-              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">أول استلام</th>
-              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">آخر استلام</th>
+              <th className={cn("px-3 py-2 font-semibold text-muted-foreground text-xs", isRtl ? "text-right" : "text-left")}>{t("inventoryMaster.items.batchColNumber")}</th>
+              <th className={cn("px-3 py-2 font-semibold text-muted-foreground text-xs", isRtl ? "text-right" : "text-left")}>{t("inventoryMaster.items.batchColExpiry")}</th>
+              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">{t("inventoryMaster.items.batchColStatus")}</th>
+              <th className={cn("px-3 py-2 font-semibold text-muted-foreground text-xs", isRtl ? "text-right" : "text-left")}>{t("inventoryMaster.items.batchColWarehouse")}</th>
+              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">{t("inventoryMaster.items.batchColReceivedQty")}</th>
+              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">{t("inventoryMaster.items.batchColAvgCost")}</th>
+              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">{t("inventoryMaster.items.batchColFirstReceived")}</th>
+              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">{t("inventoryMaster.items.batchColLastReceived")}</th>
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -3266,7 +3270,7 @@ function ItemBatchesPanel({ itemId, unitCode }: { itemId: number; unitCode: stri
                     {b.expiryDate ?? <span className="text-muted-foreground">—</span>}
                     {b.daysToExpiry != null && (
                       <span className="block text-[10px] text-muted-foreground">
-                        {b.daysToExpiry < 0 ? `منذ ${-b.daysToExpiry} يوم` : `بعد ${b.daysToExpiry} يوم`}
+                        {b.daysToExpiry < 0 ? t("inventoryMaster.items.batchDaysAgo", { days: -b.daysToExpiry }) : t("inventoryMaster.items.batchDaysLater", { days: b.daysToExpiry })}
                       </span>
                     )}
                   </td>
@@ -3292,7 +3296,7 @@ function ItemBatchesPanel({ itemId, unitCode }: { itemId: number; unitCode: stri
       </div>
 
       <p className="text-[10px] text-muted-foreground leading-relaxed border-r-2 border-amber-300 ps-3 py-1">
-        <span className="font-semibold">ملاحظة:</span> العمود "الكمية المستلمة" يعرض إجمالي ما دخل المخزون بهذه الدفعة منذ أول تسجيل لها. حركات البيع/الصرف لا ترتبط بدفعة معينة في هذه المرحلة، لذلك لا يوجد عمود "المتبقي من الدفعة" — أُضيف لاحقاً عند ترقية النظام لتتبّع الدفعات الكامل (FIFO/FEFO).
+        <span className="font-semibold">{t("inventoryMaster.items.batchNoteLabel")}</span> {t("inventoryMaster.items.batchNoteBody")}
       </p>
     </div>
   );

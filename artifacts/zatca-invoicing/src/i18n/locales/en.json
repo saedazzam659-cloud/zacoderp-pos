@@ -294,7 +294,8 @@
     "deleted": "Deleted",
     "create": "Create",
     "refresh": "Refresh",
-    "balance": "Balance"
+    "balance": "Balance",
+    "validationError": "Check your data"
   },
   "pagination": {
     "rowsPerPage": "Rows per page:",
@@ -2018,7 +2019,8 @@
         "successTitle": "Inventory scanned",
         "successBody": "{{created}} new notifications created. {{alreadyNotified}} already notified today. {{aboveThreshold}} above threshold.",
         "failed": "Inventory scan failed"
-      }
+      },
+      "itemLabel": "Item"
     },
     "alerts": {
       "title": "Smart Inventory Alerts",
@@ -2128,7 +2130,8 @@
         "inventoryAccountHint": "The accounting account that represents the balance of this warehouse in the general ledger",
         "branch": "Branch",
         "noBranch": "No branch (shared across all branches)",
-        "branchHint": "Pick the branch this warehouse belongs to. Leave empty to make it a shared warehouse visible to all branches."
+        "branchHint": "Pick the branch this warehouse belongs to. Leave empty to make it a shared warehouse visible to all branches.",
+        "codeHint": "If left empty, it will be auto-generated sequentially"
       },
       "placeholders": {
         "mainWarehouse": "Main Warehouse",
@@ -2137,7 +2140,8 @@
         "selectGroup": "— Select Group —",
         "selectAccount": "— Select Inventory Account —",
         "search": "Search by code or name...",
-        "selectBranch": "Select branch..."
+        "selectBranch": "Select branch...",
+        "codeAuto": "Leave empty to auto-generate"
       },
       "table": {
         "code": "Code",
@@ -2153,6 +2157,12 @@
         "updated": "Updated successfully",
         "deleted": "Deleted successfully",
         "confirmDelete": "Delete warehouse?"
+      },
+      "itemLabel": "Warehouse",
+      "quota": "Used",
+      "limitReachedTitle": "Limit reached",
+      "validation": {
+        "nameRequired": "Arabic name is required"
       }
     }
   },
@@ -5528,7 +5538,14 @@
       "savedToast": "Item group saved",
       "deletedToast": "Item group deleted",
       "saveError": "Save failed",
-      "deleteError": "Delete failed"
+      "deleteError": "Delete failed",
+      "accountingMappingTab": "Accounting Mapping",
+      "defaultCostAccount": "Default Cost Account",
+      "defaultRevenueAccount": "Default Revenue Account",
+      "inheritedAccountHint": "Inherited by each item in this group if no account is specified",
+      "selectCostAccount": "— Select cost account —",
+      "selectRevenueAccount": "— Select revenue account —",
+      "itemLabel": "group"
     },
     "units": {
       "title": "Units of Measure",
@@ -5556,7 +5573,16 @@
       "savedToast": "Unit saved",
       "deletedToast": "Unit deleted",
       "saveError": "Save failed",
-      "deleteError": "Delete failed"
+      "deleteError": "Delete failed",
+      "itemLabel": "unit",
+      "infoTitle": "How do multi-units work?",
+      "infoBody": "Define general units here (piece, carton, kg...). Then in the items page, link each item to the units it is sold in, specifying the conversion factor and price for each unit.",
+      "exampleTitle": "Example — Item: Sugar",
+      "exampleEach": "Each",
+      "exampleEachDetail": "Factor ×1 — Cost 5 SAR",
+      "exampleCarton": "Carton",
+      "exampleCartonDetail": "Factor ×12 — Cost 60 SAR",
+      "commonUnitsLabel": "Common Units — Click to add quickly"
     },
     "warehouseGroups": {
       "title": "Warehouse Groups",
@@ -5580,6 +5606,170 @@
       "deletedToast": "Warehouse group deleted",
       "saveError": "Save failed",
       "deleteError": "Delete failed"
+    },
+    "dashboard": {
+      "pageTitle": "Inventory Management",
+      "pageSubtitle": "Inventory dashboard — perpetual inventory with weighted average",
+      "statTotalItems": "Total Items",
+      "statWarehouses": "Warehouses Count",
+      "statStockValue": "Stock Value (SAR)",
+      "statBelowReorder": "Items Below Reorder Point",
+      "quickActions": "Quick Actions",
+      "quickNewTransfer": "New Transfer",
+      "quickStockAdjustment": "Stock Adjustment",
+      "quickStockCount": "Stock Count",
+      "quickNewItem": "New Item",
+      "recentMovements": "Latest Inventory Movements",
+      "viewAll": "View All",
+      "noMovements": "No inventory movements yet",
+      "txTransferOut": "Transfer Out",
+      "txTransferIn": "Transfer In",
+      "txAdjustment": "Adjustment",
+      "txCountAdj": "Count Adjustment",
+      "txSale": "Sales",
+      "txPurchase": "Purchases",
+      "txOpening": "Opening Balance"
+    },
+    "items": {
+      "imageTypeUnsupportedTitle": "Unsupported file type",
+      "imageTypeUnsupportedDesc": "Please choose an image file only",
+      "imageTooLargeTitle": "Image too large",
+      "imageTooLargeDesc": "Maximum size is 5 MB",
+      "imageUploadUrlFailed": "Failed to prepare upload URL",
+      "imageUploadFailed": "Failed to upload image",
+      "imageUploaded": "Image uploaded",
+      "imageUploadError": "Could not upload image",
+      "imageUploading": "Uploading...",
+      "imageChange": "Change image",
+      "imageUpload": "Upload image",
+      "imageRemove": "Remove image",
+      "saveItemFailed": "Could not save item",
+      "updateItemFailed": "Could not update item",
+      "deleteItemFailed": "Could not delete",
+      "posTab": "Point of Sale",
+      "natureFieldLabel": "Item nature",
+      "natureFieldHint": "Helps distinguish raw materials from finished goods in manufacturing screens",
+      "natureRawLong": "Raw materials",
+      "natureSemi": "Semi-finished",
+      "natureFinished": "Finished",
+      "natureConsumable": "Consumables",
+      "natureMerchandiseLong": "Regular merchandise",
+      "natureAll": "All",
+      "natureRaw": "Raw",
+      "natureMerchandise": "Merchandise",
+      "itemImageLabel": "Item image",
+      "posSettingsTitle": "Point of Sale settings",
+      "showInPosLabel": "Show item in the Point of Sale (POS) screen",
+      "showInPosHint": "When unchecked, this item will not appear in the cashier, supermarket and restaurant screens, but it remains available in inventory and in sales and purchase invoices.",
+      "expiryDateSectionTitle": "Expiry date (for items with a bill of materials / BOM)",
+      "expiryDateLabel": "Item expiry date",
+      "expiryDateHintBundle": "Composite item (BOM) — an expiry date can be recorded.",
+      "expiryDateHintDefault": "Available for all items, but it is usually used for manufactured items (those with a BOM).",
+      "batchTrackingSectionTitle": "Batch tracking (FIFO / FEFO)",
+      "batchTrackingLabel": "Batch consumption mode on issue",
+      "batchTrackingHint": "When production starts, the required quantity is drawn from raw-material batches in this order. The default mode (no tracking) keeps the current movement as a single line at the average cost.",
+      "batchTrackingNone": "No tracking — average cost (current mode)",
+      "batchTrackingFifo": "FIFO — oldest received first",
+      "batchTrackingFefo": "FEFO — nearest expiry first (suitable for perishable products)",
+      "batchTrackingPlaceholder": "Choose consumption mode",
+      "activeHint": "Active item — appears in sales/purchase invoices and inventory movements",
+      "inactiveHint": "Suspended item — not shown in data entry",
+      "batchesTab": "Batches",
+      "batchesLoadError": "Could not load batches",
+      "batchesEmpty": "No batches recorded for this item yet.",
+      "batchesEmptyHint": "Enter the batch number and expiry date on the purchase invoice or goods receipt, and it will appear here.",
+      "batchStatusExpired": "Expired",
+      "batchStatusExpiringSoon": "Expiring soon",
+      "batchStatusActive": "Valid",
+      "batchStatusNoExpiry": "No expiry",
+      "batchTotalBatches": "Total batches",
+      "batchExpiringSoon30": "Expiring within 30 days",
+      "batchColNumber": "Batch number",
+      "batchColExpiry": "Expiry date",
+      "batchColStatus": "Status",
+      "batchColWarehouse": "Warehouse",
+      "batchColReceivedQty": "Received qty",
+      "batchColAvgCost": "Average cost",
+      "batchColFirstReceived": "First received",
+      "batchColLastReceived": "Last received",
+      "batchDaysAgo": "{{days}} days ago",
+      "batchDaysLater": "in {{days}} days",
+      "batchNoteLabel": "Note:",
+      "batchNoteBody": "The \"Received qty\" column shows the total that entered inventory for this batch since its first record. Sales/issue movements are not linked to a specific batch at this stage, so there is no \"Remaining per batch\" column — it will be added later when the system is upgraded to full batch tracking (FIFO/FEFO)."
+    },
+    "offers": {
+      "activated": "Offer activated",
+      "activateError": "Could not activate",
+      "expired": "Offer expired",
+      "expireError": "Could not expire",
+      "deleted": "Offer deleted",
+      "deleteError": "Could not delete",
+      "title": "Offers",
+      "subtitle": "Manage offers linked to customers, items, and sales reps",
+      "new": "New Offer",
+      "empty": "No offers yet. Start by creating one.",
+      "deleteConfirm": "Delete this offer permanently?",
+      "filter": {
+        "all": "All",
+        "draft": "Draft",
+        "active": "Active",
+        "expired": "Expired"
+      },
+      "col": {
+        "number": "Offer #",
+        "name": "Name",
+        "discountType": "Discount Type",
+        "coupon": "Coupon",
+        "scopes": "Scopes",
+        "priority": "Priority",
+        "validity": "Validity",
+        "usage": "Usage",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "scope": {
+        "all": "All",
+        "specific": "Specific"
+      },
+      "scopeShort": {
+        "customers": "Customers",
+        "items": "Items",
+        "salesReps": "Reps"
+      },
+      "statusVal": {
+        "active": "Active",
+        "expired": "Expired",
+        "draft": "Draft"
+      },
+      "discountTypeVal": {
+        "line_pricing": {
+          "short": "Item"
+        },
+        "percentage_total": {
+          "short": "Percent"
+        },
+        "fixed_total": {
+          "short": "Fixed"
+        },
+        "buy_x_get_y": {
+          "short": "Buy X Get Y"
+        }
+      },
+      "discountInline": {
+        "off": "off",
+        "fixed": "fixed"
+      }
+    },
+    "warehouses": {
+      "quotaMaxReached": "You've reached your plan limit",
+      "quotaCanAdd": "You can add {{count}} more warehouse(s)",
+      "limitReachedDesc": "Your plan allows only {{count}} warehouse(s). Please upgrade your plan to add more.",
+      "defaultWarehouse": "Company default warehouse",
+      "defaultWarehouseHint": "Auto-selected in sales and purchase invoices and in stocktakes. Only one per company.",
+      "defaultBadge": "Default",
+      "overdraftAllowed": "Overdraft allowed",
+      "balanceOnly": "Balance only",
+      "newWarehouseAria": "New warehouse"
     }
   },
   "inventoryReports": {

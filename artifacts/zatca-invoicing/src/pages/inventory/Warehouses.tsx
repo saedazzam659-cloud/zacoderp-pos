@@ -20,7 +20,9 @@ import { useTranslation } from "react-i18next";
 const EMPTY = { code: "", nameAr: "", nameEn: "", groupId: "", branchId: "", city: "", region: "", allowNegative: false, negativeLimit: "", accountId: "", isDefault: false };
 
 export default function Warehouses() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const qc = useQueryClient();
@@ -175,7 +177,7 @@ export default function Warehouses() {
                     ? "border-amber-300 bg-amber-50 text-amber-800"
                     : "border-emerald-200 bg-emerald-50 text-emerald-800")
               }
-              title={quota.remaining === 0 ? "وصلت إلى الحد الأقصى لخطتك" : `يمكنك إضافة ${quota.remaining} مخزن إضافي`}
+              title={quota.remaining === 0 ? t("inventoryMaster.warehouses.quotaMaxReached") : t("inventoryMaster.warehouses.quotaCanAdd", { count: quota.remaining })}
             >
               {t("pages.warehouses.quota", { defaultValue: "المستخدم" })}: <span className="font-bold">{quota.used}</span> / {quota.limit}
             </div>
@@ -187,7 +189,7 @@ export default function Warehouses() {
               if (quota && quota.remaining === 0) {
                 toast({
                   title: t("pages.warehouses.limitReachedTitle", { defaultValue: "وصلت للحد الأقصى" }),
-                  description: `خطتك تسمح بـ ${quota.limit} مخزن فقط. يرجى ترقية الخطة لإضافة المزيد.`,
+                  description: t("inventoryMaster.warehouses.limitReachedDesc", { count: quota.limit }),
                   variant: "destructive",
                 });
                 return;
@@ -254,8 +256,8 @@ export default function Warehouses() {
                 <div className="md:col-span-2 flex items-center gap-3 rounded-lg border bg-amber-50/40 border-amber-200 px-3 py-2.5">
                   <Switch checked={!!form.isDefault} onCheckedChange={v => setForm((p: any) => ({ ...p, isDefault: v }))} id="is-default-wh" />
                   <Label htmlFor="is-default-wh" className="text-sm cursor-pointer flex-1">
-                    المخزن الافتراضي للشركة
-                    <span className="block text-[10px] text-muted-foreground font-normal mt-0.5">يُختار تلقائياً في فواتير المبيعات والمشتريات وفي الجرد. مخزن واحد فقط لكل شركة.</span>
+                    {t("inventoryMaster.warehouses.defaultWarehouse")}
+                    <span className="block text-[10px] text-muted-foreground font-normal mt-0.5">{t("inventoryMaster.warehouses.defaultWarehouseHint")}</span>
                   </Label>
                 </div>
                 <div className="space-y-1.5 md:col-span-2">
@@ -341,16 +343,16 @@ export default function Warehouses() {
               <div className="flex items-center gap-1.5 flex-wrap justify-end">
                 {w.isDefault && (
                   <span className="text-[10px] rounded-full px-2 py-0.5 font-semibold bg-amber-100 text-amber-800 inline-flex items-center gap-1">
-                    ★ افتراضي
+                    ★ {t("inventoryMaster.warehouses.defaultBadge")}
                   </span>
                 )}
                 {w.allowNegative ? (
                   <span className="text-[10px] rounded-full px-2 py-0.5 font-semibold bg-emerald-100 text-emerald-800 inline-flex items-center gap-1">
-                    <CheckCircle2 className="h-3 w-3" /> سحب على المكشوف
+                    <CheckCircle2 className="h-3 w-3" /> {t("inventoryMaster.warehouses.overdraftAllowed")}
                   </span>
                 ) : (
                   <span className="text-[10px] rounded-full px-2 py-0.5 font-semibold bg-slate-100 text-slate-600 inline-flex items-center gap-1">
-                    <XCircle className="h-3 w-3" /> رصيد فقط
+                    <XCircle className="h-3 w-3" /> {t("inventoryMaster.warehouses.balanceOnly")}
                   </span>
                 )}
               </div>
@@ -362,12 +364,12 @@ export default function Warehouses() {
               data-testid={`mobile-open-warehouse-${w.id}`}
             >
               <div className="font-bold text-sm text-slate-900 leading-tight">
-                {w.nameAr}
-                {w.nameEn && <span className="block text-[11px] text-muted-foreground font-normal">{w.nameEn}</span>}
+                {pickName(w.nameAr, w.nameEn)}
+                {(isRtl ? w.nameEn : w.nameAr) && <span className="block text-[11px] text-muted-foreground font-normal">{isRtl ? w.nameEn : w.nameAr}</span>}
               </div>
               <div className="flex items-center gap-3 text-[11px] text-slate-600 flex-wrap">
-                {w.group?.nameAr && (
-                  <span className="inline-flex items-center gap-1"><BookMarked className="h-3 w-3" /> {w.group.nameAr}</span>
+                {pickName(w.group?.nameAr, w.group?.nameEn) && (
+                  <span className="inline-flex items-center gap-1"><BookMarked className="h-3 w-3" /> {pickName(w.group?.nameAr, w.group?.nameEn)}</span>
                 )}
                 {w.city && (
                   <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" /> {w.city}</span>
@@ -379,12 +381,12 @@ export default function Warehouses() {
                 onClick={() => { if (confirm(t("pages.warehouses.messages.confirmDelete"))) deleteMut.mutate(w.id); }}
                 className="py-2.5 text-rose-600 active:bg-rose-100 flex items-center justify-center gap-1 text-xs"
                 data-testid={`mobile-btn-delete-warehouse-${w.id}`}>
-                <Trash2 className="h-3.5 w-3.5" /> حذف
+                <Trash2 className="h-3.5 w-3.5" /> {t("inventoryMaster.common.delete")}
               </button>
               <button type="button" onClick={() => handleEdit(w)}
                 className="py-2.5 text-cyan-700 active:bg-cyan-100 flex items-center justify-center gap-1 text-xs font-medium"
                 data-testid={`mobile-btn-edit-warehouse-${w.id}`}>
-                <Pencil className="h-3.5 w-3.5" /> تعديل
+                <Pencil className="h-3.5 w-3.5" /> {t("inventoryMaster.common.edit")}
               </button>
             </div>
           </div>
@@ -427,14 +429,14 @@ export default function Warehouses() {
                     <td className="px-4 py-3 font-mono text-xs">{w.code}</td>
                     <td className="px-4 py-3">
                       <p className="font-medium inline-flex items-center gap-1.5">
-                        {w.nameAr}
+                        {pickName(w.nameAr, w.nameEn)}
                         {w.isDefault && (
-                          <span className="text-[10px] rounded-full px-1.5 py-0.5 font-semibold bg-amber-100 text-amber-800">★ افتراضي</span>
+                          <span className="text-[10px] rounded-full px-1.5 py-0.5 font-semibold bg-amber-100 text-amber-800">★ {t("inventoryMaster.warehouses.defaultBadge")}</span>
                         )}
                       </p>
-                      {w.nameEn && <p className="text-xs text-muted-foreground">{w.nameEn}</p>}
+                      {(isRtl ? w.nameEn : w.nameAr) && <p className="text-xs text-muted-foreground">{isRtl ? w.nameEn : w.nameAr}</p>}
                     </td>
-                    <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground text-xs">{w.group?.nameAr ?? "—"}</td>
+                    <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground text-xs">{pickName(w.group?.nameAr, w.group?.nameEn) || "—"}</td>
                     <td className="px-4 py-3 hidden md:table-cell text-muted-foreground text-xs">{w.city ?? "—"}</td>
                     <td className="px-4 py-3 text-center">
                       {w.allowNegative ? <CheckCircle2 className="h-4 w-4 text-green-500 mx-auto" /> : <XCircle className="h-4 w-4 text-muted-foreground/30 mx-auto" />}
@@ -468,7 +470,7 @@ export default function Warehouses() {
         onClick={() => { reset(); setShowForm(true); }}
         className="md:hidden fixed bottom-6 end-6 z-40 group"
         data-testid="mobile-fab-new-warehouse"
-        aria-label="مستودع جديد"
+        aria-label={t("inventoryMaster.warehouses.newWarehouseAria")}
       >
         <span className="absolute inset-0 rounded-full bg-cyan-500 opacity-30 group-active:opacity-0 animate-ping" />
         <span className="relative flex items-center justify-center h-14 w-14 rounded-full bg-gradient-to-br from-cyan-500 via-cyan-600 to-cyan-800 text-white shadow-xl shadow-cyan-500/40 ring-4 ring-white active:scale-95 transition-transform">

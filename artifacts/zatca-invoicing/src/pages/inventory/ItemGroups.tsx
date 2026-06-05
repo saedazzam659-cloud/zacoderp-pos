@@ -96,7 +96,7 @@ export default function ItemGroups() {
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="w-full h-9 mb-5">
               <TabsTrigger value="basic"    className="flex-1 text-xs gap-1.5"><Tag        className="h-3.5 w-3.5" />{t("inventoryMaster.common.code") as string} / {t("inventoryMaster.common.nameAr") as string}</TabsTrigger>
-              <TabsTrigger value="accounts" className="flex-1 text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />{isRtl ? "الربط المحاسبي" : "Accounting Mapping"}</TabsTrigger>
+              <TabsTrigger value="accounts" className="flex-1 text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />{tr("accountingMappingTab")}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="basic" className="mt-0">
@@ -115,20 +115,20 @@ export default function ItemGroups() {
 
             <TabsContent value="accounts" className="mt-0">
               <FormGrid>
-                <Field label={isRtl ? "حساب التكلفة الافتراضي" : "Default Cost Account"} hint={isRtl ? "يُورَث لكل صنف ينتمي لهذه المجموعة إذا لم يُحدَّد له حساب" : "Inherited by each item in this group if no account is specified"}>
+                <Field label={tr("defaultCostAccount")} hint={tr("inheritedAccountHint")}>
                   <AccountCombobox
                     value={form.costAccountId}
                     onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))}
-                    placeholder={isRtl ? "— اختر حساب التكلفة —" : "— Select cost account —"}
+                    placeholder={tr("selectCostAccount")}
                     filterTypes={["expense", "asset"]}
                     grouped={false}
                   />
                 </Field>
-                <Field label={isRtl ? "حساب الإيراد الافتراضي" : "Default Revenue Account"} hint={isRtl ? "يُورَث لكل صنف ينتمي لهذه المجموعة إذا لم يُحدَّد له حساب" : "Inherited by each item in this group if no account is specified"}>
+                <Field label={tr("defaultRevenueAccount")} hint={tr("inheritedAccountHint")}>
                   <AccountCombobox
                     value={form.revenueAccountId}
                     onValueChange={v => setForm((p: any) => ({ ...p, revenueAccountId: v }))}
-                    placeholder={isRtl ? "— اختر حساب الإيراد —" : "— Select revenue account —"}
+                    placeholder={tr("selectRevenueAccount")}
                     filterTypes={["revenue"]}
                     grouped={false}
                   />

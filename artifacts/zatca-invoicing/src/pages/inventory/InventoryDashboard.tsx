@@ -32,18 +32,20 @@ const inventoryHubTiles: HubTile[] = [
   { nameKey: "nav.inventoryReports", href: "/inventory/reports",          icon: BarChart2,      tone: "slate",   permKey: "items" },
 ];
 
-const TX_TYPE_LABEL: Record<string, { label: string; color: string }> = {
-  transfer_out: { label: "تحويل خارج",  color: "text-orange-600 bg-orange-50" },
-  transfer_in:  { label: "تحويل داخل",  color: "text-blue-600 bg-blue-50" },
-  adjustment:   { label: "تسوية",        color: "text-purple-600 bg-purple-50" },
-  count_adj:    { label: "تعديل جرد",   color: "text-indigo-600 bg-indigo-50" },
-  sale:         { label: "مبيعات",       color: "text-red-600 bg-red-50" },
-  purchase:     { label: "مشتريات",      color: "text-green-600 bg-green-50" },
-  opening:      { label: "رصيد افتتاحي", color: "text-slate-600 bg-slate-50" },
+const TX_TYPE_META: Record<string, { txKey: string; color: string }> = {
+  transfer_out: { txKey: "txTransferOut", color: "text-orange-600 bg-orange-50" },
+  transfer_in:  { txKey: "txTransferIn",  color: "text-blue-600 bg-blue-50" },
+  adjustment:   { txKey: "txAdjustment",  color: "text-purple-600 bg-purple-50" },
+  count_adj:    { txKey: "txCountAdj",    color: "text-indigo-600 bg-indigo-50" },
+  sale:         { txKey: "txSale",        color: "text-red-600 bg-red-50" },
+  purchase:     { txKey: "txPurchase",    color: "text-green-600 bg-green-50" },
+  opening:      { txKey: "txOpening",     color: "text-slate-600 bg-slate-50" },
 };
 
 export default function InventoryDashboard() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const { fmtQty, fmtVal } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
@@ -55,7 +57,7 @@ export default function InventoryDashboard() {
 
   const stats = [
     {
-      label: "إجمالي الأصناف",
+      label: t("inventoryMaster.dashboard.statTotalItems"),
       value: isLoading ? "—" : (data?.totalItems ?? 0),
       icon: Package,
       color: "text-blue-600",
@@ -63,7 +65,7 @@ export default function InventoryDashboard() {
       href: "/inventory/items",
     },
     {
-      label: "عدد المخازن",
+      label: t("inventoryMaster.dashboard.statWarehouses"),
       value: isLoading ? "—" : (data?.totalWarehouses ?? 0),
       icon: Warehouse,
       color: "text-green-600",
@@ -71,7 +73,7 @@ export default function InventoryDashboard() {
       href: "/inventory/warehouses",
     },
     {
-      label: "قيمة المخزون (ر.س)",
+      label: t("inventoryMaster.dashboard.statStockValue"),
       value: isLoading ? "—" : fmtVal(data?.totalStockValue ?? 0),
       icon: TrendingUp,
       color: "text-primary",
@@ -79,7 +81,7 @@ export default function InventoryDashboard() {
       href: "/inventory/balance",
     },
     {
-      label: "أصناف تحت حد الطلب",
+      label: t("inventoryMaster.dashboard.statBelowReorder"),
       value: isLoading ? "—" : (data?.itemsBelowReorder ?? 0),
       icon: AlertTriangle,
       color: "text-amber-600",
@@ -89,14 +91,14 @@ export default function InventoryDashboard() {
   ];
 
   const quickActions = [
-    { label: "تحويل جديد",     href: "/inventory/transfers/new",    icon: ArrowRightLeft, color: "text-blue-600" },
-    { label: "تسوية مخزنية",   href: "/inventory/adjustments/new",  icon: SlidersHorizontal, color: "text-purple-600" },
-    { label: "جرد مخزن",       href: "/inventory/counts/new",        icon: ClipboardList, color: "text-indigo-600" },
-    { label: "صنف جديد",       href: "/inventory/items/new",         icon: Plus,          color: "text-green-600" },
+    { label: t("inventoryMaster.dashboard.quickNewTransfer"),   href: "/inventory/transfers/new",    icon: ArrowRightLeft, color: "text-blue-600" },
+    { label: t("inventoryMaster.dashboard.quickStockAdjustment"), href: "/inventory/adjustments/new",  icon: SlidersHorizontal, color: "text-purple-600" },
+    { label: t("inventoryMaster.dashboard.quickStockCount"),     href: "/inventory/counts/new",        icon: ClipboardList, color: "text-indigo-600" },
+    { label: t("inventoryMaster.dashboard.quickNewItem"),        href: "/inventory/items/new",         icon: Plus,          color: "text-green-600" },
   ];
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       {/* Module landing tiles (Odoo-style) */}
       <MenuHub
         title={t("hub.inventoryTitle")}
@@ -110,11 +112,11 @@ export default function InventoryDashboard() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">إدارة المخازن</h1>
-          <p className="text-muted-foreground text-sm mt-1">لوحة تحكم المخزون — الجرد المستمر بالمتوسط المرجح</p>
+          <h1 className="text-2xl font-bold">{t("inventoryMaster.dashboard.pageTitle")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{t("inventoryMaster.dashboard.pageSubtitle")}</p>
         </div>
         <Button asChild size="sm" className="gap-2">
-          <Link href="/inventory/items/new"><Plus className="h-4 w-4" />صنف جديد</Link>
+          <Link href="/inventory/items/new"><Plus className="h-4 w-4" />{t("inventoryMaster.dashboard.quickNewItem")}</Link>
         </Button>
       </div>
 
@@ -142,7 +144,7 @@ export default function InventoryDashboard() {
 
       {/* Quick Actions */}
       <div className="rounded-xl border bg-card p-4">
-        <h2 className="text-sm font-semibold text-muted-foreground mb-3 uppercase tracking-wide">إجراءات سريعة</h2>
+        <h2 className="text-sm font-semibold text-muted-foreground mb-3 uppercase tracking-wide">{t("inventoryMaster.dashboard.quickActions")}</h2>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {quickActions.map(a => (
             <Link key={a.label} href={a.href}>
@@ -160,10 +162,10 @@ export default function InventoryDashboard() {
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="flex items-center gap-2">
             <BookOpen className="h-4 w-4 text-primary" />
-            <h2 className="font-semibold text-sm">آخر حركات المخزون</h2>
+            <h2 className="font-semibold text-sm">{t("inventoryMaster.dashboard.recentMovements")}</h2>
           </div>
           <Button variant="ghost" size="sm" asChild className="text-xs gap-1">
-            <Link href="/inventory/ledger">عرض الكل <ChevronLeft className="h-3 w-3" /></Link>
+            <Link href="/inventory/ledger">{t("inventoryMaster.dashboard.viewAll")} <ChevronLeft className="h-3 w-3" /></Link>
           </Button>
         </div>
         {isLoading ? (
@@ -173,20 +175,22 @@ export default function InventoryDashboard() {
         ) : !data?.recentMovements?.length ? (
           <div className="p-8 text-center text-muted-foreground text-sm">
             <Package className="h-8 w-8 mx-auto mb-2 opacity-40" />
-            لا توجد حركات مخزون حتى الآن
+            {t("inventoryMaster.dashboard.noMovements")}
           </div>
         ) : (
           <div className="divide-y">
             {data.recentMovements.map((mov: any) => {
-              const tx = TX_TYPE_LABEL[mov.txType] ?? { label: mov.txType, color: "text-slate-600 bg-slate-50" };
+              const txMeta = TX_TYPE_META[mov.txType];
+              const txLabel = txMeta ? t(`inventoryMaster.dashboard.${txMeta.txKey}`) : mov.txType;
+              const txColor = txMeta?.color ?? "text-slate-600 bg-slate-50";
               return (
                 <div key={mov.id} className="flex items-center gap-3 px-4 py-3">
-                  <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5 shrink-0", tx.color)}>
-                    {tx.label}
+                  <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5 shrink-0", txColor)}>
+                    {txLabel}
                   </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{mov.item?.nameAr ?? "—"}</p>
-                    <p className="text-[11px] text-muted-foreground truncate">{mov.warehouse?.nameAr}</p>
+                    <p className="text-sm font-medium truncate">{pickName(mov.item?.nameAr, mov.item?.nameEn) || "—"}</p>
+                    <p className="text-[11px] text-muted-foreground truncate">{pickName(mov.warehouse?.nameAr, mov.warehouse?.nameEn)}</p>
                   </div>
                   <div className="text-left shrink-0">
                     <p className={cn("text-sm font-bold tabular-nums", Number(mov.qty) >= 0 ? "text-green-600" : "text-red-600")}>

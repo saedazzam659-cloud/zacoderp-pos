@@ -30,7 +30,8 @@ import { parseError } from "@/lib/parseError";
 type StatusFilter = "all" | "draft" | "active" | "expired";
 
 export default function Offers() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
   const [, navigate] = useLocation();
   const { user } = useAuth();
   const cid = user?.companyId ?? undefined;
@@ -52,18 +53,18 @@ export default function Offers() {
 
   const activate = useMutation({
     mutationFn: (id: number) => offersApi.activate(id, cid),
-    onSuccess: () => { toast({ title: t("offers.activated", "تم تفعيل العرض") }); invalidate(); },
-    onError:   (e) => toast({ title: t("offers.activateError", "تعذّر التفعيل"), description: parseError(e), variant: "destructive" }),
+    onSuccess: () => { toast({ title: t("inventoryMaster.offers.activated") }); invalidate(); },
+    onError:   (e) => toast({ title: t("inventoryMaster.offers.activateError"), description: parseError(e), variant: "destructive" }),
   });
   const expire = useMutation({
     mutationFn: (id: number) => offersApi.expire(id, cid),
-    onSuccess: () => { toast({ title: t("offers.expired", "تم إيقاف العرض") }); invalidate(); },
-    onError:   (e) => toast({ title: t("offers.expireError", "تعذّر الإيقاف"), description: parseError(e), variant: "destructive" }),
+    onSuccess: () => { toast({ title: t("inventoryMaster.offers.expired") }); invalidate(); },
+    onError:   (e) => toast({ title: t("inventoryMaster.offers.expireError"), description: parseError(e), variant: "destructive" }),
   });
   const remove = useMutation({
     mutationFn: (id: number) => offersApi.remove(id, cid),
-    onSuccess: () => { toast({ title: t("offers.deleted", "تم حذف العرض") }); invalidate(); },
-    onError:   (e) => toast({ title: t("offers.deleteError", "تعذّر الحذف"), description: parseError(e), variant: "destructive" }),
+    onSuccess: () => { toast({ title: t("inventoryMaster.offers.deleted") }); invalidate(); },
+    onError:   (e) => toast({ title: t("inventoryMaster.offers.deleteError"), description: parseError(e), variant: "destructive" }),
   });
 
   const allRows = offersQ.data ?? [];
@@ -86,14 +87,14 @@ export default function Offers() {
             <Tag className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-xl font-bold">{t("offers.title", "العروض")}</h1>
+            <h1 className="text-xl font-bold">{t("inventoryMaster.offers.title")}</h1>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {t("offers.subtitle", "إدارة العروض المرتبطة بالعملاء والأصناف والمناديب")}
+              {t("inventoryMaster.offers.subtitle")}
             </p>
           </div>
         </div>
         <Button onClick={() => navigate("/inventory/offers/new")} className="gap-1">
-          <Plus className="h-4 w-4" /> {t("offers.new", "عرض جديد")}
+          <Plus className="h-4 w-4" /> {t("inventoryMaster.offers.new")}
         </Button>
       </div>
 
@@ -109,7 +110,7 @@ export default function Offers() {
                 : "bg-card text-foreground border-border hover:border-primary/40"
             }`}
           >
-            {t(`offers.filter.${s}`, s)} <span className="opacity-70">({counts[s]})</span>
+            {t(`inventoryMaster.offers.filter.${s}`)} <span className="opacity-70">({counts[s]})</span>
           </button>
         ))}
       </div>
@@ -122,23 +123,23 @@ export default function Offers() {
           </div>
         ) : rows.length === 0 ? (
           <div className="p-10 text-center text-muted-foreground text-sm">
-            {t("offers.empty", "لا توجد عروض بعد. ابدأ بإنشاء عرض جديد.")}
+            {t("inventoryMaster.offers.empty")}
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-muted/40 text-xs text-muted-foreground">
                 <tr>
-                  <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.number", "رقم العرض")}</th>
-                  <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.name", "الاسم")}</th>
-                  <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.discountType", "نوع الخصم")}</th>
-                  <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.coupon", "الكوبون")}</th>
-                  <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.scopes", "النطاقات")}</th>
-                  <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.priority", "الأولوية")}</th>
-                  <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.validity", "الصلاحية")}</th>
-                  <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.usage", "الاستخدام")}</th>
-                  <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.status", "الحالة")}</th>
-                  <th className="text-end px-3 py-2.5 font-medium">{t("offers.col.actions", "الإجراءات")}</th>
+                  <th className="text-start px-3 py-2.5 font-medium">{t("inventoryMaster.offers.col.number")}</th>
+                  <th className="text-start px-3 py-2.5 font-medium">{t("inventoryMaster.offers.col.name")}</th>
+                  <th className="text-start px-3 py-2.5 font-medium">{t("inventoryMaster.offers.col.discountType")}</th>
+                  <th className="text-start px-3 py-2.5 font-medium">{t("inventoryMaster.offers.col.coupon")}</th>
+                  <th className="text-start px-3 py-2.5 font-medium">{t("inventoryMaster.offers.col.scopes")}</th>
+                  <th className="text-start px-3 py-2.5 font-medium">{t("inventoryMaster.offers.col.priority")}</th>
+                  <th className="text-start px-3 py-2.5 font-medium">{t("inventoryMaster.offers.col.validity")}</th>
+                  <th className="text-start px-3 py-2.5 font-medium">{t("inventoryMaster.offers.col.usage")}</th>
+                  <th className="text-start px-3 py-2.5 font-medium">{t("inventoryMaster.offers.col.status")}</th>
+                  <th className="text-end px-3 py-2.5 font-medium">{t("inventoryMaster.offers.col.actions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -147,7 +148,7 @@ export default function Offers() {
                   onExpire={() => expire.mutate(o.id)}
                   onEdit={() => navigate(`/inventory/offers/${o.id}/edit`)}
                   onDelete={() => {
-                    if (window.confirm(t("offers.deleteConfirm", "حذف العرض نهائيًا؟"))) remove.mutate(o.id);
+                    if (window.confirm(t("inventoryMaster.offers.deleteConfirm"))) remove.mutate(o.id);
                   }}
                 />)}
               </tbody>
@@ -163,7 +164,8 @@ function Row({ o, onActivate, onExpire, onEdit, onDelete }: {
   o: OfferRow;
   onActivate: () => void; onExpire: () => void; onEdit: () => void; onDelete: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
   // Format dates with the system locale rather than hard-coding ar-SA so the
   // English UI gets a Latin date and the Arabic UI gets Arabic-Indic digits.
   const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString() : "—";
@@ -176,21 +178,21 @@ function Row({ o, onActivate, onExpire, onEdit, onDelete }: {
         ? "bg-blue-50 text-blue-700 border-blue-200"
         : "bg-amber-50 text-amber-700 border-amber-200"
     }`}>
-      {label}: {t(`offers.scope.${scope}`, scope === "all" ? "الكل" : "محدد")}
+      {label}: {t(`inventoryMaster.offers.scope.${scope}`)}
     </span>
   );
 
   const statusBadge =
-    isActive   ? <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200"><BadgeCheck className="h-3 w-3" /> {t("offers.statusVal.active", "مفعّل")}</span> :
-    isExpired  ? <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">{t("offers.statusVal.expired", "منتهي")}</span> :
-                 <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">{t("offers.statusVal.draft", "مسوّدة")}</span>;
+    isActive   ? <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200"><BadgeCheck className="h-3 w-3" /> {t("inventoryMaster.offers.statusVal.active")}</span> :
+    isExpired  ? <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">{t("inventoryMaster.offers.statusVal.expired")}</span> :
+                 <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">{t("inventoryMaster.offers.statusVal.draft")}</span>;
 
   // Compact, descriptive label for the discount column — pairs the type's
   // short name with the headline value so admins can scan the table without
   // opening every offer.
-  let discountLabel = t(`offers.discountTypeVal.${o.discountType}.short`, o.discountType);
-  if (o.discountType === "percentage_total" && o.discountValue) discountLabel = `${o.discountValue}% ${t("offers.discountInline.off", "خصم")}`;
-  if (o.discountType === "fixed_total"      && o.discountValue) discountLabel = `${o.discountValue} ${t("offers.discountInline.fixed", "خصم ثابت")}`;
+  let discountLabel = t(`inventoryMaster.offers.discountTypeVal.${o.discountType}.short`, o.discountType);
+  if (o.discountType === "percentage_total" && o.discountValue) discountLabel = `${o.discountValue}% ${t("inventoryMaster.offers.discountInline.off")}`;
+  if (o.discountType === "fixed_total"      && o.discountValue) discountLabel = `${o.discountValue} ${t("inventoryMaster.offers.discountInline.fixed")}`;
   if (o.discountType === "buy_x_get_y"      && o.buyQty && o.getQty) discountLabel = `Buy ${o.buyQty} Get ${o.getQty}`;
 
   return (
@@ -207,9 +209,9 @@ function Row({ o, onActivate, onExpire, onEdit, onDelete }: {
       </td>
       <td className="px-3 py-2">
         <div className="flex flex-wrap gap-1">
-          {scopeBadge(t("offers.scopeShort.customers", "عملاء"),  o.customerScope)}
-          {scopeBadge(t("offers.scopeShort.items", "أصناف"),      o.itemsScope)}
-          {scopeBadge(t("offers.scopeShort.salesReps", "مناديب"), o.salesRepScope)}
+          {scopeBadge(t("inventoryMaster.offers.scopeShort.customers"),  o.customerScope)}
+          {scopeBadge(t("inventoryMaster.offers.scopeShort.items"),      o.itemsScope)}
+          {scopeBadge(t("inventoryMaster.offers.scopeShort.salesReps"), o.salesRepScope)}
         </div>
       </td>
       <td className="px-3 py-2">{o.priority}</td>

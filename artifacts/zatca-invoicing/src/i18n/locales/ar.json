@@ -294,7 +294,8 @@
     "deleted": "تم الحذف",
     "create": "إنشاء",
     "refresh": "تحديث",
-    "balance": "الرصيد"
+    "balance": "الرصيد",
+    "validationError": "تحقق من البيانات"
   },
   "pagination": {
     "rowsPerPage": "صفوف لكل صفحة:",
@@ -2013,7 +2014,8 @@
         "successTitle": "تم فحص المخزون",
         "successBody": "تم إنشاء {{created}} إشعار جديد. {{alreadyNotified}} تم التنبيه عنها سابقاً اليوم. {{aboveThreshold}} ضمن الحدود الآمنة.",
         "failed": "تعذّر فحص المخزون"
-      }
+      },
+      "itemLabel": "صنف"
     },
     "alerts": {
       "title": "تنبيهات الأصناف الذكية",
@@ -2123,7 +2125,8 @@
         "inventoryAccountHint": "الحساب المحاسبي الذي يُمثّل رصيد هذا المخزن في دفتر الأستاذ",
         "branch": "الفرع",
         "noBranch": "بدون فرع (مشترك بين كل الفروع)",
-        "branchHint": "حدد الفرع المربوط به هذا المخزن. اتركه فارغاً ليكون مخزناً مشتركاً يظهر لجميع الفروع."
+        "branchHint": "حدد الفرع المربوط به هذا المخزن. اتركه فارغاً ليكون مخزناً مشتركاً يظهر لجميع الفروع.",
+        "codeHint": "إذا تركته فارغاً سيتم توليده تلقائياً بالتسلسل"
       },
       "placeholders": {
         "mainWarehouse": "المخزن الرئيسي",
@@ -2132,7 +2135,8 @@
         "selectGroup": "— اختر مجموعة —",
         "selectAccount": "— اختر حساب المخزون —",
         "search": "بحث بالكود أو الاسم...",
-        "selectBranch": "اختر الفرع..."
+        "selectBranch": "اختر الفرع...",
+        "codeAuto": "اتركه فارغاً للتوليد التلقائي"
       },
       "table": {
         "code": "الكود",
@@ -2148,6 +2152,12 @@
         "updated": "تم التعديل",
         "deleted": "تم الحذف",
         "confirmDelete": "حذف المخزن؟"
+      },
+      "itemLabel": "مستودع",
+      "quota": "المستخدم",
+      "limitReachedTitle": "وصلت للحد الأقصى",
+      "validation": {
+        "nameRequired": "الاسم العربي مطلوب"
       }
     }
   },
@@ -5606,7 +5616,14 @@
       "savedToast": "تم حفظ مجموعة الأصناف",
       "deletedToast": "تم حذف مجموعة الأصناف",
       "saveError": "فشل الحفظ",
-      "deleteError": "فشل الحذف"
+      "deleteError": "فشل الحذف",
+      "accountingMappingTab": "الربط المحاسبي",
+      "defaultCostAccount": "حساب التكلفة الافتراضي",
+      "defaultRevenueAccount": "حساب الإيراد الافتراضي",
+      "inheritedAccountHint": "يُورَث لكل صنف ينتمي لهذه المجموعة إذا لم يُحدَّد له حساب",
+      "selectCostAccount": "— اختر حساب التكلفة —",
+      "selectRevenueAccount": "— اختر حساب الإيراد —",
+      "itemLabel": "مجموعة"
     },
     "units": {
       "title": "وحدات القياس",
@@ -5634,7 +5651,16 @@
       "savedToast": "تم حفظ الوحدة",
       "deletedToast": "تم حذف الوحدة",
       "saveError": "فشل الحفظ",
-      "deleteError": "فشل الحذف"
+      "deleteError": "فشل الحذف",
+      "itemLabel": "وحدة",
+      "infoTitle": "كيف تعمل وحدات القياس المتعددة؟",
+      "infoBody": "هنا تُعرِّف الوحدات العامة (قطعة، كرتونة، كيلو...). بعدها في صفحة الأصناف، تربط كل صنف بالوحدات التي يُباع بها مع تحديد معامل التحويل والسعر لكل وحدة.",
+      "exampleTitle": "مثال — صنف: سكر",
+      "exampleEach": "واحدة",
+      "exampleEachDetail": "معامل ×1 — تكلفة 5 ر.س",
+      "exampleCarton": "كرتونة",
+      "exampleCartonDetail": "معامل ×12 — تكلفة 60 ر.س",
+      "commonUnitsLabel": "وحدات شائعة — انقر للإضافة السريعة"
     },
     "warehouseGroups": {
       "title": "مجموعات المخازن",
@@ -5658,6 +5684,170 @@
       "deletedToast": "تم حذف مجموعة المخازن",
       "saveError": "فشل الحفظ",
       "deleteError": "فشل الحذف"
+    },
+    "dashboard": {
+      "pageTitle": "إدارة المخازن",
+      "pageSubtitle": "لوحة تحكم المخزون — الجرد المستمر بالمتوسط المرجح",
+      "statTotalItems": "إجمالي الأصناف",
+      "statWarehouses": "عدد المخازن",
+      "statStockValue": "قيمة المخزون (ر.س)",
+      "statBelowReorder": "أصناف تحت حد الطلب",
+      "quickActions": "إجراءات سريعة",
+      "quickNewTransfer": "تحويل جديد",
+      "quickStockAdjustment": "تسوية مخزنية",
+      "quickStockCount": "جرد مخزن",
+      "quickNewItem": "صنف جديد",
+      "recentMovements": "آخر حركات المخزون",
+      "viewAll": "عرض الكل",
+      "noMovements": "لا توجد حركات مخزون حتى الآن",
+      "txTransferOut": "تحويل خارج",
+      "txTransferIn": "تحويل داخل",
+      "txAdjustment": "تسوية",
+      "txCountAdj": "تعديل جرد",
+      "txSale": "مبيعات",
+      "txPurchase": "مشتريات",
+      "txOpening": "رصيد افتتاحي"
+    },
+    "items": {
+      "imageTypeUnsupportedTitle": "نوع ملف غير مدعوم",
+      "imageTypeUnsupportedDesc": "يرجى اختيار صورة فقط",
+      "imageTooLargeTitle": "حجم الصورة كبير",
+      "imageTooLargeDesc": "الحد الأقصى 5 ميجابايت",
+      "imageUploadUrlFailed": "فشل تجهيز رابط الرفع",
+      "imageUploadFailed": "فشل رفع الصورة",
+      "imageUploaded": "تم رفع الصورة",
+      "imageUploadError": "تعذّر رفع الصورة",
+      "imageUploading": "جارٍ الرفع...",
+      "imageChange": "تغيير الصورة",
+      "imageUpload": "رفع صورة",
+      "imageRemove": "إزالة الصورة",
+      "saveItemFailed": "تعذّر حفظ الصنف",
+      "updateItemFailed": "تعذّر تعديل الصنف",
+      "deleteItemFailed": "تعذّر الحذف",
+      "posTab": "نقطة البيع",
+      "natureFieldLabel": "طبيعة الصنف",
+      "natureFieldHint": "يساعد في تمييز الخامات عن البضاعة الجاهزة في شاشات التصنيع",
+      "natureRawLong": "خامات (مواد أولية)",
+      "natureSemi": "نصف مصنّع",
+      "natureFinished": "تام الصنع",
+      "natureConsumable": "مستهلكات",
+      "natureMerchandiseLong": "بضاعة عادية",
+      "natureAll": "الكل",
+      "natureRaw": "خامات",
+      "natureMerchandise": "بضاعة",
+      "itemImageLabel": "صورة الصنف",
+      "posSettingsTitle": "إعدادات نقطة البيع",
+      "showInPosLabel": "إظهار الصنف في شاشة نقاط البيع (POS)",
+      "showInPosHint": "عند إلغاء التحديد، لن يظهر هذا الصنف في شاشات الكاشير والسوبرماركت والمطاعم، لكنه يبقى متوفّراً في المخزون وفواتير المبيعات والمشتريات.",
+      "expiryDateSectionTitle": "تاريخ الانتهاء (للأصناف ذات قائمة المكوّنات / BOM)",
+      "expiryDateLabel": "تاريخ انتهاء الصنف",
+      "expiryDateHintBundle": "صنف مركَّب (BOM) — يمكن تسجيل تاريخ الانتهاء.",
+      "expiryDateHintDefault": "متاح لكل الأصناف، لكنه يُستخدم عادةً للأصناف المُصنّعة (التي لها مكوّنات BOM).",
+      "batchTrackingSectionTitle": "تتبّع التشغيلات (FIFO / FEFO)",
+      "batchTrackingLabel": "نمط سحب التشغيلات على الصرف",
+      "batchTrackingHint": "عند بدء الإنتاج، يتم سحب الكمية المطلوبة من تشغيلات الخامة وفق هذا الترتيب. الوضع الافتراضي (بدون تتبّع) يُبقي الحركة الحالية كسطر واحد بالتكلفة المتوسطة.",
+      "batchTrackingNone": "بدون تتبّع — التكلفة المتوسطة (الوضع الحالي)",
+      "batchTrackingFifo": "FIFO — الأقدم استلاماً أولاً",
+      "batchTrackingFefo": "FEFO — الأقرب انتهاءً أولاً (مناسب للمنتجات القابلة للتلف)",
+      "batchTrackingPlaceholder": "اختر نمط السحب",
+      "activeHint": "صنف نشط — يظهر في فواتير البيع/الشراء وحركات المخزون",
+      "inactiveHint": "صنف موقوف — لا يظهر في الإدخال",
+      "batchesTab": "الدفعات",
+      "batchesLoadError": "تعذّر تحميل الدفعات",
+      "batchesEmpty": "لا توجد دفعات مسجّلة لهذا الصنف بعد.",
+      "batchesEmptyHint": "أدخل رقم الدفعة وتاريخ الانتهاء في فاتورة المشتريات أو سند الاستلام، وستظهر هنا.",
+      "batchStatusExpired": "منتهية",
+      "batchStatusExpiringSoon": "قاربت على الانتهاء",
+      "batchStatusActive": "صالحة",
+      "batchStatusNoExpiry": "بدون انتهاء",
+      "batchTotalBatches": "إجمالي الدفعات",
+      "batchExpiringSoon30": "تنتهي خلال 30 يوم",
+      "batchColNumber": "رقم الدفعة",
+      "batchColExpiry": "تاريخ الانتهاء",
+      "batchColStatus": "الحالة",
+      "batchColWarehouse": "المستودع",
+      "batchColReceivedQty": "الكمية المستلمة",
+      "batchColAvgCost": "متوسط التكلفة",
+      "batchColFirstReceived": "أول استلام",
+      "batchColLastReceived": "آخر استلام",
+      "batchDaysAgo": "منذ {{days}} يوم",
+      "batchDaysLater": "بعد {{days}} يوم",
+      "batchNoteLabel": "ملاحظة:",
+      "batchNoteBody": "العمود \"الكمية المستلمة\" يعرض إجمالي ما دخل المخزون بهذه الدفعة منذ أول تسجيل لها. حركات البيع/الصرف لا ترتبط بدفعة معينة في هذه المرحلة، لذلك لا يوجد عمود \"المتبقي من الدفعة\" — أُضيف لاحقاً عند ترقية النظام لتتبّع الدفعات الكامل (FIFO/FEFO)."
+    },
+    "offers": {
+      "activated": "تم تفعيل العرض",
+      "activateError": "تعذّر التفعيل",
+      "expired": "تم إيقاف العرض",
+      "expireError": "تعذّر الإيقاف",
+      "deleted": "تم حذف العرض",
+      "deleteError": "تعذّر الحذف",
+      "title": "العروض",
+      "subtitle": "إدارة العروض المرتبطة بالعملاء والأصناف والمناديب",
+      "new": "عرض جديد",
+      "empty": "لا توجد عروض بعد. ابدأ بإنشاء عرض جديد.",
+      "deleteConfirm": "حذف العرض نهائيًا؟",
+      "filter": {
+        "all": "الكل",
+        "draft": "مسوّدة",
+        "active": "مفعّل",
+        "expired": "منتهي"
+      },
+      "col": {
+        "number": "رقم العرض",
+        "name": "الاسم",
+        "discountType": "نوع الخصم",
+        "coupon": "الكوبون",
+        "scopes": "النطاقات",
+        "priority": "الأولوية",
+        "validity": "الصلاحية",
+        "usage": "الاستخدام",
+        "status": "الحالة",
+        "actions": "الإجراءات"
+      },
+      "scope": {
+        "all": "الكل",
+        "specific": "محدد"
+      },
+      "scopeShort": {
+        "customers": "عملاء",
+        "items": "أصناف",
+        "salesReps": "مناديب"
+      },
+      "statusVal": {
+        "active": "مفعّل",
+        "expired": "منتهي",
+        "draft": "مسوّدة"
+      },
+      "discountTypeVal": {
+        "line_pricing": {
+          "short": "صنف"
+        },
+        "percentage_total": {
+          "short": "نسبة"
+        },
+        "fixed_total": {
+          "short": "ثابت"
+        },
+        "buy_x_get_y": {
+          "short": "Buy X Get Y"
+        }
+      },
+      "discountInline": {
+        "off": "خصم",
+        "fixed": "خصم ثابت"
+      }
+    },
+    "warehouses": {
+      "quotaMaxReached": "وصلت إلى الحد الأقصى لخطتك",
+      "quotaCanAdd": "يمكنك إضافة {{count}} مخزن إضافي",
+      "limitReachedDesc": "خطتك تسمح بـ {{count}} مخزن فقط. يرجى ترقية الخطة لإضافة المزيد.",
+      "defaultWarehouse": "المخزن الافتراضي للشركة",
+      "defaultWarehouseHint": "يُختار تلقائياً في فواتير المبيعات والمشتريات وفي الجرد. مخزن واحد فقط لكل شركة.",
+      "defaultBadge": "افتراضي",
+      "overdraftAllowed": "سحب على المكشوف",
+      "balanceOnly": "رصيد فقط",
+      "newWarehouseAria": "مستودع جديد"
     }
   },
   "inventoryReports": {
