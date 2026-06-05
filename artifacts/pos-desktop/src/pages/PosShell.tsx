@@ -576,7 +576,7 @@ export default function PosShell({
           {!navCollapsed && (
             <div>
               <div style={S.brandName}>ZACOD POS</div>
-              <div style={S.brandTag}>v0.7.15 — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
+              <div style={S.brandTag}>v{APP_VERSION} — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
             </div>
           )}
         </div>
