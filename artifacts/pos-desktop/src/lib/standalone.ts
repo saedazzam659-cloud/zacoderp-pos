@@ -269,6 +269,33 @@ export async function setVertical(v: Vertical): Promise<void> {
   localStorage.setItem(LS_VERTICAL, v);
 }
 
+// ─── App profile (Task #226 — POS-only vs Full ERP) ──────────────────
+// Chosen once at first run, applies to BOTH cloud and standalone modes.
+//   "pos" → minimal cash-register screens only.
+//   "erp" → every screen (still subject to the cloud module gate + per-user
+//           permissions).
+// Stored next to the vertical in the generic settings store.
+const LS_PROFILE = "pos_desktop_app_profile";
+const SETTING_PROFILE = "app_profile";
+
+export async function getAppProfile(): Promise<"pos" | "erp" | null> {
+  if (hasTauri()) {
+    try {
+      const v = await invoke<string | null>("standalone_get_setting", { key: SETTING_PROFILE });
+      return v === "pos" || v === "erp" ? v : null;
+    } catch { return null; }
+  }
+  const v = localStorage.getItem(LS_PROFILE);
+  return v === "pos" || v === "erp" ? v : null;
+}
+export async function setAppProfile(p: "pos" | "erp"): Promise<void> {
+  if (hasTauri()) {
+    try { await invoke("standalone_set_setting", { key: SETTING_PROFILE, value: p }); return; }
+    catch { /* fall through */ }
+  }
+  localStorage.setItem(LS_PROFILE, p);
+}
+
 // ─── Mode ────────────────────────────────────────────────────────────
 export async function getAppMode(): Promise<AppMode | null> {
   if (hasTauri()) {

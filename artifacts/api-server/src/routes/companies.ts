@@ -430,6 +430,38 @@ router.patch("/:id/menu-permissions", async (req, res) => {
   res.json(company);
 });
 
+// PATCH /:id/windows-module-permissions — SuperAdmin-controlled visibility of
+// the Windows desktop-app (artifacts/pos-desktop) modules for this company.
+// Stored as a JSON object { <windows module key>: boolean }. Pushed to the
+// device through /api/sync/pull (settings entity). Kept separate from
+// menuPermissions because the Windows app has its own screen/module set.
+router.patch("/:id/windows-module-permissions", async (req, res) => {
+  const id = parseInt(req.params.id);
+  const u = (req as any).authUser;
+  // SuperAdmin-only: this controls the desktop-app module policy for ANY tenant,
+  // so it must never be writable by a company admin/user (cross-tenant tampering).
+  if (!u || u.role !== "superadmin") {
+    res.status(403).json({ error: "هذه العملية مخصصة لمدير النظام فقط" });
+    return;
+  }
+  const { windowsModulePermissions } = req.body as { windowsModulePermissions?: string };
+  if (!windowsModulePermissions) {
+    res.status(400).json({ error: "windowsModulePermissions مطلوب" });
+    return;
+  }
+  // Validate JSON
+  try { JSON.parse(windowsModulePermissions); } catch {
+    res.status(400).json({ error: "windowsModulePermissions يجب أن يكون JSON صالح" });
+    return;
+  }
+  const [company] = await db.update(companiesTable).set({
+    windowsModulePermissions,
+    updatedAt: new Date(),
+  }).where(eq(companiesTable.id, id)).returning();
+  if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+  res.json(company);
+});
+
 // PATCH /:id/zatca-settings — update device info + sandbox toggle (called by company users)
 router.patch("/:id/zatca-settings", async (req, res) => {
   const id = parseInt(req.params.id);

@@ -704,6 +704,7 @@
     "modules": "وحدات النظام",
     "industries": "أنواع الأنشطة",
     "menuPermissions": "صلاحيات القوائم",
+    "windowsAppPermissions": "صلاحيات تطبيق الويندوز",
     "aiControls": "التحكم بالذكاء الاصطناعي",
     "gatewayClients": "بوابة الفواتير الخارجية",
     "orphanStock": "تنظيف حركات المخزون اليتيمة",

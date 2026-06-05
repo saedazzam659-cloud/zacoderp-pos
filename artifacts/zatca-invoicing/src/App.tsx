@@ -83,6 +83,7 @@ import ZatcaBridge from "@/pages/ZatcaBridge";
 import ZatcaReport from "@/pages/ZatcaReport";
 import Users from "@/pages/Users";
 import MenuPermissions from "@/pages/MenuPermissions";
+import WindowsAppPermissions from "@/pages/WindowsAppPermissions";
 import GatewayClients from "@/pages/admin/GatewayClients";
 import GatewayInvoiceView from "@/pages/admin/GatewayInvoiceView";
 import GatewayClientReports from "@/pages/admin/GatewayClientReports";
@@ -583,6 +584,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/subscriptions" component={SubscriptionManagement} />}
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
+            {isSuperAdmin && <Route path="/admin/windows-app-permissions" component={WindowsAppPermissions} />}
             {isSuperAdmin && <Route path="/admin/gateway-clients" component={GatewayClients} />}
             {isSuperAdmin && <Route path="/admin/gateway-clients/:id/invoices/:invId" component={GatewayInvoiceView} />}
             {isSuperAdmin && <Route path="/admin/gateway-clients/:id/reports" component={GatewayClientReports} />}

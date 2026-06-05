@@ -18,7 +18,7 @@ import { db } from "@workspace/db";
 import {
   posDevicesTable, syncQueueLogTable, customersTable, itemsTable,
   posSessionsTable, salesInvoicesTable, salesInvoiceLinesTable,
-  warehousesTable, cashBoxesTable, stockBalanceTable,
+  warehousesTable, cashBoxesTable, stockBalanceTable, companiesTable,
 } from "@workspace/db";
 import { eq, and, gt, desc, sql } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -192,9 +192,24 @@ router.post("/pull", async (req: DeviceAuthedRequest, res) => {
     out.items = rows; total += rows.length;
   }
   if (parsed.data.entities.includes("settings")) {
+    // Windows desktop-app module visibility — SuperAdmin-controlled per company
+    // (companies.windows_module_permissions JSON). Pushed here so the device
+    // hides/shows modules without a reinstall. NULL/unparseable → empty object
+    // (the desktop treats a missing key as "enabled" for backward compat).
+    const [company] = await db.select({
+      windowsModulePermissions: companiesTable.windowsModulePermissions,
+    }).from(companiesTable).where(eq(companiesTable.id, cid)).limit(1);
+    let windowsModules: Record<string, boolean> = {};
+    if (company?.windowsModulePermissions) {
+      try {
+        const parsedWm = JSON.parse(company.windowsModulePermissions);
+        if (parsedWm && typeof parsedWm === "object") windowsModules = parsedWm;
+      } catch { /* keep empty → all enabled */ }
+    }
     out.settings = [{
       enableOfflinePos: true,
       serverTime: new Date().toISOString(),
+      windowsModules,
     }];
   }
 

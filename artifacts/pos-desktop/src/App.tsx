@@ -25,6 +25,7 @@ import LicenseExpired from "./pages/LicenseExpired";
 import FirstRunWizard from "./pages/FirstRunWizard";
 import VerticalSelector from "./pages/VerticalSelector";
 import CountrySelector from "./pages/CountrySelector";
+import ProfileSelector from "./pages/ProfileSelector";
 import { hasChosenCountry } from "./lib/currency";
 import StandaloneActivation from "./pages/StandaloneActivation";
 import StandaloneLogin from "./pages/StandaloneLogin";
@@ -40,7 +41,7 @@ import { clearSessionParkedCarts } from "./lib/parkedCarts";
 import {
   getAppMode, setAppMode, loadLicense, loadLocalSession,
   clearLocalSession, verifyLicenseFile, wipeStandalone,
-  getVertical,
+  getVertical, getAppProfile,
   type AppMode, type OfflineLicensePayload, type LocalSession,
 } from "./lib/standalone";
 import { getFingerprint } from "./lib/tauri-shim";
@@ -51,6 +52,7 @@ type BootState =
   | { phase: "needs-mode" }
   | { phase: "needs-vertical" }
   | { phase: "needs-country" }
+  | { phase: "needs-profile" }
   // Cloud paths
   | { phase: "needs-activation" }
   | { phase: "license-expired"; baseUrl: string; deviceToken: string; expiresAt: string | null; companyName?: string }
@@ -86,6 +88,10 @@ export default function App() {
     // ── Country / currency (applies to BOTH cloud + standalone). Sets the
     // default POS currency symbol + VAT rate. Returning users skip this.
     if (!hasChosenCountry()) { setState({ phase: "needs-country" }); return; }
+    // ── App profile (Task #226) — POS-only vs Full ERP. Applies to BOTH
+    // cloud + standalone. Chosen once at first run; returning users skip it.
+    const profile = await getAppProfile();
+    if (!profile) { setState({ phase: "needs-profile" }); return; }
     if (mode === "standalone") return bootStandalone();
     return bootCloud();
   }
@@ -284,6 +290,12 @@ export default function App() {
 
   if (state.phase === "needs-country") {
     return <CountrySelector onChosen={() => {
+      void (async () => { setState({ phase: "checking" }); await boot(); })();
+    }} />;
+  }
+
+  if (state.phase === "needs-profile") {
+    return <ProfileSelector onChosen={() => {
       void (async () => { setState({ phase: "checking" }); await boot(); })();
     }} />;
   }

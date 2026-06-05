@@ -59,6 +59,9 @@ import {
   listUserPermissions, computeAllowed, persistAllowedToLS, clearAllowedLS,
   loadAllowedFromLS, defaultsForRole, type ScreenKey,
 } from "../lib/permissions";
+import { type WindowsView, type AppProfile } from "../lib/moduleRegistry";
+import { isModuleEnabled, loadWindowsModuleFlags } from "../lib/windowsModules";
+import { getAppProfile } from "../lib/standalone";
 import ExpiryReport from "./ExpiryReport";
 import StockImport from "./StockImport";
 import LowStockReport, { countLowStockTracked } from "./LowStockReport";
@@ -74,22 +77,10 @@ import { flushPendingSessionCloses, countPendingCloses } from "../lib/pendingSes
 import { useLatestVersion, APP_VERSION } from "../lib/updates";
 import type { OfflineLicensePayload, LocalSession } from "../lib/standalone";
 
-type View =
-  | "sales" | "returns" | "pending" | "parked" | "daily"
-  | "customers" | "items" | "uom" | "dashboard" | "updates" | "users"
-  | "expiry" | "scale" | "stock_import" | "low_stock" | "network"
-  // Task #207 — accounting & operations screens (standalone).
-  | "suppliers" | "purchases" | "purchase_returns"
-  | "sales_invoices" | "sales_returns"
-  | "cash_boxes" | "banks" | "financial_tx"
-  | "currencies" | "exchange_rates" | "treasury_transfers"
-  | "chart_of_accounts" | "journal_entries" | "user_permissions"
-  | "cost_centers" | "branches" | "taxes"
-  | "report_account_statement" | "report_income_statement"
-  | "report_balance_sheet" | "report_trial_balance"
-  // Task #208 — warehouses & inventory ops (standalone).
-  | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
-  | "number_series" | "settings_guide";
+// Task #226 — the View union now lives in lib/moduleRegistry.ts (single source
+// of truth that also carries each screen's module key + app profile). Aliased
+// here as `View` so the rest of this file is unchanged.
+type View = WindowsView;
 
 /** Minimal CSV parser for the bundled starter catalogs (no quotes/escapes
  *  expected — files are repo-controlled). Returns CreateItemInput rows. */
@@ -314,6 +305,25 @@ export default function PosShell({
   }, [standalone, standaloneSession]);
   const can = useCallback((k: ScreenKey) => allowed.has(k), [allowed]);
 
+  // Task #226 — module/profile visibility gate, additive to `can()`:
+  //   • profile  — the first-run "POS only vs Full ERP" choice.
+  //   • flags     — the SuperAdmin-pushed per-company module map (cloud only).
+  // Both are refreshed on mount; `flags` also after every pull (see pull effect).
+  const [appProfile, setAppProfileState] = useState<AppProfile | null>(null);
+  const [moduleFlags, setModuleFlags] = useState<Record<string, boolean>>(
+    () => loadWindowsModuleFlags(),
+  );
+  useEffect(() => { void getAppProfile().then(setAppProfileState); }, []);
+  const moduleVisible = useCallback(
+    (v: View) => isModuleEnabled(v, { profile: appProfile, standalone, flags: moduleFlags }),
+    [appProfile, standalone, moduleFlags],
+  );
+  // If the active screen becomes gated (profile change / SuperAdmin disabled the
+  // module mid-session), fall back to the always-available sales register.
+  useEffect(() => {
+    if (!moduleVisible(view)) setView("sales");
+  }, [moduleVisible, view]);
+
   // Low-stock count drives the sidebar badge under "أصناف تحت الحد".
   // Refreshed on view-switch (cheap) + after import/sale (no realtime needed).
   const [lowStockCount, setLowStockCount] = useState(0);
@@ -418,6 +428,8 @@ export default function PosShell({
     try {
       const r = await pullAndPersist(baseUrl, deviceToken);
       setPulled(r);
+      // Task #226 — pull persists the SuperAdmin module flags; reflect them now.
+      setModuleFlags(loadWindowsModuleFlags());
     } catch (e: any) { setActionErr(e?.message ?? "pull failed"); }
     finally { setBusy(null); }
   }
@@ -516,7 +528,7 @@ export default function PosShell({
     // an error and a manual-download link.
     { id: "updates",   icon: "🔄", label: "التحديثات" },
   ];
-  const navItems: Array<{ id: View; icon: string; label: string; badge?: number }> = standalone
+  const navItemsRaw: Array<{ id: View; icon: string; label: string; badge?: number }> = standalone
     ? standaloneNav
         .filter((it) => it.adminOnly ? isAdmin : (it.perm ? (isAdmin || can(it.perm)) : true))
         .map(({ id, icon, label, badge }) => ({ id, icon, label, badge }))
@@ -537,6 +549,10 @@ export default function PosShell({
     { id: "dashboard", icon: "📊", label: "لوحة التحكم" },
     { id: "updates",   icon: "🔄", label: "التحديثات" },
   ];
+  // Task #226 — apply the module/profile gate on top of the per-user `can()`
+  // filter above. Hides ERP-only screens in the POS-only profile and any module
+  // the SuperAdmin disabled for this company (cloud mode).
+  const navItems = navItemsRaw.filter((it) => moduleVisible(it.id));
 
   return (
     <div dir="rtl" style={S.shell}>

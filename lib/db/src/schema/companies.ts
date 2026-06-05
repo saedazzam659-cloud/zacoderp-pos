@@ -37,6 +37,12 @@ export const companiesTable = pgTable("companies", {
   decimalPlaces: integer("decimal_places").notNull().default(2),
   // Menu visibility permissions (JSON): { invoices, customers, suppliers, zatca }
   menuPermissions: text("menu_permissions").default('{"invoices":true,"customers":true,"suppliers":true,"zatca":true}'),
+  // Windows desktop-app module visibility (JSON): { <windows module key>: boolean }.
+  // SuperAdmin-controlled, separate from the web `menuPermissions` because the
+  // Windows app (artifacts/pos-desktop) has its own screen/module set. Pushed to
+  // the device through /api/sync/pull (settings entity). NULL/missing key → enabled
+  // (legacy companies keep every module visible).
+  windowsModulePermissions: text("windows_module_permissions"),
   // System-wide posting mode: true = auto-post after save, false = manual posting only.
   // This is the master switch and the legacy fallback for the per-doc-type flags
   // below. When a per-doc-type flag is NULL (legacy rows) the form falls back to

@@ -15,6 +15,7 @@ import { createApi } from "./api";
 import { upsertItemsFromCloud } from "./items";
 import { upsertCustomersFromCloud } from "./customers";
 import { isClient } from "./bridge";
+import { saveWindowsModuleFlags } from "./windowsModules";
 
 export type PushSummary = {
   attempted: number;
@@ -46,6 +47,12 @@ export async function pullAndPersist(
   }
   if (r.entities.items?.length) {
     items = await upsertItemsFromCloud(r.entities.items);
+  }
+  // Task #226 — persist the SuperAdmin-pushed Windows module visibility flags
+  // so PosShell can gate its nav/screens even between pulls (and offline).
+  const settings = r.entities.settings?.[0];
+  if (settings?.windowsModules) {
+    saveWindowsModuleFlags(settings.windowsModules);
   }
   lsWrite(LS_KEYS.lastPullAt, new Date().toISOString());
   return { customers, items, serverTime: r.serverTime ?? null };

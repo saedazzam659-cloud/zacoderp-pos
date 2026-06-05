@@ -704,6 +704,7 @@
     "modules": "System Modules",
     "industries": "Activity Types",
     "menuPermissions": "Menu Permissions",
+    "windowsAppPermissions": "Windows App Permissions",
     "aiControls": "AI Controls",
     "gatewayClients": "External Invoice Gateway",
     "orphanStock": "Orphan Stock Cleanup",
