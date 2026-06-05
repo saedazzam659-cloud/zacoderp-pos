@@ -112,6 +112,7 @@ import posDesktopSyncRouter from "./pos-desktop-sync";
 import adminPosDevicesRouter from "./admin-pos-devices";
 import adminOfflineLicensesRouter from "./admin-offline-licenses";
 import publicDownloadRouter from "./public-download";
+import publicOfflineRouter from "./public-offline";
 import downloadWizardRouter from "./download-wizard";
 import adminDownloadCodesRouter from "./admin-download-codes";
 
@@ -209,6 +210,7 @@ router.use(deviceInfoRouter);
 // auth check on unmatched /api/* requests). All endpoints feature-flag
 // gated via companies.enable_offline_pos (default false).
 router.use("/public/download", publicDownloadRouter);
+router.use("/public/offline", publicOfflineRouter);
 router.use("/download-wizard", downloadWizardRouter);
 router.use("/device-licenses", deviceLicensesRouter);
 router.use("/sync", posDesktopSyncRouter);

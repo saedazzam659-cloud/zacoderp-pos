@@ -27,8 +27,9 @@ import VerticalSelector from "./pages/VerticalSelector";
 import CountrySelector from "./pages/CountrySelector";
 import ProfileSelector from "./pages/ProfileSelector";
 import { hasChosenCountry } from "./lib/currency";
-import StandaloneActivation from "./pages/StandaloneActivation";
+import StandaloneOnboard from "./pages/StandaloneOnboard";
 import StandaloneLogin from "./pages/StandaloneLogin";
+import StandaloneRevalidationNeeded, { type RevalidationReason } from "./pages/StandaloneRevalidationNeeded";
 import { createApi, ApiError } from "./lib/api";
 import {
   loadDeviceToken, clearDeviceToken,
@@ -42,6 +43,8 @@ import {
   getAppMode, setAppMode, loadLicense, loadLocalSession,
   clearLocalSession, verifyLicenseFile, wipeStandalone,
   getVertical, getAppProfile,
+  revalidateLicense, saveLicense,
+  getLastLicenseCheck, setLastLicenseCheck, isGraceExpired,
   type AppMode, type OfflineLicensePayload, type LocalSession,
 } from "./lib/standalone";
 import { getFingerprint } from "./lib/tauri-shim";
@@ -61,6 +64,7 @@ type BootState =
   // Standalone paths
   | { phase: "needs-standalone-license" }
   | { phase: "needs-standalone-login"; license: OfflineLicensePayload }
+  | { phase: "standalone-revalidation-needed"; reason: RevalidationReason }
   | { phase: "standalone-signed-in"; license: OfflineLicensePayload; session: LocalSession };
 
 const DEFAULT_BASE = "https://zacoderp.com";
@@ -71,6 +75,36 @@ export default function App() {
   const [state, setState] = useState<BootState>({ phase: "checking" });
 
   useEffect(() => { void boot(); }, []);
+
+  // ── Periodic remote revalidation (Task #236) ──────────────────────────
+  // While a self-registered standalone device is signed in, re-check the cloud
+  // every 6h and whenever the window regains focus. This picks up remote
+  // revoke/expiry promptly and resets the offline-grace timer on success. A
+  // mere network failure is ignored here — only an authoritative lock verdict
+  // or an elapsed grace window (evaluated inside revalidateStandalone) locks.
+  useEffect(() => {
+    if (state.phase !== "standalone-signed-in") return;
+    if (state.license.source !== "self_register") return;
+    let cancelled = false;
+    const license = state.license;
+    const run = async () => {
+      const verdict = await revalidateStandalone(license);
+      if (cancelled) return;
+      if (verdict.lock) { setState({ phase: "standalone-revalidation-needed", reason: verdict.reason }); return; }
+      // Apply a refreshed payload (e.g. SuperAdmin renewed/extended expiry) so
+      // the change takes effect immediately without waiting for a restart.
+      if (verdict.license) {
+        setState((s) => (s.phase === "standalone-signed-in"
+          ? { ...s, license: verdict.license! }
+          : s));
+      }
+    };
+    const id = window.setInterval(() => { void run(); }, 6 * 60 * 60 * 1000);
+    const onFocus = () => { void run(); };
+    window.addEventListener("focus", onFocus);
+    return () => { cancelled = true; window.clearInterval(id); window.removeEventListener("focus", onFocus); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.phase, state.phase === "standalone-signed-in" ? state.license.licenseKey : ""]);
 
   async function boot() {
     // ── LAN bridge (Task #207) ────────────────────────────────────────
@@ -130,10 +164,65 @@ export default function App() {
         return;
       }
     }
+    // Layer 1c: remote revalidation (Task #236) — ONLY for online self-
+    // registered licenses. Admin-issued file licenses (source !== 'self_register')
+    // stay 100% offline (Task #233) and skip this entirely.
+    let license = r.payload;
+    if (license.source === "self_register") {
+      const verdict = await revalidateStandalone(license);
+      if (verdict.lock) { setState({ phase: "standalone-revalidation-needed", reason: verdict.reason }); return; }
+      if (verdict.license) license = verdict.license;
+    }
     // Layer 2: local user session
     const session = await loadLocalSession();
-    if (!session) { setState({ phase: "needs-standalone-login", license: r.payload }); return; }
-    setState({ phase: "standalone-signed-in", license: r.payload, session });
+    if (!session) { setState({ phase: "needs-standalone-login", license }); return; }
+    setState({ phase: "standalone-signed-in", license, session });
+  }
+
+  // Revalidate an online-registered license against the cloud. Returns a lock
+  // verdict (revoked / expired / grace-expired) or, on success, the possibly-
+  // refreshed payload so the SuperAdmin's remote renew/expiry changes apply.
+  // A transport failure is tolerated up to the offline grace window.
+  async function revalidateStandalone(license: OfflineLicensePayload): Promise<
+    | { lock: true; reason: RevalidationReason }
+    | { lock: false; license?: OfflineLicensePayload }
+  > {
+    let fp = "";
+    try { fp = await getFingerprint(); } catch { /* fingerprint backend down */ }
+    const out = await revalidateLicense(license.licenseKey, fp);
+    if (out.reachable) {
+      if (out.status === "revoked") return { lock: true, reason: "revoked" };
+      if (out.status === "not_found") return { lock: true, reason: "revoked" };
+      if (out.status === "fingerprint_mismatch") return { lock: true, reason: "revoked" };
+      // active OR expired: persist the freshly-signed file (carries the SA's
+      // latest expiry) and re-verify it locally.
+      if (out.signedFile) {
+        const v = await verifyLicenseFile(out.signedFile);
+        if (v.ok) {
+          await saveLicense(out.signedFile);
+          await setLastLicenseCheck(Date.now());
+          if (v.payload.expiresAt && new Date(v.payload.expiresAt).getTime() < Date.now()) {
+            return { lock: true, reason: "expired" };
+          }
+          return { lock: false, license: v.payload };
+        }
+        // Re-signed file fails local verify (e.g. now expired) → lock as expired.
+        if (out.status === "expired") return { lock: true, reason: "expired" };
+      }
+      if (out.status === "expired") return { lock: true, reason: "expired" };
+      await setLastLicenseCheck(Date.now());
+      return { lock: false };
+    }
+    // Offline: tolerate until the grace window elapses. If we have never
+    // recorded a successful check (lastCheck null), anchor the window to the
+    // license's signed issuedAt so an imported self-register file cannot run
+    // forever offline.
+    const lastCheck = await getLastLicenseCheck();
+    const issuedTs = license.issuedAt ? new Date(license.issuedAt).getTime() : null;
+    if (isGraceExpired(lastCheck, license.graceDays, issuedTs)) {
+      return { lock: true, reason: "grace-expired" };
+    }
+    return { lock: false };
   }
 
   async function bootCloud() {
@@ -303,15 +392,24 @@ export default function App() {
   // ── Standalone branch ─────────────────────────────────────────────
   if (state.phase === "needs-standalone-license") {
     return (
-      <StandaloneActivation
-        onDone={(payload) => {
-          void (async () => {
-            const session = await loadLocalSession();
-            if (session) setState({ phase: "standalone-signed-in", license: payload, session });
-            else setState({ phase: "needs-standalone-login", license: payload });
-          })();
+      <StandaloneOnboard
+        onDone={() => {
+          // Re-run boot so a freshly registered/imported license immediately
+          // goes through verify + remote revalidation (revoked/expired/grace
+          // checks) before we let the operator in — don't short-circuit to the
+          // signed-in state from here.
+          void (async () => { setState({ phase: "checking" }); await boot(); })();
         }}
         onCancel={() => { void (async () => { await wipeStandalone(); setState({ phase: "needs-mode" }); })(); }}
+      />
+    );
+  }
+  if (state.phase === "standalone-revalidation-needed") {
+    return (
+      <StandaloneRevalidationNeeded
+        reason={state.reason}
+        onRetry={handleRetryLicense}
+        onReset={handleStandaloneFullReset}
       />
     );
   }

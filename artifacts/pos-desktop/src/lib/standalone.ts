@@ -40,6 +40,18 @@ export type OfflineLicensePayload = {
   expiresAt: string | null;
   serverPubKey: string;
   notes?: string;
+  // ─── Online self-registration + remote control (Task #236) ──────────
+  // Optional so older admin-issued files stay byte-compatible. Populated
+  // when the device self-registers online. `graceDays` = how many days the
+  // device may run offline before it must re-validate against the cloud.
+  country?: string;
+  companyTaxNumber?: string;
+  companyCrNumber?: string;
+  companyAddress?: string;
+  companyPhone?: string;
+  companyEmail?: string;
+  source?: "admin" | "self_register";
+  graceDays?: number;
 };
 export type SignedLicenseFile = {
   v: 1; alg: "ed25519";
@@ -408,6 +420,147 @@ export async function loadLicense(): Promise<SignedLicenseFile | null> {
     const raw = localStorage.getItem(LS_LICENSE);
     return raw ? JSON.parse(raw) as SignedLicenseFile : null;
   } catch { return null; }
+}
+
+// ─── Online self-registration + remote revalidation (Task #236) ──────
+// Standalone devices can register their company profile with the cloud and
+// then periodically re-validate over the internet. The cloud SuperAdmin
+// controls expiry/renewal/revocation centrally; a device that cannot reach
+// the cloud for STANDALONE_GRACE_DAYS locks until it re-validates.
+//
+// Persisted in the SAME generic settings store as net_role etc. — no Rust
+// change is needed. `last_license_check` is the epoch-ms of the last
+// SUCCESSFUL online revalidation (or initial register).
+export const STANDALONE_GRACE_DAYS = 7;
+
+const SETTING_LAST_LICENSE_CHECK = "last_license_check";
+const LS_LAST_LICENSE_CHECK = "pos_desktop_last_license_check";
+
+const REGISTER_BASE: string =
+  (((import.meta.env.VITE_UPDATE_SERVER_URL ?? "") as string).trim().replace(/\/+$/, ""))
+  || "https://zacoderp.com";
+
+export async function getLastLicenseCheck(): Promise<number | null> {
+  const v = await getSetting(SETTING_LAST_LICENSE_CHECK, LS_LAST_LICENSE_CHECK);
+  const n = v ? Number(v) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+export async function setLastLicenseCheck(ts: number): Promise<void> {
+  await setSetting(SETTING_LAST_LICENSE_CHECK, LS_LAST_LICENSE_CHECK, String(ts));
+}
+
+/**
+ * Has the offline grace window elapsed since the last successful online check?
+ *
+ * `lastCheck` is the epoch-ms of the last SUCCESSFUL revalidation. When it is
+ * null (e.g. a self-register license file imported by hand, or storage reset
+ * before the first online check) the caller MUST pass a trusted `fallbackTs`
+ * — typically the license's `issuedAt` — so the grace window is anchored to a
+ * real point in time. Without a fallback we conservatively report expired,
+ * because a self-register license that can prove no check-in time must not run
+ * indefinitely offline. (Admin-issued FILE licenses never call this — they are
+ * gated out by `source !== 'self_register'` before we reach here, Task #233.)
+ */
+export function isGraceExpired(
+  lastCheck: number | null,
+  graceDays = STANDALONE_GRACE_DAYS,
+  fallbackTs?: number | null,
+): boolean {
+  const baseline = lastCheck ?? (Number.isFinite(fallbackTs) && (fallbackTs as number) > 0 ? (fallbackTs as number) : null);
+  if (!baseline) return true;
+  const days = Number.isFinite(graceDays) && graceDays > 0 ? graceDays : STANDALONE_GRACE_DAYS;
+  return Date.now() - baseline > days * 24 * 60 * 60 * 1000;
+}
+
+export type StandaloneCompanyInfo = {
+  customerName: string;
+  vertical: "retail" | "pharmacy" | "restaurant" | "grocery";
+  country?: string;
+  companyTaxNumber?: string;
+  companyCrNumber?: string;
+  companyAddress?: string;
+  companyPhone?: string;
+  companyEmail?: string;
+};
+
+/**
+ * Self-register the company with the cloud and receive a signed license file.
+ * Pass the RAW machine fingerprint (the server hashes it). Network failures
+ * and non-2xx responses are returned as `{ ok: false }` rather than thrown.
+ */
+export async function registerStandalone(
+  info: StandaloneCompanyInfo,
+  fingerprint: string,
+): Promise<{ ok: true; signedFile: SignedLicenseFile } | { ok: false; error: string }> {
+  let body: string;
+  try {
+    body = JSON.stringify({ ...info, fingerprint, appVersion: __APP_VERSION__ });
+  } catch {
+    return { ok: false, error: "تعذّر تجهيز بيانات التسجيل" };
+  }
+  try {
+    const r = await fetch(`${REGISTER_BASE}/api/public/offline/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+    const text = await r.text();
+    if (text.trimStart().startsWith("<")) {
+      return { ok: false, error: "تعذّر الوصول لخادم التسجيل (استجابة غير متوقعة)." };
+    }
+    let data: any;
+    try { data = JSON.parse(text); } catch { return { ok: false, error: "استجابة غير صالحة من الخادم." }; }
+    if (!r.ok) {
+      return { ok: false, error: typeof data?.error === "string" ? data.error : `فشل التسجيل (${r.status}).` };
+    }
+    const signedFile = (data?.signedFile ?? data) as SignedLicenseFile;
+    if (!signedFile?.payload || !signedFile?.signature) {
+      return { ok: false, error: "لم يُرجِع الخادم ملف ترخيص صالحاً." };
+    }
+    return { ok: true, signedFile };
+  } catch (e: any) {
+    return { ok: false, error: "تعذّر الاتصال بخادم التسجيل. تأكد من اتصالك بالإنترنت." };
+  }
+}
+
+export type RevalidateOutcome =
+  | { reachable: true; status: "active" | "expired" | "revoked" | "not_found" | "fingerprint_mismatch"; signedFile?: SignedLicenseFile }
+  | { reachable: false };
+
+/**
+ * Re-validate an existing license against the cloud. Used both at boot and on
+ * a periodic timer. `reachable:false` means a network/transport failure (the
+ * caller falls back to the offline grace window); any other result is an
+ * authoritative server verdict.
+ */
+export async function revalidateLicense(licenseKey: string, fingerprint: string): Promise<RevalidateOutcome> {
+  let body: string;
+  try {
+    body = JSON.stringify({ licenseKey, fingerprint, appVersion: __APP_VERSION__ });
+  } catch {
+    return { reachable: false };
+  }
+  try {
+    const r = await fetch(`${REGISTER_BASE}/api/public/offline/revalidate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+    const text = await r.text();
+    if (text.trimStart().startsWith("<")) return { reachable: false };
+    let data: any;
+    try { data = JSON.parse(text); } catch { return { reachable: false }; }
+    if (r.status === 404) return { reachable: true, status: "not_found" };
+    if (r.status === 409) return { reachable: true, status: "fingerprint_mismatch" };
+    if (!r.ok && r.status >= 500) return { reachable: false };
+    const status = data?.status;
+    if (status === "active" || status === "expired" || status === "revoked") {
+      return { reachable: true, status, signedFile: data?.signedFile as SignedLicenseFile | undefined };
+    }
+    return { reachable: false };
+  } catch {
+    return { reachable: false };
+  }
 }
 
 // ─── Users ───────────────────────────────────────────────────────────

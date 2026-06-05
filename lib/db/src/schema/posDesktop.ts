@@ -1,4 +1,5 @@
 import { pgTable, serial, text, boolean, timestamp, integer, bigint, jsonb, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { companiesTable } from "./companies";
 import { branchesTable } from "./branches";
 import { usersTable } from "./users";
@@ -120,6 +121,22 @@ export const offlineLicensesTable = pgTable("offline_licenses", {
   revokedAt: timestamp("revoked_at"),
   status: text("status").notNull().default("active"), // active | revoked | expired
   notes: text("notes"),
+  // ─── Online self-registration + remote license control (Task #236) ──
+  // Standalone devices can register their company data online and pull
+  // periodically-revalidated signed licenses. SuperAdmin controls expiry
+  // remotely; the device locks after `graceDays` offline. These columns
+  // are nullable so existing admin-issued (file-handed) licenses are
+  // unaffected. `source` distinguishes admin-created vs device self-register.
+  country: text("country"),                                  // ISO-2 (e.g. SA, EG)
+  companyTaxNumber: text("company_tax_number"),              // الرقم الضريبي
+  companyCrNumber: text("company_cr_number"),                // السجل التجاري
+  companyAddress: text("company_address"),
+  companyPhone: text("company_phone"),
+  companyEmail: text("company_email"),
+  source: text("source").notNull().default("admin"),        // admin | self_register
+  graceDays: integer("grace_days").notNull().default(7),     // offline days before lock
+  lastSeenAt: timestamp("last_seen_at"),                     // last successful revalidate
+  appVersion: text("app_version"),                           // last reported desktop build
   // The Ed25519-signed JSON payload last issued for this license (base64).
   // We store it so SuperAdmin can re-download without re-signing.
   signedFileJson: text("signed_file_json"),
@@ -130,6 +147,12 @@ export const offlineLicensesTable = pgTable("offline_licenses", {
 }, (t) => ({
   keyUniq: uniqueIndex("offline_licenses_key_uniq").on(t.licenseKey),
   statusIdx: index("offline_licenses_status_idx").on(t.status),
+  // One self-register row per device fingerprint — prevents a register-race
+  // from minting duplicate licenses for the same machine (Task #236). Partial
+  // so admin rows (which may share a NULL fingerprint) are unaffected.
+  selfRegisterFpUniq: uniqueIndex("offline_licenses_self_register_fp_uq")
+    .on(t.fingerprintHash)
+    .where(sql`source = 'self_register' AND fingerprint_hash IS NOT NULL`),
 }));
 
 // ─── Protected install-wizard activation codes (/install) ────────────

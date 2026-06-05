@@ -26,6 +26,10 @@ type OfflineLicense = {
   maxUsers: number; fingerprintHash: string | null; status: string;
   issuedAt: string; expiresAt: string | null; revokedAt: string | null;
   publicKeyFingerprint: string | null; notes: string | null;
+  // Company profile + online self-registration (Task #236)
+  country: string | null; companyTaxNumber: string | null; companyCrNumber: string | null;
+  companyAddress: string | null; companyPhone: string | null; companyEmail: string | null;
+  source: string; graceDays: number; lastSeenAt: string | null; appVersion: string | null;
 };
 
 type PublicKeyInfo = { publicKeyB64: string; publicKeyFingerprint: string; source: "env" | "dev-cache" };
@@ -66,6 +70,8 @@ export default function OfflineLicenses() {
   const [form, setForm] = useState({
     customerName: "", vertical: "retail", plan: "standalone_pos",
     maxUsers: 5, fingerprint: "", expiresAt: "", notes: "",
+    country: "", companyTaxNumber: "", companyCrNumber: "",
+    companyAddress: "", companyPhone: "", companyEmail: "", graceDays: 7,
   });
 
   // Search / filter — used to narrow long lists by license key or customer name.
@@ -75,6 +81,8 @@ export default function OfflineLicenses() {
   const [editing, setEditing] = useState<OfflineLicense | null>(null);
   const [editForm, setEditForm] = useState({
     customerName: "", vertical: "retail", maxUsers: 5, expiresAt: "", notes: "",
+    country: "", companyTaxNumber: "", companyCrNumber: "",
+    companyAddress: "", companyPhone: "", companyEmail: "", graceDays: 7,
   });
   function openEdit(lic: OfflineLicense) {
     setEditing(lic);
@@ -84,6 +92,13 @@ export default function OfflineLicenses() {
       maxUsers: lic.maxUsers,
       expiresAt: lic.expiresAt ? new Date(lic.expiresAt).toISOString().slice(0, 10) : "",
       notes: lic.notes ?? "",
+      country: lic.country ?? "",
+      companyTaxNumber: lic.companyTaxNumber ?? "",
+      companyCrNumber: lic.companyCrNumber ?? "",
+      companyAddress: lic.companyAddress ?? "",
+      companyPhone: lic.companyPhone ?? "",
+      companyEmail: lic.companyEmail ?? "",
+      graceDays: lic.graceDays ?? 7,
     });
   }
   const edit = useMutation({
@@ -96,6 +111,13 @@ export default function OfflineLicenses() {
         notes: editForm.notes,
         // empty string clears expiry (permanent license)
         expiresAt: editForm.expiresAt ? new Date(editForm.expiresAt).toISOString() : "",
+        country: editForm.country || null,
+        companyTaxNumber: editForm.companyTaxNumber || null,
+        companyCrNumber: editForm.companyCrNumber || null,
+        companyAddress: editForm.companyAddress || null,
+        companyPhone: editForm.companyPhone || null,
+        companyEmail: editForm.companyEmail || null,
+        graceDays: Number(editForm.graceDays) || 7,
       };
       const r = await fetch(`${API}/api/admin/offline-licenses/${editing.id}`, {
         method: "PATCH", headers, body: JSON.stringify(body),
@@ -129,6 +151,13 @@ export default function OfflineLicenses() {
         vertical: form.vertical, plan: form.plan,
         maxUsers: Number(form.maxUsers),
         notes: form.notes || undefined,
+        country: form.country || undefined,
+        companyTaxNumber: form.companyTaxNumber || undefined,
+        companyCrNumber: form.companyCrNumber || undefined,
+        companyAddress: form.companyAddress || undefined,
+        companyPhone: form.companyPhone || undefined,
+        companyEmail: form.companyEmail || undefined,
+        graceDays: Number(form.graceDays) || 7,
       };
       if (form.fingerprint.trim()) body.fingerprint = form.fingerprint.trim();
       if (form.expiresAt) body.expiresAt = new Date(form.expiresAt).toISOString();
@@ -145,7 +174,7 @@ export default function OfflineLicenses() {
       setShowCreate(false);
       // Auto-download the signed file
       downloadSignedFile(data.signedFile, data.license.licenseKey);
-      setForm({ customerName: "", vertical: "retail", plan: "standalone_pos", maxUsers: 5, fingerprint: "", expiresAt: "", notes: "" });
+      setForm({ customerName: "", vertical: "retail", plan: "standalone_pos", maxUsers: 5, fingerprint: "", expiresAt: "", notes: "", country: "", companyTaxNumber: "", companyCrNumber: "", companyAddress: "", companyPhone: "", companyEmail: "", graceDays: 7 });
     },
     onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
   });
@@ -288,14 +317,30 @@ export default function OfflineLicenses() {
                     <code className="font-mono text-sm font-semibold">{lic.licenseKey}</code>
                     <StatusBadge status={lic.status} />
                     <Badge variant="outline">{lic.vertical}</Badge>
+                    {lic.source === "self_register"
+                      ? <Badge className="bg-indigo-100 text-indigo-800">سجّل ذاتياً عبر الإنترنت</Badge>
+                      : <Badge variant="outline">أصدره المشرف</Badge>}
+                    {lic.country && <Badge variant="outline">{lic.country}</Badge>}
                   </div>
                   <div className="text-sm font-medium">{lic.customerName}</div>
-                  <div className="text-xs text-muted-foreground flex gap-3 mt-1">
+                  <div className="text-xs text-muted-foreground flex gap-3 mt-1 flex-wrap">
                     <span>👥 {lic.maxUsers} مستخدم</span>
                     <span>📅 صدر: {new Date(lic.issuedAt).toLocaleDateString("ar-SA")}</span>
                     {lic.expiresAt && <span>⏰ ينتهي: {new Date(lic.expiresAt).toLocaleDateString("ar-SA")}</span>}
                     {lic.fingerprintHash && <span title={lic.fingerprintHash}>🔒 مربوط بجهاز</span>}
+                    <span>🕒 مهلة عدم الاتصال: {lic.graceDays ?? 7} يوم</span>
+                    {lic.lastSeenAt && <span>📡 آخر اتصال: {new Date(lic.lastSeenAt).toLocaleString("ar-SA")}</span>}
+                    {lic.appVersion && <span>📦 الإصدار: {lic.appVersion}</span>}
                   </div>
+                  {(lic.companyTaxNumber || lic.companyCrNumber || lic.companyPhone || lic.companyEmail || lic.companyAddress) && (
+                    <div className="text-xs text-muted-foreground flex gap-3 mt-1 flex-wrap">
+                      {lic.companyTaxNumber && <span>الرقم الضريبي: {lic.companyTaxNumber}</span>}
+                      {lic.companyCrNumber && <span>س.ت: {lic.companyCrNumber}</span>}
+                      {lic.companyPhone && <span>📞 {lic.companyPhone}</span>}
+                      {lic.companyEmail && <span>✉️ {lic.companyEmail}</span>}
+                      {lic.companyAddress && <span>📍 {lic.companyAddress}</span>}
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-1">
                   <Button size="sm" variant="outline" onClick={() => openEdit(lic)}
@@ -356,6 +401,40 @@ export default function OfflineLicenses() {
                 <Label>الحد الأقصى للمستخدمين</Label>
                 <Input type="number" min={1} max={100} value={form.maxUsers} onChange={(e) => setForm({ ...form, maxUsers: Number(e.target.value) })} />
               </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>الدولة (رمز ISO)</Label>
+                <Input value={form.country} maxLength={2} onChange={(e) => setForm({ ...form, country: e.target.value.toUpperCase() })} placeholder="SA" />
+              </div>
+              <div>
+                <Label>مهلة عدم الاتصال (أيام)</Label>
+                <Input type="number" min={1} max={90} value={form.graceDays} onChange={(e) => setForm({ ...form, graceDays: Number(e.target.value) })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>الرقم الضريبي</Label>
+                <Input value={form.companyTaxNumber} onChange={(e) => setForm({ ...form, companyTaxNumber: e.target.value })} placeholder="3xxxxxxxxxxxxx3" />
+              </div>
+              <div>
+                <Label>السجل التجاري</Label>
+                <Input value={form.companyCrNumber} onChange={(e) => setForm({ ...form, companyCrNumber: e.target.value })} placeholder="10xxxxxxxx" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>هاتف الشركة</Label>
+                <Input value={form.companyPhone} onChange={(e) => setForm({ ...form, companyPhone: e.target.value })} placeholder="+9665xxxxxxxx" />
+              </div>
+              <div>
+                <Label>البريد الإلكتروني</Label>
+                <Input value={form.companyEmail} onChange={(e) => setForm({ ...form, companyEmail: e.target.value })} placeholder="info@example.com" />
+              </div>
+            </div>
+            <div>
+              <Label>عنوان الشركة</Label>
+              <Input value={form.companyAddress} onChange={(e) => setForm({ ...form, companyAddress: e.target.value })} placeholder="الرياض، حي العليا" />
             </div>
             <div>
               <Label>تاريخ الانتهاء (اختياري)</Label>
@@ -420,6 +499,40 @@ export default function OfflineLicenses() {
                 <Input type="number" min={1} max={100} value={editForm.maxUsers}
                   onChange={(e) => setEditForm({ ...editForm, maxUsers: Number(e.target.value) })} />
               </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>الدولة (رمز ISO)</Label>
+                <Input value={editForm.country} maxLength={2} onChange={(e) => setEditForm({ ...editForm, country: e.target.value.toUpperCase() })} placeholder="SA" />
+              </div>
+              <div>
+                <Label>مهلة عدم الاتصال (أيام)</Label>
+                <Input type="number" min={1} max={90} value={editForm.graceDays} onChange={(e) => setEditForm({ ...editForm, graceDays: Number(e.target.value) })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>الرقم الضريبي</Label>
+                <Input value={editForm.companyTaxNumber} onChange={(e) => setEditForm({ ...editForm, companyTaxNumber: e.target.value })} />
+              </div>
+              <div>
+                <Label>السجل التجاري</Label>
+                <Input value={editForm.companyCrNumber} onChange={(e) => setEditForm({ ...editForm, companyCrNumber: e.target.value })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>هاتف الشركة</Label>
+                <Input value={editForm.companyPhone} onChange={(e) => setEditForm({ ...editForm, companyPhone: e.target.value })} />
+              </div>
+              <div>
+                <Label>البريد الإلكتروني</Label>
+                <Input value={editForm.companyEmail} onChange={(e) => setEditForm({ ...editForm, companyEmail: e.target.value })} />
+              </div>
+            </div>
+            <div>
+              <Label>عنوان الشركة</Label>
+              <Input value={editForm.companyAddress} onChange={(e) => setEditForm({ ...editForm, companyAddress: e.target.value })} />
             </div>
             <div>
               <Label>تاريخ الانتهاء</Label>

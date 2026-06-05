@@ -41,6 +41,14 @@ const createSchema = z.object({
   fingerprint: z.string().min(8).optional(),   // optional pre-bind
   expiresAt: z.string().datetime({ offset: true }).optional(),
   notes: z.string().max(1000).optional(),
+  // Company profile (Task #236) — optional on admin-created licenses.
+  country: z.string().max(2).optional(),
+  companyTaxNumber: z.string().max(50).optional(),
+  companyCrNumber: z.string().max(50).optional(),
+  companyAddress: z.string().max(300).optional(),
+  companyPhone: z.string().max(50).optional(),
+  companyEmail: z.string().max(120).optional(),
+  graceDays: z.number().int().min(1).max(365).optional(),
 });
 
 // ─── POST /api/admin/offline-licenses ────────────────────────────────
@@ -53,6 +61,7 @@ router.post("/", async (req, res) => {
   const fpHash = parsed.data.fingerprint ? hashFingerprint(parsed.data.fingerprint) : null;
   const licenseKey = generateLicenseKey();
 
+  const graceDays = parsed.data.graceDays ?? 7;
   const signed = signOfflineLicense({
     licenseKey,
     customerName: parsed.data.customerName,
@@ -63,6 +72,14 @@ router.post("/", async (req, res) => {
     issuedAt: new Date().toISOString(),
     expiresAt: parsed.data.expiresAt ?? null,
     notes: parsed.data.notes,
+    country: parsed.data.country,
+    companyTaxNumber: parsed.data.companyTaxNumber,
+    companyCrNumber: parsed.data.companyCrNumber,
+    companyAddress: parsed.data.companyAddress,
+    companyPhone: parsed.data.companyPhone,
+    companyEmail: parsed.data.companyEmail,
+    source: "admin",
+    graceDays,
   });
 
   const [created] = await db.insert(offlineLicensesTable).values({
@@ -74,6 +91,14 @@ router.post("/", async (req, res) => {
     fingerprintHash: fpHash,
     expiresAt: parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null,
     notes: parsed.data.notes,
+    country: parsed.data.country ?? null,
+    companyTaxNumber: parsed.data.companyTaxNumber ?? null,
+    companyCrNumber: parsed.data.companyCrNumber ?? null,
+    companyAddress: parsed.data.companyAddress ?? null,
+    companyPhone: parsed.data.companyPhone ?? null,
+    companyEmail: parsed.data.companyEmail ?? null,
+    source: "admin",
+    graceDays,
     signedFileJson: JSON.stringify(signed),
     publicKeyFingerprint: signed.publicKeyFingerprint,
     createdByUserId: userId,
@@ -104,6 +129,14 @@ router.get("/:id/file", async (req, res) => {
       issuedAt: lic.issuedAt.toISOString(),
       expiresAt: lic.expiresAt ? lic.expiresAt.toISOString() : null,
       notes: lic.notes ?? undefined,
+      country: lic.country ?? undefined,
+      companyTaxNumber: lic.companyTaxNumber ?? undefined,
+      companyCrNumber: lic.companyCrNumber ?? undefined,
+      companyAddress: lic.companyAddress ?? undefined,
+      companyPhone: lic.companyPhone ?? undefined,
+      companyEmail: lic.companyEmail ?? undefined,
+      source: (lic.source as "admin" | "self_register") ?? "admin",
+      graceDays: lic.graceDays ?? 7,
     });
     await db.update(offlineLicensesTable).set({
       signedFileJson: JSON.stringify(signed),
@@ -132,7 +165,21 @@ const editSchema = z.object({
   // accept "" / null to clear the expiry (make it permanent)
   expiresAt: z.union([z.string().datetime({ offset: true }), z.literal(""), z.null()]).optional(),
   notes: z.string().max(1000).nullable().optional(),
+  // Company profile (Task #236) — nullable to allow clearing.
+  country: z.string().max(2).nullable().optional(),
+  companyTaxNumber: z.string().max(50).nullable().optional(),
+  companyCrNumber: z.string().max(50).nullable().optional(),
+  companyAddress: z.string().max(300).nullable().optional(),
+  companyPhone: z.string().max(50).nullable().optional(),
+  companyEmail: z.string().max(120).nullable().optional(),
+  graceDays: z.number().int().min(1).max(365).optional(),
 });
+
+// Resolve an optional+nullable patch field against the existing value:
+// undefined → keep existing; null → clear; value → set.
+function mergeField<T>(patch: T | null | undefined, existing: T | null): T | null {
+  return patch === undefined ? existing : patch;
+}
 router.patch("/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "bad id" }); return; }
@@ -156,6 +203,13 @@ router.patch("/:id", async (req, res) => {
       : parsed.data.expiresAt === "" || parsed.data.expiresAt === null ? null
       : new Date(parsed.data.expiresAt),
     notes: parsed.data.notes === undefined ? existing.notes : parsed.data.notes,
+    country: mergeField(parsed.data.country, existing.country),
+    companyTaxNumber: mergeField(parsed.data.companyTaxNumber, existing.companyTaxNumber),
+    companyCrNumber: mergeField(parsed.data.companyCrNumber, existing.companyCrNumber),
+    companyAddress: mergeField(parsed.data.companyAddress, existing.companyAddress),
+    companyPhone: mergeField(parsed.data.companyPhone, existing.companyPhone),
+    companyEmail: mergeField(parsed.data.companyEmail, existing.companyEmail),
+    graceDays: parsed.data.graceDays ?? existing.graceDays ?? 7,
   };
 
   const signed = signOfflineLicense({
@@ -168,6 +222,14 @@ router.patch("/:id", async (req, res) => {
     issuedAt: existing.issuedAt.toISOString(),
     expiresAt: merged.expiresAt ? merged.expiresAt.toISOString() : null,
     notes: merged.notes ?? undefined,
+    country: merged.country ?? undefined,
+    companyTaxNumber: merged.companyTaxNumber ?? undefined,
+    companyCrNumber: merged.companyCrNumber ?? undefined,
+    companyAddress: merged.companyAddress ?? undefined,
+    companyPhone: merged.companyPhone ?? undefined,
+    companyEmail: merged.companyEmail ?? undefined,
+    source: (existing.source as "admin" | "self_register") ?? "admin",
+    graceDays: merged.graceDays,
   });
 
   const [updated] = await db.update(offlineLicensesTable).set({
@@ -178,6 +240,13 @@ router.patch("/:id", async (req, res) => {
     fingerprintHash: merged.fingerprintHash,
     expiresAt: merged.expiresAt,
     notes: merged.notes,
+    country: merged.country,
+    companyTaxNumber: merged.companyTaxNumber,
+    companyCrNumber: merged.companyCrNumber,
+    companyAddress: merged.companyAddress,
+    companyPhone: merged.companyPhone,
+    companyEmail: merged.companyEmail,
+    graceDays: merged.graceDays,
     // If we were previously "expired" and the new expiry is in the future
     // (or null = permanent), flip back to "active".
     status: (merged.expiresAt === null || merged.expiresAt.getTime() > Date.now()) ? "active" : existing.status,

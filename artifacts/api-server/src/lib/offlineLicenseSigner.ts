@@ -94,6 +94,19 @@ export type OfflineLicensePayload = {
   expiresAt: string | null;
   serverPubKey: string;   // base64 raw 32-byte
   notes?: string;
+  // ─── Online self-registration + remote control (Task #236) ──────────
+  // Optional so older admin-issued files remain byte-compatible. When the
+  // device self-registers online these carry the company profile; graceDays
+  // tells the desktop how many days it may run offline before it must
+  // re-validate against the cloud.
+  country?: string;
+  companyTaxNumber?: string;
+  companyCrNumber?: string;
+  companyAddress?: string;
+  companyPhone?: string;
+  companyEmail?: string;
+  source?: "admin" | "self_register";
+  graceDays?: number;
 };
 
 export type SignedLicenseFile = {
