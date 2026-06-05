@@ -95,7 +95,12 @@ async function mirrorAsset(
   platform: string,
   asset: GhAsset,
 ): Promise<Pick<SyncSummary, "inserted" | "alreadySynced" | "deactivatedCount" | "url" | "reason">> {
-  const [existing] = await db.select({ id: downloadReleasesTable.id, isActive: downloadReleasesTable.isActive })
+  const [existing] = await db.select({
+    id: downloadReleasesTable.id,
+    isActive: downloadReleasesTable.isActive,
+    downloadUrl: downloadReleasesTable.downloadUrl,
+    fileSizeBytes: downloadReleasesTable.fileSizeBytes,
+  })
     .from(downloadReleasesTable)
     .where(and(
       eq(downloadReleasesTable.countryCode, COUNTRY),
@@ -105,22 +110,45 @@ async function mirrorAsset(
     .limit(1);
 
   if (existing) {
-    if (!existing.isActive) {
-      await db.transaction(async (tx) => {
-        await tx.update(downloadReleasesTable)
-          .set({ isActive: false, updatedAt: new Date() })
-          .where(and(
-            eq(downloadReleasesTable.countryCode, COUNTRY),
-            eq(downloadReleasesTable.platform, platform),
-            eq(downloadReleasesTable.isActive, true),
-          ));
-        await tx.update(downloadReleasesTable)
-          .set({ isActive: true, updatedAt: new Date() })
-          .where(eq(downloadReleasesTable.id, existing.id));
-      });
-      return { inserted: false, alreadySynced: true, reason: "reactivated" };
+    // A version is normally immutable, but a release can legitimately be
+    // RE-CUT under the same tag (e.g. the first build shipped a wrong/old
+    // binary and was deleted + re-uploaded). If the asset URL or size now
+    // differs from what we mirrored, the old row points at a stale/broken
+    // download — refresh it instead of treating the version as a no-op,
+    // otherwise the fix can never reach clients without a manual DB edit.
+    const assetChanged =
+      existing.downloadUrl !== asset.browser_download_url ||
+      existing.fileSizeBytes !== asset.size;
+
+    if (existing.isActive && !assetChanged) {
+      return { inserted: false, alreadySynced: true };
     }
-    return { inserted: false, alreadySynced: true };
+
+    await db.transaction(async (tx) => {
+      await tx.update(downloadReleasesTable)
+        .set({ isActive: false, updatedAt: new Date() })
+        .where(and(
+          eq(downloadReleasesTable.countryCode, COUNTRY),
+          eq(downloadReleasesTable.platform, platform),
+          eq(downloadReleasesTable.isActive, true),
+        ));
+      await tx.update(downloadReleasesTable)
+        .set({
+          isActive: true,
+          downloadUrl: asset.browser_download_url,
+          fileSizeBytes: asset.size,
+          releaseNotes: rel.body ?? null,
+          publishedAt: new Date(rel.published_at),
+          updatedAt: new Date(),
+        })
+        .where(eq(downloadReleasesTable.id, existing.id));
+    });
+    return {
+      inserted: false,
+      alreadySynced: true,
+      url: asset.browser_download_url,
+      reason: assetChanged ? "asset refreshed" : "reactivated",
+    };
   }
 
   let deactivatedCount = 0;

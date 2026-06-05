@@ -156,21 +156,57 @@ pub async fn download_and_install_update(
         dest_display
     );
 
-    // ── 3) Spawn msiexec /passive (Windows-only) ────────────────────
+    // ── 3) Launch the installer ELEVATED + DETACHED (Windows-only) ──
     #[cfg(target_os = "windows")]
     {
         let dest_str = dest_display.clone();
-        std::process::Command::new("msiexec")
-            .args(["/i", &dest_str, "/passive", "/norestart"])
+
+        // Verbose MSI log so any future failure is diagnosable instead of
+        // silent. Lives next to the downloaded MSI in %TEMP%.
+        let log_path = {
+            let mut p = std::env::temp_dir();
+            p.push("zacod-pos-update-install.log");
+            p.display().to_string()
+        };
+
+        // The whole reason in-app updates "installed" yet left the app on the
+        // OLD version: the MSI is a PER-MACHINE install (Tauri MSI default —
+        // only the NSIS .exe is currentUser), so msiexec needs elevation, and
+        // a major-upgrade cannot overwrite the still-running ZACOD POS.exe.
+        // We fix BOTH here via a detached PowerShell helper that:
+        //   • Start-Sleep 2s  → waits for THIS process to exit so msiexec can
+        //     replace the (now-released) binary; with /norestart an in-use
+        //     file would otherwise roll the upgrade back → stay on old.
+        //   • -Verb RunAs     → requests UAC elevation so the per-machine
+        //     install actually has privileges (no more silent error 1925).
+        //   • /l*v <log>      → verbose install log for post-mortem.
+        // PowerShell single-quoted args preserve spaces in the temp path.
+        // Escape any literal apostrophe ('  ->  '') so a username like
+        // C:\Users\O'Connor\... can't break parsing or inject commands.
+        let dest_ps = dest_str.replace('\'', "''");
+        let log_ps = log_path.replace('\'', "''");
+        let ps_cmd = format!(
+            "Start-Sleep -Seconds 2; Start-Process -FilePath 'msiexec.exe' \
+             -ArgumentList '/i','{}','/passive','/norestart','/l*v','{}' -Verb RunAs",
+            dest_ps, log_ps
+        );
+        std::process::Command::new("powershell")
+            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps_cmd])
             .spawn()
             .map_err(|e| format!("تعذّر تشغيل المثبّت: {}", e))?;
 
-        // Let the success event flush to the renderer before we die.
+        log::info!(
+            "[updater] elevated installer scheduled (log → {}); exiting app",
+            log_path
+        );
+
+        // Flush the success event to the renderer, then exit fast so the
+        // helper's 2s wait elapses with our files already released.
         let app2 = app.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(700));
+            std::thread::sleep(Duration::from_millis(400));
             let _ = app2.emit("updater://exiting", ());
-            std::thread::sleep(Duration::from_millis(300));
+            std::thread::sleep(Duration::from_millis(200));
             std::process::exit(0);
         });
     }

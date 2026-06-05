@@ -73,6 +73,30 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      # ─── 2b. Pin version from the git tag (tag builds only) ──────────
+      # The MSI ProductVersion + the in-app __APP_VERSION__ come from the
+      # COMMITTED package.json / tauri.conf.json — NOT from the tag. If a
+      # `pos-desktop-vX.Y.Z` tag is cut on a commit whose version files still
+      # say something else, we ship an MSI that reports the WRONG version
+      # (this already happened: tag pos-desktop-v0.8.12 had no bump commit).
+      # Deriving the version FROM the tag here makes the build authoritative
+      # so a release can never again advertise a version it didn't compile.
+      - name: Pin version from tag
+        if: startsWith(github.ref, 'refs/tags/pos-desktop-v')
+        shell: bash
+        run: |
+          TAG_VER="${GITHUB_REF_NAME#pos-desktop-v}"
+          if [[ -z "$TAG_VER" ]]; then
+            echo "::error::Empty version after stripping tag prefix from $GITHUB_REF_NAME"; exit 1
+          fi
+          echo "Pinning version $TAG_VER from tag $GITHUB_REF_NAME"
+          node -e "const fs=require('fs');const f='package.json';const j=JSON.parse(fs.readFileSync(f));j.version='$TAG_VER';fs.writeFileSync(f, JSON.stringify(j,null,2)+'\n');"
+          node -e "const fs=require('fs');const f='src-tauri/tauri.conf.json';const j=JSON.parse(fs.readFileSync(f));j.version='$TAG_VER';fs.writeFileSync(f, JSON.stringify(j,null,2)+'\n');"
+          sed -i -E "0,/^version = \".*\"/s//version = \"$TAG_VER\"/" src-tauri/Cargo.toml
+          echo "package.json    → $(node -p "require('./package.json').version")"
+          echo "tauri.conf.json → $(node -p "require('./src-tauri/tauri.conf.json').version")"
+          echo "Cargo.toml      → $(grep -m1 '^version' src-tauri/Cargo.toml)"
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
