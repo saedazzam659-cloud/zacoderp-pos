@@ -501,6 +501,111 @@ pub fn initialize() -> Result<()> {
             line_total  REAL NOT NULL
         );
 
+        -- ── Quotations (عروض الأسعار) — purely non-financial documents ─────
+        -- No journal entry, no stock movement. Header + lines mirror the sales
+        -- invoice shape so a quotation can be converted into a sales invoice
+        -- (which is what posts the JE + COGS + stock). `status` lifecycle:
+        -- draft → sent → accepted/rejected → converted. `converted_invoice_id`
+        -- links to the sales invoice produced by the conversion.
+        CREATE TABLE IF NOT EXISTS quotations_local (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            doc_no               TEXT NOT NULL UNIQUE,
+            customer_id          INTEGER REFERENCES customers_local(id),
+            quotation_date       TEXT NOT NULL,
+            valid_until          TEXT,
+            subtotal             REAL NOT NULL DEFAULT 0,
+            vat_total            REAL NOT NULL DEFAULT 0,
+            grand_total          REAL NOT NULL DEFAULT 0,
+            notes                TEXT,
+            status               TEXT NOT NULL DEFAULT 'draft'
+                                 CHECK (status IN ('draft','sent','accepted','rejected','converted')),
+            converted_invoice_id INTEGER REFERENCES sales_invoices_local(id),
+            warehouse_id         INTEGER REFERENCES warehouses_local(id),
+            branch_id            INTEGER REFERENCES branches_local(id),
+            cost_center_id       INTEGER REFERENCES cost_centers_local(id),
+            sales_rep_id         INTEGER REFERENCES salespersons_local(id),
+            commission_pct       REAL NOT NULL DEFAULT 0,
+            invoice_type         TEXT,
+            buyer_name           TEXT,
+            buyer_vat            TEXT,
+            buyer_address        TEXT,
+            currency_code        TEXT NOT NULL DEFAULT 'SAR',
+            exchange_rate        REAL NOT NULL DEFAULT 1,
+            created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_quot_customer ON quotations_local(customer_id);
+        CREATE INDEX IF NOT EXISTS idx_quot_date ON quotations_local(quotation_date DESC);
+
+        CREATE TABLE IF NOT EXISTS quotation_lines_local (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            quotation_id      INTEGER NOT NULL REFERENCES quotations_local(id) ON DELETE CASCADE,
+            item_id           INTEGER NOT NULL REFERENCES items_local(id),
+            qty               REAL NOT NULL,
+            unit_price        REAL NOT NULL,
+            vat_rate          REAL NOT NULL DEFAULT 15,
+            line_total        REAL NOT NULL,
+            uom_id            INTEGER,
+            uom_name          TEXT,
+            conversion_factor REAL NOT NULL DEFAULT 1,
+            free_qty          REAL NOT NULL DEFAULT 0,
+            note              TEXT,
+            warehouse_id      INTEGER
+        );
+
+        -- ── Sales Orders (أوامر البيع) — purely non-financial documents ───
+        -- Same idea as quotations but with a payment method captured up-front
+        -- (carried into the invoice on conversion). `status` lifecycle:
+        -- draft → confirmed → converted (or cancelled). Conversion requires
+        -- the order to be 'confirmed'.
+        CREATE TABLE IF NOT EXISTS sales_orders_local (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            doc_no               TEXT NOT NULL UNIQUE,
+            customer_id          INTEGER REFERENCES customers_local(id),
+            order_date           TEXT NOT NULL,
+            expected_delivery    TEXT,
+            payment_method       TEXT NOT NULL DEFAULT 'credit'
+                                 CHECK (payment_method IN ('credit','cash','bank')),
+            cash_box_id          INTEGER REFERENCES cash_boxes_local(id),
+            bank_id              INTEGER REFERENCES banks_local(id),
+            subtotal             REAL NOT NULL DEFAULT 0,
+            vat_total            REAL NOT NULL DEFAULT 0,
+            grand_total          REAL NOT NULL DEFAULT 0,
+            notes                TEXT,
+            status               TEXT NOT NULL DEFAULT 'draft'
+                                 CHECK (status IN ('draft','confirmed','cancelled','converted')),
+            converted_invoice_id INTEGER REFERENCES sales_invoices_local(id),
+            warehouse_id         INTEGER REFERENCES warehouses_local(id),
+            branch_id            INTEGER REFERENCES branches_local(id),
+            cost_center_id       INTEGER REFERENCES cost_centers_local(id),
+            sales_rep_id         INTEGER REFERENCES salespersons_local(id),
+            commission_pct       REAL NOT NULL DEFAULT 0,
+            invoice_type         TEXT,
+            buyer_name           TEXT,
+            buyer_vat            TEXT,
+            buyer_address        TEXT,
+            currency_code        TEXT NOT NULL DEFAULT 'SAR',
+            exchange_rate        REAL NOT NULL DEFAULT 1,
+            created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_sord_customer ON sales_orders_local(customer_id);
+        CREATE INDEX IF NOT EXISTS idx_sord_date ON sales_orders_local(order_date DESC);
+
+        CREATE TABLE IF NOT EXISTS sales_order_lines_local (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id          INTEGER NOT NULL REFERENCES sales_orders_local(id) ON DELETE CASCADE,
+            item_id           INTEGER NOT NULL REFERENCES items_local(id),
+            qty               REAL NOT NULL,
+            unit_price        REAL NOT NULL,
+            vat_rate          REAL NOT NULL DEFAULT 15,
+            line_total        REAL NOT NULL,
+            uom_id            INTEGER,
+            uom_name          TEXT,
+            conversion_factor REAL NOT NULL DEFAULT 1,
+            free_qty          REAL NOT NULL DEFAULT 0,
+            note              TEXT,
+            warehouse_id      INTEGER
+        );
+
         -- ── Accounting dimensions: branches & cost centers ───────────────
         -- Both are optional analytic tags attached to journal entries (and
         -- the documents that generate them). They let the financial reports
@@ -779,6 +884,8 @@ pub fn initialize() -> Result<()> {
         ("purchase_return", "PRT-",  "purchase_returns_local"),
         ("sales_invoice",   "SINV-", "sales_invoices_local"),
         ("sales_return",    "SRT-",  "sales_returns_local"),
+        ("quotation",       "QT-",   "quotations_local"),
+        ("sales_order",     "SO-",   "sales_orders_local"),
     ];
     for (doc_type, prefix, table) in seeds {
         let sql = format!(

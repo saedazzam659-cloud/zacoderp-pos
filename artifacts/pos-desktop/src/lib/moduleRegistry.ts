@@ -29,7 +29,7 @@ export type WindowsView =
   | "expiry" | "scale" | "stock_import" | "low_stock" | "network"
   | "suppliers" | "purchases" | "purchase_returns"
   | "salespersons"
-  | "sales_invoices" | "sales_returns" | "invoice_import"
+  | "sales_invoices" | "quotations" | "sales_orders" | "sales_returns" | "invoice_import"
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "user_permissions"
@@ -98,6 +98,8 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   purchase_returns:  { module: "purchasing", profile: "erp" },
   salespersons:      { module: "sales_docs", profile: "erp" },
   sales_invoices:    { module: "sales_docs", profile: "erp" },
+  quotations:        { module: "sales_docs", profile: "erp" },
+  sales_orders:      { module: "sales_docs", profile: "erp" },
   sales_returns:     { module: "sales_docs", profile: "erp" },
   cash_boxes:        { module: "cash_banks", profile: "erp" },
   banks:             { module: "cash_banks", profile: "erp" },

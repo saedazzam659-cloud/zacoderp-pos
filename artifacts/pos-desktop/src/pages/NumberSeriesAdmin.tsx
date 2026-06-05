@@ -22,6 +22,8 @@ const DOC_LABELS: Record<NumberSeriesDocType, string> = {
   purchase_return: "مرتجع الشراء",
   sales_invoice: "فواتير المبيعات",
   sales_return: "مرتجع المبيعات",
+  quotation: "عروض الأسعار",
+  sales_order: "أوامر البيع",
 };
 
 const PAD_MIN = 1;

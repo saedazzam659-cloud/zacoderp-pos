@@ -14,3 +14,5 @@ Rule: when implementing a "first-caller-wins" claim on a status-gated row, the U
 4. Do the side-effect work (JE insert, etc.) inside the same tx so a failure rolls the claim back.
 
 Verify the fix by firing 5 parallel POST requests against the same row and asserting exactly one 2xx + N−1 conflict responses and a single side-effect row in the database.
+
+**Cross-connection variant (when the heavy work opens its OWN connection/tx):** Sometimes the side-effect can't share the claimer's transaction — e.g. a doc→invoice conversion where the invoice-creation routine opens its own DB connection. Then: (1) claim with a compare-and-set UPDATE that flips the gating column (`SET status='converted' WHERE id=? AND status<>'converted'`), reject if it affected 0 rows; (2) run the heavy work; (3) on success patch the link column (`converted_invoice_id`), on failure REVERT the claim back to its prior status so the doc stays retryable. The claim still guarantees single-winner; the explicit revert replaces the rollback you'd otherwise get for free inside one tx.

@@ -1,0 +1,526 @@
+import React, { useEffect, useState } from "react";
+import {
+  listSalesOrders, getSalesOrder, createSalesOrder, setSalesOrderStatus, convertSalesOrderToInvoice,
+  listCashBoxes, listBanks,
+  type SalesOrder, type SalesOrderStatus, type SalesLine, type PaymentMethod, type CashBox, type Bank,
+} from "../lib/accounting";
+import { listCustomers, type LocalCustomer } from "../lib/customers";
+import { listItems, type LocalItem } from "../lib/items";
+import { listUom, type Uom } from "../lib/uom";
+import { listWarehouses, type Warehouse } from "../lib/inventory";
+import { listSalespersons, type Salesperson } from "../lib/salespersons";
+import {
+  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
+  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
+} from "./_adminUi";
+import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
+import { useInvoiceTaxes } from "./_invoiceTax";
+import { baseCurrencyCode, currencyByCode } from "../lib/currency";
+import { computeDiscount, lineNet, type DiscType, type DiscFields } from "../lib/discount";
+
+type FLine = SalesLine & DiscFields;
+
+const STATUS: Record<SalesOrderStatus, { l: string; c: string }> = {
+  draft:     { l: "مسودة",  c: "#475569" },
+  confirmed: { l: "مؤكّد",   c: "#15803d" },
+  cancelled: { l: "ملغى",   c: "#b91c1c" },
+  converted: { l: "محوّل لفاتورة", c: "#7c3aed" },
+};
+
+function StatusBadge({ s }: { s: SalesOrderStatus }) {
+  const x = STATUS[s];
+  return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{x.l}</span>;
+}
+
+function PayBadge({ m }: { m: PaymentMethod }) {
+  const map = { credit: { l: "آجل", c: "#9a3412" }, cash: { l: "نقدي", c: "#15803d" }, bank: { l: "بنك", c: "#1e40af" } } as const;
+  const x = map[m];
+  return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{x.l}</span>;
+}
+
+export default function SalesOrdersAdmin() {
+  const [rows, setRows] = useState<SalesOrder[]>([]);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedDetail, setExpandedDetail] = useState<SalesOrder | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [deps, setDeps] = useState<{ customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[]; salespersons: Salesperson[] } | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function refresh() { setRows(await listSalesOrders(5000)); }
+  useEffect(() => {
+    void refresh();
+    void (async () => {
+      const [customers, cashBoxes, banks, items, warehouses, salespersons] = await Promise.all([listCustomers(), listCashBoxes(), listBanks(), listItems(), listWarehouses(), listSalespersons(false)]);
+      setDeps({ customers, cashBoxes, banks, items, warehouses, salespersons });
+    })();
+  }, []);
+
+  const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
+  const pageRows = rows.slice(start, end);
+  useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
+
+  async function toggleView(id: number) {
+    if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); return; }
+    setExpandedId(id); setExpandedDetail(null);
+    const fetched = await getSalesOrder(id);
+    setExpandedId((cur) => { if (cur === id) setExpandedDetail(fetched); return cur; });
+  }
+
+  async function changeStatus(id: number, s: SalesOrderStatus) {
+    setBusyId(id); setErr(null);
+    try { await setSalesOrderStatus(id, s); await refresh(); }
+    catch (e: any) { setErr(e?.message ?? "فشل تغيير الحالة"); }
+    finally { setBusyId(null); }
+  }
+
+  async function convert(id: number) {
+    setBusyId(id); setErr(null);
+    try { await convertSalesOrderToInvoice(id); await refresh(); }
+    catch (e: any) { setErr(e?.message ?? "فشل التحويل إلى فاتورة"); }
+    finally { setBusyId(null); }
+  }
+
+  return (
+    <Page
+      title="أوامر البيع"
+      subtitle={`${rows.length} أمر — مستند غير مالي؛ يُحوّل إلى فاتورة بعد التأكيد`}
+      right={
+        <button onClick={() => setCreating(true)} disabled={!deps || creating}
+          style={{ ...btnPrimary, opacity: (!deps || creating) ? 0.5 : 1, cursor: (!deps || creating) ? "not-allowed" : "pointer" }}>
+          + أمر بيع
+        </button>
+      }
+    >
+      <ErrorMsg text={err} />
+      {creating && deps && (
+        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+          <div style={{ padding: 16 }}>
+            <CreateForm deps={deps} onCancel={() => setCreating(false)} onDone={() => { setCreating(false); void refresh(); }} />
+          </div>
+        </Card>
+      )}
+      <Card>
+        {rows.length === 0 && !creating ? <Empty text="لا توجد أوامر بيع" /> : (
+          <Table>
+            <thead><tr>
+              <Th>رقم الأمر</Th><Th>التاريخ</Th><Th>التسليم المتوقع</Th><Th>العميل</Th><Th>الدفع</Th><Th>الحالة</Th>
+              <Th style={{ textAlign: "left" }}>المجموع</Th><Th style={{ textAlign: "left" }}>الضريبة</Th>
+              <Th style={{ textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 280 }}></Th>
+            </tr></thead>
+            <tbody>
+              {pageRows.map((p) => (
+                <React.Fragment key={p.id}>
+                  <tr>
+                    <Td mono>{p.docNo}</Td>
+                    <Td>{p.orderDate}</Td>
+                    <Td>{p.expectedDelivery ?? "—"}</Td>
+                    <Td>{p.customerName ?? "بدون عميل"}</Td>
+                    <Td><PayBadge m={p.paymentMethod} /></Td>
+                    <Td><StatusBadge s={p.status} /></Td>
+                    <Td num>{fmt(p.subtotal)}</Td>
+                    <Td num>{fmt(p.vatTotal)}</Td>
+                    <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
+                    <Td>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                        <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
+                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                          {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
+                        </button>
+                        {p.status === "draft" && (
+                          <>
+                            <button onClick={() => void changeStatus(p.id, "confirmed")} disabled={busyId === p.id} style={{ ...btnLink, color: "#15803d" }}>تأكيد</button>
+                            <button onClick={() => void changeStatus(p.id, "cancelled")} disabled={busyId === p.id} style={{ ...btnLink, color: "#b91c1c" }}>إلغاء</button>
+                          </>
+                        )}
+                        {p.status === "confirmed" && (
+                          <button onClick={() => void convert(p.id)} disabled={busyId === p.id} style={{ ...btnPrimary, padding: "4px 10px", fontSize: 12 }}>↪ إلى فاتورة</button>
+                        )}
+                        {p.status === "converted" && p.convertedInvoiceId && (
+                          <span style={{ fontSize: 12, color: "#7c3aed" }}>فاتورة #{p.convertedInvoiceId}</span>
+                        )}
+                      </div>
+                    </Td>
+                  </tr>
+                  {expandedId === p.id && (
+                    <tr style={{ background: "#f8fafc" }}>
+                      <Td colSpan={10 as any}>
+                        {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>... جاري التحميل</div> : (
+                          <DocDetail p={expandedDetail} />
+                        )}
+                      </Td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </Table>
+        )}
+        {rows.length > 0 && (
+          <Pagination total={rows.length} page={page} pageSize={pageSize}
+            onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />
+        )}
+      </Card>
+    </Page>
+  );
+}
+
+function DocDetail({ p }: { p: SalesOrder }) {
+  return (
+    <div style={{ padding: 12 }}>
+      <Table>
+        <thead><tr><Th>الصنف</Th><Th>الوحدة</Th><Th style={{ textAlign: "left" }}>الكمية</Th><Th style={{ textAlign: "left" }}>سعر الوحدة</Th><Th style={{ textAlign: "left" }}>الضريبة %</Th><Th style={{ textAlign: "left" }}>الإجمالي</Th></tr></thead>
+        <tbody>
+          {p.lines.map((l, i) => (
+            <tr key={l.id ?? i}>
+              <Td>{l.itemName}</Td><Td>{l.uomName ?? ""}</Td><Td num>{l.qty}</Td><Td num>{fmt(l.unitPrice)}</Td><Td num>{l.vatRate}</Td><Td num>{fmt(l.lineTotal)}</Td>
+            </tr>
+          ))}
+          <tr style={{ background: "#fff", fontWeight: 700 }}><Td colSpan={5 as any}>الإجمالي قبل الضريبة</Td><Td num>{fmt(p.subtotal)}</Td></tr>
+          <tr style={{ background: "#fff" }}><Td colSpan={5 as any}>ضريبة القيمة المضافة</Td><Td num>{fmt(p.vatTotal)}</Td></tr>
+          <tr style={{ background: "#f1f5f9", fontWeight: 800, fontSize: 16 }}><Td colSpan={5 as any}>الإجمالي النهائي</Td><Td num>{fmt(p.grandTotal)}</Td></tr>
+          {p.notes && <tr style={{ background: "#fff", color: "#64748b" }}><Td colSpan={6 as any}>ملاحظات: {p.notes}</Td></tr>}
+        </tbody>
+      </Table>
+    </div>
+  );
+}
+
+function CreateForm({ deps, onCancel, onDone }: {
+  deps: { customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[]; salespersons: Salesperson[] };
+  onCancel: () => void; onDone: () => void;
+}) {
+  const [customerId, setCustomerId] = useState<number>(0);
+  const [date, setDate] = useState(todayStr());
+  const [expectedDelivery, setExpectedDelivery] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [cashBoxId, setCashBoxId] = useState<number | null>(deps.cashBoxes[0]?.id ?? null);
+  const [bankId, setBankId] = useState<number | null>(deps.banks[0]?.id ?? null);
+  const [warehouseId, setWarehouseId] = useState<number>(
+    (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
+  );
+  const { branches, costCenters } = useDimensions();
+  const [branchId, setBranchId] = useState<number | "">("");
+  const [costCenterId, setCostCenterId] = useState<number | "">("");
+  const [salesRepId, setSalesRepId] = useState<number | "">("");
+  const [invoiceType, setInvoiceType] = useState<"simplified" | "standard">("simplified");
+  const [buyerName, setBuyerName] = useState("");
+  const [buyerVat, setBuyerVat] = useState("");
+  const [buyerAddress, setBuyerAddress] = useState("");
+  const [notes, setNotes] = useState("");
+  const [uoms] = useState<Uom[]>(() => listUom());
+  const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
+  const blankLine = (): FLine => ({
+    itemId: 0, qty: 1, unitPrice: 0, vatRate: 15, lineTotal: 0, disc: 0, discType: "percent",
+    uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
+  });
+  const [lines, setLines] = useState<FLine[]>(() => [blankLine()]);
+  const [headerDisc, setHeaderDisc] = useState(0);
+  const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
+  const [currency, setCurrency] = useState<string>(() => baseCurrencyCode());
+  const [exchangeRate, setExchangeRate] = useState<number>(1);
+  const effRate = currency === baseCurrencyCode() ? 1 : (exchangeRate || 1);
+  const docSym = currencyByCode(currency).symbol;
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const { taxes, taxId, setTaxId, taxOptions, selectedRate } = useInvoiceTaxes("sales");
+
+  const selectedCustomer = deps.customers.find((c) => c.id === customerId) ?? null;
+
+  useEffect(() => {
+    if (!selectedCustomer) {
+      setBuyerName(""); setBuyerVat(""); setBuyerAddress(""); setInvoiceType("simplified");
+      return;
+    }
+    setBuyerName(selectedCustomer.nameAr ?? "");
+    setBuyerVat(selectedCustomer.vatNumber ?? "");
+    const addr = [selectedCustomer.street, selectedCustomer.district, selectedCustomer.city]
+      .filter((x) => x && String(x).trim()).join("، ");
+    setBuyerAddress(addr);
+    setInvoiceType(selectedCustomer.vatNumber ? "standard" : "simplified");
+  }, [customerId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function setLine(i: number, patch: Partial<FLine>) {
+    setLines((ls) => ls.map((l, k) => {
+      if (k !== i) return l;
+      const next = { ...l, ...patch };
+      if (patch.itemId !== undefined) {
+        const it = deps.items.find((x) => x.id === Number(patch.itemId));
+        if (it) {
+          if (!next.unitPrice) next.unitPrice = it.salePrice ?? 0;
+          next.vatRate = it.vatRate ?? next.vatRate;
+          if (it.uomId != null) {
+            const u = uoms.find((x) => x.id === it.uomId);
+            if (u) { next.uomId = u.id; next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
+          }
+        }
+      }
+      if (patch.uomId !== undefined) {
+        const u = uoms.find((x) => x.id === Number(patch.uomId));
+        if (u) { next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
+      }
+      if (selectedRate != null) next.vatRate = selectedRate;
+      const { net } = lineNet(next.qty, next.unitPrice, next.disc, next.discType);
+      next.lineTotal = net + net * (Number(next.vatRate) || 0) / 100;
+      return next;
+    }));
+  }
+  function addLine() {
+    setLines((ls) => {
+      const nl = blankLine();
+      if (selectedRate != null) nl.vatRate = selectedRate;
+      return [...ls, nl];
+    });
+  }
+  function removeLine(i: number) { setLines((ls) => ls.filter((_, k) => k !== i)); }
+  function onSelectTax(v: string | number) {
+    const id = v === "" ? "" : Number(v);
+    setTaxId(id);
+    const t = taxes.find((x) => x.id === id);
+    if (!t) return;
+    const rate = t.rateValue;
+    setLines((ls) => ls.map((l) => {
+      const { net } = lineNet(l.qty, l.unitPrice, l.disc, l.discType);
+      return { ...l, vatRate: rate, lineTotal: net + net * rate / 100 };
+    }));
+  }
+
+  const result = computeDiscount(
+    lines.map((l) => ({ qty: l.qty, unit: l.unitPrice, vatRate: l.vatRate, disc: l.disc, discType: l.discType })),
+    headerDisc, headerDiscType,
+  );
+
+  async function save() {
+    setBusy(true); setErr(null);
+    try {
+      const cleaned = lines.filter((l) => l.itemId && (l.qty || 0) > 0);
+      if (cleaned.length === 0) throw new Error("أضف صنفاً واحداً على الأقل");
+      if (paymentMethod === "credit" && !customerId) throw new Error("اختر العميل للبيع الآجل");
+      if (currency !== baseCurrencyCode() && !(exchangeRate > 0)) throw new Error("أدخل سعر صرف صحيح للعملة الأجنبية");
+      const r = computeDiscount(
+        cleaned.map((l) => ({ qty: l.qty, unit: l.unitPrice, vatRate: l.vatRate, disc: l.disc, discType: l.discType })),
+        headerDisc, headerDiscType,
+      );
+      const payloadLines: SalesLine[] = cleaned.map((l, i) => {
+        const net = r.netUnitPrices[i] * effRate;
+        return {
+          itemId: l.itemId, itemName: l.itemName, qty: l.qty, unitPrice: net, vatRate: l.vatRate,
+          lineTotal: l.qty * net * (1 + (Number(l.vatRate) || 0) / 100),
+          uomId: l.uomId, uomName: l.uomName, conversionFactor: l.conversionFactor,
+          freeQty: l.freeQty || 0, note: l.note?.trim() ? l.note.trim() : null,
+        };
+      });
+      await createSalesOrder({
+        customerId: customerId || null, orderDate: date, expectedDelivery: expectedDelivery || null,
+        paymentMethod,
+        cashBoxId: paymentMethod === "cash" ? cashBoxId : null,
+        bankId:    paymentMethod === "bank" ? bankId : null,
+        warehouseId: warehouseId || null,
+        branchId: branchId === "" ? null : branchId,
+        costCenterId: costCenterId === "" ? null : costCenterId,
+        salesRepId: salesRepId === "" ? null : salesRepId,
+        commissionPct: salesRepId === "" ? null : (deps.salespersons.find((s) => s.id === salesRepId)?.commissionPct ?? 0),
+        invoiceType,
+        buyerName: invoiceType === "standard" ? (buyerName.trim() || null) : null,
+        buyerVat: invoiceType === "standard" ? (buyerVat.trim() || null) : null,
+        buyerAddress: invoiceType === "standard" ? (buyerAddress.trim() || null) : null,
+        notes: notes || null, lines: payloadLines,
+      });
+      onDone();
+    } catch (e: any) { setErr(e?.message ?? "فشل"); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>أمر بيع جديد</h3>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 200px 200px", gap: 10 }}>
+        <Field label={paymentMethod === "credit" ? "العميل *" : "العميل (اختياري)"}>
+          <SearchCombobox
+            value={customerId}
+            onChange={(v) => setCustomerId(Number(v))}
+            style={input}
+            options={[
+              { value: 0, label: "— بدون عميل —" },
+              ...deps.customers.map((c) => ({ value: c.id, label: c.nameAr })),
+            ]}
+          />
+        </Field>
+        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
+        <Field label="التسليم المتوقع"><input type="date" value={expectedDelivery} onChange={(e) => setExpectedDelivery(e.target.value)} style={input} /></Field>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 10, marginTop: 10 }}>
+        <Field label="طريقة الدفع">
+          <SearchCombobox
+            value={paymentMethod}
+            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
+            style={input}
+            options={[
+              { value: "cash", label: "نقدي" },
+              { value: "bank", label: "بنك" },
+              { value: "credit", label: "آجل (على الحساب)" },
+            ]}
+          />
+        </Field>
+        <Field label="المستودع">
+          <SearchCombobox
+            value={warehouseId}
+            onChange={(v) => setWarehouseId(Number(v))}
+            style={input}
+            options={[
+              { value: 0, label: "— المستودع الافتراضي —" },
+              ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
+            ]}
+          />
+        </Field>
+      </div>
+      {paymentMethod === "cash" && (
+        <Field label="الخزينة" style={{ marginTop: 10 }}>
+          <SearchCombobox
+            value={cashBoxId ?? ""}
+            onChange={(v) => setCashBoxId(Number(v) || null)}
+            style={input}
+            options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
+          />
+        </Field>
+      )}
+      {paymentMethod === "bank" && (
+        <Field label="البنك" style={{ marginTop: 10 }}>
+          <SearchCombobox
+            value={bankId ?? ""}
+            onChange={(v) => setBankId(Number(v) || null)}
+            style={input}
+            options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
+          />
+        </Field>
+      )}
+      <Field label="الضريبة (تُطبّق على كل البنود)" style={{ marginTop: 10, maxWidth: 420 }}>
+        <SearchCombobox value={taxId} onChange={onSelectTax} options={taxOptions} style={input} />
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+        <Field label="الفرع">
+          <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
+        </Field>
+        <Field label="مركز التكلفة">
+          <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
+        </Field>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+        <Field label="مندوب المبيعات">
+          <SearchCombobox
+            value={salesRepId}
+            onChange={(v) => setSalesRepId(v === "" ? "" : Number(v))}
+            style={input}
+            options={[
+              { value: "", label: "— بدون —" },
+              ...deps.salespersons.map((s) => ({ value: s.id, label: s.nameAr })),
+            ]}
+          />
+        </Field>
+        <Field label="نوع المستند (زاتكا)">
+          <SearchCombobox
+            value={invoiceType}
+            onChange={(v) => setInvoiceType(v as "simplified" | "standard")}
+            style={input}
+            options={[
+              { value: "simplified", label: "مبسّطة (B2C)" },
+              { value: "standard", label: "ضريبية (B2B)" },
+            ]}
+          />
+        </Field>
+      </div>
+      {invoiceType === "standard" && (
+        <div style={{ marginTop: 10, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>بيانات المشتري</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="اسم المشتري">
+              <input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} style={input} />
+            </Field>
+            <Field label="الرقم الضريبي للمشتري">
+              <input value={buyerVat} onChange={(e) => setBuyerVat(e.target.value)} style={input} />
+            </Field>
+          </div>
+          <Field label="عنوان المشتري" style={{ marginTop: 8 }}>
+            <input value={buyerAddress} onChange={(e) => setBuyerAddress(e.target.value)} style={input} />
+          </Field>
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "200px 200px", gap: 10, marginTop: 10 }}>
+        <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
+      </div>
+
+      {selectedCustomer && paymentMethod === "credit" && (selectedCustomer.enforceCreditLimit || (selectedCustomer.creditLimit ?? 0) > 0) && (
+        <div style={{ marginTop: 8, padding: "8px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 13, color: "#92400e" }}>
+          الرصيد الحالي: <b>{fmt(selectedCustomer.balance ?? 0)}</b>
+          {(selectedCustomer.creditLimit ?? 0) > 0 && <> · حد الائتمان: <b>{fmt(selectedCustomer.creditLimit ?? 0)}</b></>}
+          {(selectedCustomer.paymentTermsDays ?? 0) > 0 && <> · مدة الاستحقاق: <b>{selectedCustomer.paymentTermsDays} يوم</b></>}
+          {selectedCustomer.enforceCreditLimit && <> · <b>المنع مُفعّل</b></>}
+        </div>
+      )}
+
+      <div style={{ overflowX: "auto" }}>
+      <Table style={{ minWidth: 1040 }}>
+        <thead><tr>
+          <Th style={{ minWidth: 240 }}>الصنف</Th>
+          <Th style={{ width: 130 }}>الوحدة</Th>
+          <Th style={{ width: 90 }}>الكمية</Th>
+          <Th style={{ width: 80 }}>مجاني</Th>
+          <Th style={{ width: 120 }}>سعر الوحدة</Th>
+          <Th style={{ width: 170 }}>الخصم</Th>
+          <Th style={{ width: 80 }}>ض. %</Th>
+          <Th style={{ width: 150 }}>ملاحظة</Th>
+          <Th style={{ width: 120, textAlign: "left" }}>الإجمالي</Th>
+          <Th style={{ width: 40 }}></Th>
+        </tr></thead>
+        <tbody>
+          {lines.map((l, i) => (
+            <tr key={i}>
+              <Td>
+                <SearchCombobox
+                  value={l.itemId}
+                  onChange={(v) => setLine(i, { itemId: Number(v) })}
+                  style={input}
+                  options={[
+                    { value: 0, label: "— اختر —" },
+                    ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
+                  ]}
+                />
+              </Td>
+              <Td>
+                <SearchCombobox
+                  value={l.uomId ?? 0}
+                  onChange={(v) => setLine(i, { uomId: Number(v) })}
+                  style={input}
+                  options={uoms.map((u) => ({ value: u.id, label: u.baseQty !== 1 ? `${u.nameAr} (×${u.baseQty})` : u.nameAr }))}
+                />
+              </Td>
+              <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={input} /></Td>
+              <Td><input type="number" step="0.001" value={l.freeQty ?? 0} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={input} /></Td>
+              <Td><input type="number" step="0.01" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={input} /></Td>
+              <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} /></Td>
+              <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={input} /></Td>
+              <Td><input value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} style={input} /></Td>
+              <Td num>{fmt(l.lineTotal)}</Td>
+              <Td><button onClick={() => removeLine(i)} style={{ ...btnLink, color: "#dc2626" }}>×</button></Td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+      </div>
+      <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
+      <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+
+      <Field label="ملاحظات" style={{ marginTop: 12 }}>
+        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} />
+      </Field>
+      <ErrorMsg text={err} />
+      <Actions>
+        <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
+        <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : "حفظ"}</button>
+      </Actions>
+    </div>
+  );
+}

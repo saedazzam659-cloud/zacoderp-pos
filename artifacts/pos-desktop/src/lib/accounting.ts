@@ -165,6 +165,54 @@ export type SalesReturnInput = {
   lines: SalesLine[];
 };
 
+// ── Quotations (عروض الأسعار) — non-financial; converts to a sales invoice ──
+export type QuotationStatus = "draft" | "sent" | "accepted" | "rejected" | "converted";
+export type Quotation = {
+  id: number; docNo: string; customerId: number | null; customerName: string | null;
+  quotationDate: string; validUntil: string | null;
+  subtotal: number; vatTotal: number; grandTotal: number;
+  notes: string | null; status: QuotationStatus; convertedInvoiceId: number | null;
+  warehouseId?: number | null; branchId?: number | null; costCenterId?: number | null;
+  salesRepId?: number | null; salesRepName?: string | null; commissionPct?: number;
+  invoiceType?: string | null;
+  buyerName?: string | null; buyerVat?: string | null; buyerAddress?: string | null;
+  lines: SalesLine[];
+};
+export type QuotationInput = {
+  customerId: number | null; quotationDate: string; validUntil: string | null;
+  notes: string | null;
+  warehouseId?: number | null; branchId?: number | null; costCenterId?: number | null;
+  salesRepId?: number | null; commissionPct?: number | null;
+  invoiceType?: string | null;
+  buyerName?: string | null; buyerVat?: string | null; buyerAddress?: string | null;
+  lines: SalesLine[];
+};
+
+// ── Sales Orders (أوامر البيع) — non-financial; carries payment method ──
+export type SalesOrderStatus = "draft" | "confirmed" | "cancelled" | "converted";
+export type SalesOrder = {
+  id: number; docNo: string; customerId: number | null; customerName: string | null;
+  orderDate: string; expectedDelivery: string | null;
+  paymentMethod: PaymentMethod; cashBoxId: number | null; bankId: number | null;
+  subtotal: number; vatTotal: number; grandTotal: number;
+  notes: string | null; status: SalesOrderStatus; convertedInvoiceId: number | null;
+  warehouseId?: number | null; branchId?: number | null; costCenterId?: number | null;
+  salesRepId?: number | null; salesRepName?: string | null; commissionPct?: number;
+  invoiceType?: string | null;
+  buyerName?: string | null; buyerVat?: string | null; buyerAddress?: string | null;
+  lines: SalesLine[];
+};
+export type SalesOrderInput = {
+  customerId: number | null; orderDate: string; expectedDelivery: string | null;
+  paymentMethod: PaymentMethod; cashBoxId: number | null; bankId: number | null;
+  notes: string | null;
+  warehouseId?: number | null; branchId?: number | null; costCenterId?: number | null;
+  salesRepId?: number | null; commissionPct?: number | null;
+  invoiceType?: string | null;
+  buyerName?: string | null; buyerVat?: string | null; buyerAddress?: string | null;
+  lines: SalesLine[];
+};
+
 export type TxType = "receipt" | "payment";
 export type PartyType = "customer" | "supplier" | "none";
 export type FinancialTx = {
@@ -382,6 +430,50 @@ export async function setSalesInvoiceZatca(
   await invoke("sales_invoice_set_zatca", { id, qrBase64, offlineUuid });
 }
 
+// ─── Quotations ──────────────────────────────────────────────────────
+export async function listQuotations(limit = 200): Promise<Quotation[]> {
+  if (!hasTauri()) return [];
+  return await invoke<Quotation[]>("quotations_list", { limit });
+}
+export async function getQuotation(id: number): Promise<Quotation> {
+  if (!hasTauri()) notImpl();
+  return await invoke<Quotation>("quotation_get", { id });
+}
+export async function createQuotation(input: QuotationInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("quotation_create", { input });
+}
+export async function setQuotationStatus(id: number, status: QuotationStatus): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("quotation_set_status", { id, status });
+}
+export async function convertQuotationToInvoice(id: number): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("quotation_convert_to_invoice", { id });
+}
+
+// ─── Sales orders ────────────────────────────────────────────────────
+export async function listSalesOrders(limit = 200): Promise<SalesOrder[]> {
+  if (!hasTauri()) return [];
+  return await invoke<SalesOrder[]>("sales_orders_list", { limit });
+}
+export async function getSalesOrder(id: number): Promise<SalesOrder> {
+  if (!hasTauri()) notImpl();
+  return await invoke<SalesOrder>("sales_order_get", { id });
+}
+export async function createSalesOrder(input: SalesOrderInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("sales_order_create", { input });
+}
+export async function setSalesOrderStatus(id: number, status: SalesOrderStatus): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("sales_order_set_status", { id, status });
+}
+export async function convertSalesOrderToInvoice(id: number): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("sales_order_convert_to_invoice", { id });
+}
+
 // ─── Sales returns ───────────────────────────────────────────────────
 export async function listSalesReturns(limit = 200): Promise<SalesReturn[]> {
   if (!hasTauri()) return [];
@@ -446,7 +538,8 @@ export async function peekJournalEntryNumber(): Promise<string> {
 
 // ─── Document numbering series ───────────────────────────────────────
 export type NumberSeriesDocType =
-  | "journal_entry" | "purchase" | "purchase_return" | "sales_invoice" | "sales_return";
+  | "journal_entry" | "purchase" | "purchase_return" | "sales_invoice" | "sales_return"
+  | "quotation" | "sales_order";
 export type NumberSeries = {
   docType: NumberSeriesDocType;
   prefix: string;

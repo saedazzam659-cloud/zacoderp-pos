@@ -208,6 +208,8 @@ const NUMBER_SERIES_DOC_TYPES: &[&str] = &[
     "purchase_return",
     "sales_invoice",
     "sales_return",
+    "quotation",
+    "sales_order",
 ];
 
 #[tauri::command]
@@ -1814,6 +1816,552 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
 
     tx.commit().map_err(|e| e.to_string())?;
     Ok(invoice_id)
+}
+
+// ─────────────────── Quotations & Sales Orders ───────────────────────
+//
+// Both are PURELY non-financial documents (web parity): creating them posts
+// NO journal entry and moves NO stock. The financial impact happens only on
+// CONVERSION, which builds a `SalesInvoiceInput` from the document and calls
+// `sales_invoice_create` (the single source of truth for the sales JE + COGS
+// + stock). Lines reuse the `SalesLine` struct. Totals are computed the same
+// way as a sales invoice: subtotal = Σ qty×unit_price, vat = Σ line_sub×rate.
+
+/// Recompute (subtotal, vat_total, grand_total) from a slice of sale lines.
+fn sales_doc_totals(lines: &[SalesLine]) -> (f64, f64, f64) {
+    let mut subtotal = 0.0_f64;
+    let mut vat_total = 0.0_f64;
+    for l in lines {
+        let line_sub = l.qty * l.unit_price;
+        subtotal += line_sub;
+        vat_total += line_sub * l.vat_rate / 100.0;
+    }
+    (subtotal, vat_total, subtotal + vat_total)
+}
+
+/// Today's date as YYYY-MM-DD (local) — the conversion date for invoices.
+fn today_str() -> String {
+    chrono::Local::now().format("%Y-%m-%d").to_string()
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Quotation {
+    pub id: i64,
+    pub doc_no: String,
+    pub customer_id: Option<i64>,
+    pub customer_name: Option<String>,
+    pub quotation_date: String,
+    pub valid_until: Option<String>,
+    pub subtotal: f64,
+    pub vat_total: f64,
+    pub grand_total: f64,
+    pub notes: Option<String>,
+    pub status: String,
+    pub converted_invoice_id: Option<i64>,
+    #[serde(default)]
+    pub warehouse_id: Option<i64>,
+    #[serde(default)]
+    pub branch_id: Option<i64>,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
+    #[serde(default)]
+    pub sales_rep_id: Option<i64>,
+    #[serde(default)]
+    pub sales_rep_name: Option<String>,
+    #[serde(default)]
+    pub commission_pct: f64,
+    #[serde(default)]
+    pub invoice_type: Option<String>,
+    #[serde(default)]
+    pub buyer_name: Option<String>,
+    #[serde(default)]
+    pub buyer_vat: Option<String>,
+    #[serde(default)]
+    pub buyer_address: Option<String>,
+    pub lines: Vec<SalesLine>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotationInput {
+    pub customer_id: Option<i64>,
+    pub quotation_date: String,
+    #[serde(default)]
+    pub valid_until: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub warehouse_id: Option<i64>,
+    #[serde(default)]
+    pub branch_id: Option<i64>,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
+    #[serde(default)]
+    pub sales_rep_id: Option<i64>,
+    #[serde(default)]
+    pub commission_pct: Option<f64>,
+    #[serde(default)]
+    pub invoice_type: Option<String>,
+    #[serde(default)]
+    pub buyer_name: Option<String>,
+    #[serde(default)]
+    pub buyer_vat: Option<String>,
+    #[serde(default)]
+    pub buyer_address: Option<String>,
+    pub lines: Vec<SalesLine>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SalesOrder {
+    pub id: i64,
+    pub doc_no: String,
+    pub customer_id: Option<i64>,
+    pub customer_name: Option<String>,
+    pub order_date: String,
+    pub expected_delivery: Option<String>,
+    pub payment_method: String,
+    pub cash_box_id: Option<i64>,
+    pub bank_id: Option<i64>,
+    pub subtotal: f64,
+    pub vat_total: f64,
+    pub grand_total: f64,
+    pub notes: Option<String>,
+    pub status: String,
+    pub converted_invoice_id: Option<i64>,
+    #[serde(default)]
+    pub warehouse_id: Option<i64>,
+    #[serde(default)]
+    pub branch_id: Option<i64>,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
+    #[serde(default)]
+    pub sales_rep_id: Option<i64>,
+    #[serde(default)]
+    pub sales_rep_name: Option<String>,
+    #[serde(default)]
+    pub commission_pct: f64,
+    #[serde(default)]
+    pub invoice_type: Option<String>,
+    #[serde(default)]
+    pub buyer_name: Option<String>,
+    #[serde(default)]
+    pub buyer_vat: Option<String>,
+    #[serde(default)]
+    pub buyer_address: Option<String>,
+    pub lines: Vec<SalesLine>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SalesOrderInput {
+    pub customer_id: Option<i64>,
+    pub order_date: String,
+    #[serde(default)]
+    pub expected_delivery: Option<String>,
+    pub payment_method: String,
+    #[serde(default)]
+    pub cash_box_id: Option<i64>,
+    #[serde(default)]
+    pub bank_id: Option<i64>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub warehouse_id: Option<i64>,
+    #[serde(default)]
+    pub branch_id: Option<i64>,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
+    #[serde(default)]
+    pub sales_rep_id: Option<i64>,
+    #[serde(default)]
+    pub commission_pct: Option<f64>,
+    #[serde(default)]
+    pub invoice_type: Option<String>,
+    #[serde(default)]
+    pub buyer_name: Option<String>,
+    #[serde(default)]
+    pub buyer_vat: Option<String>,
+    #[serde(default)]
+    pub buyer_address: Option<String>,
+    pub lines: Vec<SalesLine>,
+}
+
+fn norm_invoice_type(t: Option<&str>) -> &'static str {
+    match t {
+        Some("standard") => "standard",
+        _ => "simplified",
+    }
+}
+
+// ── Quotations ──
+
+#[tauri::command]
+pub fn quotations_list(limit: Option<i64>) -> Result<Vec<Quotation>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let lim = limit.unwrap_or(200);
+    let mut stmt = conn.prepare(
+        "SELECT q.id,q.doc_no,q.customer_id,c.name_ar,q.quotation_date,q.valid_until,
+                q.subtotal,q.vat_total,q.grand_total,q.notes,q.status,q.converted_invoice_id,
+                q.warehouse_id,q.branch_id,q.cost_center_id,q.sales_rep_id,sp.name_ar,q.commission_pct,
+                q.invoice_type,q.buyer_name,q.buyer_vat,q.buyer_address
+         FROM quotations_local q
+         LEFT JOIN customers_local c ON c.id=q.customer_id
+         LEFT JOIN salespersons_local sp ON sp.id=q.sales_rep_id
+         ORDER BY q.id DESC LIMIT ?1"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([lim], |r| Ok(Quotation {
+        id: r.get(0)?, doc_no: r.get(1)?, customer_id: r.get(2)?, customer_name: r.get(3)?,
+        quotation_date: r.get(4)?, valid_until: r.get(5)?,
+        subtotal: r.get(6)?, vat_total: r.get(7)?, grand_total: r.get(8)?,
+        notes: r.get(9)?, status: r.get(10)?, converted_invoice_id: r.get(11)?,
+        warehouse_id: r.get(12)?, branch_id: r.get(13)?, cost_center_id: r.get(14)?,
+        sales_rep_id: r.get(15)?, sales_rep_name: r.get(16)?, commission_pct: r.get(17)?,
+        invoice_type: r.get(18)?, buyer_name: r.get(19)?, buyer_vat: r.get(20)?, buyer_address: r.get(21)?,
+        lines: Vec::new(),
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn quotation_get(id: i64) -> Result<Quotation, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut q: Quotation = conn.query_row(
+        "SELECT q.id,q.doc_no,q.customer_id,c.name_ar,q.quotation_date,q.valid_until,
+                q.subtotal,q.vat_total,q.grand_total,q.notes,q.status,q.converted_invoice_id,
+                q.warehouse_id,q.branch_id,q.cost_center_id,q.sales_rep_id,sp.name_ar,q.commission_pct,
+                q.invoice_type,q.buyer_name,q.buyer_vat,q.buyer_address
+         FROM quotations_local q
+         LEFT JOIN customers_local c ON c.id=q.customer_id
+         LEFT JOIN salespersons_local sp ON sp.id=q.sales_rep_id
+         WHERE q.id=?1",
+        params![id], |r| Ok(Quotation {
+            id: r.get(0)?, doc_no: r.get(1)?, customer_id: r.get(2)?, customer_name: r.get(3)?,
+            quotation_date: r.get(4)?, valid_until: r.get(5)?,
+            subtotal: r.get(6)?, vat_total: r.get(7)?, grand_total: r.get(8)?,
+            notes: r.get(9)?, status: r.get(10)?, converted_invoice_id: r.get(11)?,
+            warehouse_id: r.get(12)?, branch_id: r.get(13)?, cost_center_id: r.get(14)?,
+            sales_rep_id: r.get(15)?, sales_rep_name: r.get(16)?, commission_pct: r.get(17)?,
+            invoice_type: r.get(18)?, buyer_name: r.get(19)?, buyer_vat: r.get(20)?, buyer_address: r.get(21)?,
+            lines: Vec::new(),
+        })
+    ).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT ql.id,ql.item_id,i.name_ar,ql.qty,ql.unit_price,ql.vat_rate,ql.line_total,ql.uom_id,ql.uom_name,ql.conversion_factor,ql.free_qty,ql.note,ql.warehouse_id
+         FROM quotation_lines_local ql JOIN items_local i ON i.id=ql.item_id
+         WHERE ql.quotation_id=?1 ORDER BY ql.id"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([id], |r| Ok(SalesLine {
+        id: r.get(0)?, item_id: r.get(1)?, item_name: r.get(2)?, qty: r.get(3)?,
+        unit_price: r.get(4)?, vat_rate: r.get(5)?, line_total: r.get(6)?,
+        uom_id: r.get(7)?, uom_name: r.get(8)?, conversion_factor: r.get(9)?,
+        free_qty: r.get(10)?, note: r.get(11)?, warehouse_id: r.get(12)?,
+    })).map_err(|e| e.to_string())?;
+    for r in rows { q.lines.push(r.map_err(|e| e.to_string())?); }
+    Ok(q)
+}
+
+#[tauri::command]
+pub fn quotation_create(input: QuotationInput) -> Result<i64, String> {
+    if input.lines.is_empty() { return Err("لا يمكن حفظ عرض سعر بدون أصناف".into()); }
+    let (subtotal, vat_total, grand_total) = sales_doc_totals(&input.lines);
+    let invoice_type = norm_invoice_type(input.invoice_type.as_deref());
+    let commission_pct = input.commission_pct.unwrap_or(0.0).clamp(0.0, 100.0);
+    let sales_rep_id = match input.sales_rep_id { Some(r) if r > 0 => Some(r), _ => None };
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let doc_no = next_doc_no(&tx, "quotation").map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO quotations_local(doc_no,customer_id,quotation_date,valid_until,subtotal,vat_total,grand_total,notes,status,warehouse_id,branch_id,cost_center_id,sales_rep_id,commission_pct,invoice_type,buyer_name,buyer_vat,buyer_address)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'draft',?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+        params![doc_no, input.customer_id, input.quotation_date, input.valid_until, subtotal, vat_total, grand_total,
+                input.notes, input.warehouse_id, input.branch_id, input.cost_center_id,
+                sales_rep_id, commission_pct, invoice_type, input.buyer_name, input.buyer_vat, input.buyer_address],
+    ).map_err(|e| e.to_string())?;
+    let doc_id = tx.last_insert_rowid();
+    for l in &input.lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+        let line_sub = l.qty * l.unit_price;
+        let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        tx.execute(
+            "INSERT INTO quotation_lines_local(quotation_id,item_id,qty,unit_price,vat_rate,line_total,uom_id,uom_name,conversion_factor,free_qty,note,warehouse_id)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            params![doc_id, l.item_id, l.qty, l.unit_price, l.vat_rate, lt, l.uom_id, l.uom_name, factor, l.free_qty, l.note, l.warehouse_id],
+        ).map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(doc_id)
+}
+
+#[tauri::command]
+pub fn quotation_set_status(id: i64, status: String) -> Result<(), String> {
+    if !["draft","sent","accepted","rejected"].contains(&status.as_str()) {
+        return Err("حالة غير صالحة".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let cur: String = conn.query_row("SELECT status FROM quotations_local WHERE id=?1", params![id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if cur == "converted" { return Err("لا يمكن تغيير حالة عرض سعر تم تحويله إلى فاتورة".into()); }
+    conn.execute("UPDATE quotations_local SET status=?1 WHERE id=?2", params![status, id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Convert a quotation into a (posted) sales invoice. The quotation has no
+/// payment method, so we issue a CREDIT invoice on the customer's account —
+/// which requires a customer. Idempotent at the document level: a quotation
+/// already 'converted' is rejected so it can never spawn two invoices.
+#[tauri::command]
+pub fn quotation_convert_to_invoice(id: i64) -> Result<i64, String> {
+    let q = quotation_get(id)?;
+    if q.status == "converted" {
+        return Err("تم تحويل عرض السعر هذا إلى فاتورة من قبل".into());
+    }
+    let customer_id = q.customer_id.ok_or_else(|| "اختر العميل في عرض السعر قبل التحويل إلى فاتورة آجلة".to_string())?;
+    // Atomically CLAIM the quotation before creating the invoice: the compare-
+    // and-set on the gating `status` column means two concurrent converters
+    // can't both pass — only the one whose UPDATE affects a row proceeds, so we
+    // never mint two invoices for the same quotation. On any failure below we
+    // revert the claim so the document can be retried.
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let claimed = conn.execute(
+        "UPDATE quotations_local SET status='converted' WHERE id=?1 AND status<>'converted'",
+        params![id],
+    ).map_err(|e| e.to_string())?;
+    if claimed == 0 {
+        return Err("تم تحويل عرض السعر هذا إلى فاتورة من قبل".into());
+    }
+    let input = SalesInvoiceInput {
+        customer_id: Some(customer_id),
+        invoice_date: today_str(),
+        payment_method: "credit".into(),
+        cash_box_id: None,
+        bank_id: None,
+        notes: q.notes.clone(),
+        warehouse_id: q.warehouse_id,
+        branch_id: q.branch_id,
+        cost_center_id: q.cost_center_id,
+        sales_rep_id: q.sales_rep_id,
+        commission_pct: Some(q.commission_pct),
+        invoice_type: q.invoice_type.clone(),
+        buyer_name: q.buyer_name.clone(),
+        buyer_vat: q.buyer_vat.clone(),
+        buyer_address: q.buyer_address.clone(),
+        lines: q.lines.clone(),
+    };
+    match sales_invoice_create(input) {
+        Ok(invoice_id) => {
+            conn.execute(
+                "UPDATE quotations_local SET converted_invoice_id=?1 WHERE id=?2",
+                params![invoice_id, id],
+            ).map_err(|e| e.to_string())?;
+            Ok(invoice_id)
+        }
+        Err(e) => {
+            // Revert the claim so the quotation is convertible again.
+            let _ = conn.execute(
+                "UPDATE quotations_local SET status=?1 WHERE id=?2",
+                params![q.status, id],
+            );
+            Err(e)
+        }
+    }
+}
+
+// ── Sales Orders ──
+
+#[tauri::command]
+pub fn sales_orders_list(limit: Option<i64>) -> Result<Vec<SalesOrder>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let lim = limit.unwrap_or(200);
+    let mut stmt = conn.prepare(
+        "SELECT o.id,o.doc_no,o.customer_id,c.name_ar,o.order_date,o.expected_delivery,
+                o.payment_method,o.cash_box_id,o.bank_id,o.subtotal,o.vat_total,o.grand_total,
+                o.notes,o.status,o.converted_invoice_id,o.warehouse_id,o.branch_id,o.cost_center_id,
+                o.sales_rep_id,sp.name_ar,o.commission_pct,o.invoice_type,o.buyer_name,o.buyer_vat,o.buyer_address
+         FROM sales_orders_local o
+         LEFT JOIN customers_local c ON c.id=o.customer_id
+         LEFT JOIN salespersons_local sp ON sp.id=o.sales_rep_id
+         ORDER BY o.id DESC LIMIT ?1"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([lim], |r| Ok(SalesOrder {
+        id: r.get(0)?, doc_no: r.get(1)?, customer_id: r.get(2)?, customer_name: r.get(3)?,
+        order_date: r.get(4)?, expected_delivery: r.get(5)?,
+        payment_method: r.get(6)?, cash_box_id: r.get(7)?, bank_id: r.get(8)?,
+        subtotal: r.get(9)?, vat_total: r.get(10)?, grand_total: r.get(11)?,
+        notes: r.get(12)?, status: r.get(13)?, converted_invoice_id: r.get(14)?,
+        warehouse_id: r.get(15)?, branch_id: r.get(16)?, cost_center_id: r.get(17)?,
+        sales_rep_id: r.get(18)?, sales_rep_name: r.get(19)?, commission_pct: r.get(20)?,
+        invoice_type: r.get(21)?, buyer_name: r.get(22)?, buyer_vat: r.get(23)?, buyer_address: r.get(24)?,
+        lines: Vec::new(),
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn sales_order_get(id: i64) -> Result<SalesOrder, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut o: SalesOrder = conn.query_row(
+        "SELECT o.id,o.doc_no,o.customer_id,c.name_ar,o.order_date,o.expected_delivery,
+                o.payment_method,o.cash_box_id,o.bank_id,o.subtotal,o.vat_total,o.grand_total,
+                o.notes,o.status,o.converted_invoice_id,o.warehouse_id,o.branch_id,o.cost_center_id,
+                o.sales_rep_id,sp.name_ar,o.commission_pct,o.invoice_type,o.buyer_name,o.buyer_vat,o.buyer_address
+         FROM sales_orders_local o
+         LEFT JOIN customers_local c ON c.id=o.customer_id
+         LEFT JOIN salespersons_local sp ON sp.id=o.sales_rep_id
+         WHERE o.id=?1",
+        params![id], |r| Ok(SalesOrder {
+            id: r.get(0)?, doc_no: r.get(1)?, customer_id: r.get(2)?, customer_name: r.get(3)?,
+            order_date: r.get(4)?, expected_delivery: r.get(5)?,
+            payment_method: r.get(6)?, cash_box_id: r.get(7)?, bank_id: r.get(8)?,
+            subtotal: r.get(9)?, vat_total: r.get(10)?, grand_total: r.get(11)?,
+            notes: r.get(12)?, status: r.get(13)?, converted_invoice_id: r.get(14)?,
+            warehouse_id: r.get(15)?, branch_id: r.get(16)?, cost_center_id: r.get(17)?,
+            sales_rep_id: r.get(18)?, sales_rep_name: r.get(19)?, commission_pct: r.get(20)?,
+            invoice_type: r.get(21)?, buyer_name: r.get(22)?, buyer_vat: r.get(23)?, buyer_address: r.get(24)?,
+            lines: Vec::new(),
+        })
+    ).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT ol.id,ol.item_id,i.name_ar,ol.qty,ol.unit_price,ol.vat_rate,ol.line_total,ol.uom_id,ol.uom_name,ol.conversion_factor,ol.free_qty,ol.note,ol.warehouse_id
+         FROM sales_order_lines_local ol JOIN items_local i ON i.id=ol.item_id
+         WHERE ol.order_id=?1 ORDER BY ol.id"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([id], |r| Ok(SalesLine {
+        id: r.get(0)?, item_id: r.get(1)?, item_name: r.get(2)?, qty: r.get(3)?,
+        unit_price: r.get(4)?, vat_rate: r.get(5)?, line_total: r.get(6)?,
+        uom_id: r.get(7)?, uom_name: r.get(8)?, conversion_factor: r.get(9)?,
+        free_qty: r.get(10)?, note: r.get(11)?, warehouse_id: r.get(12)?,
+    })).map_err(|e| e.to_string())?;
+    for r in rows { o.lines.push(r.map_err(|e| e.to_string())?); }
+    Ok(o)
+}
+
+#[tauri::command]
+pub fn sales_order_create(input: SalesOrderInput) -> Result<i64, String> {
+    if input.lines.is_empty() { return Err("لا يمكن حفظ أمر بيع بدون أصناف".into()); }
+    if !["credit","cash","bank"].contains(&input.payment_method.as_str()) {
+        return Err("طريقة دفع غير صالحة".into());
+    }
+    if input.payment_method == "credit" && input.customer_id.is_none() {
+        return Err("اختر العميل للبيع الآجل".into());
+    }
+    // Validate the cash/bank target now so a 'confirmed' order can never strand
+    // the conversion later (sales_invoice_create needs the debit account).
+    if input.payment_method == "cash" && input.cash_box_id.is_none() {
+        return Err("اختر الخزينة للدفع النقدي".into());
+    }
+    if input.payment_method == "bank" && input.bank_id.is_none() {
+        return Err("اختر البنك للدفع البنكي".into());
+    }
+    let (subtotal, vat_total, grand_total) = sales_doc_totals(&input.lines);
+    let invoice_type = norm_invoice_type(input.invoice_type.as_deref());
+    let commission_pct = input.commission_pct.unwrap_or(0.0).clamp(0.0, 100.0);
+    let sales_rep_id = match input.sales_rep_id { Some(r) if r > 0 => Some(r), _ => None };
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let doc_no = next_doc_no(&tx, "sales_order").map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO sales_orders_local(doc_no,customer_id,order_date,expected_delivery,payment_method,cash_box_id,bank_id,subtotal,vat_total,grand_total,notes,status,warehouse_id,branch_id,cost_center_id,sales_rep_id,commission_pct,invoice_type,buyer_name,buyer_vat,buyer_address)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'draft',?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+        params![doc_no, input.customer_id, input.order_date, input.expected_delivery, input.payment_method,
+                input.cash_box_id, input.bank_id, subtotal, vat_total, grand_total, input.notes,
+                input.warehouse_id, input.branch_id, input.cost_center_id,
+                sales_rep_id, commission_pct, invoice_type, input.buyer_name, input.buyer_vat, input.buyer_address],
+    ).map_err(|e| e.to_string())?;
+    let doc_id = tx.last_insert_rowid();
+    for l in &input.lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+        let line_sub = l.qty * l.unit_price;
+        let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        tx.execute(
+            "INSERT INTO sales_order_lines_local(order_id,item_id,qty,unit_price,vat_rate,line_total,uom_id,uom_name,conversion_factor,free_qty,note,warehouse_id)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            params![doc_id, l.item_id, l.qty, l.unit_price, l.vat_rate, lt, l.uom_id, l.uom_name, factor, l.free_qty, l.note, l.warehouse_id],
+        ).map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(doc_id)
+}
+
+#[tauri::command]
+pub fn sales_order_set_status(id: i64, status: String) -> Result<(), String> {
+    if !["draft","confirmed","cancelled"].contains(&status.as_str()) {
+        return Err("حالة غير صالحة".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let cur: String = conn.query_row("SELECT status FROM sales_orders_local WHERE id=?1", params![id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if cur == "converted" { return Err("لا يمكن تغيير حالة أمر بيع تم تحويله إلى فاتورة".into()); }
+    conn.execute("UPDATE sales_orders_local SET status=?1 WHERE id=?2", params![status, id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Convert a CONFIRMED sales order into a (posted) sales invoice, carrying the
+/// order's own payment method (cash/bank/credit). Rejected unless the order is
+/// 'confirmed' and not already 'converted'.
+#[tauri::command]
+pub fn sales_order_convert_to_invoice(id: i64) -> Result<i64, String> {
+    let o = sales_order_get(id)?;
+    if o.status == "converted" {
+        return Err("تم تحويل أمر البيع هذا إلى فاتورة من قبل".into());
+    }
+    if o.status != "confirmed" {
+        return Err("يلزم تأكيد أمر البيع (confirmed) قبل التحويل إلى فاتورة".into());
+    }
+    // Atomically CLAIM the order before creating the invoice: the compare-and-set
+    // on the gating `status='confirmed'` column means two concurrent converters
+    // can't both pass, so we never mint two invoices. On any failure below we
+    // restore status='confirmed' so the order can be retried.
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let claimed = conn.execute(
+        "UPDATE sales_orders_local SET status='converted' WHERE id=?1 AND status='confirmed'",
+        params![id],
+    ).map_err(|e| e.to_string())?;
+    if claimed == 0 {
+        return Err("تم تحويل أمر البيع هذا إلى فاتورة من قبل".into());
+    }
+    let input = SalesInvoiceInput {
+        customer_id: o.customer_id,
+        invoice_date: today_str(),
+        payment_method: o.payment_method.clone(),
+        cash_box_id: o.cash_box_id,
+        bank_id: o.bank_id,
+        notes: o.notes.clone(),
+        warehouse_id: o.warehouse_id,
+        branch_id: o.branch_id,
+        cost_center_id: o.cost_center_id,
+        sales_rep_id: o.sales_rep_id,
+        commission_pct: Some(o.commission_pct),
+        invoice_type: o.invoice_type.clone(),
+        buyer_name: o.buyer_name.clone(),
+        buyer_vat: o.buyer_vat.clone(),
+        buyer_address: o.buyer_address.clone(),
+        lines: o.lines.clone(),
+    };
+    match sales_invoice_create(input) {
+        Ok(invoice_id) => {
+            conn.execute(
+                "UPDATE sales_orders_local SET converted_invoice_id=?1 WHERE id=?2",
+                params![invoice_id, id],
+            ).map_err(|e| e.to_string())?;
+            Ok(invoice_id)
+        }
+        Err(e) => {
+            // Revert the claim so the order is convertible again.
+            let _ = conn.execute(
+                "UPDATE sales_orders_local SET status='confirmed' WHERE id=?1",
+                params![id],
+            );
+            Err(e)
+        }
+    }
 }
 
 // ───────────────────────── Sales Returns ─────────────────────────────

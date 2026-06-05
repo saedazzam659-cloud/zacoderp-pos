@@ -21,7 +21,7 @@ export type ScreenKey =
   | "stock_import" | "low_stock"
   | "suppliers" | "purchases" | "purchase_returns"
   | "salespersons"
-  | "sales_invoices" | "sales_returns" | "invoice_import"
+  | "sales_invoices" | "quotations" | "sales_orders" | "sales_returns" | "invoice_import"
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "cost_centers" | "taxes"
@@ -49,6 +49,8 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "purchase_returns", label: "مرتجع الشراء", icon: "📤", group: "المشتريات" },
 
   { key: "salespersons", label: "مندوبو المبيعات", icon: "🧑‍💼", group: "المبيعات" },
+  { key: "quotations", label: "عروض الأسعار", icon: "📝", group: "المبيعات" },
+  { key: "sales_orders", label: "أوامر البيع", icon: "📋", group: "المبيعات" },
   { key: "sales_invoices", label: "فواتير المبيعات", icon: "🧾", group: "المبيعات" },
   { key: "sales_returns", label: "مرتجع المبيعات", icon: "📥", group: "المبيعات" },
   { key: "invoice_import", label: "استيراد الفواتير", icon: "📂", group: "المبيعات" },

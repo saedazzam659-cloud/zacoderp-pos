@@ -44,6 +44,8 @@ import BalanceSheetReport from "./BalanceSheetReport";
 import TrialBalanceReport from "./TrialBalanceReport";
 import PurchasesAdmin from "./PurchasesAdmin";
 import SalesInvoicesAdmin from "./SalesInvoicesAdmin";
+import QuotationsAdmin from "./QuotationsAdmin";
+import SalesOrdersAdmin from "./SalesOrdersAdmin";
 import SalespersonsAdmin from "./SalespersonsAdmin";
 import SalesReturnsAdmin from "./SalesReturnsAdmin";
 import WarehousesAdmin from "./WarehousesAdmin";
@@ -175,7 +177,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     key: "selling",
     icon: "🧾",
     label: "المبيعات والعملاء",
-    members: ["salespersons", "sales_invoices", "sales_returns", "invoice_import"],
+    members: ["salespersons", "quotations", "sales_orders", "sales_invoices", "sales_returns", "invoice_import"],
   },
   {
     key: "purchasing",
@@ -493,6 +495,8 @@ export default function PosShell({
     { id: "purchases",        icon: "🧾", label: "فواتير الشراء", perm: "purchases" },
     { id: "purchase_returns", icon: "🔁", label: "مرتجع الشراء", perm: "purchase_returns" },
     { id: "salespersons",     icon: "🧑‍💼", label: "مندوبو المبيعات", perm: "salespersons" },
+    { id: "quotations",       icon: "📝", label: "عروض الأسعار", perm: "quotations" },
+    { id: "sales_orders",     icon: "📋", label: "أوامر البيع", perm: "sales_orders" },
     { id: "sales_invoices",   icon: "🧾", label: "فواتير المبيعات", perm: "sales_invoices" },
     { id: "sales_returns",    icon: "🔁", label: "مرتجع المبيعات", perm: "sales_returns" },
     { id: "invoice_import",   icon: "📂", label: "استيراد الفواتير", perm: "invoice_import" },
@@ -849,6 +853,12 @@ export default function PosShell({
           {standalone && view === "salespersons" && (isAdmin || can("salespersons")) && (
             <div style={S.pagePad}><SalespersonsAdmin /></div>
           )}
+          {standalone && view === "quotations" && (isAdmin || can("quotations")) && (
+            <div style={S.pagePad}><QuotationsAdmin /></div>
+          )}
+          {standalone && view === "sales_orders" && (isAdmin || can("sales_orders")) && (
+            <div style={S.pagePad}><SalesOrdersAdmin /></div>
+          )}
           {standalone && view === "sales_invoices" && (isAdmin || can("sales_invoices")) && (
             <div style={S.pagePad}><SalesInvoicesAdmin /></div>
           )}
@@ -959,6 +969,8 @@ function labelFor(v: View): string {
     purchases: "فواتير الشراء",
     purchase_returns: "مرتجع الشراء",
     salespersons: "مندوبو المبيعات",
+    quotations: "عروض الأسعار",
+    sales_orders: "أوامر البيع",
     sales_invoices: "فواتير المبيعات",
     sales_returns: "مرتجع المبيعات",
     invoice_import: "استيراد الفواتير من ملف",
