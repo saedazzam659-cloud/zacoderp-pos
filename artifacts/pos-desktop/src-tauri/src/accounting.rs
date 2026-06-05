@@ -3327,6 +3327,162 @@ pub fn report_ledger_lines(
     Ok(out)
 }
 
+// ───────────────────── Sales reports (تقارير المبيعات) ──────────────────
+// Raw, offline-first datasets for the back-office sales analytics screens.
+// The Rust side only fetches filtered rows; all grouping (by period / item /
+// customer) is done in the React pages so the SQL stays trivial and the heavy
+// aggregation logic is easy to verify without a Rust recompile.
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SalesInvoiceReportRow {
+    pub id: i64,
+    pub invoice_no: String,
+    pub invoice_date: String,
+    pub customer_id: Option<i64>,
+    pub customer_name: Option<String>,
+    pub payment_method: String,
+    pub subtotal: f64,
+    pub vat_total: f64,
+    pub grand_total: f64,
+    pub line_count: i64,
+}
+
+/// Back-office sales invoices in a date range, optionally scoped by branch /
+/// customer (local rows have no status column — every saved invoice counts).
+/// Powers the Daily Sales, Sales-by-Period and Sales-by-Customer screens
+/// (which group these rows client-side).
+#[tauri::command]
+pub fn report_sales_invoices(
+    from_date: Option<String>,
+    to_date: Option<String>,
+    branch_id: Option<i64>,
+    customer_id: Option<i64>,
+) -> Result<Vec<SalesInvoiceReportRow>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut sql = String::from(
+        "SELECT s.id, s.invoice_no, s.invoice_date, s.customer_id, c.name_ar, \
+         s.payment_method, s.subtotal, s.vat_total, s.grand_total, \
+         (SELECT COUNT(*) FROM sales_invoice_lines_local l WHERE l.invoice_id = s.id) \
+         FROM sales_invoices_local s \
+         LEFT JOIN customers_local c ON c.id = s.customer_id WHERE 1=1"
+    );
+    let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(d) = &from_date { sql.push_str(" AND s.invoice_date >= ?"); args.push(Box::new(d.clone())); }
+    if let Some(d) = &to_date { sql.push_str(" AND s.invoice_date <= ?"); args.push(Box::new(d.clone())); }
+    if let Some(b) = branch_id { sql.push_str(" AND s.branch_id = ?"); args.push(Box::new(b)); }
+    if let Some(cu) = customer_id { sql.push_str(" AND s.customer_id = ?"); args.push(Box::new(cu)); }
+    sql.push_str(" ORDER BY s.invoice_date, s.id");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(rusqlite::params_from_iter(params_ref), |r| Ok(SalesInvoiceReportRow {
+        id: r.get(0)?, invoice_no: r.get(1)?, invoice_date: r.get(2)?, customer_id: r.get(3)?,
+        customer_name: r.get(4)?, payment_method: r.get(5)?, subtotal: r.get(6)?,
+        vat_total: r.get(7)?, grand_total: r.get(8)?, line_count: r.get(9)?,
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SalesLineReportRow {
+    pub invoice_id: i64,
+    pub invoice_no: String,
+    pub invoice_date: String,
+    pub customer_id: Option<i64>,
+    pub customer_name: Option<String>,
+    pub item_id: i64,
+    pub item_code: Option<String>,
+    pub item_name: String,
+    pub qty: f64,
+    pub unit_price: f64,
+    pub line_total: f64,
+    pub vat_rate: f64,
+}
+
+/// Line-level sales rows in a date range (one row per invoice line), joined to
+/// item + customer master data. Powers the Sales-by-Item screen.
+#[tauri::command]
+pub fn report_sales_invoice_lines(
+    from_date: Option<String>,
+    to_date: Option<String>,
+    branch_id: Option<i64>,
+) -> Result<Vec<SalesLineReportRow>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut sql = String::from(
+        "SELECT l.invoice_id, s.invoice_no, s.invoice_date, s.customer_id, c.name_ar, \
+         l.item_id, i.code, i.name_ar, l.qty, l.unit_price, l.line_total, l.vat_rate \
+         FROM sales_invoice_lines_local l \
+         JOIN sales_invoices_local s ON s.id = l.invoice_id \
+         LEFT JOIN customers_local c ON c.id = s.customer_id \
+         LEFT JOIN items_local i ON i.id = l.item_id WHERE 1=1"
+    );
+    let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(d) = &from_date { sql.push_str(" AND s.invoice_date >= ?"); args.push(Box::new(d.clone())); }
+    if let Some(d) = &to_date { sql.push_str(" AND s.invoice_date <= ?"); args.push(Box::new(d.clone())); }
+    if let Some(b) = branch_id { sql.push_str(" AND s.branch_id = ?"); args.push(Box::new(b)); }
+    sql.push_str(" ORDER BY s.invoice_date, l.id");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(rusqlite::params_from_iter(params_ref), |r| Ok(SalesLineReportRow {
+        invoice_id: r.get(0)?, invoice_no: r.get(1)?, invoice_date: r.get(2)?, customer_id: r.get(3)?,
+        customer_name: r.get(4)?, item_id: r.get(5)?, item_code: r.get(6)?, item_name: r.get(7)?,
+        qty: r.get(8)?, unit_price: r.get(9)?, line_total: r.get(10)?, vat_rate: r.get(11)?,
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SalesReturnReportRow {
+    pub id: i64,
+    pub return_no: String,
+    pub return_date: String,
+    pub customer_id: Option<i64>,
+    pub customer_name: Option<String>,
+    pub subtotal: f64,
+    pub vat_total: f64,
+    pub grand_total: f64,
+}
+
+/// Sales returns (credit notes) in a date range, optionally scoped by branch /
+/// customer. Feeds the net-sales column on Sales-by-Customer and the dedicated
+/// Sales Returns report in a later wave.
+#[tauri::command]
+pub fn report_sales_returns(
+    from_date: Option<String>,
+    to_date: Option<String>,
+    branch_id: Option<i64>,
+    customer_id: Option<i64>,
+) -> Result<Vec<SalesReturnReportRow>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut sql = String::from(
+        "SELECT r.id, r.return_no, r.return_date, r.customer_id, c.name_ar, \
+         r.subtotal, r.vat_total, r.grand_total \
+         FROM sales_returns_local r \
+         LEFT JOIN customers_local c ON c.id = r.customer_id WHERE 1=1"
+    );
+    let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(d) = &from_date { sql.push_str(" AND r.return_date >= ?"); args.push(Box::new(d.clone())); }
+    if let Some(d) = &to_date { sql.push_str(" AND r.return_date <= ?"); args.push(Box::new(d.clone())); }
+    if let Some(b) = branch_id { sql.push_str(" AND r.branch_id = ?"); args.push(Box::new(b)); }
+    if let Some(cu) = customer_id { sql.push_str(" AND r.customer_id = ?"); args.push(Box::new(cu)); }
+    sql.push_str(" ORDER BY r.return_date, r.id");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(rusqlite::params_from_iter(params_ref), |r| Ok(SalesReturnReportRow {
+        id: r.get(0)?, return_no: r.get(1)?, return_date: r.get(2)?, customer_id: r.get(3)?,
+        customer_name: r.get(4)?, subtotal: r.get(5)?, vat_total: r.get(6)?, grand_total: r.get(7)?,
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
 // ─────────────────────────── Taxes (الضرائب) ───────────────────────────
 // Dynamic master list of taxes. Each tax owns one GL account + a rate, and
 // declares per-direction availability + debit/credit nature. Exactly one row

@@ -46,6 +46,10 @@ import PurchasesAdmin from "./PurchasesAdmin";
 import SalesInvoicesAdmin from "./SalesInvoicesAdmin";
 import QuotationsAdmin from "./QuotationsAdmin";
 import SalesOrdersAdmin from "./SalesOrdersAdmin";
+import DailySalesReport from "./DailySalesReport";
+import SalesByPeriodReport from "./SalesByPeriodReport";
+import SalesByItemReport from "./SalesByItemReport";
+import SalesByCustomerReport from "./SalesByCustomerReport";
 import SalespersonsAdmin from "./SalespersonsAdmin";
 import SalesReturnsAdmin from "./SalesReturnsAdmin";
 import WarehousesAdmin from "./WarehousesAdmin";
@@ -177,7 +181,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     key: "selling",
     icon: "🧾",
     label: "المبيعات والعملاء",
-    members: ["salespersons", "quotations", "sales_orders", "sales_invoices", "sales_returns", "invoice_import"],
+    members: ["salespersons", "quotations", "sales_orders", "sales_invoices", "sales_returns", "invoice_import", "report_sales_daily", "report_sales_by_period", "report_sales_by_item", "report_sales_by_customer"],
   },
   {
     key: "purchasing",
@@ -500,6 +504,10 @@ export default function PosShell({
     { id: "sales_invoices",   icon: "🧾", label: "فواتير المبيعات", perm: "sales_invoices" },
     { id: "sales_returns",    icon: "🔁", label: "مرتجع المبيعات", perm: "sales_returns" },
     { id: "invoice_import",   icon: "📂", label: "استيراد الفواتير", perm: "invoice_import" },
+    { id: "report_sales_daily",       icon: "📅", label: "تقرير المبيعات اليومي", perm: "report_sales_daily" },
+    { id: "report_sales_by_period",   icon: "🗓️", label: "المبيعات حسب الفترة", perm: "report_sales_by_period" },
+    { id: "report_sales_by_item",     icon: "📦", label: "المبيعات حسب الصنف", perm: "report_sales_by_item" },
+    { id: "report_sales_by_customer", icon: "👥", label: "المبيعات حسب العميل", perm: "report_sales_by_customer" },
     { id: "cash_boxes",       icon: "💰", label: "الخزن", perm: "cash_boxes" },
     { id: "banks",            icon: "🏦", label: "البنوك", perm: "banks" },
     { id: "financial_tx",     icon: "💸", label: "المعاملات المالية", perm: "financial_tx" },
@@ -865,6 +873,18 @@ export default function PosShell({
           {standalone && view === "sales_returns" && (isAdmin || can("sales_returns")) && (
             <div style={S.pagePad}><SalesReturnsAdmin /></div>
           )}
+          {standalone && view === "report_sales_daily" && (isAdmin || can("report_sales_daily")) && (
+            <div style={S.pagePad}><DailySalesReport /></div>
+          )}
+          {standalone && view === "report_sales_by_period" && (isAdmin || can("report_sales_by_period")) && (
+            <div style={S.pagePad}><SalesByPeriodReport /></div>
+          )}
+          {standalone && view === "report_sales_by_item" && (isAdmin || can("report_sales_by_item")) && (
+            <div style={S.pagePad}><SalesByItemReport /></div>
+          )}
+          {standalone && view === "report_sales_by_customer" && (isAdmin || can("report_sales_by_customer")) && (
+            <div style={S.pagePad}><SalesByCustomerReport /></div>
+          )}
           {standalone && view === "cash_boxes" && (isAdmin || can("cash_boxes")) && (
             <div style={S.pagePad}><CashBoxesAdmin /></div>
           )}
@@ -974,6 +994,10 @@ function labelFor(v: View): string {
     sales_invoices: "فواتير المبيعات",
     sales_returns: "مرتجع المبيعات",
     invoice_import: "استيراد الفواتير من ملف",
+    report_sales_daily: "تقرير المبيعات اليومي",
+    report_sales_by_period: "المبيعات حسب الفترة",
+    report_sales_by_item: "المبيعات حسب الصنف",
+    report_sales_by_customer: "المبيعات حسب العميل",
     cash_boxes: "الخزن",
     banks: "البنوك",
     financial_tx: "المعاملات المالية",

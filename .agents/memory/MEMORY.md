@@ -44,4 +44,5 @@
 - [companies.ts router only blocks anonymous](companies-router-auth-gap.md) — its router middleware does NOT enforce superadmin; every new cross-tenant policy-write route needs its own role guard.
 - [POS Desktop online license control](pos-desktop-online-license-control.md) — self_register vs admin licenses must never cross; public revalidate gates to source='self_register' (404 else); grace-lock fails closed; dedup via partial unique index.
 - [ZATCA app English localization](zatca-i18n-localization.md) — parallel i18n via per-page FRAGMENT json + single-writer merge (no JSON race); full-English needs language-aware pickName(nameAr,nameEn), not just t() on UI strings.
+- [POS Desktop offline reports](pos-desktop-sales-reports.md) — Rust returns raw filtered rows only; ALL grouping/share%/net done client-side in TS (Rust builds in CI only); local tables have no status column.
 - [POS Desktop standalone ZATCA pipeline](pos-desktop-standalone-zatca-pipeline.md) — device does full EGS onboarding+sign+submit, no cloud; record-before-submit chain, QR injected post-sign into the empty EmbeddedDocumentBinaryObject, genesis PIH length differs by design.

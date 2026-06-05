@@ -505,6 +505,9 @@ fn main() {
             accounting::tax_delete,
             accounting::tax_set_default,
             accounting::report_ledger_lines,
+            accounting::report_sales_invoices,
+            accounting::report_sales_invoice_lines,
+            accounting::report_sales_returns,
             // LAN shared database (Task #207).
             lan::lan_stock_get_all,
             lan::lan_stock_set,

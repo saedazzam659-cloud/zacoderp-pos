@@ -30,6 +30,7 @@ export type WindowsView =
   | "suppliers" | "purchases" | "purchase_returns"
   | "salespersons"
   | "sales_invoices" | "quotations" | "sales_orders" | "sales_returns" | "invoice_import"
+  | "report_sales_daily" | "report_sales_by_period" | "report_sales_by_item" | "report_sales_by_customer"
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "user_permissions"
@@ -101,6 +102,10 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   quotations:        { module: "sales_docs", profile: "erp" },
   sales_orders:      { module: "sales_docs", profile: "erp" },
   sales_returns:     { module: "sales_docs", profile: "erp" },
+  report_sales_daily:       { module: "sales_docs", profile: "erp" },
+  report_sales_by_period:   { module: "sales_docs", profile: "erp" },
+  report_sales_by_item:     { module: "sales_docs", profile: "erp" },
+  report_sales_by_customer: { module: "sales_docs", profile: "erp" },
   cash_boxes:        { module: "cash_banks", profile: "erp" },
   banks:             { module: "cash_banks", profile: "erp" },
   financial_tx:      { module: "cash_banks", profile: "erp" },

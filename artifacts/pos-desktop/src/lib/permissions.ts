@@ -22,6 +22,7 @@ export type ScreenKey =
   | "suppliers" | "purchases" | "purchase_returns"
   | "salespersons"
   | "sales_invoices" | "quotations" | "sales_orders" | "sales_returns" | "invoice_import"
+  | "report_sales_daily" | "report_sales_by_period" | "report_sales_by_item" | "report_sales_by_customer"
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "cost_centers" | "taxes"
@@ -54,6 +55,11 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "sales_invoices", label: "فواتير المبيعات", icon: "🧾", group: "المبيعات" },
   { key: "sales_returns", label: "مرتجع المبيعات", icon: "📥", group: "المبيعات" },
   { key: "invoice_import", label: "استيراد الفواتير", icon: "📂", group: "المبيعات" },
+
+  { key: "report_sales_daily", label: "تقرير المبيعات اليومي", icon: "📅", group: "تقارير المبيعات" },
+  { key: "report_sales_by_period", label: "المبيعات حسب الفترة", icon: "🗓️", group: "تقارير المبيعات" },
+  { key: "report_sales_by_item", label: "المبيعات حسب الصنف", icon: "📦", group: "تقارير المبيعات" },
+  { key: "report_sales_by_customer", label: "المبيعات حسب العميل", icon: "👥", group: "تقارير المبيعات" },
 
   { key: "cash_boxes", label: "الخزن", icon: "💰", group: "الخزينة والبنوك" },
   { key: "banks", label: "البنوك", icon: "🏦", group: "الخزينة والبنوك" },
