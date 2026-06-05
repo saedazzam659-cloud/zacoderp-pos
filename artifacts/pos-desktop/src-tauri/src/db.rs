@@ -604,6 +604,12 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE journal_entry_lines_local ADD COLUMN cost_center_id INTEGER",
         "ALTER TABLE sales_invoices_local ADD COLUMN branch_id INTEGER",
         "ALTER TABLE sales_invoices_local ADD COLUMN cost_center_id INTEGER",
+        // ── ZATCA bridge: link a back-office sales invoice to the cached QR
+        // and to the offline_invoices sync row (local_uuid) that carries it to
+        // the cloud for ZATCA reporting/clearance. Both nullable — only set for
+        // SA invoices that went through the bridge; non-SA rows stay untagged.
+        "ALTER TABLE sales_invoices_local ADD COLUMN zatca_qr_base64 TEXT",
+        "ALTER TABLE sales_invoices_local ADD COLUMN zatca_offline_uuid TEXT",
         "ALTER TABLE sales_returns_local ADD COLUMN branch_id INTEGER",
         "ALTER TABLE sales_returns_local ADD COLUMN cost_center_id INTEGER",
         "ALTER TABLE purchases_local ADD COLUMN branch_id INTEGER",

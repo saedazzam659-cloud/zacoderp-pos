@@ -418,6 +418,7 @@ fn main() {
             accounting::sales_invoices_list,
             accounting::sales_invoice_get,
             accounting::sales_invoice_create,
+            accounting::sales_invoice_set_zatca,
             accounting::sales_returns_list,
             accounting::sales_return_get,
             accounting::sales_return_create,

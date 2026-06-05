@@ -1441,6 +1441,12 @@ pub struct SalesInvoice {
     pub je_id: Option<i64>,
     pub notes: Option<String>,
     pub lines: Vec<SalesLine>,
+    /// Cached ZATCA TLV QR (base64). Loaded by `sales_invoice_get`; left None
+    /// in the list query to avoid shipping multi-hundred-byte blobs per row.
+    pub zatca_qr_base64: Option<String>,
+    /// Sync status of the linked offline_invoices row (pending|synced|...),
+    /// or None when this invoice was never bridged (e.g. non-SA).
+    pub zatca_status: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1515,8 +1521,11 @@ pub fn sales_invoices_list(limit: Option<i64>) -> Result<Vec<SalesInvoice>, Stri
     let lim = limit.unwrap_or(200);
     let mut stmt = conn.prepare(
         "SELECT s.id,s.invoice_no,s.customer_id,c.name_ar,s.invoice_date,s.subtotal,s.vat_total,s.grand_total,
-                s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes
-         FROM sales_invoices_local s LEFT JOIN customers_local c ON c.id=s.customer_id
+                s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes,
+                oi.sync_status
+         FROM sales_invoices_local s
+         LEFT JOIN customers_local c ON c.id=s.customer_id
+         LEFT JOIN offline_invoices oi ON oi.local_uuid=s.zatca_offline_uuid
          ORDER BY s.id DESC LIMIT ?1"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([lim], |r| Ok(SalesInvoice {
@@ -1524,6 +1533,7 @@ pub fn sales_invoices_list(limit: Option<i64>) -> Result<Vec<SalesInvoice>, Stri
         invoice_date: r.get(4)?, subtotal: r.get(5)?, vat_total: r.get(6)?, grand_total: r.get(7)?,
         cogs_total: r.get(8)?, payment_method: r.get(9)?, cash_box_id: r.get(10)?, bank_id: r.get(11)?,
         je_id: r.get(12)?, notes: r.get(13)?, lines: Vec::new(),
+        zatca_qr_base64: None, zatca_status: r.get(14)?,
     })).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows { out.push(r.map_err(|e| e.to_string())?); }
@@ -1535,14 +1545,18 @@ pub fn sales_invoice_get(id: i64) -> Result<SalesInvoice, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     let mut s: SalesInvoice = conn.query_row(
         "SELECT s.id,s.invoice_no,s.customer_id,c.name_ar,s.invoice_date,s.subtotal,s.vat_total,s.grand_total,
-                s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes
-         FROM sales_invoices_local s LEFT JOIN customers_local c ON c.id=s.customer_id
+                s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes,
+                s.zatca_qr_base64,oi.sync_status
+         FROM sales_invoices_local s
+         LEFT JOIN customers_local c ON c.id=s.customer_id
+         LEFT JOIN offline_invoices oi ON oi.local_uuid=s.zatca_offline_uuid
          WHERE s.id=?1",
         params![id], |r| Ok(SalesInvoice {
             id: r.get(0)?, invoice_no: r.get(1)?, customer_id: r.get(2)?, customer_name: r.get(3)?,
             invoice_date: r.get(4)?, subtotal: r.get(5)?, vat_total: r.get(6)?, grand_total: r.get(7)?,
             cogs_total: r.get(8)?, payment_method: r.get(9)?, cash_box_id: r.get(10)?, bank_id: r.get(11)?,
             je_id: r.get(12)?, notes: r.get(13)?, lines: Vec::new(),
+            zatca_qr_base64: r.get(14)?, zatca_status: r.get(15)?,
         })
     ).map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
@@ -1557,6 +1571,24 @@ pub fn sales_invoice_get(id: i64) -> Result<SalesInvoice, String> {
     })).map_err(|e| e.to_string())?;
     for r in rows { s.lines.push(r.map_err(|e| e.to_string())?); }
     Ok(s)
+}
+
+/// Persist the ZATCA bridge link back onto a sales invoice after the TS layer
+/// has generated the QR and enqueued the offline_invoices row. Idempotent: the
+/// TS side reuses a stable `local_uuid` (`sinv-<id>`) so re-running overwrites
+/// the same values rather than creating duplicates.
+#[tauri::command]
+pub fn sales_invoice_set_zatca(
+    id: i64,
+    qr_base64: Option<String>,
+    offline_uuid: Option<String>,
+) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE sales_invoices_local SET zatca_qr_base64=?1, zatca_offline_uuid=?2 WHERE id=?3",
+        params![qr_base64, offline_uuid, id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]

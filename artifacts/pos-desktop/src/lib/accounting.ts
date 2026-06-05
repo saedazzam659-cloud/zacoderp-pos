@@ -127,6 +127,9 @@ export type SalesInvoice = {
   invoiceDate: string; subtotal: number; vatTotal: number; grandTotal: number; cogsTotal: number;
   paymentMethod: PaymentMethod; cashBoxId: number | null; bankId: number | null;
   jeId: number | null; notes: string | null; lines: SalesLine[];
+  // ZATCA bridge: cached TLV QR (base64, loaded only by getSalesInvoice) and the
+  // sync status of the linked offline_invoices row (null when not bridged / non-SA).
+  zatcaQrBase64?: string | null; zatcaStatus?: string | null;
 };
 export type SalesInvoiceInput = {
   customerId: number | null; invoiceDate: string; paymentMethod: PaymentMethod;
@@ -359,6 +362,13 @@ export async function getSalesInvoice(id: number): Promise<SalesInvoice> {
 export async function createSalesInvoice(input: SalesInvoiceInput): Promise<number> {
   if (!hasTauri()) notImpl();
   return await invoke<number>("sales_invoice_create", { input });
+}
+/** Persist the ZATCA bridge link (QR + offline_invoices local_uuid) onto a sales invoice. */
+export async function setSalesInvoiceZatca(
+  id: number, qrBase64: string | null, offlineUuid: string | null,
+): Promise<void> {
+  if (!hasTauri()) return;
+  await invoke("sales_invoice_set_zatca", { id, qrBase64, offlineUuid });
 }
 
 // ─── Sales returns ───────────────────────────────────────────────────

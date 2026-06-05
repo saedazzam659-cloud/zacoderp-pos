@@ -39,5 +39,6 @@
 - [Global ErrorBoundary prevents white-screen](error-boundary-whitescreen.md) — app had NO boundary; one render error blanked everything. Logged-out OK + logged-in blank ⇒ authed render path, not cache.
 - [GROUP_PERMISSION_KEYS sync](group-permission-keys-sync.md) — every isGroupAllowed("<group>") in Layout.tsx needs a GROUP_PERMISSION_KEYS entry or undefined.some() white-screens all logged-in non-SA users.
 - [Foreign-currency VAT in SAR](foreign-currency-vat-in-sar.md) — ZATCA: foreign-currency tax invoices/returns must print the VAT amount in SAR (base = foreign × rate); gate to tax docs, not quotations.
+- [POS Desktop ZATCA bridge](pos-desktop-zatca-bridge.md) — back-office sales invoices reuse the register's offline_invoices→sync pipeline; build QR/payload from the PERSISTED invoice (not form) to avoid drift; idempotency key sinv-<id>.
 - [companies.ts router only blocks anonymous](companies-router-auth-gap.md) — its router middleware does NOT enforce superadmin; every new cross-tenant policy-write route needs its own role guard.
 - [ZATCA app English localization](zatca-i18n-localization.md) — parallel i18n via per-page FRAGMENT json + single-writer merge (no JSON race); full-English needs language-aware pickName(nameAr,nameEn), not just t() on UI strings.

@@ -19,6 +19,7 @@ import {
   computeDiscount, lineNet, saveDocDiscount, getDocDiscount,
   type DiscType, type DiscFields,
 } from "../lib/discount";
+import { isZatcaCountry, bridgeSalesInvoiceToZatca } from "../lib/zatcaBridge";
 
 type FLine = SalesLine & DiscFields;
 
@@ -73,7 +74,7 @@ export default function SalesInvoicesAdmin() {
         {rows.length === 0 && !creating ? <Empty text="لا توجد فواتير مبيعات" /> : (
           <Table>
             <thead><tr>
-              <Th>رقم الفاتورة</Th><Th>التاريخ</Th><Th>العميل</Th><Th>طريقة الدفع</Th>
+              <Th>رقم الفاتورة</Th><Th>التاريخ</Th><Th>العميل</Th><Th>طريقة الدفع</Th><Th>زاتكا</Th>
               <Th style={{ textAlign: "left" }}>المجموع</Th><Th style={{ textAlign: "left" }}>الضريبة</Th>
               <Th style={{ textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 100 }}></Th>
             </tr></thead>
@@ -85,6 +86,7 @@ export default function SalesInvoicesAdmin() {
                     <Td>{p.invoiceDate}</Td>
                     <Td>{p.customerName ?? "نقدي/بدون عميل"}</Td>
                     <Td><PayBadge m={p.paymentMethod} /></Td>
+                    <Td><ZatcaBadge status={p.zatcaStatus} /></Td>
                     <Td num>{fmt(p.subtotal)}</Td>
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
@@ -97,7 +99,7 @@ export default function SalesInvoicesAdmin() {
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>
-                      <Td colSpan={8 as any}>
+                      <Td colSpan={9 as any}>
                         {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>... جاري التحميل</div> : (
                           <SalesDetail p={expandedDetail} />
                         )}
@@ -122,6 +124,16 @@ function PayBadge({ m }: { m: PaymentMethod }) {
   const map = { credit: { l: "آجل", c: "#9a3412" }, cash: { l: "نقدي", c: "#15803d" }, bank: { l: "بنك", c: "#1e40af" } } as const;
   const x = map[m];
   return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{x.l}</span>;
+}
+
+// ZATCA sync state of the linked offline_invoices row. `null` = not bridged
+// (non-Saudi installs, or the bridge hasn't run yet).
+function ZatcaBadge({ status }: { status?: string | null }) {
+  if (!status) return <span style={{ color: "#94a3b8", fontSize: 12 }}>—</span>;
+  const synced = status === "synced" || status === "submitted" || status === "cleared" || status === "reported";
+  const c = synced ? "#15803d" : "#b45309";
+  const label = synced ? "مُرسلة" : "بانتظار الرفع";
+  return <span style={{ background: c + "20", color: c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{label}</span>;
 }
 
 function SalesDetail({ p }: { p: SalesInvoice }) {
@@ -152,6 +164,17 @@ function SalesDetail({ p }: { p: SalesInvoice }) {
           <tr style={{ background: "#fff" }}><Td colSpan={5 as any}>ضريبة القيمة المضافة</Td><Td num>{fmt(p.vatTotal)}</Td></tr>
           <tr style={{ background: "#f1f5f9", fontWeight: 800, fontSize: 16 }}><Td colSpan={5 as any}>الإجمالي النهائي</Td><Td num>{fmt(p.grandTotal)}</Td></tr>
           <tr style={{ background: "#fff", color: "#64748b" }}><Td colSpan={5 as any}>تكلفة البضاعة المباعة</Td><Td num>{fmt(p.cogsTotal)}</Td></tr>
+          {p.zatcaQrBase64 && (
+            <tr style={{ background: "#fff" }}>
+              <Td colSpan={5 as any}>زاتكا</Td>
+              <Td>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  <ZatcaBadge status={p.zatcaStatus ?? "pending"} />
+                  <span style={{ color: "#15803d", fontSize: 12 }}>✓ تم توليد رمز QR وإدراج الفاتورة في طابور الإرسال لزاتكا</span>
+                </span>
+              </Td>
+            </tr>
+          )}
         </tbody>
       </Table>
     </div>
@@ -189,6 +212,9 @@ function CreateForm({ deps, onCancel, onDone }: {
   const docSym = currencyByCode(currency).symbol;
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Once the invoice is persisted we keep its id so a ZATCA-bridge failure can
+  // be retried (click حفظ again) WITHOUT creating a duplicate invoice.
+  const [savedId, setSavedId] = useState<number | null>(null);
   const { taxes, taxId, setTaxId, taxOptions, selectedRate } = useInvoiceTaxes("sales");
 
   const selectedCustomer = deps.customers.find((c) => c.id === customerId) ?? null;
@@ -272,19 +298,44 @@ function CreateForm({ deps, onCancel, onDone }: {
           uomId: l.uomId, uomName: l.uomName, conversionFactor: l.conversionFactor,
         };
       });
-      const id = await createSalesInvoice({
-        customerId: customerId || null, invoiceDate: date, paymentMethod,
-        cashBoxId: paymentMethod === "cash" ? cashBoxId : null,
-        bankId:    paymentMethod === "bank" ? bankId : null,
-        warehouseId: warehouseId || null,
-        branchId: branchId === "" ? null : branchId,
-        costCenterId: costCenterId === "" ? null : costCenterId,
-        notes: notes || null, lines: payloadLines,
-      });
-      saveDocDiscount("sales_invoice", id, {
-        grossSubtotal: r.grossSubtotal * effRate, lineDiscountTotal: r.lineDiscountTotal * effRate, headerDiscountValue: r.headerDiscountValue * effRate,
-        currencyCode: currency, exchangeRate: effRate,
-      });
+      // Persist once; on a ZATCA-bridge retry `savedId` is already set so we
+      // skip the (duplicating) create + discount write and only re-run the bridge.
+      let id = savedId;
+      if (id == null) {
+        id = await createSalesInvoice({
+          customerId: customerId || null, invoiceDate: date, paymentMethod,
+          cashBoxId: paymentMethod === "cash" ? cashBoxId : null,
+          bankId:    paymentMethod === "bank" ? bankId : null,
+          warehouseId: warehouseId || null,
+          branchId: branchId === "" ? null : branchId,
+          costCenterId: costCenterId === "" ? null : costCenterId,
+          notes: notes || null, lines: payloadLines,
+        });
+        setSavedId(id);
+        saveDocDiscount("sales_invoice", id, {
+          grossSubtotal: r.grossSubtotal * effRate, lineDiscountTotal: r.lineDiscountTotal * effRate, headerDiscountValue: r.headerDiscountValue * effRate,
+          currencyCode: currency, exchangeRate: effRate,
+        });
+      }
+      // ZATCA bridge (Saudi installs only): generate the TLV QR and enqueue the
+      // invoice into the existing offline_invoices → cloud-sync submission path.
+      // Best-effort: the invoice is already saved, so a bridge failure is shown
+      // as a non-fatal warning and can be retried by clicking حفظ again.
+      if (isZatcaCountry()) {
+        try {
+          // Totals + lines are read back from the persisted invoice inside the
+          // bridge, so the QR/payload match exactly what was stored (no drift).
+          await bridgeSalesInvoiceToZatca({
+            invoiceId: id,
+            paymentMethod,
+            customerName: selectedCustomer?.nameAr ?? null,
+            customerVat: selectedCustomer?.vatNumber ?? null,
+          });
+        } catch (e: any) {
+          setErr(`تم حفظ الفاتورة لكن تعذّر ربطها بزاتكا. اضغط «حفظ» مرة أخرى لإعادة المحاولة. (${e?.message ?? "خطأ"})`);
+          return;
+        }
+      }
       onDone();
     } catch (e: any) { setErr(e?.message ?? "فشل"); }
     finally { setBusy(false); }
