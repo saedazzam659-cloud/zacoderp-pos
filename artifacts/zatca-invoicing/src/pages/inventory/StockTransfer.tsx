@@ -21,11 +21,12 @@ import {
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt } from "@/hooks/use-fmt";
+import { useTranslation } from "react-i18next";
 
-const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  draft:     { label: "مسودة",   color: "bg-amber-50 text-amber-700" },
-  posted:    { label: "مُرحَّل",  color: "bg-green-50 text-green-700" },
-  cancelled: { label: "ملغي",    color: "bg-red-50 text-red-600" },
+const STATUS_CONFIG: Record<string, { color: string }> = {
+  draft:     { color: "bg-amber-50 text-amber-700" },
+  posted:    { color: "bg-green-50 text-green-700" },
+  cancelled: { color: "bg-red-50 text-red-600" },
 };
 const EMPTY_FORM = {
   transferNumber: "",
@@ -39,6 +40,9 @@ const EMPTY_FORM = {
 const newLine = () => ({ itemId: "", unitId: "", qty: "1", costPrice: "0", conversionFactor: "1" });
 
 export default function StockTransfer() {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const { fmt, fmtQty } = useFmt();
   const { user, token } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
@@ -93,7 +97,7 @@ export default function StockTransfer() {
         try {
           return await inventoryApi.postTransfer(created.id);
         } catch (e: any) {
-          throw new Error(`تم الحفظ ولكن فشل الترحيل: ${e?.message || e}`);
+          throw new Error(t("stockTransferPage.savedButPostFailed", { error: e?.message || e }));
         }
       }
       return created;
@@ -102,7 +106,7 @@ export default function StockTransfer() {
       invalidate();
       qc.invalidateQueries({ queryKey: ["stock-balance"] });
       reset();
-      toast({ title: "تم إنشاء أمر التحويل وترحيله" });
+      toast({ title: t("stockTransferPage.toastCreated") });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -111,12 +115,12 @@ export default function StockTransfer() {
     onSuccess: () => {
       invalidate();
       qc.invalidateQueries({ queryKey: ["stock-balance"] });
-      toast({ title: "تم ترحيل التحويل وتحديث المخزون" });
+      toast({ title: t("stockTransferPage.toastPosted") });
     },
   });
   const deleteMut = useMutation({
     mutationFn: (id: number) => inventoryApi.deleteTransfer(id),
-    onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); },
+    onSuccess: () => { invalidate(); toast({ title: t("stockTransferPage.toastDeleted") }); },
   });
 
   function reset() {
@@ -189,12 +193,12 @@ export default function StockTransfer() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.fromWarehouseId || !form.toWarehouseId) {
-      toast({ title: "يجب اختيار مخزن المصدر والوجهة", variant: "destructive" });
+      toast({ title: t("stockTransferPage.errSelectWarehouses"), variant: "destructive" });
       return;
     }
     const validLines = lines.filter(l => l.itemId && Number(l.qty) > 0);
     if (!validLines.length) {
-      toast({ title: "يجب إضافة صنف واحد على الأقل", variant: "destructive" });
+      toast({ title: t("stockTransferPage.errAddItem"), variant: "destructive" });
       return;
     }
     createMut.mutate({
@@ -213,16 +217,17 @@ export default function StockTransfer() {
   }
 
   // Get available units for a line's item (from cache or fall back to global)
-  function getLineUnits(line: any): { id: number; nameAr: string; code?: string }[] {
+  function getLineUnits(line: any): { id: number; nameAr?: string | null; nameEn?: string | null; code?: string }[] {
     const cached = itemUnitsMap[line.itemId];
     if (cached && cached.length > 0) {
       return cached.map((u: any) => ({
         id: u.unitId,
-        nameAr: u.unit?.nameAr ?? "—",
+        nameAr: u.unit?.nameAr ?? null,
+        nameEn: u.unit?.nameEn ?? null,
         code: u.unit?.code,
       }));
     }
-    return (units as any[]).map((u: any) => ({ id: u.id, nameAr: u.nameAr, code: u.code }));
+    return (units as any[]).map((u: any) => ({ id: u.id, nameAr: u.nameAr, nameEn: u.nameEn, code: u.code }));
   }
 
   // Check if the current unit has an auto-filled price
@@ -235,20 +240,22 @@ export default function StockTransfer() {
     (t: any) =>
       t.transferNumber.includes(search) ||
       (t.fromWarehouse?.nameAr ?? "").includes(search) ||
-      (t.toWarehouse?.nameAr ?? "").includes(search)
+      (t.fromWarehouse?.nameEn ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (t.toWarehouse?.nameAr ?? "").includes(search) ||
+      (t.toWarehouse?.nameEn ?? "").toLowerCase().includes(search.toLowerCase())
   );
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <ArrowRightLeft className="h-6 w-6 text-primary" />
-            التحويل بين المخازن
+            {t("stockTransferPage.title")}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            نقل الأصناف بين المخازن — اختيار الوحدة يملأ السعر تلقائياً
+            {t("stockTransferPage.subtitle")}
           </p>
         </div>
         <Button
@@ -256,7 +263,7 @@ export default function StockTransfer() {
           className="gap-2"
           onClick={() => { reset(); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}
         >
-          <Plus className="h-4 w-4" />تحويل جديد
+          <Plus className="h-4 w-4" />{t("stockTransferPage.newTransfer")}
         </Button>
       </div>
 
@@ -270,20 +277,20 @@ export default function StockTransfer() {
                 <ArrowRightLeft className="h-4 w-4" />
               </span>
               <div className="min-w-0">
-                <h2 className="font-semibold text-sm sm:text-base text-foreground truncate">أمر تحويل جديد</h2>
-                <p className="text-xs text-muted-foreground truncate mt-0.5">نقل أصناف بين مخزنين مع تحديد الكميات وأسعار التكلفة</p>
+                <h2 className="font-semibold text-sm sm:text-base text-foreground truncate">{t("stockTransferPage.formTitle")}</h2>
+                <p className="text-xs text-muted-foreground truncate mt-0.5">{t("stockTransferPage.formSubtitle")}</p>
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border bg-amber-50 text-amber-700 border-amber-200">
-                مسودة
+                {t("stockTransferPage.status.draft")}
               </span>
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={reset}
                 className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                aria-label="إغلاق"
+                aria-label={t("stockTransferPage.close")}
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -300,33 +307,33 @@ export default function StockTransfer() {
                   <CardHeader className="py-3 px-4 border-b bg-muted/30">
                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
                       <FileText className="h-4 w-4 text-amber-700" />
-                      بيانات التحويل
+                      {t("stockTransferPage.transferDataTitle")}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="pt-4 pb-4">
                     <FormGrid cols={2}>
-                      <Field label="رقم الحركة">
+                      <Field label={t("stockTransferPage.transferNumber")}>
                         <Input
-                          placeholder={seqPeek.loading ? "…" : "TRF-001 (تلقائي)"}
+                          placeholder={seqPeek.loading ? "…" : t("stockTransferPage.transferNumberPlaceholder")}
                           dir="ltr"
                           className={cn("text-left h-9 text-sm", seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
                           value={form.transferNumber}
                           onChange={e => { if (!seqPeek.hasSequence) setForm((p: any) => ({ ...p, transferNumber: e.target.value })); }}
                           readOnly={seqPeek.hasSequence}
-                          title={seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
+                          title={seqPeek.hasSequence ? t("stockTransferPage.sequenceTitle", { code: seqPeek.sequenceCode ?? "" }) : undefined}
                         />
                       </Field>
-                      <Field label="التاريخ" required>
+                      <Field label={t("stockTransferPage.date")} required>
                         <Input type="date" className="h-9 text-sm" value={form.transferDate} onChange={e => setForm((p: any) => ({ ...p, transferDate: e.target.value }))} />
                       </Field>
-                      <Field label="من مخزن" required>
-                        <SearchCombobox items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))} value={form.fromWarehouseId} onValueChange={v => setForm((p: any) => ({ ...p, fromWarehouseId: v }))} placeholder="— اختر مخزن المصدر —" />
+                      <Field label={t("stockTransferPage.fromWarehouse")} required>
+                        <SearchCombobox items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: pickName(w.nameAr, w.nameEn) }))} value={form.fromWarehouseId} onValueChange={v => setForm((p: any) => ({ ...p, fromWarehouseId: v }))} placeholder={t("stockTransferPage.fromWarehousePlaceholder")} />
                       </Field>
-                      <Field label="إلى مخزن" required>
-                        <SearchCombobox items={(warehouses as any[]).filter((w: any) => String(w.id) !== form.fromWarehouseId).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))} value={form.toWarehouseId} onValueChange={v => setForm((p: any) => ({ ...p, toWarehouseId: v }))} placeholder="— اختر مخزن الوجهة —" />
+                      <Field label={t("stockTransferPage.toWarehouse")} required>
+                        <SearchCombobox items={(warehouses as any[]).filter((w: any) => String(w.id) !== form.fromWarehouseId).map((w: any) => ({ value: String(w.id), code: w.code, label: pickName(w.nameAr, w.nameEn) }))} value={form.toWarehouseId} onValueChange={v => setForm((p: any) => ({ ...p, toWarehouseId: v }))} placeholder={t("stockTransferPage.toWarehousePlaceholder")} />
                       </Field>
-                      <Field label="ملاحظات" className="md:col-span-2">
-                        <Input className="h-9 text-sm" placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
+                      <Field label={t("stockTransferPage.notes")} className="md:col-span-2">
+                        <Input className="h-9 text-sm" placeholder={t("stockTransferPage.notesPlaceholder")} value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
                       </Field>
                     </FormGrid>
                   </CardContent>
@@ -338,7 +345,7 @@ export default function StockTransfer() {
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <CardTitle className="text-sm font-semibold flex items-center gap-2 text-blue-900">
                         <Settings2 className="h-4 w-4" />
-                        حسابات القيد المحاسبي
+                        {t("stockTransferPage.accountsTitle")}
                       </CardTitle>
                       <Button
                         type="button"
@@ -371,40 +378,40 @@ export default function StockTransfer() {
                               }),
                             });
                             const j = await r.json();
-                            if (!r.ok) throw new Error(j?.error || "تعذّر الاقتراح");
+                            if (!r.ok) throw new Error(j?.error || t("stockTransferPage.aiErrSuggest"));
                             if (j.fromAccountId && j.toAccountId) {
                               setForm((p: any) => ({
                                 ...p,
                                 fromAccountId: String(j.fromAccountId),
                                 toAccountId:   String(j.toAccountId),
                               }));
-                              setAiReasoning(`${j.reasoning || ""}${j.source === "ai" ? " (اقتراح AI)" : " (اقتراح آلي)"}`);
-                              toast({ title: "تم اقتراح الحسابات", description: `${j.fromAccountLabel} ⇄ ${j.toAccountLabel}` });
+                              setAiReasoning(`${j.reasoning || ""}${j.source === "ai" ? t("stockTransferPage.aiSuggestAi") : t("stockTransferPage.aiSuggestAuto")}`);
+                              toast({ title: t("stockTransferPage.toastAccountsSuggested"), description: `${j.fromAccountLabel} ⇄ ${j.toAccountLabel}` });
                             } else {
-                              throw new Error(j?.reasoning || "لم يتم العثور على حسابات مناسبة");
+                              throw new Error(j?.reasoning || t("stockTransferPage.aiErrNoAccounts"));
                             }
                           } catch (e: any) {
-                            toast({ title: "تعذّر الاقتراح", description: e?.message || "خطأ غير معروف", variant: "destructive" });
+                            toast({ title: t("stockTransferPage.aiErrSuggest"), description: e?.message || t("stockTransferPage.aiErrUnknown"), variant: "destructive" });
                           } finally {
                             setAiLoading(false);
                           }
                         }}
                       >
                         {aiLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                        اقتراح بالذكاء الاصطناعي
+                        {t("stockTransferPage.aiSuggest")}
                       </Button>
                     </div>
                   </CardHeader>
                   <CardContent className="pt-4 pb-4 space-y-3">
                     <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      سيتم إنشاء قيد محاسبي متوازن تلقائياً عند الترحيل: <b className="text-blue-700">مدين</b> = حساب مخزن الوجهة، <b className="text-rose-700">دائن</b> = حساب مخزن المصدر.
+                      {t("stockTransferPage.accountsHintStart")}<b className="text-blue-700">{t("stockTransferPage.debit")}</b>{t("stockTransferPage.accountsHintDest")}<b className="text-rose-700">{t("stockTransferPage.credit")}</b>{t("stockTransferPage.accountsHintSource")}
                     </p>
                     <FormGrid cols={2}>
-                      <Field label="حساب مخزن المصدر (دائن)">
-                        <AccountCombobox value={form.fromAccountId} onValueChange={v => setForm((p: any) => ({ ...p, fromAccountId: v }))} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
+                      <Field label={t("stockTransferPage.fromAccountLabel")}>
+                        <AccountCombobox value={form.fromAccountId} onValueChange={v => setForm((p: any) => ({ ...p, fromAccountId: v }))} placeholder={t("stockTransferPage.selectAccountPlaceholder")} filterTypes={["asset"]} grouped={false} />
                       </Field>
-                      <Field label="حساب مخزن الوجهة (مدين)">
-                        <AccountCombobox value={form.toAccountId} onValueChange={v => setForm((p: any) => ({ ...p, toAccountId: v }))} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
+                      <Field label={t("stockTransferPage.toAccountLabel")}>
+                        <AccountCombobox value={form.toAccountId} onValueChange={v => setForm((p: any) => ({ ...p, toAccountId: v }))} placeholder={t("stockTransferPage.selectAccountPlaceholder")} filterTypes={["asset"]} grouped={false} />
                       </Field>
                     </FormGrid>
                     {aiReasoning && (
@@ -421,7 +428,7 @@ export default function StockTransfer() {
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <CardTitle className="text-sm font-semibold flex items-center gap-2">
                         <Boxes className="h-4 w-4 text-slate-700" />
-                        أصناف التحويل
+                        {t("stockTransferPage.itemsTitle")}
                         {lines.filter(l => l.itemId).length > 0 && (
                           <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary/15 text-primary text-[10px] font-bold">
                             {lines.filter(l => l.itemId).length}
@@ -429,7 +436,7 @@ export default function StockTransfer() {
                         )}
                       </CardTitle>
                       <Button type="button" size="sm" variant="outline" onClick={addLine} className="gap-1 h-7 text-xs">
-                        <Plus className="h-3 w-3" />إضافة صنف
+                        <Plus className="h-3 w-3" />{t("stockTransferPage.addItem")}
                       </Button>
                     </div>
                   </CardHeader>
@@ -437,8 +444,8 @@ export default function StockTransfer() {
                     {/* ── Items grid (سند نمط فواتير المبيعات) ─────────────── */}
                     {(() => {
                       const gridCols = "240px 110px 160px 90px 140px 140px 40px";
-                      const headers = ["الصنف", "كود الصنف", "الوحدة", "الكمية", "سعر التكلفة", "الإجمالي", ""];
-                      const totalLabel = "الإجمالي";
+                      const headers = [t("stockTransferPage.colItem"), t("stockTransferPage.colItemCode"), t("stockTransferPage.colUnit"), t("stockTransferPage.colQty"), t("stockTransferPage.colCostPrice"), t("stockTransferPage.colTotal"), ""];
+                      const totalLabel = t("stockTransferPage.colTotal");
                       return (
                         <div className="rounded-xl border bg-card overflow-x-auto">
                           <div className="min-w-max">
@@ -467,7 +474,7 @@ export default function StockTransfer() {
                                 const lineUnits = getLineUnits(line);
                                 const cf = Number(line.conversionFactor || "1");
                                 const baseQtyHint = cf !== 1
-                                  ? `×${cf} = ${fmtQty(Number(line.qty || 0) * cf)} وحدة أساسية`
+                                  ? t("stockTransferPage.baseQtyHint", { cf, qty: fmtQty(Number(line.qty || 0) * cf) })
                                   : null;
                                 const autoFilled = isAutoFilled(line);
                                 const selectedItem: any = (items as any[]).find(
@@ -492,12 +499,12 @@ export default function StockTransfer() {
                                           .map((it: any) => ({
                                             value: String(it.id),
                                             code: it.code,
-                                            label: it.nameAr,
+                                            label: pickName(it.nameAr, it.nameEn),
                                             labelEn: it.nameEn,
                                           }))}
                                         value={line.itemId}
                                         onValueChange={v => handleItemSelect(i, v)}
-                                        placeholder="— اختر صنف —"
+                                        placeholder={t("stockTransferPage.selectItemPlaceholder")}
                                         className="h-8 text-xs"
                                       />
 
@@ -505,7 +512,7 @@ export default function StockTransfer() {
                                       <Input
                                         className="h-8 text-xs bg-muted/40 font-mono"
                                         readOnly
-                                        placeholder="تلقائي"
+                                        placeholder={t("stockTransferPage.autoPlaceholder")}
                                         value={itemCode}
                                         title={itemCode}
                                       />
@@ -514,12 +521,12 @@ export default function StockTransfer() {
                                       <div>
                                         <SearchCombobox
                                           items={[
-                                            { value: "", label: "وحدة أساسية" },
-                                            ...lineUnits.map(u => ({ value: String(u.id), label: u.nameAr })),
+                                            { value: "", label: t("stockTransferPage.baseUnit") },
+                                            ...lineUnits.map(u => ({ value: String(u.id), label: pickName(u.nameAr, u.nameEn) || "—" })),
                                           ]}
                                           value={line.unitId}
                                           onValueChange={v => handleUnitSelect(i, v)}
-                                          placeholder="وحدة أساسية"
+                                          placeholder={t("stockTransferPage.baseUnit")}
                                           className="h-8 text-xs"
                                         />
                                         {baseQtyHint && (
@@ -556,7 +563,7 @@ export default function StockTransfer() {
                                         />
                                         {autoFilled && (
                                           <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[8px] font-bold text-amber-600 bg-amber-100 rounded px-0.5">
-                                            تلقائي
+                                            {t("stockTransferPage.autoBadge")}
                                           </span>
                                         )}
                                       </div>
@@ -577,8 +584,8 @@ export default function StockTransfer() {
                                         className="h-8 w-8 text-destructive"
                                         onClick={() => removeLine(i)}
                                         disabled={lines.length <= 1}
-                                        aria-label="حذف الصنف"
-                                        title="حذف الصنف"
+                                        aria-label={t("stockTransferPage.deleteItem")}
+                                        title={t("stockTransferPage.deleteItem")}
                                       >
                                         <Trash2 className="h-3.5 w-3.5" />
                                       </Button>
@@ -594,15 +601,15 @@ export default function StockTransfer() {
 
                     {/* ── إجمالي التحويل (تحت الجريد) ─────────────────────── */}
                     <div className="flex items-center justify-end gap-3 px-3 py-2 rounded-lg bg-muted/30 border">
-                      <span className="text-xs font-semibold text-muted-foreground">إجمالي التحويل</span>
+                      <span className="text-xs font-semibold text-muted-foreground">{t("stockTransferPage.totalTransfer")}</span>
                       <span className="text-sm font-bold tabular-nums font-mono text-primary">
-                        {fmt(lines.reduce((s, l) => s + Number(l.qty || 0) * Number(l.costPrice || 0), 0))} ر.س
+                        {fmt(lines.reduce((s, l) => s + Number(l.qty || 0) * Number(l.costPrice || 0), 0))} {t("stockTransferPage.sar")}
                       </span>
                     </div>
 
                     <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
                       <Zap className="h-3 w-3 text-amber-500" />
-                      عند اختيار الصنف تُملأ الوحدة الأساسية والتكلفة تلقائياً من وحدات التسعير
+                      {t("stockTransferPage.autoFillHint")}
                     </p>
                   </CardContent>
                 </Card>
@@ -614,7 +621,7 @@ export default function StockTransfer() {
                   <CardHeader className="py-3 px-4 border-b border-blue-200/60">
                     <CardTitle className="text-sm font-semibold flex items-center gap-2 text-blue-900">
                       <Calculator className="h-4 w-4" />
-                      معاينة القيد المحاسبي
+                      {t("stockTransferPage.jePreviewTitle")}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="pt-3 pb-3">
@@ -623,7 +630,7 @@ export default function StockTransfer() {
                       if (total <= 0) {
                         return (
                           <p className="text-xs text-muted-foreground text-center py-6">
-                            أضف الأصناف لمعاينة القيد المحاسبي
+                            {t("stockTransferPage.jeAddItemsHint")}
                           </p>
                         );
                       }
@@ -631,19 +638,19 @@ export default function StockTransfer() {
                       const toWh:   any = (warehouses as any[]).find((w: any) => String(w.id) === form.toWarehouseId);
                       const fromAcc = form.fromAccountId ? Number(form.fromAccountId) : (fromWh?.accountId ?? null);
                       const toAcc   = form.toAccountId   ? Number(form.toAccountId)   : (toWh?.accountId   ?? null);
-                      const fromSrc = form.fromAccountId ? "اختيار يدوي" : (fromWh?.accountId ? "افتراضي للمخزن" : null);
-                      const toSrc   = form.toAccountId   ? "اختيار يدوي" : (toWh?.accountId   ? "افتراضي للمخزن" : null);
+                      const fromSrc = form.fromAccountId ? t("stockTransferPage.manualSelection") : (fromWh?.accountId ? t("stockTransferPage.warehouseDefault") : null);
+                      const toSrc   = form.toAccountId   ? t("stockTransferPage.manualSelection") : (toWh?.accountId   ? t("stockTransferPage.warehouseDefault") : null);
                       if (!fromAcc || !toAcc) {
                         return (
                           <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 leading-relaxed">
-                            لن يتم إنشاء قيد محاسبي — اختر الحسابين أو اربط المخازن بحسابات افتراضية (سيتم تحديث المخزون فقط).
+                            {t("stockTransferPage.noJeWarning")}
                           </div>
                         );
                       }
                       if (fromAcc === toAcc) {
                         return (
                           <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 leading-relaxed">
-                            الحسابان متطابقان — لن يتم إنشاء قيد (لا أثر محاسبي، يتم تحديث المخزون فقط).
+                            {t("stockTransferPage.sameAccountWarning")}
                           </div>
                         );
                       }
@@ -652,15 +659,15 @@ export default function StockTransfer() {
                           <table className="w-full text-xs">
                             <thead>
                               <tr className="text-blue-800/70 border-b border-blue-200/60">
-                                <th className="text-start pb-1.5 font-medium">الحساب</th>
-                                <th className="text-left pb-1.5 font-medium">مدين</th>
-                                <th className="text-left pb-1.5 font-medium">دائن</th>
+                                <th className="text-start pb-1.5 font-medium">{t("stockTransferPage.colAccount")}</th>
+                                <th className="text-left pb-1.5 font-medium">{t("stockTransferPage.debit")}</th>
+                                <th className="text-left pb-1.5 font-medium">{t("stockTransferPage.credit")}</th>
                               </tr>
                             </thead>
                             <tbody className="font-mono">
                               <tr className="border-b border-blue-200/40">
                                 <td className="py-1.5 text-start text-[11px]">
-                                  مخزن الوجهة
+                                  {t("stockTransferPage.destWarehouse")}
                                   {toSrc && <div className="text-[9px] text-muted-foreground font-sans">{toSrc}</div>}
                                 </td>
                                 <td className="text-left text-green-700 font-semibold tabular-nums">{fmt(total)}</td>
@@ -668,7 +675,7 @@ export default function StockTransfer() {
                               </tr>
                               <tr>
                                 <td className="py-1.5 text-start text-[11px]">
-                                  مخزن المصدر
+                                  {t("stockTransferPage.sourceWarehouse")}
                                   {fromSrc && <div className="text-[9px] text-muted-foreground font-sans">{fromSrc}</div>}
                                 </td>
                                 <td className="text-left text-muted-foreground">—</td>
@@ -677,14 +684,14 @@ export default function StockTransfer() {
                             </tbody>
                             <tfoot className="border-t border-blue-200/60">
                               <tr>
-                                <td className="pt-1.5 text-start text-[10px] font-semibold text-blue-900">الإجمالي</td>
+                                <td className="pt-1.5 text-start text-[10px] font-semibold text-blue-900">{t("stockTransferPage.totalLabel")}</td>
                                 <td className="pt-1.5 text-left text-[11px] font-bold text-blue-900 tabular-nums">{fmt(total)}</td>
                                 <td className="pt-1.5 text-left text-[11px] font-bold text-blue-900 tabular-nums">{fmt(total)}</td>
                               </tr>
                             </tfoot>
                           </table>
                           <p className="text-[10px] text-blue-800/70 mt-2 leading-relaxed">
-                            القيد متوازن — سيتم إنشاؤه تلقائياً عند الترحيل.
+                            {t("stockTransferPage.jeBalancedHint")}
                           </p>
                         </>
                       );
@@ -693,11 +700,11 @@ export default function StockTransfer() {
                 </Card>
 
                 <div className="text-[11px] text-muted-foreground leading-relaxed bg-muted/20 border rounded-lg p-3">
-                  <p className="font-semibold mb-1">اختصارات سريعة</p>
+                  <p className="font-semibold mb-1">{t("stockTransferPage.shortcutsTitle")}</p>
                   <ul className="space-y-0.5 list-disc list-inside">
-                    <li>اختيار الصنف يملأ الوحدة الأساسية والتكلفة تلقائياً</li>
-                    <li>اضغط زر «اقتراح بالذكاء الاصطناعي» لاختيار الحسابات</li>
-                    <li>سيُنشأ قيد محاسبي متوازن تلقائياً عند الترحيل</li>
+                    <li>{t("stockTransferPage.shortcut1")}</li>
+                    <li>{t("stockTransferPage.shortcut2")}</li>
+                    <li>{t("stockTransferPage.shortcut3")}</li>
                   </ul>
                 </div>
               </aside>
@@ -707,7 +714,7 @@ export default function StockTransfer() {
           {/* ─── Bottom action bar ──────────────────────────────────────── */}
           <div className="flex items-center justify-between gap-2 px-5 py-3.5 border-t bg-muted/20 flex-wrap">
             <Button variant="ghost" size="sm" onClick={reset} disabled={createMut.isPending}>
-              إلغاء
+              {t("stockTransferPage.cancel")}
             </Button>
             <Button
               size="sm"
@@ -716,7 +723,7 @@ export default function StockTransfer() {
               disabled={createMut.isPending || !form.fromWarehouseId || !form.toWarehouseId || !form.transferDate}
             >
               {createMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              حفظ كمسودة
+              {t("stockTransferPage.saveDraft")}
             </Button>
           </div>
         </div>
@@ -727,7 +734,7 @@ export default function StockTransfer() {
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
           className="pr-9"
-          placeholder="بحث برقم الحركة أو المخزن..."
+          placeholder={t("stockTransferPage.searchPlaceholder")}
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
@@ -748,12 +755,12 @@ export default function StockTransfer() {
           <thead className="bg-muted/50 border-b">
             <tr>
               <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-8" />
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">رقم الحركة</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">التاريخ</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">من مخزن</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">إلى مخزن</th>
-              <th className="px-4 py-3 text-center font-semibold text-muted-foreground">الحالة</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-32">إجراءات</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("stockTransferPage.colNumber")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("stockTransferPage.colDate")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">{t("stockTransferPage.colFromWarehouse")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">{t("stockTransferPage.colToWarehouse")}</th>
+              <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("stockTransferPage.colStatus")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-32">{t("stockTransferPage.colActions")}</th>
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -770,12 +777,13 @@ export default function StockTransfer() {
                 <tr>
                   <td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">
                     <ArrowRightLeft className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                    لا توجد حركات تحويل
+                    {t("stockTransferPage.emptyState")}
                   </td>
                 </tr>
               )
               : filtered.map((tr: any) => {
                   const st = STATUS_CONFIG[tr.status] ?? STATUS_CONFIG.draft;
+                  const statusKey = STATUS_CONFIG[tr.status] ? tr.status : "draft";
                   return (
                     <Fragment key={tr.id}>
                       <tr data-status={tr.status}
@@ -785,20 +793,20 @@ export default function StockTransfer() {
                           <button
                             onClick={() => setExpandedId(expandedId === tr.id ? null : tr.id)}
                             className="text-muted-foreground hover:text-foreground"
-                            aria-label={expandedId === tr.id ? "طيّ التفاصيل" : "عرض التفاصيل"}
+                            aria-label={expandedId === tr.id ? t("stockTransferPage.collapseDetails") : t("stockTransferPage.expandDetails")}
                             aria-expanded={expandedId === tr.id}
-                            title={expandedId === tr.id ? "طيّ التفاصيل" : "عرض التفاصيل"}
+                            title={expandedId === tr.id ? t("stockTransferPage.collapseDetails") : t("stockTransferPage.expandDetails")}
                           >
                             {expandedId === tr.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                           </button>
                         </td>
                         <td className="px-4 py-3 font-mono text-xs font-bold">{tr.transferNumber}</td>
                         <td className="px-4 py-3 text-muted-foreground">{tr.transferDate}</td>
-                        <td className="px-4 py-3 hidden sm:table-cell">{tr.fromWarehouse?.nameAr ?? "—"}</td>
-                        <td className="px-4 py-3 hidden sm:table-cell">{tr.toWarehouse?.nameAr ?? "—"}</td>
+                        <td className="px-4 py-3 hidden sm:table-cell">{pickName(tr.fromWarehouse?.nameAr, tr.fromWarehouse?.nameEn) || "—"}</td>
+                        <td className="px-4 py-3 hidden sm:table-cell">{pickName(tr.toWarehouse?.nameAr, tr.toWarehouse?.nameEn) || "—"}</td>
                         <td className="px-4 py-3 text-center">
                           <span className={cn("text-[10px] font-medium rounded-full px-2.5 py-1", st.color)}>
-                            {st.label}
+                            {t(`stockTransferPage.status.${statusKey}`)}
                           </span>
                         </td>
                         <td className="px-4 py-3">
@@ -809,17 +817,17 @@ export default function StockTransfer() {
                                   size="sm"
                                   variant="outline"
                                   className="h-7 text-xs gap-1 text-green-700 border-green-200 hover:bg-green-50"
-                                  onClick={() => { if (confirm("ترحيل التحويل وتحديث أرصدة المخزون؟")) postMut.mutate(tr.id); }}
+                                  onClick={() => { if (confirm(t("stockTransferPage.confirmPost"))) postMut.mutate(tr.id); }}
                                 >
-                                  <Send className="h-3 w-3" />ترحيل
+                                  <Send className="h-3 w-3" />{t("stockTransferPage.post")}
                                 </Button>
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   className="h-7 w-7 text-destructive"
-                                  onClick={() => { if (confirm("حذف أمر التحويل؟")) deleteMut.mutate(tr.id); }}
-                                  aria-label="حذف أمر التحويل"
-                                  title="حذف أمر التحويل"
+                                  onClick={() => { if (confirm(t("stockTransferPage.confirmDelete"))) deleteMut.mutate(tr.id); }}
+                                  aria-label={t("stockTransferPage.deleteTransfer")}
+                                  title={t("stockTransferPage.deleteTransfer")}
                                 >
                                   <Trash2 className="h-3 w-3" />
                                 </Button>
@@ -837,23 +845,23 @@ export default function StockTransfer() {
                         <tr className="bg-muted/10">
                           <td colSpan={7} className="px-6 py-4">
                             {!trDetail?.items?.length
-                              ? <p className="text-xs text-muted-foreground">لا توجد أصناف</p>
+                              ? <p className="text-xs text-muted-foreground">{t("stockTransferPage.noItems")}</p>
                               : (
                                 <table className="w-full text-xs">
                                   <thead>
                                     <tr className="text-muted-foreground border-b">
-                                      <th className="text-right pb-2 pr-0">الصنف</th>
-                                      <th className="text-right pb-2">الوحدة</th>
-                                      <th className="text-right pb-2">الكمية</th>
-                                      <th className="text-right pb-2">التكلفة</th>
-                                      <th className="text-right pb-2">الإجمالي</th>
+                                      <th className="text-right pb-2 pr-0">{t("stockTransferPage.colItem")}</th>
+                                      <th className="text-right pb-2">{t("stockTransferPage.colUnit")}</th>
+                                      <th className="text-right pb-2">{t("stockTransferPage.colQty")}</th>
+                                      <th className="text-right pb-2">{t("stockTransferPage.detailColCost")}</th>
+                                      <th className="text-right pb-2">{t("stockTransferPage.colTotal")}</th>
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-border/50">
                                     {trDetail.items.map((l: any) => (
                                       <tr key={l.id}>
-                                        <td className="py-1.5 pr-0">{l.item?.nameAr ?? l.itemId}</td>
-                                        <td className="py-1.5">{l.unit?.nameAr ?? "وحدة أساسية"}</td>
+                                        <td className="py-1.5 pr-0">{pickName(l.item?.nameAr, l.item?.nameEn) || l.itemId}</td>
+                                        <td className="py-1.5">{pickName(l.unit?.nameAr, l.unit?.nameEn) || t("stockTransferPage.baseUnit")}</td>
                                         <td className="py-1.5 tabular-nums">{fmtQty(l.qty)}</td>
                                         <td className="py-1.5 tabular-nums">{fmt(l.costPrice)}</td>
                                         <td className="py-1.5 tabular-nums font-medium">
@@ -874,7 +882,7 @@ export default function StockTransfer() {
         </table>
         {!isLoading && (
           <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">
-            {filtered.length} أمر تحويل
+            {t("stockTransferPage.transferCount", { count: filtered.length })}
           </div>
         )}
       </div>

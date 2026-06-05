@@ -84,6 +84,7 @@ const EMPTY = {
 export default function GoodsDeliveries() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
+  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const fmt = (n: any) => Number(n || 0).toLocaleString(isRtl ? "ar-SA" : "en-US", { minimumFractionDigits: 2 });
   const tr = (k: string, opts?: any): string => t(`warehousePages.goodsDeliveries.${k}`, opts) as string;
   const custName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
@@ -630,8 +631,8 @@ export default function GoodsDeliveries() {
     { key: "journal",  label: tr("listCols.journal"), type: "text", valueOf: (r) => r.journalEntryId ? `JE-${r.journalEntryId}` : "" },
     { key: "linkedInvoice", label: tr("listCols.linkedInvoice"), type: "text", valueOf: (r) => r.linkedInvoiceId ? `SI-${r.linkedInvoiceId}` : "" },
     { key: "status",   label: tr("listCols.status"),  type: "text", valueOf: (r) => statusLabel(r.status) },
-    { key: "createdBy", label: tr("listCols.createdBy", "أنشأه"), type: "text", valueOf: (r) => r.createdByName ?? "" },
-    { key: "postedBy",  label: tr("listCols.postedBy", "رحّله"),  type: "text", valueOf: (r) => r.postedByName ?? "" },
+    { key: "createdBy", label: tr("listCols.createdBy"), type: "text", valueOf: (r) => r.createdByName ?? "" },
+    { key: "postedBy",  label: tr("listCols.postedBy"),  type: "text", valueOf: (r) => r.postedByName ?? "" },
     { key: "_act",     label: tr("listCols.actions"), type: "none", valueOf: () => "" },
   ];
   const DATA_KEYS = COLUMNS.filter(c => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map(c => c.key);
@@ -716,22 +717,23 @@ export default function GoodsDeliveries() {
   const openPrintWindow = (html: string) => {
     const w = window.open("", "_blank", "width=1100,height=800");
     if (!w) {
-      toast({ title: "تم حظر النافذة المنبثقة", description: "الرجاء السماح بفتح النوافذ المنبثقة من المتصفح للطباعة", variant: "destructive" });
+      toast({ title: tr("popupBlocked.title"), description: tr("popupBlocked.desc"), variant: "destructive" });
       return;
     }
     w.document.open(); w.document.write(html); w.document.close();
   };
 
   const buildListHtml = (source: any[] = filteredDeliveries) => {
-    const reportDate = new Date().toLocaleDateString("ar-SA");
+    const reportDate = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-US");
     const sumSub = source.reduce((a, r: any) => a + (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)), 0);
     const sumVat = source.reduce((a, r: any) => a + Number(r.vatAmount ?? 0), 0);
     const sumTot = source.reduce((a, r: any) => a + Number(r.totalAmount ?? 0), 0);
     const logoHtml = safeLogo
       ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;margin:0 auto;" /></div>` : "";
-    const companyHtml = user?.company?.nameAr
-      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;">${escapeHtml(user.company.nameAr)}</div>` : "";
-    return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${escapeHtml(tr("title"))}</title>
+    const companyName = pickName(user?.company?.nameAr, (user?.company as any)?.nameEn);
+    const companyHtml = companyName
+      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;">${escapeHtml(companyName)}</div>` : "";
+    return `<!DOCTYPE html><html dir="${isRtl ? "rtl" : "ltr"}" lang="${isRtl ? "ar" : "en"}"><head><meta charset="utf-8"><title>${escapeHtml(tr("title"))}</title>
 <style>
 @page { size: A4 landscape; margin: 12mm; }
 * { box-sizing: border-box; }
@@ -750,17 +752,17 @@ tfoot td { padding:6px 8px; border:1px solid #1e3a8a; background:#eef2ff; font-w
 .print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
 @media print { .print-btn { display:none; } }
 </style></head><body>
-<button class="print-btn" onclick="window.print()">طباعة</button>
+<button class="print-btn" onclick="window.print()">${escapeHtml(tr("print.printBtn"))}</button>
 <div class="h">${logoHtml}${companyHtml}<h1>${escapeHtml(tr("title"))}</h1>
-<div class="meta">تاريخ التقرير: ${reportDate} — عدد الأذونات: ${source.length}</div></div>
+<div class="meta">${escapeHtml(tr("print.reportMeta", { date: reportDate, count: source.length }))}</div></div>
 <div class="totals">
-  <span>إجمالي المجموع: <b>${sumSub.toFixed(2)}</b></span>
-  <span>إجمالي الضريبة: <b>${sumVat.toFixed(2)}</b></span>
-  <span>الإجمالي: <b>${sumTot.toFixed(2)}</b></span>
+  <span>${escapeHtml(tr("print.totalSubtotal"))} <b>${sumSub.toFixed(2)}</b></span>
+  <span>${escapeHtml(tr("print.totalVat"))} <b>${sumVat.toFixed(2)}</b></span>
+  <span>${escapeHtml(tr("print.totalTotal"))} <b>${sumTot.toFixed(2)}</b></span>
 </div>
 <table><thead><tr>
-  <th>#</th><th>رقم الإذن</th><th>التاريخ</th><th>العميل</th><th>العملة</th>
-  <th>المجموع</th><th>الضريبة</th><th>الإجمالي</th><th>القيد</th><th>الفاتورة</th><th>الحالة</th>
+  <th>#</th><th>${escapeHtml(tr("print.colDocNo"))}</th><th>${escapeHtml(tr("print.colDate"))}</th><th>${escapeHtml(tr("print.colCustomer"))}</th><th>${escapeHtml(tr("print.colCurrency"))}</th>
+  <th>${escapeHtml(tr("print.colSubtotal"))}</th><th>${escapeHtml(tr("print.colVat"))}</th><th>${escapeHtml(tr("print.colTotal"))}</th><th>${escapeHtml(tr("print.colJournal"))}</th><th>${escapeHtml(tr("print.colInvoice"))}</th><th>${escapeHtml(tr("print.colStatus"))}</th>
 </tr></thead><tbody>
 ${source.map((r: any, i: number) => `<tr>
   <td>${i + 1}</td>
@@ -776,7 +778,7 @@ ${source.map((r: any, i: number) => `<tr>
   <td>${escapeHtml(statusLabel(r.status))}</td>
 </tr>`).join("")}
 </tbody><tfoot><tr>
-  <td colspan="5">الإجمالي العام</td>
+  <td colspan="5">${escapeHtml(tr("print.grandTotal"))}</td>
   <td class="num">${sumSub.toFixed(2)}</td>
   <td class="num">${sumVat.toFixed(2)}</td>
   <td class="num">${sumTot.toFixed(2)}</td>
@@ -786,19 +788,20 @@ ${source.map((r: any, i: number) => `<tr>
   };
 
   const buildBulkHtml = (docs: any[]) => {
-    const reportDate = new Date().toLocaleDateString("ar-SA");
+    const reportDate = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-US");
     const grandSub = docs.reduce((a, d: any) => a + (Number(d.totalAmount ?? 0) - Number(d.vatAmount ?? 0)), 0);
     const grandVat = docs.reduce((a, d: any) => a + Number(d.vatAmount ?? 0), 0);
     const grandTot = docs.reduce((a, d: any) => a + Number(d.totalAmount ?? 0), 0);
     const logoHtml = safeLogo
       ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:48px;max-width:160px;object-fit:contain;display:block;margin:0 auto;" /></div>` : "";
-    const companyHtml = user?.company?.nameAr
-      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;text-align:center;">${escapeHtml(user.company.nameAr)}</div>` : "";
+    const companyName = pickName(user?.company?.nameAr, (user?.company as any)?.nameEn);
+    const companyHtml = companyName
+      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;text-align:center;">${escapeHtml(companyName)}</div>` : "";
     const sections = docs.map((d: any) => {
       const lns: any[] = Array.isArray(d.lines) ? d.lines : [];
       const docNo  = d.docNumber ?? `GDN-${d.id}`;
       const linesHtml = lns.length === 0
-        ? `<tr><td colspan="6" style="text-align:center;color:#6b7280;padding:14px;">لا توجد بنود لهذا الإذن.</td></tr>`
+        ? `<tr><td colspan="6" style="text-align:center;color:#6b7280;padding:14px;">${escapeHtml(tr("print.noLines"))}</td></tr>`
         : lns.map((l: any, i: number) => {
             const itemLabel = l.itemName ?? `#${l.itemId ?? ""}`;
             const qty = Number(l.qty ?? 0);
@@ -816,28 +819,28 @@ ${source.map((r: any, i: number) => `<tr>
           }).join("");
       return `<section class="doc">
         <div class="doc-head">
-          <span class="badge b-doc">رقم الإذن: ${escapeHtml(docNo)}</span>
-          <span class="badge b-date">التاريخ: ${escapeHtml(d.deliveryDate ?? "")}</span>
-          <span class="badge b-cust">العميل: ${escapeHtml(custMap[d.customerId] ?? "—")}</span>
+          <span class="badge b-doc">${escapeHtml(tr("print.docNoLabel"))}${escapeHtml(docNo)}</span>
+          <span class="badge b-date">${escapeHtml(tr("print.dateLabel"))}${escapeHtml(d.deliveryDate ?? "")}</span>
+          <span class="badge b-cust">${escapeHtml(tr("print.customerLabel"))}${escapeHtml(custMap[d.customerId] ?? "—")}</span>
           <span class="badge b-status s-${escapeHtml(d.status)}">${escapeHtml(statusLabel(d.status))}</span>
         </div>
         ${d.notes ? `<div class="desc">${escapeHtml(d.notes)}</div>` : ""}
         <table>
           <thead><tr>
-            <th style="width:30px;">#</th><th>الصنف</th>
-            <th style="width:70px;">الكمية</th><th style="width:80px;">السعر</th>
-            <th style="width:60px;">الضريبة</th><th style="width:90px;">الإجمالي</th>
+            <th style="width:30px;">#</th><th>${escapeHtml(tr("print.colItem"))}</th>
+            <th style="width:70px;">${escapeHtml(tr("print.colQty"))}</th><th style="width:80px;">${escapeHtml(tr("print.colPrice"))}</th>
+            <th style="width:60px;">${escapeHtml(tr("print.colVat"))}</th><th style="width:90px;">${escapeHtml(tr("print.colTotal"))}</th>
           </tr></thead>
           <tbody>${linesHtml}</tbody>
           <tfoot><tr>
-            <td colspan="4" style="text-align:left;">المجموع</td>
+            <td colspan="4" style="text-align:left;">${escapeHtml(tr("print.sumLabel"))}</td>
             <td class="num">${Number(d.vatAmount ?? 0).toFixed(2)}</td>
             <td class="num">${Number(d.totalAmount ?? 0).toFixed(2)}</td>
           </tr></tfoot>
         </table>
       </section>`;
     }).join("");
-    return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>طباعة أذونات التسليم المحدّدة</title>
+    return `<!DOCTYPE html><html dir="${isRtl ? "rtl" : "ltr"}" lang="${isRtl ? "ar" : "en"}"><head><meta charset="utf-8"><title>${escapeHtml(tr("print.bulkTitle"))}</title>
 <style>
 @page { size: A4 portrait; margin: 12mm; }
 * { box-sizing: border-box; }
@@ -865,13 +868,13 @@ tfoot td { padding:5px 6px; border:1px solid #1e3a8a; background:#eef2ff; font-w
 .print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
 @media print { .print-btn { display:none; } }
 </style></head><body>
-<button class="print-btn" onclick="window.print()">طباعة</button>
-<div class="h">${logoHtml}${companyHtml}<h1>أذونات التسليم المحدّدة</h1>
-<div class="meta">تاريخ التقرير: ${reportDate} — عدد الأذونات: ${docs.length}</div></div>
+<button class="print-btn" onclick="window.print()">${escapeHtml(tr("print.printBtn"))}</button>
+<div class="h">${logoHtml}${companyHtml}<h1>${escapeHtml(tr("print.bulkHeading"))}</h1>
+<div class="meta">${escapeHtml(tr("print.reportMeta", { date: reportDate, count: docs.length }))}</div></div>
 <div class="grand">
-  <span>إجمالي المجموع: <b>${grandSub.toFixed(2)}</b></span>
-  <span>إجمالي الضريبة: <b>${grandVat.toFixed(2)}</b></span>
-  <span>الإجمالي العام: <b>${grandTot.toFixed(2)}</b></span>
+  <span>${escapeHtml(tr("print.totalSubtotal"))} <b>${grandSub.toFixed(2)}</b></span>
+  <span>${escapeHtml(tr("print.totalVat"))} <b>${grandVat.toFixed(2)}</b></span>
+  <span>${escapeHtml(tr("print.grandTotalColon"))} <b>${grandTot.toFixed(2)}</b></span>
 </div>
 ${sections}
 <script>setTimeout(()=>window.print(),350);</script></body></html>`;
@@ -880,23 +883,23 @@ ${sections}
   const handleExportPDF = () => openPrintWindow(buildListHtml());
   const handlePrint    = () => openPrintWindow(buildListHtml());
   const handleExportExcel = () => {
-    if (filteredDeliveries.length === 0) { toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" }); return; }
+    if (filteredDeliveries.length === 0) { toast({ title: tr("toasts.noDataExport"), variant: "destructive" }); return; }
     const rows = filteredDeliveries.map((r: any) => ({
-      "رقم الإذن": r.docNumber ?? `GDN-${r.id}`,
-      "التاريخ": r.deliveryDate ?? "",
-      "العميل": custMap[r.customerId] ?? "",
-      "العملة": r.currencyCode ?? "",
-      "المجموع": (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)).toFixed(2),
-      "الضريبة": Number(r.vatAmount ?? 0).toFixed(2),
-      "الإجمالي": Number(r.totalAmount ?? 0).toFixed(2),
-      "القيد": r.journalEntryId ? `JE-${r.journalEntryId}` : "",
-      "الفاتورة": r.linkedInvoiceId ? `SI-${r.linkedInvoiceId}` : "",
-      "الحالة": statusLabel(r.status),
+      [tr("excelCols.docNo")]: r.docNumber ?? `GDN-${r.id}`,
+      [tr("excelCols.date")]: r.deliveryDate ?? "",
+      [tr("excelCols.customer")]: custMap[r.customerId] ?? "",
+      [tr("excelCols.currency")]: r.currencyCode ?? "",
+      [tr("excelCols.subtotal")]: (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)).toFixed(2),
+      [tr("excelCols.vat")]: Number(r.vatAmount ?? 0).toFixed(2),
+      [tr("excelCols.total")]: Number(r.totalAmount ?? 0).toFixed(2),
+      [tr("excelCols.journal")]: r.journalEntryId ? `JE-${r.journalEntryId}` : "",
+      [tr("excelCols.invoice")]: r.linkedInvoiceId ? `SI-${r.linkedInvoiceId}` : "",
+      [tr("excelCols.status")]: statusLabel(r.status),
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }];
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "أذونات التسليم");
+    XLSX.utils.book_append_sheet(wb, ws, tr("print.sheetName"));
     XLSX.writeFile(wb, `goods-deliveries-${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
@@ -908,7 +911,7 @@ ${sections}
     const failed: Array<{ id: number; error: string }> = [];
     for (const id of ids) {
       try { await perId(id); ok++; }
-      catch (e: any) { failed.push({ id, error: e?.message ?? "خطأ" }); }
+      catch (e: any) { failed.push({ id, error: e?.message ?? t("common.error") }); }
     }
     return { ok, failed };
   }
@@ -932,13 +935,13 @@ ${sections}
       );
       openPrintWindow(buildBulkHtml(docs));
       if (failed > 0) {
-        toast({ title: "تعذّر تحميل تفاصيل بعض الأذونات", description: `تمت طباعة ${docs.length} مع ${failed} بدون بنود تفصيلية`, variant: "destructive" });
+        toast({ title: tr("toasts.bulkPrintPartialTitle"), description: tr("toasts.bulkPrintPartialDesc", { printed: docs.length, failed }), variant: "destructive" });
       }
     } finally { setBulkPrintBusy(false); }
   }
 
   function exportCsv() {
-    if (filteredDeliveries.length === 0) { toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" }); return; }
+    if (filteredDeliveries.length === 0) { toast({ title: tr("toasts.noDataExport"), variant: "destructive" }); return; }
     const header = ["#", ...visibleColumns.filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
     const rows = filteredDeliveries.map((r: any, i: number) => [
       i + 1,
@@ -950,7 +953,7 @@ ${sections}
         }),
     ]);
     downloadCsv(`goods-deliveries-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
-    toast({ title: "تم تصدير ملف CSV بنجاح" });
+    toast({ title: tr("toasts.csvExported") });
   }
 
   const allFilteredIds: number[] = useMemo(
@@ -967,7 +970,7 @@ ${sections}
 
   async function bulkPost() {
     const ids = selectedPostable.map((r) => Number(r.id));
-    if (ids.length === 0) { toast({ title: "لا توجد مسوّدات ضمن المحدَّد", variant: "destructive" }); return; }
+    if (ids.length === 0) { toast({ title: tr("bulk.noDraftsSelected"), variant: "destructive" }); return; }
     setBulkBusy(true);
     try {
       const { ok, failed } = await bulkRun(ids, async (id) => {
@@ -975,16 +978,16 @@ ${sections}
         if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
       });
       qc.invalidateQueries({ queryKey: ["goods-deliveries"] });
-      if (failed.length === 0) toast({ title: `تم ترحيل ${ok} إذن` });
-      else toast({ title: `ترحيل: ${ok} نجح، ${failed.length} فشل`, description: failed.slice(0, 3).map(f => f.error).join("\n"), variant: "destructive" });
+      if (failed.length === 0) toast({ title: tr("bulk.postedCount", { count: ok }) });
+      else toast({ title: tr("bulk.postResult", { ok, failed: failed.length }), description: failed.slice(0, 3).map(f => f.error).join("\n"), variant: "destructive" });
       clearSelection();
     } finally { setBulkBusy(false); }
   }
 
   async function bulkUnpost() {
     const ids = selectedUnpostable.map((r) => Number(r.id));
-    if (ids.length === 0) { toast({ title: "لا توجد أذونات مرحَّلة ضمن المحدَّد", variant: "destructive" }); return; }
-    if (!window.confirm(`إلغاء ترحيل ${ids.length} إذن؟`)) return;
+    if (ids.length === 0) { toast({ title: tr("bulk.noPostedSelected"), variant: "destructive" }); return; }
+    if (!window.confirm(tr("bulk.confirmUnpost", { count: ids.length }))) return;
     setBulkBusy(true);
     try {
       const { ok, failed } = await bulkRun(ids, async (id) => {
@@ -992,16 +995,16 @@ ${sections}
         if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
       });
       qc.invalidateQueries({ queryKey: ["goods-deliveries"] });
-      if (failed.length === 0) toast({ title: `تم إلغاء ترحيل ${ok} إذن` });
-      else toast({ title: `إلغاء: ${ok} نجح، ${failed.length} فشل`, description: failed.slice(0, 3).map(f => f.error).join("\n"), variant: "destructive" });
+      if (failed.length === 0) toast({ title: tr("bulk.unpostedCount", { count: ok }) });
+      else toast({ title: tr("bulk.unpostResult", { ok, failed: failed.length }), description: failed.slice(0, 3).map(f => f.error).join("\n"), variant: "destructive" });
       clearSelection();
     } finally { setBulkBusy(false); }
   }
 
   async function bulkDelete() {
     const ids = selectedDeletable.map((r) => Number(r.id));
-    if (ids.length === 0) { toast({ title: "لا يمكن حذف الأذونات المرحَّلة", variant: "destructive" }); return; }
-    if (!window.confirm(`حذف ${ids.length} إذن نهائياً؟ لا يمكن التراجع.`)) return;
+    if (ids.length === 0) { toast({ title: tr("bulk.cannotDeletePosted"), variant: "destructive" }); return; }
+    if (!window.confirm(tr("bulk.confirmDelete", { count: ids.length }))) return;
     setBulkBusy(true);
     try {
       const { ok, failed } = await bulkRun(ids, async (id) => {
@@ -1009,8 +1012,8 @@ ${sections}
         if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
       });
       qc.invalidateQueries({ queryKey: ["goods-deliveries"] });
-      if (failed.length === 0) toast({ title: `تم حذف ${ok} إذن` });
-      else toast({ title: `حذف: ${ok} نجح، ${failed.length} فشل`, description: failed.slice(0, 3).map(f => f.error).join("\n"), variant: "destructive" });
+      if (failed.length === 0) toast({ title: tr("bulk.deletedCount", { count: ok }) });
+      else toast({ title: tr("bulk.deleteResult", { ok, failed: failed.length }), description: failed.slice(0, 3).map(f => f.error).join("\n"), variant: "destructive" });
       clearSelection();
     } finally { setBulkBusy(false); }
   }
@@ -1047,7 +1050,7 @@ ${sections}
             <div className="w-px bg-slate-200" />
             <Button variant="ghost" size="sm" onClick={handlePrint}
               className="h-9 rounded-none gap-1.5 text-slate-700 hover:bg-slate-50 hover:text-slate-700 px-3">
-              <Printer className="h-4 w-4" /> طباعة
+              <Printer className="h-4 w-4" /> {t("common.print")}
             </Button>
           </div>
         </div>
@@ -1060,7 +1063,7 @@ ${sections}
           : null;
         const customerNameById = (id: any) => {
           const s = (customers as any[]).find((s: any) => Number(s.id) === Number(id));
-          return s ? (s.nameAr ?? s.nameEn ?? `#${s.id}`) : "—";
+          return s ? (pickName(s.nameAr, s.nameEn) || `#${s.id}`) : "—";
         };
         return (
         <>
@@ -1138,7 +1141,7 @@ ${sections}
                       </SelectContent>
                     </Select>
                   </Field>
-                  <Field label="المستودع">
+                  <Field label={tr("warehouse")}>
                     <SearchCombobox
                       items={(warehouses as any[]).map((w: any) => ({
                         value: String(w.id),
@@ -1146,18 +1149,18 @@ ${sections}
                       }))}
                       value={headerWarehouseId}
                       onValueChange={applyHeaderWarehouse}
-                      placeholder="اختر المستودع"
+                      placeholder={tr("warehousePh")}
                     />
                   </Field>
                   {taxCatalog.length > 0 && (
-                    <Field label="الضريبة">
+                    <Field label={tr("tax")}>
                       <SearchCombobox
                         items={taxComboItems}
                         value={headerTaxId}
                         onValueChange={applyHeaderTax}
-                        placeholder="اختر الضريبة"
+                        placeholder={tr("taxPh")}
                       />
-                      <p className="text-[10px] text-muted-foreground">تُطبَّق نسبتها تلقائياً على كل سطور الأصناف.</p>
+                      <p className="text-[10px] text-muted-foreground">{tr("taxHint")}</p>
                     </Field>
                   )}
                   <Field label={tr("currency")}>
@@ -1205,7 +1208,7 @@ ${sections}
                           <SearchCombobox items={itemComboItems} value={l.itemId}
                             onValueChange={v => selectItem(l._id, v)}
                             placeholder={tr("selectItemCombo")}
-                            searchPlaceholder="ابحث بالكود أو الاسم..." />
+                            searchPlaceholder={tr("itemSearchPh")} />
                         ) : (
                           <Input className="h-8 text-xs" placeholder={tr("itemNamePh")} value={l.itemName}
                             onChange={e => updateLine(l._id, "itemName", e.target.value)} />
@@ -1337,7 +1340,7 @@ ${sections}
         <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)} dir={isRtl ? "rtl" : "ltr"}>
           <div className={cn("flex-1 text-sm font-bold tracking-wide flex items-center gap-2", theme.text)}>
             <PackageMinus className="h-4 w-4 opacity-90" />
-            جرد أذونات التسليم
+            {tr("gridTitle")}
           </div>
           <div className="flex items-center gap-1.5">
             <HeaderColorPicker layout={layout} isRtl={isRtl} />
@@ -1346,14 +1349,14 @@ ${sections}
             <Button type="button" size="sm" variant="ghost"
               className={cn("h-7 px-2 text-xs gap-1", theme.btn)} onClick={exportCsv}>
               <FileSpreadsheet className="h-3.5 w-3.5" />
-              تصدير CSV
+              {tr("exportCsvBtn")}
             </Button>
           </div>
         </div>
 
         <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs" dir={isRtl ? "rtl" : "ltr"}>
           <Input
-            placeholder="بحث (مستند، عميل، عملة)…"
+            placeholder={tr("tableSearchPh")}
             value={tableSearch}
             onChange={(e) => setTableSearch(e.target.value)}
             className="h-7 text-xs w-56"
@@ -1374,14 +1377,14 @@ ${sections}
           {(Object.values(colFilters).some((v) => v) || Object.values(colAdv).some(isAdvActive)) && (
             <Button type="button" size="sm" variant="ghost"
               className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50"
-              onClick={clearAllColFilters} title="مسح فلاتر الأعمدة">
+              onClick={clearAllColFilters} title={tr("clearColFilters")}>
               <X className="h-3.5 w-3.5 me-1" />
-              مسح فلاتر الأعمدة
+              {tr("clearColFilters")}
             </Button>
           )}
           <div className="flex-1" />
           <span className="text-slate-700 font-medium">
-            {filteredDeliveries.length} إذن
+            {filteredDeliveries.length} {tr("unit")}
             {filteredDeliveries.length !== deliveries.length && <span className="text-slate-400"> / {deliveries.length}</span>}
           </span>
         </div>
@@ -1390,57 +1393,57 @@ ${sections}
             className="h-7 px-3 text-xs gap-1 bg-blue-700 hover:bg-blue-600 text-white"
             onClick={handleBulkPrint}
             disabled={layout.selected.size === 0 || bulkPrintBusy}
-            title={`طباعة (${layout.selected.size})`}>
+            title={tr("bulk.printTitle", { count: layout.selected.size })}>
             {bulkPrintBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
-            طباعة ({layout.selected.size})
+            {t("common.print")} ({layout.selected.size})
           </Button>
           <Button type="button" size="sm"
             className="h-7 px-3 text-xs gap-1 bg-emerald-700 hover:bg-emerald-600 text-white"
             onClick={bulkPost}
             disabled={bulkBusy || selectedPostable.length === 0}
-            title={selectedPostable.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : `ترحيل ${selectedPostable.length} إذن`}>
+            title={selectedPostable.length === 0 ? tr("bulk.noDraftsSelected") : tr("bulk.postTitle", { count: selectedPostable.length })}>
             {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-            ترحيل ({selectedPostable.length})
+            {t("common.post")} ({selectedPostable.length})
           </Button>
           <Button type="button" size="sm" variant="outline"
             className="h-7 px-3 text-xs gap-1 border-blue-400 text-blue-800 hover:bg-blue-50"
             onClick={() => {
-              if (layout.selected.size !== 1) { toast({ title: "حدِّد إذنًا واحدًا فقط للتعديل", variant: "destructive" }); return; }
+              if (layout.selected.size !== 1) { toast({ title: tr("bulk.selectOneEdit"), variant: "destructive" }); return; }
               startEdit(Number(Array.from(layout.selected)[0]));
             }}
             disabled={bulkBusy || layout.selected.size !== 1}
-            title={layout.selected.size === 1 ? "فتح/تعديل الإذن المحدَّد" : "حدِّد إذنًا واحدًا فقط"}>
+            title={layout.selected.size === 1 ? tr("bulk.openEditSelected") : tr("bulk.selectOneOnly")}>
             <Pencil className="h-3.5 w-3.5" />
-            تعديل
+            {t("common.edit")}
           </Button>
           <Button type="button" size="sm" variant="outline"
             className="h-7 px-3 text-xs gap-1 border-blue-400 text-blue-800 hover:bg-blue-50"
             onClick={() => {
-              if (layout.selected.size !== 1) { toast({ title: "حدِّد إذنًا واحدًا فقط للنسخ", variant: "destructive" }); return; }
+              if (layout.selected.size !== 1) { toast({ title: tr("bulk.selectOneDuplicate"), variant: "destructive" }); return; }
               duplicateDelivery(Number(Array.from(layout.selected)[0]));
             }}
             disabled={bulkBusy || layout.selected.size !== 1}
-            title={layout.selected.size === 1 ? "إنشاء نسخة مماثلة من الإذن المحدَّد" : "حدِّد إذنًا واحدًا فقط"}>
+            title={layout.selected.size === 1 ? tr("bulk.duplicateSelected") : tr("bulk.selectOneOnly")}>
             <Copy className="h-3.5 w-3.5" />
-            نسخة مماثلة
+            {t("common.duplicate")}
           </Button>
           <Button type="button" size="sm" variant="outline"
             className="h-7 px-3 text-xs gap-1 border-amber-400 text-amber-800 hover:bg-amber-50"
             onClick={bulkUnpost}
             disabled={bulkBusy || selectedUnpostable.length === 0}
-            title={selectedUnpostable.length === 0 ? "لا توجد أذونات مرحَّلة ضمن المحدَّد" : `إلغاء ترحيل ${selectedUnpostable.length} إذن`}>
+            title={selectedUnpostable.length === 0 ? tr("bulk.noPostedSelected") : tr("bulk.unpostTitle", { count: selectedUnpostable.length })}>
             <Undo2 className="h-3.5 w-3.5" />
-            إلغاء الترحيل ({selectedUnpostable.length})
+            {tr("bulk.unpostBtn")} ({selectedUnpostable.length})
           </Button>
           <Button type="button" size="sm"
             className="h-7 px-3 text-xs gap-1 bg-rose-600 hover:bg-rose-500 text-white"
             onClick={bulkDelete}
             disabled={bulkBusy || selectedDeletable.length === 0}
             title={selectedDeletable.length === 0
-              ? "لا يمكن حذف الأذونات المرحَّلة"
-              : `حذف ${selectedDeletable.length} إذن`}>
+              ? tr("bulk.cannotDeletePosted")
+              : tr("bulk.deleteTitle", { count: selectedDeletable.length })}>
             <Trash2 className="h-3.5 w-3.5" />
-            حذف ({selectedDeletable.length})
+            {t("common.delete")} ({selectedDeletable.length})
           </Button>
         </AuditGridBulkBar>
       </div>
@@ -1461,7 +1464,7 @@ ${sections}
             <div className="p-12 text-center text-muted-foreground text-sm">{tr("loading")}</div>
           ) : filteredDeliveries.length === 0 ? (
             <div className="p-12 text-center text-muted-foreground text-sm">
-              {deliveries.length === 0 ? tr("noDeliveries") : "لا توجد أذونات ضمن التصفية الحالية"}
+              {deliveries.length === 0 ? tr("noDeliveries") : tr("noFilterResults")}
             </div>
           ) : (
             <table ref={tableRef} className="w-full text-[11px] border-collapse" dir={isRtl ? "rtl" : "ltr"}>
@@ -1524,7 +1527,7 @@ ${sections}
                               <RowSelectCheckbox
                                 checked={sel}
                                 onToggle={() => toggleRow(Number(r.id))}
-                                ariaLabel={`تحديد الإذن ${r.docNumber ?? `GDN-${r.id}`}`}
+                                ariaLabel={tr("selectRowAria", { doc: r.docNumber ?? `GDN-${r.id}` })}
                               />
                             </td>
                           );
@@ -1605,7 +1608,7 @@ ${sections}
                                 {editable && (
                                   <Button type="button" size="icon" variant="ghost" className="h-6 w-6 text-rose-700 hover:bg-rose-50"
                                     onClick={() => { if (window.confirm(tr("confirmDelete"))) deleteMut.mutate(Number(r.id)); }}
-                                    title={"حذف"}>
+                                    title={t("common.delete")}>
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </Button>
                                 )}
@@ -1637,7 +1640,7 @@ ${sections}
                     if (col.key === "subtotal") return <td key={col.key} className="px-2 py-1.5 border border-slate-300 text-end font-mono">{fmt(totals.subtotal)}</td>;
                     if (col.key === "vat")      return <td key={col.key} className="px-2 py-1.5 border border-slate-300 text-end font-mono">{fmt(totals.vat)}</td>;
                     if (col.key === "total")    return <td key={col.key} className="px-2 py-1.5 border border-slate-300 text-end font-mono">{fmt(totals.total)}</td>;
-                    if (col.key === "doc")      return <td key={col.key} className="px-2 py-1.5 border border-slate-300 text-start">الإجمالي</td>;
+                    if (col.key === "doc")      return <td key={col.key} className="px-2 py-1.5 border border-slate-300 text-start">{t("common.total")}</td>;
                     return <td key={col.key} className="px-2 py-1.5 border border-slate-300" />;
                   })}
                 </tr>
@@ -1651,7 +1654,7 @@ ${sections}
           pageStart={pageStart}
           pageEnd={pageEnd}
           totalPages={totalPages}
-          unitLabel="إذن"
+          unitLabel={tr("unit")}
         />
       </div>
 

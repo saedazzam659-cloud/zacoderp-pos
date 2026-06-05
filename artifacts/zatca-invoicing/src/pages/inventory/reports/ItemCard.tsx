@@ -19,33 +19,25 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
 }
 
-const TX_LABEL: Record<string, string> = {
-  transfer_out: "تحويل خارج",
-  transfer_in:  "تحويل داخل",
-  adjustment:   "تسوية",
-  count_adj:    "تعديل جرد",
-  sale:         "مبيعات",
-  purchase:     "مشتريات",
-  opening:      "رصيد افتتاحي",
-  return_in:    "مرتجع وارد",
-  return_out:   "مرتجع صادر",
-};
-
-const EXPORT_COLS = [
-  { key: "txDate",       header: "التاريخ",        width: 14 },
-  { key: "txType",       header: "نوع الحركة",     width: 18 },
-  { key: "warehouseName", header: "المخزن",         width: 22 },
-  { key: "qtyIn",        header: "وارد",            width: 12 },
-  { key: "qtyOut",       header: "صادر",            width: 12 },
-  { key: "balance",      header: "الرصيد التراكمي", width: 16 },
-  { key: "costPrice",    header: "سعر التكلفة",     width: 14 },
-  { key: "totalCost",    header: "إجمالي التكلفة",  width: 16 },
-];
-
 export default function ItemCard() {
   const { fmt, fmtQty } = useFmt();
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
+  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
+
+  const txLabel = (tx: string) => t(`inventoryReports.itemCard.txType.${tx}`, { defaultValue: tx });
+
+  const EXPORT_COLS = [
+    { key: "txDate",       header: t("inventoryReports.itemCard.cols.date"),             width: 14 },
+    { key: "txType",       header: t("inventoryReports.itemCard.cols.txType"),           width: 18 },
+    { key: "warehouseName", header: t("inventoryReports.common.warehouse"),              width: 22 },
+    { key: "qtyIn",        header: t("inventoryReports.itemCard.cols.qtyIn"),            width: 12 },
+    { key: "qtyOut",       header: t("inventoryReports.itemCard.cols.qtyOut"),           width: 12 },
+    { key: "balance",      header: t("inventoryReports.itemCard.cols.cumulativeBalance"), width: 16 },
+    { key: "costPrice",    header: t("inventoryReports.itemCard.cols.costPrice"),        width: 14 },
+    { key: "totalCost",    header: t("inventoryReports.itemCard.cols.totalCost"),        width: 16 },
+  ];
+
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
 
@@ -66,7 +58,7 @@ export default function ItemCard() {
   });
   const customerOptions = useMemo(
     () => [
-      { value: "", label: "كل العملاء" },
+      { value: "", label: t("inventoryReports.itemCard.allCustomers") },
       ...(customers as any[]).map((c: any) => ({
         value: String(c.id),
         label: isRtl ? (c.nameAr ?? c.nameEn ?? `#${c.id}`) : (c.nameEn ?? c.nameAr ?? `#${c.id}`),
@@ -119,8 +111,8 @@ export default function ItemCard() {
 
   const exportRows = augmented.map((r: any) => ({
     txDate:        r.txDate,
-    txType:        TX_LABEL[r.txType] ?? r.txType,
-    warehouseName: r.warehouse?.nameAr ?? "—",
+    txType:        txLabel(r.txType),
+    warehouseName: pickName(r.warehouse?.nameAr, r.warehouse?.nameEn) || "—",
     qtyIn:         r.qtyIn ? fmtQty(r.qtyIn) : "",
     qtyOut:        r.qtyOut ? fmtQty(r.qtyOut) : "",
     balance:       fmtQty(r.running),
@@ -132,7 +124,7 @@ export default function ItemCard() {
   // last page only via the centralized exporter).
   const exportTotalsRow = (applied.itemId && !isLoading && augmented.length > 0)
     ? {
-        txDate:        "الإجمالي",
+        txDate:        t("inventoryReports.itemCard.grandTotal"),
         txType:        "",
         warehouseName: "",
         qtyIn:         fmtQty(totals.in),
@@ -144,20 +136,20 @@ export default function ItemCard() {
     : null;
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><IdCard className="h-6 w-6 text-primary" />كارت الصنف</h1>
-          <p className="text-muted-foreground text-sm mt-1">سجل حركة صنف واحد مع الرصيد التراكمي بعد كل عملية</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><IdCard className="h-6 w-6 text-primary" />{t("inventoryReports.itemCard.title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{t("inventoryReports.itemCard.subtitle")}</p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`كارت-صنف-${item?.code ?? "all"}-${applied.from}-${applied.to}${selectedCustomerName ? `-${selectedCustomerName}` : ""}`}
-          title="كارت الصنف"
+          filename={`${t("inventoryReports.itemCard.exportFilenamePrefix")}-${item?.code ?? "all"}-${applied.from}-${applied.to}${selectedCustomerName ? `-${selectedCustomerName}` : ""}`}
+          title={t("inventoryReports.itemCard.title")}
           subtitle={item
-            ? `${item.code} - ${item.nameAr}  |  ${applied.from} → ${applied.to}${selectedCustomerName ? `  |  العميل: ${selectedCustomerName}` : ""}`
-            : "اختر صنفاً"}
+            ? `${item.code} - ${pickName(item.nameAr, item.nameEn) || item.nameAr}  |  ${applied.from} → ${applied.to}${selectedCustomerName ? `  |  ${t("inventoryReports.itemCard.customer")}: ${selectedCustomerName}` : ""}`
+            : t("inventoryReports.itemCard.selectItemPrompt")}
           totalsRow={exportTotalsRow}
         />
       </div>
@@ -166,53 +158,53 @@ export default function ItemCard() {
       <div className="rounded-xl border bg-card p-4">
         <div className="flex items-center gap-2 mb-4">
           <Filter className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">معطيات الكارت</h2>
+          <h2 className="text-sm font-semibold">{t("inventoryReports.itemCard.cardParams")}</h2>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div className="space-y-1.5 sm:col-span-2">
-            <Label>الصنف <span className="text-red-500">*</span></Label>
+            <Label>{t("inventoryReports.common.item")} <span className="text-red-500">*</span></Label>
             <SearchCombobox
-              items={(items as any[]).map((it: any) => ({ value: String(it.id), code: it.code, label: it.nameAr, labelEn: it.nameEn }))}
+              items={(items as any[]).map((it: any) => ({ value: String(it.id), code: it.code, label: pickName(it.nameAr, it.nameEn), labelEn: it.nameEn }))}
               value={filters.itemId}
               onValueChange={v => setFilters(p => ({ ...p, itemId: v }))}
-              placeholder="اختر الصنف"
+              placeholder={t("inventoryReports.common.selectItem")}
             />
           </div>
           <div className="space-y-1.5">
-            <Label>من تاريخ</Label>
+            <Label>{t("inventoryReports.common.from")}</Label>
             <Input type="date" value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
-            <Label>إلى تاريخ</Label>
+            <Label>{t("inventoryReports.common.to")}</Label>
             <Input type="date" value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
-            <Label>المخزن</Label>
+            <Label>{t("inventoryReports.common.warehouse")}</Label>
             <SearchCombobox
-              items={[{ value: "", label: "كل المخازن" }, ...(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))]}
+              items={[{ value: "", label: t("inventoryReports.common.allWarehouses") }, ...(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: pickName(w.nameAr, w.nameEn) }))]}
               value={filters.warehouseId}
               onValueChange={v => setFilters(p => ({ ...p, warehouseId: v }))}
-              placeholder="كل المخازن"
+              placeholder={t("inventoryReports.common.allWarehouses")}
             />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
-            <Label>العميل</Label>
+            <Label>{t("inventoryReports.itemCard.customer")}</Label>
             <SearchCombobox
               items={customerOptions}
               value={filters.customerId}
               onValueChange={v => setFilters(p => ({ ...p, customerId: v }))}
-              placeholder="كل العملاء"
+              placeholder={t("inventoryReports.itemCard.allCustomers")}
             />
           </div>
         </div>
         {filters.customerId && (
           <p className="text-xs text-muted-foreground mt-3">
-            ℹ️ عند اختيار عميل، يتم عرض حركات البيع والمرتجعات الخاصة بهذا العميل فقط (يتم استبعاد المشتريات والتحويلات والتسويات).
+            {t("inventoryReports.itemCard.customerNote")}
           </p>
         )}
         <div className="flex justify-end mt-4">
           <Button size="sm" onClick={() => setApplied({ ...filters })} disabled={!filters.itemId} className="gap-2">
-            <Search className="h-3.5 w-3.5" />عرض الكارت
+            <Search className="h-3.5 w-3.5" />{t("inventoryReports.itemCard.showCard")}
           </Button>
         </div>
       </div>
@@ -221,15 +213,15 @@ export default function ItemCard() {
       {applied.itemId && item && (
         <div className="grid grid-cols-3 gap-4">
           <div className="rounded-xl border bg-green-50 border-green-200 p-4">
-            <p className="text-xs text-green-700">إجمالي الوارد</p>
+            <p className="text-xs text-green-700">{t("inventoryReports.itemCard.totalIn")}</p>
             <p className="text-2xl font-bold text-green-700 tabular-nums mt-1">{fmtQty(totals.in)}</p>
           </div>
           <div className="rounded-xl border bg-red-50 border-red-200 p-4">
-            <p className="text-xs text-red-700">إجمالي الصادر</p>
+            <p className="text-xs text-red-700">{t("inventoryReports.itemCard.totalOut")}</p>
             <p className="text-2xl font-bold text-red-700 tabular-nums mt-1">{fmtQty(totals.out)}</p>
           </div>
           <div className="rounded-xl border bg-primary/5 border-primary/10 p-4">
-            <p className="text-xs text-muted-foreground">الرصيد النهائي</p>
+            <p className="text-xs text-muted-foreground">{t("inventoryReports.itemCard.finalBalance")}</p>
             <p className="text-2xl font-bold tabular-nums mt-1">{fmtQty(augmented.length ? augmented[augmented.length - 1].running : 0)}</p>
           </div>
         </div>
@@ -242,26 +234,26 @@ export default function ItemCard() {
             <table className="w-full text-sm min-w-[700px]">
               <thead className="bg-muted/50 border-b">
                 <tr>
-                  <th className="px-4 py-3 text-right font-semibold text-muted-foreground">التاريخ</th>
-                  <th className="px-4 py-3 text-right font-semibold text-muted-foreground">نوع الحركة</th>
-                  <th className="px-4 py-3 text-right font-semibold text-muted-foreground">المخزن</th>
-                  <th className="px-4 py-3 text-center font-semibold text-green-700">وارد</th>
-                  <th className="px-4 py-3 text-center font-semibold text-red-700">صادر</th>
-                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground">الرصيد</th>
-                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">سعر التكلفة</th>
-                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">إجمالي التكلفة</th>
+                  <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.date")}</th>
+                  <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.txType")}</th>
+                  <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("inventoryReports.common.warehouse")}</th>
+                  <th className="px-4 py-3 text-center font-semibold text-green-700">{t("inventoryReports.itemCard.cols.qtyIn")}</th>
+                  <th className="px-4 py-3 text-center font-semibold text-red-700">{t("inventoryReports.itemCard.cols.qtyOut")}</th>
+                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.itemCard.cols.balance")}</th>
+                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">{t("inventoryReports.itemCard.cols.costPrice")}</th>
+                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">{t("inventoryReports.itemCard.cols.totalCost")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {isLoading
                   ? [...Array(6)].map((_, i) => <tr key={i}><td colSpan={8} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                   : augmented.length === 0
-                  ? <tr><td colSpan={8} className="py-12 text-center text-muted-foreground"><IdCard className="h-8 w-8 mx-auto mb-2 opacity-30" />لا توجد حركات لهذا الصنف في الفترة المحددة</td></tr>
+                  ? <tr><td colSpan={8} className="py-12 text-center text-muted-foreground"><IdCard className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("inventoryReports.itemCard.noMoves")}</td></tr>
                   : augmented.map((r: any) => (
                       <tr key={r.id} className="hover:bg-muted/20">
                         <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{r.txDate}</td>
-                        <td className="px-4 py-3 text-xs">{TX_LABEL[r.txType] ?? r.txType}</td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">{r.warehouse?.nameAr ?? "—"}</td>
+                        <td className="px-4 py-3 text-xs">{txLabel(r.txType)}</td>
+                        <td className="px-4 py-3 text-xs text-muted-foreground">{pickName(r.warehouse?.nameAr, r.warehouse?.nameEn) || "—"}</td>
                         <td className={cn("px-4 py-3 text-center tabular-nums text-sm font-bold", r.qtyIn ? "text-green-600" : "text-muted-foreground/30")}>
                           {r.qtyIn ? fmtQty(r.qtyIn) : "—"}
                         </td>
@@ -277,7 +269,7 @@ export default function ItemCard() {
               {!isLoading && augmented.length > 0 && (
                 <tfoot className="bg-muted/30 border-t">
                   <tr>
-                    <td colSpan={3} className="px-4 py-3 text-xs font-semibold text-muted-foreground">الإجمالي</td>
+                    <td colSpan={3} className="px-4 py-3 text-xs font-semibold text-muted-foreground">{t("inventoryReports.itemCard.grandTotal")}</td>
                     <td className="px-4 py-3 text-center font-bold tabular-nums text-green-700">{fmtQty(totals.in)}</td>
                     <td className="px-4 py-3 text-center font-bold tabular-nums text-red-700">{fmtQty(totals.out)}</td>
                     <td className="px-4 py-3 text-center font-bold tabular-nums">{fmtQty(augmented[augmented.length - 1].running)}</td>
@@ -291,7 +283,7 @@ export default function ItemCard() {
       ) : (
         <div className="rounded-xl border bg-card p-12 text-center text-muted-foreground">
           <IdCard className="h-10 w-10 mx-auto mb-3 opacity-30" />
-          <p>اختر صنفاً من القائمة لعرض كارت حركته</p>
+          <p>{t("inventoryReports.itemCard.emptyState")}</p>
         </div>
       )}
     </div>

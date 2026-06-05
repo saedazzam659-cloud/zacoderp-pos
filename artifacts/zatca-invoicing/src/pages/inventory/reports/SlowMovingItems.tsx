@@ -8,19 +8,24 @@ import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
 import { Hourglass, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
-
-const EXPORT_COLS = [
-  { key: "itemCode",     header: "كود الصنف",       width: 16 },
-  { key: "itemNameAr",   header: "اسم الصنف",       width: 30 },
-  { key: "groupName",    header: "المجموعة",         width: 20 },
-  { key: "qty",          header: "الرصيد الحالي",    width: 16 },
-  { key: "value",        header: "القيمة",            width: 16 },
-  { key: "lastMoveDate", header: "آخر حركة",         width: 16 },
-  { key: "daysIdle",     header: "عدد أيام السكون", width: 16 },
-];
+import { useTranslation } from "react-i18next";
 
 export default function SlowMovingItems() {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const { fmt, fmtQty } = useFmt();
+
+  const EXPORT_COLS = [
+    { key: "itemCode",     header: t("inventoryReports.slowMoving.exportItemCode"),       width: 16 },
+    { key: "itemNameAr",   header: t("inventoryReports.slowMoving.exportItemName"),       width: 30 },
+    { key: "groupName",    header: t("inventoryReports.slowMoving.exportGroup"),          width: 20 },
+    { key: "qty",          header: t("inventoryReports.slowMoving.exportCurrentBalance"), width: 16 },
+    { key: "value",        header: t("inventoryReports.slowMoving.exportValue"),          width: 16 },
+    { key: "lastMoveDate", header: t("inventoryReports.slowMoving.exportLastMove"),       width: 16 },
+    { key: "daysIdle",     header: t("inventoryReports.slowMoving.exportDaysIdle"),       width: 16 },
+  ];
+
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const [days, setDays] = useState("90");
@@ -76,7 +81,7 @@ export default function SlowMovingItems() {
     })
     .filter((r: any) => r.qty > 0 && r.daysIdle >= threshold)
     .filter((r: any) =>
-      !search || r.nameAr?.includes(search) || r.code?.includes(search)
+      !search || (r.nameAr ?? "").includes(search) || (r.nameEn ?? "").toLowerCase().includes(search.toLowerCase()) || r.code?.includes(search)
     )
     .sort((a, b) => b.daysIdle - a.daysIdle);
 
@@ -84,56 +89,56 @@ export default function SlowMovingItems() {
 
   const exportRows = enriched.map((r: any) => ({
     itemCode:     r.code ?? "",
-    itemNameAr:   r.nameAr ?? "",
-    groupName:    r.group?.nameAr ?? "",
+    itemNameAr:   pickName(r.nameAr, r.nameEn),
+    groupName:    pickName(r.group?.nameAr, r.group?.nameEn),
     qty:          fmtQty(r.qty),
     value:        fmt(r.value),
-    lastMoveDate: r.lastMoveDate ?? "لم يتحرك أبداً",
-    daysIdle:     r.daysIdle === 9999 ? "—" : `${r.daysIdle} يوم`,
+    lastMoveDate: r.lastMoveDate ?? t("inventoryReports.slowMoving.neverMoved"),
+    daysIdle:     r.daysIdle === 9999 ? "—" : t("inventoryReports.slowMoving.dayUnit", { days: r.daysIdle }),
   }));
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Hourglass className="h-6 w-6 text-rose-500" />الأصناف الراكدة</h1>
-          <p className="text-muted-foreground text-sm mt-1">أصناف لها رصيد ولم تشهد حركة خلال الفترة المحددة</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Hourglass className="h-6 w-6 text-rose-500" />{t("inventoryReports.slowMoving.title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{t("inventoryReports.slowMoving.subtitle")}</p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`أصناف-راكدة-${days}يوم-${new Date().toISOString().slice(0, 10)}`}
-          title="تقرير الأصناف الراكدة"
-          subtitle={`بدون حركة لمدة ${threshold} يوم أو أكثر`}
+          filename={`${t("inventoryReports.slowMoving.exportFilename", { days })}-${new Date().toISOString().slice(0, 10)}`}
+          title={t("inventoryReports.slowMoving.exportTitle")}
+          subtitle={t("inventoryReports.slowMoving.exportSubtitle", { days: threshold })}
         />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border bg-rose-50 border-rose-200 p-4">
-          <p className="text-xs text-rose-700">عدد الأصناف الراكدة</p>
+          <p className="text-xs text-rose-700">{t("inventoryReports.slowMoving.kpiCount")}</p>
           <p className="text-2xl font-bold text-rose-700 tabular-nums mt-1">{enriched.length}</p>
         </div>
         <div className="rounded-xl border bg-amber-50 border-amber-200 p-4">
-          <p className="text-xs text-amber-700">القيمة المجمدة</p>
+          <p className="text-xs text-amber-700">{t("inventoryReports.slowMoving.kpiLockedValue")}</p>
           <p className="text-2xl font-bold text-amber-700 tabular-nums mt-1">{fmt(totalLockedValue)}</p>
-          <p className="text-xs text-amber-600">ريال سعودي</p>
+          <p className="text-xs text-amber-600">{t("inventoryReports.slowMoving.sar")}</p>
         </div>
         <div className="rounded-xl border bg-card p-4">
-          <p className="text-xs text-muted-foreground">حد السكون (يوم)</p>
+          <p className="text-xs text-muted-foreground">{t("inventoryReports.slowMoving.kpiThreshold")}</p>
           <p className="text-2xl font-bold tabular-nums mt-1">{threshold}</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="space-y-1.5">
-          <Label>عدد أيام السكون كحد أدنى</Label>
+          <Label>{t("inventoryReports.slowMoving.minDaysLabel")}</Label>
           <Input type="number" min={1} value={days} onChange={e => setDays(e.target.value)} placeholder="90" />
         </div>
         <div className="space-y-1.5">
-          <Label>بحث</Label>
+          <Label>{t("inventoryReports.common.search")}</Label>
           <div className="relative">
             <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input className="pr-9" placeholder="بحث بالكود أو الاسم..." value={search} onChange={e => setSearch(e.target.value)} />
+            <Input className="pr-9" placeholder={t("inventoryReports.slowMoving.searchPh")} value={search} onChange={e => setSearch(e.target.value)} />
           </div>
         </div>
       </div>
@@ -143,12 +148,12 @@ export default function SlowMovingItems() {
           <table className="w-full text-sm min-w-[700px]">
             <thead className="bg-muted/50 border-b">
               <tr>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">الصنف</th>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">المجموعة</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">الرصيد</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">القيمة</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">آخر حركة</th>
-                <th className="px-4 py-3 text-center font-semibold text-rose-700">أيام السكون</th>
+                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("inventoryReports.common.item")}</th>
+                <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">{t("inventoryReports.slowMoving.colGroup")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.slowMoving.colBalance")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.slowMoving.colValue")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">{t("inventoryReports.slowMoving.colLastMove")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-rose-700">{t("inventoryReports.slowMoving.colDaysIdle")}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -157,21 +162,21 @@ export default function SlowMovingItems() {
                 : enriched.length === 0
                 ? <tr><td colSpan={6} className="py-12 text-center text-muted-foreground">
                     <Hourglass className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                    لا توجد أصناف راكدة بهذا المعيار
+                    {t("inventoryReports.slowMoving.noItems")}
                   </td></tr>
                 : enriched.map((r: any) => (
                     <tr key={r.id} className="hover:bg-muted/20">
                       <td className="px-4 py-3">
-                        <p className="font-medium text-sm">{r.nameAr ?? "—"}</p>
+                        <p className="font-medium text-sm">{pickName(r.nameAr, r.nameEn) || "—"}</p>
                         <p className="text-[10px] text-muted-foreground font-mono">{r.code}</p>
                       </td>
-                      <td className="px-4 py-3 hidden sm:table-cell text-xs text-muted-foreground">{r.group?.nameAr ?? "—"}</td>
+                      <td className="px-4 py-3 hidden sm:table-cell text-xs text-muted-foreground">{pickName(r.group?.nameAr, r.group?.nameEn) || "—"}</td>
                       <td className="px-4 py-3 text-center tabular-nums text-sm">{fmtQty(r.qty)}</td>
                       <td className="px-4 py-3 text-center tabular-nums text-sm font-semibold">{fmt(r.value)}</td>
-                      <td className="px-4 py-3 text-center hidden md:table-cell text-xs text-muted-foreground">{r.lastMoveDate ?? "لم يتحرك"}</td>
+                      <td className="px-4 py-3 text-center hidden md:table-cell text-xs text-muted-foreground">{r.lastMoveDate ?? t("inventoryReports.slowMoving.notMoved")}</td>
                       <td className="px-4 py-3 text-center">
                         <span className={`text-xs tabular-nums font-bold rounded-full px-2 py-0.5 ${r.daysIdle >= 365 ? "bg-rose-100 text-rose-700" : r.daysIdle >= 180 ? "bg-amber-100 text-amber-700" : "bg-yellow-50 text-yellow-700"}`}>
-                          {r.daysIdle === 9999 ? "لم يتحرك" : `${r.daysIdle} يوم`}
+                          {r.daysIdle === 9999 ? t("inventoryReports.slowMoving.notMoved") : t("inventoryReports.slowMoving.dayUnit", { days: r.daysIdle })}
                         </span>
                       </td>
                     </tr>

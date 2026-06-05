@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import {
   BarChart2, BookOpen, IdCard, AlertTriangle, Wallet, Hourglass, ChevronLeft, Bell,
@@ -7,85 +8,77 @@ import {
 const REPORTS = [
   {
     href: "/inventory/reports/stock-balance",
-    title: "رصيد المخزون",
-    desc: "أرصدة الأصناف التفصيلية بالكميات والقيم حسب المخزن",
+    key: "stockBalance",
     icon: BarChart2,
     color: "from-emerald-50 to-emerald-100/40 text-emerald-700 border-emerald-200",
   },
   {
     href: "/inventory/reports/stock-ledger",
-    title: "دفتر حركة المخزون",
-    desc: "سجل تفصيلي لكل حركات الإدخال والإخراج خلال الفترة",
+    key: "stockLedger",
     icon: BookOpen,
     color: "from-sky-50 to-sky-100/40 text-sky-700 border-sky-200",
   },
   {
     href: "/inventory/reports/item-card",
-    title: "كارت الصنف",
-    desc: "حركة صنف واحد مع الرصيد التراكمي بعد كل عملية",
+    key: "itemCard",
     icon: IdCard,
     color: "from-indigo-50 to-indigo-100/40 text-indigo-700 border-indigo-200",
   },
   {
     href: "/inventory/reports/low-stock",
-    title: "الأصناف منخفضة المخزون",
-    desc: "الأصناف التي وصلت لحد إعادة الطلب أو نفدت",
+    key: "lowStock",
     icon: AlertTriangle,
     color: "from-amber-50 to-amber-100/40 text-amber-700 border-amber-200",
   },
   {
     href: "/inventory/reports/valuation",
-    title: "تقييم المخزون حسب المخزن",
-    desc: "إجمالي قيمة المخزون مجمعة لكل مخزن مع نسبة المساهمة",
+    key: "valuation",
     icon: Wallet,
     color: "from-purple-50 to-purple-100/40 text-purple-700 border-purple-200",
   },
   {
     href: "/inventory/reports/slow-moving",
-    title: "الأصناف الراكدة",
-    desc: "الأصناف التي لم تشهد حركة خلال فترة محددة",
+    key: "slowMoving",
     icon: Hourglass,
     color: "from-rose-50 to-rose-100/40 text-rose-700 border-rose-200",
   },
   {
     href: "/inventory/alerts",
-    title: "تنبيهات الأصناف الذكية",
-    desc: "أصناف تحت حد إعادة الطلب وأصناف لم تُبَع منذ مدة طويلة في عرض موحَّد",
+    key: "smartAlerts",
     icon: Bell,
     color: "from-orange-50 to-orange-100/40 text-orange-700 border-orange-200",
   },
   {
     href: "/inventory/reports/free-quantities",
-    title: "تقرير الكميات المجانية",
-    desc: "إجمالي الكميات المجانية المُسلَّمة والمرتجعة لكل صنف خلال الفترة مع الصافي",
+    key: "freeQuantities",
     icon: Gift,
     color: "from-pink-50 to-pink-100/40 text-pink-700 border-pink-200",
   },
   {
     href: "/inventory/reports/item-sales-valuation",
-    title: "تقرير مبيعات الأصناف (بالتكلفة / البيع)",
-    desc: "إجمالي مبيعات الصنف بسعر التكلفة أو بسعر البيع (شامل/بدون ضريبة) مع المرتجع والصافي",
+    key: "itemSalesValuation",
     icon: ReceiptText,
     color: "from-teal-50 to-teal-100/40 text-teal-700 border-teal-200",
   },
   {
     href: "/inventory/reports/stocktake",
-    title: "جرد المخازن",
-    desc: "كشف جرد فعلي للأصناف مقابل أرصدة النظام مع حساب الفروقات بالكميات والقيم، قابل للطباعة والتوقيع",
+    key: "stocktake",
     icon: ClipboardCheck,
     color: "from-violet-50 to-violet-100/40 text-violet-700 border-violet-200",
   },
 ];
 
 export default function InventoryReportsHub() {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
-          <BarChart2 className="h-6 w-6 text-primary" /> تقارير المخازن
+          <BarChart2 className="h-6 w-6 text-primary" /> {t("inventoryReports.hub.title")}
         </h1>
         <p className="text-muted-foreground text-sm mt-1">
-          تقارير شاملة لإدارة ومراقبة المخزون مع إمكانية التصدير لـ Excel و PDF والطباعة
+          {t("inventoryReports.hub.subtitle")}
         </p>
       </div>
 
@@ -95,10 +88,10 @@ export default function InventoryReportsHub() {
             <a className={`group rounded-xl border bg-gradient-to-br ${r.color} p-5 transition-all hover:shadow-md hover:-translate-y-0.5 cursor-pointer block`}>
               <div className="flex items-start justify-between mb-3">
                 <r.icon className="h-7 w-7" />
-                <ChevronLeft className="h-4 w-4 opacity-40 group-hover:opacity-100 group-hover:-translate-x-1 transition-all" />
+                <ChevronLeft className={`h-4 w-4 opacity-40 group-hover:opacity-100 transition-all ${isRtl ? "group-hover:-translate-x-1" : "rotate-180 group-hover:translate-x-1"}`} />
               </div>
-              <h3 className="text-base font-bold mb-1.5">{r.title}</h3>
-              <p className="text-xs opacity-80 leading-relaxed">{r.desc}</p>
+              <h3 className="text-base font-bold mb-1.5">{t(`inventoryReports.hub.${r.key}Title`)}</h3>
+              <p className="text-xs opacity-80 leading-relaxed">{t(`inventoryReports.hub.${r.key}Desc`)}</p>
             </a>
           </Link>
         ))}

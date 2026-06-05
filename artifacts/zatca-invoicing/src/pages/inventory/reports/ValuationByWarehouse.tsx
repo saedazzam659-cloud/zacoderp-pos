@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -6,18 +7,21 @@ import ExportButtons from "@/components/ExportButtons";
 import { Wallet } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
-const EXPORT_COLS = [
-  { key: "warehouseCode", header: "كود المخزن",     width: 14 },
-  { key: "warehouseName", header: "المخزن",           width: 28 },
-  { key: "itemCount",     header: "عدد الأصناف",     width: 14 },
-  { key: "totalQty",      header: "إجمالي الكمية",    width: 16 },
-  { key: "totalValue",    header: "قيمة المخزون",     width: 18 },
-  { key: "share",         header: "نسبة المساهمة",    width: 16 },
-];
-
 export default function ValuationByWarehouse() {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const { fmt, fmtQty, fmtVal } = useFmt();
   const { user } = useAuth();
+
+  const EXPORT_COLS = [
+    { key: "warehouseCode", header: t("inventoryReports.valuation.cols.warehouseCode"), width: 14 },
+    { key: "warehouseName", header: t("inventoryReports.common.warehouse"),             width: 28 },
+    { key: "itemCount",     header: t("inventoryReports.valuation.cols.itemCount"),      width: 14 },
+    { key: "totalQty",      header: t("inventoryReports.valuation.cols.totalQty"),       width: 16 },
+    { key: "totalValue",    header: t("inventoryReports.valuation.cols.totalValue"),     width: 18 },
+    { key: "share",         header: t("inventoryReports.valuation.cols.share"),          width: 16 },
+  ];
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
 
   const { data: warehouses = [] } = useQuery({
@@ -55,7 +59,7 @@ export default function ValuationByWarehouse() {
 
   const exportRows = rows.map((r: any) => ({
     warehouseCode: r.code ?? "",
-    warehouseName: r.nameAr ?? "",
+    warehouseName: pickName(r.nameAr, r.nameEn),
     itemCount:     r.itemCount,
     totalQty:      fmtQty(r.totalQty),
     totalValue:    fmt(r.totalValue),
@@ -63,33 +67,33 @@ export default function ValuationByWarehouse() {
   }));
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Wallet className="h-6 w-6 text-primary" />تقييم المخزون حسب المخزن</h1>
-          <p className="text-muted-foreground text-sm mt-1">إجمالي قيمة المخزون لكل مخزن مع نسبة المساهمة في القيمة الإجمالية</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Wallet className="h-6 w-6 text-primary" />{t("inventoryReports.valuation.title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{t("inventoryReports.valuation.subtitle")}</p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`تقييم-المخزون-${new Date().toISOString().slice(0, 10)}`}
-          title="تقرير تقييم المخزون حسب المخزن"
-          subtitle={`القيمة الإجمالية: ${fmt(grandValue)} ر.س`}
+          filename={`${t("inventoryReports.valuation.exportFilename")}-${new Date().toISOString().slice(0, 10)}`}
+          title={t("inventoryReports.valuation.exportTitle")}
+          subtitle={t("inventoryReports.valuation.exportSubtitle", { value: fmt(grandValue) })}
         />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border bg-primary/5 border-primary/10 p-4">
-          <p className="text-xs text-muted-foreground">إجمالي قيمة المخزون</p>
+          <p className="text-xs text-muted-foreground">{t("inventoryReports.valuation.cards.totalValue")}</p>
           <p className="text-2xl font-bold tabular-nums mt-1">{fmtVal(grandValue)}</p>
-          <p className="text-xs text-muted-foreground">ريال سعودي</p>
+          <p className="text-xs text-muted-foreground">{t("inventoryReports.valuation.cards.sar")}</p>
         </div>
         <div className="rounded-xl border bg-card p-4">
-          <p className="text-xs text-muted-foreground">إجمالي الكميات</p>
+          <p className="text-xs text-muted-foreground">{t("inventoryReports.valuation.cards.totalQty")}</p>
           <p className="text-2xl font-bold tabular-nums mt-1">{fmtQty(grandQty)}</p>
         </div>
         <div className="rounded-xl border bg-card p-4">
-          <p className="text-xs text-muted-foreground">عدد الأصناف بالمخازن</p>
+          <p className="text-xs text-muted-foreground">{t("inventoryReports.valuation.cards.itemsInWarehouses")}</p>
           <p className="text-2xl font-bold tabular-nums mt-1">{grandItems}</p>
         </div>
       </div>
@@ -99,24 +103,24 @@ export default function ValuationByWarehouse() {
           <table className="w-full text-sm min-w-[700px]">
             <thead className="bg-muted/50 border-b">
               <tr>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">المخزن</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">عدد الأصناف</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">إجمالي الكمية</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">قيمة المخزون</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">نسبة المساهمة</th>
+                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("inventoryReports.common.warehouse")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.valuation.cols.itemCount")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.valuation.cols.totalQty")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.valuation.cols.totalValue")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("inventoryReports.valuation.cols.share")}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {isLoading
                 ? [...Array(4)].map((_, i) => <tr key={i}><td colSpan={5} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                 : rows.length === 0
-                ? <tr><td colSpan={5} className="py-12 text-center text-muted-foreground"><Wallet className="h-8 w-8 mx-auto mb-2 opacity-30" />لا توجد مخازن</td></tr>
+                ? <tr><td colSpan={5} className="py-12 text-center text-muted-foreground"><Wallet className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("inventoryReports.valuation.empty")}</td></tr>
                 : rows.map((r: any) => {
                     const share = grandValue > 0 ? (r.totalValue / grandValue) * 100 : 0;
                     return (
                       <tr key={r.id} className="hover:bg-muted/20">
                         <td className="px-4 py-3">
-                          <p className="font-medium text-sm">{r.nameAr ?? "—"}</p>
+                          <p className="font-medium text-sm">{pickName(r.nameAr, r.nameEn) || "—"}</p>
                           <p className="text-[10px] text-muted-foreground font-mono">{r.code}</p>
                         </td>
                         <td className="px-4 py-3 text-center tabular-nums text-sm">{r.itemCount}</td>
@@ -137,7 +141,7 @@ export default function ValuationByWarehouse() {
             {!isLoading && rows.length > 0 && (
               <tfoot className="bg-muted/30 border-t">
                 <tr>
-                  <td className="px-4 py-3 text-xs font-bold">الإجمالي</td>
+                  <td className="px-4 py-3 text-xs font-bold">{t("inventoryReports.valuation.grandTotal")}</td>
                   <td className="px-4 py-3 text-center font-bold tabular-nums">{grandItems}</td>
                   <td className="px-4 py-3 text-center font-bold tabular-nums">{fmtQty(grandQty)}</td>
                   <td className="px-4 py-3 text-center font-bold tabular-nums">{fmt(grandValue)}</td>

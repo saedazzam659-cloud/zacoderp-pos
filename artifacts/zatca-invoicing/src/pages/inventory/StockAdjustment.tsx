@@ -21,12 +21,21 @@ import {
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt } from "@/hooks/use-fmt";
+import { useTranslation } from "react-i18next";
 
-const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  draft:  { label: "مسودة",  color: "bg-amber-50 text-amber-700" },
-  posted: { label: "مُرحَّل", color: "bg-green-50 text-green-700" },
+const STATUS_CONFIG: Record<string, { color: string }> = {
+  draft:  { color: "bg-amber-50 text-amber-700" },
+  posted: { color: "bg-green-50 text-green-700" },
 };
 const REASONS = ["تعديل كمي", "تلف وخسارة", "فاقد وكسر", "إدخال أول مرة", "مكافآت وهبات", "أخرى"];
+const REASON_KEYS: Record<string, string> = {
+  "تعديل كمي": "reasonQuantityAdjustment",
+  "تلف وخسارة": "reasonDamageLoss",
+  "فاقد وكسر": "reasonShortageBreakage",
+  "إدخال أول مرة": "reasonInitialEntry",
+  "مكافآت وهبات": "reasonRewardsGifts",
+  "أخرى": "reasonOther",
+};
 
 const EMPTY_FORM = {
   adjustmentNumber: "",
@@ -41,6 +50,11 @@ const EMPTY_FORM = {
 const newLine = () => ({ itemId: "", unitId: "", qty: "0", costPrice: "0", notes: "", conversionFactor: "1" });
 
 export default function StockAdjustment() {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
+  const reasonLabel = (r: string) =>
+    REASON_KEYS[r] ? t(`stockAdjustmentPage.${REASON_KEYS[r]}`) : r;
   const { fmt, fmtQty } = useFmt();
   const { user, token } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
@@ -95,7 +109,7 @@ export default function StockAdjustment() {
         try {
           return await inventoryApi.postAdjustment(created.id);
         } catch (e: any) {
-          throw new Error(`تم الحفظ ولكن فشل الترحيل: ${e?.message || e}`);
+          throw new Error(t("stockAdjustmentPage.savedButPostFailed", { error: e?.message || e }));
         }
       }
       return created;
@@ -104,7 +118,7 @@ export default function StockAdjustment() {
       invalidate();
       qc.invalidateQueries({ queryKey: ["stock-balance"] });
       reset();
-      toast({ title: "تم إنشاء التسوية وترحيلها" });
+      toast({ title: t("stockAdjustmentPage.toastCreated") });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -113,12 +127,12 @@ export default function StockAdjustment() {
     onSuccess: () => {
       invalidate();
       qc.invalidateQueries({ queryKey: ["stock-balance"] });
-      toast({ title: "تم ترحيل التسوية وتحديث المخزون" });
+      toast({ title: t("stockAdjustmentPage.toastPosted") });
     },
   });
   const deleteMut = useMutation({
     mutationFn: inventoryApi.deleteAdjustment,
-    onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); },
+    onSuccess: () => { invalidate(); toast({ title: t("stockAdjustmentPage.toastDeleted") }); },
   });
 
   function reset() {
@@ -189,12 +203,12 @@ export default function StockAdjustment() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.warehouseId) {
-      toast({ title: "يجب اختيار المخزن", variant: "destructive" });
+      toast({ title: t("stockAdjustmentPage.mustSelectWarehouse"), variant: "destructive" });
       return;
     }
     const validLines = lines.filter(l => l.itemId);
     if (!validLines.length) {
-      toast({ title: "أضف صنفاً واحداً على الأقل", variant: "destructive" });
+      toast({ title: t("stockAdjustmentPage.addAtLeastOneItem"), variant: "destructive" });
       return;
     }
     createMut.mutate({
@@ -218,11 +232,11 @@ export default function StockAdjustment() {
     if (cached && cached.length > 0) {
       return cached.map((u: any) => ({
         id: u.unitId,
-        nameAr: u.unit?.nameAr ?? "—",
+        nameAr: pickName(u.unit?.nameAr, u.unit?.nameEn) || "—",
         code: u.unit?.code,
       }));
     }
-    return (units as any[]).map((u: any) => ({ id: u.id, nameAr: u.nameAr, code: u.code }));
+    return (units as any[]).map((u: any) => ({ id: u.id, nameAr: pickName(u.nameAr, u.nameEn), code: u.code }));
   }
 
   function isAutoFilled(line: any): boolean {
@@ -231,20 +245,20 @@ export default function StockAdjustment() {
   }
 
   const filtered = (adjustments as any[]).filter(
-    (a: any) => a.adjustmentNumber.includes(search) || (a.warehouse?.nameAr ?? "").includes(search)
+    (a: any) => a.adjustmentNumber.includes(search) || (a.warehouse?.nameAr ?? "").includes(search) || (a.warehouse?.nameEn ?? "").toLowerCase().includes(search.toLowerCase())
   );
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <SlidersHorizontal className="h-6 w-6 text-primary" />
-            التسوية المخزنية
+            {t("stockAdjustmentPage.title")}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            تعديل وضبط أرصدة المخزون — اختيار الوحدة يملأ التكلفة تلقائياً
+            {t("stockAdjustmentPage.subtitle")}
           </p>
         </div>
         <Button
@@ -252,7 +266,7 @@ export default function StockAdjustment() {
           className="gap-2"
           onClick={() => { reset(); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}
         >
-          <Plus className="h-4 w-4" />تسوية جديدة
+          <Plus className="h-4 w-4" />{t("stockAdjustmentPage.newAdjustment")}
         </Button>
       </div>
 
@@ -260,20 +274,20 @@ export default function StockAdjustment() {
       {showForm && (
         <FormPanel
           icon={SlidersHorizontal}
-          title="تسوية مخزنية جديدة"
-          subtitle="إضافة أو خصم كميات الأصناف من المخزن مع ربط محاسبي اختياري"
+          title={t("stockAdjustmentPage.formTitle")}
+          subtitle={t("stockAdjustmentPage.formSubtitle")}
           width="6xl"
           onClose={reset}
           onSave={() => handleSubmit({ preventDefault() {} } as any)}
           saving={createMut.isPending}
           saveDisabled={!form.warehouseId || !form.adjustmentDate}
-          saveLabel="حفظ التسوية"
+          saveLabel={t("stockAdjustmentPage.saveAdjustment")}
         >
           <Tabs defaultValue="info" className="w-full">
             <TabsList className="w-full grid grid-cols-2 mb-4">
-              <TabsTrigger value="info">معلومات التسوية والقيد المحاسبي</TabsTrigger>
+              <TabsTrigger value="info">{t("stockAdjustmentPage.tabInfo")}</TabsTrigger>
               <TabsTrigger value="items">
-                الأصناف
+                {t("stockAdjustmentPage.items")}
                 {lines.filter(l => l.itemId).length > 0 && (
                   <span className="mr-2 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-primary/15 text-primary text-[10px] font-bold">
                     {lines.filter(l => l.itemId).length}
@@ -282,35 +296,35 @@ export default function StockAdjustment() {
               </TabsTrigger>
             </TabsList>
             <TabsContent value="info" className="space-y-5 mt-0">
-            <FormSection title="معلومات الحركة">
+            <FormSection title={t("stockAdjustmentPage.sectionMovement")}>
               <FormGrid cols={2}>
-                <Field label="رقم التسوية"><Input
-                  placeholder={seqPeek.loading ? "…" : "ADJ-001 (تلقائي)"}
+                <Field label={t("stockAdjustmentPage.adjustmentNumber")}><Input
+                  placeholder={seqPeek.loading ? "…" : t("stockAdjustmentPage.adjustmentNumberPlaceholder")}
                   dir="ltr"
                   className={cn("text-left", seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
                   value={form.adjustmentNumber}
                   onChange={e => { if (!seqPeek.hasSequence) setForm((p: any) => ({ ...p, adjustmentNumber: e.target.value })); }}
                   readOnly={seqPeek.hasSequence}
-                  title={seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
+                  title={seqPeek.hasSequence ? t("stockAdjustmentPage.sequenceTooltip", { code: seqPeek.sequenceCode ?? "" }) : undefined}
                 /></Field>
-                <Field label="التاريخ" required><Input type="date" value={form.adjustmentDate} onChange={e => setForm((p: any) => ({ ...p, adjustmentDate: e.target.value }))} /></Field>
-                <Field label="المخزن" required>
-                  <SearchCombobox items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))} value={form.warehouseId} onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))} placeholder="— اختر مخزن —" />
+                <Field label={t("stockAdjustmentPage.date")} required><Input type="date" value={form.adjustmentDate} onChange={e => setForm((p: any) => ({ ...p, adjustmentDate: e.target.value }))} /></Field>
+                <Field label={t("stockAdjustmentPage.warehouse")} required>
+                  <SearchCombobox items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: pickName(w.nameAr, w.nameEn) }))} value={form.warehouseId} onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))} placeholder={t("stockAdjustmentPage.selectWarehouse")} />
                 </Field>
-                <Field label="سبب التسوية">
-                  <SearchCombobox items={REASONS.map(r => ({ value: r, label: r }))} value={form.reason} onValueChange={v => setForm((p: any) => ({ ...p, reason: v }))} placeholder="— اختر السبب —" />
+                <Field label={t("stockAdjustmentPage.adjustmentReason")}>
+                  <SearchCombobox items={REASONS.map(r => ({ value: r, label: reasonLabel(r) }))} value={form.reason} onValueChange={v => setForm((p: any) => ({ ...p, reason: v }))} placeholder={t("stockAdjustmentPage.selectReason")} />
                 </Field>
-                <Field label="ملاحظات" className="md:col-span-2"><Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
+                <Field label={t("stockAdjustmentPage.notes")} className="md:col-span-2"><Input placeholder={t("stockAdjustmentPage.notesPlaceholder")} value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
               </FormGrid>
             </FormSection>
 
-            <FormSection title="القيد المحاسبي التلقائي">
+            <FormSection title={t("stockAdjustmentPage.sectionJournal")}>
               <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-4 space-y-3">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    سيتم إنشاء قيد محاسبي متوازن تلقائياً عند الترحيل:
-                    <b className="text-blue-700"> زيادة المخزون</b> = مدين حساب المخزون / دائن حساب التسوية،
-                    <b className="text-rose-700"> نقص المخزون</b> = مدين حساب التسوية / دائن حساب المخزون.
+                    {t("stockAdjustmentPage.jeHintIntro")}
+                    <b className="text-blue-700">{t("stockAdjustmentPage.jeHintIncrease")}</b>{t("stockAdjustmentPage.jeHintIncreaseRule")}
+                    <b className="text-rose-700">{t("stockAdjustmentPage.jeHintDecrease")}</b>{t("stockAdjustmentPage.jeHintDecreaseRule")}
                   </p>
                   <Button
                     type="button"
@@ -343,36 +357,36 @@ export default function StockAdjustment() {
                           }),
                         });
                         const j = await r.json();
-                        if (!r.ok) throw new Error(j?.error || "تعذّر الاقتراح");
+                        if (!r.ok) throw new Error(j?.error || t("stockAdjustmentPage.suggestFailed"));
                         if (j.inventoryAccountId && j.adjustmentAccountId) {
                           setForm((p: any) => ({
                             ...p,
                             inventoryAccountId:  String(j.inventoryAccountId),
                             adjustmentAccountId: String(j.adjustmentAccountId),
                           }));
-                          setAiReasoning(`${j.reasoning || ""}${j.source === "ai" ? " (اقتراح AI)" : " (اقتراح آلي)"}`);
-                          toast({ title: "تم اقتراح الحسابات", description: `${j.inventoryAccountLabel} ⇄ ${j.adjustmentAccountLabel}` });
+                          setAiReasoning(`${j.reasoning || ""}${j.source === "ai" ? t("stockAdjustmentPage.aiSuffix") : t("stockAdjustmentPage.autoSuffix")}`);
+                          toast({ title: t("stockAdjustmentPage.accountsSuggested"), description: `${j.inventoryAccountLabel} ⇄ ${j.adjustmentAccountLabel}` });
                         } else {
-                          throw new Error(j?.reasoning || "لم يتم العثور على حسابات مناسبة");
+                          throw new Error(j?.reasoning || t("stockAdjustmentPage.noSuitableAccounts"));
                         }
                       } catch (e: any) {
-                        toast({ title: "تعذّر الاقتراح", description: e?.message || "خطأ غير معروف", variant: "destructive" });
+                        toast({ title: t("stockAdjustmentPage.suggestFailed"), description: e?.message || t("stockAdjustmentPage.unknownError"), variant: "destructive" });
                       } finally {
                         setAiLoading(false);
                       }
                     }}
                   >
                     {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                    اقتراح بالذكاء الاصطناعي
+                    {t("stockAdjustmentPage.aiSuggest")}
                   </Button>
                 </div>
 
                 <FormGrid cols={2}>
-                  <Field label="حساب المخزون (أصول)">
-                    <AccountCombobox value={form.inventoryAccountId} onValueChange={v => setForm((p: any) => ({ ...p, inventoryAccountId: v }))} placeholder="— اختر حساب المخزون —" filterTypes={["asset"]} grouped={false} />
+                  <Field label={t("stockAdjustmentPage.inventoryAccount")}>
+                    <AccountCombobox value={form.inventoryAccountId} onValueChange={v => setForm((p: any) => ({ ...p, inventoryAccountId: v }))} placeholder={t("stockAdjustmentPage.selectInventoryAccount")} filterTypes={["asset"]} grouped={false} />
                   </Field>
-                  <Field label="حساب التسوية (مصروف / إيراد)">
-                    <AccountCombobox value={form.adjustmentAccountId} onValueChange={v => setForm((p: any) => ({ ...p, adjustmentAccountId: v }))} placeholder="— اختر حساب التسوية —" filterTypes={["expense", "revenue", "income"]} grouped={false} />
+                  <Field label={t("stockAdjustmentPage.adjustmentAccount")}>
+                    <AccountCombobox value={form.adjustmentAccountId} onValueChange={v => setForm((p: any) => ({ ...p, adjustmentAccountId: v }))} placeholder={t("stockAdjustmentPage.selectAdjustmentAccount")} filterTypes={["expense", "revenue", "income"]} grouped={false} />
                   </Field>
                 </FormGrid>
 
@@ -399,39 +413,39 @@ export default function StockAdjustment() {
                   if (!invAccId || !adjAccId) {
                     return (
                       <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
-                        لن يتم إنشاء قيد محاسبي — اختر حساب المخزون وحساب التسوية أو اربط المخزن بحساب افتراضي.
+                        {t("stockAdjustmentPage.noJeWarning")}
                       </div>
                     );
                   }
                   if (invAccId === adjAccId) {
                     return (
                       <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
-                        الحسابان متطابقان — لن يتم إنشاء قيد.
+                        {t("stockAdjustmentPage.sameAccountsWarning")}
                       </div>
                     );
                   }
-                  const invSrc = form.inventoryAccountId ? "اختيار يدوي" : "حساب المخزن الافتراضي";
+                  const invSrc = form.inventoryAccountId ? t("stockAdjustmentPage.manualSelection") : t("stockAdjustmentPage.defaultWarehouseAccount");
                   const isInc = debit > 0;
                   const amount = isInc ? debit : credit;
                   return (
                     <div className="rounded-md border border-blue-200 bg-white overflow-hidden">
                       <div className="px-3 py-1.5 bg-blue-100/50 text-[11px] font-semibold text-blue-900">
-                        معاينة القيد المحاسبي — {isInc ? "صافي زيادة (فائض)" : "صافي نقص (عجز/تالف)"}
+                        {t("stockAdjustmentPage.jePreviewPrefix")}{isInc ? t("stockAdjustmentPage.netIncrease") : t("stockAdjustmentPage.netDecrease")}
                       </div>
                       <table className="w-full text-xs">
                         <thead className="bg-muted/30 border-b">
-                          <tr><th className="px-2 py-1 text-right font-medium">الحساب</th><th className="px-2 py-1 text-left font-medium w-28">مدين</th><th className="px-2 py-1 text-left font-medium w-28">دائن</th></tr>
+                          <tr><th className="px-2 py-1 text-right font-medium">{t("stockAdjustmentPage.colAccount")}</th><th className="px-2 py-1 text-left font-medium w-28">{t("stockAdjustmentPage.colDebit")}</th><th className="px-2 py-1 text-left font-medium w-28">{t("stockAdjustmentPage.colCredit")}</th></tr>
                         </thead>
                         <tbody className="divide-y">
                           {isInc ? (
                             <>
                               <tr>
-                                <td className="px-2 py-1.5 text-blue-700">حساب المخزون <span className="text-[10px] text-muted-foreground">({invSrc})</span></td>
+                                <td className="px-2 py-1.5 text-blue-700">{t("stockAdjustmentPage.inventoryAccountShort")} <span className="text-[10px] text-muted-foreground">({invSrc})</span></td>
                                 <td className="px-2 py-1.5 text-left tabular-nums font-medium">{fmt(amount)}</td>
                                 <td className="px-2 py-1.5 text-left tabular-nums">—</td>
                               </tr>
                               <tr>
-                                <td className="px-2 py-1.5 text-rose-700">حساب التسوية (إيراد فائض)</td>
+                                <td className="px-2 py-1.5 text-rose-700">{t("stockAdjustmentPage.adjustmentAccountSurplus")}</td>
                                 <td className="px-2 py-1.5 text-left tabular-nums">—</td>
                                 <td className="px-2 py-1.5 text-left tabular-nums font-medium">{fmt(amount)}</td>
                               </tr>
@@ -439,12 +453,12 @@ export default function StockAdjustment() {
                           ) : (
                             <>
                               <tr>
-                                <td className="px-2 py-1.5 text-blue-700">حساب التسوية (مصروف عجز/تالف)</td>
+                                <td className="px-2 py-1.5 text-blue-700">{t("stockAdjustmentPage.adjustmentAccountShortage")}</td>
                                 <td className="px-2 py-1.5 text-left tabular-nums font-medium">{fmt(amount)}</td>
                                 <td className="px-2 py-1.5 text-left tabular-nums">—</td>
                               </tr>
                               <tr>
-                                <td className="px-2 py-1.5 text-rose-700">حساب المخزون <span className="text-[10px] text-muted-foreground">({invSrc})</span></td>
+                                <td className="px-2 py-1.5 text-rose-700">{t("stockAdjustmentPage.inventoryAccountShort")} <span className="text-[10px] text-muted-foreground">({invSrc})</span></td>
                                 <td className="px-2 py-1.5 text-left tabular-nums">—</td>
                                 <td className="px-2 py-1.5 text-left tabular-nums font-medium">{fmt(amount)}</td>
                               </tr>
@@ -463,24 +477,24 @@ export default function StockAdjustment() {
             {/* Line items */}
             <div>
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">الأصناف</h3>
+                <h3 className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">{t("stockAdjustmentPage.items")}</h3>
                 <Button type="button" size="sm" variant="outline" onClick={addLine} className="gap-1 h-7 text-xs">
-                  <Plus className="h-3 w-3" />إضافة صنف
+                  <Plus className="h-3 w-3" />{t("stockAdjustmentPage.addItem")}
                 </Button>
               </div>
               <div className="rounded-lg border overflow-hidden">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/50 border-b">
                     <tr>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground">الصنف</th>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground w-36">الوحدة</th>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground w-28">الكمية (+ زيادة / - نقص)</th>
+                      <th className="px-3 py-2 text-right font-medium text-muted-foreground">{t("stockAdjustmentPage.colItem")}</th>
+                      <th className="px-3 py-2 text-right font-medium text-muted-foreground w-36">{t("stockAdjustmentPage.colUnit")}</th>
+                      <th className="px-3 py-2 text-right font-medium text-muted-foreground w-28">{t("stockAdjustmentPage.colQty")}</th>
                       <th className="px-3 py-2 text-right font-medium text-muted-foreground w-36">
                         <span className="flex items-center gap-1">
-                          سعر التكلفة <Zap className="h-3 w-3 text-amber-500"><title>يُملأ تلقائياً</title></Zap>
+                          {t("stockAdjustmentPage.colCostPrice")} <Zap className="h-3 w-3 text-amber-500"><title>{t("stockAdjustmentPage.autoFillTooltip")}</title></Zap>
                         </span>
                       </th>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground">ملاحظة</th>
+                      <th className="px-3 py-2 text-right font-medium text-muted-foreground">{t("stockAdjustmentPage.note")}</th>
                       <th className="px-3 py-2 w-10" />
                     </tr>
                   </thead>
@@ -488,7 +502,7 @@ export default function StockAdjustment() {
                     {lines.map((line, i) => {
                       const lineUnits = getLineUnits(line);
                       const cf = Number(line.conversionFactor || "1");
-                      const baseQtyHint = cf !== 1 ? `×${cf} = ${fmtQty(Number(line.qty || 0) * cf)} وحدة أساسية` : null;
+                      const baseQtyHint = cf !== 1 ? t("stockAdjustmentPage.baseQtyHint", { factor: cf, qty: fmtQty(Number(line.qty || 0) * cf) }) : null;
                       const autoFilled = isAutoFilled(line);
                       const qtyNum = Number(line.qty || 0);
 
@@ -497,10 +511,10 @@ export default function StockAdjustment() {
                           {/* Item */}
                           <td className="px-3 py-2 min-w-[180px]">
                             <SearchCombobox
-                              items={(items as any[]).filter((it: any) => it.itemType === "stock").map((it: any) => ({ value: String(it.id), code: it.code, label: it.nameAr, labelEn: it.nameEn }))}
+                              items={(items as any[]).filter((it: any) => it.itemType === "stock").map((it: any) => ({ value: String(it.id), code: it.code, label: pickName(it.nameAr, it.nameEn), labelEn: it.nameEn }))}
                               value={line.itemId}
                               onValueChange={v => handleItemSelect(i, v)}
-                              placeholder="— اختر صنف —"
+                              placeholder={t("stockAdjustmentPage.selectItem")}
                               className="h-8 text-xs"
                             />
                           </td>
@@ -508,10 +522,10 @@ export default function StockAdjustment() {
                           {/* Unit */}
                           <td className="px-3 py-2 min-w-[120px]">
                             <SearchCombobox
-                              items={[{ value: "", label: "وحدة أساسية" }, ...lineUnits.map(u => ({ value: String(u.id), label: u.nameAr }))]}
+                              items={[{ value: "", label: t("stockAdjustmentPage.baseUnit") }, ...lineUnits.map(u => ({ value: String(u.id), label: u.nameAr }))]}
                               value={line.unitId}
                               onValueChange={v => handleUnitSelect(i, v)}
-                              placeholder="وحدة أساسية"
+                              placeholder={t("stockAdjustmentPage.baseUnit")}
                               className="h-8 text-xs"
                             />
                             {baseQtyHint && (
@@ -530,13 +544,13 @@ export default function StockAdjustment() {
                               className="h-8 text-xs text-left"
                               value={line.qty}
                               onChange={e => updateLine(i, "qty", e.target.value)}
-                              placeholder="+100 أو -50"
+                              placeholder={t("stockAdjustmentPage.qtyPlaceholder")}
                             />
                             <p className={cn(
                               "text-[10px] mt-0.5 leading-tight",
                               qtyNum >= 0 ? "text-green-600" : "text-red-600"
                             )}>
-                              {qtyNum >= 0 ? "▲ زيادة" : "▼ نقص"}
+                              {qtyNum >= 0 ? t("stockAdjustmentPage.increase") : t("stockAdjustmentPage.decrease")}
                             </p>
                           </td>
 
@@ -557,7 +571,7 @@ export default function StockAdjustment() {
                               />
                               {autoFilled && (
                                 <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[8px] font-bold text-amber-600 bg-amber-100 rounded px-0.5">
-                                  تلقائي
+                                  {t("stockAdjustmentPage.autoBadge")}
                                 </span>
                               )}
                             </div>
@@ -567,7 +581,7 @@ export default function StockAdjustment() {
                           <td className="px-3 py-2">
                             <Input
                               className="h-8 text-xs"
-                              placeholder="ملاحظة"
+                              placeholder={t("stockAdjustmentPage.note")}
                               value={line.notes}
                               onChange={e => updateLine(i, "notes", e.target.value)}
                             />
@@ -595,7 +609,7 @@ export default function StockAdjustment() {
               </div>
               <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
                 <Zap className="h-3 w-3 text-amber-500" />
-                اختيار الصنف يملأ الوحدة والتكلفة تلقائياً — يمكن تعديل التكلفة يدوياً
+                {t("stockAdjustmentPage.autoFillHint")}
               </p>
             </div>
             </TabsContent>
@@ -608,7 +622,7 @@ export default function StockAdjustment() {
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
           className="pr-9"
-          placeholder="بحث برقم التسوية أو المخزن..."
+          placeholder={t("stockAdjustmentPage.searchPlaceholder")}
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
@@ -629,12 +643,12 @@ export default function StockAdjustment() {
           <thead className="bg-muted/50 border-b">
             <tr>
               <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-8" />
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">رقم التسوية</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">التاريخ</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">المخزن</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden md:table-cell">السبب</th>
-              <th className="px-4 py-3 text-center font-semibold text-muted-foreground">الحالة</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-32">إجراءات</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("stockAdjustmentPage.colAdjustmentNumber")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("stockAdjustmentPage.date")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">{t("stockAdjustmentPage.warehouse")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden md:table-cell">{t("stockAdjustmentPage.colReason")}</th>
+              <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("stockAdjustmentPage.colStatus")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-32">{t("stockAdjustmentPage.colActions")}</th>
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -646,7 +660,7 @@ export default function StockAdjustment() {
               ? (
                 <tr>
                   <td colSpan={7} className="py-10 text-center text-muted-foreground">
-                    <SlidersHorizontal className="h-8 w-8 mx-auto mb-2 opacity-30" />لا توجد تسويات
+                    <SlidersHorizontal className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("stockAdjustmentPage.noAdjustments")}
                   </td>
                 </tr>
               )
@@ -667,11 +681,11 @@ export default function StockAdjustment() {
                         </td>
                         <td className="px-4 py-3 font-mono text-xs font-bold">{adj.adjustmentNumber}</td>
                         <td className="px-4 py-3 text-muted-foreground">{adj.adjustmentDate}</td>
-                        <td className="px-4 py-3 hidden sm:table-cell">{adj.warehouse?.nameAr ?? "—"}</td>
-                        <td className="px-4 py-3 hidden md:table-cell text-muted-foreground text-xs">{adj.reason ?? "—"}</td>
+                        <td className="px-4 py-3 hidden sm:table-cell">{pickName(adj.warehouse?.nameAr, adj.warehouse?.nameEn) || "—"}</td>
+                        <td className="px-4 py-3 hidden md:table-cell text-muted-foreground text-xs">{adj.reason ? reasonLabel(adj.reason) : "—"}</td>
                         <td className="px-4 py-3 text-center">
                           <span className={cn("text-[10px] font-medium rounded-full px-2.5 py-1", st.color)}>
-                            {st.label}
+                            {t(`stockAdjustmentPage.${adj.status === "posted" ? "statusPosted" : "statusDraft"}`)}
                           </span>
                         </td>
                         <td className="px-4 py-3">
@@ -682,15 +696,15 @@ export default function StockAdjustment() {
                                   size="sm"
                                   variant="outline"
                                   className="h-7 text-xs gap-1 text-green-700 border-green-200 hover:bg-green-50"
-                                  onClick={() => { if (confirm("ترحيل التسوية وتحديث أرصدة المخزون؟")) postMut.mutate(adj.id); }}
+                                  onClick={() => { if (confirm(t("stockAdjustmentPage.confirmPost"))) postMut.mutate(adj.id); }}
                                 >
-                                  <Send className="h-3 w-3" />ترحيل
+                                  <Send className="h-3 w-3" />{t("stockAdjustmentPage.post")}
                                 </Button>
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   className="h-7 w-7 text-destructive"
-                                  onClick={() => { if (confirm("حذف التسوية؟")) deleteMut.mutate(adj.id); }}
+                                  onClick={() => { if (confirm(t("stockAdjustmentPage.confirmDelete"))) deleteMut.mutate(adj.id); }}
                                 >
                                   <Trash2 className="h-3 w-3" />
                                 </Button>
@@ -705,23 +719,23 @@ export default function StockAdjustment() {
                         <tr className="bg-muted/10">
                           <td colSpan={7} className="px-6 py-4">
                             {!adjDetail?.items?.length
-                              ? <p className="text-xs text-muted-foreground">لا توجد أصناف</p>
+                              ? <p className="text-xs text-muted-foreground">{t("stockAdjustmentPage.noItems")}</p>
                               : (
                                 <table className="w-full text-xs">
                                   <thead>
                                     <tr className="text-muted-foreground border-b">
-                                      <th className="text-right pb-2 pr-0">الصنف</th>
-                                      <th className="text-right pb-2">الوحدة</th>
-                                      <th className="text-right pb-2">الكمية</th>
-                                      <th className="text-right pb-2">التكلفة</th>
-                                      <th className="text-right pb-2">ملاحظة</th>
+                                      <th className="text-right pb-2 pr-0">{t("stockAdjustmentPage.colItem")}</th>
+                                      <th className="text-right pb-2">{t("stockAdjustmentPage.colUnit")}</th>
+                                      <th className="text-right pb-2">{t("stockAdjustmentPage.colQtyShort")}</th>
+                                      <th className="text-right pb-2">{t("stockAdjustmentPage.colCost")}</th>
+                                      <th className="text-right pb-2">{t("stockAdjustmentPage.note")}</th>
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-border/50">
                                     {adjDetail.items.map((l: any) => (
                                       <tr key={l.id}>
-                                        <td className="py-1.5 pr-0">{l.item?.nameAr ?? l.itemId}</td>
-                                        <td className="py-1.5">{l.unit?.nameAr ?? "وحدة أساسية"}</td>
+                                        <td className="py-1.5 pr-0">{pickName(l.item?.nameAr, l.item?.nameEn) || l.itemId}</td>
+                                        <td className="py-1.5">{pickName(l.unit?.nameAr, l.unit?.nameEn) || t("stockAdjustmentPage.baseUnit")}</td>
                                         <td className={cn(
                                           "py-1.5 tabular-nums font-medium",
                                           Number(l.qty) >= 0 ? "text-green-600" : "text-red-600"
@@ -745,7 +759,7 @@ export default function StockAdjustment() {
         </table>
         {!isLoading && (
           <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">
-            {filtered.length} تسوية
+            {t("stockAdjustmentPage.countLabel", { count: filtered.length })}
           </div>
         )}
       </div>

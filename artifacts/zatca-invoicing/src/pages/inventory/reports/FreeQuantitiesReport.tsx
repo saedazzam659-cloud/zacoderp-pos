@@ -10,6 +10,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
 import { Gift, Filter, X, PackageOpen } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
+import { useTranslation } from "react-i18next";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -18,24 +19,27 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-const EXPORT_COLS = [
-  { key: "itemCode",      header: "كود الصنف",     width: 16 },
-  { key: "itemNameAr",    header: "اسم الصنف",     width: 30 },
-  { key: "unitName",      header: "الوحدة",        width: 12 },
-  { key: "soldFreeQty",   header: "مجاني مُسلَّم (مدين)", width: 18 },
-  { key: "returnedFreeQty", header: "مجاني مرتجع (دائن)", width: 18 },
-  { key: "netFreeQty",    header: "الصافي",        width: 14 },
-];
-
 type Filters = {
   from: string; to: string;
   warehouseId: string; customerId: string; itemId: string; branchId: string;
 };
 
 export default function FreeQuantitiesReport() {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const { fmtQty } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+
+  const EXPORT_COLS = [
+    { key: "itemCode",      header: t("inventoryReports.freeQuantities.itemCode"), width: 16 },
+    { key: "itemNameAr",    header: t("inventoryReports.freeQuantities.itemName"), width: 30 },
+    { key: "unitName",      header: t("inventoryReports.freeQuantities.unit"),     width: 12 },
+    { key: "soldFreeQty",   header: t("inventoryReports.freeQuantities.soldFree"), width: 18 },
+    { key: "returnedFreeQty", header: t("inventoryReports.freeQuantities.returnedFree"), width: 18 },
+    { key: "netFreeQty",    header: t("inventoryReports.freeQuantities.net"),      width: 14 },
+  ];
 
   const today    = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
@@ -94,15 +98,15 @@ export default function FreeQuantitiesReport() {
 
   const exportRows = (rows as any[]).map(r => ({
     itemCode:        r.itemCode ?? "",
-    itemNameAr:      r.itemNameAr ?? "",
-    unitName:        r.unitName ?? "",
+    itemNameAr:      pickName(r.itemNameAr, r.itemNameEn),
+    unitName:        pickName(r.unitName, r.unitNameEn),
     soldFreeQty:     fmtQty(r.soldFreeQty),
     returnedFreeQty: fmtQty(r.returnedFreeQty),
     netFreeQty:      fmtQty(r.netFreeQty),
   }));
 
   const totalsRow = {
-    itemCode: "الإجمالي", itemNameAr: "", unitName: "",
+    itemCode: t("inventoryReports.freeQuantities.total"), itemNameAr: "", unitName: "",
     soldFreeQty:     fmtQty(totals.sold),
     returnedFreeQty: fmtQty(totals.returned),
     netFreeQty:      fmtQty(totals.net),
@@ -124,31 +128,31 @@ export default function FreeQuantitiesReport() {
   const appliedBr   = applied.branchId   ? brMap.get(Number(applied.branchId)) : null;
 
   const subtitle = [
-    `الفترة: ${applied.from} → ${applied.to}`,
-    appliedWh  && `المخزن: ${appliedWh.nameAr ?? appliedWh.name}`,
-    appliedCus && `العميل: ${appliedCus.nameAr ?? appliedCus.name}`,
-    appliedItem && `الصنف: ${appliedItem.nameAr ?? appliedItem.code}`,
-    appliedBr  && `الفرع: ${appliedBr.nameAr ?? appliedBr.name}`,
+    `${t("inventoryReports.freeQuantities.period")}: ${applied.from} → ${applied.to}`,
+    appliedWh  && `${t("inventoryReports.common.warehouse")}: ${pickName(appliedWh.nameAr, appliedWh.nameEn) || appliedWh.name}`,
+    appliedCus && `${t("inventoryReports.freeQuantities.customer")}: ${pickName(appliedCus.nameAr, appliedCus.nameEn) || appliedCus.name}`,
+    appliedItem && `${t("inventoryReports.common.item")}: ${pickName(appliedItem.nameAr, appliedItem.nameEn) || appliedItem.code}`,
+    appliedBr  && `${t("inventoryReports.freeQuantities.branch")}: ${pickName(appliedBr.nameAr, appliedBr.nameEn) || appliedBr.name}`,
   ].filter(Boolean).join("  •  ");
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Gift className="h-6 w-6 text-pink-500" />
-            تقرير الكميات المجانية
+            {t("inventoryReports.freeQuantities.title")}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            إجمالي الكميات المجانية المُسلَّمة في فواتير المبيعات والمرتجعة في فواتير المرتجع لكل صنف خلال الفترة المحددة
+            {t("inventoryReports.freeQuantities.subtitle")}
           </p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`الكميات-المجانية-${applied.from}_${applied.to}`}
-          title="تقرير الكميات المجانية"
+          filename={`${t("inventoryReports.freeQuantities.exportFilename")}-${applied.from}_${applied.to}`}
+          title={t("inventoryReports.freeQuantities.title")}
           subtitle={subtitle}
           totalsRow={totalsRow}
           disabled={(rows as any[]).length === 0}
@@ -159,63 +163,63 @@ export default function FreeQuantitiesReport() {
       <div className="rounded-2xl border bg-gradient-to-br from-pink-50/60 to-rose-50/30 p-5 space-y-4 shadow-sm">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold flex items-center gap-2 text-pink-700">
-            <Filter className="h-4 w-4" /> الفلاتر
+            <Filter className="h-4 w-4" /> {t("inventoryReports.common.filters")}
           </h3>
           {hasAnyFilter && (
             <Button size="sm" variant="ghost" className="text-xs h-7" onClick={reset}>
-              <X className="h-3 w-3 ml-1" /> تفريغ الفلاتر
+              <X className="h-3 w-3 ml-1" /> {t("inventoryReports.freeQuantities.clearFilters")}
             </Button>
           )}
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="space-y-1.5">
-            <Label className="text-xs">من تاريخ</Label>
+            <Label className="text-xs">{t("inventoryReports.common.from")}</Label>
             <Input type="date" value={filters.from} onChange={e => setFilters(f => ({ ...f, from: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">إلى تاريخ</Label>
+            <Label className="text-xs">{t("inventoryReports.common.to")}</Label>
             <Input type="date" value={filters.to} onChange={e => setFilters(f => ({ ...f, to: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">المخزن</Label>
+            <Label className="text-xs">{t("inventoryReports.common.warehouse")}</Label>
             <SearchCombobox
-              items={[{ value: "", label: "جميع المخازن" }, ...(warehouses as any[]).map(w => ({ value: String(w.id), label: `${w.nameAr ?? w.name} — ${w.code ?? ""}` }))]}
+              items={[{ value: "", label: t("inventoryReports.common.allWarehouses") }, ...(warehouses as any[]).map(w => ({ value: String(w.id), label: `${pickName(w.nameAr, w.nameEn) || w.name} — ${w.code ?? ""}` }))]}
               value={filters.warehouseId}
               onValueChange={v => setFilters(f => ({ ...f, warehouseId: v }))}
-              placeholder="جميع المخازن"
+              placeholder={t("inventoryReports.common.allWarehouses")}
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">الفرع</Label>
+            <Label className="text-xs">{t("inventoryReports.freeQuantities.branch")}</Label>
             <SearchCombobox
-              items={[{ value: "", label: "جميع الفروع" }, ...(branches as any[]).map(b => ({ value: String(b.id), label: b.nameAr ?? b.name ?? "" }))]}
+              items={[{ value: "", label: t("inventoryReports.freeQuantities.allBranches") }, ...(branches as any[]).map(b => ({ value: String(b.id), label: pickName(b.nameAr, b.nameEn) || b.name || "" }))]}
               value={filters.branchId}
               onValueChange={v => setFilters(f => ({ ...f, branchId: v }))}
-              placeholder="جميع الفروع"
+              placeholder={t("inventoryReports.freeQuantities.allBranches")}
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">العميل</Label>
+            <Label className="text-xs">{t("inventoryReports.freeQuantities.customer")}</Label>
             <SearchCombobox
-              items={[{ value: "", label: "جميع العملاء" }, ...(customers as any[]).map(c => ({ value: String(c.id), label: `${c.nameAr ?? c.name ?? ""} ${c.code ? `— ${c.code}` : ""}` }))]}
+              items={[{ value: "", label: t("inventoryReports.freeQuantities.allCustomers") }, ...(customers as any[]).map(c => ({ value: String(c.id), label: `${pickName(c.nameAr, c.nameEn) || c.name || ""} ${c.code ? `— ${c.code}` : ""}` }))]}
               value={filters.customerId}
               onValueChange={v => setFilters(f => ({ ...f, customerId: v }))}
-              placeholder="جميع العملاء"
+              placeholder={t("inventoryReports.freeQuantities.allCustomers")}
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">الصنف</Label>
+            <Label className="text-xs">{t("inventoryReports.common.item")}</Label>
             <SearchCombobox
-              items={[{ value: "", label: "جميع الأصناف" }, ...(items as any[]).map(i => ({ value: String(i.id), label: `${i.nameAr ?? i.code} ${i.code ? `— ${i.code}` : ""}` }))]}
+              items={[{ value: "", label: t("inventoryReports.freeQuantities.allItems") }, ...(items as any[]).map(i => ({ value: String(i.id), label: `${pickName(i.nameAr, i.nameEn) || i.code} ${i.code ? `— ${i.code}` : ""}` }))]}
               value={filters.itemId}
               onValueChange={v => setFilters(f => ({ ...f, itemId: v }))}
-              placeholder="جميع الأصناف"
+              placeholder={t("inventoryReports.freeQuantities.allItems")}
             />
           </div>
           <div className="sm:col-span-2 lg:col-span-2 flex items-end">
             <Button onClick={apply} className="w-full bg-pink-600 hover:bg-pink-700">
-              <Filter className="h-4 w-4 ml-2" /> عرض التقرير
+              <Filter className="h-4 w-4 ml-2" /> {t("inventoryReports.freeQuantities.showReport")}
             </Button>
           </div>
         </div>
@@ -224,15 +228,15 @@ export default function FreeQuantitiesReport() {
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border bg-blue-50 border-blue-200 p-4">
-          <p className="text-xs text-blue-700">مجاني مُسلَّم (مدين)</p>
+          <p className="text-xs text-blue-700">{t("inventoryReports.freeQuantities.soldFree")}</p>
           <p className="text-2xl font-bold text-blue-700 tabular-nums mt-1">{fmtQty(totals.sold)}</p>
         </div>
         <div className="rounded-xl border bg-amber-50 border-amber-200 p-4">
-          <p className="text-xs text-amber-700">مجاني مرتجع (دائن)</p>
+          <p className="text-xs text-amber-700">{t("inventoryReports.freeQuantities.returnedFree")}</p>
           <p className="text-2xl font-bold text-amber-700 tabular-nums mt-1">{fmtQty(totals.returned)}</p>
         </div>
         <div className="rounded-xl border bg-emerald-50 border-emerald-200 p-4">
-          <p className="text-xs text-emerald-700">صافي الكميات المجانية</p>
+          <p className="text-xs text-emerald-700">{t("inventoryReports.freeQuantities.netSummary")}</p>
           <p className="text-2xl font-bold text-emerald-700 tabular-nums mt-1">{fmtQty(totals.net)}</p>
         </div>
       </div>
@@ -243,11 +247,11 @@ export default function FreeQuantitiesReport() {
           <table className="w-full text-sm min-w-[820px]">
             <thead className="bg-muted/50 border-b">
               <tr>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">الصنف</th>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">الوحدة</th>
-                <th className="px-4 py-3 text-center font-semibold text-blue-700">مجاني مُسلَّم (مدين)</th>
-                <th className="px-4 py-3 text-center font-semibold text-amber-700">مجاني مرتجع (دائن)</th>
-                <th className="px-4 py-3 text-center font-semibold text-emerald-700">الصافي</th>
+                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("inventoryReports.common.item")}</th>
+                <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">{t("inventoryReports.freeQuantities.unit")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-blue-700">{t("inventoryReports.freeQuantities.soldFree")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-amber-700">{t("inventoryReports.freeQuantities.returnedFree")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-emerald-700">{t("inventoryReports.freeQuantities.net")}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -258,15 +262,15 @@ export default function FreeQuantitiesReport() {
                 : (rows as any[]).length === 0
                 ? <tr><td colSpan={5} className="py-12 text-center text-muted-foreground">
                     <PackageOpen className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                    لا توجد كميات مجانية في الفترة المحددة
+                    {t("inventoryReports.freeQuantities.noData")}
                   </td></tr>
                 : (rows as any[]).map((r) => (
                     <tr key={r.itemId} className="hover:bg-muted/20">
                       <td className="px-4 py-3">
-                        <p className="font-medium text-sm">{r.itemNameAr ?? "—"}</p>
+                        <p className="font-medium text-sm">{pickName(r.itemNameAr, r.itemNameEn) || "—"}</p>
                         <p className="text-[10px] text-muted-foreground font-mono">{r.itemCode}</p>
                       </td>
-                      <td className="px-4 py-3 hidden sm:table-cell text-xs text-muted-foreground">{r.unitName ?? "—"}</td>
+                      <td className="px-4 py-3 hidden sm:table-cell text-xs text-muted-foreground">{pickName(r.unitName, r.unitNameEn) || "—"}</td>
                       <td className="px-4 py-3 text-center tabular-nums text-blue-700 font-medium">{fmtQty(r.soldFreeQty)}</td>
                       <td className="px-4 py-3 text-center tabular-nums text-amber-700 font-medium">{fmtQty(r.returnedFreeQty)}</td>
                       <td className="px-4 py-3 text-center tabular-nums text-emerald-700 font-bold">{fmtQty(r.netFreeQty)}</td>
@@ -276,7 +280,7 @@ export default function FreeQuantitiesReport() {
             {(rows as any[]).length > 0 && (
               <tfoot className="bg-muted/40 border-t-2">
                 <tr>
-                  <td className="px-4 py-3 font-bold text-sm" colSpan={2}>الإجمالي</td>
+                  <td className="px-4 py-3 font-bold text-sm" colSpan={2}>{t("inventoryReports.freeQuantities.total")}</td>
                   <td className="px-4 py-3 text-center tabular-nums font-bold text-blue-700">{fmtQty(totals.sold)}</td>
                   <td className="px-4 py-3 text-center tabular-nums font-bold text-amber-700">{fmtQty(totals.returned)}</td>
                   <td className="px-4 py-3 text-center tabular-nums font-bold text-emerald-700">{fmtQty(totals.net)}</td>

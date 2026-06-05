@@ -13,6 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useFmt } from "@/hooks/use-fmt";
+import { useTranslation } from "react-i18next";
 
 type Row = {
   id: string;
@@ -25,10 +26,12 @@ type Row = {
 };
 
 export default function Stocktake() {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
   const { fmt, fmtQty, fmtCost, fmtVal } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
-  const pickName = (ar?: string | null, en?: string | null) => ar ?? en ?? "";
+  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
 
   const [warehouseId, setWarehouseId] = useState("");
   const [search, setSearch] = useState("");
@@ -120,23 +123,23 @@ export default function Stocktake() {
   }));
 
   const EXPORT_COLS = [
-    { key: "itemCode",      header: "كود الصنف",       width: 14 },
-    { key: "itemName",      header: "اسم الصنف",       width: 30 },
-    { key: "groupName",     header: "المجموعة",        width: 18 },
-    { key: "unitName",      header: "الوحدة",          width: 12 },
-    { key: "warehouseName", header: "المخزن",          width: 20 },
-    { key: "sysQty",        header: "الكمية بالنظام",  width: 14 },
-    { key: "cntQty",        header: "الكمية الفعلية",  width: 14 },
-    { key: "variance",      header: "الفرق",           width: 12 },
-    { key: "avgCost",       header: "متوسط التكلفة",   width: 14 },
-    { key: "sysValue",      header: "قيمة النظام",     width: 16 },
-    { key: "varValue",      header: "قيمة الفرق",      width: 16 },
+    { key: "itemCode",      header: t("inventoryReports.stocktake.export.itemCode"),      width: 14 },
+    { key: "itemName",      header: t("inventoryReports.stocktake.export.itemName"),      width: 30 },
+    { key: "groupName",     header: t("inventoryReports.stocktake.export.group"),         width: 18 },
+    { key: "unitName",      header: t("inventoryReports.stocktake.export.unit"),          width: 12 },
+    { key: "warehouseName", header: t("inventoryReports.stocktake.export.warehouse"),     width: 20 },
+    { key: "sysQty",        header: t("inventoryReports.stocktake.export.systemQty"),     width: 14 },
+    { key: "cntQty",        header: t("inventoryReports.stocktake.export.actualQty"),     width: 14 },
+    { key: "variance",      header: t("inventoryReports.stocktake.export.variance"),      width: 12 },
+    { key: "avgCost",       header: t("inventoryReports.stocktake.export.avgCost"),       width: 14 },
+    { key: "sysValue",      header: t("inventoryReports.stocktake.export.systemValue"),   width: 16 },
+    { key: "varValue",      header: t("inventoryReports.stocktake.export.varianceValue"), width: 16 },
   ];
 
-  const resetCounts = () => { if (confirm("هل تريد مسح جميع الكميات المُدخلة؟")) setCounts({}); };
+  const resetCounts = () => { if (confirm(t("inventoryReports.stocktake.confirmReset"))) setCounts({}); };
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       {/* Gradient hero header */}
       <div className="rounded-2xl bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-600 p-6 text-white shadow-lg print:hidden">
         <div className="flex items-start justify-between flex-wrap gap-3">
@@ -145,19 +148,19 @@ export default function Stocktake() {
               <ClipboardCheck className="h-7 w-7" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold">جرد المخازن</h1>
+              <h1 className="text-2xl font-bold">{t("inventoryReports.stocktake.title")}</h1>
               <p className="text-sm text-white/90 mt-1">
-                تقرير جرد فعلي مقابل أرصدة النظام مع حساب الفروقات والقيم. أدخل الكميات الفعلية في العمود المخصص.
+                {t("inventoryReports.stocktake.subtitle")}
               </p>
-              <p className="text-xs text-white/70 mt-1">📅 تاريخ الجرد: {today}</p>
+              <p className="text-xs text-white/70 mt-1">{t("inventoryReports.stocktake.countDate", { date: today })}</p>
             </div>
           </div>
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" onClick={() => window.print()} className="gap-1.5">
-              <Printer className="h-4 w-4" /> طباعة
+              <Printer className="h-4 w-4" /> {t("inventoryReports.stocktake.print")}
             </Button>
             <Button variant="secondary" size="sm" onClick={resetCounts} className="gap-1.5">
-              <RotateCcw className="h-4 w-4" /> مسح الإدخالات
+              <RotateCcw className="h-4 w-4" /> {t("inventoryReports.stocktake.clearEntries")}
             </Button>
           </div>
         </div>
@@ -168,38 +171,38 @@ export default function Stocktake() {
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`جرد-المخازن-${today}`}
-          title="جرد المخازن"
-          subtitle={warehouseId ? pickName((warehouses as any[]).find(w => String(w.id) === warehouseId)?.nameAr, (warehouses as any[]).find(w => String(w.id) === warehouseId)?.nameEn) : "كل المخازن"}
+          filename={`${t("inventoryReports.stocktake.exportFilename")}-${today}`}
+          title={t("inventoryReports.stocktake.exportTitle")}
+          subtitle={warehouseId ? pickName((warehouses as any[]).find(w => String(w.id) === warehouseId)?.nameAr, (warehouses as any[]).find(w => String(w.id) === warehouseId)?.nameEn) : t("inventoryReports.common.allWarehouses")}
         />
       </div>
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 print:hidden">
         <KpiCard
-          label="إجمالي الأصناف"
+          label={t("inventoryReports.stocktake.kpiTotalItems")}
           value={String(totals.items)}
           icon={Package}
           color="from-sky-50 to-sky-100/40 border-sky-200 text-sky-700"
         />
         <KpiCard
-          label="قيمة المخزون بالنظام"
+          label={t("inventoryReports.stocktake.kpiSysValue")}
           value={fmtVal(totals.sysValue)}
-          sub="ر.س"
+          sub={t("inventoryReports.stocktake.sar")}
           icon={Wallet}
           color="from-emerald-50 to-emerald-100/40 border-emerald-200 text-emerald-700"
         />
         <KpiCard
-          label={`الأصناف المجرودة (${totals.countedItems}/${totals.items})`}
-          value={`${totals.matched} مطابق`}
-          sub={`${totals.varCount} مختلف`}
+          label={t("inventoryReports.stocktake.kpiCounted", { counted: totals.countedItems, total: totals.items })}
+          value={t("inventoryReports.stocktake.matchedCount", { count: totals.matched })}
+          sub={t("inventoryReports.stocktake.differentCount", { count: totals.varCount })}
           icon={CheckCircle2}
           color="from-violet-50 to-violet-100/40 border-violet-200 text-violet-700"
         />
         <KpiCard
-          label="إجمالي قيمة الفروقات"
+          label={t("inventoryReports.stocktake.kpiTotalVariance")}
           value={fmt(totals.varValue)}
-          sub={totals.varValue >= 0 ? "زيادة" : "عجز"}
+          sub={totals.varValue >= 0 ? t("inventoryReports.stocktake.surplus") : t("inventoryReports.stocktake.shortage")}
           icon={totals.varValue >= 0 ? CheckCircle2 : AlertTriangle}
           color={totals.varValue >= 0
             ? "from-green-50 to-green-100/40 border-green-200 text-green-700"
@@ -211,30 +214,30 @@ export default function Stocktake() {
       <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 print:hidden">
         <div className="relative sm:col-span-5">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input className="pr-9" placeholder="ابحث باسم أو كود الصنف..." value={search} onChange={e => setSearch(e.target.value)} />
+          <Input className="pr-9" placeholder={t("inventoryReports.stocktake.searchPh")} value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <div className="sm:col-span-4">
           <SearchCombobox
-            items={[{ value: "", label: "كل المخازن" }, ...(warehouses as any[]).map(w => ({ value: String(w.id), code: w.code, label: pickName(w.nameAr, w.nameEn) }))]}
+            items={[{ value: "", label: t("inventoryReports.common.allWarehouses") }, ...(warehouses as any[]).map(w => ({ value: String(w.id), code: w.code, label: pickName(w.nameAr, w.nameEn) }))]}
             value={warehouseId}
             onValueChange={setWarehouseId}
-            placeholder="كل المخازن"
+            placeholder={t("inventoryReports.common.allWarehouses")}
           />
         </div>
         <label className="sm:col-span-2 flex items-center gap-2 text-sm rounded-md border px-3 cursor-pointer hover:bg-muted/30 transition">
           <input type="checkbox" checked={groupByWh} onChange={e => setGroupByWh(e.target.checked)} />
-          تجميع بالمخزن
+          {t("inventoryReports.stocktake.groupByWarehouse")}
         </label>
         <label className="sm:col-span-1 flex items-center gap-2 text-sm rounded-md border px-3 cursor-pointer hover:bg-muted/30 transition">
           <input type="checkbox" checked={showOnlyVariance} onChange={e => setShowOnlyVariance(e.target.checked)} />
-          فروق فقط
+          {t("inventoryReports.stocktake.onlyVariance")}
         </label>
       </div>
 
       {/* Print-only header */}
       <div className="hidden print:block">
-        <h1 className="text-2xl font-bold text-center">كشف جرد المخازن</h1>
-        <p className="text-sm text-center text-muted-foreground mt-1">تاريخ الجرد: {today}</p>
+        <h1 className="text-2xl font-bold text-center">{t("inventoryReports.stocktake.printTitle")}</h1>
+        <p className="text-sm text-center text-muted-foreground mt-1">{t("inventoryReports.stocktake.printDate", { date: today })}</p>
       </div>
 
       {/* Body */}
@@ -243,7 +246,7 @@ export default function Stocktake() {
       ) : visible.length === 0 ? (
         <div className="rounded-xl border bg-card p-12 text-center text-muted-foreground">
           <ClipboardCheck className="h-12 w-12 mx-auto opacity-30 mb-3" />
-          <p>لا توجد بيانات للعرض</p>
+          <p>{t("inventoryReports.stocktake.noData")}</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -261,13 +264,13 @@ export default function Stocktake() {
                     <div className="flex items-center gap-2">
                       <Warehouse className="h-5 w-5 text-indigo-600" />
                       <h3 className="font-bold text-base">{g.wh.name}</h3>
-                      <span className="text-xs bg-indigo-100 text-indigo-700 rounded-full px-2 py-0.5">{g.rows.length} صنف</span>
+                      <span className="text-xs bg-indigo-100 text-indigo-700 rounded-full px-2 py-0.5">{t("inventoryReports.stocktake.itemCountBadge", { count: g.rows.length })}</span>
                     </div>
                     <div className="flex items-center gap-3 text-xs">
-                      <span className="text-muted-foreground">القيمة: <strong className="tabular-nums text-foreground">{fmtVal(grpSysValue)}</strong></span>
+                      <span className="text-muted-foreground">{t("inventoryReports.stocktake.valueLabel")} <strong className="tabular-nums text-foreground">{fmtVal(grpSysValue)}</strong></span>
                       {grpVarValue !== 0 && (
                         <span className={cn("tabular-nums font-bold", grpVarValue > 0 ? "text-emerald-600" : "text-rose-600")}>
-                          فرق: {fmt(grpVarValue)}
+                          {t("inventoryReports.stocktake.varianceLabel")} {fmt(grpVarValue)}
                         </span>
                       )}
                       {isCollapsed ? <ChevronDown className="h-4 w-4 print:hidden" /> : <ChevronUp className="h-4 w-4 print:hidden" />}
@@ -280,14 +283,14 @@ export default function Stocktake() {
                       <thead className="bg-muted/50 border-b">
                         <tr>
                           <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground w-10">#</th>
-                          <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground">الصنف</th>
-                          <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground hidden md:table-cell">المجموعة</th>
-                          <th className="px-3 py-2.5 text-center font-semibold text-muted-foreground">الوحدة</th>
-                          <th className="px-3 py-2.5 text-center font-semibold text-muted-foreground">كمية النظام</th>
-                          <th className="px-3 py-2.5 text-center font-semibold text-indigo-700 bg-indigo-50/50">الكمية الفعلية</th>
-                          <th className="px-3 py-2.5 text-center font-semibold text-muted-foreground">الفرق</th>
-                          <th className="px-3 py-2.5 text-center font-semibold text-muted-foreground hidden lg:table-cell">متوسط التكلفة</th>
-                          <th className="px-3 py-2.5 text-center font-semibold text-muted-foreground">قيمة الفرق</th>
+                          <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground">{t("inventoryReports.stocktake.cols.item")}</th>
+                          <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground hidden md:table-cell">{t("inventoryReports.stocktake.cols.group")}</th>
+                          <th className="px-3 py-2.5 text-center font-semibold text-muted-foreground">{t("inventoryReports.stocktake.cols.unit")}</th>
+                          <th className="px-3 py-2.5 text-center font-semibold text-muted-foreground">{t("inventoryReports.stocktake.cols.systemQty")}</th>
+                          <th className="px-3 py-2.5 text-center font-semibold text-indigo-700 bg-indigo-50/50">{t("inventoryReports.stocktake.cols.actualQty")}</th>
+                          <th className="px-3 py-2.5 text-center font-semibold text-muted-foreground">{t("inventoryReports.stocktake.cols.variance")}</th>
+                          <th className="px-3 py-2.5 text-center font-semibold text-muted-foreground hidden lg:table-cell">{t("inventoryReports.stocktake.cols.avgCost")}</th>
+                          <th className="px-3 py-2.5 text-center font-semibold text-muted-foreground">{t("inventoryReports.stocktake.cols.varianceValue")}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y">
@@ -325,7 +328,7 @@ export default function Stocktake() {
                                   <span className="text-muted-foreground text-xs">—</span>
                                 ) : r.variance === 0 ? (
                                   <span className="inline-flex items-center gap-1 text-[11px] bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 font-medium">
-                                    <CheckCircle2 className="h-3 w-3" /> مطابق
+                                    <CheckCircle2 className="h-3 w-3" /> {t("inventoryReports.stocktake.badge.matched")}
                                   </span>
                                 ) : r.variance > 0 ? (
                                   <span className="inline-flex items-center gap-1 text-[11px] bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5 font-medium tabular-nums">
@@ -352,7 +355,7 @@ export default function Stocktake() {
                       </tbody>
                       <tfoot className="bg-muted/30 border-t font-semibold">
                         <tr>
-                          <td colSpan={4} className="px-3 py-2.5 text-right text-xs text-muted-foreground">الإجمالي</td>
+                          <td colSpan={4} className="px-3 py-2.5 text-right text-xs text-muted-foreground">{t("inventoryReports.stocktake.totalRow")}</td>
                           <td className="px-3 py-2.5 text-center tabular-nums">{fmtQty(g.rows.reduce((s, r) => s + r.sysQty, 0))}</td>
                           <td className="px-3 py-2.5 text-center tabular-nums">{fmtQty(g.rows.reduce((s, r) => s + (r.cntQty ?? 0), 0))}</td>
                           <td className="px-3 py-2.5"></td>
@@ -378,9 +381,9 @@ export default function Stocktake() {
       {/* Sign-off footer (print friendly) */}
       <div className="rounded-xl border-2 border-dashed border-muted bg-muted/10 p-6 grid grid-cols-1 sm:grid-cols-3 gap-6 text-sm print:break-inside-avoid">
         {[
-          { label: "أمين المخزن", role: "اسم وتوقيع" },
-          { label: "لجنة الجرد",  role: "اسم وتوقيع" },
-          { label: "المدير المالي", role: "اسم وتوقيع" },
+          { label: t("inventoryReports.stocktake.signoff.warehouseKeeper"), role: t("inventoryReports.stocktake.signoff.nameAndSignature") },
+          { label: t("inventoryReports.stocktake.signoff.committee"),  role: t("inventoryReports.stocktake.signoff.nameAndSignature") },
+          { label: t("inventoryReports.stocktake.signoff.financialManager"), role: t("inventoryReports.stocktake.signoff.nameAndSignature") },
         ].map(s => (
           <div key={s.label} className="text-center">
             <div className="font-semibold mb-8">{s.label}</div>
