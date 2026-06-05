@@ -171,16 +171,16 @@ const NAV_GROUPS: NavGroupDef[] = [
     ],
   },
   {
-    key: "purchasing",
-    icon: "🛒",
-    label: "المشتريات والموردون",
-    members: ["suppliers", "purchases", "purchase_returns"],
-  },
-  {
     key: "selling",
     icon: "🧾",
     label: "المبيعات والعملاء",
     members: ["sales_invoices", "sales_returns", "invoice_import"],
+  },
+  {
+    key: "purchasing",
+    icon: "🛒",
+    label: "المشتريات والموردون",
+    members: ["suppliers", "purchases", "purchase_returns"],
   },
   {
     key: "cash_banks",
