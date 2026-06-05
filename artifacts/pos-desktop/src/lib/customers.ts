@@ -24,6 +24,23 @@ export interface LocalCustomer {
   enforceCreditLimit?: boolean;
   /** Grace days before an unpaid credit invoice is overdue (0 = no check). */
   paymentTermsDays?: number;
+  // ── Profile parity with web (Phase 1A) ──
+  crNumber?: string | null;
+  email?: string | null;
+  city?: string | null;
+  district?: string | null;
+  street?: string | null;
+  buildingNumber?: string | null;
+  postalCode?: string | null;
+  country?: string | null;
+  nationalAddressShort?: string | null;
+  locationLat?: string | null;
+  locationLng?: string | null;
+  locationLink?: string | null;
+  /** When false, excluded from per-customer AR statement/ageing reports. */
+  includeInStatements?: boolean;
+  /** Default home branch (FK to branches_local.id). */
+  branchId?: number | null;
   createdAt?: string;
   updatedAt?: string;
   /** Soft-delete tombstone (overlay). When true, listCustomers filters this row out. */
@@ -43,6 +60,20 @@ interface RustCustomer {
   credit_limit?: number;
   enforce_credit_limit?: boolean;
   payment_terms_days?: number;
+  cr_number?: string | null;
+  email?: string | null;
+  city?: string | null;
+  district?: string | null;
+  street?: string | null;
+  building_number?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  national_address_short?: string | null;
+  location_lat?: string | null;
+  location_lng?: string | null;
+  location_link?: string | null;
+  include_in_statements?: boolean;
+  branch_id?: number | null;
 }
 
 function fromRust(r: RustCustomer): LocalCustomer {
@@ -58,6 +89,20 @@ function fromRust(r: RustCustomer): LocalCustomer {
     creditLimit: r.credit_limit ?? 0,
     enforceCreditLimit: r.enforce_credit_limit ?? false,
     paymentTermsDays: r.payment_terms_days ?? 0,
+    crNumber: r.cr_number ?? null,
+    email: r.email ?? null,
+    city: r.city ?? null,
+    district: r.district ?? null,
+    street: r.street ?? null,
+    buildingNumber: r.building_number ?? null,
+    postalCode: r.postal_code ?? null,
+    country: r.country ?? null,
+    nationalAddressShort: r.national_address_short ?? null,
+    locationLat: r.location_lat ?? null,
+    locationLng: r.location_lng ?? null,
+    locationLink: r.location_link ?? null,
+    includeInStatements: r.include_in_statements ?? true,
+    branchId: r.branch_id ?? null,
     updatedAt: r.updated_at ?? undefined,
   };
 }
@@ -183,6 +228,44 @@ export interface CreateCustomerInput {
   creditLimit?: number;
   enforceCreditLimit?: boolean;
   paymentTermsDays?: number;
+  // ── Profile parity with web (Phase 1A) ──
+  crNumber?: string | null;
+  email?: string | null;
+  city?: string | null;
+  district?: string | null;
+  street?: string | null;
+  buildingNumber?: string | null;
+  postalCode?: string | null;
+  country?: string | null;
+  nationalAddressShort?: string | null;
+  locationLat?: string | null;
+  locationLng?: string | null;
+  locationLink?: string | null;
+  includeInStatements?: boolean;
+  branchId?: number | null;
+}
+
+/** Build the Rust `profile` struct arg from a customer input (camelCase keys). */
+function toProfile(input: CreateCustomerInput) {
+  return {
+    crNumber: input.crNumber ?? null,
+    email: input.email ?? null,
+    city: input.city ?? null,
+    district: input.district ?? null,
+    street: input.street ?? null,
+    buildingNumber: input.buildingNumber ?? null,
+    postalCode: input.postalCode ?? null,
+    country: input.country ?? null,
+    nationalAddressShort: input.nationalAddressShort ?? null,
+    locationLat: input.locationLat ?? null,
+    locationLng: input.locationLng ?? null,
+    locationLink: input.locationLink ?? null,
+    includeInStatements: input.includeInStatements ?? null,
+    // branch_id tri-state on the Rust wire: undefined → null (preserve via
+    // COALESCE), explicit null ("— بدون —") → 0 sentinel (clear to NULL),
+    // a real id → that id. SQLite branch ids start at 1, so 0 is never valid.
+    branchId: input.branchId === null ? 0 : (input.branchId ?? null),
+  };
 }
 
 export async function createCustomer(input: CreateCustomerInput): Promise<LocalCustomer> {
@@ -202,6 +285,7 @@ export async function createCustomer(input: CreateCustomerInput): Promise<LocalC
         creditLimit: input.creditLimit ?? null,
         enforceCreditLimit: input.enforceCreditLimit ?? null,
         paymentTermsDays: input.paymentTermsDays ?? null,
+        profile: toProfile(input),
       });
       created = fromRust(r);
     } catch {
@@ -241,6 +325,20 @@ function createInLocalStorage(input: CreateCustomerInput, now: string): LocalCus
     creditLimit: input.creditLimit ?? 0,
     enforceCreditLimit: input.enforceCreditLimit ?? false,
     paymentTermsDays: input.paymentTermsDays ?? 0,
+    crNumber: input.crNumber ?? null,
+    email: input.email ?? null,
+    city: input.city ?? null,
+    district: input.district ?? null,
+    street: input.street ?? null,
+    buildingNumber: input.buildingNumber ?? null,
+    postalCode: input.postalCode ?? null,
+    country: input.country ?? null,
+    nationalAddressShort: input.nationalAddressShort ?? null,
+    locationLat: input.locationLat ?? null,
+    locationLng: input.locationLng ?? null,
+    locationLink: input.locationLink ?? null,
+    includeInStatements: input.includeInStatements ?? true,
+    branchId: input.branchId ?? null,
     createdAt: now,
     updatedAt: now,
   };
@@ -265,6 +363,7 @@ export async function updateCustomer(id: number, patch: CreateCustomerInput): Pr
         creditLimit: patch.creditLimit ?? null,
         enforceCreditLimit: patch.enforceCreditLimit ?? null,
         paymentTermsDays: patch.paymentTermsDays ?? null,
+        profile: toProfile(patch),
       });
     } catch { /* fall through to LS overlay */ }
   }

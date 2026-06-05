@@ -27,9 +27,30 @@ pub struct LocalCustomer {
     pub credit_limit: f64,
     pub enforce_credit_limit: bool,
     pub payment_terms_days: i64,
+    // ── Profile parity with web (Phase 1A) ──
+    pub cr_number: Option<String>,
+    pub email: Option<String>,
+    pub city: Option<String>,
+    pub district: Option<String>,
+    pub street: Option<String>,
+    pub building_number: Option<String>,
+    pub postal_code: Option<String>,
+    pub country: Option<String>,
+    pub national_address_short: Option<String>,
+    pub location_lat: Option<String>,
+    pub location_lng: Option<String>,
+    pub location_link: Option<String>,
+    pub include_in_statements: bool,
+    pub branch_id: Option<i64>,
 }
 
 const MAX_ROWS: i64 = 500;
+
+// Shared SELECT column list — keep order in lockstep with `row_to_customer`.
+const SELECT_COLS: &str = "id, cloud_id, name_ar, name_en, phone, vat_number, updated_at, currency_code, balance, \
+     credit_limit, enforce_credit_limit, payment_terms_days, \
+     cr_number, email, city, district, street, building_number, postal_code, country, \
+     national_address_short, location_lat, location_lng, location_link, include_in_statements, branch_id";
 
 fn row_to_customer(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalCustomer> {
     Ok(LocalCustomer {
@@ -45,6 +66,20 @@ fn row_to_customer(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalCustomer> {
         credit_limit: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),
         enforce_credit_limit: row.get::<_, Option<i64>>(10)?.unwrap_or(0) != 0,
         payment_terms_days: row.get::<_, Option<i64>>(11)?.unwrap_or(0),
+        cr_number: row.get(12)?,
+        email: row.get(13)?,
+        city: row.get(14)?,
+        district: row.get(15)?,
+        street: row.get(16)?,
+        building_number: row.get(17)?,
+        postal_code: row.get(18)?,
+        country: row.get(19)?,
+        national_address_short: row.get(20)?,
+        location_lat: row.get(21)?,
+        location_lng: row.get(22)?,
+        location_link: row.get(23)?,
+        include_in_statements: row.get::<_, Option<i64>>(24)?.unwrap_or(1) != 0,
+        branch_id: row.get(25)?,
     })
 }
 
@@ -55,14 +90,15 @@ pub fn list_customers(search: Option<String>) -> Result<Vec<LocalCustomer>, Stri
 
 fn list(search: Option<&str>) -> Result<Vec<LocalCustomer>> {
     let conn = db::open()?;
-    let sql = "SELECT id, cloud_id, name_ar, name_en, phone, vat_number, updated_at, currency_code, balance,
-                      credit_limit, enforce_credit_limit, payment_terms_days
+    let sql = format!(
+        "SELECT {SELECT_COLS}
                FROM customers_local
                WHERE (?1 IS NULL OR name_ar LIKE ?2 OR phone LIKE ?2 OR vat_number LIKE ?2)
                ORDER BY name_ar
-               LIMIT ?3";
+               LIMIT ?3"
+    );
     let pattern = search.map(|s| format!("%{}%", s));
-    let mut stmt = conn.prepare(sql)?;
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(
         rusqlite::params![search, pattern, MAX_ROWS],
         row_to_customer,
@@ -112,6 +148,28 @@ fn upsert_from_cloud(rows: Vec<CloudCustomer>) -> Result<u64> {
     Ok(count)
 }
 
+/// Optional profile fields shared by create + update. Bundling them in one
+/// struct keeps the Tauri command signatures sane as the customer model grows.
+/// JS passes a single `profile` object (camelCase keys → serde rename).
+#[derive(Deserialize, Debug, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomerProfile {
+    pub cr_number: Option<String>,
+    pub email: Option<String>,
+    pub city: Option<String>,
+    pub district: Option<String>,
+    pub street: Option<String>,
+    pub building_number: Option<String>,
+    pub postal_code: Option<String>,
+    pub country: Option<String>,
+    pub national_address_short: Option<String>,
+    pub location_lat: Option<String>,
+    pub location_lng: Option<String>,
+    pub location_link: Option<String>,
+    pub include_in_statements: Option<bool>,
+    pub branch_id: Option<i64>,
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn create_customer_local(
@@ -126,9 +184,10 @@ pub fn create_customer_local(
     credit_limit: Option<f64>,
     enforce_credit_limit: Option<bool>,
     payment_terms_days: Option<i64>,
+    profile: Option<CustomerProfile>,
 ) -> Result<LocalCustomer, String> {
     create(name_ar, name_en, phone, vat_number, currency_code, opening_balance, opening_nature, opening_date,
-           credit_limit, enforce_credit_limit, payment_terms_days)
+           credit_limit, enforce_credit_limit, payment_terms_days, profile.unwrap_or_default())
         .map_err(|e| e.to_string())
 }
 
@@ -145,18 +204,39 @@ fn create(
     credit_limit: Option<f64>,
     enforce_credit_limit: Option<bool>,
     payment_terms_days: Option<i64>,
+    profile: CustomerProfile,
 ) -> Result<LocalCustomer> {
     let mut conn = db::open()?;
     let cur = currency_code.unwrap_or_else(|| "SAR".to_string());
     let cl = credit_limit.unwrap_or(0.0);
     let enforce = enforce_credit_limit.unwrap_or(false);
     let terms = payment_terms_days.unwrap_or(0);
+    let country = profile.country.clone().unwrap_or_else(|| "SA".to_string());
+    let include = profile.include_in_statements.unwrap_or(true);
+    // 0 is the "no branch" sentinel from the JS wire (see toProfile); SQLite
+    // branch ids start at 1, so collapse it to NULL on insert.
+    let branch_id = match profile.branch_id {
+        Some(0) => None,
+        other => other,
+    };
     let tx = conn.transaction()?;
     tx.execute(
         "INSERT INTO customers_local (cloud_id, name_ar, name_en, phone, vat_number, currency_code,
-                                      credit_limit, enforce_credit_limit, payment_terms_days, updated_at)
-         VALUES (NULL, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)",
-        rusqlite::params![name_ar, name_en, phone, vat_number, cur, cl, enforce as i64, terms],
+                                      credit_limit, enforce_credit_limit, payment_terms_days,
+                                      cr_number, email, city, district, street, building_number, postal_code,
+                                      country, national_address_short, location_lat, location_lng, location_link,
+                                      include_in_statements, branch_id, updated_at)
+         VALUES (NULL, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                 ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                 ?16, ?17, ?18, ?19, ?20,
+                 ?21, ?22, CURRENT_TIMESTAMP)",
+        rusqlite::params![
+            name_ar, name_en, phone, vat_number, cur, cl, enforce as i64, terms,
+            profile.cr_number, profile.email, profile.city, profile.district, profile.street,
+            profile.building_number, profile.postal_code, country, profile.national_address_short,
+            profile.location_lat, profile.location_lng, profile.location_link,
+            include as i64, branch_id,
+        ],
     )?;
     let id = tx.last_insert_rowid();
     let ob = opening_balance.unwrap_or(0.0).abs();
@@ -183,6 +263,20 @@ fn create(
         credit_limit: cl,
         enforce_credit_limit: enforce,
         payment_terms_days: terms,
+        cr_number: profile.cr_number,
+        email: profile.email,
+        city: profile.city,
+        district: profile.district,
+        street: profile.street,
+        building_number: profile.building_number,
+        postal_code: profile.postal_code,
+        country: Some(country),
+        national_address_short: profile.national_address_short,
+        location_lat: profile.location_lat,
+        location_lng: profile.location_lng,
+        location_link: profile.location_link,
+        include_in_statements: include,
+        branch_id,
     })
 }
 
@@ -202,9 +296,10 @@ pub fn update_customer_local(
     credit_limit: Option<f64>,
     enforce_credit_limit: Option<bool>,
     payment_terms_days: Option<i64>,
+    profile: Option<CustomerProfile>,
 ) -> Result<LocalCustomer, String> {
     update(id, name_ar, name_en, phone, vat_number, currency_code,
-           credit_limit, enforce_credit_limit, payment_terms_days)
+           credit_limit, enforce_credit_limit, payment_terms_days, profile.unwrap_or_default())
         .map_err(|e| e.to_string())
 }
 
@@ -219,9 +314,11 @@ fn update(
     credit_limit: Option<f64>,
     enforce_credit_limit: Option<bool>,
     payment_terms_days: Option<i64>,
+    profile: CustomerProfile,
 ) -> Result<LocalCustomer> {
     let conn = db::open()?;
     let enforce_int: Option<i64> = enforce_credit_limit.map(|b| b as i64);
+    let include_int: Option<i64> = profile.include_in_statements.map(|b| b as i64);
     conn.execute(
         "UPDATE customers_local SET
            name_ar              = COALESCE(?2, name_ar),
@@ -232,15 +329,36 @@ fn update(
            credit_limit         = COALESCE(?7, credit_limit),
            enforce_credit_limit = COALESCE(?8, enforce_credit_limit),
            payment_terms_days   = COALESCE(?9, payment_terms_days),
+           cr_number              = COALESCE(?10, cr_number),
+           email                  = COALESCE(?11, email),
+           city                   = COALESCE(?12, city),
+           district               = COALESCE(?13, district),
+           street                 = COALESCE(?14, street),
+           building_number        = COALESCE(?15, building_number),
+           postal_code            = COALESCE(?16, postal_code),
+           country                = COALESCE(?17, country),
+           national_address_short = COALESCE(?18, national_address_short),
+           location_lat           = COALESCE(?19, location_lat),
+           location_lng           = COALESCE(?20, location_lng),
+           location_link          = COALESCE(?21, location_link),
+           include_in_statements  = COALESCE(?22, include_in_statements),
+           branch_id              = CASE WHEN ?23 IS NULL THEN branch_id
+                                         WHEN ?23 = 0 THEN NULL
+                                         ELSE ?23 END,
            updated_at           = CURRENT_TIMESTAMP
          WHERE id = ?1",
-        rusqlite::params![id, name_ar, name_en, phone, vat_number, currency_code,
-                          credit_limit, enforce_int, payment_terms_days],
+        rusqlite::params![
+            id, name_ar, name_en, phone, vat_number, currency_code,
+            credit_limit, enforce_int, payment_terms_days,
+            profile.cr_number, profile.email, profile.city, profile.district, profile.street,
+            profile.building_number, profile.postal_code, profile.country, profile.national_address_short,
+            profile.location_lat, profile.location_lng, profile.location_link,
+            include_int, profile.branch_id,
+        ],
     )?;
+    let sql = format!("SELECT {SELECT_COLS} FROM customers_local WHERE id = ?1");
     conn.query_row(
-        "SELECT id, cloud_id, name_ar, name_en, phone, vat_number, updated_at, currency_code, balance,
-                credit_limit, enforce_credit_limit, payment_terms_days
-         FROM customers_local WHERE id = ?1",
+        &sql,
         rusqlite::params![id],
         row_to_customer,
     ).map_err(Into::into)

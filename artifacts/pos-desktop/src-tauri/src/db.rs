@@ -629,6 +629,24 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE customers_local ADD COLUMN credit_limit REAL NOT NULL DEFAULT 0",
         "ALTER TABLE customers_local ADD COLUMN enforce_credit_limit INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE customers_local ADD COLUMN payment_terms_days INTEGER NOT NULL DEFAULT 0",
+        // ── Customer profile parity with web (Phase 1A) ──
+        // CR number, email, full national address, geolocation, statement
+        // participation flag, and default home branch. All locally-set; the
+        // cloud Pull (upsert_customers_from_cloud) never overwrites them.
+        "ALTER TABLE customers_local ADD COLUMN cr_number TEXT",
+        "ALTER TABLE customers_local ADD COLUMN email TEXT",
+        "ALTER TABLE customers_local ADD COLUMN city TEXT",
+        "ALTER TABLE customers_local ADD COLUMN district TEXT",
+        "ALTER TABLE customers_local ADD COLUMN street TEXT",
+        "ALTER TABLE customers_local ADD COLUMN building_number TEXT",
+        "ALTER TABLE customers_local ADD COLUMN postal_code TEXT",
+        "ALTER TABLE customers_local ADD COLUMN country TEXT DEFAULT 'SA'",
+        "ALTER TABLE customers_local ADD COLUMN national_address_short TEXT",
+        "ALTER TABLE customers_local ADD COLUMN location_lat TEXT",
+        "ALTER TABLE customers_local ADD COLUMN location_lng TEXT",
+        "ALTER TABLE customers_local ADD COLUMN location_link TEXT",
+        "ALTER TABLE customers_local ADD COLUMN include_in_statements INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE customers_local ADD COLUMN branch_id INTEGER",
         // Line-level unit of measure (الوحدة). uom_id/uom_name are the selected
         // unit; conversion_factor converts the line qty into BASE units for the
         // stock ledger & COGS (e.g. carton=12 → factor 12). Financial totals stay

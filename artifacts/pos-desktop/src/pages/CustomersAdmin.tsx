@@ -7,11 +7,17 @@ import {
   type LocalCustomer, type CreateCustomerInput,
 } from "../lib/customers";
 import { listCurrencies, type Currency } from "../lib/accounting";
+import { listBranches, type Branch } from "../lib/branches";
 
 const emptyInput: CreateCustomerInput = {
   nameAr: "", nameEn: "", phone: "", vatNumber: "",
   currencyCode: "SAR", openingBalance: 0, openingNature: "debit",
   creditLimit: 0, enforceCreditLimit: false, paymentTermsDays: 0,
+  crNumber: "", email: "",
+  city: "", district: "", street: "", buildingNumber: "", postalCode: "",
+  country: "SA", nationalAddressShort: "",
+  locationLat: "", locationLng: "", locationLink: "",
+  includeInStatements: true, branchId: null,
 };
 
 // Customer balance follows AR convention: positive = owes us (مدين).
@@ -31,6 +37,7 @@ type EditState =
 export default function CustomersAdmin() {
   const [rows, setRows] = useState<LocalCustomer[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [edit, setEdit] = useState<EditState>(null);
@@ -41,8 +48,10 @@ export default function CustomersAdmin() {
   async function refresh() {
     setLoading(true);
     try {
-      const [cs, cur] = await Promise.all([listCustomers(search || undefined), listCurrencies(true)]);
-      setRows(cs); setCurrencies(cur);
+      const [cs, cur, br] = await Promise.all([
+        listCustomers(search || undefined), listCurrencies(true), listBranches().catch(() => []),
+      ]);
+      setRows(cs); setCurrencies(cur); setBranches(br);
     } finally { setLoading(false); }
   }
   useEffect(() => { void refresh(); /* eslint-disable-next-line */ }, [search]);
@@ -56,6 +65,13 @@ export default function CustomersAdmin() {
       creditLimit: c.creditLimit ?? 0,
       enforceCreditLimit: c.enforceCreditLimit ?? false,
       paymentTermsDays: c.paymentTermsDays ?? 0,
+      crNumber: c.crNumber ?? "", email: c.email ?? "",
+      city: c.city ?? "", district: c.district ?? "", street: c.street ?? "",
+      buildingNumber: c.buildingNumber ?? "", postalCode: c.postalCode ?? "",
+      country: c.country ?? "SA", nationalAddressShort: c.nationalAddressShort ?? "",
+      locationLat: c.locationLat ?? "", locationLng: c.locationLng ?? "", locationLink: c.locationLink ?? "",
+      includeInStatements: c.includeInStatements ?? true,
+      branchId: c.branchId ?? null,
     } });
   }
   function cancel() { setEdit(null); setErr(null); }
@@ -82,6 +98,13 @@ export default function CustomersAdmin() {
           creditLimit: f.creditLimit,
           enforceCreditLimit: f.enforceCreditLimit,
           paymentTermsDays: f.paymentTermsDays,
+          crNumber: f.crNumber, email: f.email,
+          city: f.city, district: f.district, street: f.street,
+          buildingNumber: f.buildingNumber, postalCode: f.postalCode,
+          country: f.country, nationalAddressShort: f.nationalAddressShort,
+          locationLat: f.locationLat, locationLng: f.locationLng, locationLink: f.locationLink,
+          includeInStatements: f.includeInStatements,
+          branchId: f.branchId,
         });
         setToast({ kind: "ok", text: "تم تحديث العميل" });
       }
@@ -121,6 +144,7 @@ export default function CustomersAdmin() {
           busy={busy}
           err={err}
           currencyOpts={currencyOpts}
+          branches={branches}
         />
       )}
 
@@ -183,13 +207,14 @@ export default function CustomersAdmin() {
   );
 }
 
-function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, currencyOpts }: {
+function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, currencyOpts, branches }: {
   mode: "new" | "edit";
   data: CreateCustomerInput;
   setField: <K extends keyof CreateCustomerInput>(k: K, v: CreateCustomerInput[K]) => void;
   onSave: () => void; onCancel: () => void;
   busy: boolean; err: string | null;
   currencyOpts: string[];
+  branches: Branch[];
 }) {
   return (
     <div style={S.formCard}>
@@ -209,10 +234,68 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
         <Field label="الرقم الضريبي">
           <input value={data.vatNumber ?? ""} onChange={(e) => setField("vatNumber", e.target.value)} style={{ ...S.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="3xxxxxxxxxxxxx3" />
         </Field>
+        <Field label="السجل التجاري">
+          <input value={data.crNumber ?? ""} onChange={(e) => setField("crNumber", e.target.value)} style={{ ...S.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="10xxxxxxxx" />
+        </Field>
+        <Field label="البريد الإلكتروني">
+          <input type="email" value={data.email ?? ""} onChange={(e) => setField("email", e.target.value)} style={S.bigInput} placeholder="name@example.com" />
+        </Field>
         <Field label="العملة">
           <select value={data.currencyCode ?? "SAR"} onChange={(e) => setField("currencyCode", e.target.value)} style={S.bigInput}>
             {currencyOpts.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
+        </Field>
+        <Field label="الفرع الافتراضي">
+          <select value={data.branchId ?? ""} onChange={(e) => setField("branchId", e.target.value ? Number(e.target.value) : null)} style={S.bigInput}>
+            <option value="">— بدون —</option>
+            {branches.map((b) => <option key={b.id} value={b.id}>{b.nameAr}</option>)}
+          </select>
+        </Field>
+        <Field label="إدراج في كشوف الحساب والأعمار">
+          <label style={S.checkRow}>
+            <input type="checkbox" checked={data.includeInStatements ?? true}
+              onChange={(e) => setField("includeInStatements", e.target.checked)}
+              style={S.checkbox} />
+            <span>عند الإلغاء يُستبعد العميل من كشف الحساب وتقارير أعمار الديون</span>
+          </label>
+        </Field>
+      </div>
+
+      <div style={S.section}>العنوان الوطني</div>
+      <div style={S.grid}>
+        <Field label="المدينة">
+          <input value={data.city ?? ""} onChange={(e) => setField("city", e.target.value)} style={S.bigInput} placeholder="الرياض" />
+        </Field>
+        <Field label="الحي">
+          <input value={data.district ?? ""} onChange={(e) => setField("district", e.target.value)} style={S.bigInput} placeholder="حي ..." />
+        </Field>
+        <Field label="الشارع">
+          <input value={data.street ?? ""} onChange={(e) => setField("street", e.target.value)} style={S.bigInput} placeholder="شارع ..." />
+        </Field>
+        <Field label="رقم المبنى">
+          <input value={data.buildingNumber ?? ""} onChange={(e) => setField("buildingNumber", e.target.value)} style={S.bigInput} placeholder="0000" />
+        </Field>
+        <Field label="الرمز البريدي">
+          <input value={data.postalCode ?? ""} onChange={(e) => setField("postalCode", e.target.value)} style={S.bigInput} placeholder="00000" />
+        </Field>
+        <Field label="الدولة">
+          <input value={data.country ?? "SA"} onChange={(e) => setField("country", e.target.value)} style={S.bigInput} placeholder="SA" />
+        </Field>
+        <Field label="العنوان الوطني المختصر">
+          <input value={data.nationalAddressShort ?? ""} onChange={(e) => setField("nationalAddressShort", e.target.value)} style={{ ...S.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="RRRD0000" />
+        </Field>
+      </div>
+
+      <div style={S.section}>الموقع الجغرافي (اختياري)</div>
+      <div style={S.grid}>
+        <Field label="خط العرض (Latitude)">
+          <input value={data.locationLat ?? ""} onChange={(e) => setField("locationLat", e.target.value)} style={{ ...S.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="24.7136" />
+        </Field>
+        <Field label="خط الطول (Longitude)">
+          <input value={data.locationLng ?? ""} onChange={(e) => setField("locationLng", e.target.value)} style={{ ...S.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="46.6753" />
+        </Field>
+        <Field label="رابط الموقع (خرائط جوجل)">
+          <input value={data.locationLink ?? ""} onChange={(e) => setField("locationLink", e.target.value)} style={S.bigInput} placeholder="https://maps.google.com/..." />
         </Field>
       </div>
 
