@@ -22,9 +22,12 @@
 // release, matching the TS behavior of relying on Node's Buffer overflow
 // semantics (which also produce an invalid TLV beyond 255).
 
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::Engine;
 use crate::db;
 use rusqlite::{params, OptionalExtension};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 /// Encodes a single (tag, value) pair as a TLV byte sequence.
@@ -276,16 +279,78 @@ fn zatca_secret_file(account: &str) -> Result<std::path::PathBuf, String> {
     Ok(p)
 }
 
+/// Version marker prefixing an encrypted on-disk secret. Files without it are
+/// treated as legacy plaintext (transparent migration on the next save).
+const ZATCA_ENC_PREFIX: &str = "zenc1:";
+
+/// Derives the 32-byte AES key for the file fallback from this machine's
+/// hardware fingerprint. No key is ever persisted — the encrypted file is
+/// therefore bound to THIS machine: copying %APPDATA% to another box yields
+/// an undecryptable blob. Domain-separated from any other fingerprint use.
+fn zatca_file_key() -> Result<[u8; 32], String> {
+    let fp = crate::license::hardware_fingerprint().map_err(|e| e.to_string())?;
+    let mut h = Sha256::new();
+    h.update(b"zatca-secret-file-v1|");
+    h.update(fp.as_bytes());
+    let digest = h.finalize();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&digest);
+    Ok(key)
+}
+
+/// AES-256-GCM encrypt → "zenc1:" + base64(nonce[12] || ciphertext+tag).
+fn zatca_encrypt(plain: &str) -> Result<String, String> {
+    let key = zatca_file_key()?;
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
+    let mut nonce_bytes = [0u8; 12];
+    getrandom::getrandom(&mut nonce_bytes).map_err(|e| e.to_string())?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ct = cipher
+        .encrypt(nonce, plain.as_bytes())
+        .map_err(|e| format!("zatca secret encrypt failed: {e}"))?;
+    let mut blob = Vec::with_capacity(nonce_bytes.len() + ct.len());
+    blob.extend_from_slice(&nonce_bytes);
+    blob.extend_from_slice(&ct);
+    Ok(format!(
+        "{ZATCA_ENC_PREFIX}{}",
+        base64::engine::general_purpose::STANDARD.encode(&blob)
+    ))
+}
+
+/// Inverse of `zatca_encrypt`. A value lacking the version prefix is returned
+/// verbatim (legacy plaintext) so already-onboarded devices keep working.
+fn zatca_decrypt(stored: &str) -> Result<String, String> {
+    let Some(b64) = stored.strip_prefix(ZATCA_ENC_PREFIX) else {
+        return Ok(stored.to_string());
+    };
+    let blob = base64::engine::general_purpose::STANDARD
+        .decode(b64.trim())
+        .map_err(|e| format!("invalid zatca secret blob: {e}"))?;
+    if blob.len() < 12 + 16 {
+        return Err("zatca secret blob too short".to_string());
+    }
+    let (nonce_bytes, ct) = blob.split_at(12);
+    let key = zatca_file_key()?;
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
+    let nonce = Nonce::from_slice(nonce_bytes);
+    let pt = cipher
+        .decrypt(nonce, ct)
+        .map_err(|_| "zatca secret decrypt failed (wrong machine or corrupted file)".to_string())?;
+    String::from_utf8(pt).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn zatca_save_secret(slot: String, value: String) -> Result<(), String> {
     let account = zatca_slot_account(&slot)?;
-    // Best-effort keyring write.
+    // Best-effort keyring write (OS-encrypted primary store).
     if let Ok(entry) = keyring::Entry::new(ZATCA_KEYRING_SERVICE, account) {
         let _ = entry.set_password(&value);
     }
-    // File write IS the source of truth — must succeed.
+    // File fallback IS the source of truth — must succeed. Encrypted at rest
+    // with a machine-bound key so a copied file is useless off this machine.
     let p = zatca_secret_file(account)?;
-    std::fs::write(&p, value).map_err(|e| e.to_string())
+    let enc = zatca_encrypt(&value)?;
+    std::fs::write(&p, enc).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -302,8 +367,8 @@ pub fn zatca_load_secret(slot: String) -> Result<Option<String>, String> {
     }
     match std::fs::read_to_string(&p) {
         Ok(v) => {
-            let v = v.trim().to_string();
-            if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
+            let v = v.trim();
+            if v.is_empty() { Ok(None) } else { Ok(Some(zatca_decrypt(v)?)) }
         }
         Err(e) => Err(e.to_string()),
     }
