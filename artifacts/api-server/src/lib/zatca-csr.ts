@@ -1,11 +1,23 @@
 /**
  * ZATCA CSR (Certificate Signing Request) Generator
- * Generates ECDSA secp256k1 key pair and CSR for ZATCA compliance
+ *
+ * Generates an ECDSA secp256k1 key pair and a CSR that conforms to the ZATCA
+ * e-invoicing onboarding specification. The CSR carries:
+ *   - the certificate-template name in OID 1.3.6.1.4.1.311.20.2
+ *     (TSTZATCA-Code-Signing / PREZATCA-Code-Signing / ZATCA-Code-Signing)
+ *   - a subjectAltName built as a directoryName (dirName) holding the EGS
+ *     serial number (SN), VAT/organization identifier (UID), invoice-type
+ *     flags (title), registered address and business category.
+ *
+ * This layout matches ZATCA's published csr.cnf template. Earlier versions
+ * used a DigiCert-style OID set and a URI SAN, which ZATCA rejects with 400.
  */
 import { execSync } from "child_process";
 import { mkdirSync, writeFileSync, readFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+
+export type ZatcaCsrEnv = "sandbox" | "simulation" | "production";
 
 export interface CsrParams {
   commonName: string;
@@ -15,6 +27,15 @@ export interface CsrParams {
   serialNumber: string;
   vatNumber: string;
   invoiceType: string;
+  /** Registered address line (building + street + district + city + postal). */
+  registeredAddress: string;
+  /** Business / industry category (must be non-empty for ZATCA). */
+  businessCategory: string;
+  /**
+   * Target ZATCA environment. Controls the certificate-template name.
+   * Back-compat: when omitted, `isSandbox` decides sandbox vs production.
+   */
+  environment?: ZatcaCsrEnv;
   isSandbox?: boolean;
 }
 
@@ -22,6 +43,40 @@ export interface GeneratedCsr {
   privateKey: string;
   publicKey: string;
   csr: string;
+}
+
+// ZATCA certificate-template name per environment. These exact strings are
+// validated by ZATCA — any other value is rejected at /compliance with 400.
+function templateName(env: ZatcaCsrEnv): string {
+  switch (env) {
+    case "production":
+      return "ZATCA-Code-Signing";
+    case "simulation":
+      return "PREZATCA-Code-Signing";
+    case "sandbox":
+    default:
+      return "TSTZATCA-Code-Signing";
+  }
+}
+
+// Invoice-type flags for the CSR `title` field: position 1 = standard (B2B
+// tax) invoices, position 2 = simplified (B2C) invoices. "both" => 1100.
+function invoiceTypeFlags(invoiceType: string): string {
+  switch (invoiceType) {
+    case "standard":
+      return "1000";
+    case "simplified":
+      return "0100";
+    case "both":
+    default:
+      return "1100";
+  }
+}
+
+// openssl .cnf values are single-line; strip CR/LF and trim to avoid breaking
+// the config file. ZATCA values (VAT, serial, address) are plain text.
+function cnfValue(v: string): string {
+  return (v ?? "").replace(/[\r\n]+/g, " ").trim();
 }
 
 export function generateCsr(params: CsrParams): GeneratedCsr {
@@ -33,46 +88,52 @@ export function generateCsr(params: CsrParams): GeneratedCsr {
   const pubPath = join(workDir, "public.pem");
   const cnfPath = join(workDir, "csr.cnf");
 
-  const environment = params.isSandbox ? "ZATCA_E-Invoice_Solutions_Provider_Demo" : "ZATCA_E-Invoice_Solutions_Provider";
-  const invoiceTypeValue = params.invoiceType === "simplified" ? "1000" : params.invoiceType === "standard" ? "0100" : "1100";
+  const env: ZatcaCsrEnv =
+    params.environment ?? (params.isSandbox === false ? "production" : "sandbox");
+  const template = templateName(env);
+  const titleValue = invoiceTypeFlags(params.invoiceType);
+
+  // Business category is required by ZATCA; fall back to the org unit / a
+  // generic value so the CSR is never emitted with an empty businessCategory.
+  const businessCategory =
+    cnfValue(params.businessCategory) || cnfValue(params.organizationUnit) || "Other";
+  const registeredAddress = cnfValue(params.registeredAddress) || cnfValue(params.organizationName);
 
   const cnfContent = `[req]
 default_bits = 2048
 prompt = no
 default_md = sha256
-req_extensions = req_ext
+req_extensions = v3_req
 distinguished_name = dn
 
 [dn]
-C = ${params.country ?? "SA"}
-OU = ${params.organizationUnit || "E-Invoice"}
-O = ${params.organizationName}
-CN = ${params.commonName}
+C = ${cnfValue(params.country ?? "SA")}
+OU = ${cnfValue(params.organizationUnit) || "E-Invoice"}
+O = ${cnfValue(params.organizationName)}
+CN = ${cnfValue(params.commonName)}
 
-[req_ext]
-subjectAltName = @alt_names
-1.3.6.1.4.1.311.20.2 = ASN1:UTF8String:${environment}
-2.16.840.1.114028.10.1.12 = ASN1:UTF8String:${params.vatNumber}
-2.16.840.1.114028.10.1.11 = ASN1:UTF8String:${params.serialNumber}
-2.16.840.1.114028.10.1.13 = ASN1:UTF8String:${invoiceTypeValue}
-2.16.840.1.114028.10.1.14 = ASN1:UTF8String:1
-2.16.840.1.114028.10.1.15 = ASN1:UTF8String:1
-2.16.840.1.114028.10.1.7 = ASN1:UTF8String:1
+[v3_req]
+1.3.6.1.4.1.311.20.2 = ASN1:UTF8String:${template}
+subjectAltName = dirName:dir_sect
 
-[alt_names]
-URI = ${params.vatNumber}
+[dir_sect]
+SN = ${cnfValue(params.serialNumber)}
+UID = ${cnfValue(params.vatNumber)}
+title = ${titleValue}
+registeredAddress = ${registeredAddress}
+businessCategory = ${businessCategory}
 `;
 
   writeFileSync(cnfPath, cnfContent);
 
   try {
-    // Generate EC private key (secp256k1)
+    // Generate EC private key (secp256k1 — required by ZATCA).
     execSync(`openssl ecparam -name secp256k1 -genkey -noout -out "${keyPath}"`, { timeout: 15000 });
 
-    // Generate CSR using the private key and config
+    // Generate CSR using the private key and config.
     execSync(`openssl req -new -key "${keyPath}" -config "${cnfPath}" -out "${csrPath}"`, { timeout: 15000 });
 
-    // Extract public key
+    // Extract public key.
     execSync(`openssl ec -in "${keyPath}" -pubout -out "${pubPath}"`, { timeout: 15000 });
 
     const privateKey = readFileSync(keyPath, "utf8");
@@ -81,7 +142,7 @@ URI = ${params.vatNumber}
 
     return { privateKey, publicKey, csr };
   } finally {
-    // Cleanup temp files
+    // Cleanup temp files.
     try { unlinkSync(keyPath); } catch {}
     try { unlinkSync(csrPath); } catch {}
     try { unlinkSync(pubPath); } catch {}

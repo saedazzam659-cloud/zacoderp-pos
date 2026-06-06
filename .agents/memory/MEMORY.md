@@ -49,3 +49,4 @@
 - [ZATCA app English localization](zatca-i18n-localization.md) — parallel i18n via per-page FRAGMENT json + single-writer merge (no JSON race); full-English needs language-aware pickName(nameAr,nameEn), not just t() on UI strings.
 - [POS Desktop offline reports](pos-desktop-sales-reports.md) — Rust returns raw filtered rows only; ALL grouping/share%/net done client-side in TS (Rust builds in CI only); local tables have no status column.
 - [POS Desktop standalone ZATCA pipeline](pos-desktop-standalone-zatca-pipeline.md) — device does full EGS onboarding+sign+submit, no cloud; record-before-submit chain, QR injected post-sign into the empty EmbeddedDocumentBinaryObject, genesis PIH length differs by design.
+- [ZATCA CSR + onboarding spec](zatca-csr-spec.md) — /compliance 400s unless CSR uses exact template name + dirName SAN; production-csid needs the compliance requestID not the token.

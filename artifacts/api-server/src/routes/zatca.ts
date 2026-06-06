@@ -72,6 +72,17 @@ router.post("/companies/:id/generate-csr", requirePermission("zatca_setup", "cre
     const serialNumber = (company.serialNumber ?? "").trim()
       || (serial1 ? `1-${serial1}|2-${serial2 || "Node"}|3-${serial3 || company.id}` : `1-Server|2-Node|3-${company.id}`);
 
+    // ZATCA requires a registered address + business category inside the CSR's
+    // directoryName subjectAltName. Build a single-line address from the
+    // company's structured address fields.
+    const registeredAddress = [
+      (company.buildingNumber ?? "").trim(),
+      (company.street ?? "").trim(),
+      (company.district ?? "").trim(),
+      (company.city ?? "").trim(),
+      (company.postalCode ?? "").trim(),
+    ].filter(Boolean).join(" ");
+
     const { privateKey, csr } = generateCsr({
       commonName: serialNumber,
       organizationName: company.nameAr.trim(),
@@ -80,6 +91,8 @@ router.post("/companies/:id/generate-csr", requirePermission("zatca_setup", "cre
       serialNumber,
       vatNumber: company.vatNumber.trim(),
       invoiceType: company.invoiceType ?? "both",
+      registeredAddress,
+      businessCategory: (company.industryName ?? "").trim(),
       isSandbox: company.isSandbox ?? true,
     });
 
@@ -147,6 +160,10 @@ router.post("/companies/:id/compliance", requirePermission("zatca_setup", "creat
     };
 
     if (!response.ok) {
+      req.log.warn(
+        { companyId: id, status: response.status, isSandbox: company.isSandbox ?? true, zatcaResponse: data },
+        "ZATCA compliance request rejected",
+      );
       res.status(response.status).json({
         error: "فشل استدعاء ZATCA Compliance API",
         zatcaResponse: data,
@@ -183,6 +200,10 @@ router.post("/companies/:id/compliance", requirePermission("zatca_setup", "creat
 // ─── 3. Production CSID (Onboarding) ─────────────────────────────────────────
 router.post("/companies/:id/production-csid", requirePermission("zatca_setup", "create"), audit("zatca_setup", "create"), async (req, res) => {
   const id = parseInt(req.params.id);
+  // ZATCA's /production/csids expects `compliance_request_id` = the `requestID`
+  // returned by the earlier /compliance call (NOT the binary security token).
+  // The client forwards it from the compliance step.
+  const { complianceRequestId } = req.body as { complianceRequestId?: string };
   const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, id));
 
   if (!company) {
@@ -206,7 +227,7 @@ router.post("/companies/:id/production-csid", requirePermission("zatca_setup", "
         "Authorization": basicAuth(company.zatcaCsidToken, company.zatcaCsidSecret),
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ compliance_request_id: company.zatcaCsidToken }),
+      body: JSON.stringify({ compliance_request_id: complianceRequestId ?? company.zatcaCsidToken }),
     });
 
     const data = await response.json() as {
@@ -218,6 +239,10 @@ router.post("/companies/:id/production-csid", requirePermission("zatca_setup", "
     };
 
     if (!response.ok) {
+      req.log.warn(
+        { companyId: id, status: response.status, isSandbox: company.isSandbox ?? true, zatcaResponse: data },
+        "ZATCA production-csid request rejected",
+      );
       res.status(response.status).json({
         error: "فشل استدعاء ZATCA Production CSID API",
         zatcaResponse: data,

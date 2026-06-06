@@ -284,6 +284,11 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? t("zatcaIntegration.errOtpFailed"));
+      // ZATCA's production-csid step needs the compliance `requestID`. Persist it
+      // (localStorage survives a page reload between the two onboarding steps).
+      if (json.requestID) {
+        try { localStorage.setItem(`zatca_compliance_reqid_${companyId}`, String(json.requestID)); } catch {}
+      }
       toast({
         title: t("zatcaIntegration.csidSuccessTitle"),
         description: t("zatcaIntegration.csidSuccessDesc"),
@@ -318,10 +323,12 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
 
   const productionCsidMutation = useMutation({
     mutationFn: async () => {
+      let complianceRequestId: string | null = null;
+      try { complianceRequestId = localStorage.getItem(`zatca_compliance_reqid_${companyId}`); } catch {}
       const res = await fetch(`${API}/api/companies/${companyId}/production-csid`, {
         method: "POST",
         headers,
-        body: JSON.stringify({}),
+        body: JSON.stringify({ complianceRequestId }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? t("zatcaIntegration.errPcsidFailed"));
