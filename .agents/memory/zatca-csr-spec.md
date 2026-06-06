@@ -37,8 +37,16 @@ fixing the generator you MUST re-run `generate-csr` for each company before
 `/compliance`, and use a FRESH OTP (single-use, 1-hour). The compliance route
 logs ZATCA's real rejection via `req.log.warn(... zatcaResponse ...)`.
 
-The pos-desktop standalone pipeline (Rust) has its own separate CSR builder —
-verify it independently; fixing the web generator does NOT touch it.
+The pos-desktop (Windows) standalone pipeline has its OWN separate CSR builder —
+it is **TypeScript** (`src/lib/zatca/csr.ts`), a hand-rolled DER port, NOT Rust,
+NOT openssl. It had the exact same bug (made-up template + URI SAN + DigiCert
+OIDs) and was fixed to mirror this same spec. The desktop OTP/compliance/
+production flow already existed and worked once the CSR was correct. The dirName
+SAN must be a `[4]` constructed context tag wrapping the RDNSequence; all five
+attribute values are UTF8String; the OIDs openssl uses for the csr.cnf short
+names are: SN=2.5.4.4 (surname), UID=0.9.2342.19200300.100.1.1 (userId),
+title=2.5.4.12, registeredAddress=2.5.4.26, businessCategory=2.5.4.15. Verify
+the TS output the same way: `npx tsx` build a CSR → `openssl req -noout -text`.
 
 ## production-csid step
 

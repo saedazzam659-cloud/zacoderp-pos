@@ -41,6 +41,10 @@ export interface OnboardingOrg {
   invoiceType: string;
   /** Common name for the CSR (defaults to organizationName). */
   commonName?: string;
+  /** Registered address (building + street + district + city + postal). */
+  registeredAddress?: string;
+  /** Business / industry category (required non-empty by ZATCA). */
+  businessCategory?: string;
 }
 
 function csidJson(token: string, secret: string): string {
@@ -63,6 +67,9 @@ export async function generateOnboardingCsr(
     serialNumber: org.serialNumber,
     vatNumber: org.vatNumber,
     invoiceType: org.invoiceType,
+    registeredAddress: org.registeredAddress,
+    businessCategory: org.businessCategory,
+    environment: env === "production" ? "production" : "sandbox",
     isSandbox: env !== "production",
   };
   const { csrPem, keyPair } = buildZatcaCsr(params);

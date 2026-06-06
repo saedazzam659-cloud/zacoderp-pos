@@ -137,6 +137,8 @@ export default function ZatcaOnboarding() {
   const [vatNumber, setVatNumber] = useState("");
   const [serial, setSerial] = useState("");
   const [invType, setInvType] = useState("simplified");
+  const [regAddress, setRegAddress] = useState("");
+  const [bizCategory, setBizCategory] = useState("");
   const [otp, setOtp] = useState("");
 
   const refresh = useCallback(async () => {
@@ -157,6 +159,8 @@ export default function ZatcaOnboarding() {
           setOrgUnit((v) => v || org.organizationUnit || "");
           setVatNumber((v) => v || org.vatNumber || "");
           setSerial((v) => v || org.serialNumber || "");
+          setRegAddress((v) => v || org.registeredAddress || "");
+          setBizCategory((v) => v || org.businessCategory || "");
           setInvType(org.invoiceType || "simplified");
         } catch { /* ignore */ }
       } else {
@@ -248,6 +252,12 @@ export default function ZatcaOnboarding() {
             <Field label="الرقم التسلسلي للجهاز (EGS)">
               <input style={input} value={serial} onChange={(e) => setSerial(e.target.value)} placeholder="1-Zacod|2-POS|3-..." />
             </Field>
+            <Field label="العنوان المسجّل (المبنى والشارع والحي والمدينة)">
+              <input style={input} value={regAddress} onChange={(e) => setRegAddress(e.target.value)} placeholder="مثال: الرياض 1234 العليا" />
+            </Field>
+            <Field label="النشاط التجاري">
+              <input style={input} value={bizCategory} onChange={(e) => setBizCategory(e.target.value)} placeholder="مثال: تجزئة" />
+            </Field>
             <Field label="نوع الفواتير">
               <select style={input} value={invType} onChange={(e) => setInvType(e.target.value)}>
                 <option value="simplified">مبسطة (B2C)</option>
@@ -268,7 +278,7 @@ export default function ZatcaOnboarding() {
               disabled={!!busy || !orgName || !vatNumber || !serial}
               onClick={() => run("csr", async () => {
                 await generateOnboardingCsr(
-                  { organizationName: orgName, organizationUnit: orgUnit, vatNumber, serialNumber: serial, invoiceType: invType },
+                  { organizationName: orgName, organizationUnit: orgUnit, vatNumber, serialNumber: serial, invoiceType: invType, registeredAddress: regAddress, businessCategory: bizCategory },
                   env,
                 );
                 setMsg("تم إنشاء المفتاح وطلب الشهادة بنجاح.");

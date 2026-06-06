@@ -33,6 +33,8 @@ import {
   tlv,
 } from "./der";
 
+export type ZatcaCsrEnv = "sandbox" | "simulation" | "production";
+
 export interface ZatcaCsrParams {
   commonName: string;
   organizationName: string;
@@ -42,6 +44,15 @@ export interface ZatcaCsrParams {
   serialNumber: string;
   vatNumber: string;
   invoiceType: string; // "simplified" | "standard" | other → both
+  /** Registered address line (building + street + district + city + postal). */
+  registeredAddress?: string;
+  /** Business / industry category (ZATCA requires it non-empty). */
+  businessCategory?: string;
+  /**
+   * Target ZATCA environment — controls the certificate-template name.
+   * Back-compat: when omitted, `isSandbox` decides sandbox vs production.
+   */
+  environment?: ZatcaCsrEnv;
   isSandbox?: boolean;
 }
 
@@ -63,13 +74,42 @@ const OID = {
   extensionRequest: "1.2.840.113549.1.9.14",
   subjectAltName: "2.5.29.17",
   msTemplate: "1.3.6.1.4.1.311.20.2",
-  vat: "2.16.840.1.114028.10.1.12",
-  egsSerial: "2.16.840.1.114028.10.1.11",
-  invoiceType: "2.16.840.1.114028.10.1.13",
-  location: "2.16.840.1.114028.10.1.14",
-  industry: "2.16.840.1.114028.10.1.15",
-  title: "2.16.840.1.114028.10.1.7",
+  // ZATCA dirName SAN attributes — these are the exact OIDs openssl emits for
+  // the csr.cnf short names SN/UID/title/registeredAddress/businessCategory.
+  surname: "2.5.4.4", // SN  → EGS serial number
+  userId: "0.9.2342.19200300.100.1.1", // UID → VAT / org identifier
+  title: "2.5.4.12", // title → invoice-type flags
+  registeredAddress: "2.5.4.26",
+  businessCategory: "2.5.4.15",
 } as const;
+
+// ZATCA certificate-template name per environment. These exact strings are
+// validated by ZATCA — any other value is rejected at /compliance with 400.
+function templateName(env: ZatcaCsrEnv): string {
+  switch (env) {
+    case "production":
+      return "ZATCA-Code-Signing";
+    case "simulation":
+      return "PREZATCA-Code-Signing";
+    case "sandbox":
+    default:
+      return "TSTZATCA-Code-Signing";
+  }
+}
+
+// Invoice-type flags for the CSR `title` field: position 1 = standard (B2B
+// tax) invoices, position 2 = simplified (B2C) invoices. "both" => 1100.
+function invoiceTypeFlags(invoiceType: string): string {
+  switch (invoiceType) {
+    case "standard":
+      return "1000";
+    case "simplified":
+      return "0100";
+    case "both":
+    default:
+      return "1100";
+  }
+}
 
 function rdn(oid: string, valueTlv: Uint8Array): Uint8Array {
   return derSet(derSeq(derOid(oid), valueTlv));
@@ -96,11 +136,21 @@ function pemWrap(label: string, der: Uint8Array): string {
 export function buildZatcaCsr(params: ZatcaCsrParams, existing?: EcKeyPair): GeneratedCsr {
   const keyPair = existing ?? generateEcKeyPair();
 
-  const environment = params.isSandbox
-    ? "ZATCA_E-Invoice_Solutions_Provider_Demo"
-    : "ZATCA_E-Invoice_Solutions_Provider";
-  const invoiceTypeValue =
-    params.invoiceType === "simplified" ? "1000" : params.invoiceType === "standard" ? "0100" : "1100";
+  const env: ZatcaCsrEnv =
+    params.environment ?? (params.isSandbox === false ? "production" : "sandbox");
+  const template = templateName(env);
+  const titleValue = invoiceTypeFlags(params.invoiceType);
+
+  // ZATCA requires a non-empty businessCategory + registeredAddress; fall back
+  // to the org unit / name (and a placeholder) so the CSR is never empty.
+  const businessCategory =
+    (params.businessCategory ?? "").trim() ||
+    (params.organizationUnit ?? "").trim() ||
+    "Other";
+  const registeredAddress =
+    (params.registeredAddress ?? "").trim() ||
+    (params.organizationName ?? "").trim() ||
+    "غير محدد";
 
   // Subject — order matches the cloud's openssl config (C, OU, O, CN).
   const subject = derSeq(
@@ -112,21 +162,23 @@ export function buildZatcaCsr(params: ZatcaCsrParams, existing?: EcKeyPair): Gen
 
   const spki = buildSubjectPublicKeyInfo(keyPair.publicKeyUncompressed);
 
-  // subjectAltName with a single URI = VAT (matches the cloud config's [alt_names]).
-  // GeneralName URI is [6] IMPLICIT IA5String → context-primitive tag 6.
-  const sanValue = derSeq(derContext(6, false, new TextEncoder().encode(params.vatNumber)));
+  // subjectAltName = directoryName ([4] EXPLICIT Name) carrying the ZATCA EGS
+  // attributes (SN/UID/title/registeredAddress/businessCategory), exactly like
+  // ZATCA's csr.cnf dir_sect. All values are UTF8String and use the same OIDs
+  // openssl emits for those short names. DigiCert OIDs + the URI SAN (which
+  // ZATCA rejects with 400) are gone.
+  const dirName = derSeq(
+    rdn(OID.surname, derUtf8(params.serialNumber)),
+    rdn(OID.userId, derUtf8(params.vatNumber)),
+    rdn(OID.title, derUtf8(titleValue)),
+    rdn(OID.registeredAddress, derUtf8(registeredAddress)),
+    rdn(OID.businessCategory, derUtf8(businessCategory)),
+  );
+  const sanValue = derSeq(derContext(4, true, dirName));
 
-  // ZATCA EGS attributes as individual custom-OID UTF8String extensions
-  // (openssl `<OID> = ASN1:UTF8String:<value>` → extnValue = DER(UTF8String)).
   const extensions = derSeq(
+    extension(OID.msTemplate, derUtf8(template)),
     extension(OID.subjectAltName, sanValue),
-    extension(OID.msTemplate, derUtf8(environment)),
-    extension(OID.vat, derUtf8(params.vatNumber)),
-    extension(OID.egsSerial, derUtf8(params.serialNumber)),
-    extension(OID.invoiceType, derUtf8(invoiceTypeValue)),
-    extension(OID.location, derUtf8("1")),
-    extension(OID.industry, derUtf8("1")),
-    extension(OID.title, derUtf8("1")),
   );
 
   // extensionRequest attribute: SEQUENCE { OID, SET { Extensions } }
