@@ -265,16 +265,23 @@ jobs:
       - name: Build Tauri installers (unsigned)
         if: steps.signing.outputs.MODE == 'unsigned'
         run: |
-          # Pass 1 — SMALL MSI (downloadBootstrapper from base tauri.conf.json):
+          # Pass 1 — SMALL online MSI (downloadBootstrapper from base config):
           # served by the public /download page AND used by the in-app updater
-          # (platform=win-x64). WebView2 is fetched at install time (and is
-          # already present on any machine running this app, so updates need
-          # no extra download).
+          # (platform=win-x64). WebView2 is fetched at install time.
           pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles msi
-          # Pass 2 — LARGE OFFLINE one-click NSIS .exe: the offline config
-          # override bundles the full WebView2 runtime so the protected
-          # /install wizard (platform=win-x64-exe) installs with no internet.
-          pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles nsis --config src-tauri/tauri.offline.conf.json
+          # Both passes emit bundle/msi/<same-name>.msi, so stash the online MSI
+          # before Pass 2 overwrites it.
+          MSI_DIR="src-tauri/target/${{ env.TAURI_TARGET }}/release/bundle/msi"
+          mkdir -p staging/online staging/offline
+          mv "$MSI_DIR"/*.msi staging/online/
+          # Pass 2 — LARGE OFFLINE MSI (offlineInstaller embeds the full WebView2
+          # runtime) for the protected /install wizard (platform=win-x64-exe).
+          # Same installer TYPE (per-machine MSI) as the online one, so they can
+          # never diverge into separate per-user/per-machine products.
+          pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles msi --config src-tauri/tauri.offline.conf.json
+          for f in "$MSI_DIR"/*.msi; do
+            mv "$f" "staging/offline/$(basename "${f%.msi}")-offline.msi"
+          done
 
       - name: Build Tauri MSI (signed)
         if: steps.signing.outputs.MODE == 'signed'
@@ -285,17 +292,25 @@ jobs:
           TAURI__BUNDLE__WINDOWS__DIGEST_ALGORITHM: "sha256"
           TAURI__BUNDLE__WINDOWS__TIMESTAMP_URL: "http://timestamp.digicert.com"
         run: |
-          # Pass 1 — SMALL MSI (downloadBootstrapper) → /download + in-app updater
+          # Pass 1 — SMALL online MSI (downloadBootstrapper) → /download + updater
           pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles msi
-          # Pass 2 — LARGE OFFLINE one-click NSIS .exe → /install wizard
-          pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles nsis --config src-tauri/tauri.offline.conf.json
+          # Both passes emit bundle/msi/<same-name>.msi, so stash the online MSI
+          # before Pass 2 overwrites it.
+          MSI_DIR="src-tauri/target/${{ env.TAURI_TARGET }}/release/bundle/msi"
+          mkdir -p staging/online staging/offline
+          mv "$MSI_DIR"/*.msi staging/online/
+          # Pass 2 — LARGE OFFLINE MSI (offlineInstaller, full WebView2) → /install
+          pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles msi --config src-tauri/tauri.offline.conf.json
+          for f in "$MSI_DIR"/*.msi; do
+            mv "$f" "staging/offline/$(basename "${f%.msi}")-offline.msi"
+          done
 
       # ─── 8. Locate + checksum the MSI ───────────────────────────────
       - name: Find produced MSI
         id: msi
         shell: bash
         run: |
-          MSI_PATH=$(find src-tauri/target/${{ env.TAURI_TARGET }}/release/bundle/msi -name "*.msi" | head -n1)
+          MSI_PATH=$(find staging/online -name "*.msi" | head -n1)
           if [[ -z "$MSI_PATH" ]]; then
             echo "::error::No MSI produced — check Tauri build output above."
             exit 1
@@ -311,20 +326,19 @@ jobs:
           echo "MSI: $MSI_NAME ($MSI_SIZE bytes)"
           echo "SHA256: $MSI_SHA256"
 
-      # ─── 8b. Locate + checksum the NSIS one-click .exe ──────────────
-      # NSIS produces a Chrome-style one-click installer (per-user, no admin)
-      # used by the protected /install wizard (platform=win-x64-exe). The
-      # public /download page keeps serving the .msi (platform=win-x64).
-      - name: Find produced NSIS exe
+      # ─── 8b. Locate + checksum the OFFLINE MSI ──────────────────────
+      # The offline installer is now an MSI (offlineInstaller — full WebView2
+      # runtime embedded, per-machine) used by the protected /install wizard
+      # (platform=win-x64-exe). Same installer TYPE as the online MSI, so the
+      # in-app updater (MSI) always replaces it cleanly — no per-user vs
+      # per-machine split. The public /download page serves the online MSI.
+      - name: Find produced offline MSI
         id: exe
         shell: bash
         run: |
-          EXE_PATH=$(find src-tauri/target/${{ env.TAURI_TARGET }}/release/bundle/nsis -name "*-setup.exe" | head -n1)
+          EXE_PATH=$(find staging/offline -name "*-offline.msi" | head -n1)
           if [[ -z "$EXE_PATH" ]]; then
-            EXE_PATH=$(find src-tauri/target/${{ env.TAURI_TARGET }}/release/bundle/nsis -name "*.exe" | head -n1)
-          fi
-          if [[ -z "$EXE_PATH" ]]; then
-            echo "::error::No NSIS .exe produced — check Tauri build output above."
+            echo "::error::No offline MSI produced — check Tauri build output above."
             exit 1
           fi
           EXE_NAME=$(basename "$EXE_PATH")
@@ -335,7 +349,7 @@ jobs:
           echo "SIZE=$EXE_SIZE" >> "$GITHUB_OUTPUT"
           echo "SHA256=$EXE_SHA256" >> "$GITHUB_OUTPUT"
           echo ""
-          echo "NSIS exe: $EXE_NAME ($EXE_SIZE bytes)"
+          echo "Offline MSI: $EXE_NAME ($EXE_SIZE bytes)"
           echo "SHA256: $EXE_SHA256"
 
       - name: Write build manifest
@@ -386,7 +400,7 @@ jobs:
             **Size:** ${{ steps.msi.outputs.SIZE }} bytes
             **SHA-256:** `${{ steps.msi.outputs.SHA256 }}`
 
-            **One-click installer (`/install` wizard):** `${{ steps.exe.outputs.NAME }}`
+            **Offline MSI installer (`/install` wizard):** `${{ steps.exe.outputs.NAME }}`
             **Size:** ${{ steps.exe.outputs.SIZE }} bytes
             **SHA-256:** `${{ steps.exe.outputs.SHA256 }}`
 
@@ -395,11 +409,11 @@ jobs:
 
             ### Next steps for SuperAdmin
             The server auto-mirrors BOTH assets hourly into the Releases table
-            (`ALL` country): the `.msi` as platform `win-x64` and the `.exe` as
-            platform `win-x64-exe`. To publish immediately, hit **SuperAdmin →
-            POS Devices → Releases tab → مزامنة الآن**, or add per-country rows
-            manually (use platform `win-x64` for `/download`, `win-x64-exe` for
-            the `/install` one-click wizard).
+            (`ALL` country): the online `.msi` as platform `win-x64` and the
+            `-offline.msi` as platform `win-x64-exe`. To publish immediately, hit
+            **SuperAdmin → POS Devices → Releases tab → مزامنة الآن**, or add
+            per-country rows manually (use platform `win-x64` for `/download`,
+            `win-x64-exe` for the `/install` offline wizard).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

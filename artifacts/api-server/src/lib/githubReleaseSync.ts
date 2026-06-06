@@ -20,7 +20,7 @@ const REPO = "saedazzam659-cloud/zacoderp-pos";
 const TAG_PREFIX = "pos-desktop-v";
 const COUNTRY = "ALL";
 const PLATFORM = "win-x64";          // .msi — public /download page
-const PLATFORM_EXE = "win-x64-exe";  // NSIS one-click .exe — /install wizard
+const PLATFORM_EXE = "win-x64-exe";  // offline MSI (full WebView2) — /install wizard
 const TICK_MS = 60 * 60_000;       // 1h
 const STARTUP_DELAY_MS = 60_000;   // 1 min after boot
 
@@ -71,15 +71,26 @@ async function fetchLatestRelease(): Promise<GhRelease | null> {
 }
 
 function pickMsiAsset(rel: GhRelease): GhAsset | null {
-  return rel.assets.find((a) => a.name.toLowerCase().endsWith(".msi")) ?? null;
+  // The small ONLINE MSI (public /download page + in-app updater). Exclude the
+  // offline MSI, whose name ends with `-offline.msi`.
+  return (
+    rel.assets.find(
+      (a) =>
+        a.name.toLowerCase().endsWith(".msi") &&
+        !a.name.toLowerCase().endsWith("-offline.msi"),
+    ) ?? null
+  );
 }
 
-// The NSIS one-click installer asset (per-user, no-admin) used by the
-// protected /install wizard. Tauri names it `*-setup.exe`; fall back to any
-// `.exe` so a naming change upstream doesn't silently skip the mirror.
+// The OFFLINE installer used by the protected /install wizard. It is now an MSI
+// (`*-offline.msi`) with the full WebView2 runtime embedded — same installer
+// TYPE (per-machine MSI) as the online one, so the in-app updater always
+// replaces it cleanly with no per-user/per-machine split. Older releases shipped
+// a NSIS `*-setup.exe`; fall back to it so historic tags still mirror.
 function pickExeAsset(rel: GhRelease): GhAsset | null {
   const lower = (a: GhAsset) => a.name.toLowerCase();
   return (
+    rel.assets.find((a) => lower(a).endsWith("-offline.msi")) ??
     rel.assets.find((a) => lower(a).endsWith("-setup.exe")) ??
     rel.assets.find((a) => lower(a).endsWith(".exe")) ??
     null
