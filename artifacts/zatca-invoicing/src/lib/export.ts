@@ -157,6 +157,29 @@ export async function exportToPDF(
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
 
+  // Number-aware cell renderer. Money/number columns carry a `numFmt`
+  // (e.g. "#,##0.00") derived from the company's decimal-places setting in
+  // الإعدادات العامة. Raw JS numbers like 57.879999999999995 leak through
+  // unformatted otherwise — so when a column has a numFmt AND the cell value
+  // is a real number, round it to that many decimals (with thousands
+  // grouping when the format includes a comma). Non-numeric values
+  // (pre-formatted strings such as "1,200.00 مدين", dates, empty cells)
+  // fall straight through to the plain escaper.
+  const cell = (col: ExportColumn, value: unknown): string => {
+    if (col.numFmt && typeof value === "number" && Number.isFinite(value)) {
+      const dot = col.numFmt.lastIndexOf(".");
+      const decimals = dot >= 0 ? col.numFmt.length - dot - 1 : 0;
+      return escape(
+        value.toLocaleString("en-US", {
+          minimumFractionDigits: decimals,
+          maximumFractionDigits: decimals,
+          useGrouping: col.numFmt.includes(","),
+        }),
+      );
+    }
+    return escape(value);
+  };
+
   // Logo HTML — wrapped in a white rounded card so it renders cleanly on
   // top of the dark-green header background regardless of the source image
   // having transparency or its own padding.  Falls back to an empty string
@@ -177,7 +200,7 @@ export async function exportToPDF(
     .map(
       (row, i) =>
         `<tr class="${i % 2 === 0 ? "even" : "odd"}">${columns
-          .map(c => `<td>${escape(row[c.key])}</td>`)
+          .map(c => `<td>${cell(c, row[c.key])}</td>`)
           .join("")}</tr>`,
     )
     .join("");
@@ -190,7 +213,7 @@ export async function exportToPDF(
   // where the data ends, satisfying that requirement.
   const totalsTbodyRow = totalsRow
     ? `<tr class="totals">${columns
-        .map(c => `<td>${escape(totalsRow[c.key])}</td>`)
+        .map(c => `<td>${cell(c, totalsRow[c.key])}</td>`)
         .join("")}</tr>`
     : "";
 
@@ -380,9 +403,9 @@ export async function exportToPDF(
         const th = s.columns.map(c => `<th>${escape(c.header)}</th>`).join("");
         const tb = s.rows.map((r, i) =>
           `<tr class="${i % 2 === 0 ? "even" : "odd"}">${s.columns
-            .map(c => `<td>${escape(r[c.key])}</td>`).join("")}</tr>`).join("");
+            .map(c => `<td>${cell(c, r[c.key])}</td>`).join("")}</tr>`).join("");
         const tot = s.totalsRow
-          ? `<tr class="totals">${s.columns.map(c => `<td>${escape(s.totalsRow![c.key])}</td>`).join("")}</tr>`
+          ? `<tr class="totals">${s.columns.map(c => `<td>${cell(c, s.totalsRow![c.key])}</td>`).join("")}</tr>`
           : "";
         return `<h2 style="margin:18px 0 8px;font-size:12pt;color:#14532d;border-bottom:2px solid #166534;padding-bottom:4px;page-break-before:auto;page-break-inside:avoid;">${escape(s.title)}</h2>
           <table><thead><tr>${th}</tr></thead><tbody>${tb}${tot}</tbody></table>`;
