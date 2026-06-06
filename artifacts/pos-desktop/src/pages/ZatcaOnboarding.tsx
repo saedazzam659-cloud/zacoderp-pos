@@ -12,6 +12,7 @@ import {
   Table, Th, Td, Empty,
 } from "./_adminUi";
 import { getCompanyProfile } from "../lib/appSettings";
+import { getFingerprint } from "../lib/tauri-shim";
 import {
   generateOnboardingCsr, exchangeComplianceCsid, exchangeProductionCsid,
   runComplianceCheck, type OnboardingOrg,
@@ -105,6 +106,14 @@ function buildSampleInvoice(uuid: string): BuildInvoiceInput {
   };
 }
 
+async function sha256Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 function uuidV4(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -174,6 +183,30 @@ export default function ZatcaOnboarding() {
     }
   }
 
+  // Auto-fill org name + VAT from the company profile, default the branch, and
+  // generate a stable EGS serial from the device fingerprint (same machine →
+  // same serial, so re-onboarding stays consistent). One-click convenience.
+  const autoFill = useCallback(async () => {
+    setErr(null); setMsg(null);
+    try {
+      const p = getCompanyProfile();
+      if (p.name) setOrgName(p.name);
+      if (p.vat) setVatNumber(p.vat);
+      setOrgUnit((v) => v || "الفرع الرئيسي");
+      let seed = (await getFingerprint())?.trim() || "";
+      if (!seed) {
+        const KEY = "pos_desktop_egs_seed";
+        seed = localStorage.getItem(KEY) || "";
+        if (!seed) { seed = uuidV4(); localStorage.setItem(KEY, seed); }
+      }
+      const short = (await sha256Hex(seed)).slice(0, 12).toUpperCase();
+      setSerial(`1-Zacod|2-POS|3-${short}`);
+      setMsg("تم ملء البيانات تلقائياً — راجعها ثم اضغط «إنشاء المفتاح + CSR».");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
   const status = onb?.status ?? "none";
   const hasCsr = status === "csr" || status === "compliance" || status === "production";
   const hasCompliance = status === "compliance" || status === "production";
@@ -196,7 +229,12 @@ export default function ZatcaOnboarding() {
 
         {/* Step 1 — CSR */}
         <Card style={{ marginBottom: 16 }}>
-          <h3 style={{ marginTop: 0 }}>1) إنشاء المفتاح وطلب الشهادة (CSR)</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+            <h3 style={{ margin: 0 }}>1) إنشاء المفتاح وطلب الشهادة (CSR)</h3>
+            <button style={btnSecondary} disabled={!!busy} onClick={() => void autoFill()}>
+              ⚡ ملء تلقائي
+            </button>
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <Field label="اسم المنشأة">
               <input style={input} value={orgName} onChange={(e) => setOrgName(e.target.value)} />
