@@ -928,6 +928,10 @@ router.post("/register", async (req, res) => {
     isSandbox: false,
     status: companyStatus,
     registrationIp,
+    // New tenants default to the legacy "manual" journal-entry form mode
+    // (close screen + return to list after each save). They can switch to
+    // the faster "auto" continuous-entry mode from الإعدادات العامة.
+    journalEntryFormMode: "manual",
     // Only override default menuPermissions if the user picked modules at
     // registration; otherwise let the schema default apply.
     ...(resolvedMenuPermissions ? { menuPermissions: resolvedMenuPermissions } : {}),

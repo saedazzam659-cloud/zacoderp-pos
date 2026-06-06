@@ -61,6 +61,10 @@ router.post("/", async (req, res) => {
     deviceSerial3: data.deviceSerial3,
     zatcaCsid: data.zatcaCsid,
     zatcaPcsid: data.zatcaPcsid,
+    // New tenants default to the legacy "manual" journal-entry form mode
+    // (close screen + return to list after each save). They can switch to
+    // the faster "auto" continuous-entry mode from الإعدادات العامة.
+    journalEntryFormMode: "manual",
   }).returning();
 
   // Auto-seed the standard commercial chart of accounts so the new tenant
