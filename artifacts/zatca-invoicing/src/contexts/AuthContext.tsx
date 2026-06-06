@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { setAuthTokenGetter, setSessionIdGetter, setActingCompanyIdGetter } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { emitCall } from "@/lib/callSignal";
+
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 // Register auth token getter for the generated API client so all hooks automatically include Bearer token
@@ -358,6 +360,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const payload = JSON.parse(e.data);
           window.dispatchEvent(new CustomEvent("cobrowse:invite-cancelled", { detail: payload?.meta ?? payload }));
         } catch { /* ignore */ }
+      });
+
+      // WebRTC chat-call signaling: forward to the in-process call bus so the
+      // global CallProvider can react (ring, exchange offer/answer/ICE, hang
+      // up) without opening a second SSE connection.
+      es.addEventListener("call_invite", (e: MessageEvent) => {
+        try { const p = JSON.parse(e.data); emitCall("invite", (p?.meta ?? p)); } catch { /* ignore */ }
+      });
+      es.addEventListener("call_signal", (e: MessageEvent) => {
+        try { const p = JSON.parse(e.data); emitCall("signal", (p?.meta ?? p)); } catch { /* ignore */ }
+      });
+      es.addEventListener("call_end", (e: MessageEvent) => {
+        try { const p = JSON.parse(e.data); emitCall("end", (p?.meta ?? p)); } catch { /* ignore */ }
       });
 
       es.addEventListener("hello", () => {

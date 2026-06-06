@@ -128,6 +128,19 @@ export const chatApi = {
       conversationTitle: string | null; conversationKind: string;
     }> }>("GET", `/api/chat-ai/search?q=${encodeURIComponent(q)}`),
 
+  // ── Calls (WebRTC signaling relay) ─────────────────────────────────────
+  // The media flows browser↔browser; these endpoints only relay the small
+  // offer/answer/ICE blobs through the server SSE to the targeted peer(s).
+  callInvite: (conversationId: number, body: { callId: string; media: "audio" | "video" }) =>
+    req<{ ok: true; notified: number }>("POST", `/api/chat/conversations/${conversationId}/call/invite`, body),
+  callSignal: (conversationId: number, body: {
+    callId: string;
+    toUserId?: number;
+    signal: { kind: "offer" | "answer" | "ice" | "accept" | "reject" | "join"; sdp?: string; candidate?: unknown; name?: string };
+  }) => req<{ ok: true }>("POST", `/api/chat/conversations/${conversationId}/call/signal`, body),
+  callEnd: (conversationId: number, body: { callId: string; reason?: string }) =>
+    req<{ ok: true }>("POST", `/api/chat/conversations/${conversationId}/call/end`, body),
+
   // ── Attachments: request a presigned upload URL, then PUT directly. ──
   requestUploadUrl: (file: { name: string; size: number; contentType: string }) =>
     req<{ uploadURL: string; objectPath: string; metadata: any }>("POST", "/api/storage/uploads/request-url", file),

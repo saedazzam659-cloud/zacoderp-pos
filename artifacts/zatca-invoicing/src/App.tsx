@@ -234,6 +234,7 @@ import PosTerminals from "@/pages/pos/PosTerminals";
 import OnlineStore from "@/pages/online-store/OnlineStore";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ScreenActionsProvider } from "@/contexts/ScreenActionsContext";
+import { CallProvider } from "@/contexts/CallContext";
 import { Loader2 } from "lucide-react";
 // Inventory
 import InventoryDashboard from "@/pages/inventory/InventoryDashboard";
@@ -1045,6 +1046,7 @@ function App() {
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
           <AuthProvider>
             <ScreenActionsProvider>
+              <CallProvider>
               <AppRoutes />
               <CustomerCobrowseWidget />
               {/* Floating WhatsApp CTA — visible to unauthenticated
@@ -1054,6 +1056,7 @@ function App() {
                   without each page needing to opt in. */}
               <WhatsAppFloat />
               <PwaInstallPrompt />
+              </CallProvider>
             </ScreenActionsProvider>
           </AuthProvider>
         </WouterRouter>

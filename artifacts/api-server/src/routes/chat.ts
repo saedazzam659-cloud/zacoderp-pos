@@ -20,6 +20,7 @@ import {
 import { and, eq, desc, asc, inArray, sql, gt, isNull, or, ne } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
+import { emitToUser } from "../lib/sessionEvents.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -379,6 +380,127 @@ router.get("/unread-count", async (req, res) => {
       WHERE c.company_id = ${cid} AND p.user_id = ${userId}
     `);
     res.json({ count: Number(r.rows?.[0]?.c || 0) });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Chat calls (WebRTC) — signaling relay. The media itself flows peer-to-peer
+// between browsers; the server only ferries the small offer/answer/ICE blobs
+// to the targeted participant(s) via the existing SSE stream (emitToUser).
+// Every endpoint re-checks that the caller is a participant of the
+// conversation, and signal/end re-check the *target* is too, so a tenant can
+// never inject signaling into a conversation they aren't part of.
+// ─────────────────────────────────────────────────────────────────────────
+
+async function otherParticipantIds(convId: number, exceptUserId: number): Promise<number[]> {
+  const rows = await db.select({ userId: chatParticipantsTable.userId })
+    .from(chatParticipantsTable)
+    .where(eq(chatParticipantsTable.conversationId, convId));
+  return rows.map(r => r.userId).filter(id => id !== exceptUserId);
+}
+
+const CallInviteBody = z.object({
+  callId: z.string().min(1).max(64),
+  media: z.enum(["audio", "video"]),
+});
+
+const CallSignalBody = z.object({
+  callId: z.string().min(1).max(64),
+  // Point-to-point when set; broadcast to every other participant when omitted
+  // (used by the mesh "join" announcement so all peers discover each other).
+  toUserId: z.number().int().positive().optional(),
+  signal: z.object({
+    kind: z.enum(["offer", "answer", "ice", "accept", "reject", "join"]),
+    sdp: z.string().optional(),
+    candidate: z.unknown().optional(),
+    name: z.string().max(128).optional(),
+  }),
+});
+
+const CallEndBody = z.object({
+  callId: z.string().min(1).max(64),
+  reason: z.string().max(64).optional(),
+});
+
+// ─── POST /chat/conversations/:id/call/invite ─────────────────────────────
+// Ring every OTHER participant of the conversation.
+router.post("/conversations/:id/call/invite", async (req, res) => {
+  try {
+    const cid = getCid(req, res); if (!cid) return;
+    const userId = req.authUser!.id;
+    const convId = Number(req.params.id);
+    const conv = await loadConversationForUser(convId, cid, userId);
+    if (!conv) { res.status(404).json({ error: "غير موجود" }); return; }
+    const parsed = CallInviteBody.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
+    const [me] = await db.select({
+      nameAr: usersTable.nameAr, nameEn: usersTable.nameEn, username: usersTable.username,
+    }).from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+    const fromName = me?.nameAr || me?.nameEn || me?.username || "—";
+    const others = await otherParticipantIds(convId, userId);
+    for (const uid of others) {
+      emitToUser(uid, cid, "call_invite", {
+        callId: parsed.data.callId, conversationId: convId,
+        fromUserId: userId, fromName, media: parsed.data.media,
+      });
+    }
+    res.json({ ok: true, notified: others.length });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── POST /chat/conversations/:id/call/signal ─────────────────────────────
+// Relay one signaling blob (offer/answer/ICE/accept/reject) to one peer.
+router.post("/conversations/:id/call/signal", async (req, res) => {
+  try {
+    const cid = getCid(req, res); if (!cid) return;
+    const userId = req.authUser!.id;
+    const convId = Number(req.params.id);
+    const conv = await loadConversationForUser(convId, cid, userId);
+    if (!conv) { res.status(404).json({ error: "غير موجود" }); return; }
+    const parsed = CallSignalBody.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
+    if (parsed.data.toUserId != null) {
+      // Point-to-point relay (offer/answer/ICE/accept/reject/join-ack).
+      if (!(await isParticipant(convId, parsed.data.toUserId))) {
+        res.status(404).json({ error: "الطرف غير موجود في المحادثة" }); return;
+      }
+      emitToUser(parsed.data.toUserId, cid, "call_signal", {
+        callId: parsed.data.callId, conversationId: convId,
+        fromUserId: userId, signal: parsed.data.signal,
+      });
+    } else {
+      // Broadcast (mesh "join" announcement) to every other participant.
+      const others = await otherParticipantIds(convId, userId);
+      for (const uid of others) {
+        emitToUser(uid, cid, "call_signal", {
+          callId: parsed.data.callId, conversationId: convId,
+          fromUserId: userId, signal: parsed.data.signal,
+        });
+      }
+    }
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── POST /chat/conversations/:id/call/end ────────────────────────────────
+// Tell every other participant the caller hung up / rejected.
+router.post("/conversations/:id/call/end", async (req, res) => {
+  try {
+    const cid = getCid(req, res); if (!cid) return;
+    const userId = req.authUser!.id;
+    const convId = Number(req.params.id);
+    const conv = await loadConversationForUser(convId, cid, userId);
+    if (!conv) { res.status(404).json({ error: "غير موجود" }); return; }
+    const parsed = CallEndBody.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
+    const others = await otherParticipantIds(convId, userId);
+    for (const uid of others) {
+      emitToUser(uid, cid, "call_end", {
+        callId: parsed.data.callId, conversationId: convId,
+        fromUserId: userId, reason: parsed.data.reason ?? null,
+      });
+    }
+    res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

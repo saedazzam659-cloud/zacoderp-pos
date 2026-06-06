@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import {
   chatApi, uploadFile,
   type ChatConversation, type ChatMessage, type ChatUser,
-  conversationLabel, displayName, otherParticipant,
+  conversationLabel, displayName,
 } from "@/lib/chatApi";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,9 @@ import { cn } from "@/lib/utils";
 import {
   MessageSquare, Plus, Send, Paperclip, Trash2, Search, Sparkles,
   Languages, ListChecks, Image as ImageIcon, FileText, Loader2, X, Users as UsersIcon,
+  Phone, Video as VideoIcon,
 } from "lucide-react";
+import { useCall } from "@/contexts/CallContext";
 
 const POLL_LIST_MS = 10_000;
 const POLL_MSGS_MS =  3_000;
@@ -284,6 +286,7 @@ export default function ChatPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const userId = user?.id ?? 0;
+  const { startCall, busy } = useCall();
 
   const [activeId, setActiveId] = useState<number | null>(null);
   const [composer, setComposer] = useState("");
@@ -364,6 +367,23 @@ export default function ChatPage() {
 
   const activeConv = conversations.find(c => c.id === activeId) ?? null;
   const activeLabel = activeConv ? conversationLabel(activeConv, userId) : "";
+  // Calls support 1:1 and group mesh (≤4 total participants). Gather every
+  // other member of the active conversation as call peers.
+  const callPeers = activeConv
+    ? activeConv.participants
+        .filter((p) => p.userId !== userId)
+        .map((p) => ({ userId: p.userId, name: displayName(p) }))
+    : [];
+  // Full mesh is capped at 4 → at most 3 remote peers.
+  const canCall = callPeers.length >= 1 && callPeers.length <= 3;
+  const placeCall = (media: "audio" | "video") => {
+    if (!activeConv || !canCall) return;
+    startCall({
+      conversationId: activeConv.id,
+      media,
+      participants: callPeers,
+    });
+  };
 
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)]" dir="rtl">
@@ -436,6 +456,31 @@ export default function ChatPage() {
                     </div>
                   </div>
                 </div>
+                <div className="flex items-center gap-1">
+                {canCall && (
+                  <>
+                    <Button
+                      data-testid="button-call-audio"
+                      size="icon"
+                      variant="outline"
+                      disabled={busy}
+                      title="مكالمة صوتية"
+                      onClick={() => placeCall("audio")}
+                    >
+                      <Phone className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      data-testid="button-call-video"
+                      size="icon"
+                      variant="outline"
+                      disabled={busy}
+                      title="مكالمة فيديو"
+                      onClick={() => placeCall("video")}
+                    >
+                      <VideoIcon className="h-4 w-4" />
+                    </Button>
+                  </>
+                )}
                 <Sheet open={aiOpen} onOpenChange={setAiOpen}>
                   <SheetTrigger asChild>
                     <Button data-testid="button-open-ai" size="sm" variant="outline">
@@ -447,6 +492,7 @@ export default function ChatPage() {
                     <AiToolsPanel conversationId={activeConv.id} onPickReply={(s) => { setComposer(s); setAiOpen(false); }} />
                   </SheetContent>
                 </Sheet>
+                </div>
               </header>
 
               {/* Messages */}

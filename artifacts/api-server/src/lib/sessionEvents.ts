@@ -9,7 +9,13 @@ export type SessionEventType =
   // in `meta`; targeted via `userId` so other users in the same company are
   // not notified.
   | "cobrowse_invite"
-  | "cobrowse_invite_cancelled";
+  | "cobrowse_invite_cancelled"
+  // In-app chat calls (WebRTC). Signaling is relayed peer-to-peer through the
+  // SSE stream via emitToUser: `call_invite` rings the other participant(s),
+  // `call_signal` carries offer/answer/ICE/accept/reject, `call_end` hangs up.
+  | "call_invite"
+  | "call_signal"
+  | "call_end";
 
 export interface SessionEvent {
   type: SessionEventType;
