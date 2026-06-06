@@ -52,3 +52,4 @@
 - [POS Desktop version cleanup](pos-desktop-version-cleanup.md) — pin MSI upgradeCode to stop side-by-side pile-up; startup registry cleanup removes STRICTLY-older installs (never self/newer) to bridge the auto→pinned code switch.
 - [POS Desktop ZATCA secret at-rest](pos-desktop-secret-at-rest.md) — keyring-fallback file for EGS key/CSID is machine-bound AES-256-GCM ("zenc1:" prefix), key=SHA256(fp); legacy plaintext auto-migrates on next save.
 - [ZATCA CSR + onboarding spec](zatca-csr-spec.md) — /compliance 400s unless CSR uses exact template name + dirName SAN; production-csid needs the compliance requestID not the token.
+- [List query array-guard](fetch-list-guard.md) — list queryFns feeding .find/.map MUST coerce to array (fetchJsonArray); a module-gated 403 returns an OBJECT and white-screens via ErrorBoundary in only the companies lacking the perm.

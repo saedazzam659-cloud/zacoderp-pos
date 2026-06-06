@@ -3,6 +3,7 @@ import { useLocation, useSearch } from "wouter";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -139,52 +140,49 @@ export default function GoodsReceipts() {
   // ── Data queries ─────────────────────────────────────────
   const { data: receipts = [], isLoading } = useQuery<any[]>({
     queryKey: ["goods-receipts", cid],
-    queryFn: async () => {
-      const r = await fetch(cid ? `${API}/api/goods-receipts?companyId=${cid}` : `${API}/api/goods-receipts`, { headers: authH });
-      return r.json();
-    },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/goods-receipts?companyId=${cid}` : `${API}/api/goods-receipts`, authH),
     enabled: !!user,
   });
 
   const { data: suppliers = [] } = useQuery<any[]>({
     queryKey: ["suppliers", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/suppliers?companyId=${cid}` : `${API}/api/suppliers`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/suppliers?companyId=${cid}` : `${API}/api/suppliers`, authH),
     enabled: !!user,
   });
 
   const { data: currencies = [] } = useQuery<any[]>({
     queryKey: ["currencies", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/currencies?companyId=${cid}` : `${API}/api/currencies`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/currencies?companyId=${cid}` : `${API}/api/currencies`, authH),
     enabled: !!user,
   });
 
   const { data: exchangeRates = [] } = useQuery<any[]>({
     queryKey: ["exchange-rates", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/currencies/rates?companyId=${cid}` : `${API}/api/currencies/rates`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/currencies/rates?companyId=${cid}` : `${API}/api/currencies/rates`, authH),
     enabled: !!user,
   });
 
   const { data: inventoryItems = [] } = useQuery<any[]>({
     queryKey: ["inventory-items", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/items?companyId=${cid}` : `${API}/api/inventory/items`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/items?companyId=${cid}` : `${API}/api/inventory/items`, authH),
     enabled: !!user,
   });
 
   const { data: units = [] } = useQuery<any[]>({
     queryKey: ["units", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/units?companyId=${cid}` : `${API}/api/inventory/units`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/units?companyId=${cid}` : `${API}/api/inventory/units`, authH),
     enabled: !!user,
   });
 
   const { data: warehouses = [] } = useQuery<any[]>({
     queryKey: ["warehouses", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/warehouses?companyId=${cid}` : `${API}/api/inventory/warehouses`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/warehouses?companyId=${cid}` : `${API}/api/inventory/warehouses`, authH),
     enabled: !!user,
   });
 
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["branches", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, authH),
     enabled: !!user,
   });
 
@@ -192,12 +190,12 @@ export default function GoodsReceipts() {
   // eagerly so the dialog renders instantly without an extra fetch round-trip.
   const { data: cashBoxes = [] } = useQuery<any[]>({
     queryKey: ["cash-boxes", cid],
-    queryFn: async () => { const r = await fetch(`${API}/api/cash-boxes?companyId=${cid}`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(`${API}/api/cash-boxes?companyId=${cid}`, authH),
     enabled: !!user && !!cid,
   });
   const { data: bankAccounts = [] } = useQuery<any[]>({
     queryKey: ["bank-accounts", cid],
-    queryFn: async () => { const r = await fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(`${API}/api/bank-accounts?companyId=${cid}`, authH),
     enabled: !!user && !!cid,
   });
 

@@ -6,6 +6,7 @@ import { validateInvoiceLines } from "@/lib/lineValidation";
 import { syncLineDiscount, effectiveLineDiscount } from "@/lib/lineDiscountSync";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -204,77 +205,71 @@ export default function SalesReturns() {
       const params = new URLSearchParams();
       if (cid) params.set("companyId", String(cid));
       if (branchIds.length) params.set("branchIds", branchIds.join(","));
-      const r = await fetch(`${API}/api/sales/sales-returns?${params.toString()}`, { headers: authH });
-      return r.json();
+      return fetchJsonArray(`${API}/api/sales/sales-returns?${params.toString()}`, authH);
     },
     enabled: !!user,
   });
 
   const { data: customers = [] } = useQuery<any[]>({
     queryKey: ["customers", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, authH),
     enabled: !!user,
   });
 
   const { data: invoices = [] } = useQuery<any[]>({
     queryKey: ["sales-invoices", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/sales/sales-invoices?companyId=${cid}` : `${API}/api/sales/sales-invoices`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/sales/sales-invoices?companyId=${cid}` : `${API}/api/sales/sales-invoices`, authH),
     enabled: !!user,
   });
 
   const { data: currencies = [] } = useQuery<any[]>({
     queryKey: ["currencies", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/currencies?companyId=${cid}` : `${API}/api/currencies`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/currencies?companyId=${cid}` : `${API}/api/currencies`, authH),
     enabled: !!user,
   });
 
   const { data: exchangeRates = [] } = useQuery<any[]>({
     queryKey: ["exchange-rates", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/currencies/rates?companyId=${cid}` : `${API}/api/currencies/rates`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/currencies/rates?companyId=${cid}` : `${API}/api/currencies/rates`, authH),
     enabled: !!user,
   });
 
   const { data: inventoryItems = [] } = useQuery<any[]>({
     queryKey: ["inventory-items", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/items?companyId=${cid}` : `${API}/api/inventory/items`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/items?companyId=${cid}` : `${API}/api/inventory/items`, authH),
     enabled: !!user,
   });
 
   const { data: units = [] } = useQuery<any[]>({
     queryKey: ["units", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/units?companyId=${cid}` : `${API}/api/inventory/units`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/units?companyId=${cid}` : `${API}/api/inventory/units`, authH),
     enabled: !!user,
   });
 
   const { data: salesReps = [] } = useQuery<any[]>({
     queryKey: ["sales-reps", cid],
-    queryFn: async () => {
-      const url = cid ? `${API}/api/sales-reps?companyId=${cid}` : `${API}/api/sales-reps`;
-      const r = await fetch(url, { headers: authH });
-      if (!r.ok) return [];
-      return r.json();
-    },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/sales-reps?companyId=${cid}` : `${API}/api/sales-reps`, authH),
     enabled: !!user,
   });
 
   const { data: warehouses = [] } = useQuery<any[]>({
     queryKey: ["warehouses", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/warehouses?companyId=${cid}` : `${API}/api/inventory/warehouses`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/warehouses?companyId=${cid}` : `${API}/api/inventory/warehouses`, authH),
     enabled: !!user,
   });
 
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["branches", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, authH),
     enabled: !!user,
   });
   const { data: cashBoxes = [] } = useQuery<any[]>({
     queryKey: ["cash-boxes", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/cash-boxes?companyId=${cid}` : `${API}/api/cash-boxes`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/cash-boxes?companyId=${cid}` : `${API}/api/cash-boxes`, authH),
   });
   const { data: bankAccounts = [] } = useQuery<any[]>({
     queryKey: ["bank-accounts", cid],
-    queryFn: async () => { const r = await fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(`${API}/api/bank-accounts?companyId=${cid}`, authH),
     enabled: !!user,
   });
   const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];

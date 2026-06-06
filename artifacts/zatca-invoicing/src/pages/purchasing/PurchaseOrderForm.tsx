@@ -21,6 +21,7 @@ import { useEnterNavContainer } from "@/lib/enterNav";
 import { validateInvoiceLines } from "@/lib/lineValidation";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
@@ -155,7 +156,7 @@ export default function PurchaseOrderForm() {
 
   const { data: suppliers = [] } = useQuery<any[]>({
     queryKey: ["suppliers", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/suppliers?companyId=${cid}` : `${API}/api/suppliers`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/suppliers?companyId=${cid}` : `${API}/api/suppliers`, authH),
     enabled: !!user,
   });
 
@@ -164,46 +165,43 @@ export default function PurchaseOrderForm() {
   // navigator is instant once the user has visited the list.
   const { data: allPurchaseOrders = [] } = useQuery<any[]>({
     queryKey: ["purchase-orders", cid],
-    queryFn: async () => {
-      const r = await fetch(cid ? `${API}/api/purchasing/purchase-orders?companyId=${cid}` : `${API}/api/purchasing/purchase-orders`, { headers: authH });
-      return r.json();
-    },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/purchasing/purchase-orders?companyId=${cid}` : `${API}/api/purchasing/purchase-orders`, authH),
     enabled: !!user,
   });
 
   const { data: currencies = [] } = useQuery<any[]>({
     queryKey: ["currencies", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/currencies?companyId=${cid}` : `${API}/api/currencies`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/currencies?companyId=${cid}` : `${API}/api/currencies`, authH),
     enabled: !!user,
   });
 
   const { data: exchangeRates = [] } = useQuery<any[]>({
     queryKey: ["exchange-rates", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/currencies/rates?companyId=${cid}` : `${API}/api/currencies/rates`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/currencies/rates?companyId=${cid}` : `${API}/api/currencies/rates`, authH),
     enabled: !!user,
   });
 
   const { data: inventoryItems = [] } = useQuery<any[]>({
     queryKey: ["inventory-items", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/items?companyId=${cid}` : `${API}/api/inventory/items`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/items?companyId=${cid}` : `${API}/api/inventory/items`, authH),
     enabled: !!user,
   });
 
   const { data: units = [] } = useQuery<any[]>({
     queryKey: ["units", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/units?companyId=${cid}` : `${API}/api/inventory/units`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/units?companyId=${cid}` : `${API}/api/inventory/units`, authH),
     enabled: !!user,
   });
 
   const { data: warehouses = [] } = useQuery<any[]>({
     queryKey: ["warehouses", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/warehouses?companyId=${cid}` : `${API}/api/inventory/warehouses`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/warehouses?companyId=${cid}` : `${API}/api/inventory/warehouses`, authH),
     enabled: !!user,
   });
 
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["branches", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, authH),
     enabled: !!user,
   });
   const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
