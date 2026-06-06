@@ -156,7 +156,7 @@ pub async fn download_and_install_update(
         dest_display
     );
 
-    // ── 3) Launch the installer ELEVATED + DETACHED (Windows-only) ──
+    // ── 3) Launch the MSI installer directly (Windows-only) ────────
     #[cfg(target_os = "windows")]
     {
         let dest_str = dest_display.clone();
@@ -169,44 +169,36 @@ pub async fn download_and_install_update(
             p.display().to_string()
         };
 
-        // The whole reason in-app updates "installed" yet left the app on the
-        // OLD version: the MSI is a PER-MACHINE install (Tauri MSI default —
-        // only the NSIS .exe is currentUser), so msiexec needs elevation, and
-        // a major-upgrade cannot overwrite the still-running ZACOD POS.exe.
-        // We fix BOTH here via a detached PowerShell helper that:
-        //   • Start-Sleep 2s  → waits for THIS process to exit so msiexec can
-        //     replace the (now-released) binary; with /norestart an in-use
-        //     file would otherwise roll the upgrade back → stay on old.
-        //   • -Verb RunAs     → requests UAC elevation so the per-machine
-        //     install actually has privileges (no more silent error 1925).
-        //   • /l*v <log>      → verbose install log for post-mortem.
-        // PowerShell single-quoted args preserve spaces in the temp path.
-        // Escape any literal apostrophe ('  ->  '') so a username like
-        // C:\Users\O'Connor\... can't break parsing or inject commands.
-        let dest_ps = dest_str.replace('\'', "''");
-        let log_ps = log_path.replace('\'', "''");
-        let ps_cmd = format!(
-            "Start-Sleep -Seconds 2; Start-Process -FilePath 'msiexec.exe' \
-             -ArgumentList '/i','{}','/passive','/norestart','/l*v','{}' -Verb RunAs",
-            dest_ps, log_ps
-        );
-        std::process::Command::new("powershell")
-            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps_cmd])
+        // Launch msiexec DIRECTLY. The Windows Installer service (msiserver)
+        // takes ownership of the install the instant msiexec starts, so the
+        // upgrade completes even though THIS app exits a moment later, and
+        // msiexec auto-prompts UAC for the per-machine MSI when elevation is
+        // required. This is the call that worked in production through 0.8.11.
+        //
+        // ⚠️ DO NOT reintroduce a hidden-PowerShell + `Start-Sleep` +
+        // `-Verb RunAs` wrapper here. That pattern — a hidden shell that
+        // sleeps then spawns an elevated installer — is a textbook malware
+        // behaviour, so Windows Defender / EDR silently terminates it and the
+        // installer NEVER runs (the app stays on the old version). That exact
+        // "improvement" shipped after 0.8.11 and broke in-app updates. A plain
+        // msiexec call is benign and reliable; keep it that way.
+        std::process::Command::new("msiexec")
+            .args(["/i", &dest_str, "/passive", "/norestart", "/l*v", &log_path])
             .spawn()
             .map_err(|e| format!("تعذّر تشغيل المثبّت: {}", e))?;
 
         log::info!(
-            "[updater] elevated installer scheduled (log → {}); exiting app",
+            "[updater] msiexec launched (log → {}); exiting app so files release",
             log_path
         );
 
-        // Flush the success event to the renderer, then exit fast so the
-        // helper's 2s wait elapses with our files already released.
+        // Let the success event flush to the renderer, then exit so the
+        // running binary is released and msiexec can replace it.
         let app2 = app.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(400));
+            std::thread::sleep(Duration::from_millis(700));
             let _ = app2.emit("updater://exiting", ());
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(300));
             std::process::exit(0);
         });
     }
