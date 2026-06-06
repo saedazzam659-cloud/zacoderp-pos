@@ -28,6 +28,7 @@ import CountrySelector from "./pages/CountrySelector";
 import ProfileSelector from "./pages/ProfileSelector";
 import { hasChosenCountry } from "./lib/currency";
 import StandaloneOnboard from "./pages/StandaloneOnboard";
+import StandaloneCompanyRegistration from "./pages/StandaloneCompanyRegistration";
 import StandaloneLogin from "./pages/StandaloneLogin";
 import StandaloneRevalidationNeeded, { type RevalidationReason } from "./pages/StandaloneRevalidationNeeded";
 import { createApi, ApiError } from "./lib/api";
@@ -45,6 +46,7 @@ import {
   getVertical, getAppProfile,
   revalidateLicense, saveLicense,
   getLastLicenseCheck, setLastLicenseCheck, isGraceExpired,
+  getPendingLicenseKey,
   type AppMode, type OfflineLicensePayload, type LocalSession,
 } from "./lib/standalone";
 import { getFingerprint } from "./lib/tauri-shim";
@@ -63,6 +65,7 @@ type BootState =
   | { phase: "signed-in"; baseUrl: string; deviceToken: string; userToken: string; companyId: number; deviceId: number; companyName?: string; cashierContext: CashierContext; expiresAt: string | null }
   // Standalone paths
   | { phase: "needs-standalone-license" }
+  | { phase: "needs-standalone-approval"; licenseKey: string }
   | { phase: "needs-standalone-login"; license: OfflineLicensePayload }
   | { phase: "standalone-revalidation-needed"; reason: RevalidationReason }
   | { phase: "standalone-signed-in"; license: OfflineLicensePayload; session: LocalSession };
@@ -133,7 +136,15 @@ export default function App() {
   async function bootStandalone() {
     // Layer 1: signed license file
     const file = await loadLicense();
-    if (!file) { setState({ phase: "needs-standalone-license" }); return; }
+    if (!file) {
+      // No signed file yet — but if a self-registration is still awaiting
+      // SuperAdmin approval, resume the "awaiting approval" wait instead of
+      // restarting from a blank activation screen.
+      const pendingKey = await getPendingLicenseKey();
+      if (pendingKey) { setState({ phase: "needs-standalone-approval", licenseKey: pendingKey }); return; }
+      setState({ phase: "needs-standalone-license" });
+      return;
+    }
     const r = await verifyLicenseFile(file);
     if (!r.ok) {
       // Tampered or expired — force re-activation but keep mode = standalone.
@@ -401,6 +412,17 @@ export default function App() {
           void (async () => { setState({ phase: "checking" }); await boot(); })();
         }}
         onCancel={() => { void (async () => { await wipeStandalone(); setState({ phase: "needs-mode" }); })(); }}
+      />
+    );
+  }
+  if (state.phase === "needs-standalone-approval") {
+    return (
+      <StandaloneCompanyRegistration
+        resumePendingKey={state.licenseKey}
+        onDone={() => {
+          void (async () => { setState({ phase: "checking" }); await boot(); })();
+        }}
+        onBack={() => { void (async () => { await wipeStandalone(); setState({ phase: "needs-mode" }); })(); }}
       />
     );
   }

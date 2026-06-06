@@ -11,26 +11,36 @@
 // admin user (same final step as StandaloneActivation) so the device has a
 // local login on first run.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  registerStandalone, verifyLicenseFile, saveLicense,
+  registerStandalone, revalidateLicense, verifyLicenseFile, saveLicense,
   setLastLicenseCheck, createLocalUser, countLocalUsers,
+  setPendingLicenseKey, clearPendingLicenseKey,
   DEV_PUBKEY_UNPINNED, PINNED_PUBKEY_FINGERPRINT,
   type OfflineLicensePayload, type StandaloneCompanyInfo,
 } from "../lib/standalone";
 import { getFingerprint } from "../lib/tauri-shim";
 import { getCountryIso } from "../lib/currency";
 
-type Phase = "form" | "submitting" | "license-ok" | "admin-create" | "done";
+type Phase = "form" | "submitting" | "pending-approval" | "admin-create" | "done";
 
-export default function StandaloneCompanyRegistration({ onDone, onBack }: {
+// How often the device polls the cloud while awaiting SuperAdmin approval.
+const APPROVAL_POLL_MS = 8000;
+
+export default function StandaloneCompanyRegistration({ onDone, onBack, resumePendingKey }: {
   onDone: (payload: OfflineLicensePayload) => void;
   onBack: () => void;
+  // When the app reopens while a request is still awaiting approval, App.tsx
+  // re-mounts this component with the persisted pending key so we resume the
+  // "awaiting approval" wait (skipping the form) instead of losing the request.
+  resumePendingKey?: string;
 }) {
-  const [phase, setPhase] = useState<Phase>("form");
+  const [phase, setPhase] = useState<Phase>(resumePendingKey ? "pending-approval" : "form");
   const [err, setErr] = useState<string | null>(null);
   const [payload, setPayload] = useState<OfflineLicensePayload | null>(null);
   const [needsAdmin, setNeedsAdmin] = useState<boolean>(true);
+  const [pendingKey, setPendingKey] = useState<string | null>(resumePendingKey ?? null);
+  const [checking, setChecking] = useState(false);
   useEffect(() => { void countLocalUsers().then((n) => setNeedsAdmin(n === 0)); }, []);
 
   const [c, setC] = useState<StandaloneCompanyInfo>({
@@ -46,6 +56,69 @@ export default function StandaloneCompanyRegistration({ onDone, onBack }: {
 
   const [a, setA] = useState({ username: "admin", displayName: "المسؤول", password: "", password2: "" });
   const [busy, setBusy] = useState(false);
+
+  // ─── Poll for approval while pending ───────────────────────────────
+  // Once the SuperAdmin approves, /revalidate returns status:'active' + the
+  // signed file; we verify, persist it, clear the pending marker, and move on
+  // to admin creation (or finish if an admin already exists).
+  const pollGuard = useRef(false);
+  async function checkApproval(manual = false) {
+    if (!pendingKey || pollGuard.current) return;
+    pollGuard.current = true;
+    if (manual) setChecking(true);
+    try {
+      const fp = await getFingerprint();
+      const out = await revalidateLicense(pendingKey, fp);
+      if (!out.reachable) {
+        if (manual) setErr("تعذّر الاتصال بالخادم. حاول مرة أخرى.");
+        return;
+      }
+      if (out.status === "pending") {
+        if (manual) setErr(null);
+        return; // still waiting — keep polling
+      }
+      if (out.status === "revoked" || out.status === "not_found") {
+        // Terminal denial — drop the pending marker so a restart does NOT
+        // resume an indefinite poll, and return the operator to the form to
+        // submit a fresh request.
+        await clearPendingLicenseKey();
+        setPendingKey(null);
+        setPhase("form");
+        setErr("تم رفض طلب التسجيل من قبل المشرف. يمكنك تعديل البيانات وإرسال طلب جديد، أو التواصل مع مزوّد الخدمة.");
+        return;
+      }
+      if (out.status === "fingerprint_mismatch") {
+        await clearPendingLicenseKey();
+        setPendingKey(null);
+        setPhase("form");
+        setErr("هذا الترخيص مرتبط بجهاز آخر. أرسل طلب تسجيل جديداً من هذا الجهاز.");
+        return;
+      }
+      // active / expired → we have a signed file. Verify + store.
+      if (!out.signedFile) { if (manual) setErr("لم يصل ملف الترخيص بعد، حاول مجدداً."); return; }
+      const res = await verifyLicenseFile(out.signedFile);
+      if (!res.ok) { setErr(res.error); return; }
+      await saveLicense(out.signedFile);
+      await setLastLicenseCheck(Date.now());
+      await clearPendingLicenseKey();
+      setPendingKey(null);
+      setPayload(res.payload);
+      setErr(null);
+      if (needsAdmin) setPhase("admin-create");
+      else { setPhase("done"); onDone(res.payload); }
+    } finally {
+      pollGuard.current = false;
+      if (manual) setChecking(false);
+    }
+  }
+
+  useEffect(() => {
+    if (phase !== "pending-approval" || !pendingKey) return;
+    void checkApproval();
+    const id = setInterval(() => { void checkApproval(); }, APPROVAL_POLL_MS);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, pendingKey, needsAdmin]);
 
   async function submit() {
     setErr(null);
@@ -65,8 +138,15 @@ export default function StandaloneCompanyRegistration({ onDone, onBack }: {
       };
       const reg = await registerStandalone(clean, fp);
       if (!reg.ok) { setErr(reg.error); setPhase("form"); return; }
-      // Verify the returned file against the build's pinned key (same gate as
-      // the file-drop path) before trusting/storing it.
+      // NEW: registration now creates a PENDING request — wait for SuperAdmin
+      // approval before any signed file is issued.
+      if (reg.status === "pending") {
+        await setPendingLicenseKey(reg.licenseKey);
+        setPendingKey(reg.licenseKey);
+        setPhase("pending-approval");
+        return;
+      }
+      // Backward-compat: server still returned an active signed file directly.
       const res = await verifyLicenseFile(reg.signedFile);
       if (!res.ok) { setErr(res.error); setPhase("form"); return; }
       await saveLicense(reg.signedFile);
@@ -161,9 +241,32 @@ export default function StandaloneCompanyRegistration({ onDone, onBack }: {
           </div>
         )}
 
+        {phase === "pending-approval" && (
+          <div>
+            <div style={S.pending}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div>
+              <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 6 }}>بانتظار موافقة المشرف</div>
+              <p style={{ fontSize: 13, lineHeight: 1.7, margin: 0 }}>
+                تم استلام طلب تسجيلك بنجاح. يجب أن يوافق عليه مزوّد الخدمة (المشرف) ويحدّد مدة
+                التفعيل (تجريبية أو دائمة) قبل أن يبدأ التطبيق بالعمل. سيتم التفعيل تلقائياً بمجرد
+                الموافقة — أبقِ الجهاز متصلاً بالإنترنت.
+              </p>
+            </div>
+            <div style={{ fontSize: 12, color: "#64748b", fontFamily: "monospace", padding: "6px 8px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4, marginBottom: 12, direction: "ltr", textAlign: "left", wordBreak: "break-all" }}>
+              مفتاح الطلب: {pendingKey}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button onClick={() => void checkApproval(true)} disabled={checking} style={S.btnPrimary}>
+                {checking ? "جارٍ التحقق…" : "تحقق الآن"}
+              </button>
+              <span style={{ fontSize: 12, color: "#94a3b8" }}>يتم التحقق تلقائياً كل بضع ثوانٍ…</span>
+            </div>
+          </div>
+        )}
+
         {phase === "admin-create" && (
           <div>
-            <div style={S.success}>✅ تم التسجيل وإصدار الترخيص بنجاح</div>
+            <div style={S.success}>✅ تمت الموافقة وإصدار الترخيص بنجاح</div>
             <p style={S.lead}>
               أنشئ أول مستخدم مسؤول لإدارة هذا الجهاز. يمكنه لاحقاً إضافة مستخدمين آخرين (كاشير).
             </p>
@@ -208,6 +311,7 @@ const S = {
   row2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } as const,
   btnPrimary: { display: "inline-block", padding: "10px 20px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: 600 } as const,
   success: { padding: 12, background: "#f0fdf4", color: "#166534", border: "1px solid #bbf7d0", borderRadius: 8, marginBottom: 16, fontSize: 14 } as const,
+  pending: { padding: 20, background: "#fffbeb", color: "#92400e", border: "1px solid #fde68a", borderRadius: 8, marginBottom: 16, textAlign: "center" } as const,
   warn: { padding: 10, background: "#fffbeb", color: "#92400e", border: "1px solid #fde68a", borderRadius: 8, marginBottom: 16, fontSize: 13 } as const,
   err: { padding: 12, background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca", borderRadius: 8, marginTop: 12, fontSize: 14 } as const,
   input: { width: "100%", padding: "10px 12px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 14, boxSizing: "border-box" } as const,

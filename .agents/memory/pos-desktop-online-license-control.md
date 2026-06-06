@@ -42,3 +42,23 @@ self_register row and return its stored signed file.
 for one machine.
 
 Note: this drizzle version names the conflict predicate option `where`, not `targetWhere`.
+
+**Self-register is APPROVAL-GATED — register creates `status='pending'` with NO signed
+file.** A device cannot run until a SuperAdmin approves it with a trial term (default 7d,
+editable) or a permanent toggle, which signs the file and flips `pending→active`. The
+device sits in a polling "awaiting approval" phase and resumes that wait across restarts
+via a persisted pending-license-key (settings `pending_license_key` / LS
+`pos_desktop_pending_license_key`, `""`→null). `/revalidate` returns `pending` (no file)
+BEFORE bind-on-first-use while pending.
+**Why:** the original flow handed out an active signed file instantly, so anyone could
+self-provision a working license with zero oversight.
+**How to apply:**
+- Approve MUST be atomic: `UPDATE ... WHERE id=? AND status='pending'` (compare-and-set)
+  and 409 on 0 rows — a plain read-check then unconditional update lets two concurrent
+  approvals both win and double-assign the trial term.
+- The device MUST clear the persisted pending key on every TERMINAL deny outcome
+  (`revoked`/`not_found`/`fingerprint_mismatch`) and drop back to the form. Otherwise the
+  boot branch that prioritises the pending key re-enters an indefinite poll forever.
+- This is a HARD version cutoff: do NOT add a server compat path returning a signed file
+  to old (≤0.8.20) clients — that would bypass the approval gate entirely. Old clients
+  must update; their pending row self-heals once the new app retries after approval.

@@ -17,7 +17,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
-import { Download, KeyRound, ShieldOff, Trash2, Copy, RefreshCw, Plus, Pencil, Search } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Download, KeyRound, ShieldOff, Trash2, Copy, RefreshCw, Plus, Pencil, Search, Check, X } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -33,7 +34,7 @@ type OfflineLicense = {
 };
 
 type PublicKeyInfo = { publicKeyB64: string; publicKeyFingerprint: string; source: "env" | "dev-cache" };
-type Stats = { total: number; active: number; revoked: number; expired: number };
+type Stats = { total: number; active: number; revoked: number; expired: number; pending: number };
 
 export default function OfflineLicenses() {
   const { token } = useAuth();
@@ -179,6 +180,38 @@ export default function OfflineLicenses() {
     onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
   });
 
+  // ─── Approve a pending self-registration (Task: standalone approval gate) ──
+  // A self-registered device starts as `pending` with NO signed file. The
+  // SuperAdmin sets a trial duration (default 7 days, editable) OR marks it
+  // permanent, then approves — which signs + issues the license file the device
+  // is polling for.
+  const [approving, setApproving] = useState<OfflineLicense | null>(null);
+  const [approveForm, setApproveForm] = useState({ trialDays: 7, permanent: false });
+  function openApprove(lic: OfflineLicense) {
+    setApproving(lic);
+    setApproveForm({ trialDays: 7, permanent: false });
+  }
+  const approve = useMutation({
+    mutationFn: async () => {
+      if (!approving) return;
+      const body = approveForm.permanent
+        ? { permanent: true }
+        : { trialDays: Number(approveForm.trialDays) || 7 };
+      const r = await fetch(`${API}/api/admin/offline-licenses/${approving.id}/approve`, {
+        method: "POST", headers, body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error((await r.json()).error ?? "فشل الموافقة");
+      return r.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تمت الموافقة على الترخيص", description: "تم إصدار الملف الموقّع — سيُفعَّل الجهاز تلقائياً عند تحققه التالي." });
+      qc.invalidateQueries({ queryKey: ["offline-licenses"] });
+      qc.invalidateQueries({ queryKey: ["offline-licenses-stats"] });
+      setApproving(null);
+    },
+    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+  });
+
   const revoke = useMutation({
     mutationFn: async (id: number) => {
       const r = await fetch(`${API}/api/admin/offline-licenses/${id}/revoke`, { method: "POST", headers });
@@ -278,8 +311,9 @@ export default function OfflineLicenses() {
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-5 gap-3">
         <StatCard label="إجمالي" value={statsQ.data?.total ?? 0} />
+        <StatCard label="بانتظار الموافقة" value={statsQ.data?.pending ?? 0} color="text-orange-700 bg-orange-50" />
         <StatCard label="نشط" value={statsQ.data?.active ?? 0} color="text-green-700 bg-green-50" />
         <StatCard label="ملغى" value={statsQ.data?.revoked ?? 0} color="text-red-700 bg-red-50" />
         <StatCard label="منتهٍ" value={statsQ.data?.expired ?? 0} color="text-amber-700 bg-amber-50" />
@@ -343,24 +377,41 @@ export default function OfflineLicenses() {
                   )}
                 </div>
                 <div className="flex gap-1">
-                  <Button size="sm" variant="outline" onClick={() => openEdit(lic)}
-                          disabled={lic.status === "revoked"} title="تعديل / تجديد المدة">
-                    <Pencil className="h-4 w-4 text-blue-600" />
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => redownload(lic.id, lic.licenseKey)}
-                          disabled={lic.status === "revoked"} title="تنزيل ملف الترخيص الموقّع">
-                    <Download className="h-4 w-4" />
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => {
-                    if (confirm(`تأكيد إلغاء الترخيص ${lic.licenseKey}؟ لن يعمل التطبيق على الأجهزة التي تستخدمه (لكن لن نعرف بذلك لأنها لا تتصل بنا).`)) revoke.mutate(lic.id);
-                  }} disabled={lic.status !== "active"} title="إلغاء">
-                    <ShieldOff className="h-4 w-4" />
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => {
-                    if (confirm(`حذف نهائي للترخيص ${lic.licenseKey} من قاعدة البيانات؟`)) del.mutate(lic.id);
-                  }} title="حذف">
-                    <Trash2 className="h-4 w-4 text-red-600" />
-                  </Button>
+                  {lic.status === "pending" && (
+                    <>
+                      <Button size="sm" variant="outline" onClick={() => openApprove(lic)}
+                              title="الموافقة وإصدار الترخيص" className="border-green-200">
+                        <Check className="h-4 w-4 text-green-600" />
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => {
+                        if (confirm(`رفض طلب التسجيل ${lic.licenseKey} وحذفه نهائياً؟ سيتمكن العميل من إرسال طلب جديد.`)) del.mutate(lic.id);
+                      }} title="رفض الطلب">
+                        <X className="h-4 w-4 text-red-600" />
+                      </Button>
+                    </>
+                  )}
+                  {lic.status !== "pending" && (
+                    <>
+                      <Button size="sm" variant="outline" onClick={() => openEdit(lic)}
+                              disabled={lic.status === "revoked"} title="تعديل / تجديد المدة">
+                        <Pencil className="h-4 w-4 text-blue-600" />
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => redownload(lic.id, lic.licenseKey)}
+                              disabled={lic.status === "revoked"} title="تنزيل ملف الترخيص الموقّع">
+                        <Download className="h-4 w-4" />
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => {
+                        if (confirm(`تأكيد إلغاء الترخيص ${lic.licenseKey}؟ لن يعمل التطبيق على الأجهزة التي تستخدمه (لكن لن نعرف بذلك لأنها لا تتصل بنا).`)) revoke.mutate(lic.id);
+                      }} disabled={lic.status !== "active"} title="إلغاء">
+                        <ShieldOff className="h-4 w-4" />
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => {
+                        if (confirm(`حذف نهائي للترخيص ${lic.licenseKey} من قاعدة البيانات؟`)) del.mutate(lic.id);
+                      }} title="حذف">
+                        <Trash2 className="h-4 w-4 text-red-600" />
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
             ))}
@@ -564,6 +615,52 @@ export default function OfflineLicenses() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Approve dialog — issue a signed file for a pending self-registration.
+          Default a 7-day trial; allow editing the duration or marking it
+          permanent. On approve the backend signs + stores the file and the
+          device picks it up on its next poll. */}
+      <Dialog open={!!approving} onOpenChange={(o) => !o && setApproving(null)}>
+        <DialogContent dir="rtl" className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>الموافقة على طلب التسجيل</DialogTitle>
+            <DialogDescription>
+              {approving && (<>
+                مفتاح: <code className="font-mono text-xs">{approving.licenseKey}</code> · العميل: <b>{approving.customerName}</b>
+              </>)}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="approve-permanent"
+                checked={approveForm.permanent}
+                onCheckedChange={(c) => setApproveForm({ ...approveForm, permanent: c === true })}
+              />
+              <Label htmlFor="approve-permanent" className="cursor-pointer">ترخيص دائم (بدون تاريخ انتهاء)</Label>
+            </div>
+            {!approveForm.permanent && (
+              <div>
+                <Label>مدة التجربة (أيام)</Label>
+                <Input
+                  type="number" min={1} max={3650}
+                  value={approveForm.trialDays}
+                  onChange={(e) => setApproveForm({ ...approveForm, trialDays: Number(e.target.value) })}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  الافتراضي 7 أيام. يبدأ الاحتساب من لحظة الموافقة. يمكنك التمديد لاحقاً من زر التعديل.
+                </p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setApproving(null)}>إلغاء</Button>
+            <Button onClick={() => approve.mutate()} disabled={approve.isPending || (!approveForm.permanent && (!approveForm.trialDays || approveForm.trialDays < 1))}>
+              {approve.isPending ? "جارٍ الموافقة…" : "موافقة وإصدار الترخيص"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -579,6 +676,7 @@ function StatCard({ label, value, color }: { label: string; value: number; color
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
+    pending: { label: "بانتظار الموافقة", cls: "bg-orange-100 text-orange-800" },
     active: { label: "نشط", cls: "bg-green-100 text-green-800" },
     revoked: { label: "ملغى", cls: "bg-red-100 text-red-800" },
     expired: { label: "منتهٍ", cls: "bg-amber-100 text-amber-800" },

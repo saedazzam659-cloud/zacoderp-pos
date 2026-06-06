@@ -491,7 +491,11 @@ export type StandaloneCompanyInfo = {
 export async function registerStandalone(
   info: StandaloneCompanyInfo,
   fingerprint: string,
-): Promise<{ ok: true; signedFile: SignedLicenseFile } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; status: "active"; signedFile: SignedLicenseFile }
+  | { ok: true; status: "pending"; licenseKey: string }
+  | { ok: false; error: string }
+> {
   let body: string;
   try {
     body = JSON.stringify({ ...info, fingerprint, appVersion: __APP_VERSION__ });
@@ -513,18 +517,49 @@ export async function registerStandalone(
     if (!r.ok) {
       return { ok: false, error: typeof data?.error === "string" ? data.error : `فشل التسجيل (${r.status}).` };
     }
+    // NEW flow: a fresh self-registration is created PENDING — the server returns
+    // a licenseKey but NO signed file until a SuperAdmin approves it.
+    if (data?.status === "pending") {
+      const licenseKey = typeof data?.licenseKey === "string" ? data.licenseKey : "";
+      if (!licenseKey) return { ok: false, error: "لم يُرجِع الخادم مفتاح ترخيص صالحاً." };
+      return { ok: true, status: "pending", licenseKey };
+    }
     const signedFile = (data?.signedFile ?? data) as SignedLicenseFile;
     if (!signedFile?.payload || !signedFile?.signature) {
       return { ok: false, error: "لم يُرجِع الخادم ملف ترخيص صالحاً." };
     }
-    return { ok: true, signedFile };
+    return { ok: true, status: "active", signedFile };
   } catch (e: any) {
     return { ok: false, error: "تعذّر الاتصال بخادم التسجيل. تأكد من اتصالك بالإنترنت." };
   }
 }
 
+// ─── Pending-approval persistence ────────────────────────────────────
+// When a device self-registers it gets a licenseKey but must wait for the
+// SuperAdmin to approve it. We persist that key (same generic settings store)
+// so closing + reopening the app resumes the "awaiting approval" wait instead
+// of losing the request. Cleared once the approved + signed file is saved.
+const SETTING_PENDING_LICENSE = "pending_license_key";
+const LS_PENDING_LICENSE = "pos_desktop_pending_license_key";
+
+export async function getPendingLicenseKey(): Promise<string | null> {
+  const v = await getSetting(SETTING_PENDING_LICENSE, LS_PENDING_LICENSE);
+  const k = (v ?? "").trim();
+  return k.length > 0 ? k : null;
+}
+export async function setPendingLicenseKey(licenseKey: string): Promise<void> {
+  await setSetting(SETTING_PENDING_LICENSE, LS_PENDING_LICENSE, licenseKey.trim());
+}
+export async function clearPendingLicenseKey(): Promise<void> {
+  // Tauri settings store has no delete — overwrite with "" (treated as null on read).
+  await setSetting(SETTING_PENDING_LICENSE, LS_PENDING_LICENSE, "");
+  if (typeof window !== "undefined") {
+    try { localStorage.removeItem(LS_PENDING_LICENSE); } catch { /* ignore */ }
+  }
+}
+
 export type RevalidateOutcome =
-  | { reachable: true; status: "active" | "expired" | "revoked" | "not_found" | "fingerprint_mismatch"; signedFile?: SignedLicenseFile }
+  | { reachable: true; status: "active" | "expired" | "revoked" | "not_found" | "fingerprint_mismatch" | "pending"; signedFile?: SignedLicenseFile }
   | { reachable: false };
 
 /**
@@ -554,6 +589,9 @@ export async function revalidateLicense(licenseKey: string, fingerprint: string)
     if (r.status === 409) return { reachable: true, status: "fingerprint_mismatch" };
     if (!r.ok && r.status >= 500) return { reachable: false };
     const status = data?.status;
+    if (status === "pending") {
+      return { reachable: true, status: "pending" };
+    }
     if (status === "active" || status === "expired" || status === "revoked") {
       return { reachable: true, status, signedFile: data?.signedFile as SignedLicenseFile | undefined };
     }

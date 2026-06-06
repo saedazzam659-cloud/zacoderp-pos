@@ -5,7 +5,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { offlineLicensesTable } from "@workspace/db";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, sql, and } from "drizzle-orm";
 import { z } from "zod/v4";
 import { extractAuth } from "../middleware/auth.js";
 import { generateLicenseKey, hashFingerprint } from "../lib/posDesktopGuards.js";
@@ -105,6 +105,67 @@ router.post("/", async (req, res) => {
   }).returning();
 
   res.json({ ok: true, license: created, signedFile: signed });
+});
+
+// ─── POST /api/admin/offline-licenses/:id/approve ───────────────────
+// Approve a PENDING self-registered license. Grants a trial term (default
+// 7 days, editable) or a permanent license, then signs + activates it so the
+// device's next /revalidate pulls the freshly-signed file. Only `pending`
+// rows can be approved (admin-created licenses are active on creation).
+const approveSchema = z.object({
+  trialDays: z.number().int().min(1).max(3650).optional(),
+  permanent: z.boolean().optional(),
+});
+router.post("/:id/approve", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "bad id" }); return; }
+  const parsed = approveSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "bad payload", details: parsed.error.issues }); return; }
+  const [existing] = await db.select().from(offlineLicensesTable).where(eq(offlineLicensesTable.id, id));
+  if (!existing) { res.status(404).json({ error: "not found" }); return; }
+  if (existing.status === "revoked") { res.status(409).json({ error: "cannot approve a revoked license" }); return; }
+  if (existing.status !== "pending") { res.status(409).json({ error: "license is not pending approval" }); return; }
+
+  const expiresAt: Date | null = parsed.data.permanent
+    ? null
+    : new Date(Date.now() + (parsed.data.trialDays ?? 7) * 86400000);
+
+  const signed = signOfflineLicense({
+    licenseKey: existing.licenseKey,
+    customerName: existing.customerName,
+    vertical: existing.vertical,
+    plan: existing.plan,
+    maxUsers: existing.maxUsers,
+    fingerprintHash: existing.fingerprintHash,
+    issuedAt: existing.issuedAt.toISOString(),
+    expiresAt: expiresAt ? expiresAt.toISOString() : null,
+    notes: existing.notes ?? undefined,
+    country: existing.country ?? undefined,
+    companyTaxNumber: existing.companyTaxNumber ?? undefined,
+    companyCrNumber: existing.companyCrNumber ?? undefined,
+    companyAddress: existing.companyAddress ?? undefined,
+    companyPhone: existing.companyPhone ?? undefined,
+    companyEmail: existing.companyEmail ?? undefined,
+    source: (existing.source as "admin" | "self_register") ?? "self_register",
+    graceDays: existing.graceDays ?? 7,
+  });
+
+  // Atomic compare-and-set: only the row that is STILL pending is flipped.
+  // Two concurrent approvals → one updates the row, the other matches 0 rows
+  // and is rejected 409, so the trial term can never be set twice.
+  const [updated] = await db.update(offlineLicensesTable).set({
+    status: "active",
+    expiresAt,
+    signedFileJson: JSON.stringify(signed),
+    publicKeyFingerprint: signed.publicKeyFingerprint,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(offlineLicensesTable.id, id),
+    eq(offlineLicensesTable.status, "pending"),
+  )).returning();
+  if (!updated) { res.status(409).json({ error: "license is not pending approval" }); return; }
+
+  res.json({ ok: true, license: updated, signedFile: signed });
 });
 
 // ─── GET /api/admin/offline-licenses/:id/file ────────────────────────
@@ -283,7 +344,7 @@ router.get("/stats", async (_req, res) => {
   const rows = await db.execute<{ status: string; n: number }>(sql`
     SELECT status, COUNT(*)::int AS n FROM offline_licenses GROUP BY status
   `);
-  const out: Record<string, number> = { total: 0, active: 0, revoked: 0, expired: 0 };
+  const out: Record<string, number> = { total: 0, active: 0, revoked: 0, expired: 0, pending: 0 };
   for (const r of (rows.rows ?? rows as any)) {
     out[r.status] = Number(r.n); out.total += Number(r.n);
   }

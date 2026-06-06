@@ -26,8 +26,12 @@ const DEFAULT_GRACE_DAYS = 7;
 // Compute the effective status of a license row at read time. The stored
 // `status` column only flips to "expired" lazily, so we also evaluate the
 // expiry date here so a device learns immediately when its term lapses.
-function effectiveStatus(row: { status: string; expiresAt: Date | null }): "active" | "revoked" | "expired" {
+function effectiveStatus(row: { status: string; expiresAt: Date | null }): "active" | "revoked" | "expired" | "pending" {
   if (row.status === "revoked") return "revoked";
+  // A self-registered license stays `pending` until a SuperAdmin approves it
+  // (granting a trial / permanent term). Pending licenses never deliver a
+  // usable signed file — the device must wait for approval.
+  if (row.status === "pending") return "pending";
   if (row.expiresAt && row.expiresAt.getTime() < Date.now()) return "expired";
   return "active";
 }
@@ -63,6 +67,17 @@ router.post("/register", async (req, res) => {
   const prior = existing.find((r) => r.source === "self_register");
   if (prior) {
     if (prior.status === "revoked") { res.status(403).json({ error: "license revoked", status: "revoked" }); return; }
+    // Awaiting SuperAdmin approval: re-touch last-seen but DO NOT mint/return a
+    // signed file. The device keeps polling /revalidate until approval.
+    if (prior.status === "pending") {
+      await db.update(offlineLicensesTable).set({
+        lastSeenAt: new Date(),
+        appVersion: d.appVersion ?? prior.appVersion,
+        updatedAt: new Date(),
+      }).where(eq(offlineLicensesTable.id, prior.id));
+      res.json({ ok: true, status: "pending", licenseKey: prior.licenseKey, alreadyRegistered: true });
+      return;
+    }
     let signed = prior.signedFileJson ? JSON.parse(prior.signedFileJson) : null;
     if (!signed) {
       signed = signOfflineLicense({
@@ -104,30 +119,16 @@ router.post("/register", async (req, res) => {
 
   const licenseKey = generateLicenseKey();
   const issuedAt = new Date();
-  const signed = signOfflineLicense({
-    licenseKey,
-    customerName: d.customerName,
-    vertical: d.vertical,
-    plan: "standalone_pos",
-    maxUsers: 5,
-    fingerprintHash: fpHash,
-    issuedAt: issuedAt.toISOString(),
-    expiresAt: null,
-    country: d.country,
-    companyTaxNumber: d.companyTaxNumber,
-    companyCrNumber: d.companyCrNumber,
-    companyAddress: d.companyAddress,
-    companyPhone: d.companyPhone,
-    companyEmail: d.companyEmail,
-    source: "self_register",
-    graceDays: DEFAULT_GRACE_DAYS,
-  });
 
+  // NEW self-registrations are created PENDING with no signed file. A SuperAdmin
+  // must approve the request from /admin/offline-licenses (granting a trial or
+  // permanent term), which signs + activates the license. Until then the device
+  // gets `status:'pending'` and no usable file.
+  //
   // `onConflictDoNothing` on the partial unique index (fingerprint_hash WHERE
   // source='self_register') makes concurrent registers for the SAME device
   // race-safe: only one INSERT wins, the loser gets an empty `returning()` and
-  // we fall back to re-reading + returning the winner's signed file. This
-  // prevents minting duplicate licenses for one machine.
+  // we fall back to re-reading + returning the winner's state.
   const inserted = await db.insert(offlineLicensesTable).values({
     licenseKey,
     customerName: d.customerName,
@@ -137,6 +138,7 @@ router.post("/register", async (req, res) => {
     fingerprintHash: fpHash,
     expiresAt: null,
     issuedAt,
+    status: "pending",
     country: d.country ?? null,
     companyTaxNumber: d.companyTaxNumber ?? null,
     companyCrNumber: d.companyCrNumber ?? null,
@@ -147,8 +149,8 @@ router.post("/register", async (req, res) => {
     graceDays: DEFAULT_GRACE_DAYS,
     lastSeenAt: issuedAt,
     appVersion: d.appVersion ?? null,
-    signedFileJson: JSON.stringify(signed),
-    publicKeyFingerprint: signed.publicKeyFingerprint,
+    signedFileJson: null,
+    publicKeyFingerprint: null,
   }).onConflictDoNothing({
     target: offlineLicensesTable.fingerprintHash,
     where: sql`source = 'self_register' AND fingerprint_hash IS NOT NULL`,
@@ -161,7 +163,12 @@ router.post("/register", async (req, res) => {
       .where(eq(offlineLicensesTable.fingerprintHash, fpHash));
     const winner = rows.find((r) => r.source === "self_register");
     if (winner) {
-      const winnerSigned = winner.signedFileJson ? JSON.parse(winner.signedFileJson) : signed;
+      if (winner.status === "revoked") { res.status(403).json({ error: "license revoked", status: "revoked" }); return; }
+      if (winner.status === "pending") {
+        res.json({ ok: true, status: "pending", licenseKey: winner.licenseKey, alreadyRegistered: true });
+        return;
+      }
+      const winnerSigned = winner.signedFileJson ? JSON.parse(winner.signedFileJson) : undefined;
       res.json({ ok: true, status: effectiveStatus(winner), licenseKey: winner.licenseKey, signedFile: winnerSigned, alreadyRegistered: true });
       return;
     }
@@ -169,7 +176,7 @@ router.post("/register", async (req, res) => {
     return;
   }
 
-  res.json({ ok: true, status: "active", licenseKey: created.licenseKey, signedFile: signed });
+  res.json({ ok: true, status: "pending", licenseKey: created.licenseKey });
 });
 
 // ─── POST /api/public/offline/revalidate ─────────────────────────────
@@ -210,6 +217,16 @@ router.post("/revalidate", async (req, res) => {
 
   const status = effectiveStatus(lic);
   if (status === "revoked") { res.json({ status: "revoked" }); return; }
+  // Still awaiting SuperAdmin approval — re-touch last-seen but deliver no file.
+  if (status === "pending") {
+    await db.update(offlineLicensesTable).set({
+      lastSeenAt: new Date(),
+      appVersion: appVersion ?? lic.appVersion,
+      updatedAt: new Date(),
+    }).where(eq(offlineLicensesTable.id, lic.id));
+    res.json({ status: "pending" });
+    return;
+  }
 
   // Bind-on-first-use: an unbound license captures this device's fingerprint
   // and is re-signed so the file carries the binding from now on.
