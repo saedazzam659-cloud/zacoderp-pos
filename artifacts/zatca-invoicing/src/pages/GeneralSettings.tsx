@@ -359,7 +359,7 @@ export default function GeneralSettings() {
   }
 
   return (
-    <div className="space-y-6 max-w-2xl" dir="rtl">
+    <div className="space-y-6 w-full max-w-6xl mx-auto" dir="rtl">
 
       {/* Header */}
       <div>
