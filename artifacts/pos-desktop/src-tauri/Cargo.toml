@@ -1,6 +1,6 @@
 [package]
 name = "pos-desktop"
-version = "0.8.19"
+version = "0.8.20"
 description = "ZACOD POS Desktop (Windows offline)"
 edition = "2021"
 rust-version = "1.85"
@@ -43,6 +43,11 @@ aes-gcm = "0.10"
 bcrypt = "0.15"
 tiny_http = "0.12"
 local-ip-address = "0.6"
+
+# Windows-only: read the uninstall registry to clean up stale side-by-side
+# installs of previous versions (see src/cleanup.rs).
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
 
 [profile.release]
 panic = "abort"

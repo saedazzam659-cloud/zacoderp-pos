@@ -19,6 +19,7 @@ mod scale;
 mod standalone;
 mod sync;
 mod updater;
+mod cleanup;
 mod zatca;
 
 use serde::{Deserialize, Serialize};
@@ -328,6 +329,22 @@ fn main() {
                 get_device_name(),
                 env!("CARGO_PKG_VERSION").to_string(),
             );
+            // Remove any stale side-by-side install of an OLDER ZACOD POS
+            // version left behind when a prior MSI carried a different
+            // UpgradeCode. Runs in the background a few seconds after launch so
+            // it never blocks startup and lets any just-finished installer
+            // release the global Windows Installer mutex first.
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                match cleanup::find_and_remove_old_versions(env!("CARGO_PKG_VERSION")) {
+                    Ok(removed) if removed.iter().any(|r| r.uninstalled) => log::info!(
+                        "[cleanup] removed {} stale install(s) at startup",
+                        removed.iter().filter(|r| r.uninstalled).count()
+                    ),
+                    Ok(_) => {}
+                    Err(e) => log::warn!("[cleanup] startup cleanup error: {}", e),
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -409,6 +426,7 @@ fn main() {
             standalone::standalone_get_setting,
             standalone::standalone_set_setting,
             updater::download_and_install_update,
+            cleanup::cleanup_old_versions,
             // Accounting & operations (Task #207).
             accounting::accounts_list,
             accounting::accounts_create,

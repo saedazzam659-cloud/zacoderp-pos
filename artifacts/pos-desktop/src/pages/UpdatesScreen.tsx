@@ -92,6 +92,10 @@ export default function UpdatesScreen({ baseUrl }: Props) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState({ downloaded: 0, total: 0, percent: 0 });
   const [installError, setInstallError] = useState<string | null>(null);
+
+  // Manual old-version cleanup state.
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanResult, setCleanResult] = useState<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const exitUnlistenRef = useRef<UnlistenFn | null>(null);
 
@@ -172,6 +176,29 @@ export default function UpdatesScreen({ baseUrl }: Props) {
     }
   }
 
+  async function runCleanup() {
+    if (!TAURI_MODE) return;
+    setCleaning(true);
+    setCleanResult(null);
+    try {
+      const removed = await invoke<Array<{ name: string; version: string; uninstalled: boolean }>>(
+        "cleanup_old_versions",
+      );
+      const done = removed.filter((r) => r.uninstalled);
+      if (done.length === 0) {
+        setCleanResult("لا توجد إصدارات قديمة عالقة — النظام نظيف ✅");
+      } else {
+        setCleanResult(
+          `تمت إزالة ${done.length} إصدار قديم عالق: ${done.map((r) => "v" + r.version).join("، ")}`,
+        );
+      }
+    } catch (e: any) {
+      setCleanResult(`تعذّر التنظيف: ${typeof e === "string" ? e : e?.message ?? e}`);
+    } finally {
+      setCleaning(false);
+    }
+  }
+
   const installing = phase === "downloading" || phase === "verifying" || phase === "launching";
 
   return (
@@ -204,6 +231,22 @@ export default function UpdatesScreen({ baseUrl }: Props) {
           <span>·</span>
           <span>{TAURI_MODE ? "💻 وضع سطح المكتب" : "🌐 وضع المتصفح"}</span>
         </div>
+
+        {TAURI_MODE && (
+          <div style={S.cleanupRow}>
+            <div style={S.cleanupText}>
+              <div style={S.cleanupTitle}>🧹 إزالة الإصدارات القديمة العالقة</div>
+              <div style={S.cleanupHint}>
+                يحذف أي نسخة قديمة من البرنامج بقيت مثبَّتة بجانب النسخة الحالية لتفادي تعارض التثبيت.
+                يتم ذلك تلقائياً عند تشغيل البرنامج، ويمكنك تنفيذه يدوياً الآن.
+              </div>
+            </div>
+            <button style={S.cleanupBtn} onClick={runCleanup} disabled={cleaning}>
+              {cleaning ? "⏳ جارٍ التنظيف…" : "تنظيف الآن"}
+            </button>
+          </div>
+        )}
+        {cleanResult && <div style={S.cleanupResult}>{cleanResult}</div>}
       </section>
 
       {error && (
@@ -383,6 +426,23 @@ const S = {
   meta: {
     marginTop: 16, paddingTop: 16, borderTop: "1px solid #f1f5f9",
     display: "flex", gap: 8, fontSize: 13, color: "#64748b", flexWrap: "wrap" as const,
+  } as React.CSSProperties,
+  cleanupRow: {
+    marginTop: 16, paddingTop: 16, borderTop: "1px solid #f1f5f9",
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    gap: 16, flexWrap: "wrap" as const,
+  } as React.CSSProperties,
+  cleanupText: { flex: "1 1 320px" } as React.CSSProperties,
+  cleanupTitle: { fontSize: 14, fontWeight: 600, color: "#0f172a", marginBottom: 4 } as React.CSSProperties,
+  cleanupHint: { fontSize: 12, color: "#64748b", lineHeight: 1.6 } as React.CSSProperties,
+  cleanupBtn: {
+    padding: "10px 18px", border: "1px solid #cbd5e1", borderRadius: 8,
+    background: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 600,
+    color: "#0f172a", whiteSpace: "nowrap" as const,
+  } as React.CSSProperties,
+  cleanupResult: {
+    marginTop: 12, padding: 12, background: "#f0fdf4", border: "1px solid #bbf7d0",
+    color: "#166534", borderRadius: 8, fontSize: 13, lineHeight: 1.6,
   } as React.CSSProperties,
   errorBox: {
     background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b",
