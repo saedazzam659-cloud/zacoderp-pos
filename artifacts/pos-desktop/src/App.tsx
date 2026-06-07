@@ -17,7 +17,7 @@
 // First-time launch shows FirstRunWizard which writes the chosen mode to
 // localStorage; later boots skip straight into the matching path.
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Activation from "./pages/Activation";
 import CashierLogin from "./pages/CashierLogin";
 import PosShell from "./pages/PosShell";
@@ -54,6 +54,10 @@ import { initBridge } from "./lib/bridge";
 
 type BootState =
   | { phase: "checking" }
+  // Boot failed unexpectedly (uncaught error or a hung startup step). Shown
+  // INSTEAD of an endless "checking…" / blank white screen so the user always
+  // gets a visible, recoverable screen with the real error + a retry.
+  | { phase: "boot-error"; message: string }
   | { phase: "needs-mode" }
   | { phase: "needs-vertical" }
   | { phase: "needs-country" }
@@ -76,8 +80,28 @@ const COMPANY_NAME_KEY = "pos_desktop_company_name";
 
 export default function App() {
   const [state, setState] = useState<BootState>({ phase: "checking" });
+  // Monotonic id for the current boot attempt. A retry (or the watchdog firing)
+  // starts a new attempt; if a STALE attempt later rejects/resolves it must not
+  // clobber the newer one's state. Every terminal setState checks this id.
+  const bootRunId = useRef(0);
 
   useEffect(() => { void boot(); }, []);
+
+  // ── Boot watchdog ─────────────────────────────────────────────────────
+  // A startup step could HANG (e.g. a native invoke that never resolves) — a
+  // rejection is caught by boot()'s try/catch, but a hang would otherwise sit
+  // on the "checking…" screen forever (the user's "blank white screen"). If we
+  // are still "checking" after a generous window, surface a recoverable error
+  // instead. Re-armed every time we re-enter "checking" (e.g. on retry).
+  useEffect(() => {
+    if (state.phase !== "checking") return;
+    const id = window.setTimeout(() => {
+      setState((s) => s.phase === "checking"
+        ? { phase: "boot-error", message: "تعذّر إكمال بدء التشغيل خلال المدة المتوقعة (قد تكون هناك خطوة معلّقة)." }
+        : s);
+    }, 20000);
+    return () => window.clearTimeout(id);
+  }, [state.phase]);
 
   // ── Periodic remote revalidation (Task #236) ──────────────────────────
   // While a self-registered standalone device is signed in, re-check the cloud
@@ -109,7 +133,23 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.phase, state.phase === "standalone-signed-in" ? state.license.licenseKey : ""]);
 
+  // Thin wrapper: NEVER let a boot failure leave the app hanging on the
+  // "checking…" screen (which the user perceives as a blank white screen).
+  // Any uncaught error from a startup step lands on a visible, recoverable
+  // "boot-error" screen that shows the real message and offers a retry.
   async function boot() {
+    const runId = ++bootRunId.current;
+    try {
+      await bootInner();
+    } catch (e) {
+      if (runId !== bootRunId.current) return; // a newer attempt superseded us
+      console.error("[pos-desktop] boot failed:", e);
+      const message = e instanceof Error ? (e.stack || e.message) : String(e);
+      setState({ phase: "boot-error", message });
+    }
+  }
+
+  async function bootInner() {
     // ── LAN bridge (Task #207) ────────────────────────────────────────
     // Must run before any shared-data load so a `client` device routes its
     // reads/writes to the host. No-op for single/host (local Tauri invoke).
@@ -368,6 +408,57 @@ export default function App() {
         <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 8 }}>
           {TAURI_MODE === "tauri" ? "وضع التطبيق الأصلي" : "وضع المتصفح (تطوير)"}
         </div>
+      </div>
+    );
+  }
+
+  if (state.phase === "boot-error") {
+    return (
+      <div
+        dir="rtl"
+        style={{
+          minHeight: "100vh", display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center", gap: 16, padding: 24,
+          textAlign: "center", fontFamily: "'Segoe UI', system-ui, sans-serif",
+          background: "#0f172a", color: "#e2e8f0",
+        }}
+      >
+        <div style={{ fontSize: 48 }}>⚠️</div>
+        <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700 }}>تعذّر بدء تشغيل التطبيق</h1>
+        <p style={{ margin: 0, color: "#94a3b8", maxWidth: 480, lineHeight: 1.7 }}>
+          حدثت مشكلة أثناء بدء التشغيل. بياناتك المحفوظة محلياً آمنة. جرّب إعادة
+          المحاولة، وإن استمرت المشكلة أعد تشغيل التطبيق أو تواصل مع الدعم.
+        </p>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
+          <button
+            onClick={() => { void (async () => { setState({ phase: "checking" }); await boot(); })(); }}
+            style={{
+              padding: "10px 28px", fontSize: 16, fontWeight: 600, color: "#fff",
+              background: "#2563eb", border: "none", borderRadius: 8, cursor: "pointer",
+            }}
+          >
+            إعادة المحاولة
+          </button>
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              padding: "10px 28px", fontSize: 16, fontWeight: 600, color: "#e2e8f0",
+              background: "transparent", border: "1px solid #334155", borderRadius: 8, cursor: "pointer",
+            }}
+          >
+            إعادة تحميل
+          </button>
+        </div>
+        {state.message ? (
+          <pre
+            style={{
+              marginTop: 12, maxWidth: 560, whiteSpace: "pre-wrap", wordBreak: "break-word",
+              fontSize: 12, color: "#64748b", direction: "ltr",
+            }}
+          >
+            {state.message}
+          </pre>
+        ) : null}
       </div>
     );
   }
