@@ -788,6 +788,27 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
                     ))}
                   </ul>
                 )}
+                {!checkResult.success
+                  && !(checkResult.validationResults?.errorMessages?.length > 0)
+                  && (checkResult.zatcaStatus || checkResult.zatcaResponse) && (
+                  <div className="text-xs space-y-1">
+                    {checkResult.zatcaStatus && (
+                      <p>
+                        رمز استجابة ZATCA: <span className="font-mono">{checkResult.zatcaStatus}</span>
+                        {checkResult.environment
+                          ? <> — البيئة: {checkResult.environment === "production" ? "إنتاج" : "تجريبي"}</>
+                          : null}
+                      </p>
+                    )}
+                    {checkResult.zatcaResponse && (
+                      <pre className="whitespace-pre-wrap break-words rounded bg-black/5 p-2 text-[11px] opacity-70 max-h-40 overflow-auto" dir="ltr">
+                        {typeof checkResult.zatcaResponse === "string"
+                          ? checkResult.zatcaResponse
+                          : JSON.stringify(checkResult.zatcaResponse, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                )}
                 {checkResult.hint && (
                   <p className="text-xs opacity-80">{checkResult.hint}</p>
                 )}

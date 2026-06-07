@@ -341,11 +341,33 @@ router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", 
     };
 
     if (!response.ok) {
+      const env = (company.isSandbox ?? true) ? "sandbox" : "production";
+      // Mirror the /compliance route's logging so a gateway-level rejection
+      // (404/401/403) is diagnosable from deployment logs instead of being
+      // swallowed behind a generic "فشل الفحص".
+      req.log.warn(
+        {
+          companyId: id, invoiceId, invoiceType: invoice.invoiceType,
+          status: response.status, isSandbox: company.isSandbox ?? true,
+          endpoint, zatcaResponse: data,
+        },
+        "ZATCA compliance-check rejected",
+      );
+      // A 404/401/403 from the gateway is NOT an invoice-validation failure —
+      // ZATCA never even validated the document. It almost always means the
+      // CSID/onboarding environment doesn't match the active "وضع الربط".
+      const isGatewayError = response.status === 404 || response.status === 401 || response.status === 403;
+      const envAr = env === "production" ? "إنتاج" : "تجريبي";
       res.status(response.status).json({
         success: false,
         complianceCheck: false,
+        zatcaStatus: response.status,
+        environment: env,
+        endpoint,
         zatcaResponse: data,
-        hint: "الفاتورة التجريبية فشلت في التحقق. راجع رسائل الخطأ وصحح البيانات قبل الانتقال للإنتاج.",
+        hint: isGatewayError
+          ? `رفضت بوابة ZATCA الطلب (رمز ${response.status}) قبل التحقق من الفاتورة. تأكد أن وضع الربط الحالي (${envAr}) مطابق للبيئة التي حصلت منها على شهادة CSID — يجب أن يتم الإعداد (CSR + CSID) والفحص التجريبي على نفس البيئة.`
+          : "الفاتورة التجريبية فشلت في التحقق. راجع رسائل الخطأ وصحح البيانات قبل الانتقال للإنتاج.",
       });
       return;
     }

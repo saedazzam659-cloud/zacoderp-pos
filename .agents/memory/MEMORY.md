@@ -52,6 +52,7 @@
 - [POS Desktop version cleanup](pos-desktop-version-cleanup.md) — pin MSI upgradeCode to stop side-by-side pile-up; startup registry cleanup removes STRICTLY-older installs (never self/newer) to bridge the auto→pinned code switch.
 - [POS Desktop ZATCA secret at-rest](pos-desktop-secret-at-rest.md) — keyring-fallback file for EGS key/CSID is machine-bound AES-256-GCM ("zenc1:" prefix), key=SHA256(fp); legacy plaintext auto-migrates on next save.
 - [ZATCA CSR + onboarding spec](zatca-csr-spec.md) — /compliance 400s unless CSR uses exact template name + dirName SAN; production-csid needs the compliance requestID not the token.
+- [ZATCA compliance-check gateway 404](zatca-compliance-check-gateway-404.md) — a forwarded 404/401/403 = env/CSID mismatch (isSandbox vs where CSID issued), NOT a bad invoice; paths are correct, log+surface the raw response.
 - [POS Desktop boot-hang white screen](pos-desktop-boot-hang-whitescreen.md) — startup stuck on "checking" = blank screen; need boot() try/catch + watchdog + recoverable boot-error phase + bootRunId guard (ErrorBoundary only catches render errors).
 - [Opening-balance party import](opening-balance-party-import.md) — one draft JE marked in description; replace must clear-on-zero, guard DELETED JE's period, serialize via advisory lock, round before summing.
 - [ZATCA compliance-test invoice picker](zatca-compliance-test-invoice-picker.md) — step-3 resolves invoice by DB id + needs ISSUED (has xmlContent); use a status=issued picker, never a typed number.
