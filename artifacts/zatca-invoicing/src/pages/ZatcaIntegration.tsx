@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -156,15 +156,23 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
     retry: 1,
   });
 
-  // Invoices available for the compliance test. ZATCA can only validate an
-  // ISSUED invoice (one that already has generated XML), so we fetch only
-  // status=issued and present them in a picker — the user should never have to
-  // guess the internal database id.
-  const { data: testableInvoices = [], isLoading: invoicesLoading } = useQuery<any[]>({
+  // Invoices available for the compliance test. We fetch every invoice for the
+  // company and present them in a picker (drafts + issued) — the user should
+  // never have to guess the internal database id. A draft is auto-issued right
+  // before the check so ZATCA always validates a real, signed document.
+  const { data: allInvoices = [], isLoading: invoicesLoading } = useQuery<any[]>({
     queryKey: ["zatca-testable-invoices", companyId],
-    queryFn: () => fetchJsonArray(`${API}/api/invoices?companyId=${companyId}&status=issued`, headers),
+    queryFn: () => fetchJsonArray(`${API}/api/invoices?companyId=${companyId}`, headers),
     enabled: !!companyId,
   });
+  // Both drafts and issued invoices can feed the compliance test: a selected
+  // draft is auto-issued (XML generated) right before the check runs, so the
+  // user no longer has to leave this page to issue an invoice first. Cancelled
+  // invoices are excluded.
+  const testableInvoices = useMemo(
+    () => allInvoices.filter((inv: any) => inv.status === "draft" || inv.status === "issued"),
+    [allInvoices],
+  );
 
   // Drop a stale selection if the chosen invoice is no longer in the issued list
   // (e.g. it was unposted, deleted, or the acting company changed).
@@ -324,21 +332,44 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
 
   const complianceCheckMutation = useMutation({
     mutationFn: async () => {
+      const id = parseInt(checkInvoiceId);
+      const selected = testableInvoices.find((inv: any) => String(inv.id) === checkInvoiceId);
+      // A draft has no signed XML yet, and the compliance endpoint rejects it.
+      // Issue it first (generates UBL + QR, flips status to "issued") so ZATCA
+      // has a real document to validate.
+      if (selected?.status === "draft") {
+        const issueRes = await fetch(`${API}/api/invoices/${id}/issue`, { method: "POST", headers });
+        // 400 = "only drafts can be issued": the invoice was already issued (another
+        // tab, or a stale client-side status) so it already has XML — fall through
+        // to the compliance check. Only genuine failures (404/500) abort.
+        if (!issueRes.ok && issueRes.status !== 400) {
+          const issueJson = await issueRes.json().catch(() => ({}));
+          throw new Error(issueJson.error ?? t("zatcaIntegration.errIssueFailed"));
+        }
+      }
       const res = await fetch(`${API}/api/companies/${companyId}/compliance-check`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ invoiceId: parseInt(checkInvoiceId) }),
+        body: JSON.stringify({ invoiceId: id }),
       });
       const json = await res.json();
       setCheckResult(json);
       if (!res.ok) throw new Error(json.error ?? t("zatcaIntegration.errCheckFailed"));
       return json;
     },
-    onSuccess: () => toast({
-      title: t("zatcaIntegration.checkSuccessTitle"),
-      description: t("zatcaIntegration.checkSuccessDesc"),
-    }),
-    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["zatca-testable-invoices", companyId] });
+      toast({
+        title: t("zatcaIntegration.checkSuccessTitle"),
+        description: t("zatcaIntegration.checkSuccessDesc"),
+      });
+    },
+    onError: (e: any) => {
+      // The invoice may have been issued before the check failed — refresh so the
+      // picker reflects its new status.
+      qc.invalidateQueries({ queryKey: ["zatca-testable-invoices", companyId] });
+      toast({ title: e.message, variant: "destructive" });
+    },
   });
 
   const productionCsidMutation = useMutation({
@@ -693,37 +724,46 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
             ) : testableInvoices.length === 0 ? (
               <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 flex gap-2">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>{t("zatcaIntegration.noIssuedInvoices")}</span>
+                <span>{t(allInvoices.length === 0 ? "zatcaIntegration.noInvoicesAtAll" : "zatcaIntegration.noTestableInvoices")}</span>
               </div>
             ) : (
-              <div className="flex gap-2">
-                <Select value={checkInvoiceId} onValueChange={setCheckInvoiceId}>
-                  <SelectTrigger className="h-9 max-w-xs">
-                    <SelectValue placeholder={t("zatcaIntegration.selectInvoice")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {testableInvoices.map((inv: any) => (
-                      <SelectItem key={inv.id} value={String(inv.id)}>
-                        <span className="font-mono">{inv.invoiceNumber}</span>
-                        {inv.customer?.name ? ` — ${inv.customer.name}` : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="gap-2 whitespace-nowrap"
-                  disabled={!checkInvoiceId || complianceCheckMutation.isPending}
-                  onClick={() => complianceCheckMutation.mutate()}
-                >
-                  {complianceCheckMutation.isPending
-                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    : <FileText className="h-3.5 w-3.5" />
-                  }
-                  {t("zatcaIntegration.runCheck")}
-                </Button>
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <Select value={checkInvoiceId} onValueChange={setCheckInvoiceId}>
+                    <SelectTrigger className="h-9 max-w-xs">
+                      <SelectValue placeholder={t("zatcaIntegration.selectInvoice")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {testableInvoices.map((inv: any) => (
+                        <SelectItem key={inv.id} value={String(inv.id)}>
+                          <span className="font-mono">{inv.invoiceNumber}</span>
+                          {inv.customer?.name ? ` — ${inv.customer.name}` : ""}
+                          {inv.status === "draft" ? ` ${t("zatcaIntegration.draftLabelSuffix")}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="gap-2 whitespace-nowrap"
+                    disabled={!checkInvoiceId || complianceCheckMutation.isPending}
+                    onClick={() => complianceCheckMutation.mutate()}
+                  >
+                    {complianceCheckMutation.isPending
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : <FileText className="h-3.5 w-3.5" />
+                    }
+                    {t("zatcaIntegration.runCheck")}
+                  </Button>
+                </div>
+                {testableInvoices.find((inv: any) => String(inv.id) === checkInvoiceId)?.status === "draft" && (
+                  <div className="p-2 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800 flex gap-2">
+                    <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    <span>{t("zatcaIntegration.draftWillBeIssued")}</span>
+                  </div>
+                )}
               </div>
             )}
 
