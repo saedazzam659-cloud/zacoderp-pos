@@ -280,6 +280,68 @@ export default function GeneralSettings() {
     }
   }
 
+  // ─── Party Master Data (Customers + Suppliers) ───────────────────────────
+  const custDataFileRef = useRef<HTMLInputElement>(null);
+  const suppDataFileRef = useRef<HTMLInputElement>(null);
+  const [custDataImporting, setCustDataImporting] = useState(false);
+  const [suppDataImporting, setSuppDataImporting] = useState(false);
+  type DataReport = { created: number; updated: number; total: number; errors: { row: number; error: string }[] } | null;
+  const [custDataReport, setCustDataReport] = useState<DataReport>(null);
+  const [suppDataReport, setSuppDataReport] = useState<DataReport>(null);
+
+  function downloadCustomersDataTemplate() {
+    const headers = ["nameAr","nameEn","vatNumber","crNumber","email","phone","city","district","street","buildingNumber","postalCode","country","creditLimit","paymentTermsDays"];
+    const example = [
+      ["شركة الأفق التجارية","Horizon Trading Co","300000000000003","1010000000","info@horizon.sa","0501234567","الرياض","العليا","طريق الملك فهد","1234","12345","SA",50000,30],
+      ["مؤسسة النور","Al Noor Est","","","sales@noor.sa","0559876543","جدة","","","","","SA","",0],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...example]);
+    ws["!cols"] = headers.map(() => ({ wch: 16 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Customers");
+    XLSX.writeFile(wb, "customers_data_template.xlsx");
+  }
+
+  function downloadSuppliersDataTemplate() {
+    const headers = ["code","nameAr","nameEn","vatNumber","crNumber","email","phone","city","district","street","buildingNumber","postalCode","country","currencyCode","creditLimit"];
+    const example = [
+      ["SUP-001","شركة الإمداد","Supply Co","310000000000003","2050000000","po@supply.sa","0501112222","الدمام","","","","","SA","SAR",100000],
+      ["SUP-002","مصنع الرواد","Pioneers Factory","","","","","الرياض","","","","","SA","SAR",""],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...example]);
+    ws["!cols"] = headers.map(() => ({ wch: 16 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Suppliers");
+    XLSX.writeFile(wb, "suppliers_data_template.xlsx");
+  }
+
+  async function handlePartyDataUpload(party: "customer" | "supplier", file: File) {
+    const setImporting = party === "customer" ? setCustDataImporting : setSuppDataImporting;
+    const setReport    = party === "customer" ? setCustDataReport : setSuppDataReport;
+    setImporting(true);
+    setReport(null);
+    try {
+      const rows = await parseExcelToObjects(file);
+      if (!rows.length) throw new Error(t("pages.generalSettings.emptyFileError"));
+      const cid = user?.company?.id ?? user?.companyId;
+      const url = party === "customer"
+        ? `${API}/api/customers/import?companyId=${cid}`
+        : `${API}/api/suppliers/import?companyId=${cid}`;
+      const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ rows }) });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.importFailed"));
+      setReport(j);
+      const errCount = j.errors?.length || 0;
+      const key = errCount > 0 ? "pages.generalSettings.itemsImportReportWithErrors" : "pages.generalSettings.itemsImportReport";
+      toast({ title: t(key, { created: j.created, updated: j.updated, errors: errCount }) });
+      qc.invalidateQueries({ queryKey: [party === "customer" ? "customers" : "suppliers"] });
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.importFailed"), variant: "destructive" });
+    } finally {
+      setImporting(false);
+    }
+  }
+
   // ─── Party Opening Balances (Customers + Suppliers) ──────────────────────
   const custOBFileRef = useRef<HTMLInputElement>(null);
   const suppOBFileRef = useRef<HTMLInputElement>(null);
@@ -483,6 +545,20 @@ export default function GeneralSettings() {
           >
             <Building2 className="h-4 w-4 shrink-0" />
             <span className="truncate">{t("pages.generalSettings.suppliersOBTab")}</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="customersData"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <UsersIcon className="h-4 w-4 shrink-0" />
+            <span className="truncate">{t("pages.generalSettings.customersDataTab")}</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="suppliersData"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <Building2 className="h-4 w-4 shrink-0" />
+            <span className="truncate">{t("pages.generalSettings.suppliersDataTab")}</span>
           </TabsTrigger>
           <TabsTrigger
             value="decimals"
@@ -953,7 +1029,104 @@ export default function GeneralSettings() {
         </div>
         </TabsContent>
 
-        {/* ═══ TAB 4: Decimal Places ═════════════════════════════════════════ */}
+        {/* ═══ TAB: Customers Master Data ════════════════════════════════════ */}
+        <TabsContent value="customersData" className="mt-5">
+        <div className="rounded-xl border bg-card p-5 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+              <UsersIcon className="h-5 w-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-sm">{t("pages.generalSettings.customersDataTitle")}</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {t("pages.generalSettings.columns")}: <span className="font-mono" dir="ltr">nameAr, nameEn, vatNumber, crNumber, email, phone, city, district, street, buildingNumber, postalCode, country, creditLimit, paymentTermsDays</span>
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-1">{t("pages.generalSettings.partyDataNote")}</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={downloadCustomersDataTemplate} className="gap-1.5">
+              <Download className="h-3.5 w-3.5" />{t("pages.generalSettings.downloadTemplate")}
+            </Button>
+            <Button type="button" size="sm" onClick={() => custDataFileRef.current?.click()} disabled={custDataImporting} className="gap-1.5 bg-indigo-600 hover:bg-indigo-700">
+              {custDataImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              {custDataImporting ? t("common.loading") : t("pages.generalSettings.uploadCustomersDataFile")}
+            </Button>
+            <input
+              ref={custDataFileRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePartyDataUpload("customer", f); e.target.value = ""; }}
+            />
+          </div>
+          {custDataReport && (
+            <div className="rounded-md border bg-card px-3 py-2 text-xs space-y-1">
+              <p className="font-medium">
+                {t("pages.generalSettings.result")}: <span className="text-green-600">{custDataReport.created} {t("pages.generalSettings.added")}</span> · <span className="text-blue-600">{custDataReport.updated} {t("pages.generalSettings.updated")}</span> / {custDataReport.total}
+                {custDataReport.errors?.length ? <span className="text-red-600"> · {custDataReport.errors.length} {t("pages.generalSettings.error")}</span> : null}
+              </p>
+              {custDataReport.errors?.length > 0 && (
+                <ul className="text-[11px] text-red-700 space-y-0.5 max-h-32 overflow-auto pr-2">
+                  {custDataReport.errors.slice(0, 50).map((er, i) => (
+                    <li key={i}>{t("pages.generalSettings.line")} {er.row}: {er.error}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+        </TabsContent>
+
+        {/* ═══ TAB: Suppliers Master Data ════════════════════════════════════ */}
+        <TabsContent value="suppliersData" className="mt-5">
+        <div className="rounded-xl border bg-card p-5 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+              <Building2 className="h-5 w-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-sm">{t("pages.generalSettings.suppliersDataTitle")}</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {t("pages.generalSettings.columns")}: <span className="font-mono" dir="ltr">code, nameAr, nameEn, vatNumber, crNumber, email, phone, city, district, street, buildingNumber, postalCode, country, currencyCode, creditLimit</span>
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-1">{t("pages.generalSettings.partyDataNote")}</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={downloadSuppliersDataTemplate} className="gap-1.5">
+              <Download className="h-3.5 w-3.5" />{t("pages.generalSettings.downloadTemplate")}
+            </Button>
+            <Button type="button" size="sm" onClick={() => suppDataFileRef.current?.click()} disabled={suppDataImporting} className="gap-1.5 bg-amber-600 hover:bg-amber-700">
+              {suppDataImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              {suppDataImporting ? t("common.loading") : t("pages.generalSettings.uploadSuppliersDataFile")}
+            </Button>
+            <input
+              ref={suppDataFileRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePartyDataUpload("supplier", f); e.target.value = ""; }}
+            />
+          </div>
+          {suppDataReport && (
+            <div className="rounded-md border bg-card px-3 py-2 text-xs space-y-1">
+              <p className="font-medium">
+                {t("pages.generalSettings.result")}: <span className="text-green-600">{suppDataReport.created} {t("pages.generalSettings.added")}</span> · <span className="text-blue-600">{suppDataReport.updated} {t("pages.generalSettings.updated")}</span> / {suppDataReport.total}
+                {suppDataReport.errors?.length ? <span className="text-red-600"> · {suppDataReport.errors.length} {t("pages.generalSettings.error")}</span> : null}
+              </p>
+              {suppDataReport.errors?.length > 0 && (
+                <ul className="text-[11px] text-red-700 space-y-0.5 max-h-32 overflow-auto pr-2">
+                  {suppDataReport.errors.slice(0, 50).map((er, i) => (
+                    <li key={i}>{t("pages.generalSettings.line")} {er.row}: {er.error}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+        </TabsContent>
+
         <TabsContent value="decimals" className="mt-5 space-y-6">
           <div className="rounded-xl border bg-card p-5 space-y-4">
             <h2 className="font-semibold text-base flex items-center gap-2">

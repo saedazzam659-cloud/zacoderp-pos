@@ -7,6 +7,7 @@ import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds }
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureCustomerLedger } from "../lib/entityAccounts.js";
 import { importPartyOpeningBalances } from "../lib/openingBalanceImport.js";
+import { importPartyMasterData } from "../lib/partyMasterImport.js";
 
 // Auto-create a sub-account under the "Accounts Receivable — Customers" parent.
 // Delegates to the shared entity-account helper which reads the parent
@@ -224,6 +225,23 @@ router.post("/import/opening-balances", async (req, res) => {
     res.json(result);
   } catch (e: any) {
     res.status(e?.status ?? 500).json({ error: e?.message ?? "فشل استيراد الأرصدة الافتتاحية" });
+  }
+});
+
+// Bulk-import customer MASTER DATA (names, tax/CR, address, contact, terms).
+// Upsert only — carries NO opening balance. Registered BEFORE "/:id"
+// (Express 5 / path-to-regexp 8: literal segments must precede the param route).
+router.post("/import", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, (req as any).authUser?.companyId ?? undefined);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const body = req.body || {};
+    const rows = Array.isArray(body.rows) ? body.rows : Array.isArray(body.customers) ? body.customers : [];
+    if (!rows.length) { res.status(400).json({ error: "لا توجد بيانات" }); return; }
+    const result = await importPartyMasterData({ req, cid, party: "customer", rows });
+    res.json(result);
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e?.message ?? "فشل استيراد بيانات العملاء" });
   }
 });
 
