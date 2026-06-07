@@ -7,7 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import ZatcaOtpDialog from "@/components/ZatcaOtpDialog";
 import {
   ShieldCheck, Key, CheckCircle2, Loader2, AlertTriangle,
@@ -153,6 +155,24 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
     enabled: !!companyId,
     retry: 1,
   });
+
+  // Invoices available for the compliance test. ZATCA can only validate an
+  // ISSUED invoice (one that already has generated XML), so we fetch only
+  // status=issued and present them in a picker — the user should never have to
+  // guess the internal database id.
+  const { data: testableInvoices = [], isLoading: invoicesLoading } = useQuery<any[]>({
+    queryKey: ["zatca-testable-invoices", companyId],
+    queryFn: () => fetchJsonArray(`${API}/api/invoices?companyId=${companyId}&status=issued`, headers),
+    enabled: !!companyId,
+  });
+
+  // Drop a stale selection if the chosen invoice is no longer in the issued list
+  // (e.g. it was unposted, deleted, or the acting company changed).
+  useEffect(() => {
+    if (checkInvoiceId && !testableInvoices.some((inv: any) => String(inv.id) === checkInvoiceId)) {
+      setCheckInvoiceId("");
+    }
+  }, [testableInvoices, checkInvoiceId]);
 
   useEffect(() => {
     if (company && !seeded.current) {
@@ -665,30 +685,47 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
               <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
               <span>{t("zatcaIntegration.step3Hint")}</span>
             </div>
-            <div className="flex gap-2">
-              <Input
-                value={checkInvoiceId}
-                onChange={e => setCheckInvoiceId(e.target.value)}
-                placeholder={t("zatcaIntegration.invoiceIdPlaceholder")}
-                type="number"
-                dir="ltr"
-                className="h-9 max-w-xs font-mono"
-              />
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="gap-2 whitespace-nowrap"
-                disabled={!checkInvoiceId || complianceCheckMutation.isPending}
-                onClick={() => complianceCheckMutation.mutate()}
-              >
-                {complianceCheckMutation.isPending
-                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  : <FileText className="h-3.5 w-3.5" />
-                }
-                {t("zatcaIntegration.runCheck")}
-              </Button>
-            </div>
+            {invoicesLoading ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <span>{t("common.loading")}</span>
+              </div>
+            ) : testableInvoices.length === 0 ? (
+              <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 flex gap-2">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>{t("zatcaIntegration.noIssuedInvoices")}</span>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <Select value={checkInvoiceId} onValueChange={setCheckInvoiceId}>
+                  <SelectTrigger className="h-9 max-w-xs">
+                    <SelectValue placeholder={t("zatcaIntegration.selectInvoice")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {testableInvoices.map((inv: any) => (
+                      <SelectItem key={inv.id} value={String(inv.id)}>
+                        <span className="font-mono">{inv.invoiceNumber}</span>
+                        {inv.customer?.name ? ` — ${inv.customer.name}` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-2 whitespace-nowrap"
+                  disabled={!checkInvoiceId || complianceCheckMutation.isPending}
+                  onClick={() => complianceCheckMutation.mutate()}
+                >
+                  {complianceCheckMutation.isPending
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <FileText className="h-3.5 w-3.5" />
+                  }
+                  {t("zatcaIntegration.runCheck")}
+                </Button>
+              </div>
+            )}
 
             {checkResult && (
               <div className={cn(
