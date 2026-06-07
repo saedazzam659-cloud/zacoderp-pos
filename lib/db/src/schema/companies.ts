@@ -19,6 +19,7 @@ export const companiesTable = pgTable("companies", {
   industryName: text("industry_name"),
   invoiceType: text("invoice_type").notNull().default("both"),
   isSandbox: boolean("is_sandbox").notNull().default(false),
+  zatcaEnvironment: text("zatca_environment"),
   serialNumber: text("serial_number"),
   deviceSerial1: text("device_serial1"),
   deviceSerial2: text("device_serial2"),

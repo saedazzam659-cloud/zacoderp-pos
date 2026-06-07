@@ -26,7 +26,14 @@ interface DeviceForm {
   deviceSerial2: string;
   deviceSerial3: string;
   isSandbox: boolean;
+  zatcaEnvironment: string;
 }
+
+const ENV_LABELS: Record<string, string> = {
+  sandbox: "تجريبي",
+  simulation: "محاكاة",
+  production: "إنتاج",
+};
 
 function mask(val: string | null | undefined): string {
   if (!val) return "—";
@@ -191,6 +198,9 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         deviceSerial2: company.deviceSerial2 ?? "",
         deviceSerial3: company.deviceSerial3 ?? "",
         isSandbox: company.isSandbox ?? true,
+        zatcaEnvironment:
+          (company.zatcaEnvironment as string | null) ??
+          ((company.isSandbox ?? true) ? "sandbox" : "production"),
       });
     }
   }, [company]);
@@ -409,7 +419,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
   const hasCsid  = !!company.zatcaCsidToken;
   const hasPcsid = !!company.zatcaPcsidToken;
 
-  const envLabel = form.isSandbox ? t("zatcaIntegration.envSandbox") : t("zatcaIntegration.envProd");
+  const envLabel = ENV_LABELS[form.zatcaEnvironment] ?? ENV_LABELS.sandbox;
 
   const step1Status = hasCsr ? "done" : "active";
   const step2Status = !hasCsr ? "locked" : hasCsid ? "done" : "active";
@@ -500,18 +510,35 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
           completedLabel={t("zatcaIntegration.completedBadge")}
         >
           <div className="space-y-4">
-            {/* Sandbox toggle */}
-            <div className="flex items-center justify-between p-3 rounded-lg border bg-background">
+            {/* Environment selector — تجريبي / محاكاة / إنتاج */}
+            <div className="p-3 rounded-lg border bg-background space-y-2">
               <div>
                 <p className="text-sm font-medium">{t("zatcaIntegration.sandboxToggleTitle")}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {t("zatcaIntegration.sandboxToggleDesc")}
+                  بيئة الربط مع ZATCA. الفحص التجريبي يتم على «تجريبي» أو «محاكاة» فقط — بوابة «إنتاج» لا تستضيف خطوة الفحص.
                 </p>
               </div>
-              <Switch
-                checked={form.isSandbox}
-                onCheckedChange={v => updateForm({ isSandbox: v })}
-              />
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { v: "sandbox", label: "تجريبي", desc: "اختبار المطوّرين" },
+                  { v: "simulation", label: "محاكاة", desc: "ما قبل الإنتاج" },
+                  { v: "production", label: "إنتاج", desc: "البيئة الحيّة" },
+                ] as const).map(opt => (
+                  <button
+                    key={opt.v}
+                    type="button"
+                    onClick={() => updateForm({ zatcaEnvironment: opt.v, isSandbox: opt.v !== "production" })}
+                    className={`rounded-lg border p-2 text-center transition ${
+                      form.zatcaEnvironment === opt.v
+                        ? "border-primary bg-primary/10 ring-1 ring-primary"
+                        : "hover:bg-muted"
+                    }`}
+                  >
+                    <div className="text-sm font-medium">{opt.label}</div>
+                    <div className="text-[11px] text-muted-foreground">{opt.desc}</div>
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Serial fields */}
@@ -796,7 +823,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
                       <p>
                         رمز استجابة ZATCA: <span className="font-mono">{checkResult.zatcaStatus}</span>
                         {checkResult.environment
-                          ? <> — البيئة: {checkResult.environment === "production" ? "إنتاج" : "تجريبي"}</>
+                          ? <> — البيئة: {ENV_LABELS[checkResult.environment] ?? "تجريبي"}</>
                           : null}
                       </p>
                     )}

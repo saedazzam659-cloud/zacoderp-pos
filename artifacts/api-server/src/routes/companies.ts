@@ -469,13 +469,18 @@ router.patch("/:id/windows-module-permissions", async (req, res) => {
 // PATCH /:id/zatca-settings — update device info + sandbox toggle (called by company users)
 router.patch("/:id/zatca-settings", async (req, res) => {
   const id = parseInt(req.params.id);
-  const { serialNumber, deviceSerial1, deviceSerial2, deviceSerial3, isSandbox } = req.body;
+  const { serialNumber, deviceSerial1, deviceSerial2, deviceSerial3, isSandbox, zatcaEnvironment } = req.body;
+  // `zatcaEnvironment` (sandbox|simulation|production) is authoritative for the
+  // ZATCA gateway URL; keep the legacy `isSandbox` boolean in sync so older
+  // readers (admin status derivation) stay correct — only "production" is live.
+  const validEnv = zatcaEnvironment === "sandbox" || zatcaEnvironment === "simulation" || zatcaEnvironment === "production";
   const [company] = await db.update(companiesTable).set({
     ...(serialNumber !== undefined && { serialNumber }),
     ...(deviceSerial1 !== undefined && { deviceSerial1 }),
     ...(deviceSerial2 !== undefined && { deviceSerial2 }),
     ...(deviceSerial3 !== undefined && { deviceSerial3 }),
-    ...(isSandbox !== undefined && { isSandbox }),
+    ...(validEnv && { zatcaEnvironment, isSandbox: zatcaEnvironment !== "production" }),
+    ...(!validEnv && isSandbox !== undefined && { isSandbox }),
     updatedAt: new Date(),
   }).where(eq(companiesTable.id, id)).returning();
   if (!company) { res.status(404).json({ error: "Company not found" }); return; }

@@ -28,12 +28,39 @@ function requireAuthed(req: Request, res: Response, next: NextFunction) {
 }
 router.use(requireAuthed);
 
-// ─── Sandbox vs Production base URL ──────────────────────────────────────────
-function getZatcaBaseUrl(isSandbox: boolean): string {
-  return isSandbox
-    ? "https://gw-fatoora.zatca.gov.sa/e-invoicing/developer-portal"
-    : "https://gw-fatoora.zatca.gov.sa/e-invoicing/core";
+// ─── ZATCA environment → gateway base URL ───────────────────────────────────
+// ZATCA hosts three SELF-CONTAINED environments. The compliance/onboarding test
+// endpoints (/compliance, /compliance/invoices/...) live on developer-portal +
+// simulation ONLY — the production `core` gateway does NOT host them and returns
+// 404 "No resources match requested URI". Each call must therefore target the
+// base URL of the company's selected environment.
+type ZatcaEnv = "sandbox" | "simulation" | "production";
+
+function getZatcaBaseUrl(env: ZatcaEnv): string {
+  switch (env) {
+    case "production":
+      return "https://gw-fatoora.zatca.gov.sa/e-invoicing/core";
+    case "simulation":
+      return "https://gw-fatoora.zatca.gov.sa/e-invoicing/simulation";
+    case "sandbox":
+    default:
+      return "https://gw-fatoora.zatca.gov.sa/e-invoicing/developer-portal";
+  }
 }
+
+// Resolve the active environment for a company. The explicit `zatcaEnvironment`
+// column wins; fall back to the legacy `isSandbox` boolean for rows predating it.
+function resolveZatcaEnv(company: { zatcaEnvironment?: string | null; isSandbox?: boolean | null }): ZatcaEnv {
+  const e = company.zatcaEnvironment;
+  if (e === "sandbox" || e === "simulation" || e === "production") return e;
+  return (company.isSandbox ?? true) ? "sandbox" : "production";
+}
+
+const envArabic: Record<ZatcaEnv, string> = {
+  sandbox: "تجريبي",
+  simulation: "محاكاة",
+  production: "إنتاج",
+};
 
 function basicAuth(token: string, secret: string): string {
   return "Basic " + Buffer.from(`${token}:${secret}`).toString("base64");
@@ -93,7 +120,7 @@ router.post("/companies/:id/generate-csr", requirePermission("zatca_setup", "cre
       invoiceType: company.invoiceType ?? "both",
       registeredAddress,
       businessCategory: (company.industryName ?? "").trim(),
-      isSandbox: company.isSandbox ?? true,
+      environment: resolveZatcaEnv(company),
     });
 
     await db.update(companiesTable).set({
@@ -137,7 +164,8 @@ router.post("/companies/:id/compliance", requirePermission("zatca_setup", "creat
   }
 
   try {
-    const baseUrl = getZatcaBaseUrl(company.isSandbox ?? true);
+    const env = resolveZatcaEnv(company);
+    const baseUrl = getZatcaBaseUrl(env);
     const csrBase64 = Buffer.from(company.zatcaCsr).toString("base64");
 
     const response = await fetch(`${baseUrl}/compliance`, {
@@ -161,7 +189,7 @@ router.post("/companies/:id/compliance", requirePermission("zatca_setup", "creat
 
     if (!response.ok) {
       req.log.warn(
-        { companyId: id, status: response.status, isSandbox: company.isSandbox ?? true, zatcaResponse: data },
+        { companyId: id, status: response.status, environment: env, zatcaResponse: data },
         "ZATCA compliance request rejected",
       );
       res.status(response.status).json({
@@ -217,7 +245,8 @@ router.post("/companies/:id/production-csid", requirePermission("zatca_setup", "
   }
 
   try {
-    const baseUrl = getZatcaBaseUrl(company.isSandbox ?? true);
+    const env = resolveZatcaEnv(company);
+    const baseUrl = getZatcaBaseUrl(env);
 
     const response = await fetch(`${baseUrl}/production/csids`, {
       method: "POST",
@@ -240,7 +269,7 @@ router.post("/companies/:id/production-csid", requirePermission("zatca_setup", "
 
     if (!response.ok) {
       req.log.warn(
-        { companyId: id, status: response.status, isSandbox: company.isSandbox ?? true, zatcaResponse: data },
+        { companyId: id, status: response.status, environment: env, zatcaResponse: data },
         "ZATCA production-csid request rejected",
       );
       res.status(response.status).json({
@@ -305,7 +334,8 @@ router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", 
   }
 
   try {
-    const baseUrl = getZatcaBaseUrl(company.isSandbox ?? true);
+    const env = resolveZatcaEnv(company);
+    const baseUrl = getZatcaBaseUrl(env);
     const xmlBase64 = Buffer.from(invoice.xmlContent).toString("base64");
     const hashBase64 = hashXml(invoice.xmlContent);
 
@@ -341,14 +371,13 @@ router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", 
     };
 
     if (!response.ok) {
-      const env = (company.isSandbox ?? true) ? "sandbox" : "production";
       // Mirror the /compliance route's logging so a gateway-level rejection
       // (404/401/403) is diagnosable from deployment logs instead of being
       // swallowed behind a generic "فشل الفحص".
       req.log.warn(
         {
           companyId: id, invoiceId, invoiceType: invoice.invoiceType,
-          status: response.status, isSandbox: company.isSandbox ?? true,
+          status: response.status, environment: env,
           endpoint, zatcaResponse: data,
         },
         "ZATCA compliance-check rejected",
@@ -357,7 +386,7 @@ router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", 
       // ZATCA never even validated the document. It almost always means the
       // CSID/onboarding environment doesn't match the active "وضع الربط".
       const isGatewayError = response.status === 404 || response.status === 401 || response.status === 403;
-      const envAr = env === "production" ? "إنتاج" : "تجريبي";
+      const envAr = envArabic[env];
       res.status(response.status).json({
         success: false,
         complianceCheck: false,
@@ -426,7 +455,8 @@ router.post("/invoices/:id/submit", requirePermission("zatca_bridge", "create"),
   }
 
   try {
-    const baseUrl = getZatcaBaseUrl(company.isSandbox ?? true);
+    const env = resolveZatcaEnv(company);
+    const baseUrl = getZatcaBaseUrl(env);
     const xmlBase64 = Buffer.from(invoice.xmlContent).toString("base64");
     const hashBase64 = hashXml(invoice.xmlContent);
 
