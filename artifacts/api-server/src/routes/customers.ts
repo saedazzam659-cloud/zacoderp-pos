@@ -6,6 +6,7 @@ import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureCustomerLedger } from "../lib/entityAccounts.js";
+import { importPartyOpeningBalances } from "../lib/openingBalanceImport.js";
 
 // Auto-create a sub-account under the "Accounts Receivable — Customers" parent.
 // Delegates to the shared entity-account helper which reads the parent
@@ -208,6 +209,22 @@ router.post("/", async (req, res) => {
     })(),
   }).returning();
   res.status(201).json(customer);
+});
+
+// Bulk-import opening balances for customers → one draft "opening" JE.
+// Registered BEFORE "/:id" (Express 5 / path-to-regexp 8: literal segments
+// must precede the param route or ":id" swallows "import").
+router.post("/import/opening-balances", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, (req as any).authUser?.companyId ?? undefined);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const body = req.body || {};
+    const data = Array.isArray(body.rows) ? body.rows : Array.isArray(body.balances) ? body.balances : [];
+    const result = await importPartyOpeningBalances({ req, cid, party: "customer", rows: data, date: body.date });
+    res.json(result);
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e?.message ?? "فشل استيراد الأرصدة الافتتاحية" });
+  }
 });
 
 router.get("/:id", async (req, res) => {

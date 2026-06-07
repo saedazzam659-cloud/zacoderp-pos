@@ -7,6 +7,7 @@ import { eq, and, sql, inArray, notInArray, isNotNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureSupplierLedger } from "../lib/entityAccounts.js";
+import { importPartyOpeningBalances } from "../lib/openingBalanceImport.js";
 
 // Auto-create a sub-account under the "Accounts Payable — Suppliers" parent.
 // Delegates to the shared entity-account helper which reads the parent
@@ -231,6 +232,22 @@ router.post("/", async (req, res) => {
     includeInStatements: data.includeInStatements === false ? false : true,
   }).returning();
   res.status(201).json(supplier);
+});
+
+// Bulk-import opening balances for suppliers → one draft "opening" JE.
+// Registered BEFORE "/:id" (Express 5 / path-to-regexp 8: literal segments
+// must precede the param route or ":id" swallows "import").
+router.post("/import/opening-balances", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, (req as any).authUser?.companyId ?? undefined);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const body = req.body || {};
+    const data = Array.isArray(body.rows) ? body.rows : Array.isArray(body.balances) ? body.balances : [];
+    const result = await importPartyOpeningBalances({ req, cid, party: "supplier", rows: data, date: body.date });
+    res.json(result);
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e?.message ?? "فشل استيراد الأرصدة الافتتاحية" });
+  }
 });
 
 router.get("/:id", async (req, res) => {

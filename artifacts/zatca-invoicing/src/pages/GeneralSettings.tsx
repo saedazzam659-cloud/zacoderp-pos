@@ -280,6 +280,69 @@ export default function GeneralSettings() {
     }
   }
 
+  // ─── Party Opening Balances (Customers + Suppliers) ──────────────────────
+  const custOBFileRef = useRef<HTMLInputElement>(null);
+  const suppOBFileRef = useRef<HTMLInputElement>(null);
+  const [custOBImporting, setCustOBImporting] = useState(false);
+  const [suppOBImporting, setSuppOBImporting] = useState(false);
+  type OBReport = { applied: number; total: number; errors: { row: number; error: string }[]; docNumber?: string | null } | null;
+  const [custOBReport, setCustOBReport] = useState<OBReport>(null);
+  const [suppOBReport, setSuppOBReport] = useState<OBReport>(null);
+
+  function coerceList(j: any): any[] {
+    if (Array.isArray(j)) return j;
+    return j?.items ?? j?.rows ?? j?.data ?? [];
+  }
+
+  async function downloadPartyOBTemplate(party: "customer" | "supplier") {
+    try {
+      const cid = user?.company?.id ?? user?.companyId;
+      const url = party === "customer" ? `${API}/api/customers?companyId=${cid}` : `${API}/api/suppliers?companyId=${cid}`;
+      const res = await fetch(url, { headers });
+      const list = coerceList(await res.json().catch(() => []));
+      const defType = party === "customer" ? "مدين" : "دائن";
+      const head = ["id", "name", "balance", "type"];
+      const body = list.map((p: any) => [p.id, p.nameAr ?? p.name ?? "", "", defType]);
+      const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+      ws["!cols"] = [{ wch: 8 }, { wch: 32 }, { wch: 14 }, { wch: 10 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, party === "customer" ? "Customers" : "Suppliers");
+      XLSX.writeFile(wb, party === "customer" ? "customers_opening_balances.xlsx" : "suppliers_opening_balances.xlsx");
+    } catch (e: any) {
+      toast({ title: e?.message || t("pages.generalSettings.importFailed"), variant: "destructive" });
+    }
+  }
+
+  async function handlePartyOBUpload(party: "customer" | "supplier", file: File) {
+    const setImporting = party === "customer" ? setCustOBImporting : setSuppOBImporting;
+    const setReport = party === "customer" ? setCustOBReport : setSuppOBReport;
+    setImporting(true);
+    setReport(null);
+    try {
+      const rows = await parseExcelToObjects(file);
+      if (!rows.length) throw new Error(t("pages.generalSettings.emptyFileError"));
+      const cid = user?.company?.id ?? user?.companyId;
+      const endpoint = party === "customer"
+        ? `${API}/api/customers/import/opening-balances?companyId=${cid}`
+        : `${API}/api/suppliers/import/opening-balances?companyId=${cid}`;
+      const res = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify({ rows }) });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.importFailed"));
+      setReport(j);
+      {
+        const errCount = j.errors?.length || 0;
+        const key = errCount > 0 ? "pages.generalSettings.partyOBReportWithErrors" : "pages.generalSettings.partyOBReport";
+        toast({ title: t(key, { applied: j.applied, errors: errCount }) });
+      }
+      qc.invalidateQueries({ queryKey: ["journal-entries"] });
+      qc.invalidateQueries({ queryKey: [party === "customer" ? "customers" : "suppliers"] });
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.importFailed"), variant: "destructive" });
+    } finally {
+      setImporting(false);
+    }
+  }
+
   // ─── Backup Export / Import (with AI analysis) ───────────────────────────
   const backupFileRef = useRef<HTMLInputElement>(null);
   const [exporting, setExporting] = useState(false);
@@ -406,6 +469,20 @@ export default function GeneralSettings() {
           >
             <Boxes className="h-4 w-4 shrink-0" />
             <span className="truncate">{t("pages.generalSettings.openingBalancesTab")}</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="customersOB"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <UsersIcon className="h-4 w-4 shrink-0" />
+            <span className="truncate">{t("pages.generalSettings.customersOBTab")}</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="suppliersOB"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <Building2 className="h-4 w-4 shrink-0" />
+            <span className="truncate">{t("pages.generalSettings.suppliersOBTab")}</span>
           </TabsTrigger>
           <TabsTrigger
             value="decimals"
@@ -761,6 +838,112 @@ export default function GeneralSettings() {
               {balancesReport.errors?.length > 0 && (
                 <ul className="text-[11px] text-red-700 space-y-0.5 max-h-32 overflow-auto pr-2">
                   {balancesReport.errors.slice(0, 50).map((er, i) => (
+                    <li key={i}>{t("pages.generalSettings.line")} {er.row}: {er.error}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+        </TabsContent>
+
+        {/* ═══ TAB: Customers Opening Balances ═══════════════════════════════ */}
+        <TabsContent value="customersOB" className="mt-5">
+        <div className="rounded-xl border bg-card p-5 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+              <UsersIcon className="h-5 w-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-sm">{t("pages.generalSettings.customersOBTitle")}</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {t("pages.generalSettings.columns")}: <span className="font-mono" dir="ltr">id, name, balance, type</span>
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-1">{t("pages.generalSettings.partyOBNote")}</p>
+              <p className="text-[11px] text-amber-700 dark:text-amber-500 mt-1 flex items-start gap-1">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />{t("pages.generalSettings.partyOBReplaceNote")}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => downloadPartyOBTemplate("customer")} className="gap-1.5">
+              <Download className="h-3.5 w-3.5" />{t("pages.generalSettings.downloadTemplateWithData")}
+            </Button>
+            <Button type="button" size="sm" onClick={() => custOBFileRef.current?.click()} disabled={custOBImporting} className="gap-1.5 bg-indigo-600 hover:bg-indigo-700">
+              {custOBImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              {custOBImporting ? t("common.loading") : t("pages.generalSettings.uploadCustomersOB")}
+            </Button>
+            <input
+              ref={custOBFileRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePartyOBUpload("customer", f); e.target.value = ""; }}
+            />
+          </div>
+          {custOBReport && (
+            <div className="rounded-md border bg-card px-3 py-2 text-xs space-y-1">
+              <p className="font-medium">
+                {t("pages.generalSettings.result")}: <span className="text-indigo-600">{custOBReport.applied} {t("pages.generalSettings.partyOBApplied")}</span> / {custOBReport.total}
+                {custOBReport.docNumber ? <span className="text-muted-foreground"> · {t("pages.generalSettings.partyOBEntryNo")}: <span className="font-mono" dir="ltr">{custOBReport.docNumber}</span></span> : null}
+                {custOBReport.errors?.length ? <span className="text-red-600"> · {custOBReport.errors.length} {t("pages.generalSettings.error")}</span> : null}
+              </p>
+              {custOBReport.errors?.length > 0 && (
+                <ul className="text-[11px] text-red-700 space-y-0.5 max-h-32 overflow-auto pr-2">
+                  {custOBReport.errors.slice(0, 50).map((er, i) => (
+                    <li key={i}>{t("pages.generalSettings.line")} {er.row}: {er.error}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+        </TabsContent>
+
+        {/* ═══ TAB: Suppliers Opening Balances ═══════════════════════════════ */}
+        <TabsContent value="suppliersOB" className="mt-5">
+        <div className="rounded-xl border bg-card p-5 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+              <Building2 className="h-5 w-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-sm">{t("pages.generalSettings.suppliersOBTitle")}</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {t("pages.generalSettings.columns")}: <span className="font-mono" dir="ltr">id, name, balance, type</span>
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-1">{t("pages.generalSettings.partyOBNote")}</p>
+              <p className="text-[11px] text-amber-700 dark:text-amber-500 mt-1 flex items-start gap-1">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />{t("pages.generalSettings.partyOBReplaceNote")}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => downloadPartyOBTemplate("supplier")} className="gap-1.5">
+              <Download className="h-3.5 w-3.5" />{t("pages.generalSettings.downloadTemplateWithData")}
+            </Button>
+            <Button type="button" size="sm" onClick={() => suppOBFileRef.current?.click()} disabled={suppOBImporting} className="gap-1.5 bg-rose-600 hover:bg-rose-700">
+              {suppOBImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              {suppOBImporting ? t("common.loading") : t("pages.generalSettings.uploadSuppliersOB")}
+            </Button>
+            <input
+              ref={suppOBFileRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePartyOBUpload("supplier", f); e.target.value = ""; }}
+            />
+          </div>
+          {suppOBReport && (
+            <div className="rounded-md border bg-card px-3 py-2 text-xs space-y-1">
+              <p className="font-medium">
+                {t("pages.generalSettings.result")}: <span className="text-rose-600">{suppOBReport.applied} {t("pages.generalSettings.partyOBApplied")}</span> / {suppOBReport.total}
+                {suppOBReport.docNumber ? <span className="text-muted-foreground"> · {t("pages.generalSettings.partyOBEntryNo")}: <span className="font-mono" dir="ltr">{suppOBReport.docNumber}</span></span> : null}
+                {suppOBReport.errors?.length ? <span className="text-red-600"> · {suppOBReport.errors.length} {t("pages.generalSettings.error")}</span> : null}
+              </p>
+              {suppOBReport.errors?.length > 0 && (
+                <ul className="text-[11px] text-red-700 space-y-0.5 max-h-32 overflow-auto pr-2">
+                  {suppOBReport.errors.slice(0, 50).map((er, i) => (
                     <li key={i}>{t("pages.generalSettings.line")} {er.row}: {er.error}</li>
                   ))}
                 </ul>
