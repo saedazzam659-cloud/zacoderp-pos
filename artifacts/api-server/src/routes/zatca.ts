@@ -259,21 +259,29 @@ router.post("/companies/:id/production-csid", requirePermission("zatca_setup", "
       body: JSON.stringify({ compliance_request_id: complianceRequestId ?? company.zatcaCsidToken }),
     });
 
-    const data = await response.json() as {
+    // ZATCA may return a non-JSON body (e.g. an HTML 404 page from the wrong
+    // gateway) — parse defensively so a bad body surfaces the real status +
+    // raw text instead of throwing an opaque 500 in the catch below.
+    const rawBody = await response.text();
+    let data: {
       requestID?: string;
       dispositionMessage?: string;
       binarySecurityToken?: string;
       secret?: string;
       errors?: unknown;
-    };
+      raw?: string;
+    } = {};
+    try { data = rawBody ? JSON.parse(rawBody) : {}; } catch { data = { raw: rawBody }; }
 
     if (!response.ok) {
       req.log.warn(
-        { companyId: id, status: response.status, environment: env, zatcaResponse: data },
+        { companyId: id, status: response.status, environment: env, endpoint: `${baseUrl}/production/csids`, zatcaResponse: data },
         "ZATCA production-csid request rejected",
       );
       res.status(response.status).json({
         error: "فشل استدعاء ZATCA Production CSID API",
+        zatcaStatus: response.status,
+        environment: env,
         zatcaResponse: data,
       });
       return;
@@ -294,6 +302,7 @@ router.post("/companies/:id/production-csid", requirePermission("zatca_setup", "
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    req.log.error({ companyId: id, err: message }, "ZATCA production-csid threw");
     res.status(500).json({ error: "فشل الاتصال بـ ZATCA", details: message });
   }
 });
