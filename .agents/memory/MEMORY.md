@@ -52,6 +52,7 @@
 - [POS Desktop version cleanup](pos-desktop-version-cleanup.md) — pin MSI upgradeCode to stop side-by-side pile-up; startup registry cleanup removes STRICTLY-older installs (never self/newer) to bridge the auto→pinned code switch.
 - [POS Desktop ZATCA secret at-rest](pos-desktop-secret-at-rest.md) — keyring-fallback file for EGS key/CSID is machine-bound AES-256-GCM ("zenc1:" prefix), key=SHA256(fp); legacy plaintext auto-migrates on next save.
 - [ZATCA CSR + onboarding spec](zatca-csr-spec.md) — /compliance 400s unless CSR uses exact template name + dirName SAN; production-csid needs the compliance requestID not the token.
+- [ZATCA compliance requestID persistence](zatca-compliance-requestid.md) — persist /compliance requestID on the company row; production-csid must use it, never fall back to the binary CSID token (opaque «فشل الاتصال»).
 - [Bulk upsert importer invariants](bulk-upsert-importer-invariants.md) — in-memory match maps must de-index on key mutation; ledger creation strict on insert (error the row, never silent null); Drizzle dynamic .values() needs `as $inferInsert`.
 - [ZATCA three environments](zatca-three-environments.md) — sandbox/simulation/production are SEPARATE gateways each hosting all endpoints; `core` (prod) has NO /compliance (404); resolve URL+CSR template per env, never per isSandbox.
 - [ZATCA compliance-check gateway 404](zatca-compliance-check-gateway-404.md) — a forwarded 404/401/403 = env/CSID mismatch (isSandbox vs where CSID issued), NOT a bad invoice; paths are correct, log+surface the raw response.
