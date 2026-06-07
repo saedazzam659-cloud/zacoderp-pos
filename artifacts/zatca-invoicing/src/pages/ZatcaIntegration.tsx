@@ -421,6 +421,15 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
 
   const envLabel = ENV_LABELS[form.zatcaEnvironment] ?? ENV_LABELS.sandbox;
 
+  // The compliance trial check (/compliance/invoices/...) only exists on the
+  // sandbox + simulation gateways. ZATCA's production `core` gateway does NOT
+  // host it (returns 404). Gate on the SAVED company env — that is what the
+  // server resolves the request against, not the in-form (unsaved) selection.
+  const savedEnv =
+    (company.zatcaEnvironment as string | null) ??
+    ((company.isSandbox ?? true) ? "sandbox" : "production");
+  const isProductionEnv = savedEnv === "production";
+
   const step1Status = hasCsr ? "done" : "active";
   const step2Status = !hasCsr ? "locked" : hasCsid ? "done" : "active";
   const step3Status: "active" | "locked" = !hasCsid ? "locked" : "active";
@@ -743,7 +752,12 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
               <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
               <span>{t("zatcaIntegration.step3Hint")}</span>
             </div>
-            {invoicesLoading ? (
+            {isProductionEnv ? (
+              <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800 flex gap-2">
+                <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>{t("zatcaIntegration.trialNotInProduction")}</span>
+              </div>
+            ) : invoicesLoading ? (
               <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 <span>{t("common.loading")}</span>
@@ -775,7 +789,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
                     size="sm"
                     variant="outline"
                     className="gap-2 whitespace-nowrap"
-                    disabled={!checkInvoiceId || complianceCheckMutation.isPending}
+                    disabled={!checkInvoiceId || complianceCheckMutation.isPending || isProductionEnv}
                     onClick={() => complianceCheckMutation.mutate()}
                   >
                     {complianceCheckMutation.isPending

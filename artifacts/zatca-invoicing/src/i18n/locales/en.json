@@ -7702,6 +7702,7 @@
     "noTestableInvoices": "No testable invoices. Existing invoices are cancelled and can't be used — create a new invoice, then come back here.",
     "draftLabelSuffix": "(draft — will be issued)",
     "draftWillBeIssued": "This invoice is a draft; it will be issued automatically (its XML generated) before the compliance test runs.",
+    "trialNotInProduction": "The compliance trial check isn't available on the «Production» environment — ZATCA's production gateway doesn't host this step. To run it, switch the connection environment (in Step 1) to «Simulation» and save. In production you don't need the trial check; your real invoices are issued and sent directly to ZATCA via reporting/clearance.",
     "runCheck": "Run test",
     "checkSuccess": "Compliance test passed",
     "checkFailed": "Compliance test failed",
