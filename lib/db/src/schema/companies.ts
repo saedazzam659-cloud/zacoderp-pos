@@ -32,6 +32,10 @@ export const companiesTable = pgTable("companies", {
   zatcaCsidSecret: text("zatca_csid_secret"),
   zatcaPcsidToken: text("zatca_pcsid_token"),
   zatcaPcsidSecret: text("zatca_pcsid_secret"),
+  // The `requestID` returned by the ZATCA /compliance call. Persisted here so
+  // the production-csid step (/production/csids) no longer depends on the
+  // browser's localStorage to carry it across sessions/devices.
+  zatcaComplianceRequestId: text("zatca_compliance_request_id"),
   invoiceCounter: integer("invoice_counter").notNull().default(0),
   // General settings
   logo: text("logo"),                          // base64 data URL

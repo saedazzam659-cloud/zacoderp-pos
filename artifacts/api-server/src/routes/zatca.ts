@@ -200,11 +200,14 @@ router.post("/companies/:id/compliance", requirePermission("zatca_setup", "creat
       return;
     }
 
-    // Save CSID token and secret
+    // Save CSID token + secret AND the compliance requestID. The requestID is
+    // required later by /production/csids; persisting it here (not just in the
+    // browser) makes the production-csid step work across sessions/devices.
     await db.update(companiesTable).set({
       zatcaCsid: data.binarySecurityToken ?? null,
       zatcaCsidToken: data.binarySecurityToken ?? null,
       zatcaCsidSecret: data.secret ?? null,
+      zatcaComplianceRequestId: data.requestID ?? null,
       updatedAt: new Date(),
     }).where(eq(companiesTable.id, id));
 
@@ -244,6 +247,18 @@ router.post("/companies/:id/production-csid", requirePermission("zatca_setup", "
     return;
   }
 
+  // ZATCA's /production/csids expects the COMPLIANCE `requestID` — NOT the
+  // binary CSID token. Prefer the value the client forwarded; otherwise use the
+  // one persisted on the company during the /compliance step. Never fall back
+  // to the binary token (ZATCA rejects it, surfacing as an opaque failure).
+  const requestId = complianceRequestId ?? company.zatcaComplianceRequestId;
+  if (!requestId) {
+    res.status(400).json({
+      error: "معرّف طلب الامتثال غير متوفر. أعد تنفيذ خطوة «استخراج شهادة الامتثال (CSID)» للحصول عليه، ثم استخرج شهادة الإنتاج.",
+    });
+    return;
+  }
+
   try {
     const env = resolveZatcaEnv(company);
     const baseUrl = getZatcaBaseUrl(env);
@@ -256,7 +271,7 @@ router.post("/companies/:id/production-csid", requirePermission("zatca_setup", "
         "Authorization": basicAuth(company.zatcaCsidToken, company.zatcaCsidSecret),
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ compliance_request_id: complianceRequestId ?? company.zatcaCsidToken }),
+      body: JSON.stringify({ compliance_request_id: requestId }),
     });
 
     // ZATCA may return a non-JSON body (e.g. an HTML 404 page from the wrong
