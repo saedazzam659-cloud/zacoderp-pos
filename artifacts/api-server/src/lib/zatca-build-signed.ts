@@ -20,7 +20,7 @@
 import { createPublicKey, createPrivateKey } from "crypto";
 import forge from "node-forge";
 import { generateZatcaXml, hashXml, type InvoiceData } from "./zatca-xml.js";
-import { signZatcaUbl } from "./zatca-xades-signer.js";
+import { signZatcaUbl, certDerFromToken } from "./zatca-xades-signer.js";
 import { buildPhase2Qr } from "./zatca-tlv.js";
 
 /** Derive the EGS public key as DER SubjectPublicKeyInfo (QR tag 8). */
@@ -32,11 +32,11 @@ export function publicKeySpkiDer(privateKeyPem: string): Buffer {
 /** Extract the raw certificate signature bytes from the base64 cert body (QR tag 9). */
 export function certSignatureDer(certBodyBase64: string): Buffer | null {
   try {
-    const clean = certBodyBase64
-      .replace(/-----BEGIN [^-]+-----/g, "")
-      .replace(/-----END [^-]+-----/g, "")
-      .replace(/\s+/g, "");
-    const der = Buffer.from(clean, "base64");
+    // Normalize through the shared decoder: the stored value is a ZATCA
+    // binarySecurityToken (double base64 over the DER), so a single decode here
+    // would feed ASCII base64 text into forge and the parse would fail (silently
+    // dropping QR tag 9). certDerFromToken unwraps the extra layer when present.
+    const { der } = certDerFromToken(certBodyBase64);
     const asn1 = forge.asn1.fromDer(forge.util.createBuffer(der.toString("binary")));
     const cert = forge.pki.certificateFromAsn1(asn1);
     // node-forge stores the signature as a binary string.

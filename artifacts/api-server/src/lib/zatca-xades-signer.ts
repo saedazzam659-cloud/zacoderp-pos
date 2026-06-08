@@ -49,25 +49,51 @@ export interface SignXadesResult {
  * @throws if the private key can't be parsed or the XML doesn't contain
  *         the expected UBLExtensions placeholder.
  */
-export function signZatcaUbl(input: SignXadesInput): SignXadesResult {
-  const { ublXml, certificatePem, privateKeyPem, invoiceHash } = input;
-
-  // 1. Strip cert headers, get DER, derive cert digest (base64 of sha256 hex
-  //    bytes per ZATCA spec — yes, hex string then sha256, then base64).
-  const certBody = certificatePem
+/**
+ * Recover the raw certificate DER and its canonical single-base64 body from a
+ * ZATCA certificate input.
+ *
+ * ZATCA returns the certificate as a `binarySecurityToken` (stored verbatim in
+ * `company.zatcaCsidToken` / `zatcaPcsidToken`). That token carries an EXTRA
+ * base64 layer over the DER: decoding it once yields the ASCII base64 cert body
+ * (the `<ds:X509Certificate>` value, starting with "MII…"), NOT raw DER. Every
+ * X.509 DER document starts with 0x30 (SEQUENCE), so when the first decoded byte
+ * is not 0x30 we unwrap the extra layer. Without this, `forge.asn1.fromDer`
+ * throws "Unparsed DER bytes remain after ASN.1 parsing" (a 500 before we ever
+ * reach ZATCA). Already-PEM/DER inputs are handled transparently too.
+ */
+export function certDerFromToken(certInput: string): { der: Buffer; bodyB64: string } {
+  const stripped = certInput
     .replace(/-----BEGIN [^-]+-----/g, "")
     .replace(/-----END [^-]+-----/g, "")
     .replace(/\s+/g, "");
+  let der = Buffer.from(stripped, "base64");
+  if (der[0] !== 0x30) {
+    // Unwrap ZATCA's extra base64 layer (binarySecurityToken → cert body).
+    der = Buffer.from(der.toString("utf8").trim(), "base64");
+  }
+  return { der, bodyB64: der.toString("base64") };
+}
+
+export function signZatcaUbl(input: SignXadesInput): SignXadesResult {
+  const { ublXml, certificatePem, privateKeyPem, invoiceHash } = input;
+
+  // Recover the certificate DER + canonical base64 body. The stored value is a
+  // ZATCA binarySecurityToken (double base64 over the DER); certDerFromToken
+  // unwraps that layer so the ASN.1 parse and digest operate on real bytes.
+  const { der: certBytes, bodyB64: certBody } = certDerFromToken(certificatePem);
   if (!certBody) throw new Error("certificate is empty after PEM strip");
 
-  // ZATCA's quirky cert-digest rule: digest the *hex of the cert bytes* as ASCII.
-  const certBytes = Buffer.from(certBody, "base64");
-  const certHexAscii = certBytes.toString("hex");
-  const certDigestB64 = createHash("sha256").update(certHexAscii, "utf8").digest("base64");
+  // ZATCA cert-digest = base64( lower-hex( sha256( base64-cert-body ASCII ) ) ).
+  // The hash is taken over the base64 cert STRING (the exact <ds:X509Certificate>
+  // text content), NOT the DER; the 64-char hex of that digest is then
+  // base64-encoded. (The previous code hashed in the wrong order and over the
+  // wrong bytes, so the CertDigest never matched what ZATCA recomputes.)
+  const certHashHex = createHash("sha256").update(certBody, "utf8").digest("hex");
+  const certDigestB64 = Buffer.from(certHashHex, "utf8").toString("base64");
 
-  // 2. Parse cert subject + issuer + serial from PEM. We do a minimal ASN.1
-  //    walk just for the issuer Name and serialNumber — the rest of the
-  //    KeyInfo only needs the base64 cert body itself.
+  // Issuer DN + serial come from the real DER (ZATCA validates them against the
+  // CA registry, so they must match the bytes inside the certificate).
   const { issuerName, serialNumber } = parseCertIssuerSerial(certBytes);
 
   // 3. Build SignedProperties XML, hash it, embed.
