@@ -1562,7 +1562,7 @@
       "uploadCustomersDataFile": "Upload Customers File",
       "uploadSuppliersDataFile": "Upload Suppliers File",
       "partyDataNote": "If the party exists, its data is updated (matched by VAT number, code, or name); otherwise a new party is added. Arabic name is required, and blank cells never overwrite existing data. Master data only — no balances.",
-      "customerAccountNote": "Column \"branch\": the branch name to link the customer to. Column \"accountNumber\": the branch's parent account code in the chart of accounts (e.g. 10005); a sequential sub-account is auto-created per customer under it (100050001, 100050002…). If \"accountNumber\" is left blank, the parent is taken automatically from the account whose name matches the branch. Existing customers that already have an account are not re-created.",
+      "customerAccountNote": "Column \"branch\": the branch name to link the customer to. Column \"accountNumber\": the PARENT account code in the chart of accounts — it can sit at any level (e.g. account 11031 at level 4); a sequential sub-account is auto-created per customer one level below it (11031 level 4 → 110310001 level 5, then 110310002…). If \"accountNumber\" is left blank, the parent is taken automatically from the account whose name matches the branch. Existing customers that already have an account are not re-created.",
       "supplierAccountNote": "Column \"accountNumber\": an existing account code in the chart of accounts that the supplier is linked to directly (no new account, no sequential numbering). If left blank, the supplier account is auto-created as usual.",
       "decimals": "Decimal Precision",
       "backupExport": "Export Backup",

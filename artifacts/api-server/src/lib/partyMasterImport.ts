@@ -92,11 +92,34 @@ export async function importPartyMasterData(opts: {
   const allAccounts = await db.select().from(accountsTable).where(eq(accountsTable.companyId, cid));
   const allBranches = await db.select().from(branchesTable).where(eq(branchesTable.companyId, cid));
   const accByCode = new Map<string, any>();
+  const accById = new Map<number, any>();
   for (const a of allAccounts) {
     const c = (a.code ?? "").trim();
     if (c && !accByCode.has(c)) accByCode.set(c, a);
+    if (a.id != null) accById.set(a.id, a);
   }
   const takenCodes = new Set<string>(allAccounts.map(a => (a.code ?? "").trim()).filter(Boolean));
+
+  // Compute an account's TRUE depth from the parentId chain (root = level 1),
+  // NOT the stored `level` column. The chart-of-accounts bulk-import persists
+  // `level = 2` for every account that merely has a parent (regardless of how
+  // deep it sits), so the stored value is unreliable for nested trees — the
+  // UI itself draws the tree from the parentId chain. Walking the chain here
+  // guarantees a customer minted under a level-4 parent lands at level 5.
+  // `seen` guards against a corrupt cyclic parent reference.
+  function accountDepth(acc: any): number {
+    let depth = 1;
+    let cur = acc;
+    const seen = new Set<number>();
+    while (cur?.parentId != null && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      const parent = accById.get(cur.parentId);
+      if (!parent) break;
+      depth++;
+      cur = parent;
+    }
+    return depth;
+  }
   const branchByKey = new Map<string, any>();
   for (const b of allBranches) {
     for (const key of [b.nameAr, b.nameEn, b.code]) {
@@ -147,7 +170,7 @@ export async function importPartyMasterData(opts: {
       nameAr: name,
       accountType: "asset",
       reportDirection: parent.reportDirection ?? null,
-      level: (parent.level ?? 1) + 1,
+      level: accountDepth(parent) + 1,
       isPosting: true,
       isActive: true,
     } as typeof accountsTable.$inferInsert).returning();

@@ -62,3 +62,4 @@
 - [Opening-balance party import](opening-balance-party-import.md) — one draft JE marked in description; replace must clear-on-zero, guard DELETED JE's period, serialize via advisory lock, round before summing.
 - [ZATCA compliance-test invoice picker](zatca-compliance-test-invoice-picker.md) — step-3 resolves invoice by DB id + needs ISSUED (has xmlContent); use a status=issued picker, never a typed number.
 - [List query array-guard](fetch-list-guard.md) — list queryFns feeding .find/.map MUST coerce to array (fetchJsonArray); a module-gated 403 returns an OBJECT and white-screens via ErrorBoundary in only the companies lacking the perm.
+- [Account level from parent chain](account-level-from-parent-chain.md) — derive a minted sub-account's level by walking the parentId chain; the stored accounts.level column is bulk-import-stale (level=2 for all parented rows).
