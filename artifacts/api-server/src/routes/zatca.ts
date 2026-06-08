@@ -30,11 +30,14 @@ function requireAuthed(req: Request, res: Response, next: NextFunction) {
 router.use(requireAuthed);
 
 // ─── ZATCA environment → gateway base URL ───────────────────────────────────
-// ZATCA hosts three SELF-CONTAINED environments. The compliance/onboarding test
-// endpoints (/compliance, /compliance/invoices/...) live on developer-portal +
-// simulation ONLY — the production `core` gateway does NOT host them and returns
-// 404 "No resources match requested URI". Each call must therefore target the
-// base URL of the company's selected environment.
+// ZATCA hosts three SELF-CONTAINED environments (developer-portal / simulation /
+// core-production). ALL of them host the full onboarding chain: /compliance,
+// /compliance/invoices, and /production/csids (verified empirically — the prod
+// `core` gateway returns 400 "Missing-OTP", NOT 404, for /compliance). The
+// onboarding (CSR → compliance CSID → compliance check → production CSID) must be
+// completed end-to-end on ONE environment — a CSID issued on one gateway is
+// rejected ("not authorized") by another. Each call targets the base URL of the
+// company's selected environment.
 type ZatcaEnv = "sandbox" | "simulation" | "production";
 
 function getZatcaBaseUrl(env: ZatcaEnv): string {
@@ -364,9 +367,12 @@ router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", 
     const xmlBase64 = Buffer.from(invoice.xmlContent).toString("base64");
     const hashBase64 = hashXml(invoice.xmlContent);
 
-    const endpoint = invoice.invoiceType === "simplified"
-      ? `${baseUrl}/compliance/invoices/reporting/single`
-      : `${baseUrl}/compliance/invoices/clearance/single`;
+    // ZATCA exposes ONE compliance-invoice endpoint for BOTH standard (clearance)
+    // and simplified (reporting) documents — it auto-detects the flow from the
+    // InvoiceTypeCode inside the XML. The split .../clearance/single and
+    // .../reporting/single paths only exist for LIVE invoices, not compliance;
+    // hitting them during onboarding returns 404 and compliance never completes.
+    const endpoint = `${baseUrl}/compliance/invoices`;
 
     const response = await fetch(endpoint, {
       method: "POST",
@@ -478,17 +484,10 @@ router.post("/companies/:id/auto-compliance-check", requirePermission("zatca_set
   }
 
   const env = resolveZatcaEnv(company);
-  if (env === "production") {
-    // The compliance endpoints only exist on the onboarding (sandbox/simulation)
-    // gateways. Running them against production would 404 — block early with a
-    // clear message instead of leaking a confusing gateway error.
-    res.status(400).json({
-      error: "الفحص التجريبي التلقائي يعمل فقط على بيئة التجربة أو المحاكاة، وليس الإنتاج.",
-      hint: `وضع الربط الحالي هو "${envArabic[env]}". غيّر وضع الربط إلى تجريبي أو محاكاة وأكمل الإعداد عليه قبل تشغيل الفحص.`,
-      environment: env,
-    });
-    return;
-  }
+  // The compliance chain runs on ALL environments INCLUDING production — obtaining
+  // a real Production CSID REQUIRES passing the compliance check on the production
+  // gateway first. (This was previously blocked for production, which made it
+  // impossible to onboard a live company and produced the 401 at /production/csids.)
 
   try {
     const baseUrl = getZatcaBaseUrl(env);

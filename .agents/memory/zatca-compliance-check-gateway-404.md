@@ -23,7 +23,11 @@ hint, and the UI (`ZatcaIntegration.tsx`) rendered ONLY `validationResults.error
 
 **How to apply:** on any opaque external-API forward-failure, (1) log status + endpoint + raw response
 server-side, and (2) surface the raw response + status + which environment was hit in the UI when
-structured error messages are absent. The compliance/clearance endpoint **paths**
-(`/compliance/invoices/clearance/single` for standard, `/compliance/invoices/reporting/single` for
-simplified) are CORRECT and verified against the pos-desktop standalone gateway — do not "fix" the path
-when chasing a 404; check the environment/CSID pairing first.
+structured error messages are absent.
+
+**CORRECTION (was the root cause of a 2-day bug):** an earlier version of this note claimed the
+compliance paths `/compliance/invoices/clearance/single` and `.../reporting/single` were "correct,
+do not fix." That is WRONG — those split paths are LIVE-invoice only and 404 under `/compliance/...`.
+The compliance check posts to a SINGLE `/compliance/invoices` path. So when a ZATCA `/compliance/...`
+call 404s, **check the path FIRST**, then the environment/CSID pairing. See
+`zatca-compliance-invoices-endpoint.md`.

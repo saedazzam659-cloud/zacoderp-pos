@@ -245,9 +245,10 @@ export async function runAutoComplianceCheck(args: {
 
     const finalXml = injectQr(signedXml, qr);
 
-    const endpoint = doc.flow === "simplified"
-      ? `${baseUrl}/compliance/invoices/reporting/single`
-      : `${baseUrl}/compliance/invoices/clearance/single`;
+    // Single compliance-invoice endpoint for every flow (see routes/zatca.ts).
+    // The .../clearance/single and .../reporting/single paths are LIVE-invoice
+    // only and 404 during onboarding, so compliance never completes.
+    const endpoint = `${baseUrl}/compliance/invoices`;
 
     const result: ComplianceDocResult = {
       flow: doc.flow,

@@ -1,6 +1,6 @@
 ---
 name: ZATCA three self-contained environments
-description: ZATCA onboarding/clearance has 3 separate gateways (sandbox/simulation/production), each hosting ALL endpoints with its own CSR template; never share a base URL across phases.
+description: ZATCA onboarding/clearance has 3 separate gateways (sandbox/simulation/production), each hosting the FULL endpoint set with its own CSR template; never share a base URL across phases.
 ---
 
 # ZATCA has THREE self-contained environments, not a "test vs live" toggle
@@ -14,24 +14,28 @@ ZATCA fatoora exposes three fully independent gateways under
 | simulation | `simulation`       | `PREZATCA-Code-Signing`           |
 | production | `core`             | `ZATCA-Code-Signing`              |
 
-**Why this matters / past incident:** the app originally modelled this as a
-single `isSandbox` boolean → only `developer-portal` (sandbox) and `core`
-(production). Real production onboarding broke because the **production `core`
-gateway does NOT host the `/compliance/...` onboarding endpoints** — they live
-on `developer-portal` and `simulation` only, and `core` returns 404. There is
-no "run compliance on production" path; compliance is always done on
-sandbox/simulation, then you go live on `core`.
+**Each gateway hosts the FULL onboarding chain** — `/compliance`,
+`/compliance/invoices`, AND `/production/csids` all exist on `core` (production)
+too. Verified empirically: `POST .../core/compliance` returns **400
+"Missing-OTP"** (endpoint exists), NOT 404. To get a real Production CSID you
+MUST run the compliance check on the **production** gateway first — there is no
+"do compliance on sandbox then go live on core" shortcut; a CSID issued on one
+gateway is rejected ("You are not authorized to use this api endpoint") by
+another.
+
+**Past incident (the 2-day bug):** an earlier memory + code comment wrongly
+claimed `core` has no `/compliance` and 404s, so the auto-compliance route
+blocked production entirely. Combined with the wrong invoice path (see
+`zatca-compliance-invoices-endpoint.md`), compliance never completed and
+`/production/csids` kept returning 401.
 
 **How to apply:**
-- The authoritative selector is `companies.zatca_environment`
+- Authoritative selector is `companies.zatca_environment`
   (`sandbox|simulation|production`), resolved by `resolveZatcaEnv(company)` in
-  `routes/zatca.ts`; it falls back to the legacy `isSandbox` boolean when the
-  column is null.
-- Every ZATCA HTTP call (generate-csr/compliance/production-csid/
-  compliance-check/submit) must compute its base URL from the resolved env via
+  `routes/zatca.ts`; falls back to legacy `isSandbox` when null.
+- Every ZATCA HTTP call computes its base URL from the resolved env via
   `getZatcaBaseUrl(env)`. Never branch a ZATCA URL on `isSandbox` directly.
-- Legacy `isSandbox` is kept in sync as `env !== "production"`, so **simulation
-  is isSandbox=true** (only production is "live"). Don't treat isSandbox=true as
-  "sandbox env" — it can mean simulation.
-- The CSR template differs per env — picking the wrong template gets rejected by
-  the gateway. See `zatca-csr-spec.md` for the exact CSR/dirName SAN rules.
+- The whole chain (CSR → compliance CSID → compliance check → production CSID)
+  must run end-to-end on ONE environment.
+- CSR template differs per env — wrong template = gateway rejection. See
+  `zatca-csr-spec.md`.
