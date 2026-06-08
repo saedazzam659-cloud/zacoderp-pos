@@ -573,6 +573,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           micOn={micOn}
           camOn={camOn}
           sharing={sharing}
+          screenStream={sharing ? screenStreamRef.current : null}
           onToggleMic={toggleMic}
           onToggleCam={toggleCam}
           onToggleShare={toggleScreenShare}
@@ -635,12 +636,13 @@ function IncomingCallDialog({ invite, onAccept, onReject }: {
 
 // ─── In-call overlay ─────────────────────────────────────────────────────────
 function CallOverlay({
-  call, phase, localStream, remoteStreams, remoteNames, micOn, camOn, sharing,
+  call, phase, localStream, screenStream, remoteStreams, remoteNames, micOn, camOn, sharing,
   onToggleMic, onToggleCam, onToggleShare, onHangup,
 }: {
   call: ActiveCall;
   phase: Phase;
   localStream: MediaStream | null;
+  screenStream: MediaStream | null;
   remoteStreams: Record<number, MediaStream>;
   remoteNames: Record<number, string>;
   micOn: boolean;
@@ -703,14 +705,31 @@ function CallOverlay({
           {statusText}
         </div>
 
-        {/* Local picture-in-picture (video / screen share) */}
-        {(isVideo || sharing) && (
+        {/* Local preview. While screen-sharing, show the SHARED SCREEN (so the
+            presenter can see what they're broadcasting) with their camera as a
+            small bubble in the corner; a normal video call just shows the camera. */}
+        {sharing ? (
+          <div className="absolute bottom-4 left-4 w-72 max-w-[44vw] rounded-xl overflow-hidden border border-emerald-400/50 bg-black shadow-2xl" data-testid="local-share-preview">
+            <div className="relative aspect-video bg-black">
+              <VideoTile stream={screenStream} className="h-full w-full object-contain" />
+              {camOn && (
+                <div className="absolute bottom-1.5 right-1.5 h-14 w-14 rounded-full overflow-hidden border-2 border-white/80 shadow-lg bg-black">
+                  <VideoTile stream={localStream} muted mirror className="h-full w-full object-cover" />
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-center gap-1.5 px-2 py-1 bg-emerald-600 text-[11px] font-semibold">
+              <MonitorUp className="h-3.5 w-3.5" />
+              أنت تشارك شاشتك
+            </div>
+          </div>
+        ) : isVideo ? (
           <div className="absolute bottom-4 left-4 h-32 w-24 rounded-lg overflow-hidden border border-white/20 bg-black shadow-lg">
-            {(camOn || sharing)
-              ? <VideoTile stream={localStream} muted mirror={!sharing} className="h-full w-full object-cover" />
+            {camOn
+              ? <VideoTile stream={localStream} muted mirror className="h-full w-full object-cover" />
               : <div className="h-full w-full flex items-center justify-center text-white/50"><VideoOff className="h-6 w-6" /></div>}
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Controls */}
@@ -725,20 +744,10 @@ function CallOverlay({
           {micOn ? <Mic className="h-6 w-6" /> : <MicOff className="h-6 w-6" />}
         </Button>
 
-        {isVideo && (
-          <Button
-            data-testid="button-toggle-cam"
-            onClick={onToggleCam}
-            variant={camOn ? "secondary" : "destructive"}
-            size="lg"
-            className="rounded-full h-14 w-14 p-0"
-          >
-            {camOn ? <VideoIcon className="h-6 w-6" /> : <VideoOff className="h-6 w-6" />}
-          </Button>
-        )}
-
         {/* Screen share rides the camera's video sender, so it's only offered
-            on video calls (audio-only calls have no video track to replace). */}
+            on video calls (audio-only calls have no video track to replace).
+            Placed before the camera button so that, in this RTL layout, it sits
+            to the RIGHT of the camera icon. */}
         {isVideo && (
           <Button
             data-testid="button-toggle-share"
@@ -749,6 +758,18 @@ function CallOverlay({
             title={sharing ? "إيقاف مشاركة الشاشة" : "مشاركة الشاشة"}
           >
             {sharing ? <MonitorOff className="h-6 w-6" /> : <MonitorUp className="h-6 w-6" />}
+          </Button>
+        )}
+
+        {isVideo && (
+          <Button
+            data-testid="button-toggle-cam"
+            onClick={onToggleCam}
+            variant={camOn ? "secondary" : "destructive"}
+            size="lg"
+            className="rounded-full h-14 w-14 p-0"
+          >
+            {camOn ? <VideoIcon className="h-6 w-6" /> : <VideoOff className="h-6 w-6" />}
           </Button>
         )}
 
