@@ -116,15 +116,16 @@ export async function importPartyMasterData(opts: {
       (a.nameAr ?? "").toLowerCase().includes(n) || (a.nameEn ?? "").toLowerCase().includes(n));
     return hit ?? null;
   }
-  // Mint the next free sequential code under `parent` (numeric concat
-  // "10005"→"100051"…, dashed "<parent>-NNN" fallback for non-numeric parents),
-  // insert the posting sub-account, and demote the parent to a roll-up node.
+  // Mint the next free sequential code under `parent` (numeric concat with a
+  // zero-padded 4-digit suffix "10005"→"100050001", "100050002"…, dashed
+  // "<parent>-NNN" fallback for non-numeric parents), insert the posting
+  // sub-account, and demote the parent to a roll-up node.
   async function createPartySubAccount(parent: any, name: string): Promise<number> {
     const parentCode = (parent.code ?? "").trim();
     let code = "";
     if (/^\d+$/.test(parentCode)) {
-      for (let nn = 1; nn < 100_000; nn++) {
-        const cand = `${parentCode}${nn}`;
+      for (let nn = 1; nn < 10_000; nn++) {
+        const cand = `${parentCode}${String(nn).padStart(4, "0")}`;
         if (!takenCodes.has(cand)) { code = cand; break; }
       }
     }
