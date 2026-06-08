@@ -712,6 +712,27 @@ function CallOverlay({
           <div className="absolute bottom-4 left-4 w-72 max-w-[44vw] rounded-xl overflow-hidden border border-emerald-400/50 bg-black shadow-2xl" data-testid="local-share-preview">
             <div className="relative aspect-video bg-black">
               <VideoTile stream={screenStream} className="h-full w-full object-contain" />
+              {/* Quick controls on the broadcast preview: mute mic + stop share. */}
+              <div className="absolute top-1.5 left-1.5 flex items-center gap-1">
+                <button
+                  type="button"
+                  data-testid="button-share-mute"
+                  onClick={onToggleMic}
+                  title={micOn ? "كتم الميكروفون" : "تشغيل الميكروفون"}
+                  className={`h-7 w-7 rounded-full flex items-center justify-center text-white shadow ${micOn ? "bg-black/60 hover:bg-black/80" : "bg-red-600 hover:bg-red-700"}`}
+                >
+                  {micOn ? <Mic className="h-3.5 w-3.5" /> : <MicOff className="h-3.5 w-3.5" />}
+                </button>
+                <button
+                  type="button"
+                  data-testid="button-share-stop"
+                  onClick={onToggleShare}
+                  title="إيقاف مشاركة الشاشة"
+                  className="h-7 w-7 rounded-full flex items-center justify-center text-white bg-red-600 hover:bg-red-700 shadow"
+                >
+                  <MonitorOff className="h-3.5 w-3.5" />
+                </button>
+              </div>
               {camOn && (
                 <div className="absolute bottom-1.5 right-1.5 h-14 w-14 rounded-full overflow-hidden border-2 border-white/80 shadow-lg bg-black">
                   <VideoTile stream={localStream} muted mirror className="h-full w-full object-cover" />
