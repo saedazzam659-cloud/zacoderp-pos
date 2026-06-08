@@ -29,7 +29,7 @@
  */
 import { createSign, createHash, createPrivateKey, type KeyObject } from "crypto";
 import forge from "node-forge";
-import { canonicalizeInContext } from "./zatca-c14n.js";
+import { canonicalizeFragment } from "./zatca-c14n.js";
 
 export interface SignXadesInput {
   ublXml: string;          // unsigned UBL with placeholder UBLExtensions
@@ -106,11 +106,13 @@ export function signZatcaUbl(input: SignXadesInput): SignXadesResult {
     serialNumber,
   });
   // Reference#2 ("xadesSignedProperties") DigestValue — hash the CANONICAL form,
-  // not the raw template. ZATCA canonicalizes the SignedProperties node IN CONTEXT,
-  // which inlines all 9 in-scope namespaces (incl. the unused default) on its apex.
-  // Hashing the raw template is what produced `signed-properties-hashing`.
+  // not the raw template. ZATCA canonicalizes the referenced SignedProperties
+  // element in ISOLATION: only the namespaces declared inside the fragment appear
+  // (xades on the apex + ds inline on each ds child), NOT the invoice-root ns.
+  // Hashing the raw template — or canonicalizing it wrapped in the 9-ns invoice
+  // root — is what produced `signed-properties-hashing`.
   const signedPropsHashB64 = createHash("sha256")
-    .update(canonicalizeInContext(signedProps, "SignedProperties"), "utf8")
+    .update(canonicalizeFragment(signedProps, "SignedProperties"), "utf8")
     .digest("base64");
 
   // 4. Build SignedInfo over (a) invoice digest + (b) signed-properties digest.
@@ -118,10 +120,11 @@ export function signZatcaUbl(input: SignXadesInput): SignXadesResult {
 
   // 5. Sign SignedInfo with ECDSA-SHA256 (P1363 / fixed-length encoding).
   //    The SignatureValue must be computed over the CANONICAL SignedInfo
-  //    (CanonicalizationMethod = c14n11, inclusive — inlines all in-scope
-  //    namespaces on the apex), NOT the raw template. Signing the raw template
-  //    is what produced `signature-method` (ZATCA verifies over C14N(SignedInfo)).
-  const canonicalSignedInfo = canonicalizeInContext(signedInfo, "SignedInfo");
+  //    (CanonicalizationMethod = c14n11) canonicalized as a self-contained
+  //    element — only its own xmlns:ds apex declaration appears — NOT the raw
+  //    template. (The separate `signature-method`/BR-KSA-30 rejection was the
+  //    missing cac:Signature block, now added in zatca-xml.ts.)
+  const canonicalSignedInfo = canonicalizeFragment(signedInfo, "SignedInfo");
   let key: KeyObject;
   try { key = createPrivateKey(privateKeyPem); }
   catch (e) { throw new Error(`invalid EC private key: ${e instanceof Error ? e.message : String(e)}`); }

@@ -297,6 +297,11 @@ ${billingReferenceXml}
     </cac:Attachment>
   </cac:AdditionalDocumentReference>
 
+  <cac:Signature>
+    <cbc:ID>urn:oasis:names:specification:ubl:signature:Invoice</cbc:ID>
+    <cbc:SignatureMethod>urn:oasis:names:specification:ubl:dsig:enveloped:xades</cbc:SignatureMethod>
+  </cac:Signature>
+
   <cac:AccountingSupplierParty>
     <cac:Party>
       <cac:PartyIdentification>
