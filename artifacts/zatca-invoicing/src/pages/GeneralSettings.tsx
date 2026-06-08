@@ -290,10 +290,10 @@ export default function GeneralSettings() {
   const [suppDataReport, setSuppDataReport] = useState<DataReport>(null);
 
   function downloadCustomersDataTemplate() {
-    const headers = ["nameAr","nameEn","vatNumber","crNumber","email","phone","city","district","street","buildingNumber","postalCode","country","creditLimit","paymentTermsDays"];
+    const headers = ["nameAr","nameEn","vatNumber","crNumber","email","phone","city","district","street","buildingNumber","postalCode","country","creditLimit","paymentTermsDays","branch","accountNumber"];
     const example = [
-      ["شركة الأفق التجارية","Horizon Trading Co","300000000000003","1010000000","info@horizon.sa","0501234567","الرياض","العليا","طريق الملك فهد","1234","12345","SA",50000,30],
-      ["مؤسسة النور","Al Noor Est","","","sales@noor.sa","0559876543","جدة","","","","","SA","",0],
+      ["شركة الأفق التجارية","Horizon Trading Co","300000000000003","1010000000","info@horizon.sa","0501234567","الرياض","العليا","طريق الملك فهد","1234","12345","SA",50000,30,"الفرع الرئيسي","10005"],
+      ["مؤسسة النور","Al Noor Est","","","sales@noor.sa","0559876543","جدة","","","","","SA","",0,"فرع جدة",""],
     ];
     const ws = XLSX.utils.aoa_to_sheet([headers, ...example]);
     ws["!cols"] = headers.map(() => ({ wch: 16 }));
@@ -303,10 +303,10 @@ export default function GeneralSettings() {
   }
 
   function downloadSuppliersDataTemplate() {
-    const headers = ["code","nameAr","nameEn","vatNumber","crNumber","email","phone","city","district","street","buildingNumber","postalCode","country","currencyCode","creditLimit"];
+    const headers = ["code","nameAr","nameEn","vatNumber","crNumber","email","phone","city","district","street","buildingNumber","postalCode","country","currencyCode","creditLimit","accountNumber"];
     const example = [
-      ["SUP-001","شركة الإمداد","Supply Co","310000000000003","2050000000","po@supply.sa","0501112222","الدمام","","","","","SA","SAR",100000],
-      ["SUP-002","مصنع الرواد","Pioneers Factory","","","","","الرياض","","","","","SA","SAR",""],
+      ["SUP-001","شركة الإمداد","Supply Co","310000000000003","2050000000","po@supply.sa","0501112222","الدمام","","","","","SA","SAR",100000,"21010"],
+      ["SUP-002","مصنع الرواد","Pioneers Factory","","","","","الرياض","","","","","SA","SAR","",""],
     ];
     const ws = XLSX.utils.aoa_to_sheet([headers, ...example]);
     ws["!cols"] = headers.map(() => ({ wch: 16 }));
@@ -1039,9 +1039,10 @@ export default function GeneralSettings() {
             <div className="flex-1 min-w-0">
               <h3 className="font-semibold text-sm">{t("pages.generalSettings.customersDataTitle")}</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {t("pages.generalSettings.columns")}: <span className="font-mono" dir="ltr">nameAr, nameEn, vatNumber, crNumber, email, phone, city, district, street, buildingNumber, postalCode, country, creditLimit, paymentTermsDays</span>
+                {t("pages.generalSettings.columns")}: <span className="font-mono" dir="ltr">nameAr, nameEn, vatNumber, crNumber, email, phone, city, district, street, buildingNumber, postalCode, country, creditLimit, paymentTermsDays, branch, accountNumber</span>
               </p>
               <p className="text-[11px] text-muted-foreground mt-1">{t("pages.generalSettings.partyDataNote")}</p>
+              <p className="text-[11px] text-muted-foreground mt-1">{t("pages.generalSettings.customerAccountNote")}</p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -1088,9 +1089,10 @@ export default function GeneralSettings() {
             <div className="flex-1 min-w-0">
               <h3 className="font-semibold text-sm">{t("pages.generalSettings.suppliersDataTitle")}</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {t("pages.generalSettings.columns")}: <span className="font-mono" dir="ltr">code, nameAr, nameEn, vatNumber, crNumber, email, phone, city, district, street, buildingNumber, postalCode, country, currencyCode, creditLimit</span>
+                {t("pages.generalSettings.columns")}: <span className="font-mono" dir="ltr">code, nameAr, nameEn, vatNumber, crNumber, email, phone, city, district, street, buildingNumber, postalCode, country, currencyCode, creditLimit, accountNumber</span>
               </p>
               <p className="text-[11px] text-muted-foreground mt-1">{t("pages.generalSettings.partyDataNote")}</p>
+              <p className="text-[11px] text-muted-foreground mt-1">{t("pages.generalSettings.supplierAccountNote")}</p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">

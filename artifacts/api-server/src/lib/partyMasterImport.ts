@@ -1,5 +1,5 @@
 import { db } from "@workspace/db";
-import { customersTable, suppliersTable } from "@workspace/db";
+import { customersTable, suppliersTable, accountsTable, branchesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { ensureCustomerLedger, ensureSupplierLedger } from "./entityAccounts.js";
 
@@ -83,6 +83,81 @@ export async function importPartyMasterData(opts: {
   };
   for (const r of existing) index(r);
 
+  // ── Chart-of-accounts + branch lookups for the new linkage columns ────────
+  // Loaded once per import. `takenCodes` is mutated in-memory as we mint
+  // sub-accounts so a single run never produces a duplicate code across rows
+  // (nextChildCode in entityAccounts only checks direct siblings — here we must
+  // be globally collision-safe because we batch many customers under the same
+  // parent in one transaction-less loop).
+  const allAccounts = await db.select().from(accountsTable).where(eq(accountsTable.companyId, cid));
+  const allBranches = await db.select().from(branchesTable).where(eq(branchesTable.companyId, cid));
+  const accByCode = new Map<string, any>();
+  for (const a of allAccounts) {
+    const c = (a.code ?? "").trim();
+    if (c && !accByCode.has(c)) accByCode.set(c, a);
+  }
+  const takenCodes = new Set<string>(allAccounts.map(a => (a.code ?? "").trim()).filter(Boolean));
+  const branchByKey = new Map<string, any>();
+  for (const b of allBranches) {
+    for (const key of [b.nameAr, b.nameEn, b.code]) {
+      const k = (key ?? "").trim().toLowerCase();
+      if (k && !branchByKey.has(k)) branchByKey.set(k, b);
+    }
+  }
+  // Resolve the PARENT account by matching a branch name to an account name
+  // (exact first, then "contains") — the convention the user follows when they
+  // create one customer control account per branch in the chart of accounts.
+  function findAccountByBranchName(name: string | null | undefined): any | null {
+    const n = (name ?? "").trim().toLowerCase();
+    if (!n) return null;
+    let hit = allAccounts.find(a =>
+      (a.nameAr ?? "").trim().toLowerCase() === n || (a.nameEn ?? "").trim().toLowerCase() === n);
+    if (!hit) hit = allAccounts.find(a =>
+      (a.nameAr ?? "").toLowerCase().includes(n) || (a.nameEn ?? "").toLowerCase().includes(n));
+    return hit ?? null;
+  }
+  // Mint the next free sequential code under `parent` (numeric concat
+  // "10005"→"100051"…, dashed "<parent>-NNN" fallback for non-numeric parents),
+  // insert the posting sub-account, and demote the parent to a roll-up node.
+  async function createPartySubAccount(parent: any, name: string): Promise<number> {
+    const parentCode = (parent.code ?? "").trim();
+    let code = "";
+    if (/^\d+$/.test(parentCode)) {
+      for (let nn = 1; nn < 100_000; nn++) {
+        const cand = `${parentCode}${nn}`;
+        if (!takenCodes.has(cand)) { code = cand; break; }
+      }
+    }
+    if (!code) {
+      const prefix = `${parentCode}-`;
+      let seq = 1;
+      for (const c of takenCodes) {
+        if (c.startsWith(prefix)) {
+          const v = parseInt(c.slice(prefix.length), 10);
+          if (Number.isFinite(v) && v >= seq) seq = v + 1;
+        }
+      }
+      do { code = `${prefix}${String(seq).padStart(3, "0")}`; seq++; } while (takenCodes.has(code));
+    }
+    const [created] = await db.insert(accountsTable).values({
+      companyId: cid,
+      parentId: parent.id,
+      code,
+      nameAr: name,
+      accountType: "asset",
+      reportDirection: parent.reportDirection ?? null,
+      level: (parent.level ?? 1) + 1,
+      isPosting: true,
+      isActive: true,
+    } as typeof accountsTable.$inferInsert).returning();
+    takenCodes.add(code);
+    if (parent.isPosting) {
+      await db.update(accountsTable).set({ isPosting: false }).where(eq(accountsTable.id, parent.id));
+      parent.isPosting = false;
+    }
+    return created.id;
+  }
+
   // Concrete per-party mutators keep Drizzle's column types narrow (a shared
   // `table` union would lose the `.set(...)` / `.values(...)` typing).
   async function upsertRow(matchId: number | null, patch: Record<string, any>, accountId: number | null) {
@@ -151,15 +226,61 @@ export async function importPartyMasterData(opts: {
       if (!match && vat && byVat.has(vat)) match = byVat.get(vat);
       if (!match && byName.has(nameAr.toLowerCase())) match = byName.get(nameAr.toLowerCase());
 
-      // On insert, create the AR/AP sub-account. A genuine failure must surface
-      // as a row error (caught below) instead of silently inserting a party
-      // with no ledger; a legitimate null (no parent account mapped yet) is
-      // allowed through, matching the single-create route's behaviour.
+      // ── Branch + chart-of-accounts linkage (new master-data columns) ──────
+      // Customers: `branch` sets branchId AND (via the `accountNumber` override
+      // or by matching an account named after the branch) picks the PARENT
+      // account under which a per-customer sub-account is auto-minted
+      // (10005 → 100051, 100052 …). Suppliers: a single `accountNumber` column
+      // links the supplier DIRECTLY to an existing account (no sub-account, no
+      // numbering). A bad branch/account reference surfaces as a row error.
+      let customerParent: any = null;
+      if (isCustomer) {
+        const branchText = txt(r.branch ?? r["الفرع"] ?? r.branchName);
+        const acctText   = txt(r.accountNumber ?? r["رقم الحساب"] ?? r.account);
+        let branch: any = null;
+        if (branchText) {
+          branch = branchByKey.get(branchText.toLowerCase()) ?? null;
+          if (!branch) { errors.push({ row: i + 2, error: `الفرع غير موجود في النظام: ${branchText}` }); continue; }
+          patch.branchId = branch.id;
+        }
+        if (acctText) {
+          customerParent = accByCode.get(acctText) ?? null;
+          if (!customerParent) { errors.push({ row: i + 2, error: `رقم الحساب الرئيسي غير موجود في شجرة الحسابات: ${acctText}` }); continue; }
+        } else if (branch) {
+          customerParent = findAccountByBranchName(branch.nameAr) ?? findAccountByBranchName(branch.nameEn);
+          if (!customerParent) { errors.push({ row: i + 2, error: `لا يوجد حساب في شجرة الحسابات باسم الفرع: ${branch.nameAr}` }); continue; }
+        }
+      } else {
+        const acctText = txt(r.accountNumber ?? r["رقم الحساب"] ?? r.account);
+        if (acctText) {
+          const acc = accByCode.get(acctText);
+          if (!acc) { errors.push({ row: i + 2, error: `رقم الحساب غير موجود في شجرة الحسابات: ${acctText}` }); continue; }
+          patch.accountId = acc.id; // direct link — persists on both insert and update
+        }
+      }
+
+      // Resolve the ledger account id:
+      //  - customer + resolved parent + (new row OR existing row with no account)
+      //      → mint a sequential sub-account under that parent.
+      //  - customer with no parent column → ensureCustomerLedger fallback.
+      //  - supplier with explicit accountNumber → already set in patch.accountId.
+      //  - supplier insert with no column → ensureSupplierLedger.
+      // A genuine ledger-creation failure surfaces as a per-row error (caught
+      // below) instead of silently inserting a party with no ledger.
       let accountId: number | null = match?.accountId ?? null;
-      if (!match) {
-        accountId = isCustomer
-          ? await ensureCustomerLedger(cid, nameAr)
-          : await ensureSupplierLedger(cid, nameAr);
+      if (isCustomer) {
+        if (customerParent && (!match || match.accountId == null)) {
+          accountId = await createPartySubAccount(customerParent, nameAr);
+          if (match) patch.accountId = accountId; // persist on the update path
+        } else if (!match) {
+          accountId = await ensureCustomerLedger(cid, nameAr);
+        }
+      } else {
+        if (patch.accountId != null) {
+          accountId = patch.accountId as number;
+        } else if (!match) {
+          accountId = await ensureSupplierLedger(cid, nameAr);
+        }
       }
 
       if (match) deindex(match);
