@@ -2000,7 +2000,6 @@ function template14(d: PrintData): string {
       box-shadow: 0 2px 8px rgba(184,138,42,.10);
     }
     .logo-wrap img { max-height:62px; max-width:170px; object-fit:contain; display:block; }
-    .logo-fallback { width:62px; height:62px; border-radius:50%; background:linear-gradient(135deg, var(--gold), var(--gold2)); color:#fff; font-weight:900; font-size:22px; display:inline-flex; align-items:center; justify-content:center; }
     /* Classic, borderless title — no dark pill, no surrounding frame.
        Two thin gold accent lines above/below give it an elegant feel
        without the heavy "badge" look. */
@@ -2092,6 +2091,11 @@ function template14(d: PrintData): string {
        3-column header grid (COMPANY to the left, CUSTOMER to the right)
        to the English convention, mirror-imaging the Arabic layout. */
     html[dir="ltr"] body { direction: ltr; }
+    /* English print: center the company & customer header blocks (label,
+       name, and each label/value row) per the user's request. */
+    html[dir="ltr"] .col-co, html[dir="ltr"] .col-cu { text-align:center; }
+    html[dir="ltr"] .col-co .row, html[dir="ltr"] .col-cu .row { justify-content:center; }
+    html[dir="ltr"] .col-co .row b, html[dir="ltr"] .col-cu .row b { min-width:0; }
     html[dir="ltr"] .lines-chunk th,
     html[dir="ltr"] .lines-chunk td { text-align:left; }
     html[dir="ltr"] .line-notes td { border-right:none; border-left:3px solid var(--gold2); }
@@ -2115,11 +2119,7 @@ function template14(d: PrintData): string {
 
       <!-- LOGO + TITLE + META (center) -->
       <div class="col-mid">
-        <div class="logo-wrap">
-          ${safeLogo
-            ? `<img src="${safeLogo}" alt="logo" />`
-            : `<div class="logo-fallback">${(company?.nameAr ?? company?.nameEn ?? "?").trim().slice(0, 2)}</div>`}
-        </div>
+        ${safeLogo ? `<div class="logo-wrap"><img src="${safeLogo}" alt="logo" /></div>` : ""}
         <div class="doc-title-pill">
           ${titleMain}
           <span class="en">${titleSub}</span>
