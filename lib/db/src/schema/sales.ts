@@ -54,6 +54,14 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   zatcaErrorMessages:    text("zatca_error_messages"),
   zatcaWarningMessages:  text("zatca_warning_messages"),
   zatcaAiSuggestion:     text("zatca_ai_suggestion"),
+  // Real ZATCA Phase-2 artifacts produced by the bridge submit (mirror the
+  // web invoices columns). xmlContent = signed UBL, invoiceHash = empty-QR
+  // SHA-256 (the DigestValue ZATCA recomputes), zatcaIcv = invoice counter
+  // value (ICV), zatcaPih = previous-invoice hash used to chain this document.
+  xmlContent:            text("xml_content"),
+  invoiceHash:           text("invoice_hash"),
+  zatcaIcv:              integer("zatca_icv"),
+  zatcaPih:              text("zatca_pih"),
   // Optional cost-center code propagated to every JE line on /post.
   // Stored as text to mirror the journal_entry_lines.cost_center convention
   // (cost center CODE, not id) and to survive cost-center renames.

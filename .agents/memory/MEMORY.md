@@ -63,4 +63,6 @@
 - [Opening-balance party import](opening-balance-party-import.md) — one draft JE marked in description; replace must clear-on-zero, guard DELETED JE's period, serialize via advisory lock, round before summing.
 - [ZATCA compliance-test invoice picker](zatca-compliance-test-invoice-picker.md) — step-3 resolves invoice by DB id + needs ISSUED (has xmlContent); use a status=issued picker, never a typed number.
 - [List query array-guard](fetch-list-guard.md) — list queryFns feeding .find/.map MUST coerce to array (fetchJsonArray); a module-gated 403 returns an OBJECT and white-screens via ErrorBoundary in only the companies lacking the perm.
+- [ZATCA empty-QR invoice hash](zatca-empty-qr-hash.md) — DigestValue is over the QR-LESS XML; sequence MUST be generate(empty QR)→hashXml→sign→buildPhase2Qr→injectQr; never re-hash a stored QR-containing string.
+- [ZATCA PIH/ICV chain per-EGS](zatca-pih-icv-chain-per-egs.md) — ICV/PIH is ONE chain per CSID/PCSID; two invoice tables each with own MAX(icv)+1 fork the chain; new submit paths must share one per-company chain head, consumed atomically.
 - [Account level from parent chain](account-level-from-parent-chain.md) — derive a minted sub-account's level by walking the parentId chain; the stored accounts.level column is bulk-import-stale (level=2 for all parented rows).

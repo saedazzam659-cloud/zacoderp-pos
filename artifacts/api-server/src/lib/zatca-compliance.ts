@@ -18,11 +18,8 @@
  * into the empty placeholder. The QR is excluded from the signed digest, so
  * injecting it after signing does not invalidate the signature.
  */
-import { createPublicKey, createPrivateKey, randomUUID } from "crypto";
-import forge from "node-forge";
-import { generateZatcaXml, hashXml } from "./zatca-xml.js";
-import { signZatcaUbl } from "./zatca-xades-signer.js";
-import { buildPhase2Qr } from "./zatca-tlv.js";
+import { randomUUID } from "crypto";
+import { buildSignedZatcaInvoice } from "./zatca-build-signed.js";
 
 // ZATCA's documented genesis Previous-Invoice-Hash (base64 of the SHA256 of "0").
 const GENESIS_HASH =
@@ -72,29 +69,6 @@ interface MinimalLogger {
   error?: (...args: unknown[]) => void;
 }
 
-/** Derive the EGS public key as DER SubjectPublicKeyInfo (QR tag 8). */
-function publicKeySpkiDer(privateKeyPem: string): Buffer {
-  const pub = createPublicKey(createPrivateKey(privateKeyPem));
-  return pub.export({ type: "spki", format: "der" }) as Buffer;
-}
-
-/** Extract the raw certificate signature bytes from the base64 cert body (QR tag 9). */
-function certSignatureDer(certBodyBase64: string): Buffer | null {
-  try {
-    const clean = certBodyBase64
-      .replace(/-----BEGIN [^-]+-----/g, "")
-      .replace(/-----END [^-]+-----/g, "")
-      .replace(/\s+/g, "");
-    const der = Buffer.from(clean, "base64");
-    const asn1 = forge.asn1.fromDer(forge.util.createBuffer(der.toString("binary")));
-    const cert = forge.pki.certificateFromAsn1(asn1);
-    // node-forge stores the signature as a binary string.
-    return Buffer.from(cert.signature, "binary");
-  } catch {
-    return null;
-  }
-}
-
 /** Which sample documents are required for the company's registered invoice type. */
 function buildDocSet(invoiceType: string): Array<{ flow: Flow; documentType: DocumentType; invoiceNumber: string }> {
   const flows: Flow[] =
@@ -112,17 +86,6 @@ function buildDocSet(invoiceType: string): Array<{ flow: Flow; documentType: Doc
   return docs;
 }
 
-/** Inject the Phase-2 QR into the empty QR EmbeddedDocumentBinaryObject placeholder. */
-function injectQr(signedXml: string, qrBase64: string): string {
-  const re = /(<cbc:ID>QR<\/cbc:ID>\s*<cac:Attachment>\s*<cbc:EmbeddedDocumentBinaryObject mimeCode="text\/plain">)(<\/cbc:EmbeddedDocumentBinaryObject>)/;
-  if (!re.test(signedXml)) {
-    // Fail loudly: a UBL-template change that breaks this placeholder would
-    // otherwise silently submit a QR-less document that ZATCA rejects opaquely.
-    throw new Error("QR placeholder not found in signed UBL — cannot inject Phase-2 QR");
-  }
-  return signedXml.replace(re, `$1${qrBase64}$2`);
-}
-
 export async function runAutoComplianceCheck(args: {
   company: ComplianceCompany;
   baseUrl: string;
@@ -137,8 +100,6 @@ export async function runAutoComplianceCheck(args: {
     throw new Error("CSID token / secret / private key missing — complete the CSID step first.");
   }
 
-  const publicKeyDer = publicKeySpkiDer(privateKeyPem);
-  const certSig = certSignatureDer(certBody);
   const authHeader = `Basic ${Buffer.from(`${certBody}:${csidSecret}`).toString("base64")}`;
 
   const now = new Date();
@@ -198,52 +159,39 @@ export async function runAutoComplianceCheck(args: {
     const billingReferenceId =
       doc.documentType !== "invoice" ? `COMP-${prefix}-INV-001` : null;
 
-    const ublXml = generateZatcaXml({
-      invoiceNumber: doc.invoiceNumber,
-      uuid,
-      invoiceType: doc.flow,
-      documentType: doc.documentType,
-      billingReferenceId,
-      instructionNote: doc.documentType !== "invoice" ? "تصحيح فاتورة الامتثال التجريبية" : null,
-      issueDate,
-      issueTime,
-      supplyDate: issueDate,
-      currency: "SAR",
-      paymentMethod: "10",
-      subtotal: "100.00",
-      discountTotal: "0.00",
-      vatTotal: "15.00",
-      grandTotal: "115.00",
-      notes: "مستند امتثال تجريبي مُولّد تلقائياً",
-      invoiceCounterValue: icv,
-      previousInvoiceHash: prevHash,
-      qrCode: "",
-      lineItems,
-      company: companyForXml,
-      customer,
-    });
-
-    const invoiceHash = hashXml(ublXml);
-    const { signedXml, signatureValueB64 } = signZatcaUbl({
-      ublXml,
+    const { finalXml, invoiceHash } = buildSignedZatcaInvoice({
+      invoiceData: {
+        invoiceNumber: doc.invoiceNumber,
+        uuid,
+        invoiceType: doc.flow,
+        documentType: doc.documentType,
+        billingReferenceId,
+        instructionNote: doc.documentType !== "invoice" ? "تصحيح فاتورة الامتثال التجريبية" : null,
+        issueDate,
+        issueTime,
+        supplyDate: issueDate,
+        currency: "SAR",
+        paymentMethod: "10",
+        subtotal: "100.00",
+        discountTotal: "0.00",
+        vatTotal: "15.00",
+        grandTotal: "115.00",
+        notes: "مستند امتثال تجريبي مُولّد تلقائياً",
+        invoiceCounterValue: icv,
+        previousInvoiceHash: prevHash,
+        lineItems,
+        company: companyForXml,
+        customer,
+      },
       certificatePem: certBody,
       privateKeyPem,
-      invoiceHash,
+      seller: { nameAr: company.nameAr, vatNumber: company.vatNumber },
+      qr: {
+        invoiceTimestamp: `${issueDate}T${issueTime}Z`,
+        invoiceTotal: "115.00",
+        vatAmount: "15.00",
+      },
     });
-
-    const qr = buildPhase2Qr({
-      sellerName: company.nameAr,
-      vatNumber: company.vatNumber,
-      invoiceTimestamp: `${issueDate}T${issueTime}Z`,
-      invoiceTotal: "115.00",
-      vatAmount: "15.00",
-      invoiceHashB64: invoiceHash,
-      signatureB64: signatureValueB64,
-      publicKeyDer,
-      certSignatureDer: certSig,
-    });
-
-    const finalXml = injectQr(signedXml, qr);
 
     // Single compliance-invoice endpoint for every flow (see routes/zatca.ts).
     // The .../clearance/single and .../reporting/single paths are LIVE-invoice

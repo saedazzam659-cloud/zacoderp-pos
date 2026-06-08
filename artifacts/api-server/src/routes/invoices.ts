@@ -6,6 +6,8 @@ import { createHash } from "crypto";
 import { CreateInvoiceBody, UpdateInvoiceBody, ListInvoicesQueryParams } from "@workspace/api-zod";
 import { generateZatcaQr } from "../lib/zatca-tlv.js";
 import { generateZatcaXml, hashXml } from "../lib/zatca-xml.js";
+import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
+import { invoiceRowToZatcaData } from "../lib/zatca-invoice-mapper.js";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
@@ -355,70 +357,58 @@ router.post("/:id/issue", async (req, res) => {
   const prevInvoice = previousInvoices.find(inv => inv.id !== id && inv.invoiceHash);
   const previousInvoiceHash = prevInvoice?.invoiceHash ?? GENESIS_HASH;
 
-  // Generate TLV QR code
+  // Build the ZATCA document. When the company is onboarded (has a private key
+  // + a CSID/PCSID certificate), build the FULL Phase-2 signed document so the
+  // stored hash is the empty-QR DigestValue ZATCA recomputes, the QR is the
+  // cryptographic-stamp QR, and the PIH chain stays valid. Otherwise fall back
+  // to a Phase-1 (display-only) QR for companies not yet onboarded to ZATCA.
   const issueTimestamp = new Date().toISOString().replace("Z", "+03:00");
-  const qrCode = generateZatcaQr({
-    sellerName: company?.nameAr ?? "",
-    vatNumber: company?.vatNumber ?? "",
-    invoiceTimestamp: issueTimestamp,
-    invoiceTotal: existing.grandTotal,
-    vatAmount: existing.vatTotal,
-  });
+  const issueTime = new Date().toTimeString().split(" ")[0];
+  const signingCert = company?.zatcaPcsidToken ?? company?.zatcaCsidToken ?? null;
+  const canSign = !!(company && company.zatcaPrivateKey && signingCert);
 
-  // Generate UBL 2.1 XML
-  const xmlContent = generateZatcaXml({
-    invoiceNumber: existing.invoiceNumber,
-    invoiceType: existing.invoiceType,
-    issueDate: existing.issueDate,
-    issueTime: new Date().toTimeString().split(" ")[0],
-    supplyDate: existing.supplyDate,
-    currency: existing.currency,
-    paymentMethod: existing.paymentMethod ?? "10",
-    subtotal: existing.subtotal,
-    discountTotal: existing.discountTotal,
-    vatTotal: existing.vatTotal,
-    grandTotal: existing.grandTotal,
-    notes: existing.notes,
-    invoiceCounterValue: nextCounter,
-    previousInvoiceHash,
-    qrCode,
-    lineItems: lineItems.map(li => ({
-      id: li.id,
-      description: li.description,
-      quantity: li.quantity,
-      unitCode: li.unitCode ?? "PCE",
-      unitPrice: li.unitPrice,
-      discountAmount: li.discountAmount,
-      taxCategory: li.taxCategory ?? "S",
-      vatRate: li.vatRate,
-      vatAmount: li.vatAmount,
-      subtotal: li.subtotal,
-      total: li.total,
-    })),
-    company: company ?? {
-      nameAr: "غير محدد",
-      vatNumber: "",
-      crNumber: "",
-      street: "",
-      buildingNumber: "",
-      city: "",
-      postalCode: "",
-      country: "SA",
-    },
-    customer: existing.buyerName ? {
-      nameAr: existing.buyerName,
-      vatNumber: existing.buyerVatNumber,
-      crNumber: existing.buyerCrNumber,
-      street: existing.buyerStreet,
-      buildingNumber: existing.buyerBuildingNumber,
-      district: existing.buyerDistrict,
-      city: existing.buyerCity,
-      postalCode: existing.buyerPostalCode,
-      country: existing.buyerCountry ?? "SA",
-    } : customer ?? null,
-  });
+  let qrCode: string;
+  let xmlContent: string;
+  let invoiceHash: string;
 
-  const invoiceHash = hashXml(xmlContent);
+  if (company && canSign) {
+    const built = buildSignedZatcaInvoice({
+      invoiceData: invoiceRowToZatcaData(existing, lineItems, company, customer ?? null, {
+        invoiceCounterValue: nextCounter,
+        previousInvoiceHash,
+        issueTime,
+      }),
+      certificatePem: signingCert!,
+      privateKeyPem: company.zatcaPrivateKey!,
+      seller: { nameAr: company.nameAr ?? "", vatNumber: company.vatNumber ?? "" },
+      qr: {
+        invoiceTimestamp: issueTimestamp,
+        invoiceTotal: existing.grandTotal,
+        vatAmount: existing.vatTotal,
+      },
+    });
+    qrCode = built.qrBase64;
+    xmlContent = built.finalXml;
+    invoiceHash = built.invoiceHash;
+  } else {
+    // Phase-1 fallback (no certificate yet) — display QR only, naive hash.
+    qrCode = generateZatcaQr({
+      sellerName: company?.nameAr ?? "",
+      vatNumber: company?.vatNumber ?? "",
+      invoiceTimestamp: issueTimestamp,
+      invoiceTotal: existing.grandTotal,
+      vatAmount: existing.vatTotal,
+    });
+    xmlContent = generateZatcaXml({
+      ...invoiceRowToZatcaData(existing, lineItems, company ?? null, customer ?? null, {
+        invoiceCounterValue: nextCounter,
+        previousInvoiceHash,
+        issueTime,
+      }),
+      qrCode,
+    });
+    invoiceHash = hashXml(xmlContent);
+  }
 
   await db.update(invoicesTable).set({
     status: "issued",

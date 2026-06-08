@@ -12,7 +12,10 @@ import { eq } from "drizzle-orm";
 import { generateCsr } from "../lib/zatca-csr.js";
 import { generateZatcaQr } from "../lib/zatca-tlv.js";
 import { generateZatcaXml, hashXml } from "../lib/zatca-xml.js";
+import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
+import { invoiceRowToZatcaData } from "../lib/zatca-invoice-mapper.js";
 import { runAutoComplianceCheck } from "../lib/zatca-compliance.js";
+import { getZatcaBaseUrl, resolveZatcaEnv, envArabic, GENESIS_HASH, type ZatcaEnv } from "../lib/zatca-env.js";
 import { createHash } from "crypto";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission, audit } from "../middleware/permissions.js";
@@ -29,42 +32,10 @@ function requireAuthed(req: Request, res: Response, next: NextFunction) {
 }
 router.use(requireAuthed);
 
-// ─── ZATCA environment → gateway base URL ───────────────────────────────────
-// ZATCA hosts three SELF-CONTAINED environments (developer-portal / simulation /
-// core-production). ALL of them host the full onboarding chain: /compliance,
-// /compliance/invoices, and /production/csids (verified empirically — the prod
-// `core` gateway returns 400 "Missing-OTP", NOT 404, for /compliance). The
-// onboarding (CSR → compliance CSID → compliance check → production CSID) must be
-// completed end-to-end on ONE environment — a CSID issued on one gateway is
-// rejected ("not authorized") by another. Each call targets the base URL of the
-// company's selected environment.
-type ZatcaEnv = "sandbox" | "simulation" | "production";
-
-function getZatcaBaseUrl(env: ZatcaEnv): string {
-  switch (env) {
-    case "production":
-      return "https://gw-fatoora.zatca.gov.sa/e-invoicing/core";
-    case "simulation":
-      return "https://gw-fatoora.zatca.gov.sa/e-invoicing/simulation";
-    case "sandbox":
-    default:
-      return "https://gw-fatoora.zatca.gov.sa/e-invoicing/developer-portal";
-  }
-}
-
-// Resolve the active environment for a company. The explicit `zatcaEnvironment`
-// column wins; fall back to the legacy `isSandbox` boolean for rows predating it.
-function resolveZatcaEnv(company: { zatcaEnvironment?: string | null; isSandbox?: boolean | null }): ZatcaEnv {
-  const e = company.zatcaEnvironment;
-  if (e === "sandbox" || e === "simulation" || e === "production") return e;
-  return (company.isSandbox ?? true) ? "sandbox" : "production";
-}
-
-const envArabic: Record<ZatcaEnv, string> = {
-  sandbox: "تجريبي",
-  simulation: "محاكاة",
-  production: "إنتاج",
-};
+// ZATCA environment/gateway resolution + the genesis chain hash now live in
+// lib/zatca-env.ts so the sales-invoice bridge resolves the SAME gateway and
+// genesis hash as the onboarding/live-submit flow. See that file for the
+// three-environment notes (developer-portal / simulation / core-production).
 
 function basicAuth(token: string, secret: string): string {
   return "Basic " + Buffer.from(`${token}:${secret}`).toString("base64");
@@ -344,6 +315,14 @@ router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", 
     return;
   }
 
+  if (!company.zatcaPrivateKey) {
+    res.status(400).json({
+      error: "المفتاح الخاص غير متوفر. لا يمكن توقيع الفاتورة التجريبية.",
+      hint: "أعد توليد CSR والحصول على CSID — يتم حفظ المفتاح الخاص مع الشهادة.",
+    });
+    return;
+  }
+
   const { invoiceId } = req.body as { invoiceId?: number };
   if (!invoiceId) {
     res.status(400).json({ error: "invoiceId مطلوب — أدخل رقم فاتورة لاختبارها." });
@@ -356,16 +335,40 @@ router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", 
     return;
   }
 
-  if (!invoice.xmlContent) {
-    res.status(400).json({ error: "يجب إصدار الفاتورة أولاً لتوليد XML. اذهب لصفحة الفاتورة واضغط 'إصدار واعتماد'." });
-    return;
-  }
-
   try {
     const env = resolveZatcaEnv(company);
     const baseUrl = getZatcaBaseUrl(env);
-    const xmlBase64 = Buffer.from(invoice.xmlContent).toString("base64");
-    const hashBase64 = hashXml(invoice.xmlContent);
+
+    // REBUILD + SIGN the document from the invoice's authoritative data using the
+    // CSID (compliance) certificate — never trust a previously stored xmlContent,
+    // which may be a Phase-1 / unsigned / wrong-certificate document. The hash is
+    // computed over the empty-QR UBL exactly as ZATCA recomputes it (the old code
+    // hashed the QR-containing string → invalid-invoice-hash).
+    const lineItems = await db.select().from(invoiceLineItemsTable)
+      .where(eq(invoiceLineItemsTable.invoiceId, invoice.id));
+    const [customer] = invoice.customerId
+      ? await db.select().from(customersTable).where(eq(customersTable.id, invoice.customerId))
+      : [null];
+
+    const now = new Date();
+    const issueTime = now.toTimeString().split(" ")[0];
+    const built = buildSignedZatcaInvoice({
+      invoiceData: invoiceRowToZatcaData(invoice, lineItems, company, customer ?? null, {
+        invoiceCounterValue: invoice.invoiceCounterValue ?? 1,
+        previousInvoiceHash: invoice.previousInvoiceHash ?? GENESIS_HASH,
+        issueTime,
+      }),
+      certificatePem: company.zatcaCsidToken,
+      privateKeyPem: company.zatcaPrivateKey,
+      seller: { nameAr: company.nameAr ?? "", vatNumber: company.vatNumber ?? "" },
+      qr: {
+        invoiceTimestamp: `${invoice.issueDate}T${issueTime}Z`,
+        invoiceTotal: invoice.grandTotal,
+        vatAmount: invoice.vatTotal,
+      },
+    });
+    const xmlBase64 = Buffer.from(built.finalXml).toString("base64");
+    const hashBase64 = built.invoiceHash;
 
     // ZATCA exposes ONE compliance-invoice endpoint for BOTH standard (clearance)
     // and simplified (reporting) documents — it auto-detects the flow from the
@@ -548,16 +551,46 @@ router.post("/invoices/:id/submit", requirePermission("zatca_bridge", "create"),
     return;
   }
 
-  if (!invoice.xmlContent) {
-    res.status(400).json({ error: "XML الفاتورة غير موجود. أعد إصدار الفاتورة." });
+  if (!company.zatcaPrivateKey) {
+    res.status(400).json({
+      error: "المفتاح الخاص غير متوفر. لا يمكن توقيع الفاتورة.",
+      hint: "أعد توليد CSR والحصول على الشهادة (CSID/PCSID).",
+    });
     return;
   }
 
   try {
     const env = resolveZatcaEnv(company);
     const baseUrl = getZatcaBaseUrl(env);
-    const xmlBase64 = Buffer.from(invoice.xmlContent).toString("base64");
-    const hashBase64 = hashXml(invoice.xmlContent);
+
+    // REBUILD + SIGN from authoritative invoice data using the live certificate
+    // (PCSID when available, else CSID). The signed finalXml + empty-QR hash are
+    // what ZATCA recomputes — never re-hash a stored QR-containing string.
+    const lineItems = await db.select().from(invoiceLineItemsTable)
+      .where(eq(invoiceLineItemsTable.invoiceId, invoice.id));
+    const [customer] = invoice.customerId
+      ? await db.select().from(customersTable).where(eq(customersTable.id, invoice.customerId))
+      : [null];
+
+    const now = new Date();
+    const issueTime = now.toTimeString().split(" ")[0];
+    const built = buildSignedZatcaInvoice({
+      invoiceData: invoiceRowToZatcaData(invoice, lineItems, company, customer ?? null, {
+        invoiceCounterValue: invoice.invoiceCounterValue ?? 1,
+        previousInvoiceHash: invoice.previousInvoiceHash ?? GENESIS_HASH,
+        issueTime,
+      }),
+      certificatePem: authToken,
+      privateKeyPem: company.zatcaPrivateKey,
+      seller: { nameAr: company.nameAr ?? "", vatNumber: company.vatNumber ?? "" },
+      qr: {
+        invoiceTimestamp: `${invoice.issueDate}T${issueTime}Z`,
+        invoiceTotal: invoice.grandTotal,
+        vatAmount: invoice.vatTotal,
+      },
+    });
+    const xmlBase64 = Buffer.from(built.finalXml).toString("base64");
+    const hashBase64 = built.invoiceHash;
 
     const endpoint = invoice.invoiceType === "simplified"
       ? `${baseUrl}/invoices/reporting/single`
@@ -587,7 +620,17 @@ router.post("/invoices/:id/submit", requirePermission("zatca_bridge", "create"),
       clearedInvoice?: string;
     };
 
-    const newStatus = response.ok
+    // The verdict must come from ZATCA's actual document status, NOT just an
+    // HTTP 200. ZATCA can return 200 with clearanceStatus=NOT_CLEARED or a
+    // reportingStatus other than REPORTED — treating that as success would
+    // produce a false "معتمدة". Only CLEARED / REPORTED(_WITH_WARNINGS) pass.
+    const clearance = (data.clearanceStatus ?? "").toUpperCase();
+    const reporting = (data.reportingStatus ?? "").toUpperCase();
+    const accepted = invoice.invoiceType === "simplified"
+      ? reporting === "REPORTED" || reporting === "REPORTED_WITH_WARNINGS"
+      : clearance === "CLEARED";
+    const succeeded = response.ok && accepted;
+    const newStatus = succeeded
       ? (invoice.invoiceType === "simplified" ? "reported" : "cleared")
       : "rejected";
 
@@ -600,12 +643,16 @@ router.post("/invoices/:id/submit", requirePermission("zatca_bridge", "create"),
       updatedAt: new Date(),
     }).where(eq(invoicesTable.id, id));
 
-    if (!response.ok) {
-      res.status(response.status).json({
+    if (!succeeded) {
+      res.status(response.ok ? 422 : response.status).json({
         success: false,
         zatcaStatus: newStatus,
+        clearanceStatus: data.clearanceStatus,
+        reportingStatus: data.reportingStatus,
         zatcaResponse: data,
-        hint: "راجع رسائل الخطأ من ZATCA وتحقق من صحة بيانات الفاتورة.",
+        hint: response.ok
+          ? "قبلت بوابة ZATCA الطلب لكن لم يتم تخليص/إبلاغ الفاتورة. راجع رسائل التحقق وصحّح البيانات."
+          : "راجع رسائل الخطأ من ZATCA وتحقق من صحة بيانات الفاتورة.",
       });
       return;
     }

@@ -8,6 +8,7 @@ import {
   salesQuotationsTable, salesQuotationLinesTable,
   salesOrdersTable, salesOrderLinesTable,
   customerSettlementsTable, stockBalanceTable, stockLedgerTable,
+  companiesTable,
   customersTable, cashBoxesTable, bankAccountsTable, warehousesTable,
   journalEntriesTable, journalEntryLinesTable,
   receiptVouchersTable, paymentVouchersTable,
@@ -25,6 +26,9 @@ import { upsertBalance, getBalance, addStockLedgerEntry, pickBatches, type Batch
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
+import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
+import { salesInvoiceRowToZatcaData } from "../lib/zatca-sales-mapper.js";
+import { getZatcaBaseUrl, resolveZatcaEnv, GENESIS_HASH } from "../lib/zatca-env.js";
 
 // ─── Journal entry helper (mirrors purchasing.ts) ────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null; costCenter?: string | null };
@@ -2956,10 +2960,12 @@ router.delete("/customer-settlements/:id", async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// ZATCA — Submit a sales invoice for clearance/reporting
-// Validates the invoice against ZATCA-style rules and records the result.
-// Approved → zatcaStatus="approved", uuid generated.
-// Rejected → zatcaStatus="rejected", errorMessages JSON array.
+// ZATCA — Submit a back-office sales invoice for clearance/reporting.
+// REAL pipeline (no more local "approved" mock): local BR-KSA rules run as a
+// PRE-FLIGHT only (cheap rejection before hitting ZATCA). The actual verdict
+// comes from the ZATCA gateway. Requires the company's signing key + a CSID
+// (PCSID preferred) — without onboarding the invoice cannot be submitted.
+// Standard (B2B, customer has 15-digit VAT) → clearance; simplified → reporting.
 // ═══════════════════════════════════════════════════════════════════
 router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
   try {
@@ -2977,10 +2983,10 @@ router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
       ? (await db.select().from(customersTable).where(and(
           eq(customersTable.id, inv.customerId),
           eq(customersTable.companyId, cid),
-        )))[0]
+        )))[0] ?? null
       : null;
 
-    // ─── ZATCA-style validation rules ────────────────────────────────────
+    // ─── PRE-FLIGHT: local BR-KSA validation (cheap reject before ZATCA) ──
     const errors: { code: string; message: string; field?: string }[] = [];
     const warnings: { code: string; message: string }[] = [];
 
@@ -3047,21 +3053,165 @@ router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
       return;
     }
 
-    // Approved — generate a UUID
-    const uuid = `ZATCA-${cid}-${id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`.toUpperCase();
+    // ─── Company onboarding gate: need a signing key + a CSID/PCSID ──────
+    const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, cid));
+    if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+
+    const authToken = company.zatcaPcsidToken ?? company.zatcaCsidToken;
+    const authSecret = company.zatcaPcsidSecret ?? company.zatcaCsidSecret;
+    if (!authToken || !authSecret) {
+      res.status(400).json({
+        error: "لا توجد شهادة ZATCA. يجب إتمام التسجيل والحصول على CSID/PCSID أولاً.",
+        hint: "اذهب لصفحة الشركة → تبويب الشهادة → استخراج CSID ثم PCSID.",
+      });
+      return;
+    }
+    if (!company.zatcaPrivateKey) {
+      res.status(400).json({
+        error: "المفتاح الخاص غير متوفر. لا يمكن توقيع الفاتورة.",
+        hint: "أعد توليد CSR والحصول على الشهادة (CSID/PCSID).",
+      });
+      return;
+    }
+
+    // ─── ICV / PIH chain (scoped to this company's sales invoices) ───────
+    const [{ maxIcv }] = await db
+      .select({ maxIcv: sql<number>`COALESCE(MAX(${salesInvoicesTable.zatcaIcv}), 0)` })
+      .from(salesInvoicesTable)
+      .where(eq(salesInvoicesTable.companyId, cid));
+    const invoiceCounterValue = Number(maxIcv ?? 0) + 1;
+
+    const [prevHashRow] = await db
+      .select({ hash: salesInvoicesTable.invoiceHash })
+      .from(salesInvoicesTable)
+      .where(and(
+        eq(salesInvoicesTable.companyId, cid),
+        sql`${salesInvoicesTable.invoiceHash} IS NOT NULL`,
+      ))
+      .orderBy(desc(salesInvoicesTable.zatcaIcv), desc(salesInvoicesTable.id))
+      .limit(1);
+    const previousInvoiceHash = prevHashRow?.hash || GENESIS_HASH;
+
+    const issueTime = now.toTimeString().split(" ")[0];
+    const mapped = salesInvoiceRowToZatcaData(inv, lines, company, customer, {
+      invoiceCounterValue,
+      previousInvoiceHash,
+      issueTime,
+    });
+
+    // Fail loud on any reconciliation drift between the per-line construction
+    // and the stored header total — better than submitting a doc ZATCA rejects
+    // opaquely. Tolerance scales with line count (per-line rounding).
+    const tolerance = 0.02 + lines.length * 0.01;
+    if (Math.abs(mapped.computedGrandTotalSar - mapped.storedGrandTotalSar) > tolerance) {
+      res.status(422).json({
+        status: "rejected",
+        errors: [{
+          code: "BR-KSA-RECON",
+          message: `تعذّر مطابقة إجمالي الفاتورة المحسوب (${mapped.computedGrandTotalSar.toFixed(2)} ريال) مع الإجمالي المخزّن (${mapped.storedGrandTotalSar.toFixed(2)} ريال). راجع الخصومات على مستوى المستند أو أسعار الصرف.`,
+        }],
+        warnings,
+      });
+      return;
+    }
+
+    const env = resolveZatcaEnv(company);
+    const baseUrl = getZatcaBaseUrl(env);
+
+    const built = buildSignedZatcaInvoice({
+      invoiceData: mapped.data,
+      certificatePem: authToken,
+      privateKeyPem: company.zatcaPrivateKey,
+      seller: { nameAr: company.nameAr ?? "", vatNumber: company.vatNumber ?? "" },
+      qr: {
+        invoiceTimestamp: `${inv.invoiceDate}T${issueTime}Z`,
+        invoiceTotal: mapped.data.grandTotal,
+        vatAmount: mapped.data.vatTotal,
+      },
+    });
+
+    const xmlBase64 = Buffer.from(built.finalXml).toString("base64");
+    const hashBase64 = built.invoiceHash;
+    const uuid = inv.docNumber || `SINV-${inv.id}`;
+
+    const endpoint = mapped.invoiceType === "simplified"
+      ? `${baseUrl}/invoices/reporting/single`
+      : `${baseUrl}/invoices/clearance/single`;
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Accept-Version": "V2",
+        "Accept-Language": "en",
+        "Authorization": "Basic " + Buffer.from(`${authToken}:${authSecret}`).toString("base64"),
+        "Clearance-Status": mapped.invoiceType === "standard" ? "1" : "0",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ invoiceHash: hashBase64, uuid, invoice: xmlBase64 }),
+    });
+
+    const data = await response.json() as {
+      reportingStatus?: string;
+      clearanceStatus?: string;
+      warningMessages?: Array<{ code: string; message: string }>;
+      errorMessages?: Array<{ code: string; message: string }>;
+    };
+
+    // Verdict from ZATCA's real document status, never just HTTP 200.
+    const clearance = (data.clearanceStatus ?? "").toUpperCase();
+    const reporting = (data.reportingStatus ?? "").toUpperCase();
+    const accepted = mapped.invoiceType === "simplified"
+      ? reporting === "REPORTED" || reporting === "REPORTED_WITH_WARNINGS"
+      : clearance === "CLEARED";
+    const succeeded = response.ok && accepted;
+    const newStatus = succeeded
+      ? (mapped.invoiceType === "simplified" ? "reported" : "cleared")
+      : "rejected";
+
     await db.update(salesInvoicesTable).set({
-      zatcaStatus: "approved",
+      zatcaStatus: newStatus,
       zatcaSubmittedAt: now,
-      zatcaUuid: uuid,
-      zatcaResponseCode: "200",
-      zatcaErrorMessages: null,
-      zatcaWarningMessages: warnings.length ? JSON.stringify(warnings) : null,
+      zatcaUuid: succeeded ? uuid : null,
+      zatcaResponseCode: String(response.status),
+      zatcaErrorMessages: data.errorMessages ? JSON.stringify(data.errorMessages) : null,
+      zatcaWarningMessages: data.warningMessages ? JSON.stringify(data.warningMessages) : (warnings.length ? JSON.stringify(warnings) : null),
       zatcaAiSuggestion: null,
+      xmlContent: built.finalXml,
+      invoiceHash: succeeded ? built.invoiceHash : null,
+      zatcaIcv: succeeded ? invoiceCounterValue : null,
+      zatcaPih: previousInvoiceHash,
       updatedAt: now,
     }).where(eq(salesInvoicesTable.id, id));
-    res.json({ status: "approved", uuid, warnings });
+
+    if (!succeeded) {
+      res.status(response.ok ? 422 : response.status).json({
+        status: "rejected",
+        zatcaStatus: newStatus,
+        clearanceStatus: data.clearanceStatus,
+        reportingStatus: data.reportingStatus,
+        errors: data.errorMessages ?? [],
+        warnings: data.warningMessages ?? warnings,
+        zatcaResponse: data,
+        hint: response.ok
+          ? "قبلت بوابة ZATCA الطلب لكن لم يتم تخليص/إبلاغ الفاتورة. راجع رسائل التحقق وصحّح البيانات."
+          : "راجع رسائل الخطأ من ZATCA وتحقق من صحة بيانات الفاتورة.",
+      });
+      return;
+    }
+
+    res.json({
+      status: succeeded ? (mapped.invoiceType === "simplified" ? "reported" : "cleared") : "rejected",
+      uuid,
+      zatcaStatus: newStatus,
+      clearanceStatus: data.clearanceStatus,
+      reportingStatus: data.reportingStatus,
+      warnings: data.warningMessages ?? warnings,
+      message: mapped.invoiceType === "simplified"
+        ? "تم إبلاغ ZATCA بالفاتورة المبسطة بنجاح."
+        : "تم تخليص الفاتورة الضريبية بنجاح.",
+    });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: "فشل الاتصال بـ ZATCA", details: e?.message ?? String(e) });
   }
 });
 

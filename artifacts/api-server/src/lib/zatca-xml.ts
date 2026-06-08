@@ -45,7 +45,7 @@ interface Customer {
   country?: string | null;
 }
 
-interface InvoiceData {
+export interface InvoiceData {
   invoiceNumber: string;
   invoiceType: string;
   // Optional explicit document UUID (a GUID). When omitted, falls back to the
