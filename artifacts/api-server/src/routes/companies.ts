@@ -130,7 +130,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     return;
   }
   const {
-    logo, decimalPlaces, autoPostingEnabled,
+    logo, logoBase64, logoMime, decimalPlaces, autoPostingEnabled,
     // Per-doc-type auto-posting toggles. Each one independently decides
     // whether saving that document immediately posts the resulting journal
     // entry. Validated as plain booleans below.
@@ -165,7 +165,8 @@ router.patch("/:id/general-settings", async (req, res) => {
     // VAT calc mode: "before_discount" | "after_discount". Validated below.
     taxCalculationMode,
   } = req.body as {
-    logo?: string; decimalPlaces?: number; autoPostingEnabled?: boolean;
+    logo?: string; logoBase64?: string | null; logoMime?: string;
+    decimalPlaces?: number; autoPostingEnabled?: boolean;
     autoPostJournalEntry?: boolean;
     autoPostSales?: boolean; autoPostPurchase?: boolean;
     autoPostReceipt?: boolean; autoPostPayment?: boolean;
@@ -197,7 +198,25 @@ router.patch("/:id/general-settings", async (req, res) => {
     taxCalculationMode?: string;
   };
   const updates: Record<string, any> = { updatedAt: new Date() };
-  if (logo !== undefined) updates.logo = logo;
+  // The client sends the logo as raw base64 (+ mime) — never a "data:" URL —
+  // because the production edge WAF blocks "data:...;base64,..." bodies with a
+  // 403 HTML page. Rebuild the data URL here so the stored format (and every
+  // consumer: print templates, UI) stays unchanged. `logo` (full data URL) is
+  // still accepted for backward compatibility with any older caller.
+  if (logoBase64 !== undefined) {
+    if (logoBase64 === null || logoBase64 === "") {
+      updates.logo = null;
+    } else {
+      if (logoBase64.length > 5 * 1024 * 1024) {
+        res.status(400).json({ error: "حجم الشعار كبير جداً" }); return;
+      }
+      const mime = typeof logoMime === "string" && /^image\/[\w.+-]+$/.test(logoMime)
+        ? logoMime : "image/png";
+      updates.logo = `data:${mime};base64,${logoBase64}`;
+    }
+  } else if (logo !== undefined) {
+    updates.logo = logo;
+  }
   if (decimalPlaces !== undefined) {
     const dp = Number(decimalPlaces);
     if (isNaN(dp) || dp < 0 || dp > 4) {

@@ -1,3 +1,4 @@
+- [Prod edge WAF blocks data: base64 URIs](prod-edge-waf-data-uri.md) — zacoderp.com ingress 403s (HTML) any body with `data:<mime>;base64,<blob>`; raw base64 passes. Send base64+mime, rebuild server-side.
 - [Atomic claim-and-post in PG](atomic-claim-post.md) — conditional UPDATE alone is NOT enough; the SET must flip the gating column or two concurrent callers both win.
 - [Gated download URL exposure](gated-download-url.md) — metered downloads must return the resource URL ONLY from the consuming /claim step, never from the metadata/release endpoint.
 - [Module gate keys live in two places](module-gate-sync.md) — backend `COMPANY_MODULE_GATE` (permissions.ts) AND frontend group-perms arrays in `Layout.tsx` must both list any new module key, or sidebar/company-toggle silently breaks.

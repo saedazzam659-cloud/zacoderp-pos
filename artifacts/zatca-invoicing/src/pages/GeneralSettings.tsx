@@ -76,6 +76,24 @@ async function downscaleLogo(file: File, maxDim = 512): Promise<string> {
   }
 }
 
+// The production edge WAF rejects (403 + HTML page) any request body that
+// contains a "data:<mime>;base64,<blob>" data-URI. Raw base64 WITHOUT the
+// "data:" prefix passes through fine, so we split the data URL and send the
+// raw base64 + mime separately; the server rebuilds the data URL before
+// storing it, keeping the on-disk format (companies.logo) unchanged.
+function splitDataUrl(dataUrl: string): { b64: string; mime: string } | null {
+  const m = /^data:([^;,]*)?(;base64)?,([\s\S]*)$/.exec(dataUrl);
+  if (!m) return null;
+  const mime = m[1] || "image/png";
+  const isB64 = !!m[2];
+  try {
+    const b64 = isB64 ? m[3] : btoa(unescape(decodeURIComponent(m[3])));
+    return { b64, mime };
+  } catch {
+    return null;
+  }
+}
+
 export default function GeneralSettings() {
   const { t } = useTranslation();
   const { user, token, setUser } = useAuth() as any;
@@ -133,10 +151,26 @@ export default function GeneralSettings() {
   const saveMutation = useMutation({
     mutationFn: async (payload: { logo?: string | null; decimalPlaces?: number }) => {
       const cid = user?.company?.id ?? user?.companyId;
+      // Send the logo as raw base64 (+ mime) rather than a "data:" URL so the
+      // production edge WAF doesn't reject the request with a 403 HTML page.
+      const body: Record<string, any> = { decimalPlaces: payload.decimalPlaces };
+      if (payload.logo === null) {
+        body.logoBase64 = null;
+      } else if (typeof payload.logo === "string") {
+        const parts = splitDataUrl(payload.logo);
+        if (parts) {
+          body.logoBase64 = parts.b64;
+          body.logoMime = parts.mime;
+        } else {
+          // Unexpected non-data-URL value — preserve it via the legacy `logo`
+          // field rather than silently clearing the logo.
+          body.logo = payload.logo;
+        }
+      }
       const res = await fetch(`${API}/api/companies/${cid}/general-settings`, {
         method: "PATCH",
         headers,
-        body: JSON.stringify(payload),
+        body: JSON.stringify(body),
       });
       // The server may return a non-JSON error page (e.g. the ingress rejecting
       // an oversized body with an HTML 413). Read text first so we surface a
