@@ -456,15 +456,6 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
 
   const envLabel = ENV_LABELS[form.zatcaEnvironment] ?? ENV_LABELS.sandbox;
 
-  // The compliance trial check (/compliance/invoices/...) only exists on the
-  // sandbox + simulation gateways. ZATCA's production `core` gateway does NOT
-  // host it (returns 404). Gate on the SAVED company env — that is what the
-  // server resolves the request against, not the in-form (unsaved) selection.
-  const savedEnv =
-    (company.zatcaEnvironment as string | null) ??
-    ((company.isSandbox ?? true) ? "sandbox" : "production");
-  const isProductionEnv = savedEnv === "production";
-
   const step1Status = hasCsr ? "done" : "active";
   const step2Status = !hasCsr ? "locked" : hasCsid ? "done" : "active";
   const step3Status: "active" | "locked" = !hasCsid ? "locked" : "active";
@@ -559,7 +550,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
               <div>
                 <p className="text-sm font-medium">{t("zatcaIntegration.sandboxToggleTitle")}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  بيئة الربط مع ZATCA. الفحص التجريبي يتم على «تجريبي» أو «محاكاة» فقط — بوابة «إنتاج» لا تستضيف خطوة الفحص.
+                  بيئة الربط مع ZATCA. أكمل دورة الربط بالكامل (CSR ← الامتثال ← الفحص التجريبي ← شهادة الإنتاج) على نفس البيئة المختارة — لا تنتقل الشهادات بين البيئات.
                 </p>
               </div>
               <div className="grid grid-cols-3 gap-2">
@@ -754,22 +745,22 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
               </a>
             </div>
 
-            {hasCsid ? (
+            {hasCsid && (
               <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
                 {t("zatcaIntegration.csidExtractedSuccess")}
               </div>
-            ) : (
-              <Button
-                type="button"
-                className="gap-2"
-                onClick={() => setOtpOpen(true)}
-                disabled={!hasCsr}
-              >
-                <ShieldCheck className="h-4 w-4" />
-                {t("zatcaIntegration.enterOtpButton")}
-              </Button>
             )}
+            <Button
+              type="button"
+              className="gap-2"
+              variant={hasCsid ? "outline" : "default"}
+              onClick={() => setOtpOpen(true)}
+              disabled={!hasCsr}
+            >
+              <ShieldCheck className="h-4 w-4" />
+              {hasCsid ? t("zatcaIntegration.reEnterOtpButton") : t("zatcaIntegration.enterOtpButton")}
+            </Button>
           </div>
         </StepCard>
 
@@ -786,7 +777,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
             {/* One-click automated compliance check — generates, signs, and submits
                 EVERY required sample document (invoice/credit/debit × the company's
                 registered invoice type) so ZATCA can mark compliance complete. */}
-            {!isProductionEnv && (
+            {(
               <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 space-y-2">
                 <p className="text-xs text-indigo-900 flex gap-2">
                   <Wand2 className="h-3.5 w-3.5 shrink-0 mt-0.5" />
@@ -858,12 +849,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
               <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
               <span>{t("zatcaIntegration.step3Hint")}</span>
             </div>
-            {isProductionEnv ? (
-              <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800 flex gap-2">
-                <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>{t("zatcaIntegration.trialNotInProduction")}</span>
-              </div>
-            ) : invoicesLoading ? (
+            {invoicesLoading ? (
               <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 <span>{t("common.loading")}</span>
@@ -895,7 +881,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
                     size="sm"
                     variant="outline"
                     className="gap-2 whitespace-nowrap"
-                    disabled={!checkInvoiceId || complianceCheckMutation.isPending || isProductionEnv}
+                    disabled={!checkInvoiceId || complianceCheckMutation.isPending}
                     onClick={() => complianceCheckMutation.mutate()}
                   >
                     {complianceCheckMutation.isPending

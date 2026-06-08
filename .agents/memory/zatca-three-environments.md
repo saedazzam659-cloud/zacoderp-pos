@@ -39,3 +39,23 @@ blocked production entirely. Combined with the wrong invoice path (see
   must run end-to-end on ONE environment.
 - CSR template differs per env — wrong template = gateway rejection. See
   `zatca-csr-spec.md`.
+
+## The wrong "production has no /compliance" assumption was duplicated in the FRONTEND too
+
+Fixing the backend gate alone did NOT unblock production onboarding. The
+onboarding wizard (`ZatcaIntegration.tsx`) independently gated on
+`isProductionEnv` (derived from the saved company env): it HID the one-click
+auto-compliance-check, showed a "trial not available in production" message,
+and disabled the manual check whenever env=production. Removed all three gates.
+
+Separately, Step 2's "Enter OTP" button only rendered when `!hasCsid`, so a
+company that already had a (stale / pre-fix, missing compliance_request_id)
+CSID had **no UI path to re-run Step 2** with a fresh OTP. Fixed by always
+rendering the OTP button (re-enter label when hasCsid) alongside the success
+badge.
+
+**How to apply:** when a wrong external-gateway assumption is found in backend
+code, grep the frontend for the same env/branching (`isProductionEnv`,
+`isSandbox`) — the assumption is often duplicated as UI gating that silently
+blocks the same flow. And any "issue once" credential step needs a visible
+re-do path, never hidden purely on the existence of the credential.

@@ -7692,6 +7692,7 @@
     "openZatcaPortal": "Open ZATCA FATOORA portal",
     "csidExtractedSuccess": "Compliance certificate (CSID) extracted successfully",
     "enterOtpButton": "Enter OTP & link to ZATCA",
+    "reEnterOtpButton": "Re-enter OTP & reissue compliance certificate",
     "step3Title": "Compliance Test",
     "step3Subtitle": "Required step — compliance must pass before the Production Certificate (PCSID) can be issued",
     "step3Hint": "Pick an invoice from the list to test compliance before moving to production. Drafts are issued automatically when you run the test.",
