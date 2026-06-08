@@ -48,6 +48,26 @@ const ICE_SERVERS: RTCIceServer[] = [
 // Total participants cap (this node + remote peers).
 const MAX_PARTICIPANTS = 4;
 
+// Map a getUserMedia DOMException to a clear Arabic explanation. The most common
+// case in practice is NotReadableError ("Device in use") — the camera/mic is
+// already held by another app or by a second browser on the SAME machine.
+function describeMediaError(e: any): string {
+  const name = e?.name as string | undefined;
+  switch (name) {
+    case "NotAllowedError":
+    case "SecurityError":
+      return "لم يُسمح بالوصول للكاميرا/الميكروفون. فعّل الإذن من إعدادات المتصفح ثم أعد المحاولة.";
+    case "NotReadableError":
+    case "AbortError":
+      return "الكاميرا أو الميكروفون مشغول بتطبيق آخر (أو متصفح آخر على نفس الجهاز). أغلق التطبيق الآخر ثم حاول مجددًا.";
+    case "NotFoundError":
+    case "OverconstrainedError":
+      return "لا توجد كاميرا أو ميكروفون متاح على هذا الجهاز.";
+    default:
+      return e?.message || "تعذّر الوصول للكاميرا/الميكروفون.";
+  }
+}
+
 type Phase = "idle" | "outgoing" | "incoming" | "connecting" | "active";
 
 interface ActiveCall {
@@ -164,14 +184,39 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, [teardown]);
 
   // ── Acquire local mic/camera ─────────────────────────────────────────────
+  // For a video call, if the camera can't be opened (busy / missing) we fall
+  // back to an audio-only stream so the call still connects instead of failing
+  // outright. Any final failure is rethrown with a clear Arabic message.
   const getLocalMedia = useCallback(async (media: CallMedia): Promise<MediaStream> => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: media === "video" ? { width: 640, height: 480 } : false,
-    });
-    localStreamRef.current = stream;
-    cameraTrackRef.current = stream.getVideoTracks()[0] ?? null;
-    return stream;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: media === "video" ? { width: 640, height: 480 } : false,
+      });
+      localStreamRef.current = stream;
+      cameraTrackRef.current = stream.getVideoTracks()[0] ?? null;
+      return stream;
+    } catch (e: any) {
+      const camRecoverable =
+        media === "video" &&
+        (e?.name === "NotReadableError" || e?.name === "NotFoundError" ||
+          e?.name === "OverconstrainedError" || e?.name === "AbortError");
+      if (camRecoverable) {
+        try {
+          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          localStreamRef.current = audioStream;
+          cameraTrackRef.current = null;
+          toast({
+            title: "تعذّر فتح الكاميرا",
+            description: "الكاميرا مشغولة أو غير متاحة — تم الانضمام بالصوت فقط.",
+          });
+          return audioStream;
+        } catch (e2: any) {
+          throw new Error(describeMediaError(e2));
+        }
+      }
+      throw new Error(describeMediaError(e));
+    }
   }, []);
 
   const flushCandidates = useCallback(async (peerId: number) => {
@@ -291,8 +336,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     setPhaseSafe("outgoing");
     (async () => {
       try {
-        await getLocalMedia(args.media);
-        setCamOn(args.media === "video");
+        const stream = await getLocalMedia(args.media);
+        setCamOn(stream.getVideoTracks().length > 0);
         await chatApi.callInvite(args.conversationId, { callId, media: args.media });
         joinedRef.current = true;
         broadcastJoin();
@@ -317,8 +362,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     setPhaseSafe("connecting");
     (async () => {
       try {
-        await getLocalMedia(inv.media);
-        setCamOn(inv.media === "video");
+        const stream = await getLocalMedia(inv.media);
+        setCamOn(stream.getVideoTracks().length > 0);
         joinedRef.current = true;
         // Connect to the inviter directly, then announce ourselves so any other
         // already-joined participants discover us too.
