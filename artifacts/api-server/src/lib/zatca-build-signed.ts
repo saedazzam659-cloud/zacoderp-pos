@@ -17,16 +17,14 @@
  * does not invalidate the signature. The naive "hash the raw XML that already
  * contains a Phase-1 QR" approach is exactly what produced `invalid-invoice-hash`.
  */
-import { createPublicKey, createPrivateKey } from "crypto";
 import { generateZatcaXml, hashXml, type InvoiceData } from "./zatca-xml.js";
-import { signZatcaUbl, certDerFromToken, certSignatureFromDer } from "./zatca-xades-signer.js";
+import {
+  signZatcaUbl,
+  certDerFromToken,
+  certSignatureFromDer,
+  certPublicKeySpkiDer,
+} from "./zatca-xades-signer.js";
 import { buildPhase2Qr } from "./zatca-tlv.js";
-
-/** Derive the EGS public key as DER SubjectPublicKeyInfo (QR tag 8). */
-export function publicKeySpkiDer(privateKeyPem: string): Buffer {
-  const pub = createPublicKey(createPrivateKey(privateKeyPem));
-  return pub.export({ type: "spki", format: "der" }) as Buffer;
-}
 
 /** Extract the raw certificate signature bytes from the base64 cert body (QR tag 9). */
 export function certSignatureDer(certBodyBase64: string): Buffer | null {
@@ -110,7 +108,7 @@ export function buildSignedZatcaInvoice(input: BuildSignedInput): BuildSignedRes
     vatAmount: qr.vatAmount,
     invoiceHashB64: invoiceHash,
     signatureB64: signatureValueB64,
-    publicKeyDer: publicKeySpkiDer(privateKeyPem),
+    publicKeyDer: certPublicKeySpkiDer(certificatePem),
     certSignatureDer: certSignatureDer(certificatePem),
   });
   // 5. Inject the QR into the signed XML (safe — QR excluded from the digest).

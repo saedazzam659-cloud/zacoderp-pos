@@ -105,14 +105,15 @@ export function signZatcaUbl(input: SignXadesInput): SignXadesResult {
     issuerName,
     serialNumber,
   });
-  // Reference#2 ("xadesSignedProperties") DigestValue — hash the CANONICAL form,
-  // not the raw template. ZATCA canonicalizes the referenced SignedProperties
-  // element in ISOLATION: only the namespaces declared inside the fragment appear
-  // (xades on the apex + ds inline on each ds child), NOT the invoice-root ns.
-  // Hashing the raw template — or canonicalizing it wrapped in the 9-ns invoice
-  // root — is what produced `signed-properties-hashing`.
+  // Reference#2 ("xadesSignedProperties") DigestValue — hash the VERBATIM
+  // SignedProperties template, NOT a C14N form. ZATCA recomputes this digest over
+  // the literal SignedProperties serialization (the template is authored to match
+  // it byte-for-byte), so running it through xml-crypto C14N — which reorders
+  // attributes (xmlns before Id) and expands self-closing tags — yields different
+  // bytes and is exactly what produced `signed-properties-hashing` on simplified
+  // (B2C) samples. This mirrors the proven offline POS signer's sha256B64(signedProps).
   const signedPropsHashB64 = createHash("sha256")
-    .update(canonicalizeFragment(signedProps, "SignedProperties"), "utf8")
+    .update(signedProps, "utf8")
     .digest("base64");
 
   // 4. Build SignedInfo over (a) invoice digest + (b) signed-properties digest.
@@ -339,6 +340,39 @@ export function certSignatureFromDer(der: Buffer): Buffer | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Extract the certificate's SubjectPublicKeyInfo (DER) for QR tag 8.
+ *
+ * ZATCA validates that QR tag 8 (the EGS public key) byte-matches the public key
+ * inside the signing certificate — otherwise the simplified (B2C) sample fails
+ * with `publicKey_QRCODE_INVALID` ("ECDSA Public Key does not match with qr code
+ * ECDSA public key"). Deriving the SPKI from the PRIVATE key via Node's
+ * `export({type:'spki'})` can serialize the EC domain parameters in EXPLICIT form
+ * (instead of the named secp256k1 curve OID) when the stored key carries explicit
+ * params, producing bytes that differ from the cert's named-curve SPKI even though
+ * the underlying point is identical. Pulling the SPKI straight out of the
+ * certificate guarantees an exact byte match with what ZATCA compares against.
+ *
+ * subjectPublicKeyInfo is element idx+5 of TBSCertificate (same idx convention as
+ * parseCertIssuerSerial: serial=idx, sigAlg=idx+1, issuer=idx+2, validity=idx+3,
+ * subject=idx+4, spki=idx+5), where idx skips the optional [0] EXPLICIT version.
+ */
+export function certPublicKeySpkiDer(certInput: string): Buffer {
+  const { der } = certDerFromToken(certInput);
+  const asn1 = forge.asn1.fromDer(forge.util.createBuffer(der.toString("binary")));
+  const tbsItems = (asn1.value as forge.asn1.Asn1[])[0].value as forge.asn1.Asn1[];
+  let idx = 0;
+  const firstItem = tbsItems[0];
+  if (firstItem.tagClass === forge.asn1.Class.CONTEXT_SPECIFIC && firstItem.type === 0) {
+    idx = 1;
+  }
+  const spkiAsn1 = tbsItems[idx + 5];
+  if (!spkiAsn1) {
+    throw new Error("could not locate SubjectPublicKeyInfo in certificate DER");
+  }
+  return Buffer.from(forge.asn1.toDer(spkiAsn1).getBytes(), "binary");
 }
 
 function escapeXml(s: string): string {
