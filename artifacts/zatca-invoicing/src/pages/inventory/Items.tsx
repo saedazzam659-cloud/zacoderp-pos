@@ -1489,9 +1489,9 @@ export default function Items() {
                             </div>
                           )}
                           <div className="min-w-0">
-                            <div className="max-h-[60px] overflow-y-auto pe-1 [scrollbar-width:thin] rounded-sm">
-                              <p className="font-medium break-words leading-snug">{pickName(it.nameAr, it.nameEn)}</p>
-                              {(isRtl ? it.nameEn : it.nameAr) && <p className="text-xs text-muted-foreground break-words leading-snug">{isRtl ? it.nameEn : it.nameAr}</p>}
+                            <div className="max-w-[200px] md:max-w-[280px] lg:max-w-[340px] overflow-x-auto whitespace-nowrap pb-1 [scrollbar-width:thin] rounded-sm">
+                              <p className="font-medium leading-snug">{pickName(it.nameAr, it.nameEn)}</p>
+                              {(isRtl ? it.nameEn : it.nameAr) && <p className="text-xs text-muted-foreground leading-snug">{isRtl ? it.nameEn : it.nameAr}</p>}
                             </div>
                             {it.barcode && <p className="text-[10px] text-muted-foreground/70 font-mono">🔖 {it.barcode}</p>}
                             {it.tags && tagsToArray(it.tags).length > 0 && (
