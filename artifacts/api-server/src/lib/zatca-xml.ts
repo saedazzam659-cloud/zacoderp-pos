@@ -48,6 +48,16 @@ interface Customer {
 interface InvoiceData {
   invoiceNumber: string;
   invoiceType: string;
+  // Optional explicit document UUID (a GUID). When omitted, falls back to the
+  // invoice number — preserving the historical real-invoice behaviour. ZATCA
+  // requires the submission `uuid` to equal the document's cbc:UUID.
+  uuid?: string;
+  // Document kind: tax invoice (388), credit note (381), or debit note (383).
+  // Defaults to "invoice"; credit/debit notes additionally require a
+  // billingReferenceId (the corrected invoice) + an instructionNote (reason).
+  documentType?: "invoice" | "credit" | "debit";
+  billingReferenceId?: string | null;
+  instructionNote?: string | null;
   issueDate: string;
   issueTime?: string;
   supplyDate?: string | null;
@@ -76,11 +86,14 @@ function xmlEscape(str: string | null | undefined): string {
     .replace(/'/g, "&apos;");
 }
 
-function getInvoiceTypeCode(type: string): { typeCode: string; subTypeCode: string } {
-  if (type === "simplified") {
-    return { typeCode: "388", subTypeCode: "0200000" };
-  }
-  return { typeCode: "388", subTypeCode: "0100000" };
+function getInvoiceTypeCode(
+  type: string,
+  documentType: "invoice" | "credit" | "debit" = "invoice",
+): { typeCode: string; subTypeCode: string } {
+  // ZATCA InvoiceTypeCode: 388 tax invoice, 381 credit note, 383 debit note.
+  const typeCode = documentType === "credit" ? "381" : documentType === "debit" ? "383" : "388";
+  const subTypeCode = type === "simplified" ? "0200000" : "0100000";
+  return { typeCode, subTypeCode };
 }
 
 /**
@@ -108,9 +121,23 @@ function getTaxCategory(category?: string, vatRate?: string): {
 }
 
 export function generateZatcaXml(data: InvoiceData): string {
-  const { typeCode, subTypeCode } = getInvoiceTypeCode(data.invoiceType);
+  const documentType = data.documentType ?? "invoice";
+  const { typeCode, subTypeCode } = getInvoiceTypeCode(data.invoiceType, documentType);
   const issueTime = data.issueTime ?? new Date().toISOString().split("T")[1]?.split(".")[0] ?? "00:00:00";
   const paymentMeansCode = data.paymentMethod ?? "10";
+  const documentUuid = data.uuid ?? data.invoiceNumber;
+
+  // Credit/debit notes must reference the corrected invoice (cac:BillingReference,
+  // before cac:AdditionalDocumentReference per the UBL element sequence) and carry
+  // a reason. Tax invoices (388) emit neither — keeping their output unchanged.
+  const billingReferenceXml = documentType !== "invoice" && data.billingReferenceId ? `
+  <cac:BillingReference>
+    <cac:InvoiceDocumentReference>
+      <cbc:ID>${xmlEscape(data.billingReferenceId)}</cbc:ID>
+    </cac:InvoiceDocumentReference>
+  </cac:BillingReference>` : "";
+  const instructionNoteXml = documentType !== "invoice" ? `
+    <cbc:InstructionNote>${xmlEscape(data.instructionNote ?? "تصحيح فاتورة")}</cbc:InstructionNote>` : "";
 
   // Aggregate tax by category for TaxTotal/TaxSubtotal
   const taxByCategory = new Map<string, { taxable: number; tax: number; rate: number }>();
@@ -245,14 +272,14 @@ export function generateZatcaXml(data: InvoiceData): string {
 
   <cbc:ProfileID>reporting:1.0</cbc:ProfileID>
   <cbc:ID>${xmlEscape(data.invoiceNumber)}</cbc:ID>
-  <cbc:UUID>${xmlEscape(data.invoiceNumber)}</cbc:UUID>
+  <cbc:UUID>${xmlEscape(documentUuid)}</cbc:UUID>
   <cbc:IssueDate>${data.issueDate}</cbc:IssueDate>
   <cbc:IssueTime>${issueTime}</cbc:IssueTime>
   <cbc:InvoiceTypeCode name="${subTypeCode}">${typeCode}</cbc:InvoiceTypeCode>
   <cbc:Note languageID="ar">${xmlEscape(data.notes)}</cbc:Note>
   <cbc:DocumentCurrencyCode>${data.currency}</cbc:DocumentCurrencyCode>
   <cbc:TaxCurrencyCode>${data.currency}</cbc:TaxCurrencyCode>
-
+${billingReferenceXml}
   <cac:AdditionalDocumentReference>
     <cbc:ID>ICV</cbc:ID>
     <cbc:UUID>${data.invoiceCounterValue}</cbc:UUID>
@@ -305,7 +332,7 @@ export function generateZatcaXml(data: InvoiceData): string {
   </cac:Delivery>
 
   <cac:PaymentMeans>
-    <cbc:PaymentMeansCode>${paymentMeansCode}</cbc:PaymentMeansCode>
+    <cbc:PaymentMeansCode>${paymentMeansCode}</cbc:PaymentMeansCode>${instructionNoteXml}
   </cac:PaymentMeans>
 
   <cac:TaxTotal>

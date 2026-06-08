@@ -34,6 +34,53 @@ export function generateZatcaQr(params: {
   return tlv.toString("base64");
 }
 
+/**
+ * Phase-2 (cryptographic-stamp) QR — tags 1-9, required on SIGNED simplified
+ * invoices and used for ZATCA compliance-check submissions.
+ *
+ *   1-5 — same as Phase-1 (seller, VAT, timestamp, total, VAT amount)
+ *   6   — invoice hash (base64 DigestValue string)
+ *   7   — XAdES SignatureValue (base64 string)
+ *   8   — EGS public key as DER SubjectPublicKeyInfo (raw bytes)
+ *   9   — CSID certificate signature (raw bytes) — omitted when absent
+ *
+ * Binary tags (8, 9) carry raw bytes, so this uses a Buffer-capable encoder
+ * rather than the UTF-8 `encodeTLV` above. Single-byte length (values < 256B).
+ */
+function encodeTLVBinary(tag: number, value: Buffer): Buffer {
+  if (value.length > 0xff) {
+    throw new Error(`ZATCA TLV tag ${tag} value is ${value.length} bytes — exceeds the single-byte length limit (255)`);
+  }
+  return Buffer.concat([Buffer.from([tag]), Buffer.from([value.length]), value]);
+}
+
+export function buildPhase2Qr(params: {
+  sellerName: string;
+  vatNumber: string;
+  invoiceTimestamp: string;
+  invoiceTotal: string;
+  vatAmount: string;
+  invoiceHashB64: string;
+  signatureB64: string;
+  publicKeyDer: Buffer;
+  certSignatureDer?: Buffer | null;
+}): string {
+  const parts: Buffer[] = [
+    encodeTLVBinary(1, Buffer.from(params.sellerName, "utf8")),
+    encodeTLVBinary(2, Buffer.from(params.vatNumber, "utf8")),
+    encodeTLVBinary(3, Buffer.from(params.invoiceTimestamp, "utf8")),
+    encodeTLVBinary(4, Buffer.from(params.invoiceTotal, "utf8")),
+    encodeTLVBinary(5, Buffer.from(params.vatAmount, "utf8")),
+    encodeTLVBinary(6, Buffer.from(params.invoiceHashB64, "utf8")),
+    encodeTLVBinary(7, Buffer.from(params.signatureB64, "utf8")),
+    encodeTLVBinary(8, params.publicKeyDer),
+  ];
+  if (params.certSignatureDer && params.certSignatureDer.length > 0) {
+    parts.push(encodeTLVBinary(9, params.certSignatureDer));
+  }
+  return Buffer.concat(parts).toString("base64");
+}
+
 export function decodeZatcaQr(base64: string): Record<string, string> {
   const buf = Buffer.from(base64, "base64");
   const tags: Record<number, string> = {};

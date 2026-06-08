@@ -12,8 +12,9 @@ import { eq } from "drizzle-orm";
 import { generateCsr } from "../lib/zatca-csr.js";
 import { generateZatcaQr } from "../lib/zatca-tlv.js";
 import { generateZatcaXml, hashXml } from "../lib/zatca-xml.js";
+import { runAutoComplianceCheck } from "../lib/zatca-compliance.js";
 import { createHash } from "crypto";
-import { extractAuth } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission, audit } from "../middleware/permissions.js";
 
 const router = Router();
@@ -435,6 +436,81 @@ router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", 
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: "فشل الاتصال بـ ZATCA", details: message });
+  }
+});
+
+// ─── 3b. Automated Compliance Check (one-click sample-document submission) ─────
+// ZATCA only authorises a Production CSID after the EGS submits + passes the full
+// set of sample documents matching the certificate's registered invoice type
+// (invoice/credit/debit × standard/simplified). This route builds, signs, and
+// submits every required sample in one server-side pass so the operator does not
+// have to hand-craft them. Sample documents are synthetic — never persisted.
+router.post("/companies/:id/auto-compliance-check", requirePermission("zatca_setup", "create"), audit("zatca_setup", "create"), async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "معرف الشركة غير صالح" });
+    return;
+  }
+
+  // Tenant scope: this endpoint triggers live ZATCA submissions using the
+  // target company's certificate, so a non-superadmin must only ever act on
+  // their OWN company. resolveCompanyId returns the user's companyId (or, for a
+  // superadmin, the deliberately-addressed acting/impersonated tenant). Block
+  // any attempt to target a different company id (cross-tenant IDOR).
+  const scopedCompanyId = resolveCompanyId(req);
+  if (req.authUser?.role !== "superadmin" && scopedCompanyId !== id) {
+    res.status(403).json({ error: "لا يمكنك تشغيل الفحص التجريبي لشركة أخرى." });
+    return;
+  }
+
+  const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, id));
+  if (!company) {
+    res.status(404).json({ error: "Company not found" });
+    return;
+  }
+
+  if (!company.zatcaCsidToken || !company.zatcaCsidSecret || !company.zatcaPrivateKey) {
+    res.status(400).json({
+      error: "CSID أو المفتاح الخاص غير متوفر. أكمل الخطوة 2 (الشهادة الأولية CSID) أولاً.",
+      hint: "يجب توليد CSR والحصول على CSID قبل تشغيل الفحص التجريبي التلقائي.",
+    });
+    return;
+  }
+
+  const env = resolveZatcaEnv(company);
+  if (env === "production") {
+    // The compliance endpoints only exist on the onboarding (sandbox/simulation)
+    // gateways. Running them against production would 404 — block early with a
+    // clear message instead of leaking a confusing gateway error.
+    res.status(400).json({
+      error: "الفحص التجريبي التلقائي يعمل فقط على بيئة التجربة أو المحاكاة، وليس الإنتاج.",
+      hint: `وضع الربط الحالي هو "${envArabic[env]}". غيّر وضع الربط إلى تجريبي أو محاكاة وأكمل الإعداد عليه قبل تشغيل الفحص.`,
+      environment: env,
+    });
+    return;
+  }
+
+  try {
+    const baseUrl = getZatcaBaseUrl(env);
+    const { allPassed, results } = await runAutoComplianceCheck({
+      company,
+      baseUrl,
+      log: req.log,
+    });
+
+    res.status(allPassed ? 200 : 422).json({
+      success: allPassed,
+      environment: env,
+      allPassed,
+      results,
+      message: allPassed
+        ? "اجتازت جميع المستندات التجريبية فحص الامتثال بنجاح. يمكنك الآن طلب شهادة الإنتاج (PCSID) في الخطوة 4."
+        : "فشل أحد المستندات التجريبية أو أكثر في فحص الامتثال. راجع تفاصيل كل مستند أدناه وصحّح الأخطاء قبل المتابعة.",
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    req.log.warn({ companyId: id, environment: env, err: message }, "auto-compliance-check failed");
+    res.status(500).json({ error: "فشل تشغيل الفحص التجريبي التلقائي", details: message });
   }
 });
 

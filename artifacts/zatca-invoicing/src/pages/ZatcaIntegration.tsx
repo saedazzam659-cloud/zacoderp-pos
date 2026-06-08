@@ -145,6 +145,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
   const [isDirty, setIsDirty] = useState(false);
   const [checkInvoiceId, setCheckInvoiceId] = useState("");
   const [checkResult, setCheckResult] = useState<any | null>(null);
+  const [autoResult, setAutoResult] = useState<any | null>(null);
   const [step1Error, setStep1Error] = useState<{ message: string; details?: string } | null>(null);
   const seeded = useRef(false);
 
@@ -380,6 +381,40 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
       qc.invalidateQueries({ queryKey: ["zatca-testable-invoices", companyId] });
       toast({ title: e.message, variant: "destructive" });
     },
+  });
+
+  const autoComplianceCheckMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API}/api/companies/${companyId}/auto-compliance-check`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({}),
+      });
+      const json = await res.json();
+      setAutoResult(json);
+      if (!res.ok && res.status !== 422) {
+        // 422 = the run completed but one or more sample documents failed
+        // validation — keep the per-document detail in autoResult. Other codes
+        // (400/401/500) are setup/gateway failures with no per-doc breakdown.
+        throw new Error(json.error ?? t("zatcaIntegration.errAutoCheckFailed"));
+      }
+      return json;
+    },
+    onSuccess: (json: any) => {
+      if (json?.allPassed) {
+        toast({
+          title: t("zatcaIntegration.autoCheckSuccessTitle"),
+          description: t("zatcaIntegration.autoCheckSuccessDesc"),
+        });
+      } else {
+        toast({
+          title: t("zatcaIntegration.autoCheckPartialTitle"),
+          description: t("zatcaIntegration.autoCheckPartialDesc"),
+          variant: "destructive",
+        });
+      }
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
   const productionCsidMutation = useMutation({
@@ -748,6 +783,77 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
           completedLabel={t("zatcaIntegration.completedBadge")}
         >
           <div className="space-y-4">
+            {/* One-click automated compliance check — generates, signs, and submits
+                EVERY required sample document (invoice/credit/debit × the company's
+                registered invoice type) so ZATCA can mark compliance complete. */}
+            {!isProductionEnv && (
+              <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 space-y-2">
+                <p className="text-xs text-indigo-900 flex gap-2">
+                  <Wand2 className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span>{t("zatcaIntegration.autoCheckHint")}</span>
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-2 w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white"
+                  disabled={autoComplianceCheckMutation.isPending}
+                  onClick={() => autoComplianceCheckMutation.mutate()}
+                >
+                  {autoComplianceCheckMutation.isPending
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <Wand2 className="h-3.5 w-3.5" />
+                  }
+                  {t("zatcaIntegration.autoCheckButton")}
+                </Button>
+
+                {autoResult && (
+                  <div className={cn(
+                    "rounded-lg border p-3 text-sm space-y-2 mt-2",
+                    autoResult.allPassed
+                      ? "bg-green-50 border-green-200 text-green-800"
+                      : "bg-red-50 border-red-200 text-red-800"
+                  )}>
+                    <p className="font-medium flex items-center gap-1.5">
+                      {autoResult.allPassed
+                        ? <CheckCircle2 className="h-4 w-4 shrink-0" />
+                        : <AlertCircle className="h-4 w-4 shrink-0" />
+                      }
+                      {autoResult.allPassed
+                        ? t("zatcaIntegration.autoCheckAllPassed")
+                        : (autoResult.error ?? t("zatcaIntegration.autoCheckSomeFailed"))}
+                    </p>
+                    {Array.isArray(autoResult.results) && autoResult.results.length > 0 && (
+                      <ul className="space-y-1.5">
+                        {autoResult.results.map((r: any, i: number) => (
+                          <li key={i} className="text-xs rounded bg-white/60 border border-black/5 p-2">
+                            <div className="flex items-center gap-1.5 font-medium">
+                              {r.ok
+                                ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-600" />
+                                : <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-600" />
+                              }
+                              <span>
+                                {t(`zatcaIntegration.autoFlow_${r.flow}`)} — {t(`zatcaIntegration.autoDocType_${r.documentType}`)}
+                              </span>
+                              <span className="font-mono opacity-60">{r.invoiceNumber}</span>
+                            </div>
+                            {r.errors?.length > 0 && (
+                              <ul className="list-disc list-inside mt-1 pr-1 space-y-0.5 text-red-700">
+                                {r.errors.map((m: any, j: number) => (
+                                  <li key={j}>{m.message} <span className="opacity-60">({m.code})</span></li>
+                                ))}
+                              </ul>
+                            )}
+                            {r.note && <p className="mt-1 opacity-70" dir="ltr">{r.note}</p>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {autoResult.hint && <p className="text-xs opacity-80">{autoResult.hint}</p>}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 flex gap-2">
               <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
               <span>{t("zatcaIntegration.step3Hint")}</span>
