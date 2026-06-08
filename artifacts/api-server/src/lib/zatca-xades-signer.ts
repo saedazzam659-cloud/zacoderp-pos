@@ -232,12 +232,33 @@ ${opts.signedProperties}
 // C last). forge gives us the parsed Name with the original ordering,
 // which we reverse so the output matches xmlsec / openssl conventions.
 function parseCertIssuerSerial(der: Buffer): { issuerName: string; serialNumber: string } {
+  // ZATCA certificates are ECDSA (secp256k1). forge.pki.certificateFromAsn1
+  // tries to read the SubjectPublicKeyInfo as RSA and throws "Cannot read
+  // public key. OID is not RSA." on EC keys, so we walk the TBSCertificate
+  // ASN.1 directly and pull out ONLY the issuer Name + serialNumber (the public
+  // key is never needed here).
   const asn1 = forge.asn1.fromDer(forge.util.createBuffer(der.toString("binary")));
-  const cert = forge.pki.certificateFromAsn1(asn1);
+  const tbsItems = (asn1.value as forge.asn1.Asn1[])[0].value as forge.asn1.Asn1[];
 
-  // forge stores attributes in the order they appear in the DER (which is
-  // CA-down to CN — the opposite of RFC 4514). Reverse for the canonical
-  // string.
+  // TBSCertificate ::= SEQUENCE { version [0] EXPLICIT (optional), serialNumber
+  // INTEGER, signature AlgorithmIdentifier, issuer Name, validity, subject, … }.
+  // The version tag is [0] context-specific; when present everything shifts +1.
+  let idx = 0;
+  const firstItem = tbsItems[0];
+  if (firstItem.tagClass === forge.asn1.Class.CONTEXT_SPECIFIC && firstItem.type === 0) {
+    idx = 1;
+  }
+  const serialAsn1 = tbsItems[idx];
+  const issuerAsn1 = tbsItems[idx + 2]; // skip serialNumber (idx) + signatureAlg (idx+1)
+  // RDNAttributesAsArray exists at runtime but is missing from @types/node-forge.
+  const attributes = (
+    forge.pki as unknown as {
+      RDNAttributesAsArray(rdn: forge.asn1.Asn1): forge.pki.CertificateField[];
+    }
+  ).RDNAttributesAsArray(issuerAsn1);
+
+  // RDNs come out in DER order (CA-general first, CN last). Reverse for the
+  // canonical RFC 4514 string (CN first).
   const shortMap: Record<string, string> = {
     "2.5.4.3":  "CN",  // commonName
     "2.5.4.6":  "C",   // countryName
@@ -249,7 +270,7 @@ function parseCertIssuerSerial(der: Buffer): { issuerName: string; serialNumber:
     "1.2.840.113549.1.9.1":       "E",  // emailAddress
   };
   const parts: string[] = [];
-  for (const a of cert.issuer.attributes) {
+  for (const a of attributes) {
     const name = shortMap[a.type ?? ""] ?? a.shortName ?? a.name ?? a.type ?? "";
     const value = String(a.value ?? "");
     // RFC 4514 quoting: escape ',', '+', '"', '\', '<', '>', ';', leading '#' or ' ', trailing ' '.
@@ -268,12 +289,43 @@ function parseCertIssuerSerial(der: Buffer): { issuerName: string; serialNumber:
   }
   const issuerName = parts.reverse().join(", ");
 
-  // forge gives serialNumber as a hex string (no 0x prefix). ZATCA's
-  // ds:X509SerialNumber must be the decimal big-integer form.
-  const serialHex = (cert.serialNumber || "").replace(/^0+/, "") || "0";
+  // serialNumber INTEGER bytes → hex → decimal (ZATCA's ds:X509SerialNumber is
+  // the decimal big-integer form).
+  const serialHex = forge.util.bytesToHex(serialAsn1.value as string).replace(/^0+/, "") || "0";
   const serialNumber = BigInt("0x" + serialHex).toString(10);
 
   return { issuerName, serialNumber };
+}
+
+/**
+ * Extract the certificate's own ECDSA signature value (QR tag 9) from its DER.
+ *
+ * The signatureValue is the 3rd element of the Certificate SEQUENCE — a BIT
+ * STRING wrapping the DER-encoded ECDSA signature (SEQUENCE { r, s }). We avoid
+ * forge.pki.certificateFromAsn1 here because it rejects EC public keys with
+ * "Cannot read public key. OID is not RSA.". Returns null on any parse failure
+ * so callers can omit the tag rather than 500.
+ */
+export function certSignatureFromDer(der: Buffer): Buffer | null {
+  try {
+    const asn1 = forge.asn1.fromDer(forge.util.createBuffer(der.toString("binary")));
+    const sigBits = (asn1.value as forge.asn1.Asn1[])[2];
+    if (typeof sigBits.value === "string") {
+      // BIT STRING kept raw: drop the leading "unused bits" octet (0x00).
+      let bytes = sigBits.value;
+      if (bytes.length && bytes.charCodeAt(0) === 0) bytes = bytes.slice(1);
+      return Buffer.from(bytes, "binary");
+    }
+    if (Array.isArray(sigBits.value) && sigBits.value.length) {
+      // forge auto-decoded the BIT STRING into the inner ECDSA SEQUENCE{r,s};
+      // re-serialize that back to the raw DER signature bytes.
+      const innerDer = forge.asn1.toDer(sigBits.value[0]).getBytes();
+      return Buffer.from(innerDer, "binary");
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function escapeXml(s: string): string {

@@ -18,9 +18,8 @@
  * contains a Phase-1 QR" approach is exactly what produced `invalid-invoice-hash`.
  */
 import { createPublicKey, createPrivateKey } from "crypto";
-import forge from "node-forge";
 import { generateZatcaXml, hashXml, type InvoiceData } from "./zatca-xml.js";
-import { signZatcaUbl, certDerFromToken } from "./zatca-xades-signer.js";
+import { signZatcaUbl, certDerFromToken, certSignatureFromDer } from "./zatca-xades-signer.js";
 import { buildPhase2Qr } from "./zatca-tlv.js";
 
 /** Derive the EGS public key as DER SubjectPublicKeyInfo (QR tag 8). */
@@ -37,10 +36,10 @@ export function certSignatureDer(certBodyBase64: string): Buffer | null {
     // would feed ASCII base64 text into forge and the parse would fail (silently
     // dropping QR tag 9). certDerFromToken unwraps the extra layer when present.
     const { der } = certDerFromToken(certBodyBase64);
-    const asn1 = forge.asn1.fromDer(forge.util.createBuffer(der.toString("binary")));
-    const cert = forge.pki.certificateFromAsn1(asn1);
-    // node-forge stores the signature as a binary string.
-    return Buffer.from(cert.signature, "binary");
+    // ZATCA certs are ECDSA (secp256k1); certSignatureFromDer walks the ASN.1
+    // directly instead of forge.pki.certificateFromAsn1, which throws
+    // "Cannot read public key. OID is not RSA." on EC certificates.
+    return certSignatureFromDer(der);
   } catch {
     return null;
   }
