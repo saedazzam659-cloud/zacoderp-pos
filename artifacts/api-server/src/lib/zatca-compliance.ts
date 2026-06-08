@@ -236,12 +236,25 @@ export async function runAutoComplianceCheck(args: {
         reportingStatus?: string;
       };
       const vr = data.validationResults ?? {};
-      result.errors = vr.errorMessages ?? [];
+      const rawErrors = vr.errorMessages ?? [];
+      // ZATCA returns HTTP 406 + error code "Submitted before" (message
+      // "Compliance check already completed for …") when this document type has
+      // ALREADY passed a prior compliance check — the gateway short-circuits and
+      // does NOT re-validate. For onboarding that is a PASS (the type is already
+      // satisfied toward PCSID issuance), so strip that pseudo-error and count it
+      // as ok. Verified from live ZTC-26 logs: standard invoice/credit/debit
+      // return exactly this once they have passed.
+      const isAlreadyCompleted = (e: { code: string; message: string }) =>
+        e.code === "Submitted before" || /already completed/i.test(e.message ?? "");
+      const alreadyCompleted = rawErrors.some(isAlreadyCompleted);
+      result.errors = alreadyCompleted ? rawErrors.filter((e) => !isAlreadyCompleted(e)) : rawErrors;
       result.warnings = vr.warningMessages ?? [];
       result.status = data.clearanceStatus ?? data.reportingStatus ?? vr.status;
-      // Pass = gateway accepted (2xx) AND no blocking validation errors. Warnings
-      // (e.g. PIH chain notes on synthetic samples) do not block compliance.
-      result.ok = resp.ok && result.errors.length === 0;
+      if (alreadyCompleted && !result.note) result.note = "compliance already completed (submitted before)";
+      // Pass = (gateway accepted (2xx) OR already-completed) AND no remaining
+      // blocking validation errors. Warnings (e.g. PIH chain notes on synthetic
+      // samples) do not block compliance.
+      result.ok = (resp.ok || alreadyCompleted) && result.errors.length === 0;
 
       if (!result.ok) {
         log?.warn?.(
