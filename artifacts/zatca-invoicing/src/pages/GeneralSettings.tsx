@@ -33,6 +33,49 @@ const DECIMAL_OPTIONS = [
   { value: 4, label: "0.0000",example:"1,234.5678" },
 ];
 
+// Company logos are stored as a base64 data URL inside companies.logo. A raw
+// 2 MB upload becomes a ~2.7 MB base64 string, which the production ingress in
+// front of the API can reject with an HTML error page (the client then chokes
+// on "Unexpected token '<'" while parsing the response as JSON). A logo never
+// needs that resolution, so we downscale it to a small canvas before saving —
+// the resulting payload is a few tens of KB and passes any body-size limit.
+async function downscaleLogo(file: File, maxDim = 512): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result as string);
+    fr.onerror = () => reject(new Error("read failed"));
+    fr.readAsDataURL(file);
+  });
+  // SVG is vector + already tiny — rasterising would only hurt quality.
+  if (file.type === "image/svg+xml") return dataUrl;
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = () => reject(new Error("decode failed"));
+      im.src = dataUrl;
+    });
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return dataUrl;
+    ctx.drawImage(img, 0, 0, w, h);
+    // Preserve transparency for PNG/WebP; JPEG is smaller for everything else.
+    const hasAlpha = file.type === "image/png" || file.type === "image/webp";
+    const out = hasAlpha
+      ? canvas.toDataURL("image/png")
+      : canvas.toDataURL("image/jpeg", 0.9);
+    // Never return something larger than the original (rare for tiny inputs).
+    return out.length < dataUrl.length ? out : dataUrl;
+  } catch {
+    return dataUrl;
+  }
+}
+
 export default function GeneralSettings() {
   const { t } = useTranslation();
   const { user, token, setUser } = useAuth() as any;
@@ -95,8 +138,21 @@ export default function GeneralSettings() {
         headers,
         body: JSON.stringify(payload),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? t("pages.generalSettings.saveFailed"));
+      // The server may return a non-JSON error page (e.g. the ingress rejecting
+      // an oversized body with an HTML 413). Read text first so we surface a
+      // clear message instead of a cryptic "Unexpected token '<'".
+      const raw = await res.text();
+      let json: any = null;
+      try {
+        json = raw ? JSON.parse(raw) : null;
+      } catch {
+        throw new Error(
+          res.ok
+            ? t("pages.generalSettings.saveFailed")
+            : `تعذّر حفظ الإعدادات: ردّ الخادم برمز ${res.status}. قد يكون حجم الشعار كبيراً جداً — جرّب صورة أصغر.`,
+        );
+      }
+      if (!res.ok) throw new Error(json?.error ?? t("pages.generalSettings.saveFailed"));
       return json;
     },
     onSuccess: (data) => {
@@ -111,7 +167,7 @@ export default function GeneralSettings() {
 
   // ─── Logo upload handling ─────────────────────────────────────────────────
 
-  const processFile = useCallback((file: File) => {
+  const processFile = useCallback(async (file: File) => {
     setLogoError("");
     if (!file.type.startsWith("image/")) {
       setLogoError(t("pages.generalSettings.invalidFileType")); return;
@@ -119,10 +175,12 @@ export default function GeneralSettings() {
     if (file.size > 2 * 1024 * 1024) {
       setLogoError(t("pages.generalSettings.fileTooLarge")); return;
     }
-    const reader = new FileReader();
-    reader.onload = (e) => setLogo(e.target?.result as string);
-    reader.readAsDataURL(file);
-  }, []);
+    try {
+      setLogo(await downscaleLogo(file));
+    } catch {
+      setLogoError(t("pages.generalSettings.invalidFileType"));
+    }
+  }, [t]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -140,6 +198,14 @@ export default function GeneralSettings() {
   const handleDragLeave = () => setDragging(false);
 
   const handleSave = () => {
+    // Final guard regardless of how the logo was produced (downscale fallback,
+    // raw SVG passthrough, restored value). Keeps the saved base64 well under
+    // any ingress body limit so the save never bounces with an HTML error page.
+    if (logo && logo.length > 700_000) {
+      setLogoError(t("pages.generalSettings.fileTooLarge"));
+      toast({ title: t("pages.generalSettings.fileTooLarge"), variant: "destructive" });
+      return;
+    }
     saveMutation.mutate({ logo: logo ?? null, decimalPlaces: decimals });
   };
 
