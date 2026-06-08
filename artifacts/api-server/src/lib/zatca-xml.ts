@@ -353,7 +353,19 @@ ${billingReferenceXml}
 }
 
 import { createHash } from "crypto";
+import { canonicalizeInvoiceForHash } from "./zatca-c14n.js";
 
+/**
+ * Reference#1 ("invoiceSignedData") DigestValue.
+ *
+ * ZATCA recomputes this over the CANONICAL form of the invoice with its three
+ * enveloped-signature transforms applied (remove UBLExtensions / cac:Signature /
+ * the QR AdditionalDocumentReference), NOT over the raw string. Hashing the raw
+ * string is exactly what produced `invalid-invoice-hash` during the compliance
+ * test. Pass the EMPTY-QR UBL — the QR node is stripped by the transform anyway,
+ * so the hash is stable across QR injection.
+ */
 export function hashXml(xmlContent: string): string {
-  return createHash("sha256").update(xmlContent, "utf8").digest("base64");
+  const canonical = canonicalizeInvoiceForHash(xmlContent);
+  return createHash("sha256").update(canonical, "utf8").digest("base64");
 }

@@ -29,6 +29,7 @@
  */
 import { createSign, createHash, createPrivateKey, type KeyObject } from "crypto";
 import forge from "node-forge";
+import { canonicalizeInContext } from "./zatca-c14n.js";
 
 export interface SignXadesInput {
   ublXml: string;          // unsigned UBL with placeholder UBLExtensions
@@ -104,20 +105,29 @@ export function signZatcaUbl(input: SignXadesInput): SignXadesResult {
     issuerName,
     serialNumber,
   });
+  // Reference#2 ("xadesSignedProperties") DigestValue — hash the CANONICAL form,
+  // not the raw template. ZATCA canonicalizes the SignedProperties node IN CONTEXT,
+  // which inlines all 9 in-scope namespaces (incl. the unused default) on its apex.
+  // Hashing the raw template is what produced `signed-properties-hashing`.
   const signedPropsHashB64 = createHash("sha256")
-    .update(signedProps, "utf8")
+    .update(canonicalizeInContext(signedProps, "SignedProperties"), "utf8")
     .digest("base64");
 
   // 4. Build SignedInfo over (a) invoice digest + (b) signed-properties digest.
   const signedInfo = buildSignedInfo({ invoiceHashB64: invoiceHash, signedPropsHashB64 });
 
   // 5. Sign SignedInfo with ECDSA-SHA256 (P1363 / fixed-length encoding).
+  //    The SignatureValue must be computed over the CANONICAL SignedInfo
+  //    (CanonicalizationMethod = c14n11, inclusive — inlines all in-scope
+  //    namespaces on the apex), NOT the raw template. Signing the raw template
+  //    is what produced `signature-method` (ZATCA verifies over C14N(SignedInfo)).
+  const canonicalSignedInfo = canonicalizeInContext(signedInfo, "SignedInfo");
   let key: KeyObject;
   try { key = createPrivateKey(privateKeyPem); }
   catch (e) { throw new Error(`invalid EC private key: ${e instanceof Error ? e.message : String(e)}`); }
 
   const signer = createSign("SHA256");
-  signer.update(signedInfo, "utf8");
+  signer.update(canonicalSignedInfo, "utf8");
   signer.end();
   const sigDer = signer.sign({ key, dsaEncoding: "ieee-p1363" });
   const signatureValueB64 = sigDer.toString("base64");
