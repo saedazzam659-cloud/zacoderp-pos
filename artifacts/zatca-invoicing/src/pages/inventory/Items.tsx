@@ -1445,8 +1445,13 @@ export default function Items() {
                   <Fragment key={it.id}>
                     <tr
                       data-status={dictStatus}
+                      onDoubleClick={(e) => {
+                        const el = e.target as Element | null;
+                        if (el?.closest('button, a, input, [role="checkbox"]')) return;
+                        handleEdit(it);
+                      }}
                       className={cn(
-                        "transition-colors group",
+                        "transition-colors group cursor-pointer",
                         isSel ? SEL_TONE : rowToneFor({ status: dictStatus, statusMap: DICT_TONES }),
                       )}
                       title={buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}
@@ -1484,8 +1489,10 @@ export default function Items() {
                             </div>
                           )}
                           <div className="min-w-0">
-                            <p className="font-medium">{pickName(it.nameAr, it.nameEn)}</p>
-                            {(isRtl ? it.nameEn : it.nameAr) && <p className="text-xs text-muted-foreground">{isRtl ? it.nameEn : it.nameAr}</p>}
+                            <div className="max-h-[60px] overflow-y-auto pe-1 [scrollbar-width:thin] rounded-sm">
+                              <p className="font-medium break-words leading-snug">{pickName(it.nameAr, it.nameEn)}</p>
+                              {(isRtl ? it.nameEn : it.nameAr) && <p className="text-xs text-muted-foreground break-words leading-snug">{isRtl ? it.nameEn : it.nameAr}</p>}
+                            </div>
                             {it.barcode && <p className="text-[10px] text-muted-foreground/70 font-mono">🔖 {it.barcode}</p>}
                             {it.tags && tagsToArray(it.tags).length > 0 && (
                               <div className="flex flex-wrap gap-1 mt-1">
