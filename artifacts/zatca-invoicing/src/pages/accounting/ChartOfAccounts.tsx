@@ -310,6 +310,51 @@ export default function ChartOfAccounts() {
     return prefix + String(maxN + 1).padStart(width, "0");
   }
 
+  // Build the suggested code for a NEW account when a parent is chosen:
+  //   parentCode + (last child's numeric suffix + 1), keeping the suffix's
+  //   zero-padding. e.g. parent "11031" with last child "1103101" → "1103102";
+  //   parent "11031" with no children → "1103101" (suffix "01"). The width is
+  //   taken from the highest existing child so a 2-digit shop keeps 2 digits.
+  //   Collisions across the whole chart are skipped defensively.
+  function suggestCodeForParent(parentIdStr: string): string {
+    if (!parentIdStr) return "";
+    const parent = accounts.find((x: any) => String(x.id) === String(parentIdStr));
+    const parentCode = String(parent?.code ?? "").trim();
+    if (!parentCode) return "";
+    const allCodes = new Set<string>(accounts.map((x: any) => String(x.code)));
+    const children = accounts.filter((x: any) => String(x.parentId ?? "") === String(parent.id));
+    // Find the "last" child by the numeric suffix that follows the parent code.
+    let bestVal = 0, bestWidth = 2;
+    for (const c of children) {
+      const code = String(c.code ?? "").trim();
+      if (!code.startsWith(parentCode)) continue;
+      const suf = code.slice(parentCode.length);
+      if (!/^\d+$/.test(suf)) continue;
+      const n = parseInt(suf, 10);
+      if (n > bestVal) { bestVal = n; bestWidth = suf.length; }
+    }
+    for (let i = 1; i <= 1000; i++) {
+      const cand = parentCode + String(bestVal + i).padStart(bestWidth, "0");
+      if (!allCodes.has(cand)) return cand;
+    }
+    return parentCode + String(bestVal + 1).padStart(bestWidth, "0");
+  }
+
+  // True tree depth of an account from the parentId chain (root = 1), so a
+  // child minted under a level-4 parent is set to level 5. The stored `level`
+  // column can be stale, so we always walk the chain (with a cycle guard).
+  function accountDepth(acc: any): number {
+    let depth = 1, cur: any = acc;
+    const seen = new Set<number>();
+    while (cur?.parentId != null && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      const p = accounts.find((x: any) => x.id === cur.parentId);
+      if (!p) break;
+      depth++; cur = p;
+    }
+    return depth;
+  }
+
   function handleCopy(a: any) {
     const parentIdNum = a.parentId ?? null;
     const nextCode    = suggestNextCode(a.code ?? "", parentIdNum);
@@ -569,7 +614,18 @@ export default function ChartOfAccounts() {
               <SearchCombobox
                 items={parentItems}
                 value={form.parentId}
-                onValueChange={v => setForm((p: any) => ({ ...p, parentId: v }))}
+                onValueChange={v => setForm((p: any) => {
+                  if (v === p.parentId) return p;
+                  const next: any = { ...p, parentId: v };
+                  if (v) {
+                    const parent = accounts.find((x: any) => String(x.id) === String(v));
+                    next.code = suggestCodeForParent(v);
+                    if (parent) next.level = accountDepth(parent) + 1;
+                  } else {
+                    next.level = 1;
+                  }
+                  return next;
+                })}
                 placeholder={t("chartOfAccounts.noParent")}
                 searchPlaceholder={t("chartOfAccounts.searchParent")}
               />
