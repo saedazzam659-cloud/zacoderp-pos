@@ -14,7 +14,7 @@ import ExportButtons from "@/components/ExportButtons";
 import AccountsImportPanel from "@/components/AccountsImportPanel";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { TablePagination, usePagination } from "@/components/TablePagination";
-import { Plus, Pencil, Trash2, Copy, BookOpen, Search, ChevronLeft, ChevronRight, Printer, LayoutGrid, ListTree, ChevronDown, FolderTree, CheckCircle2, XCircle, ExternalLink, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { Plus, Pencil, Trash2, Copy, CopyPlus, BookOpen, Search, ChevronLeft, ChevronRight, Printer, LayoutGrid, ListTree, ChevronDown, FolderTree, CheckCircle2, XCircle, ExternalLink, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { printChartOfAccountsExternal, type CoaPrintAccount, type CoaPrintTypeMeta } from "@/lib/export";
@@ -374,6 +374,59 @@ export default function ChartOfAccounts() {
     setEditId(null);
     setShowForm(true);
     // Defer to next tick so the dialog has rendered the input before we focus.
+    setTimeout(() => {
+      const el = codeInputRef.current;
+      if (el) { el.focus(); el.select(); }
+    }, 80);
+  }
+
+  // Suggest a NEW CHILD code under `parentCode`: parentCode + next numeric
+  // suffix zero-padded to a MINIMUM of 4 digits (0001, 0002, …). If existing
+  // children already use a wider suffix, that wider width is kept. Collisions
+  // across the whole chart are skipped defensively. Read-only — does not touch
+  // any existing account or the tree.
+  function suggestChildCode4(parentCode: string, parentId: number): string {
+    const base = String(parentCode ?? "").trim();
+    if (!base) return "";
+    const allCodes = new Set<string>(accounts.map((x: any) => String(x.code)));
+    const children = accounts.filter((x: any) => x.parentId === parentId);
+    let bestVal = 0, bestWidth = 4;
+    for (const c of children) {
+      const code = String(c.code ?? "").trim();
+      if (!code.startsWith(base)) continue;
+      const suf = code.slice(base.length);
+      if (!/^\d+$/.test(suf)) continue;
+      const n = parseInt(suf, 10);
+      if (Number.isFinite(n) && n > bestVal) bestVal = n;
+      if (suf.length > bestWidth) bestWidth = suf.length;
+    }
+    for (let i = 1; i <= 10000; i++) {
+      const cand = base + String(bestVal + i).padStart(bestWidth, "0");
+      if (!allCodes.has(cand)) return cand;
+    }
+    return base + String(bestVal + 1).padStart(bestWidth, "0");
+  }
+
+  // Like handleCopy, but creates a NEW SUB-ACCOUNT (child) under the clicked
+  // account with an auto-generated 4-digit-padded code. Opens the prefilled
+  // form for review (does NOT save automatically and does NOT modify the parent).
+  function handleAddChild(a: any) {
+    const childCode = suggestChildCode4(a.code ?? "", a.id);
+    setForm({
+      code:            childCode,
+      nameAr:          "",
+      nameEn:          "",
+      accountType:     a.accountType ?? "asset",
+      reportDirection: a.reportDirection ?? "",
+      parentId:        String(a.id),
+      level:           accountDepth(a) + 1,
+      isPosting:       true,
+      isActive:        true,
+      costCenterId:    a.costCenterId ? String(a.costCenterId) : "",
+      notes:           "",
+    });
+    setEditId(null);
+    setShowForm(true);
     setTimeout(() => {
       const el = codeInputRef.current;
       if (el) { el.focus(); el.select(); }
@@ -766,6 +819,9 @@ export default function ChartOfAccounts() {
                   <Button variant="outline" size="icon" className="h-7 w-7 bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700" onClick={() => handleCopy(a)} title={t("chartOfAccounts.copyAccount")}>
                     <Copy className="h-3 w-3" />
                   </Button>
+                  <Button variant="outline" size="icon" className="h-7 w-7 bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700" onClick={() => handleAddChild(a)} title={isRtl ? "إضافة حساب فرعي (ترقيم تلقائي ٤ خانات)" : "Add sub-account (auto 4-digit)"}>
+                    <CopyPlus className="h-3 w-3" />
+                  </Button>
                   <Button variant="outline" size="icon" className="h-7 w-7 bg-red-50 hover:bg-red-100 border-red-200 text-red-700" onClick={() => { if (confirm(t("chartOfAccounts.confirmDelete"))) deleteMut.mutate(a.id); }} title={t("common.delete")}>
                     <Trash2 className="h-3 w-3" />
                   </Button>
@@ -878,6 +934,15 @@ export default function ChartOfAccounts() {
                             title={t("chartOfAccounts.copyAccount")}
                           >
                             <Copy className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8 bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700 hover:text-teal-800 shadow-sm"
+                            onClick={() => handleAddChild(a)}
+                            title={isRtl ? "إضافة حساب فرعي (ترقيم تلقائي ٤ خانات)" : "Add sub-account (auto 4-digit)"}
+                          >
+                            <CopyPlus className="h-3.5 w-3.5" />
                           </Button>
                           <Button
                             variant="outline"
