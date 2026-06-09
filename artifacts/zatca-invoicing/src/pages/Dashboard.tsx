@@ -179,6 +179,14 @@ const PAYMENT_LABELS_EN: Record<string, string> = {
   cash: "Cash", bank: "Bank", credit: "Credit",
 };
 
+function daysUntilEnd(iso?: string | null): number | null {
+  if (!iso) return null;
+  const t = new Date(String(iso).slice(0, 10) + "T00:00:00").getTime();
+  if (isNaN(t)) return null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.round((t - today.getTime()) / 86_400_000);
+}
+
 export default function Dashboard() {
   const { t, i18n } = useTranslation();
   const { user } = useAuth();
@@ -200,6 +208,16 @@ export default function Dashboard() {
 
   const ownCompany = user?.company;
   const isNotRegistered = ownCompany && !ownCompany.zatcaPcsid;
+
+  // Subscription expiry warning: show an eye-catching banner once the company's
+  // subscription is within `warningDays` of (or past) its end date. Days/contact
+  // come from the global SuperAdmin-configured notice settings on /api/auth/me.
+  const subEndDate = (user as any)?.subscription?.endDate as string | undefined;
+  const subNotice = (user as any)?.subscriptionNotice as { warningDays?: number; contactInfo?: string } | undefined;
+  const subContact = subNotice?.contactInfo?.trim() ? subNotice.contactInfo.trim() : "";
+  const subDays = subEndDate ? daysUntilEnd(subEndDate) : null;
+  const subWarningDays = subNotice?.warningDays ?? 7;
+  const showSubWarning = subDays != null && subDays <= subWarningDays;
 
   const canViewRecentInvoices = usePermission("dashboard_recent_invoices", "view");
 
@@ -233,6 +251,27 @@ export default function Dashboard() {
           </Button>
         </div>
       </div>
+
+      {/* Subscription expiry warning banner */}
+      {showSubWarning && (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-4 rounded-xl border border-red-200 bg-gradient-to-r from-amber-50 to-red-50">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100">
+            <AlertTriangle className="h-5 w-5 text-red-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-red-800 text-sm">
+              {subDays! < 0
+                ? `انتهى اشتراكك منذ ${Math.abs(subDays!)} يوم — يرجى التجديد فورًا`
+                : subDays === 0
+                  ? "ينتهي اشتراكك اليوم!"
+                  : `ينتهي اشتراكك خلال ${subDays} يوم`}
+            </p>
+            <p className="text-xs text-red-700 mt-0.5 whitespace-pre-line">
+              جدّد الآن لتجنّب توقّف الخدمة.{subContact ? `\n${subContact}` : ""}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ZATCA onboarding banner */}
       {isNotRegistered && (

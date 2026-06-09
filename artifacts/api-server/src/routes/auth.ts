@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable } from "@workspace/db";
-import { and, eq, isNull, inArray } from "drizzle-orm";
+import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable } from "@workspace/db";
+import { and, eq, isNull, inArray, sql, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { writeAudit } from "../middleware/permissions.js";
@@ -22,6 +22,32 @@ function loginClientIp(req: any): string | null {
   if (typeof xf === "string" && xf.length) return xf.split(",")[0].trim().slice(0, 64);
   if (Array.isArray(xf) && xf.length) return String(xf[0]).slice(0, 64);
   return (req.socket?.remoteAddress ?? null)?.slice(0, 64) ?? null;
+}
+
+// Subscription-notice settings (managed by SuperAdmin on the licenses screen):
+//   • subscription_warning_days — show an in-app pre-expiry banner this many
+//     days before the subscription end date.
+//   • subscription_grace_days   — keep allowing login this many days AFTER the
+//     end date before the hard block kicks in (0 = block immediately).
+//   • subscription_contact_info — free text (sales phone/email) appended to the
+//     expiry message shown to tenants.
+const SUB_WARNING_KEY = "subscription_warning_days";
+const SUB_GRACE_KEY = "subscription_grace_days";
+const SUB_CONTACT_KEY = "subscription_contact_info";
+
+async function getSubscriptionNotice(): Promise<{ warningDays: number; graceDays: number; contactInfo: string }> {
+  const rows = await db.select().from(systemSettingsTable)
+    .where(inArray(systemSettingsTable.key, [SUB_WARNING_KEY, SUB_GRACE_KEY, SUB_CONTACT_KEY]));
+  const map = new Map(rows.map(r => [r.key, r.value]));
+  const toInt = (v: string | null | undefined, def: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : def;
+  };
+  return {
+    warningDays: toInt(map.get(SUB_WARNING_KEY), 7),
+    graceDays: toInt(map.get(SUB_GRACE_KEY), 0),
+    contactInfo: map.get(SUB_CONTACT_KEY) ?? "",
+  };
 }
 
 // POST /api/auth/login
@@ -150,6 +176,43 @@ router.post("/login", async (req, res) => {
     }
   }
 
+  // Hard expiry gate: block login once the company's latest subscription has
+  // lapsed beyond the configured grace period — independent of (and faster
+  // than) the 6-hourly auto-suspend job, so an expired tenant is locked out at
+  // the very next login attempt. Done in SQL against CURRENT_DATE to match the
+  // auto-suspend job's day-boundary semantics (avoids UTC/local drift).
+  // Superadmin is tenant-less and exempt.
+  if (user.companyId && user.role !== "superadmin") {
+    const notice = await getSubscriptionNotice();
+    const expRes: any = await db.execute(sql`
+      WITH latest AS (
+        SELECT end_date FROM subscriptions
+         WHERE company_id = ${user.companyId}
+         ORDER BY end_date DESC, id DESC
+         LIMIT 1
+      )
+      SELECT end_date::text AS end_date,
+             (end_date::date < (CURRENT_DATE - (${notice.graceDays})::int)) AS is_expired
+        FROM latest
+    `);
+    const expRow = ((expRes as { rows?: any[] }).rows ?? expRes)?.[0];
+    if (expRow?.is_expired) {
+      await writeAudit({
+        userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
+        module: "auth", action: "denied",
+        method: "POST", path: "/api/auth/login", statusCode: 403,
+        ip, userAgent: ua, metadata: { reason: "subscription_expired", endDate: expRow.end_date },
+      });
+      const endStr = String(expRow.end_date).slice(0, 10).split("-").reverse().join("/");
+      const contact = notice.contactInfo.trim() ? `\n${notice.contactInfo.trim()}` : "";
+      res.status(403).json({
+        error: `انتهى اشتراك شركتك بتاريخ ${endStr}. الرجاء التواصل مع قسم المبيعات لتجديد الاشتراك.${contact}`,
+        code: "SUBSCRIPTION_EXPIRED",
+      });
+      return;
+    }
+  }
+
   // Single-session enforcement — generate new token (invalidates old)
   const sessionToken = generateToken();
   const sessionId = randomUUID();
@@ -265,14 +328,21 @@ router.post("/login", async (req, res) => {
     ip, userAgent: ua, metadata: null,
   });
 
-  // Get subscription
+  // Get subscription — pick the LATEST row (same rule as the expiry gate's CTE:
+  // ORDER BY end_date DESC, id DESC) so the returned endDate / dashboard banner
+  // always reflect the exact subscription the login gate evaluated.
   const [subscription] = user.companyId
-    ? await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.companyId, user.companyId))
+    ? await db.select().from(subscriptionsTable)
+        .where(eq(subscriptionsTable.companyId, user.companyId))
+        .orderBy(desc(subscriptionsTable.endDate), desc(subscriptionsTable.id))
+        .limit(1)
     : [null];
 
   const [company] = user.companyId
     ? await db.select().from(companiesTable).where(eq(companiesTable.id, user.companyId))
     : [null];
+
+  const subscriptionNotice = await getSubscriptionNotice();
 
   // Load branch grants so the client can scope BranchFilter dropdowns.
   const branchLinks = await db
@@ -322,6 +392,7 @@ router.post("/login", async (req, res) => {
       branchIds: branchLinks.map(l => l.branchId),
       company,
       subscription,
+      subscriptionNotice,
     },
     manualSessions,
     currentSessionId,
@@ -468,13 +539,20 @@ router.get("/me", async (req, res) => {
     return;
   }
 
+  // Same "latest subscription" rule as the login gate so /me stays consistent
+  // with the gate decision (see login handler above).
   const [subscription] = user.companyId
-    ? await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.companyId, user.companyId))
+    ? await db.select().from(subscriptionsTable)
+        .where(eq(subscriptionsTable.companyId, user.companyId))
+        .orderBy(desc(subscriptionsTable.endDate), desc(subscriptionsTable.id))
+        .limit(1)
     : [null];
 
   const [company] = user.companyId
     ? await db.select().from(companiesTable).where(eq(companiesTable.id, user.companyId))
     : [null];
+
+  const subscriptionNotice = await getSubscriptionNotice();
 
   const branchLinks = await db
     .select({ branchId: userBranchesTable.branchId })
@@ -504,6 +582,7 @@ router.get("/me", async (req, res) => {
     branchIds: branchLinks.map(l => l.branchId),
     company,
     subscription,
+    subscriptionNotice,
   });
 });
 

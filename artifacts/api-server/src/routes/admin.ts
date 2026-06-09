@@ -784,6 +784,54 @@ router.put("/system-settings/auto-suspend", requireSuperAdmin, async (req, res) 
   res.json({ ok: true, enabled });
 });
 
+// ─── Subscription notice settings (pre-expiry warning + grace + contact) ────
+// One global config (all companies) driving: the in-app pre-expiry banner
+// threshold, the post-expiry login grace period, and the free-text contact
+// info appended to the expiry message tenants see at login.
+const SUB_WARNING_KEY = "subscription_warning_days";
+const SUB_GRACE_KEY = "subscription_grace_days";
+const SUB_CONTACT_KEY = "subscription_contact_info";
+
+router.get("/system-settings/subscription-notice", requireSuperAdmin, async (_req, res) => {
+  const rows = await db.select().from(systemSettingsTable)
+    .where(inArray(systemSettingsTable.key, [SUB_WARNING_KEY, SUB_GRACE_KEY, SUB_CONTACT_KEY]));
+  const map = new Map(rows.map(r => [r.key, r.value]));
+  const toInt = (v: string | null | undefined, def: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : def;
+  };
+  res.json({
+    warningDays: toInt(map.get(SUB_WARNING_KEY), 7),
+    graceDays: toInt(map.get(SUB_GRACE_KEY), 0),
+    contactInfo: map.get(SUB_CONTACT_KEY) ?? "",
+  });
+});
+
+router.put("/system-settings/subscription-notice", requireSuperAdmin, async (req, res) => {
+  const warningDays = toBoundedInt(req.body?.warningDays, 0, 3650) ?? 7;
+  const graceDays = toBoundedInt(req.body?.graceDays, 0, 3650) ?? 0;
+  const contactInfo = String(req.body?.contactInfo ?? "").slice(0, 2000);
+  await db.execute(sql`
+    INSERT INTO system_settings (key, value, updated_at) VALUES
+      (${SUB_WARNING_KEY}, ${String(warningDays)}, NOW()),
+      (${SUB_GRACE_KEY}, ${String(graceDays)}, NOW()),
+      (${SUB_CONTACT_KEY}, ${contactInfo}, NOW())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+  `);
+  await writeAudit({
+    userId: req.adminUser?.id ?? null,
+    username: req.adminUser?.username ?? null,
+    role: "superadmin",
+    companyId: null,
+    module: "subscriptions",
+    action: "edit",
+    entityType: "system_setting",
+    entityId: "subscription_notice",
+    metadata: { warningDays, graceDays, hasContact: !!contactInfo.trim() },
+  });
+  res.json({ ok: true, warningDays, graceDays, contactInfo });
+});
+
 // POST /api/admin/licenses — upsert a license/subscription for a company
 router.post("/licenses", requireSuperAdmin, async (req, res) => {
   try {
