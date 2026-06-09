@@ -19,9 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -29,7 +27,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Brain, Save, Loader2, ShieldOff, ShieldCheck, AlertTriangle, Activity,
-  Globe, Building2, Sparkles, DollarSign, Filter,
+  Building2, Sparkles, DollarSign, Filter,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -317,30 +315,28 @@ export default function AiControls() {
       <Card>
         <CardContent className="p-4 flex items-center gap-3 flex-wrap">
           <Label className="text-sm font-semibold">السياق:</Label>
-          <Select
-            value={companyId == null ? "__system__" : String(companyId)}
-            onValueChange={v => setCompanyId(v === "__system__" ? null : Number(v))}
-          >
-            <SelectTrigger className="w-[320px]">
-              <SelectValue placeholder="اختر..." />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__system__">
-                <span className="flex items-center gap-2">
-                  <Globe className="h-4 w-4" />
-                  الإعدادات الافتراضية للنظام (تنطبق على كل شركة بدون تخصيص)
-                </span>
-              </SelectItem>
-              {(companiesQ.data?.companies ?? []).map(c => (
-                <SelectItem key={c.id} value={String(c.id)}>
-                  <span className="flex items-center gap-2">
-                    <Building2 className="h-4 w-4" />
-                    {c.nameAr || c.nameEn || `شركة #${c.id}`} <span className="text-muted-foreground">(#{c.id})</span>
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="w-[320px]">
+            <SearchCombobox
+              value={companyId == null ? "__system__" : String(companyId)}
+              onValueChange={v => setCompanyId(!v || v === "__system__" ? null : Number(v))}
+              placeholder="اختر شركة..."
+              searchPlaceholder="ابحث باسم الشركة أو رقمها..."
+              emptyText="لا توجد شركة مطابقة"
+              items={[
+                {
+                  value: "__system__",
+                  label: "الإعدادات الافتراضية للنظام",
+                  description: "تنطبق على كل شركة بدون تخصيص",
+                },
+                ...(companiesQ.data?.companies ?? []).map(c => ({
+                  value: String(c.id),
+                  code: `#${c.id}`,
+                  label: c.nameAr || c.nameEn || `شركة #${c.id}`,
+                  labelEn: c.nameEn || undefined,
+                })),
+              ]}
+            />
+          </div>
 
           <div className="flex-1" />
 
