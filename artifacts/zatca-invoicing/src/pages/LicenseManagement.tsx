@@ -95,6 +95,45 @@ export default function LicenseManagement() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm());
 
+  // ─── Subscription-notice settings (global, all companies) ───────
+  // Pre-expiry banner threshold + post-expiry login grace + contact info
+  // shown to tenants with the expiry message. SuperAdmin-only endpoints.
+  const { data: notice } = useQuery({
+    queryKey: ["admin-subscription-notice"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/system-settings/subscription-notice`, { headers });
+      if (!r.ok) throw new Error("failed");
+      return r.json() as Promise<{ warningDays: number; graceDays: number; contactInfo: string }>;
+    },
+  });
+  const [noticeForm, setNoticeForm] = useState<{ warningDays: string; graceDays: string; contactInfo: string } | null>(null);
+  useEffect(() => {
+    if (notice && noticeForm === null) {
+      setNoticeForm({
+        warningDays: String(notice.warningDays),
+        graceDays: String(notice.graceDays),
+        contactInfo: notice.contactInfo ?? "",
+      });
+    }
+  }, [notice, noticeForm]);
+  const setNoticeField = (k: "warningDays" | "graceDays" | "contactInfo", v: string) =>
+    setNoticeForm(f => ({ warningDays: "7", graceDays: "0", contactInfo: "", ...(f ?? {}), [k]: v }));
+  const noticeMutation = useMutation({
+    mutationFn: async (body: { warningDays: number; graceDays: number; contactInfo: string }) => {
+      const r = await fetch(`${API}/api/admin/system-settings/subscription-notice`, {
+        method: "PUT", headers, body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error ?? "حدث خطأ");
+      return j;
+    },
+    onSuccess: () => {
+      toast({ title: "✓ تم حفظ إعدادات تنبيه الاشتراك" });
+      qc.invalidateQueries({ queryKey: ["admin-subscription-notice"] });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
   // ─── Data ────────────────────────────────────────────────────
   const { data: companies = [] } = useQuery<Company[]>({
     queryKey: ["companies-list"],
@@ -272,6 +311,66 @@ export default function LicenseManagement() {
           </p>
         </div>
       </div>
+
+      {/* ─── Global subscription-notice settings ───────────────── */}
+      <Card className="border-amber-200 dark:border-amber-900">
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            <h2 className="font-semibold text-sm">إعدادات تنبيه انتهاء الاشتراك</h2>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            تتحكم في تنبيه قرب الانتهاء داخل النظام، وفترة السماح بعد الانتهاء قبل منع الدخول،
+            وبيانات التواصل التي تظهر للشركات مع رسالة الانتهاء. تُطبَّق على كل الشركات.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">التنبيه قبل الانتهاء (يوم)</Label>
+              <Input
+                type="number" min={0}
+                value={noticeForm?.warningDays ?? ""}
+                onChange={e => setNoticeField("warningDays", e.target.value)}
+                className="mt-1"
+              />
+              <p className="text-[11px] text-muted-foreground mt-1">يظهر بانر في الشاشة الرئيسية قبل الانتهاء بهذه المدة.</p>
+            </div>
+            <div>
+              <Label className="text-xs">فترة السماح بعد الانتهاء (يوم)</Label>
+              <Input
+                type="number" min={0}
+                value={noticeForm?.graceDays ?? ""}
+                onChange={e => setNoticeField("graceDays", e.target.value)}
+                className="mt-1"
+              />
+              <p className="text-[11px] text-muted-foreground mt-1">٠ = منع الدخول فور انتهاء آخر يوم.</p>
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">بيانات التواصل وأرقام الهواتف (تظهر مع رسالة الانتهاء)</Label>
+            <textarea
+              rows={3}
+              value={noticeForm?.contactInfo ?? ""}
+              onChange={e => setNoticeField("contactInfo", e.target.value)}
+              placeholder="مثال: للتجديد تواصل مع قسم المبيعات: 0501234567 — sales@example.com"
+              className="mt-1 flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          </div>
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              disabled={!noticeForm || noticeMutation.isPending}
+              onClick={() => noticeForm && noticeMutation.mutate({
+                warningDays: Math.max(0, Math.floor(Number(noticeForm.warningDays) || 0)),
+                graceDays: Math.max(0, Math.floor(Number(noticeForm.graceDays) || 0)),
+                contactInfo: noticeForm.contactInfo,
+              })}
+            >
+              <Save className="h-3.5 w-3.5 ml-1" />
+              حفظ الإعدادات
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
 

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -261,44 +261,6 @@ export default function SubscriptionManagement() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
-  // Subscription-notice settings (pre-expiry banner threshold, post-expiry
-  // login grace, and contact info shown with the expiry message).
-  const { data: notice } = useQuery({
-    queryKey: ["admin-subscription-notice"],
-    queryFn: async () => {
-      const res = await fetch(`${API}/api/admin/system-settings/subscription-notice`, { headers });
-      if (!res.ok) throw new Error("failed");
-      return res.json() as Promise<{ warningDays: number; graceDays: number; contactInfo: string }>;
-    },
-  });
-  const [noticeForm, setNoticeForm] = useState<{ warningDays: string; graceDays: string; contactInfo: string } | null>(null);
-  useEffect(() => {
-    if (notice && noticeForm === null) {
-      setNoticeForm({
-        warningDays: String(notice.warningDays),
-        graceDays: String(notice.graceDays),
-        contactInfo: notice.contactInfo ?? "",
-      });
-    }
-  }, [notice, noticeForm]);
-  const setNoticeField = (k: "warningDays" | "graceDays" | "contactInfo", v: string) =>
-    setNoticeForm(f => ({ warningDays: "7", graceDays: "0", contactInfo: "", ...(f ?? {}), [k]: v }));
-  const noticeMutation = useMutation({
-    mutationFn: async (body: { warningDays: number; graceDays: number; contactInfo: string }) => {
-      const res = await fetch(`${API}/api/admin/system-settings/subscription-notice`, {
-        method: "PUT", headers, body: JSON.stringify(body),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "حدث خطأ");
-      return json;
-    },
-    onSuccess: () => {
-      toast({ title: "✓ تم حفظ إعدادات تنبيه الاشتراك" });
-      qc.invalidateQueries({ queryKey: ["admin-subscription-notice"] });
-    },
-    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
-  });
-
   // Filtering
   const filtered = useMemo(() => (rows as any[]).filter((r: any) => {
     const sub = r.subscription;
@@ -377,63 +339,6 @@ export default function SubscriptionManagement() {
         <StatCard label="نشطة"               value={active}        icon={CheckCircle2}   iconBg="bg-green-100"   iconColor="text-green-600" />
         <StatCard label="تنتهي خلال 30 يوم" value={expiringSoon}  icon={AlertTriangle}  iconBg="bg-amber-100"   iconColor="text-amber-600" />
         <StatCard label="منتهية"             value={expired}       icon={XCircle}        iconBg="bg-red-100"     iconColor="text-red-600" />
-      </div>
-
-      {/* Subscription-notice settings tool */}
-      <div className="rounded-xl border bg-card p-4 space-y-3">
-        <div className="flex items-center gap-2">
-          <ShieldAlert className="h-4 w-4 text-amber-600" />
-          <h2 className="font-semibold text-sm">إعدادات تنبيه انتهاء الاشتراك</h2>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          تتحكم في تنبيه قرب الانتهاء داخل النظام، وفترة السماح بعد الانتهاء قبل منع الدخول،
-          وبيانات التواصل التي تظهر للشركات مع رسالة الانتهاء. تُطبَّق على كل الشركات.
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <Label className="text-xs">التنبيه قبل الانتهاء (يوم)</Label>
-            <Input
-              type="number" min={0}
-              value={noticeForm?.warningDays ?? ""}
-              onChange={e => setNoticeField("warningDays", e.target.value)}
-              className="mt-1"
-            />
-            <p className="text-[11px] text-muted-foreground mt-1">يظهر بانر في الشاشة الرئيسية قبل الانتهاء بهذه المدة.</p>
-          </div>
-          <div>
-            <Label className="text-xs">فترة السماح بعد الانتهاء (يوم)</Label>
-            <Input
-              type="number" min={0}
-              value={noticeForm?.graceDays ?? ""}
-              onChange={e => setNoticeField("graceDays", e.target.value)}
-              className="mt-1"
-            />
-            <p className="text-[11px] text-muted-foreground mt-1">٠ = منع الدخول فور انتهاء آخر يوم.</p>
-          </div>
-        </div>
-        <div>
-          <Label className="text-xs">بيانات التواصل وأرقام الهواتف (تظهر مع رسالة الانتهاء)</Label>
-          <textarea
-            rows={3}
-            value={noticeForm?.contactInfo ?? ""}
-            onChange={e => setNoticeField("contactInfo", e.target.value)}
-            placeholder="مثال: للتجديد تواصل مع قسم المبيعات: 0501234567 — sales@example.com"
-            className="mt-1 flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-          />
-        </div>
-        <div className="flex justify-end">
-          <Button
-            size="sm"
-            disabled={!noticeForm || noticeMutation.isPending}
-            onClick={() => noticeForm && noticeMutation.mutate({
-              warningDays: Math.max(0, Math.floor(Number(noticeForm.warningDays) || 0)),
-              graceDays: Math.max(0, Math.floor(Number(noticeForm.graceDays) || 0)),
-              contactInfo: noticeForm.contactInfo,
-            })}
-          >
-            حفظ الإعدادات
-          </Button>
-        </div>
       </div>
 
       {/* Over-limit collapsible panel */}
