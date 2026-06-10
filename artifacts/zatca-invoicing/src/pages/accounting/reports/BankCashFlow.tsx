@@ -12,8 +12,12 @@ import BranchFilter from "@/components/BranchFilter";
 import ExportButtons from "@/components/ExportButtons";
 import {
   Landmark, Search, Printer, ArrowDownToLine, ArrowUpFromLine,
-  Wallet, CheckCircle2, AlertTriangle,
+  Wallet, CheckCircle2, AlertTriangle, BarChart3, TrendingUp,
 } from "lucide-react";
+import {
+  ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend,
+  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
+} from "recharts";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -30,19 +34,19 @@ type CashFlowResponse = {
 };
 
 // Deposit categories (incoming) — order + label + tone for the analysis table.
-const DEPOSIT_CATS: { key: string; ar: string; en: string; tone: string }[] = [
-  { key: "sales",       ar: "إيداع مبيعات",        en: "Sales deposits",      tone: "text-sky-700" },
-  { key: "customers",   ar: "إيداع من عملاء",       en: "Customer deposits",   tone: "text-emerald-700" },
-  { key: "partner",     ar: "إيداع من شريك / رأس المال", en: "Partner / capital", tone: "text-violet-700" },
-  { key: "transfersIn", ar: "تحويلات واردة",        en: "Incoming transfers",  tone: "text-teal-700" },
-  { key: "other",       ar: "إيداعات أخرى",         en: "Other deposits",      tone: "text-slate-600" },
+const DEPOSIT_CATS: { key: string; ar: string; en: string; tone: string; color: string }[] = [
+  { key: "sales",       ar: "إيداع مبيعات",        en: "Sales deposits",      tone: "text-sky-700",     color: "#0284c7" },
+  { key: "customers",   ar: "إيداع من عملاء",       en: "Customer deposits",   tone: "text-emerald-700", color: "#059669" },
+  { key: "partner",     ar: "إيداع من شريك / رأس المال", en: "Partner / capital", tone: "text-violet-700", color: "#7c3aed" },
+  { key: "transfersIn", ar: "تحويلات واردة",        en: "Incoming transfers",  tone: "text-teal-700",    color: "#0d9488" },
+  { key: "other",       ar: "إيداعات أخرى",         en: "Other deposits",      tone: "text-slate-600",   color: "#64748b" },
 ];
-const OUTFLOW_CATS: { key: string; ar: string; en: string; tone: string }[] = [
-  { key: "salaries",     ar: "سداد رواتب",          en: "Salaries",            tone: "text-rose-700" },
-  { key: "suppliers",    ar: "سداد موردين",         en: "Suppliers",           tone: "text-amber-700" },
-  { key: "serviceBills", ar: "سداد فواتير خدمات",    en: "Service bills",       tone: "text-orange-700" },
-  { key: "transfersOut", ar: "تحويلات صادرة",       en: "Outgoing transfers",  tone: "text-teal-700" },
-  { key: "other",        ar: "استخدامات أخرى",       en: "Other uses",          tone: "text-slate-600" },
+const OUTFLOW_CATS: { key: string; ar: string; en: string; tone: string; color: string }[] = [
+  { key: "salaries",     ar: "سداد رواتب",          en: "Salaries",            tone: "text-rose-700",    color: "#e11d48" },
+  { key: "suppliers",    ar: "سداد موردين",         en: "Suppliers",           tone: "text-amber-700",   color: "#d97706" },
+  { key: "serviceBills", ar: "سداد فواتير خدمات",    en: "Service bills",       tone: "text-orange-700",  color: "#ea580c" },
+  { key: "transfersOut", ar: "تحويلات صادرة",       en: "Outgoing transfers",  tone: "text-teal-700",    color: "#14b8a6" },
+  { key: "other",        ar: "استخدامات أخرى",       en: "Other uses",          tone: "text-slate-600",   color: "#94a3b8" },
 ];
 
 export default function BankCashFlow() {
@@ -108,6 +112,21 @@ export default function BankCashFlow() {
   // double-counted a line — surface it instead of giving a false "validated".
   const bookClosing = data?.bookClosing ?? closing;
   const reconciled = Math.abs(closing - bookClosing) < 0.01;
+
+  // ── Chart datasets ───────────────────────────────────────────────────────
+  const depositPie = DEPOSIT_CATS
+    .map(c => ({ name: isRtl ? c.ar : c.en, value: deposits[c.key] ?? 0, color: c.color }))
+    .filter(d => d.value > 0);
+  const outflowPie = OUTFLOW_CATS
+    .map(c => ({ name: isRtl ? c.ar : c.en, value: outflows[c.key] ?? 0, color: c.color }))
+    .filter(d => d.value > 0);
+  const monthlyChart = monthlyRows.map(m => ({
+    month: m.month,
+    deposits: m.deposits.total,
+    outflows: m.outflows.total,
+    closing: m.closing,
+  }));
+  const netFlow = deposits.total - outflows.total;
 
   function handleSearch() {
     setSearched(true);
@@ -271,6 +290,77 @@ export default function BankCashFlow() {
               : <><AlertTriangle className="h-4 w-4" />{isRtl ? "تحقق من البيانات: الرصيد غير مطابق" : "Check data: balance does not reconcile"}</>}
           </div>
 
+          {/* ── Visual dashboard ───────────────────────────────────────── */}
+          <div className="rounded-2xl border bg-gradient-to-br from-slate-50 to-white p-4 sm:p-5 shadow-sm print:hidden">
+            <div className="flex items-center gap-2 mb-4">
+              <BarChart3 className="h-5 w-5 text-primary" />
+              <h2 className="font-bold text-base">{isRtl ? "لوحة التحليل البصري" : "Visual analytics dashboard"}</h2>
+            </div>
+
+            {/* Net-flow highlight strip */}
+            <div className={cn(
+              "rounded-xl px-4 py-3 mb-4 flex items-center justify-between gap-3 border",
+              netFlow >= 0 ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50",
+            )}>
+              <div className={cn("flex items-center gap-2 text-sm font-semibold", netFlow >= 0 ? "text-emerald-800" : "text-rose-800")}>
+                <TrendingUp className={cn("h-4 w-4", netFlow < 0 && "rotate-180")} />
+                {isRtl ? "صافي التدفق النقدي للفترة" : "Net cash flow for the period"}
+              </div>
+              <div className={cn("text-xl font-bold tabular-nums", netFlow >= 0 ? "text-emerald-800" : "text-rose-800")}>
+                {netFlow >= 0 ? "+" : "−"}{fmt(Math.abs(netFlow))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <DonutCard
+                title={isRtl ? "مصادر الإيداعات" : "Sources of deposits"}
+                icon={<ArrowDownToLine className="h-4 w-4 text-emerald-600" />}
+                data={depositPie}
+                total={deposits.total}
+                fmt={fmt}
+                isRtl={isRtl}
+              />
+              <DonutCard
+                title={isRtl ? "أوجه استخدام الأموال" : "Uses of funds"}
+                icon={<ArrowUpFromLine className="h-4 w-4 text-rose-600" />}
+                data={outflowPie}
+                total={outflows.total}
+                fmt={fmt}
+                isRtl={isRtl}
+              />
+            </div>
+
+            {/* Monthly trend chart (only when monthly breakdown produced rows) */}
+            {monthly && monthlyChart.length > 0 && (
+              <div className="mt-4 rounded-xl border bg-card p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <TrendingUp className="h-4 w-4 text-sky-600" />
+                  <h3 className="font-semibold text-sm">{isRtl ? "اتجاه التدفقات الشهرية" : "Monthly cash-flow trend"}</h3>
+                </div>
+                <div className="h-72 w-full" dir="ltr">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={monthlyChart} margin={{ top: 6, right: 12, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                      <XAxis dataKey="month" tick={{ fontSize: 11 }} tickLine={false} axisLine={{ stroke: "#cbd5e1" }} />
+                      <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false}
+                        tickFormatter={(v: number) => Intl.NumberFormat("en", { notation: "compact" }).format(v)} />
+                      <Tooltip
+                        formatter={(v: any, name: any) => [fmt(Number(v)), name]}
+                        labelStyle={{ fontWeight: 600 }}
+                        contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      <Bar dataKey="deposits" name={isRtl ? "إيداعات" : "Deposits"} fill="#10b981" radius={[4, 4, 0, 0]} barSize={18} />
+                      <Bar dataKey="outflows" name={isRtl ? "مسحوبات" : "Uses"} fill="#f43f5e" radius={[4, 4, 0, 0]} barSize={18} />
+                      <Line dataKey="closing" name={isRtl ? "الرصيد آخر الشهر" : "Closing"} type="monotone"
+                        stroke="#0ea5e9" strokeWidth={2.5} dot={{ r: 3 }} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Waterfall analysis */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <AnalysisTable
@@ -383,6 +473,57 @@ function AnalysisTable({ title, headTone, cats, buckets, totalLabel, isRtl, fmt 
           </tr>
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function DonutCard({ title, icon, data, total, fmt, isRtl }: {
+  title: string; icon: React.ReactNode;
+  data: { name: string; value: number; color: string }[];
+  total: number; fmt: (n: number) => string; isRtl: boolean;
+}) {
+  return (
+    <div className="rounded-xl border bg-card p-4">
+      <div className="flex items-center gap-2 mb-2">
+        {icon}
+        <h3 className="font-semibold text-sm">{title}</h3>
+      </div>
+      {data.length === 0 ? (
+        <div className="h-56 flex items-center justify-center text-sm text-muted-foreground">
+          {isRtl ? "لا توجد بيانات" : "No data"}
+        </div>
+      ) : (
+        <div className="h-56 w-full" dir="ltr">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={data}
+                dataKey="value"
+                nameKey="name"
+                cx="50%"
+                cy="50%"
+                innerRadius={52}
+                outerRadius={78}
+                paddingAngle={2}
+                stroke="#fff"
+                strokeWidth={2}
+              >
+                {data.map((d, i) => <Cell key={i} fill={d.color} />)}
+              </Pie>
+              <Tooltip
+                formatter={(v: any) => [fmt(Number(v)), total > 0 ? `${((Number(v) / total) * 100).toFixed(1)}%` : ""]}
+                contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }}
+              />
+              <Legend
+                wrapperStyle={{ fontSize: 11 }}
+                iconType="circle"
+                layout="horizontal"
+                verticalAlign="bottom"
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      )}
     </div>
   );
 }
