@@ -687,15 +687,14 @@ router.get("/bank-cash-flow", async (req, res) => {
     const bid = getBid(req);
     const { bankAccountId, fromDate, toDate } = req.query as any;
     const monthlyMode = String(req.query.monthly ?? "") === "true" || req.query.monthly === "1";
+    // `mode`: "treasury" = cash & banks (default), "ledger" = any chart-of-accounts
+    // account. `accountId` selects a single GL account directly (used by both modes).
+    const mode = String(req.query.mode ?? "treasury") === "ledger" ? "ledger" : "treasury";
+    const accountIdParam = req.query.accountId ? Number(req.query.accountId) : undefined;
 
-    // ── 1. Resolve the bank account(s) and their GL account ids ──────────────
-    const bankConds: any[] = [eq(bankAccountsTable.companyId, cid)];
-    if (bankAccountId) bankConds.push(eq(bankAccountsTable.id, Number(bankAccountId)));
-    const banks = await db.select().from(bankAccountsTable).where(and(...bankConds)).orderBy(asc(bankAccountsTable.code));
-    const bankGlAccountIds = banks.map(b => b.accountId).filter((x): x is number => typeof x === "number");
-
-    // Treasury account set (all bank + cash-box GL accounts) — a contra line
-    // pointing at one of these means the movement is an internal transfer.
+    // ── 0. Treasury set (all bank + cash-box GL accounts) — used both as the
+    //        default "all cash & banks" target AND to detect internal transfers
+    //        (a contra line pointing at one of these = internal transfer). ─────
     const [allBanks, allBoxes] = await Promise.all([
       db.select({ accountId: bankAccountsTable.accountId }).from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid)),
       db.select({ accountId: cashBoxesTable.accountId }).from(cashBoxesTable).where(eq(cashBoxesTable.companyId, cid)),
@@ -703,9 +702,25 @@ router.get("/bank-cash-flow", async (req, res) => {
     const treasurySet = new Set<number>();
     for (const r of [...allBanks, ...allBoxes]) if (typeof r.accountId === "number") treasurySet.add(r.accountId);
 
-    const banksMeta = banks.map(b => ({ id: b.id, code: b.code, nameAr: b.nameAr, nameEn: b.nameEn, bankName: b.bankName, accountId: b.accountId }));
-    if (bankGlAccountIds.length === 0) {
-      res.json({ banks: banksMeta, opening: 0, deposits: emptyDeposits(), outflows: emptyOutflows(), closing: 0, bookClosing: 0, monthly: [] });
+    // ── 1. Resolve the target GL account(s) to analyse. ──────────────────────
+    //   • accountId (any mode)   → that single chart-of-accounts / cash-bank GL account.
+    //   • legacy bankAccountId   → resolve its GL account from bank_accounts.
+    //   • mode=treasury, no pick → every cash & bank GL account (treasurySet).
+    //   • mode=ledger,   no pick → nothing (a specific account is required).
+    let targetGlAccountIds: number[] = [];
+    if (Number.isInteger(accountIdParam) && (accountIdParam as number) > 0) {
+      targetGlAccountIds = [accountIdParam as number];
+    } else if (bankAccountId) {
+      const [ba] = await db.select({ accountId: bankAccountsTable.accountId })
+        .from(bankAccountsTable)
+        .where(and(eq(bankAccountsTable.companyId, cid), eq(bankAccountsTable.id, Number(bankAccountId))));
+      if (typeof ba?.accountId === "number") targetGlAccountIds = [ba.accountId];
+    } else if (mode === "treasury") {
+      targetGlAccountIds = Array.from(treasurySet);
+    }
+
+    if (targetGlAccountIds.length === 0) {
+      res.json({ banks: [], opening: 0, deposits: emptyDeposits(), outflows: emptyOutflows(), closing: 0, bookClosing: 0, monthly: [] });
       return;
     }
 
@@ -714,10 +729,10 @@ router.get("/bank-cash-flow", async (req, res) => {
     const openingFilters: any[] = [
       eq(journalEntriesTable.companyId, cid),
       eq(journalEntriesTable.status, "posted"),
-      inArray(journalEntryLinesTable.accountId, bankGlAccountIds),
+      inArray(journalEntryLinesTable.accountId, targetGlAccountIds),
     ];
     if (pushBranchScope(req, openingFilters, journalEntriesTable.branchId, bid) === "deny") {
-      res.json({ banks: banksMeta, opening: 0, deposits: emptyDeposits(), outflows: emptyOutflows(), closing: 0, bookClosing: 0, monthly: [] });
+      res.json({ banks: [], opening: 0, deposits: emptyDeposits(), outflows: emptyOutflows(), closing: 0, bookClosing: 0, monthly: [] });
       return;
     }
     let opening = 0;
@@ -902,7 +917,7 @@ router.get("/bank-cash-flow", async (req, res) => {
     }
 
     res.json({
-      banks: banksMeta,
+      banks: [],
       opening,
       deposits,
       outflows,

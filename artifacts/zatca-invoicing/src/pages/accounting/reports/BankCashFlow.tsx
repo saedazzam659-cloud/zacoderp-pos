@@ -61,7 +61,9 @@ export default function BankCashFlow() {
   const today = new Date().toISOString().slice(0, 10);
   const firstOfMonth = today.slice(0, 8) + "01";
 
-  const [bankAccountId, setBankAccountId] = useState("");
+  // mode = "treasury" (cash & banks) | "ledger" (any chart-of-accounts account).
+  const [mode, setMode]         = useState<"treasury" | "ledger">("treasury");
+  const [accountId, setAccountId] = useState(""); // GL account id ("" = all, treasury only)
   const [fromDate, setFromDate] = useState(firstOfMonth);
   const [toDate, setToDate]     = useState(today);
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
@@ -79,16 +81,39 @@ export default function BankCashFlow() {
     enabled: !!user,
   });
 
+  const { data: cashBoxes = [] } = useQuery<any[]>({
+    queryKey: ["cash-boxes", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/cash-boxes?companyId=${cid}` : `${API}/api/cash-boxes`;
+      const res = await fetch(url, { headers });
+      const j = await res.json();
+      return Array.isArray(j) ? j : [];
+    },
+    enabled: !!user,
+  });
+
+  const { data: accounts = [] } = useQuery<any[]>({
+    queryKey: ["accounts-coa", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/accounts?companyId=${cid}` : `${API}/api/accounts`;
+      const res = await fetch(url, { headers });
+      const j = await res.json();
+      return Array.isArray(j) ? j : [];
+    },
+    enabled: !!user,
+  });
+
   const { data, isLoading, refetch } = useQuery<CashFlowResponse>({
-    queryKey: ["bank-cash-flow", cid, bankAccountId, fromDate, toDate, branchId, monthly],
+    queryKey: ["bank-cash-flow", cid, mode, accountId, fromDate, toDate, branchId, monthly],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (cid)          params.set("companyId", String(cid));
-      if (bankAccountId) params.set("bankAccountId", bankAccountId);
-      if (fromDate)     params.set("fromDate", fromDate);
-      if (toDate)       params.set("toDate", toDate);
-      if (branchId)     params.set("branchId", String(branchId));
-      if (monthly)      params.set("monthly", "true");
+      if (cid)        params.set("companyId", String(cid));
+      params.set("mode", mode);
+      if (accountId)  params.set("accountId", accountId);
+      if (fromDate)   params.set("fromDate", fromDate);
+      if (toDate)     params.set("toDate", toDate);
+      if (branchId)   params.set("branchId", String(branchId));
+      if (monthly)    params.set("monthly", "true");
       const res = await fetch(`${API}/api/accounting-reports/bank-cash-flow?${params}`, { headers });
       if (!res.ok) { const j = await res.json(); throw new Error(j.error); }
       return res.json();
@@ -101,10 +126,48 @@ export default function BankCashFlow() {
   const outflows  = data?.outflows ?? ({ total: 0 } as Buckets);
   const closing   = data?.closing ?? 0;
   const monthlyRows = data?.monthly ?? [];
-  const selectedBank = banks.find((b: any) => String(b.id) === bankAccountId);
-  const bankLabel = selectedBank
-    ? `${selectedBank.code} — ${isRtl ? selectedBank.nameAr : (selectedBank.nameEn || selectedBank.nameAr)}`
-    : (isRtl ? "كل الحسابات البنكية" : "All bank accounts");
+  // ── Account picker items ──────────────────────────────────────────────────
+  // Treasury mode: registered bank accounts + cash boxes, each mapped to its GL
+  // account id (deduped). Ledger mode: every posting account from the chart.
+  const treasuryRaw = [
+    ...banks.filter((b: any) => b.accountId).map((b: any) => ({
+      value: String(b.accountId),
+      label: `${b.code} — ${isRtl ? b.nameAr : (b.nameEn || b.nameAr)}`,
+      badge: isRtl ? "بنك" : "Bank",
+      badgeClass: "bg-blue-50 text-blue-700 border-blue-200",
+    })),
+    ...cashBoxes.filter((c: any) => c.accountId).map((c: any) => ({
+      value: String(c.accountId),
+      label: `${c.code} — ${isRtl ? c.nameAr : (c.nameEn || c.nameAr)}`,
+      badge: isRtl ? "صندوق" : "Cash",
+      badgeClass: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    })),
+  ];
+  const treasurySeen = new Set<string>();
+  const treasuryItems = [
+    { value: "", label: isRtl ? "كل حسابات النقد والبنوك" : "All cash & banks" },
+    ...treasuryRaw.filter((it) => {
+      if (treasurySeen.has(it.value)) return false;
+      treasurySeen.add(it.value);
+      return true;
+    }),
+  ];
+  const ledgerItems = accounts
+    .filter((a: any) => a.isPosting)
+    .map((a: any) => ({
+      value: String(a.id),
+      label: `${a.code} — ${isRtl ? a.nameAr : (a.nameEn || a.nameAr)}`,
+      badge: a.code,
+      badgeClass: "bg-muted text-muted-foreground border",
+    }));
+  const pickerItems = mode === "treasury" ? treasuryItems : ledgerItems;
+  const selectedItem = pickerItems.find((i) => i.value === accountId && i.value !== "");
+  const selectedCode = selectedItem ? selectedItem.label.split(" — ")[0] : "all";
+  const bankLabel = selectedItem
+    ? selectedItem.label
+    : mode === "treasury"
+      ? (isRtl ? "كل حسابات النقد والبنوك" : "All cash & banks")
+      : (isRtl ? "— لم يُحدَّد حساب —" : "— No account selected —");
 
   // Reconciliation: the waterfall closing (opening + deposits − outflows) must
   // equal the book balance summed independently from the ledger by the server
@@ -129,6 +192,13 @@ export default function BankCashFlow() {
   const netFlow = deposits.total - outflows.total;
 
   function handleSearch() {
+    if (mode === "ledger" && !accountId) {
+      toast({
+        title: isRtl ? "اختر حساباً من شجرة الحسابات أولاً" : "Select an account from the chart first",
+        variant: "destructive",
+      });
+      return;
+    }
     setSearched(true);
     refetch();
   }
@@ -170,7 +240,7 @@ export default function BankCashFlow() {
             <ExportButtons
               rows={exportRows}
               columns={EXPORT_COLS}
-              filename={`bank-cash-flow-${selectedBank?.code ?? "all"}-${fromDate}`}
+              filename={`bank-cash-flow-${selectedCode}-${fromDate}`}
               title={`${isRtl ? "تحليل حركة البنك" : "Bank Cash-Flow"} — ${bankLabel} (${fromDate} → ${toDate})`}
             />
             <Button variant="outline" size="sm" className="gap-2 print:hidden" onClick={() => window.print()}>
@@ -182,22 +252,42 @@ export default function BankCashFlow() {
 
       {/* Filters */}
       <div className="rounded-xl border bg-card p-4 shadow-sm">
+        {/* Account source toggle */}
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <span className="text-sm text-muted-foreground">{isRtl ? "مصدر الحساب:" : "Account source:"}</span>
+          <div className="inline-flex rounded-lg border bg-muted/40 p-0.5">
+            <button
+              type="button"
+              data-testid="button-mode-treasury"
+              onClick={() => { setMode("treasury"); setAccountId(""); }}
+              className={`px-3 py-1.5 text-sm rounded-md transition ${mode === "treasury" ? "bg-background shadow-sm font-medium" : "text-muted-foreground"}`}
+            >
+              {isRtl ? "النقد والبنوك" : "Cash & Banks"}
+            </button>
+            <button
+              type="button"
+              data-testid="button-mode-ledger"
+              onClick={() => { setMode("ledger"); setAccountId(""); }}
+              className={`px-3 py-1.5 text-sm rounded-md transition ${mode === "ledger" ? "bg-background shadow-sm font-medium" : "text-muted-foreground"}`}
+            >
+              {isRtl ? "شجرة الحسابات" : "Chart of Accounts"}
+            </button>
+          </div>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
           <div className="space-y-1.5 lg:col-span-2">
-            <Label>{isRtl ? "الحساب البنكي" : "Bank account"}</Label>
+            <Label>
+              {mode === "treasury"
+                ? (isRtl ? "حساب النقد / البنك" : "Cash / Bank account")
+                : (isRtl ? "الحساب (من شجرة الحسابات)" : "Account (from chart)")}
+            </Label>
             <SearchCombobox
-              items={[
-                { value: "", label: isRtl ? "كل الحسابات البنكية" : "All bank accounts" },
-                ...banks.map((b: any) => ({
-                  value: String(b.id),
-                  label: `${b.code} — ${isRtl ? b.nameAr : (b.nameEn || b.nameAr)}`,
-                  badge: b.code,
-                  badgeClass: "bg-muted text-muted-foreground border",
-                })),
-              ]}
-              value={bankAccountId}
-              onValueChange={setBankAccountId}
-              placeholder={isRtl ? "كل الحسابات البنكية" : "All bank accounts"}
+              items={pickerItems}
+              value={accountId}
+              onValueChange={setAccountId}
+              placeholder={mode === "treasury"
+                ? (isRtl ? "كل حسابات النقد والبنوك" : "All cash & banks")
+                : (isRtl ? "اختر حساباً" : "Select account")}
               searchPlaceholder={isRtl ? "بحث بالكود أو الاسم" : "Search by code or name"}
             />
           </div>
