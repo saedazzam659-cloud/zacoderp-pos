@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { HistoricalMigration } from "./HistoricalMigration";
 import {
   Database, Upload, Download, FileSpreadsheet, FileJson, Sparkles, AlertTriangle,
   CheckCircle2, X, Eye, ArrowLeft, ArrowRight, Loader2, FileDown,
@@ -426,9 +427,10 @@ export default function DataImportExport() {
       </header>
 
       <Tabs defaultValue="export" dir={isAr ? "rtl" : "ltr"}>
-        <TabsList className="grid grid-cols-2 max-w-md">
+        <TabsList className="grid grid-cols-3 max-w-2xl">
           <TabsTrigger value="export"><Download className="w-4 h-4 ml-2" /> {t("dataIO.tabExport")}</TabsTrigger>
           <TabsTrigger value="import"><Upload className="w-4 h-4 ml-2" /> {t("dataIO.tabImport")}</TabsTrigger>
+          <TabsTrigger value="historical"><Database className="w-4 h-4 ml-2" /> الترحيل التاريخي</TabsTrigger>
         </TabsList>
 
         <TabsContent value="export" className="mt-4">
@@ -437,6 +439,10 @@ export default function DataImportExport() {
 
         <TabsContent value="import" className="mt-4">
           <ImportWizard entities={entities} loading={entitiesLoading} cid={cid} token={token} toast={toast} isAr={isAr} />
+        </TabsContent>
+
+        <TabsContent value="historical" className="mt-4">
+          <HistoricalMigration entities={entities} cid={cid} token={token} toast={toast} />
         </TabsContent>
       </Tabs>
     </div>

@@ -108,6 +108,64 @@ export async function commitImport(token: string | null, body: { companyId?: num
   return r.json();
 }
 
+// ─── Historical Financial Migration (الترحيل التاريخي) ───────────────────────
+
+export interface HistoricalYearStat {
+  year: number;
+  entries: number;
+  lines: number;
+  totalDebit: number;
+  totalCredit: number;
+  unbalanced: number;
+  exists: boolean;
+}
+
+export interface HistoricalScanResult {
+  ok: boolean;
+  years: HistoricalYearStat[];
+  yearsToCreate: number[];
+  yearsExisting: number[];
+  totals: { entries: number; lines: number; totalDebit: number; totalCredit: number; unbalanced: number; orphans: number };
+  orphans: { rowIndex: number; reason: string }[];
+}
+
+export interface HistoricalCommitResult {
+  ok?: boolean;
+  summary: { inserted: number; skipped: number; errors: number; total: number };
+  log: { rowIndex: number; status: "inserted" | "skipped" | "error"; id?: number; reason?: string }[];
+  yearsCreated: number[];
+  yearsExisting: number[];
+  committedAt?: string;
+  aborted?: boolean;
+  reason?: string;
+  error?: string;
+}
+
+export async function scanHistorical(token: string | null, body: { companyId?: number; rows: any[] }): Promise<HistoricalScanResult> {
+  const r = await fetch(`${API}/api/data-io/import/historical/scan`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "فشل الفحص");
+  return r.json();
+}
+
+export async function ensureFiscalYears(token: string | null, body: { companyId?: number; years: number[] }): Promise<{ ok: boolean; created: number[]; existing: number[] }> {
+  const r = await fetch(`${API}/api/data-io/import/historical/ensure-years`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "فشل إنشاء السنوات المالية");
+  return r.json();
+}
+
+export async function commitHistorical(token: string | null, body: { companyId?: number; rows: any[]; options?: { skipErrors?: boolean } }): Promise<HistoricalCommitResult> {
+  const r = await fetch(`${API}/api/data-io/import/historical/commit`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok && r.status !== 422) throw new Error(data.error ?? "فشل الترحيل");
+  return data;
+}
+
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

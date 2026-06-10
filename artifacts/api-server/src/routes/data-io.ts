@@ -20,6 +20,7 @@ import {
   cashBoxesTable, bankAccountsTable,
   currenciesTable,
   journalEntriesTable, journalEntryLinesTable,
+  fiscalYearsTable, fiscalPeriodsTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import * as XLSX from "xlsx";
@@ -1568,6 +1569,299 @@ router.post("/import/commit", async (req, res) => {
       });
     }
     res.status(500).json({ error: e?.message ?? "فشل التنفيذ" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Historical Financial Migration Engine (محرك الترحيل التاريخي)
+// ───────────────────────────────────────────────────────────────────────────
+// Lets a NEW client migrate 5+ years of journal entries through the import
+// screen. It is an ISOLATED path that does NOT touch commitComposite / the
+// generic upsert importer, because historical data needs different semantics:
+//   • Entry numbers (docNumber) repeat across years — so we ALWAYS INSERT and
+//     group by `${entryDate}::${docNumber}` instead of upserting by docNumber
+//     alone (which would silently overwrite e.g. 2021's #1 with 2022's #1).
+//   • Each entry must be linked to its fiscal period (period_id) resolved from
+//     its date, and auto-posted (status="posted") so it reaches reports.
+//   • Missing fiscal years are auto-created as a SINGLE annual period
+//     (Jan-1 → Dec-31) so the EXISTING per-period closing wizard can close a
+//     whole legacy year in one cycle.
+// It reuses the FK resolution from /import/process (frontend resolves
+// accountCode→accountId, branchCode→branchId before calling these), plus the
+// shared ensureLeafAccounts guard, LOCKED_JE_TYPES guard, and the 0.01 balance
+// tolerance — exactly matching routes/journalEntries.ts behaviour.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const isISODate = (s: any): s is string => typeof s === "string" && ISO_DATE.test(s);
+// String compare on ISO dates is timezone-agnostic & correct for overlap tests.
+const rangesOverlap = (aStart: string, aEnd: string, bStart: string, bEnd: string) =>
+  aStart <= bEnd && aEnd >= bStart;
+
+type HistGroup = {
+  key: string;
+  docNumber: string;
+  entryDate: string;
+  description: string | null;
+  currency: string;
+  exchangeRate: any;
+  branchId: number | null;
+  entryType: string;
+  rowIndices: number[];
+  lines: { accountId: number | null; debit: number; credit: number; description: string | null; costCenter: string | null }[];
+};
+
+// Group processed import rows into journal-entry headers, keyed by
+// `${entryDate}::${docNumber}` so identical numbers in different years/dates
+// stay separate. Returns groups + orphan rows (missing date or number).
+function groupHistoricalRows(rows: any[]): { groups: HistGroup[]; orphans: { rowIndex: number; reason: string }[] } {
+  const map = new Map<string, HistGroup>();
+  const orphans: { rowIndex: number; reason: string }[] = [];
+  for (const r of rows) {
+    const rowIndex = r.__rowIndex ?? -1;
+    const docNumber = r.docNumber != null ? String(r.docNumber).trim() : "";
+    const entryDate = r.entryDate != null ? String(r.entryDate).trim() : "";
+    if (!docNumber) { orphans.push({ rowIndex, reason: "رقم القيد مطلوب" }); continue; }
+    if (!isISODate(entryDate)) { orphans.push({ rowIndex, reason: "تاريخ القيد غير صالح (YYYY-MM-DD)" }); continue; }
+    const key = `${entryDate}::${docNumber}`;
+    let g = map.get(key);
+    if (!g) {
+      // entryType: honour a provided non-locked type, otherwise default to "general".
+      const rawType = r.entryType != null ? String(r.entryType).trim() : "";
+      const entryType = rawType && !LOCKED_JE_TYPES.has(rawType) ? rawType : "general";
+      g = {
+        key, docNumber, entryDate,
+        description: r.description != null ? String(r.description) : null,
+        currency: r.currency != null && String(r.currency).trim() !== "" ? String(r.currency).trim() : "SAR",
+        exchangeRate: r.exchangeRate != null ? r.exchangeRate : "1",
+        branchId: r.branchId != null ? Number(r.branchId) : null,
+        entryType,
+        rowIndices: [],
+        lines: [],
+      };
+      map.set(key, g);
+    }
+    g.rowIndices.push(rowIndex);
+    g.lines.push({
+      accountId: r.accountId != null ? Number(r.accountId) : null,
+      debit: Number(r.debit ?? 0) || 0,
+      credit: Number(r.credit ?? 0) || 0,
+      description: r.lineDescription != null ? String(r.lineDescription) : null,
+      costCenter: r.costCenter != null && String(r.costCenter).trim() !== "" ? String(r.costCenter).trim() : null,
+    });
+  }
+  return { groups: [...map.values()], orphans };
+}
+
+// ─── POST /api/data-io/import/historical/scan ────────────────────────────────
+// Body: { companyId?, rows: <processed rows> }
+// Returns a per-year preview (entries, totals, balance) + which fiscal years
+// already exist vs. will be created. No writes.
+router.post("/import/historical/scan", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, req.body?.companyId ? Number(req.body.companyId) : undefined);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+
+    const { groups, orphans } = groupHistoricalRows(rows);
+
+    const existingYears = await db.select().from(fiscalYearsTable).where(eq(fiscalYearsTable.companyId, cid));
+    const yearExists = (y: number) =>
+      existingYears.some(fy => rangesOverlap(`${y}-01-01`, `${y}-12-31`, fy.startDate, fy.endDate));
+
+    type YearStat = { year: number; entries: number; lines: number; totalDebit: number; totalCredit: number; unbalanced: number; exists: boolean };
+    const byYear = new Map<number, YearStat>();
+    for (const g of groups) {
+      const y = Number(g.entryDate.slice(0, 4));
+      let s = byYear.get(y);
+      if (!s) { s = { year: y, entries: 0, lines: 0, totalDebit: 0, totalCredit: 0, unbalanced: 0, exists: yearExists(y) }; byYear.set(y, s); }
+      s.entries++;
+      s.lines += g.lines.length;
+      const d = g.lines.reduce((a, l) => a + l.debit, 0);
+      const c = g.lines.reduce((a, l) => a + l.credit, 0);
+      s.totalDebit += d;
+      s.totalCredit += c;
+      if (Math.abs(d - c) > 0.01) s.unbalanced++;
+    }
+
+    const years = [...byYear.values()].sort((a, b) => a.year - b.year);
+    res.json({
+      ok: true,
+      years,
+      yearsToCreate: years.filter(y => !y.exists).map(y => y.year),
+      yearsExisting: years.filter(y => y.exists).map(y => y.year),
+      totals: {
+        entries: groups.length,
+        lines: groups.reduce((a, g) => a + g.lines.length, 0),
+        totalDebit: years.reduce((a, y) => a + y.totalDebit, 0),
+        totalCredit: years.reduce((a, y) => a + y.totalCredit, 0),
+        unbalanced: years.reduce((a, y) => a + y.unbalanced, 0),
+        orphans: orphans.length,
+      },
+      orphans: orphans.slice(0, 50),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "فشل الفحص" });
+  }
+});
+
+// Ensure a fiscal year (as a single annual period) exists for each requested
+// calendar year that does not already overlap an existing year. Returns the
+// created/existing year numbers. Reuses the same overlap guard as POST /years.
+async function ensureAnnualFiscalYears(cid: number, years: number[]): Promise<{ created: number[]; existing: number[] }> {
+  const created: number[] = [];
+  const existing: number[] = [];
+
+  // Serialize the whole ensure-step per company inside ONE transaction so that
+  //   • the year row + its annual period row are committed atomically (no
+  //     fiscal year ever left without its period → no null period_id later), and
+  //   • two concurrent historical commits for the same company can't both pass
+  //     the read-then-insert overlap check and double-create the same year.
+  // pg_advisory_xact_lock auto-releases at COMMIT/ROLLBACK. Namespace key 0x4859
+  // ("HY") keeps it distinct from other advisory locks in the codebase.
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${0x4859}::int, ${cid}::int)`);
+    const existingYears = await tx.select().from(fiscalYearsTable).where(eq(fiscalYearsTable.companyId, cid));
+    const overlaps = (y: number) =>
+      existingYears.some(fy => rangesOverlap(`${y}-01-01`, `${y}-12-31`, fy.startDate, fy.endDate));
+
+    for (const y of [...new Set(years)].sort((a, b) => a - b)) {
+      if (overlaps(y)) { existing.push(y); continue; }
+      const startDate = `${y}-01-01`, endDate = `${y}-12-31`;
+      const [yearRow] = await tx.insert(fiscalYearsTable).values({
+        companyId: cid, name: String(y), startDate, endDate, status: "open",
+      }).returning();
+      await tx.insert(fiscalPeriodsTable).values({
+        companyId: cid, fiscalYearId: yearRow.id, name: `سنة ${y}`,
+        startDate, endDate, sequence: 1, status: "open",
+      });
+      // keep the in-memory guard fresh so the same year isn't double-created
+      existingYears.push(yearRow as any);
+      created.push(y);
+    }
+  });
+  return { created, existing };
+}
+
+// ─── POST /api/data-io/import/historical/ensure-years ───────────────────────
+// Body: { companyId?, years: number[] }  → create missing annual fiscal years.
+router.post("/import/historical/ensure-years", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, req.body?.companyId ? Number(req.body.companyId) : undefined);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const years = Array.isArray(req.body?.years) ? req.body.years.map((y: any) => Number(y)).filter((y: number) => Number.isInteger(y) && y >= 1900 && y <= 2200) : [];
+    if (years.length === 0) { res.status(400).json({ error: "قائمة السنوات مطلوبة" }); return; }
+    const result = await ensureAnnualFiscalYears(cid, years);
+    res.json({ ok: true, ...result });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "فشل إنشاء السنوات المالية" });
+  }
+});
+
+// ─── POST /api/data-io/import/historical/commit ─────────────────────────────
+// Body: { companyId?, rows: <processed rows>, options?: { skipErrors?: boolean } }
+// 1) auto-create missing fiscal years (annual period), 2) resolve period_id per
+// entry from its date, 3) ALWAYS-INSERT header + lines and POST balanced ones.
+router.post("/import/historical/commit", async (req, res) => {
+  const log: Array<{ rowIndex: number; status: "inserted" | "skipped" | "error"; id?: number; reason?: string }> = [];
+  let inserted = 0, skipped = 0, errors = 0;
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  try {
+    const cid = resolveCompanyId(req, req.body?.companyId ? Number(req.body.companyId) : undefined);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const skipErrors = req.body?.options?.skipErrors !== false; // default true
+
+    const { groups, orphans } = groupHistoricalRows(rows);
+    for (const o of orphans) { skipped++; log.push({ rowIndex: o.rowIndex, status: "skipped", reason: o.reason }); }
+
+    // 1) Auto-create missing fiscal years for every year present in the file.
+    const yearsInFile = [...new Set(groups.map(g => Number(g.entryDate.slice(0, 4))))];
+    const yearResult = await ensureAnnualFiscalYears(cid, yearsInFile);
+
+    // Load every period for the tenant so we can resolve period_id by date.
+    const periods = await db.select({
+      id: fiscalPeriodsTable.id, startDate: fiscalPeriodsTable.startDate, endDate: fiscalPeriodsTable.endDate,
+    }).from(fiscalPeriodsTable).where(eq(fiscalPeriodsTable.companyId, cid));
+    const periodIdForDate = (date: string): number | null =>
+      periods.find(p => date >= p.startDate && date <= p.endDate)?.id ?? null;
+
+    // Valid tenant-owned branch ids (strip cross-tenant smuggling, parity with importer).
+    const branchRows = await db.select({ id: branchesTable.id }).from(branchesTable).where(eq(branchesTable.companyId, cid));
+    const validBranchIds = new Set(branchRows.map(b => b.id));
+
+    for (const g of groups) {
+      try {
+        // balance check (same tolerance as the rest of the system)
+        const totalDebit = g.lines.reduce((a, l) => a + l.debit, 0);
+        const totalCredit = g.lines.reduce((a, l) => a + l.credit, 0);
+        if (g.lines.length === 0) throw new Error(`لا توجد سطور للقيد ${g.docNumber}`);
+        if (Math.abs(totalDebit - totalCredit) > 0.01) {
+          throw new Error(`القيد ${g.docNumber} (${g.entryDate}) غير متوازن: مدين=${totalDebit.toFixed(2)} ≠ دائن=${totalCredit.toFixed(2)}`);
+        }
+        // every account must resolve + be a leaf, postable, tenant-owned account
+        const accountIds = g.lines.map(l => l.accountId).filter((v): v is number => v != null);
+        if (accountIds.length !== g.lines.length) throw new Error(`القيد ${g.docNumber} يحتوي سطراً بدون حساب صالح`);
+        await ensureLeafAccounts(cid, accountIds);
+
+        const periodId = periodIdForDate(g.entryDate);
+        if (periodId == null) {
+          // Never post a historical entry without a fiscal period — that would
+          // strand it outside every period-scoped report and the closing cycle.
+          throw new Error(`القيد ${g.docNumber} (${g.entryDate}) لا توجد له فترة مالية مطابقة`);
+        }
+        const branchId = g.branchId != null && validBranchIds.has(g.branchId) ? g.branchId : null;
+
+        await db.transaction(async (tx) => {
+          const [header] = await tx.insert(journalEntriesTable).values({
+            companyId: cid,
+            docNumber: g.docNumber,
+            entryDate: g.entryDate,
+            currency: g.currency,
+            exchangeRate: String(g.exchangeRate ?? "1"),
+            description: g.description,
+            entryType: g.entryType,
+            branchId,
+            periodId,
+            status: "posted",
+          }).returning({ id: journalEntriesTable.id });
+          const lines = g.lines.map((l, i) => ({
+            entryId: header.id,
+            accountId: l.accountId,
+            costCenter: l.costCenter,
+            debit: l.debit.toFixed(2),
+            credit: l.credit.toFixed(2),
+            description: l.description,
+            sortOrder: i,
+          }));
+          await tx.insert(journalEntryLinesTable).values(lines);
+          for (const idx of g.rowIndices) { inserted++; log.push({ rowIndex: idx, status: "inserted", id: header.id }); }
+        });
+      } catch (e: any) {
+        const msg = e?.message?.slice(0, 200) ?? "خطأ غير معروف";
+        if (skipErrors) {
+          for (const idx of g.rowIndices) { skipped++; log.push({ rowIndex: idx, status: "skipped", reason: msg }); }
+        } else {
+          for (const idx of g.rowIndices) { errors++; log.push({ rowIndex: idx, status: "error", reason: msg }); }
+          res.status(422).json({
+            summary: { inserted, skipped, errors, total: rows.length },
+            log, aborted: true, reason: "strict_mode_failed", error: msg,
+            yearsCreated: yearResult.created, yearsExisting: yearResult.existing,
+          });
+          return;
+        }
+      }
+    }
+
+    res.json({
+      ok: true,
+      summary: { inserted, skipped, errors, total: rows.length },
+      log,
+      yearsCreated: yearResult.created,
+      yearsExisting: yearResult.existing,
+      committedAt: new Date().toISOString(),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "فشل الترحيل" });
   }
 });
 
