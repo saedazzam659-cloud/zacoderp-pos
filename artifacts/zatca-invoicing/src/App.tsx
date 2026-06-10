@@ -292,6 +292,7 @@ import TaxDeclaration   from "@/pages/accounting/reports/TaxDeclaration";
 import BalanceSheet     from "@/pages/accounting/reports/BalanceSheet";
 import IncomeStatement  from "@/pages/accounting/reports/IncomeStatement";
 import ForecastIncomeStatement from "@/pages/accounting/reports/ForecastIncomeStatement";
+import BankCashFlow     from "@/pages/accounting/reports/BankCashFlow";
 import FiscalPeriods    from "@/pages/accounting/FiscalPeriods";
 import Adjustments      from "@/pages/accounting/Adjustments";
 import CostCenters     from "@/pages/accounting/CostCenters";
@@ -880,6 +881,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/accounting/reports/trial-balance"     module="accounting_reports" component={TrialBalance} />}
             {!isSuperAdmin && <PermRoute path="/accounting/reports/balance-sheet"     module="accounting_reports" component={BalanceSheet} />}
             {!isSuperAdmin && <PermRoute path="/accounting/reports/income-statement"  module="accounting_reports" component={IncomeStatement} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/reports/bank-cash-flow"    module="accounting_reports" component={BankCashFlow} />}
             {!isSuperAdmin && <PermRoute path="/accounting/reports/forecast-income-statement" module="accounting_reports" component={ForecastIncomeStatement} />}
             {!isSuperAdmin && <PermRoute path="/accounting/reports/tax-declaration"   module="accounting_reports" component={TaxDeclaration} />}
 

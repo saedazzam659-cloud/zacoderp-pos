@@ -808,6 +808,7 @@
     "trialBalance": "ميزان المراجعة بالمجاميع",
     "balanceSheet": "المركز المالي",
     "incomeStatement": "قائمة الدخل",
+    "bankCashFlow": "تحليل حركة البنك (دفترياً)",
     "forecastIncomeStatement": "قائمة دخل تقديرية (AI)",
     "taxDeclaration": "الإقرار الضريبي",
     "cashGroup": "النقد والبنوك",

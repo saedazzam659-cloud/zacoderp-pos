@@ -14,6 +14,7 @@ import {
   salesOrdersTable, salesQuotationsTable,
   purchaseOrdersTable,
   maintenanceOrdersTable,
+  bankAccountsTable, cashBoxesTable,
 } from "@workspace/db";
 import { eq, and, sql, gte, lte, asc, desc, ne, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
@@ -654,6 +655,261 @@ router.get("/account-statement", async (req, res) => {
     });
 
     res.json({ previousBalance, previousDebit, previousCredit, rows: withBalance });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── BANK CASH-FLOW (تحليل حركة البنك دفترياً) ───────────────────────────────
+// Pure ADDITIVE report. Drives the numbers from the bank's GL account journal
+// lines (book ledger) — NOT from the receipt/payment voucher tables — so the
+// ending figure is GUARANTEED to equal the bank's book balance (rule:
+// closing = opening + Σdebit − Σcredit over the same posted lines).
+//
+//   opening book balance
+//   + deposits (debit side of the bank account)   ─ analysed by source
+//   − uses of funds (credit side of the bank account) ─ analysed by use
+//   = ending book balance  (matches the ledger exactly)
+//
+// Classification per journal entry that touches the bank:
+//   1. entryType (strongest signal: sales_invoice/pos_sale, payroll_run, …)
+//   2. voucher entity_type (customer / supplier) for receipt/payment vouchers
+//   3. contra-account accountType (revenue / equity / expense / liability / …)
+//   4. treasury contra (another bank/cash account) ⇒ internal transfer
+// Only POSTED entries feed the report (same rule as every financial report).
+type DepositBuckets = { sales: number; customers: number; partner: number; transfersIn: number; other: number; total: number };
+type OutflowBuckets = { salaries: number; suppliers: number; serviceBills: number; transfersOut: number; other: number; total: number };
+function emptyDeposits(): DepositBuckets { return { sales: 0, customers: 0, partner: 0, transfersIn: 0, other: 0, total: 0 }; }
+function emptyOutflows(): OutflowBuckets { return { salaries: 0, suppliers: 0, serviceBills: 0, transfersOut: 0, other: 0, total: 0 }; }
+
+router.get("/bank-cash-flow", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json({ banks: [], opening: 0, deposits: emptyDeposits(), outflows: emptyOutflows(), closing: 0, bookClosing: 0, monthly: [] }); return; }
+    const bid = getBid(req);
+    const { bankAccountId, fromDate, toDate } = req.query as any;
+    const monthlyMode = String(req.query.monthly ?? "") === "true" || req.query.monthly === "1";
+
+    // ── 1. Resolve the bank account(s) and their GL account ids ──────────────
+    const bankConds: any[] = [eq(bankAccountsTable.companyId, cid)];
+    if (bankAccountId) bankConds.push(eq(bankAccountsTable.id, Number(bankAccountId)));
+    const banks = await db.select().from(bankAccountsTable).where(and(...bankConds)).orderBy(asc(bankAccountsTable.code));
+    const bankGlAccountIds = banks.map(b => b.accountId).filter((x): x is number => typeof x === "number");
+
+    // Treasury account set (all bank + cash-box GL accounts) — a contra line
+    // pointing at one of these means the movement is an internal transfer.
+    const [allBanks, allBoxes] = await Promise.all([
+      db.select({ accountId: bankAccountsTable.accountId }).from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid)),
+      db.select({ accountId: cashBoxesTable.accountId }).from(cashBoxesTable).where(eq(cashBoxesTable.companyId, cid)),
+    ]);
+    const treasurySet = new Set<number>();
+    for (const r of [...allBanks, ...allBoxes]) if (typeof r.accountId === "number") treasurySet.add(r.accountId);
+
+    const banksMeta = banks.map(b => ({ id: b.id, code: b.code, nameAr: b.nameAr, nameEn: b.nameEn, bankName: b.bankName, accountId: b.accountId }));
+    if (bankGlAccountIds.length === 0) {
+      res.json({ banks: banksMeta, opening: 0, deposits: emptyDeposits(), outflows: emptyOutflows(), closing: 0, bookClosing: 0, monthly: [] });
+      return;
+    }
+
+    // ── 2. Opening book balance: every posted line on the bank GL account(s)
+    //        strictly BEFORE fromDate (sum debit − credit). ───────────────────
+    const openingFilters: any[] = [
+      eq(journalEntriesTable.companyId, cid),
+      eq(journalEntriesTable.status, "posted"),
+      inArray(journalEntryLinesTable.accountId, bankGlAccountIds),
+    ];
+    if (pushBranchScope(req, openingFilters, journalEntriesTable.branchId, bid) === "deny") {
+      res.json({ banks: banksMeta, opening: 0, deposits: emptyDeposits(), outflows: emptyOutflows(), closing: 0, bookClosing: 0, monthly: [] });
+      return;
+    }
+    let opening = 0;
+    if (fromDate) {
+      const openFilters = [...openingFilters, sql`${journalEntriesTable.entryDate} < ${fromDate}`];
+      const [o] = await db
+        .select({
+          debit:  sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}), 0)`,
+          credit: sql<string>`COALESCE(SUM(${journalEntryLinesTable.credit}), 0)`,
+        })
+        .from(journalEntryLinesTable)
+        .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+        .where(and(...openFilters));
+      opening = Number(o?.debit || 0) - Number(o?.credit || 0);
+    }
+
+    // ── 3. In-period bank lines (the movements to analyse). ──────────────────
+    const periodFilters = [...openingFilters];
+    if (fromDate) periodFilters.push(gte(journalEntriesTable.entryDate, fromDate));
+    if (toDate)   periodFilters.push(lte(journalEntriesTable.entryDate, toDate));
+    const bankLines = await db
+      .select({
+        entryId:   journalEntriesTable.id,
+        entryType: journalEntriesTable.entryType,
+        entryDate: journalEntriesTable.entryDate,
+        debit:     journalEntryLinesTable.debit,
+        credit:    journalEntryLinesTable.credit,
+      })
+      .from(journalEntryLinesTable)
+      .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+      .where(and(...periodFilters))
+      .orderBy(asc(journalEntriesTable.entryDate));
+
+    const entryIds = Array.from(new Set(bankLines.map(l => l.entryId)));
+
+    // ── 4. ALL lines of those entries (joined to accounts for the type), so we
+    //        can (a) detect internal transfers by counting how many DISTINCT
+    //        treasury accounts the entry touches and (b) classify by the
+    //        NON-treasury counterpart account type. We must NOT exclude bank GL
+    //        accounts here: in "all banks" mode both legs of a bank↔bank
+    //        transfer live in bankGlAccountIds, and excluding them would erase
+    //        the transfer signal and inflate the source/use buckets. Filtering
+    //        out treasury lines (which include the bank's own line) when summing
+    //        contra `types` keeps the classification counterpart-only.
+    const contraByEntry = new Map<number, { types: Record<string, number>; treasuryIds: Set<number> }>();
+    if (entryIds.length > 0) {
+      const allLines = await db
+        .select({
+          entryId:     journalEntryLinesTable.entryId,
+          accountId:   journalEntryLinesTable.accountId,
+          accountType: accountsTable.accountType,
+          debit:       journalEntryLinesTable.debit,
+          credit:      journalEntryLinesTable.credit,
+        })
+        .from(journalEntryLinesTable)
+        .innerJoin(accountsTable, eq(journalEntryLinesTable.accountId, accountsTable.id))
+        .where(inArray(journalEntryLinesTable.entryId, entryIds));
+      for (const c of allLines) {
+        const amt = Math.abs(Number(c.debit || 0)) + Math.abs(Number(c.credit || 0));
+        if (amt === 0) continue;
+        let rec = contraByEntry.get(c.entryId);
+        if (!rec) { rec = { types: {}, treasuryIds: new Set<number>() }; contraByEntry.set(c.entryId, rec); }
+        if (c.accountId && treasurySet.has(c.accountId)) {
+          rec.treasuryIds.add(c.accountId);          // treasury leg — drives transfer detection
+        } else {
+          rec.types[c.accountType] = (rec.types[c.accountType] ?? 0) + amt; // counterpart for source/use
+        }
+      }
+    }
+
+    // ── 5. Voucher entity types (customer / supplier / other). ───────────────
+    const entityByEntry = new Map<number, string>();
+    if (entryIds.length > 0) {
+      const [rv, pv] = await Promise.all([
+        db.select({ jid: receiptVouchersTable.journalEntryId, et: receiptVouchersTable.entityType })
+          .from(receiptVouchersTable)
+          .where(and(eq(receiptVouchersTable.companyId, cid), inArray(receiptVouchersTable.journalEntryId, entryIds))),
+        db.select({ jid: paymentVouchersTable.journalEntryId, et: paymentVouchersTable.entityType })
+          .from(paymentVouchersTable)
+          .where(and(eq(paymentVouchersTable.companyId, cid), inArray(paymentVouchersTable.journalEntryId, entryIds))),
+      ]);
+      for (const r of [...rv, ...pv]) if (r.jid) entityByEntry.set(r.jid, r.et as string);
+    }
+
+    // Dominant contra account type for an entry (largest absolute amount).
+    function dominantContraType(entryId: number): string | null {
+      const rec = contraByEntry.get(entryId);
+      if (!rec) return null;
+      let best: string | null = null, bestAmt = -1;
+      for (const [t, a] of Object.entries(rec.types)) if (a > bestAmt) { best = t; bestAmt = a; }
+      return best;
+    }
+    function isTransfer(entryId: number): boolean {
+      const rec = contraByEntry.get(entryId);
+      if (!rec) return false;
+      // An internal transfer moves money between treasuries, so the entry must
+      // touch ≥2 DISTINCT treasury accounts (e.g. bank↔bank or bank↔cash). One
+      // treasury account alone is a normal deposit/withdrawal, not a transfer.
+      // This is mode-independent — it holds whether one bank or all banks are
+      // selected, because it inspects every line of the entry, not just the
+      // non-selected contra.
+      return rec.treasuryIds.size >= 2;
+    }
+
+    function classifyDeposit(entryId: number, entryType: string | null): keyof Omit<DepositBuckets, "total"> {
+      if (isTransfer(entryId)) return "transfersIn";
+      const et = entryType ?? "";
+      if (et === "sales_invoice" || et === "pos_sale") return "sales";
+      const entity = entityByEntry.get(entryId);
+      if ((et === "receipt" || et === "receipt_voucher") && entity === "customer") return "customers";
+      const ct = dominantContraType(entryId);
+      if (ct === "revenue") return "sales";
+      if (ct === "equity")  return "partner";
+      if (ct === "asset")   return "customers"; // receivable settlement
+      return "other";
+    }
+    function classifyOutflow(entryId: number, entryType: string | null): keyof Omit<OutflowBuckets, "total"> {
+      if (isTransfer(entryId)) return "transfersOut";
+      const et = entryType ?? "";
+      if (et === "payroll_run" || et === "eos_payment" || et === "employee_loan") return "salaries";
+      const entity = entityByEntry.get(entryId);
+      if ((et === "payment" || et === "payment_voucher") && entity === "supplier") return "suppliers";
+      const ct = dominantContraType(entryId);
+      if (ct === "expense")   return "serviceBills";
+      if (ct === "liability") return "suppliers"; // payable settlement
+      return "other";
+    }
+
+    // ── 6. Aggregate (overall + optional per-month buckets). ─────────────────
+    const deposits = emptyDeposits();
+    const outflows = emptyOutflows();
+    const monthMap = new Map<string, { deposits: DepositBuckets; outflows: OutflowBuckets }>();
+    for (const l of bankLines) {
+      const debit  = Number(l.debit  || 0);
+      const credit = Number(l.credit || 0);
+      const ym = (l.entryDate || "").slice(0, 7);
+      let mrec = monthMap.get(ym);
+      if (!mrec && monthlyMode) { mrec = { deposits: emptyDeposits(), outflows: emptyOutflows() }; monthMap.set(ym, mrec); }
+      if (debit > 0) {
+        const cat = classifyDeposit(l.entryId, l.entryType);
+        deposits[cat] += debit; deposits.total += debit;
+        if (mrec) { mrec.deposits[cat] += debit; mrec.deposits.total += debit; }
+      }
+      if (credit > 0) {
+        const cat = classifyOutflow(l.entryId, l.entryType);
+        outflows[cat] += credit; outflows.total += credit;
+        if (mrec) { mrec.outflows[cat] += credit; mrec.outflows.total += credit; }
+      }
+    }
+
+    const closing = opening + deposits.total - outflows.total;
+
+    // Independent book balance: every posted bank GL line up to (and including)
+    // toDate, summed straight from the ledger WITHOUT going through the
+    // classification loop. This is a genuine cross-check — if the aggregation
+    // ever dropped or double-counted a line, `closing` would diverge from this
+    // `bookClosing` and the on-screen reconciliation banner would flag it.
+    const bookFilters = [...openingFilters];
+    if (toDate) bookFilters.push(lte(journalEntriesTable.entryDate, toDate));
+    const [bk] = await db
+      .select({
+        debit:  sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}), 0)`,
+        credit: sql<string>`COALESCE(SUM(${journalEntryLinesTable.credit}), 0)`,
+      })
+      .from(journalEntryLinesTable)
+      .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+      .where(and(...bookFilters));
+    const bookClosing = Number(bk?.debit || 0) - Number(bk?.credit || 0);
+
+    // Monthly rows roll the opening forward: first month opens at the overall
+    // opening, each subsequent month opens at the prior month's close.
+    const monthly: any[] = [];
+    if (monthlyMode && monthMap.size > 0) {
+      const months = Array.from(monthMap.keys()).sort();
+      let runOpen = opening;
+      for (const m of months) {
+        const rec = monthMap.get(m)!;
+        const mClose = runOpen + rec.deposits.total - rec.outflows.total;
+        monthly.push({ month: m, opening: runOpen, deposits: rec.deposits, outflows: rec.outflows, closing: mClose });
+        runOpen = mClose;
+      }
+    }
+
+    res.json({
+      banks: banksMeta,
+      opening,
+      deposits,
+      outflows,
+      closing,
+      bookClosing, // independently summed from the ledger — drives the reconciliation banner
+      monthly: monthly,
+    });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

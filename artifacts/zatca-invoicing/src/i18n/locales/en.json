@@ -806,6 +806,7 @@
     "trialBalance": "Trial Balance",
     "balanceSheet": "Balance Sheet",
     "incomeStatement": "Income Statement",
+    "bankCashFlow": "Bank Cash-Flow (Book)",
     "forecastIncomeStatement": "Forecast Income Statement (AI)",
     "taxDeclaration": "Tax Declaration",
     "cashGroup": "Cash & Banks",
