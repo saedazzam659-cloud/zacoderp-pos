@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   listSalesInvoices, getSalesInvoice, createSalesInvoice, listCashBoxes, listBanks,
   type SalesInvoice, type SalesLine, type PaymentMethod, type CashBox, type Bank,
@@ -224,6 +224,26 @@ function CreateForm({ deps, onCancel, onDone }: {
   const [savedId, setSavedId] = useState<number | null>(null);
   const { taxes, taxId, setTaxId, taxOptions, selectedRate } = useInvoiceTaxes("sales");
 
+  // ── Enter-to-advance focus navigation ───────────────────────────────
+  // Every focusable field carries data-fnav; pressing Enter jumps to the
+  // next one in document order (and selects its text for quick overwrite).
+  const formRef = useRef<HTMLDivElement | null>(null);
+  function advanceFrom(el: HTMLElement | null) {
+    const root = formRef.current;
+    if (!root || !el) return;
+    const nodes = Array.from(root.querySelectorAll<HTMLElement>("[data-fnav]"));
+    const i = nodes.indexOf(el);
+    if (i === -1) return;
+    const nxt = nodes[i + 1];
+    if (nxt) { nxt.focus(); (nxt as HTMLInputElement).select?.(); }
+  }
+  const onEnterAdv = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (e.key === "Enter") { e.preventDefault(); advanceFrom(e.currentTarget); }
+  };
+  // Spread onto native inputs / comboboxes to enrol them in the Enter chain.
+  const navInput = { className: "zfield", "data-fnav": "1", onKeyDown: onEnterAdv } as const;
+  const navCombo = { navAttr: "1", inputClassName: "zfield", onEnterNavigate: (el: HTMLElement | null) => advanceFrom(el) } as const;
+
   const selectedCustomer = deps.customers.find((c) => c.id === customerId) ?? null;
 
   // Freeze a buyer snapshot from the chosen customer (editable afterwards), and
@@ -371,13 +391,19 @@ function CreateForm({ deps, onCancel, onDone }: {
   }
 
   return (
-    <div>
+    <div ref={formRef}>
+      <style>{`
+        .zfield{transition:border-color .12s ease, box-shadow .12s ease;}
+        .zfield:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.18);}
+        .zrow:hover td{background:#eff6ff !important;}
+      `}</style>
       <h3 style={{ marginTop: 0 }}>فاتورة مبيعات جديدة</h3>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 200px 200px", gap: 10 }}>
         <Field label={paymentMethod === "credit" ? "العميل *" : "العميل (اختياري)"}>
           <SearchCombobox
             value={customerId}
             onChange={(v) => setCustomerId(Number(v))}
+            {...navCombo}
             style={input}
             options={[
               { value: 0, label: "— بدون عميل —" },
@@ -385,11 +411,12 @@ function CreateForm({ deps, onCancel, onDone }: {
             ]}
           />
         </Field>
-        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
+        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} {...navInput} /></Field>
         <Field label="طريقة الدفع">
           <SearchCombobox
             value={paymentMethod}
             onChange={(v) => setPaymentMethod(v as PaymentMethod)}
+            {...navCombo}
             style={input}
             options={[
               { value: "cash", label: "نقدي" },
@@ -403,6 +430,7 @@ function CreateForm({ deps, onCancel, onDone }: {
         <SearchCombobox
           value={warehouseId}
           onChange={(v) => setWarehouseId(Number(v))}
+          {...navCombo}
           style={input}
           options={[
             { value: 0, label: "— المستودع الافتراضي —" },
@@ -411,14 +439,14 @@ function CreateForm({ deps, onCancel, onDone }: {
         />
       </Field>
       <Field label="الضريبة (تُطبّق على كل البنود)" style={{ marginTop: 10, maxWidth: 420 }}>
-        <SearchCombobox value={taxId} onChange={onSelectTax} options={taxOptions} style={input} />
+        <SearchCombobox value={taxId} onChange={onSelectTax} {...navCombo} options={taxOptions} style={input} />
       </Field>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
         <Field label="الفرع">
-          <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
+          <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} {...navCombo} options={branchPickerOptions(branches)} style={input} />
         </Field>
         <Field label="مركز التكلفة">
-          <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
+          <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} {...navCombo} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
@@ -426,6 +454,7 @@ function CreateForm({ deps, onCancel, onDone }: {
           <SearchCombobox
             value={salesRepId}
             onChange={(v) => setSalesRepId(v === "" ? "" : Number(v))}
+            {...navCombo}
             style={input}
             options={[
               { value: "", label: "— بدون —" },
@@ -437,6 +466,7 @@ function CreateForm({ deps, onCancel, onDone }: {
           <SearchCombobox
             value={invoiceType}
             onChange={(v) => setInvoiceType(v as "simplified" | "standard")}
+            {...navCombo}
             style={input}
             options={[
               { value: "simplified", label: "مبسّطة (B2C)" },
@@ -450,14 +480,14 @@ function CreateForm({ deps, onCancel, onDone }: {
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>بيانات المشتري (للفاتورة الضريبية)</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <Field label="اسم المشتري">
-              <input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} style={input} />
+              <input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} style={input} {...navInput} />
             </Field>
             <Field label="الرقم الضريبي للمشتري">
-              <input value={buyerVat} onChange={(e) => setBuyerVat(e.target.value)} style={input} />
+              <input value={buyerVat} onChange={(e) => setBuyerVat(e.target.value)} style={input} {...navInput} />
             </Field>
           </div>
           <Field label="عنوان المشتري" style={{ marginTop: 8 }}>
-            <input value={buyerAddress} onChange={(e) => setBuyerAddress(e.target.value)} style={input} />
+            <input value={buyerAddress} onChange={(e) => setBuyerAddress(e.target.value)} style={input} {...navInput} />
           </Field>
         </div>
       )}
@@ -479,6 +509,7 @@ function CreateForm({ deps, onCancel, onDone }: {
           <SearchCombobox
             value={cashBoxId ?? ""}
             onChange={(v) => setCashBoxId(Number(v) || null)}
+            {...navCombo}
             style={input}
             options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
           />
@@ -489,33 +520,38 @@ function CreateForm({ deps, onCancel, onDone }: {
           <SearchCombobox
             value={bankId ?? ""}
             onChange={(v) => setBankId(Number(v) || null)}
+            {...navCombo}
             style={input}
             options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
           />
         </Field>
       )}
 
-      <div style={{ overflowX: "auto" }}>
-      <Table style={{ minWidth: 1040 }}>
+      <div style={{ marginTop: 16, fontSize: 15, fontWeight: 700, color: "#0f172a" }}>بنود الفاتورة</div>
+      <div style={{ overflowX: "auto", marginTop: 8, border: "1px solid #e2e8f0", borderRadius: 10 }}>
+      <Table style={{ minWidth: 1080 }}>
         <thead><tr>
+          <Th style={{ width: 44, textAlign: "center" }}>#</Th>
           <Th style={{ minWidth: 240 }}>الصنف</Th>
           <Th style={{ width: 130 }}>الوحدة</Th>
-          <Th style={{ width: 90 }}>الكمية</Th>
-          <Th style={{ width: 80 }}>مجاني</Th>
-          <Th style={{ width: 120 }}>سعر الوحدة</Th>
+          <Th style={{ width: 90, textAlign: "center" }}>الكمية</Th>
+          <Th style={{ width: 80, textAlign: "center" }}>مجاني</Th>
+          <Th style={{ width: 120, textAlign: "center" }}>سعر الوحدة</Th>
           <Th style={{ width: 170 }}>الخصم</Th>
-          <Th style={{ width: 80 }}>ض. %</Th>
+          <Th style={{ width: 80, textAlign: "center" }}>ض. %</Th>
           <Th style={{ width: 150 }}>ملاحظة</Th>
-          <Th style={{ width: 120, textAlign: "left" }}>الإجمالي</Th>
+          <Th style={{ width: 130, textAlign: "left" }}>الإجمالي</Th>
           <Th style={{ width: 40 }}></Th>
         </tr></thead>
         <tbody>
           {lines.map((l, i) => (
-            <tr key={i}>
+            <tr key={i} className="zrow" style={{ background: i % 2 ? "#fbfdff" : "#fff" }}>
+              <Td style={{ textAlign: "center", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</Td>
               <Td>
                 <SearchCombobox
                   value={l.itemId}
                   onChange={(v) => setLine(i, { itemId: Number(v) })}
+                  {...navCombo}
                   style={input}
                   options={[
                     { value: 0, label: "— اختر —" },
@@ -527,24 +563,25 @@ function CreateForm({ deps, onCancel, onDone }: {
                 <SearchCombobox
                   value={l.uomId ?? 0}
                   onChange={(v) => setLine(i, { uomId: Number(v) })}
+                  {...navCombo}
                   style={input}
                   options={uoms.map((u) => ({ value: u.id, label: u.baseQty !== 1 ? `${u.nameAr} (×${u.baseQty})` : u.nameAr }))}
                 />
               </Td>
-              <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={input} /></Td>
-              <Td><input type="number" step="0.001" value={l.freeQty ?? 0} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={input} /></Td>
-              <Td><input type="number" step="0.01" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={input} /></Td>
+              <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
+              <Td><input type="number" step="0.001" value={l.freeQty ?? 0} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
+              <Td><input type="number" step="0.01" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
               <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} /></Td>
-              <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={input} /></Td>
-              <Td><input value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} style={input} /></Td>
-              <Td num>{fmt(l.lineTotal)}</Td>
-              <Td><button onClick={() => removeLine(i)} style={{ ...btnLink, color: "#dc2626" }}>×</button></Td>
+              <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
+              <Td><input value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} style={input} {...navInput} /></Td>
+              <Td num style={{ fontWeight: 700, color: "#0f172a" }}>{docSym} {fmt(l.lineTotal)}</Td>
+              <Td><button onClick={() => removeLine(i)} style={{ ...btnLink, color: "#dc2626", fontSize: 18 }}>×</button></Td>
             </tr>
           ))}
         </tbody>
       </Table>
       </div>
-      <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
+      <button onClick={addLine} type="button" style={{ width: "100%", marginTop: 8, padding: "10px 16px", background: "#f8fafc", color: "#2563eb", border: "1px dashed #93c5fd", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: 600 }}>+ إضافة سطر</button>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
 
       <Field label="ملاحظات" style={{ marginTop: 12 }}>
@@ -553,7 +590,7 @@ function CreateForm({ deps, onCancel, onDone }: {
       <ErrorMsg text={err} />
       <Actions>
         <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : "حفظ وترحيل"}</button>
+        <button onClick={save} disabled={busy} type="button" data-fnav="1" style={btnPrimary}>{busy ? "..." : "حفظ وترحيل"}</button>
       </Actions>
     </div>
   );

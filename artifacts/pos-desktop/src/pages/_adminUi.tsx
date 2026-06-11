@@ -122,10 +122,20 @@ type ComboProps = {
   style?: CSSProperties;
   disabled?: boolean;
   autoFocus?: boolean;
+  /** When set, the inner input gets a `data-fnav` attribute so a parent
+   *  Enter-to-advance handler can include it in the focus order. */
+  navAttr?: string;
+  /** Optional className forwarded to the inner input (e.g. for a focus ring). */
+  inputClassName?: string;
+  /** Fires when the user presses Enter to pick a highlighted option (or, when
+   *  closed with a value already chosen, to skip ahead). Receives the inner
+   *  input element so the parent can move focus to the next field. */
+  onEnterNavigate?: (fromEl: HTMLElement | null) => void;
 };
 
 export function SearchCombobox({
   value, onChange, options, placeholder = "— اختر —", style, disabled, autoFocus,
+  navAttr, inputClassName, onEnterNavigate,
 }: ComboProps) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -207,7 +217,17 @@ export function SearchCombobox({
   function onKey(e: React.KeyboardEvent) {
     if (e.key === "ArrowDown") { e.preventDefault(); if (!open) { setOpen(true); return; } setHi((h) => Math.min(filtered.length - 1, h + 1)); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setHi((h) => Math.max(0, h - 1)); }
-    else if (e.key === "Enter") { e.preventDefault(); if (!open) { setOpen(true); return; } const o = filtered[hi]; if (o) pick(o); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      if (!open) {
+        // Fast data entry: Enter on a field that already holds a value jumps
+        // to the next field instead of re-opening the list.
+        if (onEnterNavigate && value != null && value !== "" && value !== 0) { onEnterNavigate(inputRef.current); return; }
+        setOpen(true); return;
+      }
+      const o = filtered[hi];
+      if (o) { pick(o); if (onEnterNavigate) onEnterNavigate(inputRef.current); }
+    }
     else if (e.key === "Escape") { e.preventDefault(); closeAndReset(); inputRef.current?.blur(); }
   }
 
@@ -227,6 +247,8 @@ export function SearchCombobox({
       <input
         ref={inputRef}
         type="text"
+        className={inputClassName}
+        {...(navAttr ? { "data-fnav": navAttr } : {})}
         disabled={disabled}
         autoFocus={autoFocus}
         value={open ? q : (selected ? selected.label : "")}
