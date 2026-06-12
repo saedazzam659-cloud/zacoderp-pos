@@ -645,7 +645,7 @@
   },
   "auth": {
     "login": "Sign In",
-    "loginSubtitle": "Enter your credentials to access the dashboard",
+    "loginSubtitle": "Welcome back to Zacod — sign in to lead your business with intelligence and confidence.",
     "username": "Username",
     "password": "Password",
     "noAccount": "Don't have an account?",
@@ -656,7 +656,7 @@
     "rights": "All rights reserved",
     "loginError": "Invalid username or password",
     "intro": {
-      "lead": "The next generation of AI-powered business management systems. A comprehensive smart platform that analyzes your company's financial and operational data in real time, giving you proactive insight for every decision.",
+      "lead": "Zacod isn't just accounting software — it's your company's digital financial brain. A complete Saudi ERP that unifies accounting, inventory, sales, manufacturing, and point-of-sale in one platform, powered by AI that turns your numbers into decisions and your business data into real growth.",
       "modulesTitle": "Integrated ERP Modules",
       "modules": {
         "accounting": "Accounting",
