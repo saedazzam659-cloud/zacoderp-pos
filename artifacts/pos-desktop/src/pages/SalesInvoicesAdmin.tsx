@@ -234,8 +234,16 @@ function CreateForm({ deps, onCancel, onDone }: {
     const nodes = Array.from(root.querySelectorAll<HTMLElement>("[data-fnav]"));
     const i = nodes.indexOf(el);
     if (i === -1) return;
-    const nxt = nodes[i + 1];
-    if (nxt) { nxt.focus(); (nxt as HTMLInputElement).select?.(); }
+    // Walk forward to the next *focusable* node: skip disabled or hidden
+    // controls (e.g. locked fields, collapsed rows) so focus never stalls.
+    for (let j = i + 1; j < nodes.length; j++) {
+      const nxt = nodes[j];
+      const disabled = (nxt as HTMLInputElement).disabled === true || nxt.getAttribute("aria-disabled") === "true";
+      const hidden = nxt.offsetParent === null;
+      if (disabled || hidden) continue;
+      nxt.focus();
+      if (document.activeElement === nxt) { (nxt as HTMLInputElement).select?.(); return; }
+    }
   }
   const onEnterAdv = (e: React.KeyboardEvent<HTMLElement>) => {
     if (e.key === "Enter") { e.preventDefault(); advanceFrom(e.currentTarget); }
@@ -571,7 +579,7 @@ function CreateForm({ deps, onCancel, onDone }: {
               <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
               <Td><input type="number" step="0.001" value={l.freeQty ?? 0} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
               <Td><input type="number" step="0.01" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
-              <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} /></Td>
+              <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} navAttr="1" inputClassName="zfield" onEnterNavigate={(el) => advanceFrom(el)} /></Td>
               <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
               <Td><input value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} style={input} {...navInput} /></Td>
               <Td num style={{ fontWeight: 700, color: "#0f172a" }}>{docSym} {fmt(l.lineTotal)}</Td>

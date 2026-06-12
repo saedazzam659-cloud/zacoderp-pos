@@ -220,9 +220,12 @@ export function SearchCombobox({
     else if (e.key === "Enter") {
       e.preventDefault();
       if (!open) {
-        // Fast data entry: Enter on a field that already holds a value jumps
-        // to the next field instead of re-opening the list.
-        if (onEnterNavigate && value != null && value !== "" && value !== 0) { onEnterNavigate(inputRef.current); return; }
+        // Fast data entry: Enter on a field that already holds a real
+        // selection jumps to the next field instead of re-opening the list.
+        // Use `selected` (a matching option exists) rather than a value
+        // sentinel, so legitimate value 0 (e.g. customerId=0 "بدون عميل")
+        // still advances.
+        if (onEnterNavigate && selected != null) { onEnterNavigate(inputRef.current); return; }
         setOpen(true); return;
       }
       const o = filtered[hi];
@@ -337,9 +340,10 @@ function DiscTypeToggle({ value, onChange, disabled }: {
  *  readout of the converted equivalent. When you type a percent it shows the
  *  resulting value (from `gross` = qty×unit); when you type a value it shows
  *  the equivalent percent. */
-export function LineDiscountCell({ amount, type, gross, sym: symOverride, onAmount, onType }: {
+export function LineDiscountCell({ amount, type, gross, sym: symOverride, onAmount, onType, navAttr, inputClassName, onEnterNavigate }: {
   amount: number; type: DiscType; gross?: number; sym?: string;
   onAmount: (v: number) => void; onType: (t: DiscType) => void;
+  navAttr?: string; inputClassName?: string; onEnterNavigate?: (fromEl: HTMLElement | null) => void;
 }) {
   const sym = symOverride ?? currencySymbol();
   const g = Number(gross) || 0;
@@ -361,6 +365,9 @@ export function LineDiscountCell({ amount, type, gross, sym: symOverride, onAmou
           type="number" step="0.01" min={0} value={amount || ""}
           placeholder="0"
           onChange={(e) => onAmount(Number(e.target.value) || 0)}
+          className={inputClassName}
+          {...(navAttr ? { "data-fnav": navAttr } : {})}
+          onKeyDown={onEnterNavigate ? (e) => { if (e.key === "Enter") { e.preventDefault(); onEnterNavigate(e.currentTarget); } } : undefined}
           style={{ ...input, padding: "8px 8px" }}
         />
         <DiscTypeToggle value={type} onChange={onType} />
