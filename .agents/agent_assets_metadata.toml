@@ -299,3 +299,15 @@ id = "o9ib5RuskVVejkNnTtWWY"
 uri = "file://.local/outputs/ZACOD-ERP---Technical-Deck.pptx"
 type = "slides"
 title = "عرض زاكود ERP التقني (PowerPoint)"
+
+[[outputs]]
+id = "81PCyae8uvqH9rOQv5qaC"
+uri = "file://dist/exports/zacoderp-source.tar.gz"
+type = "unspecified"
+title = "الكود المصدري الكامل (zacoderp-source.tar.gz)"
+
+[[outputs]]
+id = "hCNK-gGuKfgBMmtbXB1TP"
+uri = "file://dist/exports/zacoderp-database.sql.gz"
+type = "unspecified"
+title = "نسخة قاعدة البيانات (zacoderp-database.sql.gz)"
