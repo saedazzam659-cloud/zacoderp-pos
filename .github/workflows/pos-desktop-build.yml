@@ -53,12 +53,16 @@ jobs:
         shell: bash
 
     env:
-      # Pin to 1.85.0 — the crate's declared MSRV (Cargo.toml rust-version) and
-      # the exact version that stabilized edition2024 (needed by transitive deps
-      # like toml v1.1.2). Do NOT use floating "stable": newer stable Rust raised
-      # a coherence/E0119 hard error inside the `time` crate (via tauri-utils),
-      # breaking `cargo check` with no lockfile to hold the dependency tree.
-      RUST_VERSION: "1.85.0"
+      # Pin to a FIXED version, never floating "stable". With no committed
+      # Cargo.lock the dep tree floats to newest on every build, which creates a
+      # two-sided trap:
+      #   * Newer stable (>1.88) raises a coherence/E0119 hard error inside the
+      #     `time` crate (via tauri-utils) → `cargo check` fails to compile.
+      #   * 1.85.0 is too OLD: current transitive deps (serde_with 3.21,
+      #     time 0.3.43 + time-core/time-macros) declare rust-version 1.88.
+      # 1.88.0 is the sweet spot — it satisfies those deps' MSRV and is the
+      # exact version `time` 0.3.43 targets, so it compiles cleanly.
+      RUST_VERSION: "1.88.0"
       NODE_VERSION: "20"
       PNPM_VERSION: "9"
       # Tauri target — Cargo.toml + tauri.conf.json are pinned to win-x64

@@ -3,7 +3,10 @@ name = "pos-desktop"
 version = "0.8.22"
 description = "ZACOD POS Desktop (Windows offline)"
 edition = "2021"
-rust-version = "1.85"
+# Effective MSRV is driven by transitive deps (serde_with 3.21, time 0.3.43,
+# time-core/time-macros) which all require rustc 1.88. CI pins the toolchain to
+# 1.88.0 — see RUST_VERSION in .github/workflows/pos-desktop-build.yml.
+rust-version = "1.88"
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }

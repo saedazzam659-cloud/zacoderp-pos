@@ -10,6 +10,7 @@
 - [POS Desktop pull must persist](pos-desktop-pull-must-persist.md) — `/api/sync/pull` response counts ≠ local catalog; always go through `lib/sync.ts → pullAndPersist`, never call `api.pull` directly from a component.
 - [POS Desktop two-layer auth](pos-desktop-two-auth-layers.md) — device token + cashier token live in SEPARATE keyring slots; logging out a cashier must never wipe the device binding.
 - [POS Desktop parked carts](pos-desktop-parked-carts.md) — device-only scratchpad, scoped by pos_session_id; never push to cloud; do not confuse with "الفواتير غير المرفوعة" (offline-sync queue).
+- [POS Desktop CI Rust version pin](pos-desktop-rust-version-pin.md) — no committed Cargo.lock → deps float; pin RUST_VERSION to the MSRV the failing cargo-check log demands (not "stable", not too-old); that version also dodges the time-crate E0119 on newer stables.
 - [Avoid openssl-sys vendored on Windows CI](windows-openssl-trap.md) — rusqlite `bundled-sqlcipher-vendored-openssl` needs Perl+NASM build OpenSSL from source on windows-latest; flaky even with Strawberry Perl. Use plain `bundled` (no SQLCipher) unless encryption is a hard requirement.
 - [Zod datetime strict rejects +00:00](zod-datetime-offset.md) — chrono `to_rfc3339()` emits offset form, never `Z`; any zod schema validating a Rust-produced timestamp MUST use `{offset:true}` or it 400s.
 - [POS Desktop daily Z-report data source](pos-desktop-daily-report.md) — read local SQLite, not cloud `/api/reports/*`; offline shift-close must work without internet.
