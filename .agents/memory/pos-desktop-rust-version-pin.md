@@ -1,32 +1,41 @@
 ---
-name: POS Desktop CI Rust version pinning trap
-description: Why the pos-desktop MSI build's Rust toolchain must be pinned to a fixed version, and how to choose it.
+name: POS Desktop CI Rust toolchain + resolver pinning
+description: Why the pos-desktop MSI build must pin an OLD Rust toolchain AND enable Cargo's MSRV-aware resolver, instead of chasing toolchain versions.
 ---
 
-# POS Desktop CI Rust version pin
+# POS Desktop CI Rust pin
 
-The pos-desktop Tauri build has **no committed `Cargo.lock`** (only `Cargo.toml`).
-CI resolves the Rust dependency tree to the newest versions on every build, which
-creates a two-sided version trap for the `RUST_VERSION` env in
+The pos-desktop Tauri build has **no committed `Cargo.lock`** (only `Cargo.toml`),
+so CI resolves the dependency tree to the newest versions on every build. That
+creates a two-sided trap for `RUST_VERSION` in
 `.github/workflows/pos-desktop-build.yml`:
 
-- **Floating `"stable"` (newer than the deps' MSRV)** → `cargo check` hits an
-  E0119 coherence hard error *inside* the `time` crate (pulled via tauri-utils).
-- **Too-old pin (e.g. 1.85.0)** → newest transitive deps (`serde_with`,
-  `time`/`time-core`/`time-macros`) declare a higher `rust-version` and the
-  MSRV check rejects the toolchain before compiling.
+- **Floating `"stable"` / any toolchain newer than the deps' MSRV** → `cargo
+  check` hits an E0119 coherence hard error *inside* the `time` crate (pulled via
+  tauri-utils). Newer stable Rust adds std impls that conflict with `time`.
+- **Pinning a too-old toolchain** → the newest floating deps (`serde_with`,
+  `time`/`time-core`/`time-macros`) declare a higher `rust-version` (e.g. 1.88)
+  and the MSRV check rejects the toolchain before compiling.
 
-**Rule:** pin `RUST_VERSION` to a FIXED version equal to the MSRV that the
-currently-floating deps demand (read it from the failing `cargo check` log lines
-like `time@0.3.43 requires rustc 1.88.0`). That exact version is also the one the
-`time` crate was built/tested against, so it compiles without the E0119 regression
-that only appears on *later* stables. Keep `Cargo.toml` `rust-version` in lockstep.
+Chasing the toolchain version alone is a **losing game** — every dep bump moves
+the required floor and re-breaks the build (this burned several CI cycles).
 
-**Why:** there is no local cargo (see pos-desktop-no-local-cargo) so neither tsc
-nor the architect catch this — it only surfaces in CI. When the build breaks again
-after a dep bump, the fix is almost always to re-read the required-rustc line from
-the log and bump the pin to match, NOT to chase the `time` crate.
+**The real fix (do this, don't version-chase):**
+1. Pin `RUST_VERSION` to a fixed OLD toolchain (1.85.0 — the edition2024 floor).
+2. Set `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: "fallback"` in the job `env`
+   (requires cargo >= 1.84).
+3. Keep `Cargo.toml` `rust-version` = "1.85" in lockstep (the resolver uses this
+   field as the floor).
 
-**How to apply:** the real long-term fix is to commit a `Cargo.lock` so the tree
-stops floating; until then, treat `RUST_VERSION` as a moving target tied to the
-newest deps' MSRV.
+Then Cargo's MSRV-aware resolver **downgrades any dep whose MSRV exceeds 1.85** to
+the newest version that still supports 1.85, so the tree can never drift onto a
+Rust it can't compile, and the old toolchain never triggers the `time` E0119.
+
+**Why:** there is no local cargo/rustc available (the Replit `rust-stable` module
+install did NOT register in `.replit` modules; `which cargo` stays empty), so
+neither tsc nor the architect catch Rust resolution/compile errors — they only
+surface in CI. The resolver flag makes the build self-correcting against dep drift.
+
+**How to apply:** the true long-term fix is to commit a `Cargo.lock` so the tree
+stops floating entirely. Until then, the toolchain pin + `fallback` resolver is
+the stable combination — do not switch back to floating `"stable"`.

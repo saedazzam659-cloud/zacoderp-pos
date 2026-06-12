@@ -53,16 +53,19 @@ jobs:
         shell: bash
 
     env:
-      # Pin to a FIXED version, never floating "stable". With no committed
-      # Cargo.lock the dep tree floats to newest on every build, which creates a
-      # two-sided trap:
-      #   * Newer stable (>1.88) raises a coherence/E0119 hard error inside the
-      #     `time` crate (via tauri-utils) → `cargo check` fails to compile.
-      #   * 1.85.0 is too OLD: current transitive deps (serde_with 3.21,
-      #     time 0.3.43 + time-core/time-macros) declare rust-version 1.88.
-      # 1.88.0 is the sweet spot — it satisfies those deps' MSRV and is the
-      # exact version `time` 0.3.43 targets, so it compiles cleanly.
-      RUST_VERSION: "1.88.0"
+      # Pin to a FIXED, OLD toolchain — never floating "stable". With no
+      # committed Cargo.lock the dep tree floats to newest on every build, and
+      # the newest crates (time 0.3.43, serde_with 3.21) BOTH demand rustc 1.88
+      # AND trip a coherence/E0119 hard error inside `time` on newer stables.
+      # Chasing the toolchain version alone is a losing game; instead we pin an
+      # old toolchain and force Cargo's MSRV-aware resolver (below) to keep the
+      # whole tree on versions that compile here.
+      RUST_VERSION: "1.85.0"
+      # THE actual fix: make Cargo downgrade any dependency whose declared MSRV
+      # exceeds this package's rust-version (1.85) instead of selecting it and
+      # failing. This stops the no-lockfile dep tree from ever drifting onto a
+      # Rust it can't build. Requires cargo >= 1.84 (we have 1.85.0).
+      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: "fallback"
       NODE_VERSION: "20"
       PNPM_VERSION: "9"
       # Tauri target — Cargo.toml + tauri.conf.json are pinned to win-x64

@@ -3,10 +3,13 @@ name = "pos-desktop"
 version = "0.8.22"
 description = "ZACOD POS Desktop (Windows offline)"
 edition = "2021"
-# Effective MSRV is driven by transitive deps (serde_with 3.21, time 0.3.43,
-# time-core/time-macros) which all require rustc 1.88. CI pins the toolchain to
-# 1.88.0 — see RUST_VERSION in .github/workflows/pos-desktop-build.yml.
-rust-version = "1.88"
+# MSRV floor used for dependency resolution. CI pins the toolchain to this exact
+# version AND sets CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback, so Cargo
+# picks the newest dep versions still compatible with 1.85 — keeping the floating
+# (no Cargo.lock) tree off crates like time 0.3.43 / serde_with 3.21 that demand
+# rustc 1.88 and trip the time-crate E0119 on newer stable Rust.
+# See RUST_VERSION in .github/workflows/pos-desktop-build.yml.
+rust-version = "1.85"
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
