@@ -18,6 +18,7 @@ import {
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
 import CostCenterFilter from "@/components/CostCenterFilter";
+import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 import {
   Scale, Search, Printer, Eye, ExternalLink, Loader2, AlertCircle, FileText,
   Columns3, RotateCcw,
@@ -191,6 +192,91 @@ export default function TrialBalance() {
     closeCredit: (r.closingBalance ?? 0) < 0 ? fmtAbs(r.closingBalance) : "",
   }));
 
+  // ── Flat columns for the advanced grid (on-screen view) ───────────────
+  // The grid carries the same feature set as the Account Statement: a
+  // global search box that scans every column (so the account CODE and
+  // NAME are both searchable), per-column AND/OR filters, 3-state sort,
+  // drag-reorder, optional grouping with subtotals, conditional
+  // formatting, header/footer color themes, and pagination — all
+  // persisted per-tenant under the "trialBalanceGrid" slug. Column
+  // visibility honours the same «الأعمدة» popover that drives export +
+  // print, so the three stay perfectly in sync.
+  const TYPE_TONE: Record<string, string> = {
+    asset:     "border-sky-200 bg-sky-50 text-sky-700",
+    liability: "border-amber-200 bg-amber-50 text-amber-700",
+    equity:    "border-violet-200 bg-violet-50 text-violet-700",
+    revenue:   "border-emerald-200 bg-emerald-50 text-emerald-700",
+    expense:   "border-rose-200 bg-rose-50 text-rose-700",
+  };
+  const numCol = (
+    key: string, label: string, get: (r: any) => number, tone: "dr" | "cr",
+  ): GridColumn<any> => ({
+    key, label, type: "num", align: "end", totalable: true,
+    className: "font-mono tabular-nums",
+    value: (r) => get(r),
+    render: (r) => {
+      const v = get(r);
+      return <span className={tone === "dr" ? "text-blue-700" : "text-rose-700"}>{v > 0 ? fmtAbs(v) : ""}</span>;
+    },
+  });
+  const gridColumns: GridColumn<any>[] = [
+    { key: "code", label: t("accountingReports.code"), type: "text",
+      className: "font-mono text-xs",
+      value: (r) => r.code,
+      render: (r) => (
+        <button
+          type="button"
+          onClick={() => setDrillRow(r)}
+          className="inline-flex items-center gap-1.5 text-primary font-mono hover:underline focus:outline-none focus:ring-2 focus:ring-primary/40 rounded"
+          title="اعرض حركات هذا الحساب خلال الفترة"
+        >
+          {r.code}
+          <Eye className="h-3 w-3 opacity-40" />
+        </button>
+      ),
+    },
+    { key: "name", label: t("accountingReports.accountName"), type: "text",
+      value: (r) => isRtl ? r.nameAr : (r.nameEn || r.nameAr),
+      render: (r) => (
+        <button
+          type="button"
+          onClick={() => setDrillRow(r)}
+          className="text-start hover:text-primary hover:underline decoration-dotted underline-offset-4"
+        >
+          {isRtl ? r.nameAr : (r.nameEn || r.nameAr)}
+        </button>
+      ),
+    },
+    ...(visibleCols.type ? [{
+      key: "type", label: t("accountingReports.type"), type: "text" as const,
+      value: (r: any) => TYPE_LABELS[r.accountType] ?? r.accountType,
+      render: (r: any) => (
+        <span className={cn(
+          "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
+          TYPE_TONE[r.accountType] ?? "border-slate-200 bg-slate-50 text-slate-700",
+        )}>
+          {TYPE_LABELS[r.accountType] ?? r.accountType}
+        </span>
+      ),
+    }] : []),
+    ...(visibleCols.openDr   ? [numCol("openDr",   COL_LABELS.openDr,   (r) => Math.max(0,  r.openingBalance ?? 0), "dr")] : []),
+    ...(visibleCols.openCr   ? [numCol("openCr",   COL_LABELS.openCr,   (r) => Math.max(0, -(r.openingBalance ?? 0)), "cr")] : []),
+    ...(visibleCols.periodDr ? [numCol("periodDr", COL_LABELS.periodDr, (r) => r.totalDebit  ?? 0, "dr")] : []),
+    ...(visibleCols.periodCr ? [numCol("periodCr", COL_LABELS.periodCr, (r) => r.totalCredit ?? 0, "cr")] : []),
+    ...(visibleCols.closeDr  ? [numCol("closeDr",  COL_LABELS.closeDr,  (r) => Math.max(0,  r.closingBalance ?? 0), "dr")] : []),
+    ...(visibleCols.closeCr  ? [numCol("closeCr",  COL_LABELS.closeCr,  (r) => Math.max(0, -(r.closingBalance ?? 0)), "cr")] : []),
+  ];
+
+  const gridTotalsRow = rows.length > 0 ? {
+    __label: <span>{t("accountingReports.total")}</span>,
+    ...(visibleCols.openDr   ? { openDr:   <span className="font-mono text-blue-700">{fmtAbs(openDrTot)}</span> } : {}),
+    ...(visibleCols.openCr   ? { openCr:   <span className="font-mono text-rose-700">{fmtAbs(openCrTot)}</span> } : {}),
+    ...(visibleCols.periodDr ? { periodDr: <span className="font-mono text-blue-700">{fmtAbs(totalDr)}</span> } : {}),
+    ...(visibleCols.periodCr ? { periodCr: <span className="font-mono text-rose-700">{fmtAbs(totalCr)}</span> } : {}),
+    ...(visibleCols.closeDr  ? { closeDr:  <span className="font-mono text-blue-700">{fmtAbs(closeDrTot)}</span> } : {}),
+    ...(visibleCols.closeCr  ? { closeCr:  <span className="font-mono text-rose-700">{fmtAbs(closeCrTot)}</span> } : {}),
+  } : null;
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -241,7 +327,7 @@ export default function TrialBalance() {
                     <ColCheckRow label={COL_LABELS.closeCr}  checked={visibleCols.closeCr}  onToggle={() => toggleCol("closeCr")}  dot="rose" />
                   </div>
                   <div className="px-3 py-2 text-[10px] text-muted-foreground border-t bg-muted/20 leading-relaxed">
-                    💡 نصيحة: انقر مزدوجًا على رأس أي عمود في الجدول لإخفائه فورًا.
+                    💡 نصيحة: استخدم زر «الأعمدة» لإظهار أو إخفاء أي عمود. يمكنك كذلك البحث والترتيب والتجميع والتنسيق الشرطي من شريط أدوات الجدول.
                   </div>
                 </PopoverContent>
               </Popover>
@@ -283,11 +369,11 @@ export default function TrialBalance() {
       )}
 
       {rows.length > 0 && (
-        <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
+        <>
           {/* Balance indicator */}
           <div className={cn(
-            "flex items-center justify-between px-5 py-2.5 text-sm font-semibold border-b",
-            Math.abs(totalDr - totalCr) < 0.01 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
+            "rounded-xl border flex items-center justify-between px-5 py-2.5 text-sm font-semibold shadow-sm",
+            Math.abs(totalDr - totalCr) < 0.01 ? "bg-green-50 text-green-700 border-green-200" : "bg-red-50 text-red-700 border-red-200"
           )}>
             <span>{t("trialBalance.balanceCheck")}</span>
             <span>
@@ -296,6 +382,26 @@ export default function TrialBalance() {
                 : t("trialBalance.diff", { diff: fmtAbs(totalDr - totalCr) })}
             </span>
           </div>
+
+          {/* ── Interactive advanced grid (screen only) — same red-box
+              feature set as the Account Statement. Global search covers
+              the account CODE and NAME; drill-down opens on the code/name
+              cell. A static grouped table is kept below for print/PDF. */}
+          <div className="print:hidden">
+            <AdvancedReportGrid
+              slug="trialBalanceGrid"
+              cid={cid}
+              rowKey={(r: any) => r.id}
+              rows={rows}
+              unitLabel="حساب"
+              emptyMessage={t("accountingReports.noEntriesInPeriod") as string}
+              columns={gridColumns}
+              totalsRow={gridTotalsRow}
+            />
+          </div>
+
+          {/* ── Classic printable grouped table (print/PDF only) ───────── */}
+          <div className="hidden print:block rounded-xl border bg-card overflow-hidden shadow-sm">
 
           {/* ── Group separators ──
               Three balance groups are visually distinguished by:
@@ -473,7 +579,8 @@ export default function TrialBalance() {
               </tfoot>
             </table>
           </div>
-        </div>
+          </div>
+        </>
       )}
 
       {/* ── DRILL-DOWN MODAL ─────────────────────────────────────────────── */}
