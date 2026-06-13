@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import {
-  listQuotations, getQuotation, createQuotation, setQuotationStatus, convertQuotationToInvoice,
+  listQuotations, getQuotation, createQuotation, updateQuotation, deleteQuotation,
+  setQuotationStatus, convertQuotationToInvoice,
   type Quotation, type QuotationStatus, type SalesLine,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
@@ -39,11 +40,13 @@ export default function QuotationsAdmin() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<Quotation | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editDoc, setEditDoc] = useState<Quotation | null>(null);
   const [deps, setDeps] = useState<{ customers: LocalCustomer[]; items: LocalItem[]; warehouses: Warehouse[]; salespersons: Salesperson[] } | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const formOpen = creating || editDoc !== null;
 
   async function refresh() { setRows(await listQuotations(5000)); }
   useEffect(() => {
@@ -79,27 +82,47 @@ export default function QuotationsAdmin() {
     finally { setBusyId(null); }
   }
 
+  async function startEdit(id: number) {
+    setBusyId(id); setErr(null);
+    try {
+      const full = await getQuotation(id);
+      setCreating(false); setExpandedId(null); setExpandedDetail(null);
+      setEditDoc(full);
+    } catch (e: any) { setErr(e?.message ?? "فشل تحميل العرض"); }
+    finally { setBusyId(null); }
+  }
+
+  async function remove(id: number, docNo: string) {
+    if (!window.confirm(`حذف عرض السعر ${docNo}؟ لا يمكن التراجع.`)) return;
+    setBusyId(id); setErr(null);
+    try { await deleteQuotation(id); await refresh(); }
+    catch (e: any) { setErr(e?.message ?? "فشل حذف العرض"); }
+    finally { setBusyId(null); }
+  }
+
   return (
     <Page
       title="عروض الأسعار"
       subtitle={`${rows.length} عرض — مستند غير مالي؛ يمكن تحويله إلى فاتورة مبيعات`}
       right={
-        <button onClick={() => setCreating(true)} disabled={!deps || creating}
-          style={{ ...btnPrimary, opacity: (!deps || creating) ? 0.5 : 1, cursor: (!deps || creating) ? "not-allowed" : "pointer" }}>
+        <button onClick={() => setCreating(true)} disabled={!deps || formOpen}
+          style={{ ...btnPrimary, opacity: (!deps || formOpen) ? 0.5 : 1, cursor: (!deps || formOpen) ? "not-allowed" : "pointer" }}>
           + عرض سعر
         </button>
       }
     >
       <ErrorMsg text={err} />
-      {creating && deps && (
+      {formOpen && deps && (
         <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
           <div style={{ padding: 16 }}>
-            <CreateForm deps={deps} onCancel={() => setCreating(false)} onDone={() => { setCreating(false); void refresh(); }} />
+            <CreateForm key={editDoc?.id ?? "new"} deps={deps} initial={editDoc}
+              onCancel={() => { setCreating(false); setEditDoc(null); }}
+              onDone={() => { setCreating(false); setEditDoc(null); void refresh(); }} />
           </div>
         </Card>
       )}
       <Card>
-        {rows.length === 0 && !creating ? <Empty text="لا توجد عروض أسعار" /> : (
+        {rows.length === 0 && !formOpen ? <Empty text="لا توجد عروض أسعار" /> : (
           <Table>
             <thead><tr>
               <Th>رقم العرض</Th><Th>التاريخ</Th><Th>صالح حتى</Th><Th>العميل</Th><Th>الحالة</Th>
@@ -120,8 +143,8 @@ export default function QuotationsAdmin() {
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
                     <Td>
                       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-                        <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
-                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                        <button onClick={() => void toggleView(p.id)} disabled={formOpen} aria-expanded={expandedId === p.id}
+                          style={{ ...btnLink, opacity: formOpen ? 0.5 : 1, cursor: formOpen ? "not-allowed" : "pointer" }}>
                           {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
                         </button>
                         {p.status === "draft" && (
@@ -135,6 +158,12 @@ export default function QuotationsAdmin() {
                         )}
                         {p.status !== "converted" && p.status !== "rejected" && (
                           <button onClick={() => void convert(p.id)} disabled={busyId === p.id} style={{ ...btnPrimary, padding: "4px 10px", fontSize: 12 }}>↪ إلى فاتورة</button>
+                        )}
+                        {p.status !== "converted" && (
+                          <>
+                            <button onClick={() => void startEdit(p.id)} disabled={busyId === p.id || formOpen} style={btnLink}>تعديل</button>
+                            <button onClick={() => void remove(p.id, p.docNo)} disabled={busyId === p.id || formOpen} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
+                          </>
                         )}
                         {p.status === "converted" && p.convertedInvoiceId && (
                           <span style={{ fontSize: 12, color: "#7c3aed" }}>فاتورة #{p.convertedInvoiceId}</span>
@@ -186,33 +215,41 @@ function DocDetail({ p }: { p: Quotation }) {
   );
 }
 
-function CreateForm({ deps, onCancel, onDone }: {
+function CreateForm({ deps, initial, onCancel, onDone }: {
   deps: { customers: LocalCustomer[]; items: LocalItem[]; warehouses: Warehouse[]; salespersons: Salesperson[] };
+  initial?: Quotation | null;
   onCancel: () => void; onDone: () => void;
 }) {
-  const [customerId, setCustomerId] = useState<number>(0);
-  const [date, setDate] = useState(todayStr());
-  const [validUntil, setValidUntil] = useState("");
+  const isEdit = !!initial;
+  const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
+  const [date, setDate] = useState(initial?.quotationDate ?? todayStr());
+  const [validUntil, setValidUntil] = useState(initial?.validUntil ?? "");
   const [warehouseId, setWarehouseId] = useState<number>(
-    (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
+    initial?.warehouseId ?? (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
   );
   const { branches, costCenters } = useDimensions();
-  const [branchId, setBranchId] = useState<number | "">("");
-  useEffect(() => { if (branchId === "" && branches.length === 1) setBranchId(branches[0].id); }, [branches]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [costCenterId, setCostCenterId] = useState<number | "">("");
-  const [salesRepId, setSalesRepId] = useState<number | "">("");
-  const [invoiceType, setInvoiceType] = useState<"simplified" | "standard">("simplified");
-  const [buyerName, setBuyerName] = useState("");
-  const [buyerVat, setBuyerVat] = useState("");
-  const [buyerAddress, setBuyerAddress] = useState("");
-  const [notes, setNotes] = useState("");
+  const [branchId, setBranchId] = useState<number | "">(initial?.branchId ?? "");
+  useEffect(() => { if (!isEdit && branchId === "" && branches.length === 1) setBranchId(branches[0].id); }, [branches]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [costCenterId, setCostCenterId] = useState<number | "">(initial?.costCenterId ?? "");
+  const [salesRepId, setSalesRepId] = useState<number | "">(initial?.salesRepId ?? "");
+  const [invoiceType, setInvoiceType] = useState<"simplified" | "standard">(
+    (initial?.invoiceType as "simplified" | "standard") ?? "simplified",
+  );
+  const [buyerName, setBuyerName] = useState(initial?.buyerName ?? "");
+  const [buyerVat, setBuyerVat] = useState(initial?.buyerVat ?? "");
+  const [buyerAddress, setBuyerAddress] = useState(initial?.buyerAddress ?? "");
+  const [notes, setNotes] = useState(initial?.notes ?? "");
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
   const blankLine = (): FLine => ({
     itemId: 0, qty: 1, unitPrice: 0, vatRate: 15, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
-  const [lines, setLines] = useState<FLine[]>(() => [blankLine()]);
+  const [lines, setLines] = useState<FLine[]>(() =>
+    initial && initial.lines.length
+      ? initial.lines.map((l) => ({ ...l, disc: 0, discType: "percent" as DiscType }))
+      : [blankLine()],
+  );
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
   const [currency, setCurrency] = useState<string>(() => baseCurrencyCode());
@@ -226,7 +263,9 @@ function CreateForm({ deps, onCancel, onDone }: {
 
   const selectedCustomer = deps.customers.find((c) => c.id === customerId) ?? null;
 
+  const skipCustomerFill = React.useRef(isEdit);
   useEffect(() => {
+    if (skipCustomerFill.current) { skipCustomerFill.current = false; return; }
     if (!selectedCustomer) {
       setBuyerName(""); setBuyerVat(""); setBuyerAddress(""); setInvoiceType("simplified");
       return;
@@ -313,7 +352,7 @@ function CreateForm({ deps, onCancel, onDone }: {
           freeQty: l.freeQty || 0, note: l.note?.trim() ? l.note.trim() : null,
         };
       });
-      await createQuotation({
+      const payload = {
         customerId: customerId || null, quotationDate: date, validUntil: validUntil || null,
         warehouseId: warehouseId || null,
         branchId: branchId === "" ? null : branchId,
@@ -325,7 +364,9 @@ function CreateForm({ deps, onCancel, onDone }: {
         buyerVat: invoiceType === "standard" ? (buyerVat.trim() || null) : null,
         buyerAddress: invoiceType === "standard" ? (buyerAddress.trim() || null) : null,
         notes: notes || null, lines: payloadLines,
-      });
+      };
+      if (isEdit && initial) await updateQuotation(initial.id, payload);
+      else await createQuotation(payload);
       onDone();
     } catch (e: any) { setErr(e?.message ?? "فشل"); }
     finally { setBusy(false); }
@@ -333,7 +374,7 @@ function CreateForm({ deps, onCancel, onDone }: {
 
   return (
     <div>
-      <h3 style={{ marginTop: 0 }}>عرض سعر جديد</h3>
+      <h3 style={{ marginTop: 0 }}>{isEdit ? `تعديل عرض السعر ${initial?.docNo ?? ""}` : "عرض سعر جديد"}</h3>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="العميل *">
           <SearchCombobox

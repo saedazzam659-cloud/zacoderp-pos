@@ -689,7 +689,7 @@ export default function PosShell({
             <div style={S.pagePad}><SuppliersAdmin /></div>
           )}
           {standalone && v === "purchases" && (isAdmin || can("purchases")) && (
-            <div style={S.pagePad}><PurchasesAdmin /></div>
+            <div style={S.pagePad}><PurchasesAdmin onNavigate={setView} /></div>
           )}
           {standalone && v === "purchase_returns" && (isAdmin || can("purchase_returns")) && (
             <div style={S.pagePad}><PurchaseReturnsAdmin /></div>
@@ -704,7 +704,7 @@ export default function PosShell({
             <div style={S.pagePad}><SalesOrdersAdmin /></div>
           )}
           {standalone && v === "sales_invoices" && (isAdmin || can("sales_invoices")) && (
-            <div style={S.pagePad}><SalesInvoicesAdmin /></div>
+            <div style={S.pagePad}><SalesInvoicesAdmin onNavigate={setView} /></div>
           )}
           {standalone && v === "sales_returns" && (isAdmin || can("sales_returns")) && (
             <div style={S.pagePad}><SalesReturnsAdmin /></div>

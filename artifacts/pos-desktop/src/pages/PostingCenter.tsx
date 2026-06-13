@@ -5,11 +5,28 @@ import {
 } from "../lib/accounting";
 import {
   Page, Card, Table, Th, Td, ErrorMsg, Empty,
-  btnPrimary, btnSecondary, fmt,
+  btnPrimary, btnSecondary, fmt, input,
 } from "./_adminUi";
 import { currencySymbol } from "../lib/currency";
 
 type StatusFilter = "draft" | "posted" | "all";
+
+// "نوع الحركة" filter — each entry maps a user-facing module to the set of
+// journal_entries_local.source_type values it covers. "" = all modules. The
+// posting center aggregates EVERY module through its journal entry, so this is
+// purely a client-side filter over the already-fetched rows; the post / unpost
+// math stays untouched in its original module.
+const MODULE_FILTERS: { value: string; label: string; match: (s: string | null) => boolean }[] = [
+  { value: "", label: "كل الأنواع", match: () => true },
+  { value: "sales_invoice", label: "فواتير المبيعات", match: (s) => s === "sales_invoice" },
+  { value: "purchase_invoice", label: "فواتير المشتريات", match: (s) => s === "purchase_invoice" || s === "purchase" },
+  { value: "sales_return", label: "مرتجعات المبيعات", match: (s) => s === "sales_return" },
+  { value: "purchase_return", label: "مرتجعات المشتريات", match: (s) => s === "purchase_return" },
+  { value: "voucher", label: "السندات", match: (s) => s === "voucher" },
+  { value: "treasury_transfer", label: "تحويلات الخزينة", match: (s) => s === "treasury_transfer" },
+  { value: "closing", label: "قيود الإقفال", match: (s) => s === "closing" },
+  { value: "manual", label: "القيود اليدوية", match: (s) => s == null || s === "manual" },
+];
 
 const SOURCE_LABEL: Record<string, string> = {
   sales_invoice: "فاتورة مبيعات",
@@ -52,6 +69,7 @@ export default function PostingCenter() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("draft");
+  const [moduleFilter, setModuleFilter] = useState<string>("");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -70,9 +88,13 @@ export default function PostingCenter() {
   useEffect(() => { void refresh(); }, []);
 
   const filtered = useMemo(() => {
-    if (statusFilter === "all") return rows;
-    return rows.filter((e) => e.status === statusFilter);
-  }, [rows, statusFilter]);
+    const mod = MODULE_FILTERS.find((m) => m.value === moduleFilter) ?? MODULE_FILTERS[0];
+    return rows.filter(
+      (e) =>
+        (statusFilter === "all" || e.status === statusFilter) &&
+        mod.match(e.sourceType),
+    );
+  }, [rows, statusFilter, moduleFilter]);
 
   // Drop any selections no longer visible under the current filter.
   useEffect(() => {
@@ -169,6 +191,15 @@ export default function PostingCenter() {
               </button>
             ))}
           </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#475569" }}>
+            نوع الحركة:
+            <select value={moduleFilter} onChange={(e) => setModuleFilter(e.target.value)}
+              style={{ ...input, width: "auto", padding: "6px 10px" }}>
+              {MODULE_FILTERS.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+          </label>
           <span style={{ color: "#64748b", fontSize: 13 }}>{filtered.length} قيد — {selected.size} محدد</span>
         </div>
       </Card>

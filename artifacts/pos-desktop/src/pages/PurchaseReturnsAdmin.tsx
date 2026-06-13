@@ -19,6 +19,7 @@ import {
   computeDiscount, lineNet, saveDocDiscount, getDocDiscount,
   type DiscType, type DiscFields,
 } from "../lib/discount";
+import { takePurchaseReturnPrefill, type PurchaseReturnPrefill } from "../lib/returnPrefill";
 
 type FLine = PurchaseLine & DiscFields;
 
@@ -27,18 +28,25 @@ export default function PurchaseReturnsAdmin() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<PurchaseReturn | null>(null);
   const [creating, setCreating] = useState(false);
+  // Prefill handed over from the purchase-invoice list ("إرجاع"). Taken ONCE on
+  // mount; when present the create form opens automatically.
+  const [prefill, setPrefill] = useState<PurchaseReturnPrefill | null>(null);
   const [deps, setDeps] = useState<{ suppliers: Supplier[]; items: LocalItem[]; warehouses: Warehouse[] } | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
   async function refresh() { setRows(await listPurchaseReturns(5000)); }
   useEffect(() => {
+    const pf = takePurchaseReturnPrefill();
+    if (pf) { setPrefill(pf); setCreating(true); }
     void refresh();
     void (async () => {
       const [suppliers, items, warehouses] = await Promise.all([listSuppliers(), listItems(), listWarehouses()]);
       setDeps({ suppliers, items, warehouses });
     })();
   }, []);
+
+  function closeForm() { setCreating(false); setPrefill(null); }
 
   const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
   const pageRows = rows.slice(start, end);
@@ -65,7 +73,7 @@ export default function PurchaseReturnsAdmin() {
       {creating && deps && (
         <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
           <div style={{ padding: 16 }}>
-            <CreateForm deps={deps} onCancel={() => setCreating(false)} onDone={() => { setCreating(false); void refresh(); }} />
+            <CreateForm deps={deps} initial={prefill} onCancel={closeForm} onDone={() => { closeForm(); void refresh(); }} />
           </div>
         </Card>
       )}
@@ -141,11 +149,11 @@ function ReturnDetail({ r }: { r: PurchaseReturn }) {
   );
 }
 
-function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[]; items: LocalItem[]; warehouses: Warehouse[] }; onCancel: () => void; onDone: () => void }) {
-  const [supplierId, setSupplierId] = useState<number>(deps.suppliers[0]?.id ?? 0);
+function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Supplier[]; items: LocalItem[]; warehouses: Warehouse[] }; initial?: PurchaseReturnPrefill | null; onCancel: () => void; onDone: () => void }) {
+  const [supplierId, setSupplierId] = useState<number>(initial?.supplierId ?? deps.suppliers[0]?.id ?? 0);
   const [date, setDate] = useState(todayStr());
   const [warehouseId, setWarehouseId] = useState<number>(
-    (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
+    initial?.warehouseId ?? (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
   );
   const { branches, costCenters } = useDimensions();
   const [branchId, setBranchId] = useState<number | "">("");
@@ -158,7 +166,11 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
     itemId: 0, qty: 1, unitCost: 0, vatRate: 15, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
-  const [lines, setLines] = useState<FLine[]>(() => [blankLine()]);
+  const [lines, setLines] = useState<FLine[]>(() =>
+    initial?.lines?.length
+      ? initial.lines.map((l) => ({ ...l, disc: 0, discType: "percent" as DiscType }))
+      : [blankLine()],
+  );
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
   const [currency, setCurrency] = useState<string>(() => baseCurrencyCode());
@@ -248,7 +260,7 @@ function CreateForm({ deps, onCancel, onDone }: { deps: { suppliers: Supplier[];
           uomId: l.uomId, uomName: l.uomName, conversionFactor: l.conversionFactor,
         };
       });
-      const id = await createPurchaseReturn({ supplierId, purchaseId: null, returnDate: date, warehouseId: warehouseId || null, branchId: branchId === "" ? null : branchId, costCenterId: costCenterId === "" ? null : costCenterId, notes: notes || null, lines: payloadLines });
+      const id = await createPurchaseReturn({ supplierId, purchaseId: initial?.purchaseId ?? null, returnDate: date, warehouseId: warehouseId || null, branchId: branchId === "" ? null : branchId, costCenterId: costCenterId === "" ? null : costCenterId, notes: notes || null, lines: payloadLines });
       saveDocDiscount("purchase_return", id, {
         grossSubtotal: r.grossSubtotal * effRate, lineDiscountTotal: r.lineDiscountTotal * effRate, headerDiscountValue: r.headerDiscountValue * effRate,
         currencyCode: currency, exchangeRate: effRate,

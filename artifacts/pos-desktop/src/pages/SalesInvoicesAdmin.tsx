@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
-  listSalesInvoices, getSalesInvoice, createSalesInvoice, listCashBoxes, listBanks,
+  listSalesInvoices, getSalesInvoice, createSalesInvoice, updateSalesInvoice, deleteSalesInvoice,
+  listCashBoxes, listBanks,
   type SalesInvoice, type SalesLine, type PaymentMethod, type CashBox, type Bank,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
@@ -23,19 +24,57 @@ import {
   type DiscType, type DiscFields,
 } from "../lib/discount";
 import { isZatcaCountry, bridgeSalesInvoiceToZatca } from "../lib/zatcaBridge";
+import { setSalesReturnPrefill } from "../lib/returnPrefill";
+import { type WindowsView } from "../lib/moduleRegistry";
 
 type FLine = SalesLine & DiscFields;
 
-export default function SalesInvoicesAdmin() {
+export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: WindowsView) => void }) {
   const [rows, setRows] = useState<SalesInvoice[]>([]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<SalesInvoice | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editDoc, setEditDoc] = useState<SalesInvoice | null>(null);
+  const formOpen = creating || editDoc != null;
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const [deps, setDeps] = useState<{ customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[]; salespersons: Salesperson[] } | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
   async function refresh() { setRows(await listSalesInvoices(5000)); }
+
+  // ZATCA-bridged invoices are legally immutable → block edit/delete and steer
+  // the user to a credit-note return instead. `zatcaStatus` is the linked
+  // offline_invoices sync state; any non-null value means it reached the bridge.
+  function bridgedMsg(): string {
+    return "هذه الفاتورة مرتبطة بزاتكا ولا يمكن تعديلها أو حذفها قانونياً. استخدم زر «إرجاع» لإنشاء إشعار دائن.";
+  }
+
+  async function startEdit(id: number) {
+    setErr(null);
+    setBusyId(id);
+    try {
+      const inv = await getSalesInvoice(id);
+      if (inv.zatcaStatus) { setErr(bridgedMsg()); return; }
+      setCreating(false);
+      setEditDoc(inv);
+    } catch (e: any) { setErr(e?.message ?? "تعذّر تحميل الفاتورة"); }
+    finally { setBusyId(null); }
+  }
+
+  async function remove(id: number, invoiceNo: string, zatcaStatus?: string | null) {
+    setErr(null);
+    if (zatcaStatus) { setErr(bridgedMsg()); return; }
+    if (!confirm(`حذف الفاتورة ${invoiceNo}؟ سيتم عكس القيد المحاسبي وإرجاع المخزون.`)) return;
+    setBusyId(id);
+    try {
+      await deleteSalesInvoice(id);
+      if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
+      await refresh();
+    } catch (e: any) { setErr(e?.message ?? "تعذّر حذف الفاتورة"); }
+    finally { setBusyId(null); }
+  }
   useEffect(() => {
     void refresh();
     void (async () => {
@@ -55,26 +94,48 @@ export default function SalesInvoicesAdmin() {
     setExpandedId((cur) => { if (cur === id) setExpandedDetail(fetched); return cur; });
   }
 
+  // إرجاع: hand the sales-return screen a prefill built from the PERSISTED
+  // invoice (authoritative qty/price/uom), then navigate there. Works for
+  // ZATCA-bridged invoices too — a credit-note return is the compliant reversal.
+  async function startReturn(id: number) {
+    const inv = await getSalesInvoice(id);
+    setSalesReturnPrefill({
+      invoiceId: inv.id,
+      customerId: inv.customerId,
+      paymentMethod: inv.paymentMethod,
+      warehouseId: inv.lines.find((l) => l.warehouseId != null)?.warehouseId ?? null,
+      lines: inv.lines.map((l) => ({
+        itemId: l.itemId, itemName: l.itemName, qty: l.qty, unitPrice: l.unitPrice,
+        vatRate: l.vatRate, lineTotal: l.lineTotal,
+        uomId: l.uomId, uomName: l.uomName, conversionFactor: l.conversionFactor,
+      })),
+    });
+    onNavigate?.("sales_returns");
+  }
+
   return (
     <Page
       title="فواتير المبيعات"
       subtitle={`${rows.length} فاتورة — يتم ترحيل قيد المبيعات وتكلفة البضاعة المباعة تلقائياً عند الحفظ`}
       right={
-        <button onClick={() => setCreating(true)} disabled={!deps || creating}
-          style={{ ...btnPrimary, opacity: (!deps || creating) ? 0.5 : 1, cursor: (!deps || creating) ? "not-allowed" : "pointer" }}>
+        <button onClick={() => setCreating(true)} disabled={!deps || formOpen}
+          style={{ ...btnPrimary, opacity: (!deps || formOpen) ? 0.5 : 1, cursor: (!deps || formOpen) ? "not-allowed" : "pointer" }}>
           + فاتورة مبيعات
         </button>
       }
     >
-      {creating && deps && (
+      <ErrorMsg text={err} />
+      {formOpen && deps && (
         <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
           <div style={{ padding: 16 }}>
-            <CreateForm deps={deps} onCancel={() => setCreating(false)} onDone={() => { setCreating(false); void refresh(); }} />
+            <CreateForm key={editDoc?.id ?? "new"} deps={deps} initial={editDoc}
+              onCancel={() => { setCreating(false); setEditDoc(null); }}
+              onDone={() => { setCreating(false); setEditDoc(null); void refresh(); }} />
           </div>
         </Card>
       )}
       <Card>
-        {rows.length === 0 && !creating ? <Empty text="لا توجد فواتير مبيعات" /> : (
+        {rows.length === 0 && !formOpen ? <Empty text="لا توجد فواتير مبيعات" /> : (
           <Table>
             <thead><tr>
               <Th>رقم الفاتورة</Th><Th>التاريخ</Th><Th>العميل</Th><Th>طريقة الدفع</Th>{isZatcaCountry() && <Th>زاتكا</Th>}
@@ -94,10 +155,26 @@ export default function SalesInvoicesAdmin() {
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
                     <Td>
-                      <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
-                        style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                        {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
-                      </button>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                        <button onClick={() => void toggleView(p.id)} disabled={formOpen} aria-expanded={expandedId === p.id}
+                          style={{ ...btnLink, opacity: formOpen ? 0.5 : 1, cursor: formOpen ? "not-allowed" : "pointer" }}>
+                          {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
+                        </button>
+                        {onNavigate && (
+                          <button onClick={() => void startReturn(p.id)} disabled={formOpen} title="إنشاء مرتجع من هذه الفاتورة"
+                            style={{ ...btnLink, color: "#b45309", opacity: formOpen ? 0.5 : 1, cursor: formOpen ? "not-allowed" : "pointer" }}>
+                            ↩ إرجاع
+                          </button>
+                        )}
+                        {p.zatcaStatus ? (
+                          <span title={bridgedMsg()} style={{ fontSize: 12, color: "#94a3b8" }}>🔒 مُرحّلة لزاتكا</span>
+                        ) : (
+                          <>
+                            <button onClick={() => void startEdit(p.id)} disabled={busyId === p.id || formOpen} style={btnLink}>تعديل</button>
+                            <button onClick={() => void remove(p.id, p.invoiceNo, p.zatcaStatus)} disabled={busyId === p.id || formOpen} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
+                          </>
+                        )}
+                      </div>
                     </Td>
                   </tr>
                   {expandedId === p.id && (
@@ -205,37 +282,50 @@ function invoiceToPrintDoc(p: SalesInvoice): PrintDoc {
   };
 }
 
-function CreateForm({ deps, onCancel, onDone }: {
+function CreateForm({ deps, initial, onCancel, onDone }: {
   deps: { customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[]; salespersons: Salesperson[] };
+  initial?: SalesInvoice | null;
   onCancel: () => void; onDone: () => void;
 }) {
-  const [customerId, setCustomerId] = useState<number>(0);
-  const [date, setDate] = useState(todayStr());
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
-  const [cashBoxId, setCashBoxId] = useState<number | null>(deps.cashBoxes[0]?.id ?? null);
-  const [bankId, setBankId] = useState<number | null>(deps.banks[0]?.id ?? null);
+  const isEdit = !!initial;
+  const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
+  const [date, setDate] = useState(initial?.invoiceDate ?? todayStr());
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initial?.paymentMethod ?? "cash");
+  const [cashBoxId, setCashBoxId] = useState<number | null>(initial?.cashBoxId ?? deps.cashBoxes[0]?.id ?? null);
+  const [bankId, setBankId] = useState<number | null>(initial?.bankId ?? deps.banks[0]?.id ?? null);
   const [warehouseId, setWarehouseId] = useState<number>(
-    (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
+    // SalesInvoice has no header warehouse — derive it from the first line that
+    // carries one (all lines share the header warehouse on save).
+    initial?.lines.find((l) => l.warehouseId != null)?.warehouseId
+      ?? (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
   );
   const { branches, costCenters } = useDimensions();
-  const [branchId, setBranchId] = useState<number | "">("");
+  const [branchId, setBranchId] = useState<number | "">(initial?.branchId ?? "");
   // Auto-select the only branch when a single one exists (it acts as the default).
-  useEffect(() => { if (branchId === "" && branches.length === 1) setBranchId(branches[0].id); }, [branches]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [costCenterId, setCostCenterId] = useState<number | "">("");
-  const [salesRepId, setSalesRepId] = useState<number | "">("");
+  useEffect(() => { if (!isEdit && branchId === "" && branches.length === 1) setBranchId(branches[0].id); }, [branches]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [costCenterId, setCostCenterId] = useState<number | "">(initial?.costCenterId ?? "");
+  const [salesRepId, setSalesRepId] = useState<number | "">(initial?.salesRepId ?? "");
   // ZATCA doc type: simplified (B2C) default, standard (B2B) requires buyer VAT.
-  const [invoiceType, setInvoiceType] = useState<"simplified" | "standard">("simplified");
-  const [buyerName, setBuyerName] = useState("");
-  const [buyerVat, setBuyerVat] = useState("");
-  const [buyerAddress, setBuyerAddress] = useState("");
-  const [notes, setNotes] = useState("");
+  const [invoiceType, setInvoiceType] = useState<"simplified" | "standard">(
+    (initial?.invoiceType as "simplified" | "standard") ?? "simplified",
+  );
+  const [buyerName, setBuyerName] = useState(initial?.buyerName ?? "");
+  const [buyerVat, setBuyerVat] = useState(initial?.buyerVat ?? "");
+  const [buyerAddress, setBuyerAddress] = useState(initial?.buyerAddress ?? "");
+  const [notes, setNotes] = useState(initial?.notes ?? "");
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
   const blankLine = (): FLine => ({
     itemId: 0, qty: 1, unitPrice: 0, vatRate: 15, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
-  const [lines, setLines] = useState<FLine[]>(() => [blankLine()]);
+  // Stored line unitPrice is already NET (discount baked in at create) — the
+  // pre-discount breakdown isn't round-tripped, so edit re-opens with disc=0.
+  const [lines, setLines] = useState<FLine[]>(() =>
+    initial && initial.lines.length
+      ? initial.lines.map((l) => ({ ...l, disc: 0, discType: "percent" as DiscType }))
+      : [blankLine()],
+  );
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
   const [currency, setCurrency] = useState<string>(() => baseCurrencyCode());
@@ -280,9 +370,13 @@ function CreateForm({ deps, onCancel, onDone }: {
 
   const selectedCustomer = deps.customers.find((c) => c.id === customerId) ?? null;
 
+  // In edit mode the first customerId effect would clobber the persisted buyer
+  // snapshot / invoiceType with the live customer record — skip exactly once.
+  const skipCustomerFill = useRef(isEdit);
   // Freeze a buyer snapshot from the chosen customer (editable afterwards), and
   // auto-pick the ZATCA doc type: a customer with a VAT number ⇒ standard (B2B).
   useEffect(() => {
+    if (skipCustomerFill.current) { skipCustomerFill.current = false; return; }
     if (!selectedCustomer) {
       setBuyerName(""); setBuyerVat(""); setBuyerAddress(""); setInvoiceType("simplified");
       return;
@@ -381,30 +475,45 @@ function CreateForm({ deps, onCancel, onDone }: {
           freeQty: l.freeQty || 0, note: l.note?.trim() ? l.note.trim() : null,
         };
       });
-      // Persist once; on a ZATCA-bridge retry `savedId` is already set so we
-      // skip the (duplicating) create + discount write and only re-run the bridge.
+      const payload = {
+        customerId: customerId || null, invoiceDate: date, paymentMethod,
+        cashBoxId: paymentMethod === "cash" ? cashBoxId : null,
+        bankId:    paymentMethod === "bank" ? bankId : null,
+        warehouseId: warehouseId || null,
+        branchId: branchId === "" ? null : branchId,
+        costCenterId: costCenterId === "" ? null : costCenterId,
+        salesRepId: salesRepId === "" ? null : salesRepId,
+        commissionPct: salesRepId === "" ? null : (deps.salespersons.find((s) => s.id === salesRepId)?.commissionPct ?? 0),
+        invoiceType,
+        buyerName: invoiceType === "standard" ? (buyerName.trim() || null) : null,
+        buyerVat: invoiceType === "standard" ? (buyerVat.trim() || null) : null,
+        buyerAddress: invoiceType === "standard" ? (buyerAddress.trim() || null) : null,
+        notes: notes || null, lines: payloadLines,
+      };
+      const discOverlay = {
+        grossSubtotal: r.grossSubtotal * effRate, lineDiscountTotal: r.lineDiscountTotal * effRate, headerDiscountValue: r.headerDiscountValue * effRate,
+        currencyCode: currency, exchangeRate: effRate,
+      };
+      // EDIT path: bridged invoices are blocked upstream, so this is always a
+      // non-bridged invoice. The Rust update reverses the old GL + stock +
+      // shadow-balance impact and re-applies fresh impact, keeping id +
+      // invoice_no. ALWAYS re-run the update (no `savedId` short-circuit) so
+      // repeated saves persist the latest edits; the ZATCA bridge is skipped on
+      // edit (an already-bridged invoice can never reach here).
+      if (isEdit && initial) {
+        await updateSalesInvoice(initial.id, payload);
+        saveDocDiscount("sales_invoice", initial.id, discOverlay);
+        onDone();
+        return;
+      }
+      // CREATE path. On a ZATCA-bridge retry `savedId` is already set so we
+      // skip the (duplicating) create + discount write and only re-run the
+      // bridge.
       let id = savedId;
       if (id == null) {
-        id = await createSalesInvoice({
-          customerId: customerId || null, invoiceDate: date, paymentMethod,
-          cashBoxId: paymentMethod === "cash" ? cashBoxId : null,
-          bankId:    paymentMethod === "bank" ? bankId : null,
-          warehouseId: warehouseId || null,
-          branchId: branchId === "" ? null : branchId,
-          costCenterId: costCenterId === "" ? null : costCenterId,
-          salesRepId: salesRepId === "" ? null : salesRepId,
-          commissionPct: salesRepId === "" ? null : (deps.salespersons.find((s) => s.id === salesRepId)?.commissionPct ?? 0),
-          invoiceType,
-          buyerName: invoiceType === "standard" ? (buyerName.trim() || null) : null,
-          buyerVat: invoiceType === "standard" ? (buyerVat.trim() || null) : null,
-          buyerAddress: invoiceType === "standard" ? (buyerAddress.trim() || null) : null,
-          notes: notes || null, lines: payloadLines,
-        });
+        id = await createSalesInvoice(payload);
         setSavedId(id);
-        saveDocDiscount("sales_invoice", id, {
-          grossSubtotal: r.grossSubtotal * effRate, lineDiscountTotal: r.lineDiscountTotal * effRate, headerDiscountValue: r.headerDiscountValue * effRate,
-          currencyCode: currency, exchangeRate: effRate,
-        });
+        saveDocDiscount("sales_invoice", id, discOverlay);
       }
       // ZATCA bridge (Saudi installs only): generate the TLV QR and enqueue the
       // invoice into the existing offline_invoices → cloud-sync submission path.
@@ -437,7 +546,7 @@ function CreateForm({ deps, onCancel, onDone }: {
         .zfield:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.18);}
         .zrow:hover td{background:#eff6ff !important;}
       `}</style>
-      <h3 style={{ marginTop: 0 }}>فاتورة مبيعات جديدة</h3>
+      <h3 style={{ marginTop: 0 }}>{isEdit ? `تعديل الفاتورة ${initial?.invoiceNo ?? ""}` : "فاتورة مبيعات جديدة"}</h3>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="العميل *">
           <SearchCombobox
@@ -625,7 +734,7 @@ function CreateForm({ deps, onCancel, onDone }: {
       <ErrorMsg text={err} />
       <Actions>
         <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy} type="button" data-fnav="1" style={btnPrimary}>{busy ? "..." : "حفظ وترحيل"}</button>
+        <button onClick={save} disabled={busy} type="button" data-fnav="1" style={btnPrimary}>{busy ? "..." : (isEdit ? "حفظ التعديل" : "حفظ وترحيل")}</button>
       </Actions>
     </div>
   );

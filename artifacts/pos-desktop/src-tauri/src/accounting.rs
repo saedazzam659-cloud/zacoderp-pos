@@ -1731,6 +1731,12 @@ pub struct SalesInvoice {
     pub sales_rep_name: Option<String>,
     #[serde(default)]
     pub commission_pct: f64,
+    /// Dimension snapshot — returned so an edit can round-trip them without loss
+    /// (clearing them on update would corrupt cost-center / branch reports).
+    #[serde(default)]
+    pub branch_id: Option<i64>,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
     /// ZATCA document type: "standard" (B2B) or "simplified" (B2C).
     #[serde(default)]
     pub invoice_type: Option<String>,
@@ -1836,7 +1842,7 @@ pub fn sales_invoices_list(limit: Option<i64>) -> Result<Vec<SalesInvoice>, Stri
         "SELECT s.id,s.invoice_no,s.customer_id,c.name_ar,s.invoice_date,s.subtotal,s.vat_total,s.grand_total,
                 s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes,
                 s.sales_rep_id,sp.name_ar,s.commission_pct,s.invoice_type,s.buyer_name,s.buyer_vat,s.buyer_address,
-                oi.sync_status
+                oi.sync_status,s.branch_id,s.cost_center_id
          FROM sales_invoices_local s
          LEFT JOIN customers_local c ON c.id=s.customer_id
          LEFT JOIN salespersons_local sp ON sp.id=s.sales_rep_id
@@ -1852,6 +1858,7 @@ pub fn sales_invoices_list(limit: Option<i64>) -> Result<Vec<SalesInvoice>, Stri
         invoice_type: r.get(17)?, buyer_name: r.get(18)?, buyer_vat: r.get(19)?, buyer_address: r.get(20)?,
         lines: Vec::new(),
         zatca_qr_base64: None, zatca_status: r.get(21)?,
+        branch_id: r.get(22)?, cost_center_id: r.get(23)?,
     })).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows { out.push(r.map_err(|e| e.to_string())?); }
@@ -1865,7 +1872,7 @@ pub fn sales_invoice_get(id: i64) -> Result<SalesInvoice, String> {
         "SELECT s.id,s.invoice_no,s.customer_id,c.name_ar,s.invoice_date,s.subtotal,s.vat_total,s.grand_total,
                 s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes,
                 s.sales_rep_id,sp.name_ar,s.commission_pct,s.invoice_type,s.buyer_name,s.buyer_vat,s.buyer_address,
-                s.zatca_qr_base64,oi.sync_status
+                s.zatca_qr_base64,oi.sync_status,s.branch_id,s.cost_center_id
          FROM sales_invoices_local s
          LEFT JOIN customers_local c ON c.id=s.customer_id
          LEFT JOIN salespersons_local sp ON sp.id=s.sales_rep_id
@@ -1880,6 +1887,7 @@ pub fn sales_invoice_get(id: i64) -> Result<SalesInvoice, String> {
             invoice_type: r.get(17)?, buyer_name: r.get(18)?, buyer_vat: r.get(19)?, buyer_address: r.get(20)?,
             lines: Vec::new(),
             zatca_qr_base64: r.get(21)?, zatca_status: r.get(22)?,
+            branch_id: r.get(23)?, cost_center_id: r.get(24)?,
         })
     ).map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
@@ -1912,6 +1920,197 @@ pub fn sales_invoice_set_zatca(
         "UPDATE sales_invoices_local SET zatca_qr_base64=?1, zatca_offline_uuid=?2 WHERE id=?3",
         params![qr_base64, offline_uuid, id],
     ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Refuses edit/delete of a sales invoice that was bridged to ZATCA. Such an
+/// invoice is legally immutable — the only compliant way to undo it is a credit
+/// note (إرجاع). Errors when the invoice doesn't exist.
+fn guard_sales_invoice_not_bridged(tx: &Transaction, invoice_id: i64) -> Result<(), String> {
+    let row: Option<Option<String>> = tx
+        .query_row(
+            "SELECT zatca_offline_uuid FROM sales_invoices_local WHERE id=?1",
+            params![invoice_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    match row {
+        None => Err("الفاتورة غير موجودة".into()),
+        Some(uuid) => {
+            if uuid.is_some() {
+                Err("لا يمكن تعديل أو حذف فاتورة مبيعات مرتبطة بـ ZATCA — استخدم إشعار إرجاع (مرتجع) لعكسها".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Applies the FULL impact of a sales invoice whose header row already exists:
+/// per-line stock OUT + COGS accrual, the revenue JE, the COGS JE, and the
+/// payment-side shadow balance. Shared by `sales_invoice_create` and
+/// `sales_invoice_update` so the two can never drift. `subtotal/vat_total/
+/// grand_total` are passed pre-computed by the caller (they also drive the
+/// header row).
+fn apply_sales_invoice_impact(
+    tx: &Transaction,
+    invoice_id: i64,
+    invoice_no: &str,
+    input: &SalesInvoiceInput,
+    subtotal: f64,
+    vat_total: f64,
+    grand_total: f64,
+) -> Result<(), String> {
+    let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(tx)? };
+    let mut cogs_total = 0.0_f64;
+    for l in &input.lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+        let line_sub = l.qty * l.unit_price;
+        let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        // Per-line warehouse override → fall back to the header/default one.
+        let line_wh = match l.warehouse_id { Some(w) if w > 0 => w, _ => default_wh };
+        // Free (bonus) units: no revenue/VAT, but consume stock + add COGS.
+        let free_qty = if l.free_qty > 0.0 { l.free_qty } else { 0.0 };
+        let total_base_qty = (l.qty + free_qty) * factor;
+        // unit_cost is the moving cost PER BASE UNIT (from the LINE warehouse).
+        let unit_cost = item_cost_in_tx(tx, l.item_id, line_wh);
+        cogs_total += unit_cost * total_base_qty;
+        tx.execute(
+            "INSERT INTO sales_invoice_lines_local(invoice_id,item_id,qty,unit_price,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor,free_qty,note,warehouse_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+            params![invoice_id, l.item_id, l.qty, l.unit_price, unit_cost, l.vat_rate, lt, l.uom_id, l.uom_name, factor, free_qty, l.note, line_wh],
+        ).map_err(|e| e.to_string())?;
+        // Stock OUT: BASE units ((qty + free_qty) × factor) at per-base cost,
+        // from the line's resolved warehouse.
+        crate::inventory::ledger_push_in_tx(
+            tx, l.item_id, line_wh, -total_base_qty, unit_cost,
+            "sale", Some(invoice_id), &input.invoice_date,
+        )?;
+    }
+    tx.execute("UPDATE sales_invoices_local SET cogs_total=?1 WHERE id=?2", params![cogs_total, invoice_id]).map_err(|e| e.to_string())?;
+
+    // Revenue JE: DR (AR|cash|bank)(grand) / CR Revenue(subtotal) + CR VAT-out(vat)
+    let rev_acc = account_id_by_code(tx, "4100").map_err(|e| e.to_string())?;
+    let vat_out_acc = account_id_by_code(tx, "2200").map_err(|e| e.to_string())?;
+    let dr_account_id = resolve_sales_debit_account(tx, &input.payment_method, input.cash_box_id, input.bank_id)
+        .map_err(|e| e.to_string())?;
+
+    let mut lines = vec![
+        JournalEntryLine { id: None, account_id: dr_account_id, account_code: None, account_name: None, debit: grand_total, credit: 0.0, description: Some(format!("مبيعات {invoice_no}")) },
+        JournalEntryLine { id: None, account_id: rev_acc, account_code: None, account_name: None, debit: 0.0, credit: subtotal, description: None },
+    ];
+    if vat_total > 0.0 {
+        lines.push(JournalEntryLine { id: None, account_id: vat_out_acc, account_code: None, account_name: None, debit: 0.0, credit: vat_total, description: None });
+    }
+    // The COGS JE must share the invoice's posting status so the two never
+    // diverge (e.g. a posted revenue JE paired with a draft cost JE).
+    let post_sale = resolve_auto_post(tx, "sale");
+    let je_id = insert_journal_entry(tx, &input.invoice_date, Some(&format!("فاتورة مبيعات {invoice_no}")), Some("sale"), Some(invoice_id), input.branch_id, input.cost_center_id, &lines, post_sale)
+        .map_err(|e| e.to_string())?;
+    tx.execute("UPDATE sales_invoices_local SET je_id=?1 WHERE id=?2", params![je_id, invoice_id]).map_err(|e| e.to_string())?;
+
+    // COGS JE: DR COGS / CR Inventory (at cost).
+    if cogs_total > 0.0 {
+        let cogs_acc = account_id_by_code(tx, "5100").map_err(|e| e.to_string())?;
+        let inv_acc = account_id_by_code(tx, "1300").map_err(|e| e.to_string())?;
+        let cogs_lines = vec![
+            JournalEntryLine { id: None, account_id: cogs_acc, account_code: None, account_name: None, debit: cogs_total, credit: 0.0, description: Some(format!("تكلفة مبيعات {invoice_no}")) },
+            JournalEntryLine { id: None, account_id: inv_acc, account_code: None, account_name: None, debit: 0.0, credit: cogs_total, description: None },
+        ];
+        insert_journal_entry(tx, &input.invoice_date, Some(&format!("تكلفة بضاعة مباعة {invoice_no}")), Some("sale_cogs"), Some(invoice_id), input.branch_id, input.cost_center_id, &cogs_lines, post_sale)
+            .map_err(|e| e.to_string())?;
+    }
+
+    // Balance shadows. Credit → customer owes more; cash/bank → treasury up.
+    if input.payment_method == "credit" {
+        if let Some(cid) = input.customer_id {
+            tx.execute("UPDATE customers_local SET balance=balance+?1 WHERE id=?2", params![grand_total, cid]).map_err(|e| e.to_string())?;
+        }
+    } else if input.payment_method == "cash" {
+        if let Some(cb) = input.cash_box_id {
+            tx.execute("UPDATE cash_boxes_local SET balance=balance+?1 WHERE id=?2", params![grand_total, cb]).map_err(|e| e.to_string())?;
+        }
+    } else if input.payment_method == "bank" {
+        if let Some(b) = input.bank_id {
+            tx.execute("UPDATE banks_local SET balance=balance+?1 WHERE id=?2", params![grand_total, b]).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Fully reverses the GL + stock + shadow-balance impact of a sales invoice and
+/// removes its line rows + the two source JEs (revenue + COGS). The invoice
+/// HEADER row is left intact so the caller can either delete it
+/// (`sales_invoice_delete`) or re-apply fresh impact (`sales_invoice_update`).
+fn reverse_sales_invoice_impact(tx: &Transaction, invoice_id: i64) -> Result<(), String> {
+    // Header snapshot for the shadow-balance unwind + stock-restore date.
+    let (pm, cust, cb, bank, grand, date): (String, Option<i64>, Option<i64>, Option<i64>, f64, String) = tx
+        .query_row(
+            "SELECT payment_method,customer_id,cash_box_id,bank_id,grand_total,invoice_date FROM sales_invoices_local WHERE id=?1",
+            params![invoice_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        )
+        .map_err(|e| e.to_string())?;
+
+    // 1) Reverse + delete the revenue & COGS journal entries tied to this
+    //    invoice. Only POSTED entries touched GL balances, so guard per-row.
+    let je_rows: Vec<(i64, String)> = {
+        let mut stmt = tx
+            .prepare("SELECT id,status FROM journal_entries_local WHERE source_id=?1 AND source_type IN ('sale','sale_cogs')")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![invoice_id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        let mut v = Vec::new();
+        for r in rows { v.push(r.map_err(|e| e.to_string())?); }
+        v
+    };
+    for (je_id, status) in &je_rows {
+        if status == "posted" {
+            reverse_je_balance(tx, *je_id).map_err(|e| e.to_string())?;
+        }
+        tx.execute("DELETE FROM journal_entry_lines_local WHERE entry_id=?1", params![je_id]).map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM journal_entries_local WHERE id=?1", params![je_id]).map_err(|e| e.to_string())?;
+    }
+
+    // 2) Restore stock: push the BASE units back IN at the SAME cost they left
+    //    at (stored per line), reversing the original sale OUT.
+    let default_wh = crate::inventory::default_warehouse_id_in_tx(tx)?;
+    let restore: Vec<(i64, f64, f64, f64, f64, Option<i64>)> = {
+        let mut stmt = tx
+            .prepare("SELECT item_id,qty,unit_cost,conversion_factor,free_qty,warehouse_id FROM sales_invoice_lines_local WHERE invoice_id=?1")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![invoice_id], |r| Ok((
+                r.get::<_, i64>(0)?, r.get::<_, f64>(1)?, r.get::<_, f64>(2)?,
+                r.get::<_, f64>(3)?, r.get::<_, f64>(4)?, r.get::<_, Option<i64>>(5)?,
+            )))
+            .map_err(|e| e.to_string())?;
+        let mut v = Vec::new();
+        for r in rows { v.push(r.map_err(|e| e.to_string())?); }
+        v
+    };
+    for (item_id, qty, unit_cost, cf, fq, wh) in &restore {
+        let factor = if *cf > 0.0 { *cf } else { 1.0 };
+        let free = if *fq > 0.0 { *fq } else { 0.0 };
+        let total_base_qty = (*qty + free) * factor;
+        let line_wh = match wh { Some(w) if *w > 0 => *w, _ => default_wh };
+        crate::inventory::ledger_push_in_tx(
+            tx, *item_id, line_wh, total_base_qty, *unit_cost,
+            "sale_void", Some(invoice_id), &date,
+        )?;
+    }
+
+    // 3) Unwind shadow balances (mirror of the create-time bump).
+    match pm.as_str() {
+        "credit" => { if let Some(cid) = cust { tx.execute("UPDATE customers_local SET balance=balance-?1 WHERE id=?2", params![grand, cid]).map_err(|e| e.to_string())?; } }
+        "cash" => { if let Some(c) = cb { tx.execute("UPDATE cash_boxes_local SET balance=balance-?1 WHERE id=?2", params![grand, c]).map_err(|e| e.to_string())?; } }
+        "bank" => { if let Some(b) = bank { tx.execute("UPDATE banks_local SET balance=balance-?1 WHERE id=?2", params![grand, b]).map_err(|e| e.to_string())?; } }
+        _ => {}
+    }
+
+    // 4) Drop the line rows (header kept for the caller to decide).
+    tx.execute("DELETE FROM sales_invoice_lines_local WHERE invoice_id=?1", params![invoice_id]).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -2015,82 +2214,70 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
     ).map_err(|e| e.to_string())?;
     let invoice_id = tx.last_insert_rowid();
 
-    let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
-    let mut cogs_total = 0.0_f64;
-    for l in &input.lines {
-        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
-        let line_sub = l.qty * l.unit_price;
-        let lt = line_sub + line_sub * l.vat_rate / 100.0;
-        // Per-line warehouse override → fall back to the header/default one.
-        let line_wh = match l.warehouse_id { Some(w) if w > 0 => w, _ => default_wh };
-        // Free (bonus) units: no revenue/VAT, but consume stock + add COGS.
-        let free_qty = if l.free_qty > 0.0 { l.free_qty } else { 0.0 };
-        let total_base_qty = (l.qty + free_qty) * factor;
-        // unit_cost is the moving cost PER BASE UNIT (from the LINE warehouse).
-        let unit_cost = item_cost_in_tx(&tx, l.item_id, line_wh);
-        cogs_total += unit_cost * total_base_qty;
-        tx.execute(
-            "INSERT INTO sales_invoice_lines_local(invoice_id,item_id,qty,unit_price,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor,free_qty,note,warehouse_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
-            params![invoice_id, l.item_id, l.qty, l.unit_price, unit_cost, l.vat_rate, lt, l.uom_id, l.uom_name, factor, free_qty, l.note, line_wh],
-        ).map_err(|e| e.to_string())?;
-        // Stock OUT: BASE units ((qty + free_qty) × factor) at per-base cost,
-        // from the line's resolved warehouse.
-        crate::inventory::ledger_push_in_tx(
-            &tx, l.item_id, line_wh, -total_base_qty, unit_cost,
-            "sale", Some(invoice_id), &input.invoice_date,
-        )?;
-    }
-    tx.execute("UPDATE sales_invoices_local SET cogs_total=?1 WHERE id=?2", params![cogs_total, invoice_id]).map_err(|e| e.to_string())?;
-
-    // Revenue JE: DR (AR|cash|bank)(grand) / CR Revenue(subtotal) + CR VAT-out(vat)
-    let rev_acc = account_id_by_code(&tx, "4100").map_err(|e| e.to_string())?;
-    let vat_out_acc = account_id_by_code(&tx, "2200").map_err(|e| e.to_string())?;
-    let dr_account_id = resolve_sales_debit_account(&tx, &input.payment_method, input.cash_box_id, input.bank_id)
-        .map_err(|e| e.to_string())?;
-
-    let mut lines = vec![
-        JournalEntryLine { id: None, account_id: dr_account_id, account_code: None, account_name: None, debit: grand_total, credit: 0.0, description: Some(format!("مبيعات {invoice_no}")) },
-        JournalEntryLine { id: None, account_id: rev_acc, account_code: None, account_name: None, debit: 0.0, credit: subtotal, description: None },
-    ];
-    if vat_total > 0.0 {
-        lines.push(JournalEntryLine { id: None, account_id: vat_out_acc, account_code: None, account_name: None, debit: 0.0, credit: vat_total, description: None });
-    }
-    // The COGS JE must share the invoice's posting status so the two never
-    // diverge (e.g. a posted revenue JE paired with a draft cost JE).
-    let post_sale = resolve_auto_post(&tx, "sale");
-    let je_id = insert_journal_entry(&tx, &input.invoice_date, Some(&format!("فاتورة مبيعات {invoice_no}")), Some("sale"), Some(invoice_id), input.branch_id, input.cost_center_id, &lines, post_sale)
-        .map_err(|e| e.to_string())?;
-    tx.execute("UPDATE sales_invoices_local SET je_id=?1 WHERE id=?2", params![je_id, invoice_id]).map_err(|e| e.to_string())?;
-
-    // COGS JE: DR COGS / CR Inventory (at cost).
-    if cogs_total > 0.0 {
-        let cogs_acc = account_id_by_code(&tx, "5100").map_err(|e| e.to_string())?;
-        let inv_acc = account_id_by_code(&tx, "1300").map_err(|e| e.to_string())?;
-        let cogs_lines = vec![
-            JournalEntryLine { id: None, account_id: cogs_acc, account_code: None, account_name: None, debit: cogs_total, credit: 0.0, description: Some(format!("تكلفة مبيعات {invoice_no}")) },
-            JournalEntryLine { id: None, account_id: inv_acc, account_code: None, account_name: None, debit: 0.0, credit: cogs_total, description: None },
-        ];
-        insert_journal_entry(&tx, &input.invoice_date, Some(&format!("تكلفة بضاعة مباعة {invoice_no}")), Some("sale_cogs"), Some(invoice_id), input.branch_id, input.cost_center_id, &cogs_lines, post_sale)
-            .map_err(|e| e.to_string())?;
-    }
-
-    // Balance shadows. Credit → customer owes more; cash/bank → treasury up.
-    if input.payment_method == "credit" {
-        if let Some(cid) = input.customer_id {
-            tx.execute("UPDATE customers_local SET balance=balance+?1 WHERE id=?2", params![grand_total, cid]).map_err(|e| e.to_string())?;
-        }
-    } else if input.payment_method == "cash" {
-        if let Some(cb) = input.cash_box_id {
-            tx.execute("UPDATE cash_boxes_local SET balance=balance+?1 WHERE id=?2", params![grand_total, cb]).map_err(|e| e.to_string())?;
-        }
-    } else if input.payment_method == "bank" {
-        if let Some(b) = input.bank_id {
-            tx.execute("UPDATE banks_local SET balance=balance+?1 WHERE id=?2", params![grand_total, b]).map_err(|e| e.to_string())?;
-        }
-    }
+    apply_sales_invoice_impact(&tx, invoice_id, &invoice_no, &input, subtotal, vat_total, grand_total)?;
 
     tx.commit().map_err(|e| e.to_string())?;
     Ok(invoice_id)
+}
+
+#[tauri::command]
+pub fn sales_invoice_delete(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // ZATCA-bridged invoices are legally immutable → must be reversed via إرجاع.
+    guard_sales_invoice_not_bridged(&tx, id)?;
+    // Period lock: the invoice's own date must sit in an open fiscal period.
+    let date: String = tx.query_row(
+        "SELECT invoice_date FROM sales_invoices_local WHERE id=?1", params![id], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+    guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
+    reverse_sales_invoice_impact(&tx, id)?;
+    tx.execute("DELETE FROM sales_invoices_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn sales_invoice_update(id: i64, input: SalesInvoiceInput) -> Result<(), String> {
+    if input.lines.is_empty() { return Err("لا يمكن حفظ فاتورة بدون أصناف".into()); }
+    if !["credit","cash","bank"].contains(&input.payment_method.as_str()) {
+        return Err("طريقة دفع غير صالحة".into());
+    }
+    if input.payment_method == "credit" && input.customer_id.is_none() {
+        return Err("اختر العميل للبيع الآجل".into());
+    }
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // Bridged invoices are immutable → block edit too.
+    guard_sales_invoice_not_bridged(&tx, id)?;
+    // Preserve the existing number; period-lock BOTH the old & new dates so an
+    // edit can never move impact into (or out of) a closed period.
+    let (invoice_no, old_date): (String, String) = tx.query_row(
+        "SELECT invoice_no, invoice_date FROM sales_invoices_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|e| e.to_string())?;
+    guard_period_open_for_date(&tx, &old_date).map_err(|e| e.to_string())?;
+    guard_period_open_for_date(&tx, &input.invoice_date).map_err(|e| e.to_string())?;
+
+    let (subtotal, vat_total, grand_total) = sales_doc_totals(&input.lines);
+
+    // Reverse the OLD impact, rewrite the header in place (keeping id +
+    // invoice_no), then re-apply the fresh impact from the new lines. Credit-
+    // control is intentionally NOT re-run: this is an edit of existing exposure,
+    // not new exposure.
+    reverse_sales_invoice_impact(&tx, id)?;
+    let invoice_type = match input.invoice_type.as_deref() { Some("standard") => "standard", _ => "simplified" };
+    let commission_pct = input.commission_pct.unwrap_or(0.0).clamp(0.0, 100.0);
+    let sales_rep_id = match input.sales_rep_id { Some(r) if r > 0 => Some(r), _ => None };
+    tx.execute(
+        "UPDATE sales_invoices_local SET customer_id=?1,invoice_date=?2,subtotal=?3,vat_total=?4,grand_total=?5,cogs_total=0,payment_method=?6,cash_box_id=?7,bank_id=?8,notes=?9,branch_id=?10,cost_center_id=?11,sales_rep_id=?12,commission_pct=?13,invoice_type=?14,buyer_name=?15,buyer_vat=?16,buyer_address=?17 WHERE id=?18",
+        params![input.customer_id, input.invoice_date, subtotal, vat_total, grand_total,
+                input.payment_method, input.cash_box_id, input.bank_id, input.notes, input.branch_id, input.cost_center_id,
+                sales_rep_id, commission_pct, invoice_type, input.buyer_name, input.buyer_vat, input.buyer_address, id],
+    ).map_err(|e| e.to_string())?;
+    apply_sales_invoice_impact(&tx, id, &invoice_no, &input, subtotal, vat_total, grand_total)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ─────────────────── Quotations & Sales Orders ───────────────────────
@@ -2385,6 +2572,60 @@ pub fn quotation_set_status(id: i64, status: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn quotation_delete(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let status: Option<String> = conn
+        .query_row("SELECT status FROM quotations_local WHERE id=?1", params![id], |r| r.get(0))
+        .optional().map_err(|e| e.to_string())?;
+    let status = status.ok_or_else(|| "عرض السعر غير موجود".to_string())?;
+    if status == "converted" {
+        return Err("لا يمكن حذف عرض سعر تم تحويله إلى فاتورة".into());
+    }
+    // Non-financial: no JE / stock to reverse. Lines drop via ON DELETE CASCADE,
+    // but we delete them explicitly in case FK enforcement is off.
+    conn.execute("DELETE FROM quotation_lines_local WHERE quotation_id=?1", params![id]).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM quotations_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn quotation_update(id: i64, input: QuotationInput) -> Result<(), String> {
+    if input.lines.is_empty() { return Err("لا يمكن حفظ عرض سعر بدون أصناف".into()); }
+    let (subtotal, vat_total, grand_total) = sales_doc_totals(&input.lines);
+    let invoice_type = norm_invoice_type(input.invoice_type.as_deref());
+    let commission_pct = input.commission_pct.unwrap_or(0.0).clamp(0.0, 100.0);
+    let sales_rep_id = match input.sales_rep_id { Some(r) if r > 0 => Some(r), _ => None };
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let status: Option<String> = tx
+        .query_row("SELECT status FROM quotations_local WHERE id=?1", params![id], |r| r.get(0))
+        .optional().map_err(|e| e.to_string())?;
+    let status = status.ok_or_else(|| "عرض السعر غير موجود".to_string())?;
+    if status == "converted" {
+        return Err("لا يمكن تعديل عرض سعر تم تحويله إلى فاتورة".into());
+    }
+    tx.execute(
+        "UPDATE quotations_local SET customer_id=?1,quotation_date=?2,valid_until=?3,subtotal=?4,vat_total=?5,grand_total=?6,notes=?7,warehouse_id=?8,branch_id=?9,cost_center_id=?10,sales_rep_id=?11,commission_pct=?12,invoice_type=?13,buyer_name=?14,buyer_vat=?15,buyer_address=?16 WHERE id=?17",
+        params![input.customer_id, input.quotation_date, input.valid_until, subtotal, vat_total, grand_total,
+                input.notes, input.warehouse_id, input.branch_id, input.cost_center_id,
+                sales_rep_id, commission_pct, invoice_type, input.buyer_name, input.buyer_vat, input.buyer_address, id],
+    ).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM quotation_lines_local WHERE quotation_id=?1", params![id]).map_err(|e| e.to_string())?;
+    for l in &input.lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+        let line_sub = l.qty * l.unit_price;
+        let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        tx.execute(
+            "INSERT INTO quotation_lines_local(quotation_id,item_id,qty,unit_price,vat_rate,line_total,uom_id,uom_name,conversion_factor,free_qty,note,warehouse_id)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            params![id, l.item_id, l.qty, l.unit_price, l.vat_rate, lt, l.uom_id, l.uom_name, factor, l.free_qty, l.note, l.warehouse_id],
+        ).map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Convert a quotation into a (posted) sales invoice. The quotation has no
 /// payment method, so we issue a CREDIT invoice on the customer's account —
 /// which requires a customer. Idempotent at the document level: a quotation
@@ -2575,6 +2816,72 @@ pub fn sales_order_set_status(id: i64, status: String) -> Result<(), String> {
     if cur == "converted" { return Err("لا يمكن تغيير حالة أمر بيع تم تحويله إلى فاتورة".into()); }
     conn.execute("UPDATE sales_orders_local SET status=?1 WHERE id=?2", params![status, id])
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn sales_order_delete(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let status: Option<String> = conn
+        .query_row("SELECT status FROM sales_orders_local WHERE id=?1", params![id], |r| r.get(0))
+        .optional().map_err(|e| e.to_string())?;
+    let status = status.ok_or_else(|| "أمر البيع غير موجود".to_string())?;
+    if status == "converted" {
+        return Err("لا يمكن حذف أمر بيع تم تحويله إلى فاتورة".into());
+    }
+    // Non-financial: no JE / stock to reverse.
+    conn.execute("DELETE FROM sales_order_lines_local WHERE order_id=?1", params![id]).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM sales_orders_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn sales_order_update(id: i64, input: SalesOrderInput) -> Result<(), String> {
+    if input.lines.is_empty() { return Err("لا يمكن حفظ أمر بيع بدون أصناف".into()); }
+    if !["credit","cash","bank"].contains(&input.payment_method.as_str()) {
+        return Err("طريقة دفع غير صالحة".into());
+    }
+    if input.payment_method == "credit" && input.customer_id.is_none() {
+        return Err("اختر العميل للبيع الآجل".into());
+    }
+    if input.payment_method == "cash" && input.cash_box_id.is_none() {
+        return Err("اختر الخزينة للدفع النقدي".into());
+    }
+    if input.payment_method == "bank" && input.bank_id.is_none() {
+        return Err("اختر البنك للدفع البنكي".into());
+    }
+    let (subtotal, vat_total, grand_total) = sales_doc_totals(&input.lines);
+    let invoice_type = norm_invoice_type(input.invoice_type.as_deref());
+    let commission_pct = input.commission_pct.unwrap_or(0.0).clamp(0.0, 100.0);
+    let sales_rep_id = match input.sales_rep_id { Some(r) if r > 0 => Some(r), _ => None };
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let status: Option<String> = tx
+        .query_row("SELECT status FROM sales_orders_local WHERE id=?1", params![id], |r| r.get(0))
+        .optional().map_err(|e| e.to_string())?;
+    let status = status.ok_or_else(|| "أمر البيع غير موجود".to_string())?;
+    if status == "converted" {
+        return Err("لا يمكن تعديل أمر بيع تم تحويله إلى فاتورة".into());
+    }
+    tx.execute(
+        "UPDATE sales_orders_local SET customer_id=?1,order_date=?2,expected_delivery=?3,payment_method=?4,cash_box_id=?5,bank_id=?6,subtotal=?7,vat_total=?8,grand_total=?9,notes=?10,warehouse_id=?11,branch_id=?12,cost_center_id=?13,sales_rep_id=?14,commission_pct=?15,invoice_type=?16,buyer_name=?17,buyer_vat=?18,buyer_address=?19 WHERE id=?20",
+        params![input.customer_id, input.order_date, input.expected_delivery, input.payment_method,
+                input.cash_box_id, input.bank_id, subtotal, vat_total, grand_total, input.notes,
+                input.warehouse_id, input.branch_id, input.cost_center_id,
+                sales_rep_id, commission_pct, invoice_type, input.buyer_name, input.buyer_vat, input.buyer_address, id],
+    ).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM sales_order_lines_local WHERE order_id=?1", params![id]).map_err(|e| e.to_string())?;
+    for l in &input.lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+        let line_sub = l.qty * l.unit_price;
+        let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        tx.execute(
+            "INSERT INTO sales_order_lines_local(order_id,item_id,qty,unit_price,vat_rate,line_total,uom_id,uom_name,conversion_factor,free_qty,note,warehouse_id)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            params![id, l.item_id, l.qty, l.unit_price, l.vat_rate, lt, l.uom_id, l.uom_name, factor, l.free_qty, l.note, l.warehouse_id],
+        ).map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 

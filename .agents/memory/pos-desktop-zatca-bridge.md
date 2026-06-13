@@ -33,3 +33,10 @@ just mints the matching `offline_invoices` row and links it back via two additiv
   real SA install always bridges rather than silently skipping ZATCA.
 - Bridge failure is **non-fatal** — the invoice is already saved; surface an Arabic warning
   and `return` (keep form open) so حفظ can retry.
+- **The `savedId` retry short-circuit is CREATE-only.** Edit-of-an-existing-invoice must take a
+  separate save path that ALWAYS re-runs `updateSalesInvoice` (never gated by `savedId`) and
+  skips the bridge — otherwise a first save that succeeds then fails the bridge leaves
+  `savedId` set, and a retry after the user changes fields silently drops those later edits.
+  **Why:** `savedId` exists to dedupe the create+QR enqueue on a bridge retry; reusing it for
+  edits conflates "already persisted this number" with "no further changes to persist".
+  Bridged invoices are immutable (blocked upstream), so the edit path never needs to bridge.

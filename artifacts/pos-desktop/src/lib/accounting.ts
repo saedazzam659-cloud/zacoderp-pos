@@ -132,6 +132,7 @@ export type SalesInvoice = {
   jeId: number | null; notes: string | null;
   // Salesperson attribution + commission snapshot, ZATCA doc type, frozen buyer.
   salesRepId?: number | null; salesRepName?: string | null; commissionPct?: number;
+  branchId?: number | null; costCenterId?: number | null;
   invoiceType?: string | null;
   buyerName?: string | null; buyerVat?: string | null; buyerAddress?: string | null;
   lines: SalesLine[];
@@ -422,6 +423,17 @@ export async function createSalesInvoice(input: SalesInvoiceInput): Promise<numb
   if (!hasTauri()) notImpl();
   return await invoke<number>("sales_invoice_create", { input });
 }
+/** Edit an existing (non-ZATCA-bridged) sales invoice: reverses the old GL +
+ *  stock + balance impact and re-applies fresh impact, keeping the number. */
+export async function updateSalesInvoice(id: number, input: SalesInvoiceInput): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("sales_invoice_update", { id, input });
+}
+/** Delete a (non-ZATCA-bridged, open-period) sales invoice, reversing all impact. */
+export async function deleteSalesInvoice(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("sales_invoice_delete", { id });
+}
 /** Persist the ZATCA bridge link (QR + offline_invoices local_uuid) onto a sales invoice. */
 export async function setSalesInvoiceZatca(
   id: number, qrBase64: string | null, offlineUuid: string | null,
@@ -442,6 +454,16 @@ export async function getQuotation(id: number): Promise<Quotation> {
 export async function createQuotation(input: QuotationInput): Promise<number> {
   if (!hasTauri()) notImpl();
   return await invoke<number>("quotation_create", { input });
+}
+/** Edit a non-converted quotation (non-financial: rewrites header + lines). */
+export async function updateQuotation(id: number, input: QuotationInput): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("quotation_update", { id, input });
+}
+/** Delete a non-converted quotation (non-financial). */
+export async function deleteQuotation(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("quotation_delete", { id });
 }
 export async function setQuotationStatus(id: number, status: QuotationStatus): Promise<void> {
   if (!hasTauri()) notImpl();
@@ -464,6 +486,16 @@ export async function getSalesOrder(id: number): Promise<SalesOrder> {
 export async function createSalesOrder(input: SalesOrderInput): Promise<number> {
   if (!hasTauri()) notImpl();
   return await invoke<number>("sales_order_create", { input });
+}
+/** Edit a non-converted sales order (non-financial: rewrites header + lines). */
+export async function updateSalesOrder(id: number, input: SalesOrderInput): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("sales_order_update", { id, input });
+}
+/** Delete a non-converted sales order (non-financial). */
+export async function deleteSalesOrder(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("sales_order_delete", { id });
 }
 export async function setSalesOrderStatus(id: number, status: SalesOrderStatus): Promise<void> {
   if (!hasTauri()) notImpl();

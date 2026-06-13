@@ -21,6 +21,7 @@ import {
   computeDiscount, lineNet, saveDocDiscount, getDocDiscount,
   type DiscType, type DiscFields,
 } from "../lib/discount";
+import { takeSalesReturnPrefill, type SalesReturnPrefill } from "../lib/returnPrefill";
 
 type FLine = SalesLine & DiscFields;
 
@@ -29,18 +30,25 @@ export default function SalesReturnsAdmin() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<SalesReturn | null>(null);
   const [creating, setCreating] = useState(false);
+  // Prefill handed over from the sales-invoice list ("إرجاع"). Taken ONCE on
+  // mount; when present the create form opens automatically.
+  const [prefill, setPrefill] = useState<SalesReturnPrefill | null>(null);
   const [deps, setDeps] = useState<{ customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[] } | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
   async function refresh() { setRows(await listSalesReturns(5000)); }
   useEffect(() => {
+    const pf = takeSalesReturnPrefill();
+    if (pf) { setPrefill(pf); setCreating(true); }
     void refresh();
     void (async () => {
       const [customers, cashBoxes, banks, items, warehouses] = await Promise.all([listCustomers(), listCashBoxes(), listBanks(), listItems(), listWarehouses()]);
       setDeps({ customers, cashBoxes, banks, items, warehouses });
     })();
   }, []);
+
+  function closeForm() { setCreating(false); setPrefill(null); }
 
   const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
   const pageRows = rows.slice(start, end);
@@ -67,7 +75,7 @@ export default function SalesReturnsAdmin() {
       {creating && deps && (
         <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
           <div style={{ padding: 16 }}>
-            <CreateForm deps={deps} onCancel={() => setCreating(false)} onDone={() => { setCreating(false); void refresh(); }} />
+            <CreateForm deps={deps} initial={prefill} onCancel={closeForm} onDone={() => { closeForm(); void refresh(); }} />
           </div>
         </Card>
       )}
@@ -171,17 +179,18 @@ function returnToPrintDoc(r: SalesReturn): PrintDoc {
   };
 }
 
-function CreateForm({ deps, onCancel, onDone }: {
+function CreateForm({ deps, initial, onCancel, onDone }: {
   deps: { customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[] };
+  initial?: SalesReturnPrefill | null;
   onCancel: () => void; onDone: () => void;
 }) {
-  const [customerId, setCustomerId] = useState<number>(0);
+  const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(todayStr());
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initial?.paymentMethod ?? "cash");
   const [cashBoxId, setCashBoxId] = useState<number | null>(deps.cashBoxes[0]?.id ?? null);
   const [bankId, setBankId] = useState<number | null>(deps.banks[0]?.id ?? null);
   const [warehouseId, setWarehouseId] = useState<number>(
-    (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
+    initial?.warehouseId ?? (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
   );
   const { branches, costCenters } = useDimensions();
   const [branchId, setBranchId] = useState<number | "">("");
@@ -194,7 +203,11 @@ function CreateForm({ deps, onCancel, onDone }: {
     itemId: 0, qty: 1, unitPrice: 0, vatRate: 15, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
-  const [lines, setLines] = useState<FLine[]>(() => [blankLine()]);
+  const [lines, setLines] = useState<FLine[]>(() =>
+    initial?.lines?.length
+      ? initial.lines.map((l) => ({ ...l, disc: 0, discType: "percent" as DiscType }))
+      : [blankLine()],
+  );
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
   const [currency, setCurrency] = useState<string>(() => baseCurrencyCode());
@@ -289,7 +302,7 @@ function CreateForm({ deps, onCancel, onDone }: {
         };
       });
       const id = await createSalesReturn({
-        customerId: customerId || null, invoiceId: null, returnDate: date, paymentMethod,
+        customerId: customerId || null, invoiceId: initial?.invoiceId ?? null, returnDate: date, paymentMethod,
         cashBoxId: paymentMethod === "cash" ? cashBoxId : null,
         bankId:    paymentMethod === "bank" ? bankId : null,
         warehouseId: warehouseId || null,

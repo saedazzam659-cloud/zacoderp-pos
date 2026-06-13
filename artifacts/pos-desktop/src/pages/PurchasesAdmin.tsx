@@ -19,10 +19,12 @@ import {
   computeDiscount, lineNet, saveDocDiscount, getDocDiscount,
   type DiscType, type DiscFields,
 } from "../lib/discount";
+import { setPurchaseReturnPrefill } from "../lib/returnPrefill";
+import { type WindowsView } from "../lib/moduleRegistry";
 
 type FLine = PurchaseLine & DiscFields;
 
-export default function PurchasesAdmin() {
+export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: WindowsView) => void }) {
   const [rows, setRows] = useState<Purchase[]>([]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<Purchase | null>(null);
@@ -49,6 +51,25 @@ export default function PurchasesAdmin() {
     setExpandedId(id); setExpandedDetail(null);
     const fetched = await getPurchase(id);
     setExpandedId((cur) => { if (cur === id) setExpandedDetail(fetched); return cur; });
+  }
+
+  // إرجاع: build a purchase-return prefill from the PERSISTED purchase invoice
+  // (authoritative qty/cost/uom) then navigate to the purchase-returns screen.
+  async function startReturn(id: number) {
+    const inv = await getPurchase(id);
+    setPurchaseReturnPrefill({
+      purchaseId: inv.id,
+      supplierId: inv.supplierId,
+      // Purchase header/lines don't persist a warehouse → let the return form
+      // fall back to the company default warehouse.
+      warehouseId: null,
+      lines: inv.lines.map((l) => ({
+        itemId: l.itemId, itemName: l.itemName, qty: l.qty, unitCost: l.unitCost,
+        vatRate: l.vatRate, lineTotal: l.lineTotal,
+        uomId: l.uomId, uomName: l.uomName, conversionFactor: l.conversionFactor,
+      })),
+    });
+    onNavigate?.("purchase_returns");
   }
 
   return (
@@ -93,6 +114,12 @@ export default function PurchasesAdmin() {
                         style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
                         {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
                       </button>
+                      {onNavigate && (
+                        <button onClick={() => void startReturn(p.id)} disabled={creating} title="إنشاء مرتجع من هذه الفاتورة"
+                          style={{ ...btnLink, marginInlineStart: 8, color: "#b45309", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                          ↩ إرجاع
+                        </button>
+                      )}
                     </Td>
                   </tr>
                   {expandedId === p.id && (
