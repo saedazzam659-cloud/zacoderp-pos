@@ -178,6 +178,12 @@ type NavGroupDef = {
 };
 const NAV_GROUPS: NavGroupDef[] = [
   {
+    key: "pos",
+    icon: "🛒",
+    label: "نقاط بيع",
+    members: ["sales", "returns", "parked", "daily"],
+  },
+  {
     key: "inventory",
     icon: "🏬",
     label: "المخازن",
@@ -191,7 +197,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     key: "selling",
     icon: "🧾",
     label: "المبيعات والعملاء",
-    members: ["salespersons", "quotations", "sales_orders", "sales_invoices", "sales_returns", "invoice_import", "report_sales_daily", "report_sales_by_period", "report_sales_by_item", "report_sales_by_customer", "report_sales_daily_detailed", "report_sales_payment_mix", "report_sales_returns", "report_sales_top_customers"],
+    members: ["customers", "salespersons", "quotations", "sales_orders", "sales_invoices", "sales_returns", "invoice_import", "report_sales_daily", "report_sales_by_period", "report_sales_by_item", "report_sales_by_customer", "report_sales_daily_detailed", "report_sales_payment_mix", "report_sales_returns", "report_sales_top_customers"],
   },
   {
     key: "purchasing",
@@ -221,7 +227,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     icon: "⚙️",
     label: "التحكم العام",
     members: [
-      "branches", "currencies", "exchange_rates", "dashboard",
+      "scale", "branches", "currencies", "exchange_rates", "dashboard",
       "users", "user_permissions", "network", "number_series", "settings_guide", "zatca", "updates",
     ],
   },
@@ -588,7 +594,6 @@ export default function PosShell({
         <nav style={S.topnav}>
           <div style={S.topnavBrand} title={`ZACOD POS v${APP_VERSION}`}>
             <span style={S.topnavBrandIcon}>Z</span>
-            <span style={S.topnavBrandText}>ZACOD POS</span>
           </div>
           <div style={S.topnavItems}>
             {(() => {
@@ -618,7 +623,7 @@ export default function PosShell({
               return (
                 <>
                   {primaryLeaves.map((it) => renderTopLeaf(it))}
-                  <span style={S.topnavDivider} />
+                  {primaryLeaves.length > 0 && <span style={S.topnavDivider} />}
                   {NAV_GROUPS.map((g) => {
                     const children = g.members
                       .map((m) => byId.get(m))
