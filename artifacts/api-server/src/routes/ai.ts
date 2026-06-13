@@ -3907,3 +3907,239 @@ ${JSON.stringify(sample)}
     res.status(500).json({ error: e?.message || "تدقيق الفواتير فشل" });
   }
 });
+
+// ── AI audit for SALES RETURNS (mirror of /audit-sales-invoices) ────────────
+// Same deterministic rules + optional AI commentary, adapted to credit notes
+// (returns). ZATCA-rejection and open-receivable rules don't apply to returns,
+// so they are dropped; everything else carries over 1:1.
+router.post("/audit-sales-returns", requirePermission("sales_returns", "view"), requireAiFeature("report_analyzer"), async (req, res) => {
+  try {
+    const { returns = [], currencyCode = "SAR" } = (req.body ?? {}) as {
+      returns?: any[];
+      currencyCode?: string;
+    };
+    if (!Array.isArray(returns) || returns.length === 0) {
+      res.status(400).json({ error: "لا توجد مرتجعات لتدقيقها" });
+      return;
+    }
+
+    const findings: Array<{
+      level: "error" | "warning" | "info";
+      code: string;
+      invoiceId?: number;
+      docNumber?: string;
+      message: string;
+      fix?: string;
+    }> = [];
+
+    let totalPosted = 0;
+    let totalDraft = 0;
+    let totalVat = 0;
+    const today = new Date();
+
+    for (const rt of returns) {
+      const sub = Number(rt.subtotal ?? 0);
+      const vat = Number(rt.vatAmount ?? 0);
+      const tot = Number(rt.totalAmount ?? 0);
+      const disc = Number(rt.discountAmount ?? 0);
+      totalVat += vat;
+      if (rt.status === "posted") totalPosted += tot;
+      if (rt.status === "draft")  totalDraft  += tot;
+
+      // 1. VAT mismatch (allow ±0.5 rounding)
+      const expectedVat = (sub - disc) * 0.15;
+      if (sub > 0 && Math.abs(expectedVat - vat) > 0.5) {
+        findings.push({
+          level: "error",
+          code: "VAT_MISMATCH",
+          invoiceId: rt.id,
+          docNumber: rt.docNumber,
+          message: `قيمة الضريبة (${vat.toFixed(2)}) لا تساوي 15% من المجموع بعد الخصم (المتوقع ${expectedVat.toFixed(2)})`,
+          fix: "افتح المرتجع وأعد حساب البنود — قد يكون أحد البنود يحمل نسبة ضريبة مختلفة أو أن الخصم غير محسوب على الأساس الضريبي.",
+        });
+      }
+
+      // 2. Missing customer
+      if (!rt.customerId) {
+        findings.push({
+          level: "error",
+          code: "MISSING_CUSTOMER",
+          invoiceId: rt.id,
+          docNumber: rt.docNumber,
+          message: "المرتجع لا يحتوي على عميل — مطلوب لربط الذمم المدينة وتسوية الفاتورة الأصلية.",
+          fix: "افتح المرتجع واختر العميل من القائمة.",
+        });
+      }
+
+      // 3. Return not linked to an original invoice
+      if (!rt.invoiceId) {
+        findings.push({
+          level: "warning",
+          code: "NO_SOURCE_INVOICE",
+          invoiceId: rt.id,
+          docNumber: rt.docNumber,
+          message: "المرتجع غير مرتبط بفاتورة مبيعات أصلية.",
+          fix: "اربط المرتجع بالفاتورة الأصلية لضمان دقة المخزون وأرصدة العملاء.",
+        });
+      }
+
+      // 4. Posted with no journal entry
+      if (rt.status === "posted" && !rt.journalEntryId) {
+        findings.push({
+          level: "error",
+          code: "POSTED_NO_JE",
+          invoiceId: rt.id,
+          docNumber: rt.docNumber,
+          message: "المرتجع مُرحّل لكن لا يوجد قيد محاسبي مرتبط به.",
+          fix: "ألغِ الترحيل وأعد ترحيل المرتجع لإعادة توليد القيد.",
+        });
+      }
+
+      // 5. Old drafts (>7 days)
+      if (rt.status === "draft" && rt.returnDate) {
+        const d = new Date(rt.returnDate);
+        if (!isNaN(d.getTime())) {
+          const daysOld = Math.floor((today.getTime() - d.getTime()) / 86400000);
+          if (daysOld > 7) {
+            findings.push({
+              level: "warning",
+              code: "OLD_DRAFT",
+              invoiceId: rt.id,
+              docNumber: rt.docNumber,
+              message: `مسودة مرتجع عمرها ${daysOld} يوماً — قد تكون منسيّة.`,
+              fix: "راجع المرتجع ثم رحّله أو احذفه.",
+            });
+          }
+        }
+      }
+
+      // 6. Zero total
+      if (tot <= 0 && rt.status !== "cancelled") {
+        findings.push({
+          level: "warning",
+          code: "ZERO_TOTAL",
+          invoiceId: rt.id,
+          docNumber: rt.docNumber,
+          message: "إجمالي المرتجع صفر — تأكد من إدخال البنود.",
+          fix: "افتح المرتجع وأضف البنود أو احذفه إن لم يكن مطلوباً.",
+        });
+      }
+    }
+
+    // 7. Outlier detection (any total > 3× median).
+    const baseline = returns
+      .filter((i: any) => i.status !== "cancelled" && Number(i.totalAmount ?? 0) > 0)
+      .map((i: any) => Number(i.totalAmount ?? 0))
+      .sort((a, b) => a - b);
+    let median = 0;
+    if (baseline.length > 0) {
+      const mid = Math.floor(baseline.length / 2);
+      median = baseline.length % 2 === 0
+        ? (baseline[mid - 1] + baseline[mid]) / 2
+        : baseline[mid];
+    }
+    if (median > 0) {
+      for (const rt of returns) {
+        const tot = Number(rt.totalAmount ?? 0);
+        if (rt.status !== "cancelled" && tot > median * 3) {
+          findings.push({
+            level: "warning",
+            code: "OUTLIER_HIGH",
+            invoiceId: rt.id,
+            docNumber: rt.docNumber,
+            message: `قيمة المرتجع (${tot.toFixed(2)}) أعلى بكثير من الوسيط (${median.toFixed(2)}).`,
+            fix: "تأكد من صحة الكميات والأسعار — قد يكون هناك خطأ إدخال.",
+          });
+        }
+      }
+    }
+
+    const metrics = {
+      totalInvoices: returns.length,
+      totalPosted: returns.filter((i: any) => i.status === "posted").length,
+      totalDrafts: returns.filter((i: any) => i.status === "draft").length,
+      totalCancelled: returns.filter((i: any) => i.status === "cancelled").length,
+      sumPosted: totalPosted,
+      sumDraft: totalDraft,
+      sumVat: totalVat,
+      median,
+      issuesCount: findings.filter(f => f.level === "error").length,
+      warningsCount: findings.filter(f => f.level === "warning").length,
+    };
+
+    const recommendations: string[] = [];
+    if (metrics.issuesCount > 0) {
+      recommendations.push(`عالج ${metrics.issuesCount} مشكلة حرجة قبل ترحيل المرتجعات.`);
+    }
+    if (metrics.totalDrafts > 0) {
+      recommendations.push(`لديك ${metrics.totalDrafts} مسودة مرتجع غير مُرحّلة بقيمة ${totalDraft.toFixed(2)} ${currencyCode} — راجعها وأكمل ترحيلها.`);
+    }
+    const noSource = findings.filter(f => f.code === "NO_SOURCE_INVOICE").length;
+    if (noSource > 0) {
+      recommendations.push(`${noSource} مرتجع غير مرتبط بفاتورة أصلية — اربطها لضمان دقة المخزون والأرصدة.`);
+    }
+    if (recommendations.length === 0) {
+      recommendations.push("لا توجد مشاكل واضحة في مرتجعاتك — استمر بنفس مستوى الجودة.");
+    }
+
+    let aiUsed = false;
+    if (isAIAvailable()) {
+      try {
+        const sample = returns.slice(0, 50).map((i: any) => ({
+          id: i.id,
+          docNumber: i.docNumber,
+          date: i.returnDate,
+          customer: i.customerName ?? null,
+          invoiceId: i.invoiceId ?? null,
+          subtotal: Number(i.subtotal ?? 0),
+          vat: Number(i.vatAmount ?? 0),
+          total: Number(i.totalAmount ?? 0),
+          status: i.status,
+          journalEntryId: i.journalEntryId ?? null,
+        }));
+        const userPrompt = `أنت مدقق محاسبي سعودي خبير في ZATCA. لديك ملخص ${returns.length} مرتجع مبيعات (عيّنة ${sample.length}). والقواعد التلقائية اكتشفت ${findings.length} ملاحظة.
+المؤشرات: ${JSON.stringify(metrics)}
+عيّنة المرتجعات:
+${JSON.stringify(sample)}
+
+اكتب 3-5 توصيات عملية موجزة بالعربية لتحسين جودة المرتجعات وتقليل المخاطر المحاسبية والضريبية. ركّز على الأنماط (وليس مرتجعاً واحداً).
+أعد JSON فقط: { "recommendations": ["...", "..."] }`;
+
+        const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${OPENAI_KEY}`,
+          },
+          body: JSON.stringify({
+            model: "gpt-5.4",
+            max_completion_tokens: 1024,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: "أنت مدقق محاسبي سعودي. ترد بـ JSON فقط بدون أي شرح." },
+              { role: "user", content: userPrompt },
+            ],
+          }),
+        });
+        if (r.ok) {
+          const data = await r.json();
+          const content = data?.choices?.[0]?.message?.content ?? "{}";
+          const parsed = JSON.parse(content);
+          const aiRecs = Array.isArray(parsed?.recommendations)
+            ? parsed.recommendations.map((x: any) => String(x).trim()).filter((x: string) => x.length > 0)
+            : [];
+          if (aiRecs.length > 0) {
+            recommendations.push(...aiRecs);
+            aiUsed = true;
+          }
+        }
+      } catch {
+        // Silently fall back to rule-based recommendations
+      }
+    }
+
+    res.json({ findings, metrics, recommendations, source: aiUsed ? "ai+rules" : "rules" });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "تدقيق المرتجعات فشل" });
+  }
+});

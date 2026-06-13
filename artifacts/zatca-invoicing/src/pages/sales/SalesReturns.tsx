@@ -19,7 +19,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil, Copy, Printer, FileSpreadsheet, FileDown, X, Loader2, Send, AlertCircle, StickyNote } from "lucide-react";
+import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil, Copy, Printer, FileSpreadsheet, FileDown, X, Loader2, Send, AlertCircle, AlertTriangle, Info, ListChecks, Sparkles, RefreshCw, StickyNote } from "lucide-react";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import * as XLSX from "xlsx";
 import {
   downloadCsv, useAuditGridLayout, useColumnResize,
@@ -47,10 +48,36 @@ import { CustomerVatControl } from "@/components/CustomerVatControl";
 import { DiscountRow } from "@/components/DiscountRow";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { safeLogoSrc } from "@/lib/export";
+import { safeLogoSrc, exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
+
+type AuditFinding = {
+  level: "error" | "warning" | "info";
+  code: string;
+  invoiceId?: number;
+  docNumber?: string;
+  message: string;
+  fix?: string;
+};
+type AuditResponse = {
+  findings: AuditFinding[];
+  metrics: {
+    totalInvoices: number;
+    totalPosted: number;
+    totalDrafts: number;
+    totalCancelled: number;
+    sumPosted: number;
+    sumDraft: number;
+    sumVat: number;
+    median: number;
+    issuesCount: number;
+    warningsCount: number;
+  };
+  recommendations: string[];
+  source: "ai+rules" | "rules";
+};
 
 interface ReturnLine {
   _id: string;
@@ -199,7 +226,7 @@ export default function SalesReturns() {
     () => handleSubmit({ preventDefault() {} } as any),
   );
 
-  const { data: returns_ = [], isLoading } = useQuery<any[]>({
+  const { data: returns_ = [], isLoading, isFetching, refetch } = useQuery<any[]>({
     queryKey: ["sales-returns", cid, branchKey],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -1086,6 +1113,15 @@ export default function SalesReturns() {
 
   const [tableSearch, setTableSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "posted">("all");
+  // ── Audit-grid extras (mirrors SalesAuditGrid) ──
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [warehouseFilter, setWarehouseFilter] = useState<string>("");
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [auditing, setAuditing] = useState(false);
+  const [audit, setAudit] = useState<AuditResponse | null>(null);
+  const [findingFilter, setFindingFilter] = useState<"all" | "error" | "warning" | "info">("all");
+  const [gridPrinting, setGridPrinting] = useState(false);
   // User filter: empty Set = "all users". Otherwise filter by selected user IDs.
   // Source of truth lives in GeneralSettings → "إعدادات مرتجعات المبيعات" tab,
   // persisted in localStorage as `zatca_sr_user_filter_<effectiveCid>` (JSON
@@ -1146,6 +1182,12 @@ export default function SalesReturns() {
     const q = tableSearch.trim().toLowerCase();
     return (returns_ as any[]).filter((r) => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
+      if (dateFrom && !(String(r.returnDate ?? "") >= dateFrom)) return false;
+      if (dateTo   && !(String(r.returnDate ?? "") <= dateTo))   return false;
+      if (warehouseFilter) {
+        const ids: any[] = Array.isArray(r.warehouseIds) ? r.warehouseIds : [];
+        if (!ids.some((wid: any) => String(wid) === warehouseFilter)) return false;
+      }
       if (userFilter.size > 0) {
         const uid = r.createdById != null ? Number(r.createdById) : null;
         if (uid == null || !userFilter.has(uid)) return false;
@@ -1164,7 +1206,7 @@ export default function SalesReturns() {
       }
       return true;
     });
-  }, [returns_, tableSearch, statusFilter, userFilter, colAdv, cusMap, invMap]);
+  }, [returns_, tableSearch, statusFilter, userFilter, colAdv, cusMap, invMap, dateFrom, dateTo, warehouseFilter]);
 
   /* ── Pagination ── */
   const { pageSize, page, setPage } = layout;
@@ -1298,6 +1340,138 @@ ${source.map((r: any, i: number) => {
 </tr></tfoot></table>
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
   };
+
+  /* ──────────────────────────────────────────────────────────────────
+     Audit-grid extras: Excel / PDF export, grid print, AI audit
+     (mirrors SalesAuditGrid)
+     ────────────────────────────────────────────────────────────────── */
+  const buildExportColumns = (): ExportColumn[] => ([
+    { header: "#",                key: "_idx",        width: 5  },
+    { header: "رقم المرتجع",      key: "docNumber",   width: 16 },
+    { header: "التاريخ",          key: "returnDate",  width: 12 },
+    { header: "العميل",           key: "customer",    width: 26 },
+    { header: "الفاتورة الأصلية", key: "invoice",     width: 16 },
+    { header: "العملة",           key: "currencyCode", width: 8 },
+    { header: "المجموع",          key: "subtotal",    width: 12, numFmt: "#,##0.00" },
+    { header: "الضريبة",          key: "vatAmount",   width: 12, numFmt: "#,##0.00" },
+    { header: "الإجمالي",         key: "totalAmount", width: 14, numFmt: "#,##0.00" },
+    { header: "الحالة",           key: "status",      width: 10 },
+  ]);
+  const buildExportRows = (source: any[] = filteredReturns) =>
+    source.map((r: any, idx: number) => ({
+      _idx: idx + 1,
+      docNumber: r.docNumber ?? `SR-${r.id}`,
+      returnDate: r.returnDate ?? "",
+      customer: cusMap[r.customerId] ?? "",
+      invoice: r.invoiceId ? (invMap[r.invoiceId] ?? `SI-${r.invoiceId}`) : "",
+      currencyCode: r.currencyCode ?? "",
+      subtotal: Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0),
+      vatAmount: Number(r.vatAmount ?? 0),
+      totalAmount: Number(r.totalAmount ?? 0),
+      status: r.status === "posted" ? "مرحّل" : r.status === "voided" || r.status === "cancelled" ? "ملغى" : "مسودة",
+    }));
+  const buildExportTotals = (source: any[] = filteredReturns) => ({
+    _idx: "",
+    docNumber: "الإجمالي",
+    returnDate: "",
+    customer: `${source.length} مرتجع`,
+    invoice: "",
+    currencyCode: "",
+    subtotal: source.reduce((a, r: any) => a + (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)), 0),
+    vatAmount: source.reduce((a, r: any) => a + Number(r.vatAmount ?? 0), 0),
+    totalAmount: source.reduce((a, r: any) => a + Number(r.totalAmount ?? 0), 0),
+    status: "",
+  });
+  const exportFilenameBase = () => `sales-returns-${today()}`;
+  const exportXlsx = () => {
+    if (filteredReturns.length === 0) {
+      toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
+      return;
+    }
+    exportToExcel(buildExportRows(), buildExportColumns(), exportFilenameBase(), "جرد مرتجعات المبيعات", buildExportTotals());
+    toast({ title: `تم تصدير ${filteredReturns.length} مرتجع إلى Excel` });
+  };
+  const exportPdf = () => {
+    if (filteredReturns.length === 0) {
+      toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
+      return;
+    }
+    exportToPDF(
+      buildExportRows(),
+      buildExportColumns(),
+      exportFilenameBase(),
+      "الجرد الخارجي لمرتجعات المبيعات",
+      `إجمالي السجلات: ${filteredReturns.length}`,
+      true,
+      buildExportTotals(),
+      null,
+      (user as any)?.company?.logo ?? null,
+    );
+    toast({ title: `جارٍ فتح ${filteredReturns.length} مرتجع بصيغة PDF` });
+  };
+  const printFilteredGrid = () => {
+    if (filteredReturns.length === 0) {
+      toast({ title: "لا يوجد بيانات للطباعة", variant: "destructive" });
+      return;
+    }
+    setGridPrinting(true);
+    try {
+      openPrintWindow(buildReturnsListHtml(filteredReturns));
+    } finally {
+      setGridPrinting(false);
+    }
+  };
+
+  const runAudit = async () => {
+    if (filteredReturns.length === 0) {
+      toast({ title: "لا توجد مرتجعات لتدقيقها", variant: "destructive" });
+      return;
+    }
+    setAuditing(true);
+    setAuditOpen(true);
+    try {
+      const payload = {
+        currencyCode: (filteredReturns[0] as any)?.currencyCode ?? "SAR",
+        returns: filteredReturns.map((r: any) => ({
+          id: r.id,
+          docNumber: r.docNumber ?? `SR-${r.id}`,
+          returnDate: r.returnDate,
+          customerId: r.customerId ?? null,
+          customerName: cusMap[r.customerId] ?? null,
+          invoiceId: r.invoiceId ?? null,
+          subtotal: Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0),
+          vatAmount: Number(r.vatAmount ?? 0),
+          totalAmount: Number(r.totalAmount ?? 0),
+          discountAmount: Number(r.discountAmount ?? 0),
+          status: r.status,
+          journalEntryId: r.journalEntryId ?? null,
+        })),
+      };
+      const res = await fetch(`${API}/api/ai/audit-sales-returns`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || "تدقيق المرتجعات فشل");
+      }
+      const data: AuditResponse = await res.json();
+      setAudit(data);
+      setFindingFilter("all");
+    } catch (e: any) {
+      toast({ title: "تعذّر التدقيق", description: e?.message ?? "", variant: "destructive" });
+      setAudit(null);
+    } finally {
+      setAuditing(false);
+    }
+  };
+
+  const filteredFindings = useMemo(() => {
+    if (!audit) return [] as AuditFinding[];
+    if (findingFilter === "all") return audit.findings;
+    return audit.findings.filter((f) => f.level === findingFilter);
+  }, [audit, findingFilter]);
 
   // Build the bulk-print HTML — one full A4 portrait sheet per selected return
   // showing every line (item / qty / price / vat / total) of that return.
@@ -2075,9 +2249,37 @@ ${sections}
             <FooterColorPicker layout={layout} isRtl={isRtl} />
             <ColumnReorderPopover layout={layout} isRtl={isRtl} columns={reorderableCols} />
             <Button type="button" size="sm" variant="ghost"
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)} onClick={() => refetch()} disabled={isFetching}
+              title="تحديث">
+              <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
+              تحديث
+            </Button>
+            <Button type="button" size="sm" variant="ghost"
               className={cn("h-7 px-2 text-xs gap-1", theme.btn)} onClick={exportCsv}>
               <FileSpreadsheet className="h-3.5 w-3.5" />
               تصدير CSV
+            </Button>
+            <Button type="button" size="sm" variant="ghost"
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)} onClick={exportXlsx}>
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+              Excel
+            </Button>
+            <Button type="button" size="sm" variant="ghost"
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)} onClick={exportPdf}>
+              <FileDown className="h-3.5 w-3.5" />
+              PDF
+            </Button>
+            <Button type="button" size="sm" variant="ghost"
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)} onClick={printFilteredGrid} disabled={gridPrinting}
+              title="طباعة الجرد">
+              <Printer className="h-3.5 w-3.5" />
+              طباعة الجرد
+            </Button>
+            <Button type="button" size="sm" variant="ghost"
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)} onClick={runAudit} disabled={auditing}
+              title="تدقيق ذكي بالمساعد">
+              {auditing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+              تدقيق ذكي
             </Button>
           </div>
         </div>
@@ -2109,6 +2311,35 @@ ${sections}
                 {s === "all" ? "الكل" : statusLabel(s)}
               </button>
             ))}
+          </div>
+          <div className="w-44">
+            <SearchCombobox
+              items={[
+                { value: "", label: "كل المستودعات" },
+                ...((warehouses as any[]) ?? []).map((w: any) => ({
+                  value: String(w.id),
+                  code: w.code,
+                  label: w.nameAr ?? w.nameEn ?? w.code ?? `#${w.id}`,
+                  labelEn: w.nameEn,
+                })),
+              ]}
+              value={warehouseFilter}
+              onValueChange={(v) => setWarehouseFilter(v ?? "")}
+              placeholder="المستودع"
+            />
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-slate-500">من</span>
+            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-7 text-xs w-36" />
+            <span className="text-slate-500">إلى</span>
+            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-7 text-xs w-36" />
+            {(dateFrom || dateTo) && (
+              <Button type="button" size="sm" variant="ghost"
+                className="h-7 px-1.5 text-xs text-rose-700 hover:bg-rose-50"
+                onClick={() => { setDateFrom(""); setDateTo(""); }} title="مسح التواريخ">
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
           {(Object.values(colFilters).some((v) => v) || Object.values(colAdv).some(isAdvActive)) && (
             <Button type="button" size="sm" variant="ghost"
@@ -2582,6 +2813,145 @@ ${sections}
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── AI Audit drawer (mirrors SalesAuditGrid) ── */}
+      <Sheet open={auditOpen} onOpenChange={setAuditOpen}>
+        <SheetContent side={isRtl ? "left" : "right"} className="w-full sm:max-w-xl overflow-y-auto" dir={isRtl ? "rtl" : "ltr"}>
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              التدقيق الذكي لمرتجعات المبيعات
+            </SheetTitle>
+            <SheetDescription>
+              فحص تلقائي للمرتجعات المعروضة ({filteredReturns.length}) عن الأخطاء الضريبية والمحاسبية، مع توصيات للتحسين.
+            </SheetDescription>
+          </SheetHeader>
+
+          {auditing && (
+            <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm">جارٍ تحليل المرتجعات…</p>
+            </div>
+          )}
+
+          {!auditing && audit && (
+            <div className="mt-4 space-y-4">
+              {/* Metrics */}
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="rounded-lg border bg-rose-50 border-rose-200 p-3">
+                  <div className="text-2xl font-bold text-rose-700">{audit.metrics.issuesCount}</div>
+                  <div className="text-xs text-rose-600">مشاكل حرجة</div>
+                </div>
+                <div className="rounded-lg border bg-amber-50 border-amber-200 p-3">
+                  <div className="text-2xl font-bold text-amber-700">{audit.metrics.warningsCount}</div>
+                  <div className="text-xs text-amber-600">تحذيرات</div>
+                </div>
+                <div className="rounded-lg border bg-slate-50 border-slate-200 p-3">
+                  <div className="text-lg font-bold text-slate-700">{audit.metrics.totalDrafts}</div>
+                  <div className="text-xs text-slate-600">مسودات ({fmt(audit.metrics.sumDraft)})</div>
+                </div>
+                <div className="rounded-lg border bg-emerald-50 border-emerald-200 p-3">
+                  <div className="text-lg font-bold text-emerald-700">{audit.metrics.totalPosted}</div>
+                  <div className="text-xs text-emerald-600">مُرحّلة ({fmt(audit.metrics.sumPosted)})</div>
+                </div>
+              </div>
+
+              {/* Recommendations */}
+              {audit.recommendations.length > 0 && (
+                <div className="rounded-lg border bg-primary/5 border-primary/20 p-3">
+                  <div className="flex items-center gap-1.5 font-semibold text-sm mb-2 text-primary">
+                    <ListChecks className="h-4 w-4" />
+                    التوصيات
+                    {audit.source === "ai+rules" && (
+                      <span className="ms-1 inline-flex items-center gap-0.5 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                        <Sparkles className="h-3 w-3" /> مدعوم بالذكاء
+                      </span>
+                    )}
+                  </div>
+                  <ul className="space-y-1.5 text-xs text-slate-700">
+                    {audit.recommendations.map((rec, i) => (
+                      <li key={i} className="flex gap-1.5">
+                        <span className="text-primary">•</span>
+                        <span>{rec}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Findings filter */}
+              <div className="flex gap-1 text-xs">
+                {([
+                  ["all", "الكل", audit.findings.length],
+                  ["error", "حرجة", audit.findings.filter(f => f.level === "error").length],
+                  ["warning", "تحذيرات", audit.findings.filter(f => f.level === "warning").length],
+                  ["info", "معلومات", audit.findings.filter(f => f.level === "info").length],
+                ] as const).map(([key, label, n]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setFindingFilter(key as any)}
+                    className={cn(
+                      "px-2 py-1 rounded border font-medium transition-colors",
+                      findingFilter === key
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100",
+                    )}
+                  >
+                    {label} ({n})
+                  </button>
+                ))}
+              </div>
+
+              {/* Findings list */}
+              <div className="space-y-2">
+                {filteredFindings.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-10 gap-2 text-emerald-600">
+                    <CheckCircle2 className="h-8 w-8" />
+                    <p className="text-sm">لا توجد ملاحظات في هذا التصنيف.</p>
+                  </div>
+                )}
+                {filteredFindings.map((f, i) => {
+                  const tone = f.level === "error"
+                    ? { box: "bg-rose-50 border-rose-200", icon: <AlertCircle className="h-4 w-4 text-rose-600" /> }
+                    : f.level === "warning"
+                    ? { box: "bg-amber-50 border-amber-200", icon: <AlertTriangle className="h-4 w-4 text-amber-600" /> }
+                    : { box: "bg-blue-50 border-blue-200", icon: <Info className="h-4 w-4 text-blue-600" /> };
+                  return (
+                    <div key={i} className={cn("rounded-lg border p-3 text-sm", tone.box)}>
+                      <div className="flex items-start gap-2">
+                        {tone.icon}
+                        <div className="flex-1 min-w-0">
+                          {f.docNumber && (
+                            <div className="font-semibold text-xs text-slate-600 mb-0.5">{f.docNumber}</div>
+                          )}
+                          <div className="text-slate-800">{f.message}</div>
+                          {f.fix && (
+                            <div className="mt-1 text-xs text-slate-600 flex gap-1">
+                              <span className="font-medium">الحل:</span>
+                              <span>{f.fix}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {!auditing && !audit && (
+            <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
+              <Sparkles className="h-8 w-8 text-primary/50" />
+              <p className="text-sm">اضغط "تدقيق ذكي" لبدء الفحص.</p>
+              <Button type="button" size="sm" onClick={runAudit} className="gap-1.5">
+                <Sparkles className="h-4 w-4" /> ابدأ التدقيق
+              </Button>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

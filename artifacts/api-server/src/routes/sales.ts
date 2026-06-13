@@ -1558,7 +1558,24 @@ router.get("/sales-returns", async (req, res) => {
         ...multiBranchScopeSpread(req, salesReturnsTable.branchId, req.query.branchIds ?? req.query.branchId),
       ))
       .orderBy(desc(salesReturnsTable.returnDate));
-    res.json(rows);
+    // Lightweight per-return warehouseIds set — used by the audit grid's
+    // warehouse filter so we don't ship every line over the wire. Single
+    // grouped query keeps this O(N+M) instead of N+1.
+    const ids = rows.map(r => r.id);
+    const whByReturn = new Map<number, Set<number>>();
+    if (ids.length > 0) {
+      const lineWh = await db.select({
+        returnId:    salesReturnLinesTable.returnId,
+        warehouseId: salesReturnLinesTable.warehouseId,
+      }).from(salesReturnLinesTable).where(inArray(salesReturnLinesTable.returnId, ids));
+      for (const lw of lineWh) {
+        if (!lw.returnId || lw.warehouseId == null) continue;
+        const s = whByReturn.get(lw.returnId) ?? new Set<number>();
+        s.add(Number(lw.warehouseId));
+        whByReturn.set(lw.returnId, s);
+      }
+    }
+    res.json(rows.map(r => ({ ...r, warehouseIds: Array.from(whByReturn.get(r.id) ?? []) })));
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
