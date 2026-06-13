@@ -583,52 +583,47 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
             )}
           </div>
 
-          {/* Totals + payment */}
+          {/* Compact footer — one horizontal bar: totals (right) · paid (mid) · small actions (left) */}
           <div style={S.footer}>
-            <div style={S.totalsBox}>
-              <Row S={S} k="قبل الضريبة" v={`${totals.subtotal.toFixed(2)} ${sym}`} />
-              <Row S={S} k={`ضريبة ${vatRatePct}%${taxMode === "inclusive" ? " (شاملة)" : ""}`} v={`${totals.vat.toFixed(2)} ${sym}`} />
-              <Row S={S} k="الإجمالي النهائي" v={`${totals.grandTotal.toFixed(2)} ${sym}`} big />
-            </div>
+            <div style={S.footerBar}>
+              {/* Totals — right */}
+              <div style={S.totalsInline}>
+                <div style={S.totalsInlineMuted}>
+                  <span>قبل الضريبة {totals.subtotal.toFixed(2)}</span>
+                  <span>· ضريبة {vatRatePct}%{taxMode === "inclusive" ? " (شاملة)" : ""} {totals.vat.toFixed(2)}</span>
+                </div>
+                <div style={S.totalsInlineGrand}>
+                  <span>الإجمالي</span>
+                  <span>{totals.grandTotal.toFixed(2)} {sym}</span>
+                </div>
+              </div>
 
-            {cart.length > 0 && (
-              <div style={S.paidBox}>
-                <div style={S.paidRow}>
+              {/* Paid — middle */}
+              {cart.length > 0 && (
+                <div style={S.paidInline}>
                   <label style={S.paidLabel}>💵 المدفوع</label>
                   <input
                     type="number" inputMode="decimal" step="0.01" min="0" placeholder="0.00"
-                    value={paidStr} onChange={(e) => setPaidStr(e.target.value)} style={S.paidInput}
+                    value={paidStr} onChange={(e) => setPaidStr(e.target.value)} style={S.paidInputSm}
                   />
+                  {hasPaid && (
+                    <span style={enough ? S.changePillOk : S.changePillShort}>
+                      {enough ? "الباقي" : "متبقٍ"} {Math.abs(change).toFixed(2)} {sym}
+                    </span>
+                  )}
                 </div>
-                {hasPaid && (
-                  <div style={enough ? S.changeOk : S.changeShort}>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>{enough ? "💰 الباقي للعميل" : "⚠️ المتبقي على العميل"}</span>
-                    <span style={S.changeAmount}>{Math.abs(change).toFixed(2)} {sym}</span>
-                  </div>
-                )}
-                {hasPaid && (
-                  <div style={S.paidQuick}>
-                    {[totals.grandTotal, 50, 100, 200, 500].filter((v, i, a) => a.indexOf(v) === i).map((v) => (
-                      <button key={v} onClick={() => setPaidStr(v.toFixed(2))} style={S.quickBtn}>{v.toFixed(0)}</button>
-                    ))}
-                  </div>
-                )}
+              )}
+
+              {/* Small action buttons — pushed to the left of the screen */}
+              <div style={S.miniActions}>
+                <button onClick={() => setPayMethod("cash")} style={payMethod === "cash" ? S.miniToggleActive : S.miniToggle}>💵 نقدي</button>
+                <button onClick={() => setPayMethod("card")} style={payMethod === "card" ? S.miniToggleActive : S.miniToggle}>💳 شبكة</button>
+                <button onClick={parkCart} disabled={cart.length === 0} style={S.miniBtn}>📌 تعليق</button>
+                <button onClick={clearCart} disabled={cart.length === 0} style={S.miniBtn}>🧾 جديدة</button>
+                <button onClick={() => checkout(payMethod)} disabled={paying || cart.length === 0} style={S.miniSaveBtn}>
+                  {paying ? "..." : "💾 حفظ وطباعة"}
+                </button>
               </div>
-            )}
-
-            {/* Payment method selector */}
-            <div style={S.payMethods}>
-              <button onClick={() => setPayMethod("cash")} style={payMethod === "cash" ? S.payMethodActive : S.payMethod}>💵 نقدي</button>
-              <button onClick={() => setPayMethod("card")} style={payMethod === "card" ? S.payMethodActive : S.payMethod}>💳 شبكة</button>
-            </div>
-
-            {/* Action bar */}
-            <div style={S.actionRow}>
-              <button onClick={clearCart} disabled={cart.length === 0} style={S.secondaryBtn}>🧾 جديدة</button>
-              <button onClick={parkCart} disabled={cart.length === 0} style={S.secondaryBtn}>📌 تعليق</button>
-              <button onClick={() => checkout(payMethod)} disabled={paying || cart.length === 0} style={S.saveBtn}>
-                {paying ? "..." : "💾 حفظ وطباعة"}
-              </button>
             </div>
 
             {msg && <div style={msg.kind === "ok" ? S.msgOk : S.msgErr}>{msg.text}</div>}
@@ -913,8 +908,8 @@ function makeStyles(T: Tokens): Styles {
 
     // Header
     header: {
-      flexShrink: 0, height: 64, display: "flex", alignItems: "center",
-      justifyContent: "space-between", padding: "0 20px", background: T.headerBg,
+      flexShrink: 0, height: 52, display: "flex", alignItems: "center",
+      justifyContent: "space-between", padding: "0 16px", background: T.headerBg,
       borderBottom: `1px solid ${T.border}`, backdropFilter: "blur(12px)",
     },
     brandIcon: {
@@ -1022,8 +1017,21 @@ function makeStyles(T: Tokens): Styles {
     qtyNum: { minWidth: 22, textAlign: "center", fontWeight: 800, fontSize: 13, color: T.accent },
     delBtn: { width: 26, height: 26, border: "none", background: "transparent", color: T.subtext, borderRadius: 8, cursor: "pointer", fontSize: 18, lineHeight: 1, fontFamily: FONT },
 
-    // Footer
-    footer: { flexShrink: 0, padding: 14, borderTop: `1px solid ${T.border}`, background: T.totalsBg },
+    // Footer — compact single-row bar
+    footer: { flexShrink: 0, padding: "8px 14px", borderTop: `1px solid ${T.border}`, background: T.totalsBg },
+    footerBar: { display: "flex", alignItems: "center", gap: 14, flexWrap: "nowrap" },
+    totalsInline: { display: "flex", flexDirection: "column", gap: 1, flexShrink: 0 },
+    totalsInlineMuted: { display: "flex", gap: 8, fontSize: 11, color: T.subtext, flexWrap: "wrap" },
+    totalsInlineGrand: { display: "flex", gap: 8, alignItems: "baseline", fontSize: 19, fontWeight: 800, color: T.text },
+    paidInline: { display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 160 },
+    paidInputSm: { width: 130, padding: "8px 10px", fontSize: 15, fontWeight: 700, border: `1px solid ${T.inputBorder}`, borderRadius: 8, fontFamily: "ui-monospace, monospace", textAlign: "left", background: T.inputBg, color: T.text },
+    changePillOk: { padding: "5px 10px", borderRadius: 999, background: T.accentSoft, color: T.accent, fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" },
+    changePillShort: { padding: "5px 10px", borderRadius: 999, background: "#fee2e2", color: "#991b1b", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" },
+    miniActions: { display: "flex", alignItems: "center", gap: 6, marginInlineStart: "auto", flexShrink: 0 },
+    miniToggle: { padding: "7px 11px", background: T.cardBg, border: `1px solid ${T.border}`, borderRadius: 9, color: T.text, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap" },
+    miniToggleActive: { padding: "7px 11px", background: T.accentSoft, border: `1px solid ${T.accent}`, borderRadius: 9, color: T.accent, cursor: "pointer", fontSize: 12, fontWeight: 800, fontFamily: FONT, whiteSpace: "nowrap", boxShadow: `0 0 0 1px ${T.accent} inset` },
+    miniBtn: { padding: "7px 11px", background: T.cardBg, border: `1px solid ${T.border}`, borderRadius: 9, color: T.text, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap" },
+    miniSaveBtn: { padding: "7px 16px", background: T.accent, color: T.accentText, border: "none", borderRadius: 9, cursor: "pointer", fontSize: 13, fontWeight: 800, fontFamily: FONT, whiteSpace: "nowrap" },
     totalsBox: { marginBottom: 10 },
     totalsRow: { display: "flex", justifyContent: "space-between", fontSize: 13, color: T.subtext, padding: "3px 0" },
     totalsRowBig: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 20, fontWeight: 800, color: T.text, paddingTop: 8, marginTop: 6, borderTop: `1px dashed ${T.border}` },

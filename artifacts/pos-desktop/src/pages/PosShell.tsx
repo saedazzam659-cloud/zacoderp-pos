@@ -582,56 +582,9 @@ export default function PosShell({
 
       {/* ─── Main column ───────────────────────────────────── */}
       <div style={S.main}>
-        {/* Top utility bar */}
-        <header style={S.topbar}>
-          <div style={{ flexShrink: 0 }}>
-            {effectiveCompanyName && <div style={S.companyName}>{effectiveCompanyName}</div>}
-            <div style={S.viewTitle}>{labelFor(view)}</div>
-          </div>
-          {/* Expiry banner — moved into the topbar (was a full-width strip
-              below). Lives in the empty space between left title and right
-              chips, so it no longer steals a row from the cart pane. */}
-          <div style={{ flex: 1, display: "flex", justifyContent: "center", padding: "0 16px", minWidth: 0 }}>
-            <ExpiryBanner expiresAt={expiresAt ?? null} compact />
-          </div>
-          <div style={S.topRight}>
-            <button onClick={() => setShowPeripherals(true)} style={S.periphBtn} title="الأجهزة الطرفية">🖨️</button>
-            {cashierContext && !standalone && (
-              <div style={S.cashierChip} title={`جلسة #${cashierContext.posSessionId} — مفتوحة منذ ${new Date(cashierContext.openedAt).toLocaleString("ar-SA")}`}>
-                <span style={S.cashierIcon}>👤</span>
-                <div style={S.cashierInfo}>
-                  <div style={S.cashierName}>{cashierContext.nameAr || cashierContext.username}</div>
-                  <div style={S.cashierMeta}>
-                    {cashierContext.branchName ?? "—"}
-                    {cashierContext.posTerminalName ? ` · ${cashierContext.posTerminalName}` : ""}
-                  </div>
-                </div>
-              </div>
-            )}
-            {standalone && standaloneSession && (
-              <div style={S.cashierChip} title={`مستخدم محلي — دخل في ${new Date(standaloneSession.signedInAt).toLocaleString("ar-SA")}`}>
-                <span style={S.cashierIcon}>👤</span>
-                <div style={S.cashierInfo}>
-                  <div style={S.cashierName}>{standaloneSession.displayName || standaloneSession.username}</div>
-                  <div style={S.cashierMeta}>
-                    {standaloneSession.role === "admin" ? "مسؤول" : "كاشير"} · مستقل
-                  </div>
-                </div>
-              </div>
-            )}
-            {!standalone && <SyncIndicator status={status} heartbeatErr={heartbeatErr} />}
-            {!standalone && <div style={S.deviceChip}>جهاز #{deviceId || "—"}</div>}
-            {standalone && <div style={S.deviceChip} title={standaloneLicense?.licenseKey}>🔐 ترخيص مستقل</div>}
-            {onLogoutCashier && (
-              <button onClick={doLogoutCashier} disabled={loggingOut} style={S.logoutBtn}
-                      title={standalone ? "تسجيل خروج المستخدم" : "تسجيل خروج الكاشير وإغلاق الوردية"}>
-                {loggingOut ? "..." : "🚪 خروج"}
-              </button>
-            )}
-          </div>
-        </header>
-
-        {/* ─── Horizontal navigation bar (top menu, RTL starts right) ─── */}
+        {/* ─── Single top bar: brand + menu + controls merged into ONE row
+            (the old white utility bar was removed to free a full row for the
+            POS screen, per user request). ─── */}
         <nav style={S.topnav}>
           <div style={S.topnavBrand} title={`ZACOD POS v${APP_VERSION}`}>
             <span style={S.topnavBrandIcon}>Z</span>
@@ -711,6 +664,43 @@ export default function PosShell({
                 </>
               );
             })()}
+          </div>
+          {/* Right-side controls (moved here from the old white top bar) */}
+          <div style={S.topnavControls}>
+            <ExpiryBanner expiresAt={expiresAt ?? null} compact />
+            <button onClick={() => setShowPeripherals(true)} style={S.periphBtn} title="الأجهزة الطرفية">🖨️</button>
+            {cashierContext && !standalone && (
+              <div style={S.cashierChip} title={`جلسة #${cashierContext.posSessionId} — مفتوحة منذ ${new Date(cashierContext.openedAt).toLocaleString("ar-SA")}`}>
+                <span style={S.cashierIcon}>👤</span>
+                <div style={S.cashierInfo}>
+                  <div style={S.cashierName}>{cashierContext.nameAr || cashierContext.username}</div>
+                  <div style={S.cashierMeta}>
+                    {cashierContext.branchName ?? "—"}
+                    {cashierContext.posTerminalName ? ` · ${cashierContext.posTerminalName}` : ""}
+                  </div>
+                </div>
+              </div>
+            )}
+            {standalone && standaloneSession && (
+              <div style={S.cashierChip} title={`مستخدم محلي — دخل في ${new Date(standaloneSession.signedInAt).toLocaleString("ar-SA")}`}>
+                <span style={S.cashierIcon}>👤</span>
+                <div style={S.cashierInfo}>
+                  <div style={S.cashierName}>{standaloneSession.displayName || standaloneSession.username}</div>
+                  <div style={S.cashierMeta}>
+                    {standaloneSession.role === "admin" ? "مسؤول" : "كاشير"} · مستقل
+                  </div>
+                </div>
+              </div>
+            )}
+            {!standalone && <SyncIndicator status={status} heartbeatErr={heartbeatErr} />}
+            {!standalone && <div style={S.deviceChip}>جهاز #{deviceId || "—"}</div>}
+            {standalone && <div style={S.deviceChip} title={standaloneLicense?.licenseKey}>🔐 ترخيص مستقل</div>}
+            {onLogoutCashier && (
+              <button onClick={doLogoutCashier} disabled={loggingOut} style={S.logoutBtn}
+                      title={standalone ? "تسجيل خروج المستخدم" : "تسجيل خروج الكاشير وإغلاق الوردية"}>
+                {loggingOut ? "..." : "🚪 خروج"}
+              </button>
+            )}
           </div>
         </nav>
         {openGroup && <div style={S.dropdownOverlay} onClick={() => setOpenGroup(null)} />}
@@ -1651,6 +1641,7 @@ const S = {
   topnavBrandText: { fontSize: 13, fontWeight: 700, color: "#f8fafc", whiteSpace: "nowrap" as const } as const,
   topnavItems: { display: "flex", alignItems: "center", flexWrap: "wrap" as const, gap: 3, rowGap: 5, flex: 1, overflow: "visible" as const } as const,
   topnavDivider: { width: 1, height: 20, background: "#334155", margin: "0 3px", flexShrink: 0 } as const,
+  topnavControls: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0, paddingInlineStart: 6 } as const,
   topLeaf: { display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" as const, padding: "5px 8px", border: "none", background: "transparent", color: "#cbd5e1", borderRadius: 7, cursor: "pointer", fontSize: 11.5, fontFamily: "inherit", height: 30, flexShrink: 0, transition: "all .12s" } as const,
   topLeafActive: { display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" as const, padding: "5px 8px", border: "none", background: "linear-gradient(180deg, rgba(37,99,235,.35) 0%, rgba(37,99,235,.15) 100%)", color: "#fff", borderRadius: 7, cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "inherit", height: 30, flexShrink: 0, boxShadow: "inset 0 -2px 0 #3b82f6" } as const,
   topGroup: { display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" as const, padding: "5px 8px", border: "none", background: "transparent", color: "#e2e8f0", borderRadius: 7, cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: "inherit", height: 30, flexShrink: 0, transition: "all .12s" } as const,
