@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { listAllInvoices, getOfflineInvoice, saveOfflineInvoice, type PendingInvoice, type OfflineInvoicePayload } from "../lib/invoices";
 import { printReceipt, type ReceiptLine } from "../lib/peripherals";
 import { generateZatcaQr } from "../lib/zatca";
+import { isZatcaCountry } from "../lib/zatcaBridge";
 import { useTaxSettings, computeTotals } from "../lib/taxSettings";
 import { useCurrencySymbol } from "../lib/currency";
 
@@ -228,7 +229,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
             ],
             body,
             footer: [{ text: "شكراً لزيارتكم", center: true }],
-            qrData: qr,
+            qrData: isZatcaCountry() ? qr : undefined,
             cut: true,
             openDrawer: payload.paymentMethod === "cash",
           });

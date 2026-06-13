@@ -18,6 +18,7 @@ import { SearchCombobox } from "./_adminUi";
 import { TAURI_MODE, type CashierContext } from "../lib/tauri-shim";
 import PeripheralsSettings from "./PeripheralsSettings";
 import SalesScreen from "./SalesScreen";
+import RegisterScreen from "./RegisterScreen";
 import PendingInvoices from "./PendingInvoices";
 import ParkedCarts from "./ParkedCarts";
 import ReturnsScreen from "./ReturnsScreen";
@@ -84,7 +85,7 @@ import { useTaxSettings, defaultRateForCountry } from "../lib/taxSettings";
 import ScaleSettings from "./ScaleSettings";
 import NetworkSettings from "./NetworkSettings";
 import { countPendingInvoices } from "../lib/invoices";
-import { getVertical, type Vertical } from "../lib/standalone";
+import { getVertical, usesNewRegisterScreen, type Vertical } from "../lib/standalone";
 import { syncPushNow, pullAndPersist, type PushSummary, type PullSummary } from "../lib/sync";
 import { listParkedCarts } from "../lib/parkedCarts";
 import { flushPendingSessionCloses, countPendingCloses } from "../lib/pendingSessionCloses";
@@ -134,6 +135,11 @@ function verticalLabel(v: Vertical): string {
     case "retail": return "تجزئة";
     case "restaurant": return "مطاعم";
     case "pharmacy": return "صيدلية";
+    case "plumbing": return "أدوات صحية وسباكة";
+    case "paints": return "دهانات وأصباغ";
+    case "auto_parts": return "قطع غيار سيارات";
+    case "auto_workshop": return "ورشة سيارات";
+    case "mobiles": return "موبايلات وإكسسوارات";
     default: return "عام";
   }
 }
@@ -255,19 +261,6 @@ export default function PosShell({
   // Drill-down target: set when a COA balance pill is clicked, consumed by
   // AccountStatementReport to preselect + auto-run for that account.
   const [stmtAccountId, setStmtAccountId] = useState<number | null>(null);
-  // Sidebar collapse — persisted across reloads so the cashier's choice sticks.
-  // Collapsed = 64px icon-only rail (gives the items grid ~180px more breathing
-  // room on 1280-wide tills). Expanded = original 240px with labels.
-  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
-    try { return localStorage.getItem("pos_desktop_nav_collapsed") === "1"; } catch { return false; }
-  });
-  const toggleNav = useCallback(() => {
-    setNavCollapsed((v) => {
-      const next = !v;
-      try { localStorage.setItem("pos_desktop_nav_collapsed", next ? "1" : "0"); } catch { /* ignore */ }
-      return next;
-    });
-  }, []);
   const [pendingCount, setPendingCount] = useState(0);
   const [parkedCount, setParkedCount] = useState(0);
   const [pushSummary, setPushSummary] = useState<PushSummary | null>(null);
@@ -586,154 +579,6 @@ export default function PosShell({
 
   return (
     <div dir="rtl" style={S.shell}>
-      {/* ─── Left navigation rail (RTL = right) ─────────────── */}
-      {/* The rail dynamically swaps between 240px (labels) and 64px
-          (icon-only). Width transition is animated so the items grid
-          to its left visibly expands/contracts. */}
-      <nav style={navCollapsed ? S.navCollapsed : S.nav}>
-        <div style={navCollapsed ? S.brandCollapsed : S.brand}>
-          <div style={navCollapsed ? S.brandIconCollapsed : S.brandIcon}>
-            {navCollapsed ? "Z" : "zacode"}
-          </div>
-          {!navCollapsed && (
-            <div>
-              <div style={S.brandName}>ZACOD POS</div>
-              <div style={S.brandTag}>v{APP_VERSION} — {standalone ? "standalone" : "desktop"}{isPharmacy ? " · 💊" : ""}</div>
-            </div>
-          )}
-        </div>
-
-        {/* Collapse / expand toggle — chevron flips direction (RTL: collapse
-            points right ▶, expand points left ◀). Tooltip-only when collapsed. */}
-        <button
-          onClick={toggleNav}
-          style={navCollapsed ? S.collapseToggleCollapsed : S.collapseToggle}
-          title={navCollapsed ? "توسيع القائمة" : "تصغير القائمة"}
-        >
-          <span style={{ fontSize: 14 }}>{navCollapsed ? "◀" : "▶"}</span>
-          {!navCollapsed && <span style={{ fontSize: 12 }}>تصغير</span>}
-        </button>
-
-        <div style={S.navList}>
-          {(() => {
-            const renderLeaf = (
-              it: { id: View; icon: string; label: string; badge?: number },
-              indented = false,
-            ) => {
-              const active = view === it.id;
-              const baseStyle = active ? S.navItemActive : S.navItem;
-              return (
-                <button
-                  key={it.id}
-                  onClick={() => setView(it.id)}
-                  style={navCollapsed
-                    ? { ...baseStyle, justifyContent: "center", padding: "12px 0", gap: 0, position: "relative" as const }
-                    : indented
-                      ? { ...baseStyle, paddingInlineStart: 34, fontSize: 13 }
-                      : baseStyle}
-                  title={navCollapsed ? `${it.label}${it.badge ? ` (${it.badge})` : ""}` : undefined}
-                >
-                  <span style={navCollapsed ? S.navIconLarge : S.navIcon}>{it.icon}</span>
-                  {!navCollapsed && <span style={S.navLabel}>{it.label}</span>}
-                  {it.badge !== undefined && (
-                    navCollapsed
-                      ? <span style={S.navBadgeDot}>{it.badge > 9 ? "9+" : it.badge}</span>
-                      : <span style={S.navBadge}>{it.badge}</span>
-                  )}
-                </button>
-              );
-            };
-
-            // Flat rendering — collapsed icon rail OR cloud mode (the rich
-            // accordion grouping is a standalone-only feature).
-            if (navCollapsed || !standalone) {
-              return navItems.map((it) => renderLeaf(it));
-            }
-
-            // ── Accordion grouping (standalone, expanded rail) ──
-            const byId = new Map(navItems.map((it) => [it.id, it]));
-            const grouped = new Set<View>(NAV_GROUPS.flatMap((g) => g.members));
-            const topLeaves = navItems.filter((it) => !grouped.has(it.id));
-            // Primary daily-operations leaves sit ABOVE the groups; the rest
-            // (network, expiry, updates …) sit below them.
-            const PRIMARY: View[] = ["sales", "returns", "parked", "pending", "daily", "customers"];
-            const primaryLeaves = topLeaves.filter((it) => PRIMARY.includes(it.id));
-            const trailingLeaves = topLeaves.filter((it) => !PRIMARY.includes(it.id));
-
-            return (
-              <>
-                {primaryLeaves.map((it) => renderLeaf(it))}
-                {NAV_GROUPS.map((g) => {
-                  const children = g.members
-                    .map((m) => byId.get(m))
-                    .filter((x): x is NonNullable<typeof x> => x != null);
-                  if (children.length === 0) return null;
-                  const isOpen = openGroup === g.key;
-                  const hasActive = children.some((c) => c.id === view);
-                  const badgeTotal = children.reduce((s, c) => s + (c.badge ?? 0), 0);
-                  const subHeaderCount = g.subHeaders
-                    ? children.filter((c) => g.subHeaders?.[c.id]).length
-                    : 0;
-                  return (
-                    <div key={g.key}>
-                      <button
-                        onClick={() => setOpenGroup((prev) => (prev === g.key ? null : g.key))}
-                        style={hasActive ? S.navGroupHeaderActive : S.navGroupHeader}
-                        aria-expanded={isOpen}
-                        title={g.label}
-                      >
-                        <span style={S.navIcon}>{g.icon}</span>
-                        <span style={S.navLabel}>{g.label}</span>
-                        {!isOpen && badgeTotal > 0 && <span style={S.navBadge}>{badgeTotal}</span>}
-                        <span style={{ ...S.navChevron, transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}>▸</span>
-                      </button>
-                      <div
-                        style={{
-                          ...S.navGroupBody,
-                          maxHeight: isOpen ? children.length * 48 + subHeaderCount * 28 + 8 : 0,
-                          opacity: isOpen ? 1 : 0,
-                        }}
-                      >
-                        {children.map((it) => {
-                          const sub = g.subHeaders?.[it.id];
-                          return (
-                            <Fragment key={it.id}>
-                              {sub && <div style={S.navSubHeader}>{sub}</div>}
-                              {renderLeaf(it, true)}
-                            </Fragment>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-                {trailingLeaves.map((it) => renderLeaf(it))}
-              </>
-            );
-          })()}
-        </div>
-
-        <div style={S.navFooter}>
-          <button
-            onClick={() => setShowPeripherals(true)}
-            style={navCollapsed
-              ? { ...S.navUtility, justifyContent: "center", padding: "10px 0", gap: 0 }
-              : S.navUtility}
-            title={navCollapsed ? "الأجهزة الطرفية" : undefined}
-          >
-            <span style={{ fontSize: navCollapsed ? 18 : 14 }}>🖨️</span>
-            {!navCollapsed && <span>الأجهزة الطرفية</span>}
-          </button>
-          {!navCollapsed && (
-            <div style={S.modeChip}>
-              {TAURI_MODE === "tauri" ? "🪟 وضع التطبيق الأصلي" : "🌐 وضع المتصفح"}
-            </div>
-          )}
-          <div style={S.versionChip} title={`إصدار التطبيق: ${APP_VERSION}`}>
-            {navCollapsed ? `v${APP_VERSION}` : `الإصدار v${APP_VERSION}`}
-          </div>
-        </div>
-      </nav>
 
       {/* ─── Main column ───────────────────────────────────── */}
       <div style={S.main}>
@@ -750,6 +595,7 @@ export default function PosShell({
             <ExpiryBanner expiresAt={expiresAt ?? null} compact />
           </div>
           <div style={S.topRight}>
+            <button onClick={() => setShowPeripherals(true)} style={S.periphBtn} title="الأجهزة الطرفية">🖨️</button>
             {cashierContext && !standalone && (
               <div style={S.cashierChip} title={`جلسة #${cashierContext.posSessionId} — مفتوحة منذ ${new Date(cashierContext.openedAt).toLocaleString("ar-SA")}`}>
                 <span style={S.cashierIcon}>👤</span>
@@ -785,6 +631,90 @@ export default function PosShell({
           </div>
         </header>
 
+        {/* ─── Horizontal navigation bar (top menu, RTL starts right) ─── */}
+        <nav style={S.topnav}>
+          <div style={S.topnavBrand} title={`ZACOD POS v${APP_VERSION}`}>
+            <span style={S.topnavBrandIcon}>Z</span>
+            <span style={S.topnavBrandText}>ZACOD POS</span>
+          </div>
+          <div style={S.topnavItems}>
+            {(() => {
+              const renderTopLeaf = (it: { id: View; icon: string; label: string; badge?: number }) => {
+                const active = view === it.id;
+                return (
+                  <button key={it.id} onClick={() => { setView(it.id); setOpenGroup(null); }}
+                    style={active ? S.topLeafActive : S.topLeaf} title={it.label}>
+                    <span style={{ fontSize: 15 }}>{it.icon}</span>
+                    <span>{it.label}</span>
+                    {it.badge !== undefined && <span style={S.topBadge}>{it.badge}</span>}
+                  </button>
+                );
+              };
+
+              if (!standalone) {
+                return navItems.map((it) => renderTopLeaf(it));
+              }
+
+              const byId = new Map(navItems.map((it) => [it.id, it] as const));
+              const grouped = new Set<View>(NAV_GROUPS.flatMap((g) => g.members));
+              const topLeaves = navItems.filter((it) => !grouped.has(it.id));
+              const PRIMARY: View[] = ["sales", "returns", "parked", "pending", "daily", "customers"];
+              const primaryLeaves = topLeaves.filter((it) => PRIMARY.includes(it.id));
+              const trailingLeaves = topLeaves.filter((it) => !PRIMARY.includes(it.id));
+
+              return (
+                <>
+                  {primaryLeaves.map((it) => renderTopLeaf(it))}
+                  <span style={S.topnavDivider} />
+                  {NAV_GROUPS.map((g) => {
+                    const children = g.members
+                      .map((m) => byId.get(m))
+                      .filter((x): x is NonNullable<typeof x> => x != null);
+                    if (children.length === 0) return null;
+                    const isOpen = openGroup === g.key;
+                    const hasActive = children.some((c) => c.id === view);
+                    const badgeTotal = children.reduce((sum, c) => sum + (c.badge ?? 0), 0);
+                    return (
+                      <div key={g.key} style={{ position: "relative" }}>
+                        <button onClick={() => setOpenGroup((prev) => (prev === g.key ? null : g.key))}
+                          style={(isOpen || hasActive) ? S.topGroupActive : S.topGroup}
+                          aria-expanded={isOpen} title={g.label}>
+                          <span style={{ fontSize: 15 }}>{g.icon}</span>
+                          <span>{g.label}</span>
+                          {!isOpen && badgeTotal > 0 && <span style={S.topBadge}>{badgeTotal}</span>}
+                          <span style={{ fontSize: 9, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }}>▾</span>
+                        </button>
+                        {isOpen && (
+                          <div style={S.dropdownPanel}>
+                            {children.map((it) => {
+                              const sub = g.subHeaders?.[it.id];
+                              const active = view === it.id;
+                              return (
+                                <Fragment key={it.id}>
+                                  {sub && <div style={S.dropdownSub}>{sub}</div>}
+                                  <button onClick={() => { setView(it.id); setOpenGroup(null); }}
+                                    style={active ? S.dropdownItemActive : S.dropdownItem}>
+                                    <span style={{ fontSize: 14, width: 22, textAlign: "center" }}>{it.icon}</span>
+                                    <span style={{ flex: 1 }}>{it.label}</span>
+                                    {it.badge !== undefined && <span style={S.topBadge}>{it.badge}</span>}
+                                  </button>
+                                </Fragment>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {trailingLeaves.length > 0 && <span style={S.topnavDivider} />}
+                  {trailingLeaves.map((it) => renderTopLeaf(it))}
+                </>
+              );
+            })()}
+          </div>
+        </nav>
+        {openGroup && <div style={S.dropdownOverlay} onClick={() => setOpenGroup(null)} />}
+
         {/* New-version notification banner (Task #187). Cloud-only. */}
         {!standalone && updateAvailable && latestRelease && !updateDismissed && (
           <UpdateBanner
@@ -807,7 +737,11 @@ export default function PosShell({
 
         {/* Page content */}
         <main style={S.content}>
-          {view === "sales" && <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={effectiveCashierName} />}
+          {view === "sales" && (
+            usesNewRegisterScreen(vertical)
+              ? <RegisterScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={effectiveCashierName} />
+              : <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={effectiveCashierName} />
+          )}
           {view === "returns" && <div style={S.pagePad}><ReturnsScreen companyName={effectiveCompanyName} cashierName={effectiveCashierName} /></div>}
           {!standalone && view === "pending" && <div style={S.pagePad}><PendingInvoices companyName={effectiveCompanyName} /></div>}
           {view === "parked" && (
@@ -1709,4 +1643,23 @@ const S = {
   btnDanger: { padding: "10px 18px", background: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" } as const,
   success: { background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534", padding: 12, borderRadius: 8, marginTop: 12, fontSize: 14 } as const,
   err: { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: 12, borderRadius: 8, marginTop: 12, fontSize: 14 } as const,
+
+  // ── Horizontal top navigation bar ──
+  topnav: { position: "relative" as const, zIndex: 50, display: "flex", alignItems: "center", gap: 12, padding: "0 20px", height: 52, background: "linear-gradient(90deg, #0f172a 0%, #1e293b 100%)", borderBottom: "1px solid #334155", flexShrink: 0 } as const,
+  topnavBrand: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0, paddingInlineStart: 4 } as const,
+  topnavBrandIcon: { width: 30, height: 30, borderRadius: 8, background: "linear-gradient(135deg, #22d3ee 0%, #2563eb 100%)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 15, boxShadow: "0 2px 8px rgba(34,211,238,.3)" } as const,
+  topnavBrandText: { fontSize: 13, fontWeight: 700, color: "#f8fafc", whiteSpace: "nowrap" as const } as const,
+  topnavItems: { display: "flex", alignItems: "center", gap: 4, flex: 1, overflowX: "auto" as const, overflowY: "visible" as const, height: "100%" } as const,
+  topnavDivider: { width: 1, height: 22, background: "#334155", margin: "0 4px", flexShrink: 0 } as const,
+  topLeaf: { display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const, padding: "7px 12px", border: "none", background: "transparent", color: "#cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 13, fontFamily: "inherit", height: 36, flexShrink: 0, transition: "all .12s" } as const,
+  topLeafActive: { display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const, padding: "7px 12px", border: "none", background: "linear-gradient(180deg, rgba(37,99,235,.35) 0%, rgba(37,99,235,.15) 100%)", color: "#fff", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", height: 36, flexShrink: 0, boxShadow: "inset 0 -2px 0 #3b82f6" } as const,
+  topGroup: { display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const, padding: "7px 12px", border: "none", background: "transparent", color: "#e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit", height: 36, flexShrink: 0, transition: "all .12s" } as const,
+  topGroupActive: { display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const, padding: "7px 12px", border: "none", background: "rgba(148,163,184,.18)", color: "#fff", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", height: 36, flexShrink: 0 } as const,
+  topBadge: { padding: "1px 7px", background: "#dc2626", color: "#fff", borderRadius: 999, fontSize: 10, fontWeight: 700 } as const,
+  dropdownPanel: { position: "absolute" as const, top: "calc(100% + 6px)", insetInlineStart: 0, zIndex: 60, minWidth: 230, maxHeight: 420, overflowY: "auto" as const, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 12px 32px rgba(15,23,42,.18)", padding: 6, display: "flex", flexDirection: "column" as const, gap: 2 } as const,
+  dropdownItem: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: "none", background: "transparent", color: "#334155", borderRadius: 8, cursor: "pointer", fontSize: 13, fontFamily: "inherit", textAlign: "right" as const, width: "100%", transition: "background .1s" } as const,
+  dropdownItemActive: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: "none", background: "#eff6ff", color: "#1d4ed8", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", textAlign: "right" as const, width: "100%" } as const,
+  dropdownSub: { padding: "8px 12px 4px", fontSize: 11, fontWeight: 700, color: "#94a3b8" } as const,
+  dropdownOverlay: { position: "fixed" as const, inset: 0, zIndex: 40, background: "transparent" } as const,
+  periphBtn: { padding: "6px 10px", background: "#fff", color: "#475569", border: "1px solid #e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 14, fontFamily: "inherit" } as const,
 };

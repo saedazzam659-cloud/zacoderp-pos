@@ -75,7 +75,7 @@ export default function SalesInvoicesAdmin() {
         {rows.length === 0 && !creating ? <Empty text="لا توجد فواتير مبيعات" /> : (
           <Table>
             <thead><tr>
-              <Th>رقم الفاتورة</Th><Th>التاريخ</Th><Th>العميل</Th><Th>طريقة الدفع</Th><Th>زاتكا</Th>
+              <Th>رقم الفاتورة</Th><Th>التاريخ</Th><Th>العميل</Th><Th>طريقة الدفع</Th>{isZatcaCountry() && <Th>زاتكا</Th>}
               <Th style={{ textAlign: "left" }}>المجموع</Th><Th style={{ textAlign: "left" }}>الضريبة</Th>
               <Th style={{ textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 100 }}></Th>
             </tr></thead>
@@ -87,7 +87,7 @@ export default function SalesInvoicesAdmin() {
                     <Td>{p.invoiceDate}</Td>
                     <Td>{p.customerName ?? "نقدي/بدون عميل"}</Td>
                     <Td><PayBadge m={p.paymentMethod} /></Td>
-                    <Td><ZatcaBadge status={p.zatcaStatus} /></Td>
+                    {isZatcaCountry() && <Td><ZatcaBadge status={p.zatcaStatus} /></Td>}
                     <Td num>{fmt(p.subtotal)}</Td>
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
@@ -165,7 +165,7 @@ function SalesDetail({ p }: { p: SalesInvoice }) {
           <tr style={{ background: "#fff" }}><Td colSpan={5 as any}>ضريبة القيمة المضافة</Td><Td num>{fmt(p.vatTotal)}</Td></tr>
           <tr style={{ background: "#f1f5f9", fontWeight: 800, fontSize: 16 }}><Td colSpan={5 as any}>الإجمالي النهائي</Td><Td num>{fmt(p.grandTotal)}</Td></tr>
           <tr style={{ background: "#fff", color: "#64748b" }}><Td colSpan={5 as any}>تكلفة البضاعة المباعة</Td><Td num>{fmt(p.cogsTotal)}</Td></tr>
-          {p.zatcaQrBase64 && (
+          {isZatcaCountry() && p.zatcaQrBase64 && (
             <tr style={{ background: "#fff" }}>
               <Td colSpan={5 as any}>زاتكا</Td>
               <Td>
@@ -470,6 +470,7 @@ function CreateForm({ deps, onCancel, onDone }: {
             ]}
           />
         </Field>
+        {isZatcaCountry() && (
         <Field label="نوع الفاتورة (زاتكا)">
           <SearchCombobox
             value={invoiceType}
@@ -482,6 +483,7 @@ function CreateForm({ deps, onCancel, onDone }: {
             ]}
           />
         </Field>
+        )}
       </div>
       {invoiceType === "standard" && (
         <div style={{ marginTop: 10, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>

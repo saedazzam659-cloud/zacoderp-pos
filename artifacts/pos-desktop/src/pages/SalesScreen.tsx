@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { printReceipt, openCashDrawer, type ReceiptLine } from "../lib/peripherals";
 import { generateZatcaQr } from "../lib/zatca";
+import { isZatcaCountry } from "../lib/zatcaBridge";
 import { listItems, findItemUnitByBarcode, seedDemoItems, daysUntilExpiry, findItemByPlu, type LocalItem, type ItemUnit } from "../lib/items";
 import { parseEmbeddedWeightBarcode, readWeightOnce, getScaleConfig } from "../lib/scale";
 import { getVertical, verifyAdminCredentials, type Vertical } from "../lib/standalone";
@@ -531,7 +532,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           ],
           body,
           footer: [{ text: "شكراً لزيارتكم", center: true }],
-          qrData: qr, cut: true,
+          qrData: isZatcaCountry() ? qr : undefined, cut: true,
           openDrawer: paymentMethod === "cash",
         });
         if (paymentMethod === "cash") {

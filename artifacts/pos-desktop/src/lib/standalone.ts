@@ -259,19 +259,40 @@ function stripStored(u: StoredUser): LocalUser {
 // ─── Vertical preset (Task #200) ─────────────────────────────────────
 // Three presets that switch UI flavor: catalog labels, optional fields,
 // per-vertical reports. "general" is the no-op fallback for new businesses.
-export type Vertical = "general" | "grocery" | "pharmacy" | "retail" | "restaurant";
+export type Vertical =
+  | "general" | "grocery" | "pharmacy" | "retail" | "restaurant"
+  // New trade verticals (Task — new POS register screen). These render the
+  // modern RegisterScreen instead of the classic SalesScreen.
+  | "plumbing" | "paints" | "auto_parts" | "auto_workshop" | "mobiles";
 const LS_VERTICAL = "pos_desktop_vertical";
 const SETTING_VERTICAL = "ui_vertical";
+
+// All recognized verticals — used to validate persisted values on read so a
+// stored vertical actually round-trips (the old whitelist silently dropped
+// retail/restaurant and would drop every new value too).
+const ALL_VERTICALS: readonly Vertical[] = [
+  "general", "grocery", "pharmacy", "retail", "restaurant",
+  "plumbing", "paints", "auto_parts", "auto_workshop", "mobiles",
+];
+// Verticals that use the new modern RegisterScreen (instead of SalesScreen).
+export const NEW_TRADE_VERTICALS: readonly Vertical[] = [
+  "plumbing", "paints", "auto_parts", "auto_workshop", "mobiles",
+];
+export function usesNewRegisterScreen(v: Vertical | null | undefined): boolean {
+  return v != null && NEW_TRADE_VERTICALS.includes(v);
+}
+function asVertical(v: string | null): Vertical | null {
+  return v != null && (ALL_VERTICALS as readonly string[]).includes(v) ? (v as Vertical) : null;
+}
 
 export async function getVertical(): Promise<Vertical | null> {
   if (hasTauri()) {
     try {
       const v = await invoke<string | null>("standalone_get_setting", { key: SETTING_VERTICAL });
-      return v === "general" || v === "grocery" || v === "pharmacy" ? v : null;
+      return asVertical(v);
     } catch { return null; }
   }
-  const v = localStorage.getItem(LS_VERTICAL);
-  return v === "general" || v === "grocery" || v === "pharmacy" ? v : null;
+  return asVertical(localStorage.getItem(LS_VERTICAL));
 }
 export async function setVertical(v: Vertical): Promise<void> {
   if (hasTauri()) {
