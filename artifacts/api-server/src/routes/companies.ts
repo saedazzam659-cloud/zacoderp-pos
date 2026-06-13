@@ -147,6 +147,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     faDepreciationExpenseAccountId, faAcquisitionClearingAccountId,
     faDisposalGainAccountId, faDisposalLossAccountId,
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
+    bankAccountText, printShowItemsSummary,
     printEnabledTemplates, printDefaultTemplate,
     invoicePrintLanguage,
     sequenceDateSource,
@@ -187,6 +188,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     faDisposalLossAccountId?: number | null;
     printFooterInvoice?: string; printFooterReturn?: string;
     printShowTimestamp?: boolean; printShowZatcaBrand?: boolean;
+    bankAccountText?: string | null; printShowItemsSummary?: boolean;
     printEnabledTemplates?: number[] | null; printDefaultTemplate?: number;
     invoicePrintLanguage?: string;
     sequenceDateSource?: string;
@@ -277,6 +279,11 @@ router.patch("/:id/general-settings", async (req, res) => {
   }
   if (printShowTimestamp !== undefined) updates.printShowTimestamp = !!printShowTimestamp;
   if (printShowZatcaBrand !== undefined) updates.printShowZatcaBrand = !!printShowZatcaBrand;
+  if (bankAccountText !== undefined) {
+    const bt = bankAccountText === null ? "" : String(bankAccountText).trim().slice(0, 500);
+    updates.bankAccountText = bt === "" ? null : bt;
+  }
+  if (printShowItemsSummary !== undefined) updates.printShowItemsSummary = !!printShowItemsSummary;
   // Print template visibility list — accept an array of integer ids
   // (1..12), de-dup, drop garbage. Pass `null` (or empty array) to
   // reset to "all templates visible".

@@ -2083,6 +2083,14 @@ function template14(d: PrintData): string {
       border-radius:8px; padding:8px 12px; font-size:11px; color:#334155;
     }
     .notes-box b { color:var(--ink); }
+    /* QR column wrapper: stacks the QR card and the optional bank-details box. */
+    .qr-col { display:flex; flex-direction:column; gap:10px; }
+    .bank-box {
+      border:1px solid var(--line); border-radius:10px; padding:10px 12px; background:#fff;
+      font-size:11px; color:#334155; text-align:start;
+    }
+    .bank-box .bank-title { font-weight:700; color:var(--ink); margin-bottom:5px; font-size:11.5px; }
+    .bank-box .bank-body { line-height:1.7; white-space:pre-line; }
     /* English (LTR) mode — flip table + field alignment so the layout
        reads naturally left-to-right while keeping the same structure.
        baseStyles hard-codes body direction:rtl which beats the html
@@ -2273,11 +2281,19 @@ function template14(d: PrintData): string {
               <div class="__totalsRow"><span>${tl("ضريبة القيمة المضافة", "VAT")}</span><span class="mono" style="color:#b45309;">${nf(totals.vatAmount)}</span></div>
               <div class="__totalsRow grand"><span>${tl("الصافي شامل الضريبة", "Total")}</span><span class="mono">${nf(totals.grandTotal)}</span></div>
               ${sarEqRowsHtml(totals, "__totalsRow", tl, nf)}
-              ${isEn ? summaryFooterHtmlEn(totals) : summaryFooterHtml(totals)}
+              ${(company?.printShowItemsSummary !== false) ? (isEn ? summaryFooterHtmlEn(totals) : summaryFooterHtml(totals)) : ""}
             </div>
-            <div class="qr-card">
-              ${qrImgHtml(d, { size: 150 })}
-              <div class="lbl">QR — ZATCA</div>
+            <div class="qr-col">
+              <div class="qr-card">
+                ${qrImgHtml(d, { size: 150 })}
+                <div class="lbl">QR — ZATCA</div>
+              </div>
+              ${(() => {
+                const bt = (company?.bankAccountText ?? "").toString().trim();
+                if (!bt) return "";
+                const esc = bt.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                return `<div class="bank-box"><div class="bank-title">${tl("بيانات الحساب البنكي", "Bank Account Details")}</div><div class="bank-body">${esc}</div></div>`;
+              })()}
             </div>
           </div>
 

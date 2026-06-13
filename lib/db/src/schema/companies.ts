@@ -150,6 +150,12 @@ export const companiesTable = pgTable("companies", {
   printFooterReturn:    text("print_footer_return").notNull().default("تم استلام المرتجع — شكراً لتعاملكم"),
   printShowTimestamp:   boolean("print_show_timestamp").notNull().default(true),
   printShowZatcaBrand:  boolean("print_show_zatca_brand").notNull().default(true),
+  // Free-text bank account details (account name, bank, IBAN …) printed in the
+  // empty area under the QR on the "الأصلي" invoice template. NULL/empty = hide.
+  bankAccountText:      text("bank_account_text"),
+  // Toggle for the items/quantities summary box ("blue box") on the printed
+  // invoice. Defaults to shown to preserve existing behavior.
+  printShowItemsSummary: boolean("print_show_items_summary").notNull().default(true),
   // Which sales-print templates are visible to end-users in the print
   // modal. NULL or empty array = show all 12 (default behavior). Stored
   // as a JSONB int[] (template ids 1..12). The "default" id below picks

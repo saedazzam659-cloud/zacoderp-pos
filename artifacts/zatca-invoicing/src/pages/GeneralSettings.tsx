@@ -18,6 +18,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Checkbox } from "@/components/ui/checkbox";
 import { getIdleLogoutMinutes, setIdleLogoutMinutes } from "@/hooks/useIdleLogout";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { getPreferredPrinter, setPreferredPrinter, openPrinterTestSheet, detectUsbPrinter, isWebUsbSupported } from "@/lib/preferredPrinter";
 import { cn } from "@/lib/utils";
@@ -2015,6 +2016,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
   const [returnFooter,  setReturnFooter]  = useState<string>(company.printFooterReturn  ?? DEFAULT_RETURN);
   const [showTimestamp, setShowTimestamp] = useState<boolean>(company.printShowTimestamp !== false);
   const [showZatca,     setShowZatca]     = useState<boolean>(company.printShowZatcaBrand !== false);
+  const [bankAccountText, setBankAccountText] = useState<string>(company.bankAccountText ?? "");
 
   // ─── Template visibility / default selection ─────────────────────────
   // The full catalog mirrors SalesPrintModal.TEMPLATES (kept in sync by
@@ -2053,6 +2055,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setReturnFooter(company.printFooterReturn ?? DEFAULT_RETURN);
     setShowTimestamp(company.printShowTimestamp !== false);
     setShowZatca(company.printShowZatcaBrand !== false);
+    setBankAccountText(company.bankAccountText ?? "");
     const raw = company.printEnabledTemplates;
     setEnabledIds(Array.isArray(raw) && raw.length > 0
       ? new Set(raw.filter((n: any) => ALL_IDS.includes(Number(n))).map(Number))
@@ -2099,6 +2102,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
           printFooterReturn:  returnFooter.trim(),
           printShowTimestamp: showTimestamp,
           printShowZatcaBrand: showZatca,
+          bankAccountText: bankAccountText.trim() || null,
           // Send `null` when all templates are enabled so we don't bloat
           // the row with a long array that means the same as the default.
           printEnabledTemplates: enabledIds.size === ALL_IDS.length ? null : Array.from(enabledIds).sort((a,b)=>a-b),
@@ -2119,6 +2123,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
             printFooterReturn:     data.printFooterReturn,
             printShowTimestamp:    data.printShowTimestamp,
             printShowZatcaBrand:   data.printShowZatcaBrand,
+            bankAccountText:       data.bankAccountText,
             printEnabledTemplates: data.printEnabledTemplates,
             printDefaultTemplate:  data.printDefaultTemplate,
           },
@@ -2135,6 +2140,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setReturnFooter(DEFAULT_RETURN);
     setShowTimestamp(true);
     setShowZatca(true);
+    setBankAccountText("");
     setEnabledIds(new Set(ALL_IDS));
     setDefaultTplId(1);
   }
@@ -2199,6 +2205,26 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
             <span className={cn(returnLen > 200 ? "text-destructive font-medium" : "text-muted-foreground")}>
               {returnLen} / 200
             </span>
+          </div>
+        </div>
+
+        {/* Bank account details — printed under the QR on the "الأصلي" template */}
+        <div className="space-y-2">
+          <Label htmlFor="bank-account-text" className="font-medium">
+            بيانات الحساب البنكي (تظهر تحت رمز QR في الفاتورة المطبوعة)
+          </Label>
+          <Textarea
+            id="bank-account-text"
+            value={bankAccountText}
+            maxLength={500}
+            rows={4}
+            onChange={(e) => setBankAccountText(e.target.value)}
+            placeholder={"مثال:\nاسم الحساب: شركة أكاونت إنترناشونال\nالبنك: مصرف الراجحي\nرقم الآيبان: SA00 0000 0000 0000 0000 0000"}
+            dir="rtl"
+          />
+          <div className="flex justify-between text-xs">
+            <span className="text-muted-foreground">اتركه فارغاً لإخفاء المربع من الفاتورة. يدعم عدّة أسطر.</span>
+            <span className="text-muted-foreground">{bankAccountText.length} / 500</span>
           </div>
         </div>
 
@@ -2416,6 +2442,7 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
     printTemplatePayment:  company.printTemplatePayment ?? "a4",
     printTemplateJournal:  company.printTemplateJournal ?? "a4",
     invoicePrintLanguage:  company.invoicePrintLanguage ?? "ar",
+    printShowItemsSummary: company.printShowItemsSummary !== false,
   });
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -2448,6 +2475,7 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
                   printTemplatePayment: data.printTemplatePayment,
                   printTemplateJournal: data.printTemplateJournal,
                   invoicePrintLanguage: data.invoicePrintLanguage,
+                  printShowItemsSummary: data.printShowItemsSummary,
                 },
               }
             : u,
@@ -2528,6 +2556,28 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
             <option value="ar">العربية (افتراضي)</option>
             <option value="en">English</option>
           </select>
+        </div>
+      </div>
+
+      <div className="rounded-xl border bg-card p-5 space-y-4">
+        <div>
+          <h2 className="font-semibold text-base flex items-center gap-2">
+            <Printer className="h-4 w-4 text-muted-foreground" />
+            محتوى الفاتورة المطبوعة (نموذج «الأصلي»)
+          </h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            تحكّم في إظهار صندوق ملخّص الأصناف والكميات (إجمالي أصناف الفاتورة وإجمالي الكميات) أسفل الإجماليات في الفاتورة المطبوعة.
+          </p>
+        </div>
+        <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 p-4">
+          <div className="space-y-0.5">
+            <div className="font-medium text-sm">إظهار ملخّص الأصناف والكميات</div>
+            <p className="text-xs text-muted-foreground">عند الإيقاف يختفي صندوق «إجمالي أصناف الفاتورة / إجمالي الكميات» من الفاتورة المطبوعة.</p>
+          </div>
+          <Switch
+            checked={form.printShowItemsSummary !== false}
+            onCheckedChange={(v) => setForm((p) => ({ ...p, printShowItemsSummary: !!v }))}
+          />
         </div>
       </div>
 
