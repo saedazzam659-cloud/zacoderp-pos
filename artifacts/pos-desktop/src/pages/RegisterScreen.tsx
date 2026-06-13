@@ -73,6 +73,7 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
   const [customer, setCustomer] = useState<LocalCustomer | null>(null);
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
   const [unitPickItem, setUnitPickItem] = useState<LocalItem | null>(null);
+  const [pendingUnitQty, setPendingUnitQty] = useState(1);
   const [paidStr, setPaidStr] = useState("");
   const [payMethod, setPayMethod] = useState<"cash" | "card">("cash");
   const [now, setNow] = useState(new Date());
@@ -258,6 +259,32 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
       // No barcode hit → treat as a name filter so the cashier can tap the card.
       setSearch(code);
       setMsg({ kind: "err", text: `لا يوجد باركود مطابق — تم البحث بالاسم "${code}"` });
+    } catch (e: any) {
+      setMsg({ kind: "err", text: `خطأ في البحث: ${e?.message ?? e}` });
+    }
+  }
+
+  function addFromResult(item: LocalItem) {
+    const qty = Math.max(1, parseInt(fastQty, 10) || 1);
+    if (item.units && item.units.length > 0) { setPendingUnitQty(qty); setUnitPickItem(item); }
+    else addToCart(item, qty);
+    setSearch(""); setFastQty("1");
+  }
+
+  async function addByQuery() {
+    const code = search.trim();
+    if (!code) return;
+    const qty = Math.max(1, parseInt(fastQty, 10) || 1);
+    try {
+      const match = await findItemUnitByBarcode(code);
+      if (match) {
+        if (match.unit) addUnitToCart(match.item, match.unit, qty);
+        else addToCart(match.item, qty);
+        setSearch(""); setFastQty("1");
+        return;
+      }
+      if (items.length === 1) { addFromResult(items[0]); return; }
+      if (items.length === 0) setMsg({ kind: "err", text: `لا يوجد صنف مطابق "${code}"` });
     } catch (e: any) {
       setMsg({ kind: "err", text: `خطأ في البحث: ${e?.message ?? e}` });
     }
@@ -460,45 +487,7 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
 
       {/* ─── Main layout ────────────────────────────────────────── */}
       <main style={S.main}>
-        {/* LEFT — products */}
-        <section style={S.productsPane}>
-          <div style={S.searchRow}>
-            <input
-              placeholder="🔍 بحث في المنتجات بالاسم أو الباركود..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={S.search}
-              data-allow-scan="true"
-            />
-            <div style={S.countChip}>{items.length} صنف</div>
-          </div>
-
-          <div className="reg-scroll" style={S.gridScroll}>
-            <div style={S.grid}>
-              {loadingItems && items.length === 0 ? (
-                <div style={S.empty}>... جاري تحميل الأصناف</div>
-              ) : items.length === 0 ? (
-                <div style={S.empty}>
-                  <div style={{ fontSize: 16, marginBottom: 6 }}>لا توجد أصناف</div>
-                  <div style={{ fontSize: 13 }}>اسحب من السحابة (لوحة التحكم → Pull) أو أضف صنف من شاشة "أصناف"</div>
-                </div>
-              ) : (
-                items.map((item) => (
-                  <button key={item.id} onClick={() => onItemTap(item)} style={S.itemCard}>
-                    <div style={S.itemThumb}>📦</div>
-                    <div style={S.itemName}>{item.nameAr}</div>
-                    <div style={S.itemFoot}>
-                      <span style={S.itemPrice}>{item.salePrice.toFixed(2)} <span style={S.itemPriceCur}>{sym}</span></span>
-                      {item.barcode && <span style={S.itemBarcode}>{item.barcode}</span>}
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-        </section>
-
-        {/* RIGHT — invoice document */}
+        {/* Full-width invoice document — items are added via the search box only */}
         <section style={S.invoicePane}>
           <div style={S.invoiceHeader}>
             <div>
@@ -511,24 +500,46 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
             <div style={S.invoiceHeaderBadge}>{cart.length} صنف · {totalQty} قطعة</div>
           </div>
 
-          {/* Fast-entry row */}
+          {/* Search-driven item entry (code / name / barcode) */}
           <div style={S.fastRow}>
             <input
-              placeholder="باركود أو اسم الصنف"
-              value={fastCode}
-              onChange={(e) => setFastCode(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") void addByFastCode(); }}
+              autoFocus
+              placeholder="🔍 ابحث بالكود أو اسم الصنف أو الباركود ثم اختر النتيجة أو اضغط Enter"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void addByQuery(); }}
               style={S.fastInput}
               data-allow-scan="true"
             />
             <input
               type="number" min="1" value={fastQty}
               onChange={(e) => setFastQty(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") void addByFastCode(); }}
+              onKeyDown={(e) => { if (e.key === "Enter") void addByQuery(); }}
               style={S.fastQty}
+              title="الكمية"
             />
-            <button onClick={() => void addByFastCode()} style={S.fastAddBtn}>إضافة</button>
+            <button onClick={() => void addByQuery()} style={S.fastAddBtn}>إضافة</button>
           </div>
+
+          {/* Live search results — click a row to add it to the invoice */}
+          {search.trim() !== "" && (
+            <div className="reg-scroll" style={S.searchResults}>
+              {loadingItems && items.length === 0 ? (
+                <div style={S.resultEmpty}>... جاري البحث</div>
+              ) : items.length === 0 ? (
+                <div style={S.resultEmpty}>لا توجد أصناف مطابقة</div>
+              ) : (
+                items.slice(0, 50).map((item) => (
+                  <button key={item.id} onClick={() => addFromResult(item)} style={S.resultRow}>
+                    <span style={S.resultName}>{item.nameAr}</span>
+                    <span style={S.resultMeta}>
+                      {item.barcode ? `${item.barcode} · ` : ""}{item.salePrice.toFixed(2)} {sym}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
 
           {/* Table header — 5 columns (T3) */}
           <div style={S.tableHead}>
@@ -637,11 +648,12 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
         <UnitPickerModal
           T={T}
           item={unitPickItem}
-          onCancel={() => setUnitPickItem(null)}
+          onCancel={() => { setUnitPickItem(null); setPendingUnitQty(1); }}
           onPick={(unit) => {
-            if (unit) addUnitToCart(unitPickItem, unit);
-            else addToCart(unitPickItem);
+            if (unit) addUnitToCart(unitPickItem, unit, pendingUnitQty);
+            else addToCart(unitPickItem, pendingUnitQty);
             setUnitPickItem(null);
+            setPendingUnitQty(1);
           }}
         />
       )}
@@ -964,7 +976,7 @@ function makeStyles(T: Tokens): Styles {
 
     // Invoice pane
     invoicePane: {
-      width: 480, flexShrink: 0, display: "flex", flexDirection: "column", minHeight: 0,
+      flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0,
       background: T.invoiceBg, border: `1px solid ${T.border}`, borderRadius: 18, overflow: "hidden",
       boxShadow: T.name === "aurora" ? "0 8px 28px rgba(15,23,42,.10)" : "0 8px 28px rgba(0,0,0,.5)",
     },
@@ -978,6 +990,13 @@ function makeStyles(T: Tokens): Styles {
     fastInput: { flex: 1, padding: "10px 12px", fontSize: 14, border: `1px solid ${T.inputBorder}`, borderRadius: 10, fontFamily: FONT, background: T.inputBg, color: T.text, minWidth: 0 },
     fastQty: { width: 56, padding: "10px 6px", fontSize: 14, textAlign: "center", fontWeight: 700, border: `1px solid ${T.inputBorder}`, borderRadius: 10, fontFamily: FONT, background: T.inputBg, color: T.text },
     fastAddBtn: { padding: "10px 16px", background: T.accent, color: T.accentText, border: "none", borderRadius: 10, cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap" },
+
+    // Live search results dropdown (replaces the product-card grid)
+    searchResults: { flexShrink: 0, maxHeight: 300, overflowY: "auto", borderBottom: `1px solid ${T.border}`, background: T.panelBg, display: "flex", flexDirection: "column" },
+    resultRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%", padding: "11px 14px", border: "none", borderBottom: `1px solid ${T.border}`, background: "transparent", cursor: "pointer", fontFamily: FONT, textAlign: "right", color: T.text },
+    resultName: { fontSize: 14, fontWeight: 700, color: T.text, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+    resultMeta: { fontSize: 12, color: T.subtext, fontFamily: "ui-monospace, monospace", whiteSpace: "nowrap", flexShrink: 0 },
+    resultEmpty: { padding: "18px 14px", textAlign: "center", color: T.subtext, fontSize: 13 },
 
     // Table — 5 columns
     tableHead: {

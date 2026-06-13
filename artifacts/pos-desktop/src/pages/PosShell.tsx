@@ -644,7 +644,7 @@ export default function PosShell({
                 return (
                   <button key={it.id} onClick={() => { setView(it.id); setOpenGroup(null); }}
                     style={active ? S.topLeafActive : S.topLeaf} title={it.label}>
-                    <span style={{ fontSize: 15 }}>{it.icon}</span>
+                    <span style={{ fontSize: 13 }}>{it.icon}</span>
                     <span>{it.label}</span>
                     {it.badge !== undefined && <span style={S.topBadge}>{it.badge}</span>}
                   </button>
@@ -679,7 +679,7 @@ export default function PosShell({
                         <button onClick={() => setOpenGroup((prev) => (prev === g.key ? null : g.key))}
                           style={(isOpen || hasActive) ? S.topGroupActive : S.topGroup}
                           aria-expanded={isOpen} title={g.label}>
-                          <span style={{ fontSize: 15 }}>{g.icon}</span>
+                          <span style={{ fontSize: 13 }}>{g.icon}</span>
                           <span>{g.label}</span>
                           {!isOpen && badgeTotal > 0 && <span style={S.topBadge}>{badgeTotal}</span>}
                           <span style={{ fontSize: 9, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }}>▾</span>
@@ -1645,16 +1645,16 @@ const S = {
   err: { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: 12, borderRadius: 8, marginTop: 12, fontSize: 14 } as const,
 
   // ── Horizontal top navigation bar ──
-  topnav: { position: "relative" as const, zIndex: 50, display: "flex", alignItems: "center", gap: 12, padding: "0 20px", height: 52, background: "linear-gradient(90deg, #0f172a 0%, #1e293b 100%)", borderBottom: "1px solid #334155", flexShrink: 0 } as const,
+  topnav: { position: "relative" as const, zIndex: 50, display: "flex", alignItems: "center", gap: 10, padding: "5px 14px", minHeight: 50, background: "linear-gradient(90deg, #0f172a 0%, #1e293b 100%)", borderBottom: "1px solid #334155", flexShrink: 0 } as const,
   topnavBrand: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0, paddingInlineStart: 4 } as const,
   topnavBrandIcon: { width: 30, height: 30, borderRadius: 8, background: "linear-gradient(135deg, #22d3ee 0%, #2563eb 100%)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 15, boxShadow: "0 2px 8px rgba(34,211,238,.3)" } as const,
   topnavBrandText: { fontSize: 13, fontWeight: 700, color: "#f8fafc", whiteSpace: "nowrap" as const } as const,
-  topnavItems: { display: "flex", alignItems: "center", gap: 4, flex: 1, overflowX: "auto" as const, overflowY: "visible" as const, height: "100%" } as const,
-  topnavDivider: { width: 1, height: 22, background: "#334155", margin: "0 4px", flexShrink: 0 } as const,
-  topLeaf: { display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const, padding: "7px 12px", border: "none", background: "transparent", color: "#cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 13, fontFamily: "inherit", height: 36, flexShrink: 0, transition: "all .12s" } as const,
-  topLeafActive: { display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const, padding: "7px 12px", border: "none", background: "linear-gradient(180deg, rgba(37,99,235,.35) 0%, rgba(37,99,235,.15) 100%)", color: "#fff", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", height: 36, flexShrink: 0, boxShadow: "inset 0 -2px 0 #3b82f6" } as const,
-  topGroup: { display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const, padding: "7px 12px", border: "none", background: "transparent", color: "#e2e8f0", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit", height: 36, flexShrink: 0, transition: "all .12s" } as const,
-  topGroupActive: { display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const, padding: "7px 12px", border: "none", background: "rgba(148,163,184,.18)", color: "#fff", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", height: 36, flexShrink: 0 } as const,
+  topnavItems: { display: "flex", alignItems: "center", flexWrap: "wrap" as const, gap: 3, rowGap: 5, flex: 1, overflow: "visible" as const } as const,
+  topnavDivider: { width: 1, height: 20, background: "#334155", margin: "0 3px", flexShrink: 0 } as const,
+  topLeaf: { display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" as const, padding: "5px 8px", border: "none", background: "transparent", color: "#cbd5e1", borderRadius: 7, cursor: "pointer", fontSize: 11.5, fontFamily: "inherit", height: 30, flexShrink: 0, transition: "all .12s" } as const,
+  topLeafActive: { display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" as const, padding: "5px 8px", border: "none", background: "linear-gradient(180deg, rgba(37,99,235,.35) 0%, rgba(37,99,235,.15) 100%)", color: "#fff", borderRadius: 7, cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "inherit", height: 30, flexShrink: 0, boxShadow: "inset 0 -2px 0 #3b82f6" } as const,
+  topGroup: { display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" as const, padding: "5px 8px", border: "none", background: "transparent", color: "#e2e8f0", borderRadius: 7, cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: "inherit", height: 30, flexShrink: 0, transition: "all .12s" } as const,
+  topGroupActive: { display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" as const, padding: "5px 8px", border: "none", background: "rgba(148,163,184,.18)", color: "#fff", borderRadius: 7, cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "inherit", height: 30, flexShrink: 0 } as const,
   topBadge: { padding: "1px 7px", background: "#dc2626", color: "#fff", borderRadius: 999, fontSize: 10, fontWeight: 700 } as const,
   dropdownPanel: { position: "absolute" as const, top: "calc(100% + 6px)", insetInlineStart: 0, zIndex: 60, minWidth: 230, maxHeight: 420, overflowY: "auto" as const, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 12px 32px rgba(15,23,42,.18)", padding: 6, display: "flex", flexDirection: "column" as const, gap: 2 } as const,
   dropdownItem: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: "none", background: "transparent", color: "#334155", borderRadius: 8, cursor: "pointer", fontSize: 13, fontFamily: "inherit", textAlign: "right" as const, width: "100%", transition: "background .1s" } as const,
