@@ -4618,6 +4618,7 @@
       "loading": "Loading...",
       "noLcs": "No letters of credit yet",
       "colNumber": "L/C Number",
+      "colInvoice": "Invoice #",
       "colDate": "Date",
       "colSupplier": "Supplier",
       "colBank": "Bank",

@@ -368,7 +368,28 @@ router.get("/letters-of-credit", async (req, res) => {
       const arr = byLc.get(e.lcId) ?? [];
       arr.push(e); byLc.set(e.lcId, arr);
     }
-    res.json(lcs.map(lc => enrichLcRow(lc, byLc.get(lc.id) ?? [], baseCurrency)));
+    // Linked purchase invoices per LC (1:N) — surfaced so the list page can
+    // deep-link each LC to its invoice(s). docNumber is the human رقم الفاتورة.
+    const lcIds = lcs.map(l => l.id);
+    const invoices = await db.select({
+      id:        purchaseInvoicesTable.id,
+      lcId:      purchaseInvoicesTable.lcId,
+      docNumber: purchaseInvoicesTable.docNumber,
+      status:    purchaseInvoicesTable.status,
+    }).from(purchaseInvoicesTable).where(and(
+      eq(purchaseInvoicesTable.companyId, cid),
+      inArray(purchaseInvoicesTable.lcId, lcIds),
+    )).orderBy(asc(purchaseInvoicesTable.invoiceDate));
+    const invByLc = new Map<number, any[]>();
+    for (const inv of invoices) {
+      if (inv.lcId == null) continue;
+      const arr = invByLc.get(inv.lcId) ?? [];
+      arr.push(inv); invByLc.set(inv.lcId, arr);
+    }
+    res.json(lcs.map(lc => ({
+      ...enrichLcRow(lc, byLc.get(lc.id) ?? [], baseCurrency),
+      linkedInvoices: invByLc.get(lc.id) ?? [],
+    })));
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 

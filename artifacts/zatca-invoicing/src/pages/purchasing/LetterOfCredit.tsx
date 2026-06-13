@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -561,7 +562,7 @@ export default function LetterOfCredit() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-muted/50 border-b">
-                {[tr("colNumber"), tr("colDate"), tr("colSupplier"), tr("colBank"), tr("colCurrency"), tr("colTotal"), tr("colUsed"), tr("colRemaining"), tr("colStatus"), tr("colActions")].map(h => (
+                {[tr("colNumber"), tr("colInvoice"), tr("colDate"), tr("colSupplier"), tr("colBank"), tr("colCurrency"), tr("colTotal"), tr("colUsed"), tr("colRemaining"), tr("colStatus"), tr("colActions")].map(h => (
                   <th key={h} className={`${align} px-3 py-3 font-semibold text-muted-foreground text-xs`}>{h}</th>
                 ))}
               </tr>
@@ -585,6 +586,20 @@ export default function LetterOfCredit() {
                 return (
                   <tr key={lc.id} className="border-b hover:bg-muted/30 transition-colors">
                     <td className="px-3 py-2.5 font-mono text-xs font-semibold text-primary">{lc.lcNumber}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs">
+                      {(lc.linkedInvoices ?? []).length === 0 ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {(lc.linkedInvoices as any[]).map((inv: any) => (
+                            <Link key={inv.id} href={`/purchasing/invoices/${inv.id}`}
+                              className="text-primary hover:underline" title={tr("colInvoice")}>
+                              {inv.docNumber ?? `#${inv.id}`}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-3 py-2.5">{lc.lcDate}</td>
                     <td className="px-3 py-2.5">{sup ? pickName(sup.nameAr, sup.nameEn) : "—"}</td>
                     <td className="px-3 py-2.5 text-muted-foreground">{lc.bankName ?? "—"}</td>
