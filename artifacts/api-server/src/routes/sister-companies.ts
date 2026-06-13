@@ -98,6 +98,41 @@ router.get("/", async (req, res) => {
   res.json(rows);
 });
 
+// Bulk balances for ALL sister companies — same formula as /:id/balance
+// (Σ posted transfers totalSupply − Σ posted returns totalSupply
+//  + settlements [pay → +, receive → −]), grouped per sister company.
+// Positive ⇒ مدين (owes us), used by the Customer-Balances report which
+// merges sister companies in as if they were customers.
+// MUST stay registered BEFORE `/:id` (Express 5 / path-to-regexp 8 quirk:
+// a literal segment after `/:id` gets swallowed as the id param).
+router.get("/balances", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const transfers = await db.select({
+    sid: sisterTransfersTable.sisterCompanyId,
+    total: sql<string>`COALESCE(SUM(${sisterTransfersTable.totalSupply}), 0)`,
+  }).from(sisterTransfersTable)
+    .where(and(eq(sisterTransfersTable.companyId, cid), eq(sisterTransfersTable.status, "posted")))
+    .groupBy(sisterTransfersTable.sisterCompanyId);
+  const returns_ = await db.select({
+    sid: sisterReturnsTable.sisterCompanyId,
+    total: sql<string>`COALESCE(SUM(${sisterReturnsTable.totalSupply}), 0)`,
+  }).from(sisterReturnsTable)
+    .where(and(eq(sisterReturnsTable.companyId, cid), eq(sisterReturnsTable.status, "posted")))
+    .groupBy(sisterReturnsTable.sisterCompanyId);
+  const settlements = await db.select({
+    sid: sisterSettlementsTable.sisterCompanyId,
+    dir: sisterSettlementsTable.direction,
+    total: sql<string>`COALESCE(SUM(${sisterSettlementsTable.amount}), 0)`,
+  }).from(sisterSettlementsTable)
+    .where(and(eq(sisterSettlementsTable.companyId, cid), eq(sisterSettlementsTable.status, "posted")))
+    .groupBy(sisterSettlementsTable.sisterCompanyId, sisterSettlementsTable.direction);
+  const map: Record<number, number> = {};
+  for (const t of transfers)   if (t.sid != null) map[t.sid] = (map[t.sid] ?? 0) + Number(t.total);
+  for (const r of returns_)    if (r.sid != null) map[r.sid] = (map[r.sid] ?? 0) - Number(r.total);
+  for (const s of settlements) if (s.sid != null) map[s.sid] = (map[s.sid] ?? 0) + (s.dir === "pay" ? Number(s.total) : -Number(s.total));
+  res.json(Object.entries(map).map(([sisterCompanyId, balance]) => ({ sisterCompanyId: Number(sisterCompanyId), balance })));
+});
+
 router.post("/", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const b = req.body ?? {};

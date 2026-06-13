@@ -6471,6 +6471,7 @@
       "statusDebit": "مدين",
       "statusCredit": "دائن",
       "statusZero": "صفر",
+      "sisterBadge": "شركة شقيقة",
       "noRows": "لا توجد بيانات للعرض",
       "footerLabel": "صافي ({{count}} عميل)",
       "exportFilename": "أرصدة-العملاء",

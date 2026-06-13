@@ -56,19 +56,52 @@ export default function CustomerBalances() {
     },
   });
 
+  // Sister companies (الشركات الشقيقة): the user treats them as customers, so
+  // their AR balances are merged into this report. Both endpoints are gated by
+  // the `sister_companies` module — when disabled they 403, so we coerce any
+  // non-array response to [] (per the list-query array-guard rule) and no
+  // sister rows appear.
+  const { data: sisters = [] } = useQuery({
+    queryKey: ["sister-companies", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/sister-companies?companyId=${cid}` : `${API}/api/sister-companies`;
+      const r = await fetch(url, { headers: authHeaders() });
+      if (!r.ok) return [];
+      const d = await r.json();
+      return Array.isArray(d) ? d : [];
+    },
+  });
+  const { data: sisterBalances = [] } = useQuery({
+    queryKey: ["sister-balances", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/sister-companies/balances?companyId=${cid}` : `${API}/api/sister-companies/balances`;
+      const r = await fetch(url, { headers: authHeaders() });
+      if (!r.ok) return [];
+      const d = await r.json();
+      return Array.isArray(d) ? d : [];
+    },
+  });
+
   const balByCustomer: Record<number, number> = {};
   (balances as any[]).forEach(b => { balByCustomer[b.customerId] = Number(b.balance); });
+  const balBySister: Record<number, number> = {};
+  (sisterBalances as any[]).forEach(b => { balBySister[b.sisterCompanyId] = Number(b.balance); });
 
-  const enriched = useMemo(() =>
-    (customers as any[])
-      .map(c => ({ ...c, balance: balByCustomer[c.id] ?? 0 }))
-      .filter(c => branchId === undefined || c.balance !== 0)
-      .filter(c =>
-        (filter === "all" ? true : filter === "debit" ? c.balance > 0 : c.balance < 0) &&
-        (!search || c.nameAr?.includes(search) || c.nameEn?.toLowerCase().includes(search.toLowerCase()) || c.phone?.includes(search))
-      )
-      .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance)),
-    [customers, balances, search, filter, branchId]
+  const matchesFilters = (row: { balance: number; nameAr?: string; nameEn?: string; phone?: string }) =>
+    (branchId === undefined || row.balance !== 0) &&
+    (filter === "all" ? true : filter === "debit" ? row.balance > 0 : row.balance < 0) &&
+    (!search || row.nameAr?.includes(search) || row.nameEn?.toLowerCase().includes(search.toLowerCase()) || row.phone?.includes(search));
+
+  const enriched = useMemo(() => {
+    const customerRows = (customers as any[])
+      .map(c => ({ ...c, rowKey: `c-${c.id}`, isSister: false, balance: balByCustomer[c.id] ?? 0 }));
+    const sisterRows = (sisters as any[])
+      .map(s => ({ ...s, rowKey: `s-${s.id}`, isSister: true, city: null, balance: balBySister[s.id] ?? 0 }));
+    return [...customerRows, ...sisterRows]
+      .filter(matchesFilters)
+      .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance));
+  },
+    [customers, balances, sisters, sisterBalances, search, filter, branchId]
   );
 
   const totalDebit  = enriched.filter(c => c.balance > 0).reduce((s, c) => s + c.balance, 0);
@@ -76,7 +109,7 @@ export default function CustomerBalances() {
   const net = totalDebit - totalCredit;
 
   const exportRows = enriched.map(c => ({
-    customerName: pickName(c.nameAr, c.nameEn),
+    customerName: pickName(c.nameAr, c.nameEn) + (c.isSister ? ` (${tr("sisterBadge")})` : ""),
     phone:        c.phone ?? "",
     city:         c.city ?? "",
     balance:      fmt(c.balance),
@@ -145,9 +178,12 @@ export default function CustomerBalances() {
                 : enriched.length === 0
                 ? <tr><td colSpan={5} className="py-12 text-center text-muted-foreground">{tr("noRows")}</td></tr>
                 : enriched.map(c => (
-                    <tr key={c.id} className="hover:bg-muted/20">
+                    <tr key={c.rowKey} className="hover:bg-muted/20">
                       <td className="px-4 py-3">
-                        <p className="font-medium text-sm">{pickName(c.nameAr, c.nameEn) || "—"}</p>
+                        <p className="font-medium text-sm flex items-center gap-1.5 flex-wrap">
+                          <span>{pickName(c.nameAr, c.nameEn) || "—"}</span>
+                          {c.isSister && <span className="text-[9px] bg-purple-50 text-purple-700 rounded-full px-1.5 py-0.5 font-medium">{tr("sisterBadge")}</span>}
+                        </p>
                         {(isRtl ? c.nameEn : c.nameAr) && <p className="text-[10px] text-muted-foreground">{isRtl ? c.nameEn : c.nameAr}</p>}
                       </td>
                       <td className="px-4 py-3 hidden sm:table-cell text-xs text-muted-foreground font-mono">{c.phone ?? "—"}</td>

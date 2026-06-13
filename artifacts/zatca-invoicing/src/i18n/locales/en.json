@@ -6393,6 +6393,7 @@
       "statusDebit": "Debit",
       "statusCredit": "Credit",
       "statusZero": "Zero",
+      "sisterBadge": "Sister Co.",
       "noRows": "No data to display",
       "footerLabel": "Net ({{count}} customer)",
       "exportFilename": "customer-balances",
