@@ -216,7 +216,20 @@ export default function TrialBalance() {
     value: (r) => get(r),
     render: (r) => {
       const v = get(r);
-      return <span className={tone === "dr" ? "text-blue-700" : "text-rose-700"}>{v > 0 ? fmtAbs(v) : ""}</span>;
+      if (!(v > 0)) return <span className="text-muted-foreground/40">—</span>;
+      return (
+        <button
+          type="button"
+          onClick={() => setDrillRow(r)}
+          title="اعرض حركات هذا الحساب خلال الفترة"
+          className={cn(
+            "font-mono hover:underline decoration-dotted underline-offset-4 focus:outline-none focus:ring-2 focus:ring-primary/40 rounded transition-colors",
+            tone === "dr" ? "text-blue-700 hover:text-blue-900" : "text-rose-700 hover:text-rose-900",
+          )}
+        >
+          {fmtAbs(v)}
+        </button>
+      );
     },
   });
   const gridColumns: GridColumn<any>[] = [
