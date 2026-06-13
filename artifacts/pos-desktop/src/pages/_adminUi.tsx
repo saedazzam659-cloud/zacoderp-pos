@@ -71,6 +71,59 @@ export function ErrorMsg({ text }: { text: string | null }) {
   if (!text) return null;
   return <div style={{ padding: 8, background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca", borderRadius: 6, fontSize: 13, marginTop: 8 }}>⚠️ {text}</div>;
 }
+
+// ── Back-office document validation ────────────────────────────────────────
+// Shared, field-by-field required-fields check for the back-office document
+// forms (sales/purchase invoices, quotations, sales orders, sales/purchase
+// returns). It names EVERY missing header field and, per line row, every
+// unfilled column so the cashier knows exactly what to complete.
+// NOTE: the POS register (SalesScreen / ReturnsScreen) does NOT use this.
+export interface DocLineCheck {
+  itemId: number;
+  uomId: number | null;
+  price: number;
+  qty: number;
+}
+export function collectDocIssues(
+  header: { label: string; ok: boolean }[],
+  lines: DocLineCheck[],
+  priceLabel = "السعر",
+): string[] {
+  const issues: string[] = [];
+  for (const h of header) if (!h.ok) issues.push(`${h.label} مطلوب`);
+  let anyLine = false;
+  lines.forEach((l, i) => {
+    // A row with no item, no price AND no unit-of-measure is treated as an
+    // empty/trailing row and skipped, so a stray blank line never blocks the
+    // save. Picking a UoM (a deliberate action) marks the row as "started" so
+    // a partially-filled row is validated rather than silently dropped.
+    const blank = !l.itemId && !(l.price > 0) && !l.uomId;
+    if (blank) return;
+    anyLine = true;
+    const miss: string[] = [];
+    if (!l.itemId) miss.push("الصنف");
+    if (!l.uomId) miss.push("وحدة القياس");
+    if (!(l.price > 0)) miss.push(priceLabel);
+    if (!(l.qty > 0)) miss.push("الكمية");
+    if (miss.length) issues.push(`السطر ${i + 1}: ${miss.join("، ")}`);
+  });
+  if (!anyLine) issues.push("أضف صنفاً واحداً على الأقل مع تعبئة بياناته");
+  return issues;
+}
+// Attractive, scannable error card listing each unfilled field.
+export function ValidationPanel({ issues }: { issues: string[] }) {
+  if (!issues.length) return null;
+  return (
+    <div style={{ marginTop: 10, border: "1px solid #fecaca", background: "#fff", borderRadius: 10, overflow: "hidden", boxShadow: "0 2px 10px rgba(220,38,38,.12)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", background: "#fee2e2", color: "#991b1b", fontWeight: 800, fontSize: 13 }}>
+        <span style={{ fontSize: 16 }}>⚠️</span> تعذّر الحفظ — يرجى إكمال الحقول التالية
+      </div>
+      <ul style={{ margin: 0, padding: "10px 30px 12px", color: "#b91c1c", fontSize: 13, lineHeight: 2, listStyleType: "disc" }}>
+        {issues.map((t, i) => <li key={i}>{t}</li>)}
+      </ul>
+    </div>
+  );
+}
 export function Actions({ children }: { children: ReactNode }) {
   return <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>{children}</div>;
 }

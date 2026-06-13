@@ -13,6 +13,7 @@ import {
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
 } from "./_adminUi";
+import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { useInvoiceTaxes } from "./_invoiceTax";
 import { baseCurrencyCode, currencyByCode } from "../lib/currency";
@@ -184,6 +185,7 @@ function CreateForm({ deps, onCancel, onDone }: {
   );
   const { branches, costCenters } = useDimensions();
   const [branchId, setBranchId] = useState<number | "">("");
+  useEffect(() => { if (branchId === "" && branches.length === 1) setBranchId(branches[0].id); }, [branches]); // eslint-disable-line react-hooks/exhaustive-deps
   const [costCenterId, setCostCenterId] = useState<number | "">("");
   const [notes, setNotes] = useState("");
   const [uoms] = useState<Uom[]>(() => listUom());
@@ -200,6 +202,7 @@ function CreateForm({ deps, onCancel, onDone }: {
   const effRate = currency === baseCurrencyCode() ? 1 : (exchangeRate || 1);
   const docSym = currencyByCode(currency).symbol;
   const [err, setErr] = useState<string | null>(null);
+  const [issues, setIssues] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const { taxes, taxId, setTaxId, taxOptions, selectedRate } = useInvoiceTaxes("sales_return");
 
@@ -258,11 +261,17 @@ function CreateForm({ deps, onCancel, onDone }: {
   );
 
   async function save() {
-    setBusy(true); setErr(null);
+    setBusy(true); setErr(null); setIssues([]);
     try {
+      const problems = collectDocIssues([
+        { label: "طريقة الدفع", ok: !!paymentMethod },
+        { label: "العميل", ok: paymentMethod !== "credit" || !!customerId },
+        { label: "العملة", ok: !!currency },
+        ...(branches.length ? [{ label: "الفرع", ok: branchId !== "" }] : []),
+        { label: "المستودع", ok: !!warehouseId },
+      ], lines.map((l) => ({ itemId: l.itemId, uomId: l.uomId ?? null, price: l.unitPrice, qty: l.qty })), "سعر البيع");
+      if (problems.length) { setIssues(problems); setBusy(false); return; }
       const cleaned = lines.filter((l) => l.itemId && (l.qty || 0) > 0);
-      if (cleaned.length === 0) throw new Error("أضف صنفاً واحداً على الأقل");
-      if (paymentMethod === "credit" && !customerId) throw new Error("اختر العميل لمرتجع آجل");
       if (currency !== baseCurrencyCode() && !(exchangeRate > 0)) throw new Error("أدخل سعر صرف صحيح للعملة الأجنبية");
       // Fold the discount into each unit price; Rust recomputes totals from
       // qty × unitPrice so VAT lands on the net base (ZATCA-correct).
@@ -301,7 +310,7 @@ function CreateForm({ deps, onCancel, onDone }: {
     <div>
       <h3 style={{ marginTop: 0 }}>مرتجع مبيعات جديد</h3>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
-        <Field label={paymentMethod === "credit" ? "العميل *" : "العميل (اختياري)"}>
+        <Field label="العميل *">
           <SearchCombobox
             value={customerId}
             onChange={(v) => setCustomerId(Number(v))}
@@ -410,6 +419,7 @@ function CreateForm({ deps, onCancel, onDone }: {
       <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
       <Field label="ملاحظات" style={{ marginTop: 12 }}><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
+      <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
       <Actions>
         <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>

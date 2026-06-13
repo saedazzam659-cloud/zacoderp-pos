@@ -690,6 +690,10 @@ pub fn journal_entry_create(input: ManualJeInput) -> Result<i64, String> {
     };
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // Period-lock: a manual entry created directly as `posted` applies GL
+    // balances, so it must respect a closed fiscal period just like the
+    // Posting Center path. Drafts touch no GL and are always allowed.
+    if post { guard_period_open_for_date(&tx, &input.entry_date)?; }
     let entry_no = resolve_manual_entry_no(&tx, input.doc_number.as_deref()).map_err(|e| e.to_string())?;
     tx.execute(
         "INSERT INTO journal_entries_local(entry_no,entry_date,description,total_debit,total_credit,source_type,source_id,branch_id,cost_center_id,entry_type,status) \
@@ -748,6 +752,11 @@ pub fn journal_entry_update(id: i64, input: ManualJeInput) -> Result<(), String>
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let (_src, old_status) = load_manual_guard(&conn, id)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // Period-lock: reversing an already-posted entry, or (re)posting the
+    // rewritten lines, both move GL balances — reject if either the existing
+    // entry's period or the new entry date falls in a closed period.
+    if old_status == "posted" { guard_period_open_for_entry(&tx, id)?; }
+    if post { guard_period_open_for_date(&tx, &input.entry_date)?; }
     if old_status == "posted" {
         reverse_je_balance(&tx, id).map_err(|e| e.to_string())?;
     }
