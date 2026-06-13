@@ -406,7 +406,7 @@ function CreateForm({ deps, onCancel, onDone }: {
         .zrow:hover td{background:#eff6ff !important;}
       `}</style>
       <h3 style={{ marginTop: 0 }}>فاتورة مبيعات جديدة</h3>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 200px 200px", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label={paymentMethod === "credit" ? "العميل *" : "العميل (اختياري)"}>
           <SearchCombobox
             value={customerId}
@@ -433,31 +433,27 @@ function CreateForm({ deps, onCancel, onDone }: {
             ]}
           />
         </Field>
-      </div>
-      <Field label="المستودع" style={{ maxWidth: 420 }}>
-        <SearchCombobox
-          value={warehouseId}
-          onChange={(v) => setWarehouseId(Number(v))}
-          {...navCombo}
-          style={input}
-          options={[
-            { value: 0, label: "— المستودع الافتراضي —" },
-            ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
-          ]}
-        />
-      </Field>
-      <Field label="الضريبة (تُطبّق على كل البنود)" style={{ marginTop: 10, maxWidth: 420 }}>
-        <SearchCombobox value={taxId} onChange={onSelectTax} {...navCombo} options={taxOptions} style={input} />
-      </Field>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+        <Field label="المستودع">
+          <SearchCombobox
+            value={warehouseId}
+            onChange={(v) => setWarehouseId(Number(v))}
+            {...navCombo}
+            style={input}
+            options={[
+              { value: 0, label: "— المستودع الافتراضي —" },
+              ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
+            ]}
+          />
+        </Field>
+        <Field label="الضريبة">
+          <SearchCombobox value={taxId} onChange={onSelectTax} {...navCombo} options={taxOptions} style={input} />
+        </Field>
         <Field label="الفرع">
           <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} {...navCombo} options={branchPickerOptions(branches)} style={input} />
         </Field>
         <Field label="مركز التكلفة">
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} {...navCombo} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
         <Field label="مندوب المبيعات">
           <SearchCombobox
             value={salesRepId}
@@ -484,69 +480,65 @@ function CreateForm({ deps, onCancel, onDone }: {
           />
         </Field>
         )}
-      </div>
-      {invoiceType === "standard" && (
-        <div style={{ marginTop: 10, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>بيانات المشتري (للفاتورة الضريبية)</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <Field label="اسم المشتري">
-              <input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} style={input} {...navInput} />
-            </Field>
-            <Field label="الرقم الضريبي للمشتري">
-              <input value={buyerVat} onChange={(e) => setBuyerVat(e.target.value)} style={input} {...navInput} />
-            </Field>
-          </div>
-          <Field label="عنوان المشتري" style={{ marginTop: 8 }}>
-            <input value={buyerAddress} onChange={(e) => setBuyerAddress(e.target.value)} style={input} {...navInput} />
-          </Field>
-        </div>
-      )}
-      <div style={{ display: "grid", gridTemplateColumns: "200px 200px", gap: 10, marginTop: 10 }}>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
+        {paymentMethod === "cash" && (
+          <Field label="الخزينة">
+            <SearchCombobox
+              value={cashBoxId ?? ""}
+              onChange={(v) => setCashBoxId(Number(v) || null)}
+              {...navCombo}
+              style={input}
+              options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
+            />
+          </Field>
+        )}
+        {paymentMethod === "bank" && (
+          <Field label="البنك">
+            <SearchCombobox
+              value={bankId ?? ""}
+              onChange={(v) => setBankId(Number(v) || null)}
+              {...navCombo}
+              style={input}
+              options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
+            />
+          </Field>
+        )}
+        {invoiceType === "standard" && (
+          <div style={{ gridColumn: "1 / -1", marginBottom: 10, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>بيانات المشتري (للفاتورة الضريبية)</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px" }}>
+              <Field label="اسم المشتري">
+                <input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} style={input} {...navInput} />
+              </Field>
+              <Field label="الرقم الضريبي للمشتري">
+                <input value={buyerVat} onChange={(e) => setBuyerVat(e.target.value)} style={input} {...navInput} />
+              </Field>
+              <Field label="عنوان المشتري">
+                <input value={buyerAddress} onChange={(e) => setBuyerAddress(e.target.value)} style={input} {...navInput} />
+              </Field>
+            </div>
+          </div>
+        )}
+        {selectedCustomer && paymentMethod === "credit" && (selectedCustomer.enforceCreditLimit || (selectedCustomer.creditLimit ?? 0) > 0) && (
+          <div style={{ gridColumn: "1 / -1", marginBottom: 10, padding: "8px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 13, color: "#92400e" }}>
+            الرصيد الحالي: <b>{fmt(selectedCustomer.balance ?? 0)}</b>
+            {(selectedCustomer.creditLimit ?? 0) > 0 && <> · حد الائتمان: <b>{fmt(selectedCustomer.creditLimit ?? 0)}</b></>}
+            {(selectedCustomer.paymentTermsDays ?? 0) > 0 && <> · مدة الاستحقاق: <b>{selectedCustomer.paymentTermsDays} يوم</b></>}
+            {selectedCustomer.enforceCreditLimit && <> · <b>المنع مُفعّل</b></>}
+          </div>
+        )}
       </div>
-
-      {selectedCustomer && paymentMethod === "credit" && (selectedCustomer.enforceCreditLimit || (selectedCustomer.creditLimit ?? 0) > 0) && (
-        <div style={{ marginTop: 8, padding: "8px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 13, color: "#92400e" }}>
-          الرصيد الحالي: <b>{fmt(selectedCustomer.balance ?? 0)}</b>
-          {(selectedCustomer.creditLimit ?? 0) > 0 && <> · حد الائتمان: <b>{fmt(selectedCustomer.creditLimit ?? 0)}</b></>}
-          {(selectedCustomer.paymentTermsDays ?? 0) > 0 && <> · مدة الاستحقاق: <b>{selectedCustomer.paymentTermsDays} يوم</b></>}
-          {selectedCustomer.enforceCreditLimit && <> · <b>المنع مُفعّل</b></>}
-        </div>
-      )}
-
-      {paymentMethod === "cash" && (
-        <Field label="الخزينة" style={{ marginTop: 10 }}>
-          <SearchCombobox
-            value={cashBoxId ?? ""}
-            onChange={(v) => setCashBoxId(Number(v) || null)}
-            {...navCombo}
-            style={input}
-            options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
-          />
-        </Field>
-      )}
-      {paymentMethod === "bank" && (
-        <Field label="البنك" style={{ marginTop: 10 }}>
-          <SearchCombobox
-            value={bankId ?? ""}
-            onChange={(v) => setBankId(Number(v) || null)}
-            {...navCombo}
-            style={input}
-            options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
-          />
-        </Field>
-      )}
 
       <div style={{ marginTop: 16, fontSize: 15, fontWeight: 700, color: "#0f172a" }}>بنود الفاتورة</div>
       <div style={{ overflowX: "auto", marginTop: 8, border: "1px solid #e2e8f0", borderRadius: 10 }}>
-      <Table style={{ minWidth: 1080 }}>
+      <Table style={{ minWidth: 1290 }}>
         <thead><tr>
           <Th style={{ width: 44, textAlign: "center" }}>#</Th>
           <Th style={{ minWidth: 240 }}>الصنف</Th>
           <Th style={{ width: 130 }}>الوحدة</Th>
-          <Th style={{ width: 90, textAlign: "center" }}>الكمية</Th>
+          <Th style={{ width: 180, textAlign: "center" }}>الكمية</Th>
           <Th style={{ width: 80, textAlign: "center" }}>مجاني</Th>
-          <Th style={{ width: 120, textAlign: "center" }}>سعر الوحدة</Th>
+          <Th style={{ width: 240, textAlign: "center" }}>سعر الوحدة</Th>
           <Th style={{ width: 170 }}>الخصم</Th>
           <Th style={{ width: 80, textAlign: "center" }}>ض. %</Th>
           <Th style={{ width: 150 }}>ملاحظة</Th>

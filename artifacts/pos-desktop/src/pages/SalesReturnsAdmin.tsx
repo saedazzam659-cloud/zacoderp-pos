@@ -278,7 +278,7 @@ function CreateForm({ deps, onCancel, onDone }: {
   return (
     <div>
       <h3 style={{ marginTop: 0 }}>مرتجع مبيعات جديد</h3>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 200px 200px", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label={paymentMethod === "credit" ? "العميل *" : "العميل (اختياري)"}>
           <SearchCombobox
             value={customerId}
@@ -303,58 +303,53 @@ function CreateForm({ deps, onCancel, onDone }: {
             ]}
           />
         </Field>
-      </div>
-      <Field label="المستودع" style={{ marginTop: 10, maxWidth: 420 }}>
-        <SearchCombobox
-          value={warehouseId}
-          onChange={(v) => setWarehouseId(Number(v))}
-          style={input}
-          options={[
-            { value: 0, label: "— المستودع الافتراضي —" },
-            ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
-          ]}
-        />
-      </Field>
-      <Field label="الضريبة (تُطبّق على كل البنود)" style={{ marginTop: 10, maxWidth: 420 }}>
-        <SearchCombobox value={taxId} onChange={onSelectTax} options={taxOptions} style={input} />
-      </Field>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+        <Field label="المستودع">
+          <SearchCombobox
+            value={warehouseId}
+            onChange={(v) => setWarehouseId(Number(v))}
+            style={input}
+            options={[
+              { value: 0, label: "— المستودع الافتراضي —" },
+              ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
+            ]}
+          />
+        </Field>
+        <Field label="الضريبة">
+          <SearchCombobox value={taxId} onChange={onSelectTax} options={taxOptions} style={input} />
+        </Field>
         <Field label="الفرع">
           <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
         </Field>
         <Field label="مركز التكلفة">
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "200px 200px", gap: 10, marginTop: 10 }}>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
+        {paymentMethod === "cash" && (
+          <Field label="الخزينة">
+            <SearchCombobox
+              value={cashBoxId ?? ""}
+              onChange={(v) => setCashBoxId(Number(v) || null)}
+              style={input}
+              options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
+            />
+          </Field>
+        )}
+        {paymentMethod === "bank" && (
+          <Field label="البنك">
+            <SearchCombobox
+              value={bankId ?? ""}
+              onChange={(v) => setBankId(Number(v) || null)}
+              style={input}
+              options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
+            />
+          </Field>
+        )}
       </div>
-
-      {paymentMethod === "cash" && (
-        <Field label="الخزينة" style={{ marginTop: 10 }}>
-          <SearchCombobox
-            value={cashBoxId ?? ""}
-            onChange={(v) => setCashBoxId(Number(v) || null)}
-            style={input}
-            options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
-          />
-        </Field>
-      )}
-      {paymentMethod === "bank" && (
-        <Field label="البنك" style={{ marginTop: 10 }}>
-          <SearchCombobox
-            value={bankId ?? ""}
-            onChange={(v) => setBankId(Number(v) || null)}
-            style={input}
-            options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
-          />
-        </Field>
-      )}
 
       <div style={{ overflowX: "auto" }}>
-      <Table style={{ minWidth: 1040 }}>
+      <Table style={{ minWidth: 1250 }}>
         <thead><tr>
-          <Th style={{ minWidth: 240 }}>الصنف</Th><Th style={{ width: 130 }}>الوحدة</Th><Th style={{ width: 90 }}>الكمية</Th><Th style={{ width: 120 }}>سعر الوحدة</Th><Th style={{ width: 170 }}>الخصم</Th><Th style={{ width: 80 }}>ض. %</Th>
+          <Th style={{ minWidth: 240 }}>الصنف</Th><Th style={{ width: 130 }}>الوحدة</Th><Th style={{ width: 180 }}>الكمية</Th><Th style={{ width: 240 }}>سعر الوحدة</Th><Th style={{ width: 170 }}>الخصم</Th><Th style={{ width: 80 }}>ض. %</Th>
           <Th style={{ width: 120, textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 40 }}></Th>
         </tr></thead>
         <tbody>

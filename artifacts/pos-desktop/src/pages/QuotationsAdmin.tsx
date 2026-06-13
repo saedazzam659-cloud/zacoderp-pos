@@ -326,7 +326,7 @@ function CreateForm({ deps, onCancel, onDone }: {
   return (
     <div>
       <h3 style={{ marginTop: 0 }}>عرض سعر جديد</h3>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 200px 200px", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="العميل (اختياري)">
           <SearchCombobox
             value={customerId}
@@ -340,30 +340,26 @@ function CreateForm({ deps, onCancel, onDone }: {
         </Field>
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label="صالح حتى"><input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} style={input} /></Field>
-      </div>
-      <Field label="المستودع" style={{ maxWidth: 420, marginTop: 10 }}>
-        <SearchCombobox
-          value={warehouseId}
-          onChange={(v) => setWarehouseId(Number(v))}
-          style={input}
-          options={[
-            { value: 0, label: "— المستودع الافتراضي —" },
-            ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
-          ]}
-        />
-      </Field>
-      <Field label="الضريبة (تُطبّق على كل البنود)" style={{ marginTop: 10, maxWidth: 420 }}>
-        <SearchCombobox value={taxId} onChange={onSelectTax} options={taxOptions} style={input} />
-      </Field>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+        <Field label="المستودع">
+          <SearchCombobox
+            value={warehouseId}
+            onChange={(v) => setWarehouseId(Number(v))}
+            style={input}
+            options={[
+              { value: 0, label: "— المستودع الافتراضي —" },
+              ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
+            ]}
+          />
+        </Field>
+        <Field label="الضريبة">
+          <SearchCombobox value={taxId} onChange={onSelectTax} options={taxOptions} style={input} />
+        </Field>
         <Field label="الفرع">
           <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
         </Field>
         <Field label="مركز التكلفة">
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
         <Field label="مندوب المبيعات">
           <SearchCombobox
             value={salesRepId}
@@ -386,35 +382,33 @@ function CreateForm({ deps, onCancel, onDone }: {
             ]}
           />
         </Field>
-      </div>
-      {invoiceType === "standard" && (
-        <div style={{ marginTop: 10, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>بيانات المشتري</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <Field label="اسم المشتري">
-              <input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} style={input} />
-            </Field>
-            <Field label="الرقم الضريبي للمشتري">
-              <input value={buyerVat} onChange={(e) => setBuyerVat(e.target.value)} style={input} />
-            </Field>
-          </div>
-          <Field label="عنوان المشتري" style={{ marginTop: 8 }}>
-            <input value={buyerAddress} onChange={(e) => setBuyerAddress(e.target.value)} style={input} />
-          </Field>
-        </div>
-      )}
-      <div style={{ display: "grid", gridTemplateColumns: "200px 200px", gap: 10, marginTop: 10 }}>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
+        {invoiceType === "standard" && (
+          <div style={{ gridColumn: "1 / -1", marginBottom: 10, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>بيانات المشتري</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px" }}>
+              <Field label="اسم المشتري">
+                <input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} style={input} />
+              </Field>
+              <Field label="الرقم الضريبي للمشتري">
+                <input value={buyerVat} onChange={(e) => setBuyerVat(e.target.value)} style={input} />
+              </Field>
+              <Field label="عنوان المشتري">
+                <input value={buyerAddress} onChange={(e) => setBuyerAddress(e.target.value)} style={input} />
+              </Field>
+            </div>
+          </div>
+        )}
       </div>
 
-      <div style={{ overflowX: "auto" }}>
-      <Table style={{ minWidth: 1040 }}>
+      <div style={{ overflowX: "auto", marginTop: 10 }}>
+      <Table style={{ minWidth: 1250 }}>
         <thead><tr>
           <Th style={{ minWidth: 240 }}>الصنف</Th>
           <Th style={{ width: 130 }}>الوحدة</Th>
-          <Th style={{ width: 90 }}>الكمية</Th>
+          <Th style={{ width: 180 }}>الكمية</Th>
           <Th style={{ width: 80 }}>مجاني</Th>
-          <Th style={{ width: 120 }}>سعر الوحدة</Th>
+          <Th style={{ width: 240 }}>سعر الوحدة</Th>
           <Th style={{ width: 170 }}>الخصم</Th>
           <Th style={{ width: 80 }}>ض. %</Th>
           <Th style={{ width: 150 }}>ملاحظة</Th>

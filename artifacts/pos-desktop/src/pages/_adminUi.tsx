@@ -348,18 +348,22 @@ export function LineDiscountCell({ amount, type, gross, sym: symOverride, onAmou
   const sym = symOverride ?? currencySymbol();
   const g = Number(gross) || 0;
   const a = Number(amount) || 0;
+  // Always surface the *value* of the discount in currency (plus the % it
+  // represents) so the cashier clearly sees how much is being deducted on this
+  // line — not just the raw % they typed.
   let hint = "";
   if (a > 0 && g > 0) {
     if (type === "percent") {
       const val = g * Math.min(a, 100) / 100;
-      hint = `= ${fmt(val)} ${sym}`;
+      hint = `خصم −${fmt(val)} ${sym} (${fmt(Math.min(a, 100))}%)`;
     } else {
-      const pct = Math.min(a, g) / g * 100;
-      hint = `= ${fmt(pct)} %`;
+      const val = Math.min(a, g);
+      const pct = val / g * 100;
+      hint = `خصم −${fmt(val)} ${sym} (${fmt(pct)}%)`;
     }
   }
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 150 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 160 }}>
       <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
         <input
           type="number" step="0.01" min={0} value={amount || ""}
@@ -373,7 +377,7 @@ export function LineDiscountCell({ amount, type, gross, sym: symOverride, onAmou
         <DiscTypeToggle value={type} onChange={onType} />
       </div>
       {hint && (
-        <span style={{ fontSize: 11, fontWeight: 600, color: "#2563eb", fontVariantNumeric: "tabular-nums", paddingInlineStart: 2 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#b45309", fontVariantNumeric: "tabular-nums", paddingInlineStart: 2, whiteSpace: "nowrap" }}>
           {hint}
         </span>
       )}
@@ -396,6 +400,7 @@ export function InvoiceTotals({ result, headerDisc, headerType, sym: symOverride
   const baseSym = currencySymbol();
   const hasLineDisc = result.lineDiscountTotal > 0.00001;
   const hasHeaderDisc = result.headerDiscountValue > 0.00001;
+  const totalDisc = result.lineDiscountTotal + result.headerDiscountValue;
   const rowS: CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", fontSize: 14 };
   return (
     <div style={{ marginTop: 12, marginInlineStart: "auto", maxWidth: 420, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 16px" }}>
@@ -421,6 +426,11 @@ export function InvoiceTotals({ result, headerDisc, headerType, sym: symOverride
       {hasHeaderDisc && (
         <div style={{ ...rowS, color: "#b45309", paddingTop: 0 }}>
           <span>قيمة خصم الفاتورة</span><span style={{ fontVariantNumeric: "tabular-nums" }}>− {m(result.headerDiscountValue)}</span>
+        </div>
+      )}
+      {hasLineDisc && hasHeaderDisc && (
+        <div style={{ ...rowS, borderTop: "1px dashed #e2e8f0", color: "#b45309", fontWeight: 700 }}>
+          <span>إجمالي الخصم</span><span style={{ fontVariantNumeric: "tabular-nums" }}>− {m(totalDisc)}</span>
         </div>
       )}
       <div style={{ ...rowS, borderTop: "1px solid #e2e8f0", fontWeight: 600 }}>
