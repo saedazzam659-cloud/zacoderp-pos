@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import BranchFilter from "@/components/BranchFilter";
 import ExportButtons from "@/components/ExportButtons";
+import { type ExportColumn } from "@/lib/export";
 import {
   Landmark, Search, Printer, ArrowDownToLine, ArrowUpFromLine,
   Wallet, CheckCircle2, AlertTriangle, BarChart3, TrendingUp,
@@ -545,6 +546,7 @@ export default function BankCashFlow() {
         headers={headers}
         isRtl={isRtl}
         fmt={fmt}
+        moneyFmt={moneyFmt}
       />
     </div>
   );
@@ -688,13 +690,14 @@ type DrillRow = {
 };
 type DrillResponse = { direction: string; category: string; total: number; count: number; rows: DrillRow[] };
 
-function DrillSheet({ drill, onClose, params, headers, isRtl, fmt }: {
+function DrillSheet({ drill, onClose, params, headers, isRtl, fmt, moneyFmt }: {
   drill: DrillState | null;
   onClose: () => void;
   params: { cid?: number; mode: string; accountId: string; fromDate: string; toDate: string; branchId?: number };
   headers: Record<string, string>;
   isRtl: boolean;
   fmt: (n: number) => string;
+  moneyFmt: string;
 }) {
   const isDeposit = drill?.direction === "deposit";
   const { data, isLoading, isError } = useQuery<DrillResponse>({
@@ -721,6 +724,26 @@ function DrillSheet({ drill, onClose, params, headers, isRtl, fmt }: {
   const reconciles = drill ? Math.abs(total - drill.amount) < 0.01 : true;
   const color = drill?.color ?? "#0284c7";
 
+  // Export columns/rows for the drill-down breakdown (Excel / PDF / Print).
+  const DRILL_COLS: ExportColumn[] = [
+    { header: isRtl ? "التاريخ" : "Date",        key: "date",        width: 14 },
+    { header: isRtl ? "الطرف" : "Counterpart",   key: "counterpart", width: 30 },
+    { header: isRtl ? "النوع" : "Type",          key: "type",        width: 18 },
+    { header: isRtl ? "رقم المستند" : "Document", key: "docNumber",   width: 16 },
+    { header: isRtl ? "البيان" : "Description",   key: "description", width: 40 },
+    { header: isRtl ? "المبلغ" : "Amount",        key: "amount",      width: 16, numFmt: moneyFmt },
+  ];
+  const drillExportRows = rows.map((r) => ({
+    date: r.date,
+    counterpart: (isRtl ? r.counterpartAr : (r.counterpartEn || r.counterpartAr)) || (isRtl ? "غير محدد" : "Unspecified"),
+    type: entryTypeLabel(r.entryType, isRtl),
+    docNumber: r.docNumber ?? "",
+    description: r.description ?? "",
+    amount: r.amount,
+  }));
+  const drillTotalsRow = { date: isRtl ? "الإجمالي" : "Total", amount: total };
+  const drillTitle = `${drill?.label ?? ""} — ${isDeposit ? (isRtl ? "إيداعات" : "Deposits") : (isRtl ? "مسحوبات" : "Uses")}`;
+
   return (
     <Dialog open={!!drill} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent
@@ -740,9 +763,20 @@ function DrillSheet({ drill, onClose, params, headers, isRtl, fmt }: {
           </DialogDescription>
           <div className="flex items-end justify-between pt-2">
             <div className="text-2xl font-bold tabular-nums" style={{ color }}>{fmt(total)}</div>
-            <div className="text-xs text-muted-foreground flex items-center gap-1">
-              <Layers className="h-3.5 w-3.5" />
-              {data?.count ?? 0} {isRtl ? "حركة" : "items"}
+            <div className="flex items-center gap-3">
+              <div className="text-xs text-muted-foreground flex items-center gap-1">
+                <Layers className="h-3.5 w-3.5" />
+                {data?.count ?? 0} {isRtl ? "حركة" : "items"}
+              </div>
+              <ExportButtons
+                rows={drillExportRows}
+                columns={DRILL_COLS}
+                filename={`bank-cash-flow-${drill?.direction ?? ""}-${drill?.category ?? ""}-${params.fromDate}`}
+                title={drillTitle}
+                subtitle={`${params.fromDate} → ${params.toDate}`}
+                totalsRow={drillTotalsRow}
+                disabled={isLoading || rows.length === 0}
+              />
             </div>
           </div>
           {!isLoading && !isError && (
