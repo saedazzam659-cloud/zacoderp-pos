@@ -216,11 +216,22 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
   currencyOpts: string[];
   branches: Branch[];
 }) {
+  const [tab, setTab] = useState<"basic" | "address" | "credit">("basic");
+  const handleSave = () => {
+    if (!data.nameAr.trim()) setTab("basic");
+    onSave();
+  };
   return (
     <div style={S.formCard}>
       <div style={S.formTitle}>{mode === "new" ? "عميل جديد" : "تعديل بيانات العميل"}</div>
 
-      <div style={S.section}>المعلومات الأساسية</div>
+      <div style={S.tabBar}>
+        <button type="button" onClick={() => setTab("basic")} style={tab === "basic" ? S.tabActive : S.tab}>المعلومات الأساسية</button>
+        <button type="button" onClick={() => setTab("address")} style={tab === "address" ? S.tabActive : S.tab}>العنوان الوطني</button>
+        <button type="button" onClick={() => setTab("credit")} style={tab === "credit" ? S.tabActive : S.tab}>الائتمان والاستحقاق</button>
+      </div>
+
+      {tab === "basic" && (
       <div style={S.grid}>
         <Field label="الاسم بالعربية *">
           <input autoFocus value={data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={S.bigInput} placeholder="اسم العميل" />
@@ -260,8 +271,10 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
           </label>
         </Field>
       </div>
+      )}
 
-      <div style={S.section}>العنوان الوطني</div>
+      {tab === "address" && (
+      <>
       <div style={S.grid}>
         <Field label="المدينة">
           <input value={data.city ?? ""} onChange={(e) => setField("city", e.target.value)} style={S.bigInput} placeholder="الرياض" />
@@ -298,8 +311,11 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
           <input value={data.locationLink ?? ""} onChange={(e) => setField("locationLink", e.target.value)} style={S.bigInput} placeholder="https://maps.google.com/..." />
         </Field>
       </div>
+      </>
+      )}
 
-      <div style={S.section}>الائتمان والاستحقاق</div>
+      {tab === "credit" && (
+      <>
       <div style={S.grid}>
         <Field label="حد الائتمان (الحد الأقصى للمديونية)">
           <input type="number" step="0.01" min="0" value={data.creditLimit ?? 0}
@@ -341,11 +357,13 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
           </div>
         </>
       )}
+      </>
+      )}
 
       {err && <div style={S.formErr}>⚠️ {err}</div>}
 
       <div style={S.formActions}>
-        <button onClick={onSave} disabled={busy} style={S.btnSave}>{busy ? "جاري الحفظ..." : "حفظ"}</button>
+        <button onClick={handleSave} disabled={busy} style={S.btnSave}>{busy ? "جاري الحفظ..." : "حفظ"}</button>
         <button onClick={onCancel} disabled={busy} style={S.btnCancel}>إلغاء</button>
       </div>
     </div>
@@ -372,6 +390,9 @@ const S = {
   // Large stacked form panel
   formCard: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 24, marginBottom: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" } as const,
   formTitle: { fontSize: 18, fontWeight: 700, color: "#0f172a", marginBottom: 8 } as const,
+  tabBar: { display: "flex", gap: 8, flexWrap: "wrap" as const, borderBottom: "2px solid #e2e8f0", marginBottom: 18, marginTop: 6 } as const,
+  tab: { padding: "10px 18px", background: "transparent", color: "#64748b", border: "none", borderBottom: "3px solid transparent", borderRadius: 0, cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: "inherit", marginBottom: -2 } as const,
+  tabActive: { padding: "10px 18px", background: "transparent", color: "#2563eb", border: "none", borderBottom: "3px solid #2563eb", borderRadius: 0, cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: "inherit", marginBottom: -2 } as const,
   section: { fontSize: 13, fontWeight: 700, color: "#2563eb", marginTop: 18, marginBottom: 10, paddingBottom: 6, borderBottom: "1px solid #eff6ff" } as const,
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 } as const,
   field: { display: "flex", flexDirection: "column" as const, gap: 6 } as const,
