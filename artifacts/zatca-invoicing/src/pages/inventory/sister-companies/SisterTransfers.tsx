@@ -48,6 +48,7 @@ export default function SisterTransfers() {
           {(() => {
             const cols: ExportColumn[] = [
               { header: "رقم", key: "transferNumber", width: 14 },
+              { header: "رقم القيد", key: "journalEntryNumber", width: 14 },
               { header: "التاريخ", key: "transferDate", width: 14 },
               { header: "الشركة الشقيقة", key: "sister", width: 28 },
               { header: "تكلفة", key: "totalCost", width: 14 },
@@ -55,7 +56,9 @@ export default function SisterTransfers() {
               { header: "الحالة", key: "status", width: 10 },
             ];
             const data = (transfers as any[]).map((t: any) => ({
-              transferNumber: t.transferNumber, transferDate: t.transferDate,
+              transferNumber: t.transferNumber,
+              journalEntryNumber: t.journalEntryNumber ?? "",
+              transferDate: t.transferDate,
               sister: sisterMap[t.sisterCompanyId] ?? `#${t.sisterCompanyId}`,
               totalCost: Number(t.totalCost).toFixed(2),
               totalSupply: Number(t.totalSupply).toFixed(2),
@@ -96,6 +99,7 @@ export default function SisterTransfers() {
             <thead className="bg-muted/50">
               <tr>
                 <th className="p-2 text-right">رقم</th>
+                <th className="p-2 text-right">رقم القيد</th>
                 <th className="p-2 text-right">التاريخ</th>
                 <th className="p-2 text-right">الشركة الشقيقة</th>
                 <th className="p-2 text-right">تكلفة</th>
@@ -106,13 +110,21 @@ export default function SisterTransfers() {
             </thead>
             <tbody>
               {(transfers as any[]).length === 0 && (
-                <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">لا توجد تحويلات</td></tr>
+                <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">لا توجد تحويلات</td></tr>
               )}
               {(transfers as any[]).map((t: any) => {
                 const st = STATUS_LABEL[t.status] ?? { label: t.status, color: "" };
                 return (
                   <tr key={t.id} className="border-t hover:bg-muted/30">
                     <td className="p-2 font-mono">{t.transferNumber}</td>
+                    <td className="p-2 font-mono">
+                      {t.journalEntryId ? (
+                        <Link href={`/accounting/journals/${t.journalEntryId}`}
+                          className="text-primary hover:underline" title="عرض القيد">
+                          {t.journalEntryNumber ?? `#${t.journalEntryId}`}
+                        </Link>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
                     <td className="p-2">{t.transferDate}</td>
                     <td className="p-2">{sisterMap[t.sisterCompanyId] ?? `#${t.sisterCompanyId}`}</td>
                     <td className="p-2 text-left">{Number(t.totalCost).toFixed(2)}</td>

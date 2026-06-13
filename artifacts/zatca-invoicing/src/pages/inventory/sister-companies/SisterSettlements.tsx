@@ -38,6 +38,7 @@ export default function SisterSettlements() {
           {(() => {
             const cols: ExportColumn[] = [
               { header: "رقم", key: "code", width: 14 },
+              { header: "رقم القيد", key: "journalEntryNumber", width: 14 },
               { header: "التاريخ", key: "date", width: 14 },
               { header: "الشركة الشقيقة", key: "sister", width: 28 },
               { header: "النوع", key: "direction", width: 10 },
@@ -45,7 +46,9 @@ export default function SisterSettlements() {
               { header: "الحالة", key: "status", width: 10 },
             ];
             const data = (rows as any[]).map((r: any) => ({
-              code: r.code, date: r.date,
+              code: r.code,
+              journalEntryNumber: r.journalEntryNumber ?? "",
+              date: r.date,
               sister: sisterMap[r.sisterCompanyId] ?? `#${r.sisterCompanyId}`,
               direction: r.direction === "receive" ? "تحصيل" : "سداد",
               amount: Number(r.amount).toFixed(2),
@@ -90,6 +93,7 @@ export default function SisterSettlements() {
           <table className="w-full text-sm">
             <thead className="bg-muted/50"><tr>
               <th className="p-2 text-right">رقم</th>
+              <th className="p-2 text-right">رقم القيد</th>
               <th className="p-2 text-right">التاريخ</th>
               <th className="p-2 text-right">الشركة الشقيقة</th>
               <th className="p-2 text-right">النوع</th>
@@ -99,11 +103,19 @@ export default function SisterSettlements() {
             </tr></thead>
             <tbody>
               {(rows as any[]).length === 0 && (
-                <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">لا توجد سندات</td></tr>
+                <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">لا توجد سندات</td></tr>
               )}
               {(rows as any[]).map((r: any) => (
                 <tr key={r.id} className="border-t hover:bg-muted/30">
                   <td className="p-2 font-mono">{r.code}</td>
+                  <td className="p-2 font-mono">
+                    {r.journalEntryId ? (
+                      <Link href={`/accounting/journals/${r.journalEntryId}`}
+                        className="text-primary hover:underline" title="عرض القيد">
+                        {r.journalEntryNumber ?? `#${r.journalEntryId}`}
+                      </Link>
+                    ) : <span className="text-muted-foreground">—</span>}
+                  </td>
                   <td className="p-2">{r.date}</td>
                   <td className="p-2">{sisterMap[r.sisterCompanyId] ?? `#${r.sisterCompanyId}`}</td>
                   <td className="p-2">{r.direction === "receive"

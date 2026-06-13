@@ -43,6 +43,7 @@ export default function SisterReturns() {
           {(() => {
             const cols: ExportColumn[] = [
               { header: "رقم", key: "returnNumber", width: 14 },
+              { header: "رقم القيد", key: "journalEntryNumber", width: 14 },
               { header: "التاريخ", key: "returnDate", width: 14 },
               { header: "الشركة الشقيقة", key: "sister", width: 28 },
               { header: "تكلفة", key: "totalCost", width: 14 },
@@ -50,7 +51,9 @@ export default function SisterReturns() {
               { header: "الحالة", key: "status", width: 10 },
             ];
             const data = (returns as any[]).map((r: any) => ({
-              returnNumber: r.returnNumber, returnDate: r.returnDate,
+              returnNumber: r.returnNumber,
+              journalEntryNumber: r.journalEntryNumber ?? "",
+              returnDate: r.returnDate,
               sister: sisterMap[r.sisterCompanyId] ?? `#${r.sisterCompanyId}`,
               totalCost: Number(r.totalCost).toFixed(2),
               totalSupply: Number(r.totalSupply).toFixed(2),
@@ -90,6 +93,7 @@ export default function SisterReturns() {
           <table className="w-full text-sm">
             <thead className="bg-muted/50"><tr>
               <th className="p-2 text-right">رقم</th>
+              <th className="p-2 text-right">رقم القيد</th>
               <th className="p-2 text-right">التاريخ</th>
               <th className="p-2 text-right">الشركة الشقيقة</th>
               <th className="p-2 text-right">تكلفة</th>
@@ -99,13 +103,21 @@ export default function SisterReturns() {
             </tr></thead>
             <tbody>
               {(returns as any[]).length === 0 && (
-                <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">لا توجد مرتجعات</td></tr>
+                <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">لا توجد مرتجعات</td></tr>
               )}
               {(returns as any[]).map((r: any) => {
                 const st = STATUS[r.status] ?? { label: r.status, color: "" };
                 return (
                   <tr key={r.id} className="border-t hover:bg-muted/30">
                     <td className="p-2 font-mono">{r.returnNumber}</td>
+                    <td className="p-2 font-mono">
+                      {r.journalEntryId ? (
+                        <Link href={`/accounting/journals/${r.journalEntryId}`}
+                          className="text-primary hover:underline" title="عرض القيد">
+                          {r.journalEntryNumber ?? `#${r.journalEntryId}`}
+                        </Link>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
                     <td className="p-2">{r.returnDate}</td>
                     <td className="p-2">{sisterMap[r.sisterCompanyId] ?? `#${r.sisterCompanyId}`}</td>
                     <td className="p-2 text-left">{Number(r.totalCost).toFixed(2)}</td>

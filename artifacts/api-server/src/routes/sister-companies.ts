@@ -68,6 +68,25 @@ async function upsertBalance(cid: number, itemId: number, warehouseId: number, d
   }
 }
 
+// Attach the linked posted JE's docNumber (رقم القيد) to each source-doc
+// row so the list pages can render a deep-link to /accounting/journals/:id
+// — same shape the sister-company statement already uses.
+async function withJeNumbers<T extends { journalEntryId: number | null }>(
+  rows: T[],
+): Promise<(T & { journalEntryNumber: string | null })[]> {
+  const ids = rows.map(r => r.journalEntryId).filter((x): x is number => x != null);
+  const map = new Map<number, string | null>();
+  if (ids.length) {
+    const jes = await db.select({ id: journalEntriesTable.id, docNumber: journalEntriesTable.docNumber })
+      .from(journalEntriesTable).where(inArray(journalEntriesTable.id, ids));
+    for (const j of jes) map.set(j.id, j.docNumber);
+  }
+  return rows.map(r => ({
+    ...r,
+    journalEntryNumber: r.journalEntryId != null ? map.get(r.journalEntryId) ?? null : null,
+  }));
+}
+
 // ═════════════════════════════════════════════════════════════════
 // SISTER COMPANIES — CRUD
 // ═════════════════════════════════════════════════════════════════
@@ -113,7 +132,7 @@ router.get("/transfers", async (req, res) => {
     : eq(sisterTransfersTable.companyId, cid);
   const rows = await db.select().from(sisterTransfersTable)
     .where(where).orderBy(desc(sisterTransfersTable.id));
-  res.json(rows);
+  res.json(await withJeNumbers(rows));
 });
 
 router.get("/transfers/:id", async (req, res) => {
@@ -344,7 +363,7 @@ router.get("/returns", async (req, res) => {
   const rows = await db.select().from(sisterReturnsTable)
     .where(eq(sisterReturnsTable.companyId, cid))
     .orderBy(desc(sisterReturnsTable.id));
-  res.json(rows);
+  res.json(await withJeNumbers(rows));
 });
 
 router.get("/returns/:id", async (req, res) => {
@@ -523,7 +542,7 @@ router.get("/settlements", async (req, res) => {
   const rows = await db.select().from(sisterSettlementsTable)
     .where(eq(sisterSettlementsTable.companyId, cid))
     .orderBy(desc(sisterSettlementsTable.id));
-  res.json(rows);
+  res.json(await withJeNumbers(rows));
 });
 
 router.get("/settlements/:id", async (req, res) => {
