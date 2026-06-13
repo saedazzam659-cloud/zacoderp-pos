@@ -27,6 +27,7 @@ export type ScreenKey =
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "cost_centers" | "taxes"
+  | "posting_center" | "fiscal_periods" | "posting_control" | "pos_invoices"
   | "report_account_statement" | "report_customer_statement" | "report_income_statement"
   | "report_balance_sheet" | "report_trial_balance"
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
@@ -36,6 +37,7 @@ export type ScreenKey =
 export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: string }[] = [
   { key: "sales", label: "البيع", icon: "🛒", group: "العمليات" },
   { key: "returns", label: "مرتجع المبيعات", icon: "↩️", group: "العمليات" },
+  { key: "pos_invoices", label: "فواتير نقطة البيع", icon: "🧾", group: "العمليات" },
   { key: "parked", label: "السلال المعلّقة", icon: "📌", group: "العمليات" },
   { key: "daily", label: "تقرير اليومية", icon: "📊", group: "العمليات" },
 
@@ -76,6 +78,8 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
 
   { key: "chart_of_accounts", label: "شجرة الحسابات", icon: "🌳", group: "المحاسبة" },
   { key: "journal_entries", label: "القيود اليومية", icon: "📒", group: "المحاسبة" },
+  { key: "posting_center", label: "مركز الترحيل", icon: "📮", group: "المحاسبة" },
+  { key: "fiscal_periods", label: "الفترات المحاسبية", icon: "🗓️", group: "المحاسبة" },
   { key: "cost_centers", label: "مراكز التكلفة", icon: "🎯", group: "المحاسبة" },
   { key: "taxes", label: "الضرائب", icon: "🧾", group: "المحاسبة" },
   { key: "report_account_statement", label: "كشف حساب", icon: "📄", group: "التقارير المالية" },

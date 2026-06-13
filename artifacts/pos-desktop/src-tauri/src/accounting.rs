@@ -438,6 +438,33 @@ fn load_manual_guard(conn: &Connection, id: i64) -> Result<(Option<String>, Stri
     Ok((source_type, status))
 }
 
+/// Raw value of an `app_settings` key within the current transaction
+/// (`None` when the row is absent). Reading inside the doc-create tx avoids a
+/// second SQLite handle and keeps the read consistent with the write.
+fn setting_raw_tx(tx: &Transaction, key: &str) -> Option<String> {
+    tx.query_row("SELECT value FROM app_settings WHERE key=?1", params![key], |r| r.get::<_, String>(0))
+        .optional()
+        .ok()
+        .flatten()
+}
+
+fn truthy(v: &str) -> bool { v == "1" || v.eq_ignore_ascii_case("true") }
+
+/// Decides whether a freshly-created document of `doc_type` posts its journal
+/// entry to the general ledger immediately (auto) or leaves it as a DRAFT for
+/// مركز الترحيل (manual). A per-type override `auto_post_<doc_type>` wins;
+/// otherwise the master `auto_posting_enabled` flag decides. Default is MANUAL
+/// (draft) — the master flag is absent/"0" until the user opts in via
+/// التحكم العام. Regardless of this flag, the sub-ledger (party + cash/bank
+/// shadow balances and the document-driven party statement) updates on save;
+/// only the GL impact is deferred until posting.
+fn resolve_auto_post(tx: &Transaction, doc_type: &str) -> bool {
+    if let Some(per) = setting_raw_tx(tx, &format!("auto_post_{doc_type}")) {
+        return truthy(&per);
+    }
+    setting_raw_tx(tx, "auto_posting_enabled").map(|v| truthy(&v)).unwrap_or(false)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn insert_journal_entry(
     tx: &Transaction,
@@ -448,6 +475,7 @@ fn insert_journal_entry(
     branch_id: Option<i64>,
     cost_center_id: Option<i64>,
     lines: &[JournalEntryLine],
+    post: bool,
 ) -> Result<i64> {
     let total_debit: f64 = lines.iter().map(|l| l.debit).sum();
     let total_credit: f64 = lines.iter().map(|l| l.credit).sum();
@@ -455,10 +483,22 @@ fn insert_journal_entry(
         return Err(anyhow!(format!("القيد غير متوازن: مدين={total_debit:.2} دائن={total_credit:.2}")));
     }
     if lines.len() < 2 { return Err(anyhow!("القيد يحتاج سطرين على الأقل")); }
+    // Period-lock: an auto-posted document landing in a closed fiscal period is
+    // rejected (same guard the manual/Posting-Center path enforces). Draft docs
+    // are unaffected — their GL impact is deferred until they are posted, and
+    // that posting path is guarded too.
+    if post {
+        guard_period_open_for_date(tx, entry_date).map_err(|e| anyhow!(e))?;
+    }
+    // When `post` is false the entry is stored as a DRAFT: it has NO general-
+    // ledger impact (apply_balance is skipped) until it is posted from مركز
+    // الترحيل. The caller still updates party/cash/bank shadow balances
+    // unconditionally, so the sub-ledger reflects the document immediately.
+    let status = if post { "posted" } else { "draft" };
     let entry_no = next_entry_no(tx)?;
     tx.execute(
-        "INSERT INTO journal_entries_local(entry_no,entry_date,description,total_debit,total_credit,source_type,source_id,branch_id,cost_center_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-        params![entry_no, entry_date, description, total_debit, total_credit, source_type, source_id, branch_id, cost_center_id],
+        "INSERT INTO journal_entries_local(entry_no,entry_date,description,total_debit,total_credit,source_type,source_id,branch_id,cost_center_id,status) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![entry_no, entry_date, description, total_debit, total_credit, source_type, source_id, branch_id, cost_center_id, status],
     )?;
     let je_id = tx.last_insert_rowid();
     for l in lines {
@@ -468,9 +508,89 @@ fn insert_journal_entry(
             "INSERT INTO journal_entry_lines_local(entry_id,account_id,debit,credit,description,cost_center_id) VALUES(?1,?2,?3,?4,?5,?6)",
             params![je_id, l.account_id, l.debit, l.credit, l.description, cost_center_id],
         )?;
-        apply_balance(tx, l.account_id, l.debit, l.credit)?;
+        if post {
+            apply_balance(tx, l.account_id, l.debit, l.credit)?;
+        }
     }
     Ok(je_id)
+}
+
+// ───────────────────── Posting policy (التحكم العام) ──────────────────
+// Master + per-doc-type toggles deciding whether new documents post their JE
+// straight to the GL (auto) or stay as a draft for مركز الترحيل (manual).
+// `None` on a per-type field means "follow the master flag".
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PostingSettings {
+    pub auto_posting_enabled: bool,
+    pub sale: Option<bool>,
+    pub purchase: Option<bool>,
+    pub sale_return: Option<bool>,
+    pub purchase_return: Option<bool>,
+    pub voucher: Option<bool>,
+    pub treasury_transfer: Option<bool>,
+}
+
+fn setting_raw_conn(conn: &Connection, key: &str) -> Option<String> {
+    conn.query_row("SELECT value FROM app_settings WHERE key=?1", params![key], |r| r.get::<_, String>(0))
+        .optional()
+        .ok()
+        .flatten()
+}
+
+fn setting_opt_bool(conn: &Connection, key: &str) -> Option<bool> {
+    setting_raw_conn(conn, key).map(|v| truthy(&v))
+}
+
+#[tauri::command]
+pub fn posting_settings_get() -> Result<PostingSettings, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    Ok(PostingSettings {
+        auto_posting_enabled: setting_opt_bool(&conn, "auto_posting_enabled").unwrap_or(false),
+        sale: setting_opt_bool(&conn, "auto_post_sale"),
+        purchase: setting_opt_bool(&conn, "auto_post_purchase"),
+        sale_return: setting_opt_bool(&conn, "auto_post_sale_return"),
+        purchase_return: setting_opt_bool(&conn, "auto_post_purchase_return"),
+        voucher: setting_opt_bool(&conn, "auto_post_voucher"),
+        treasury_transfer: setting_opt_bool(&conn, "auto_post_treasury_transfer"),
+    })
+}
+
+#[tauri::command]
+pub fn posting_settings_set(input: PostingSettings) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    // Master flag always persisted as an explicit "1"/"0".
+    conn.execute(
+        "INSERT INTO app_settings(key,value) VALUES('auto_posting_enabled',?1)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        params![if input.auto_posting_enabled { "1" } else { "0" }],
+    ).map_err(|e| e.to_string())?;
+    // Per-type overrides: Some(b) writes "1"/"0"; None removes the row so the
+    // type falls back to the master flag.
+    let per: [(&str, Option<bool>); 6] = [
+        ("auto_post_sale", input.sale),
+        ("auto_post_purchase", input.purchase),
+        ("auto_post_sale_return", input.sale_return),
+        ("auto_post_purchase_return", input.purchase_return),
+        ("auto_post_voucher", input.voucher),
+        ("auto_post_treasury_transfer", input.treasury_transfer),
+    ];
+    for (key, val) in per {
+        match val {
+            Some(b) => {
+                conn.execute(
+                    "INSERT INTO app_settings(key,value) VALUES(?1,?2)
+                     ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    params![key, if b { "1" } else { "0" }],
+                ).map_err(|e| e.to_string())?;
+            }
+            None => {
+                conn.execute("DELETE FROM app_settings WHERE key=?1", params![key])
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -649,6 +769,112 @@ pub fn journal_entry_post(id: i64) -> Result<(), String> {
     let (_src, status) = load_manual_guard(&conn, id)?;
     if status != "draft" { return Err("هذا القيد ليس مسودة".into()); }
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    post_je_core(&tx, id)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Unposts a manual posted entry back to draft, reversing its balance impact.
+#[tauri::command]
+pub fn journal_entry_unpost(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let (_src, status) = load_manual_guard(&conn, id)?;
+    if status != "posted" { return Err("هذا القيد ليس مرحَّلاً".into()); }
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    unpost_je_core(&tx, id)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ───────── Fiscal-period lock guard ─────────
+// Rejects posting / unposting a journal entry whose date falls inside a fiscal
+// period that has been soft-closed (`closed`) or hard-closed
+// (`permanently_closed`). Entries whose date is outside any defined period are
+// always allowed — fiscal-period setup is optional, so a company that never
+// created periods is never blocked. The date is normalised to its YYYY-MM-DD
+// prefix so timestamps (if any) still match a period's day range.
+pub(crate) fn guard_period_open_for_date(tx: &Transaction, date: &str) -> Result<(), String> {
+    let status: Option<String> = tx
+        .query_row(
+            "SELECT status FROM fiscal_periods_local \
+             WHERE substr(?1,1,10) >= start_date AND substr(?1,1,10) <= end_date \
+             ORDER BY start_date DESC LIMIT 1",
+            params![date],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    match status.as_deref() {
+        Some("closed") => Err(
+            "لا يمكن الترحيل — الفترة المحاسبية لهذا التاريخ مقفلة (إقفال ناعم). افتح الفترة من شاشة الفترات المحاسبية أولاً".into(),
+        ),
+        Some("permanently_closed") => Err(
+            "لا يمكن الترحيل — الفترة المحاسبية لهذا التاريخ مقفلة نهائياً".into(),
+        ),
+        _ => Ok(()),
+    }
+}
+
+pub(crate) fn guard_period_open_for_entry(tx: &Transaction, id: i64) -> Result<(), String> {
+    let entry_date: Option<String> = tx
+        .query_row("SELECT entry_date FROM journal_entries_local WHERE id=?1", params![id], |r| r.get(0))
+        .optional()
+        .map_err(|e| e.to_string())?;
+    match entry_date {
+        Some(d) => guard_period_open_for_date(tx, &d),
+        None => Ok(()),
+    }
+}
+
+/// Inserts a fully-balanced CLOSING journal entry (posted immediately) used by
+/// the fiscal-period closing wizard. Tagged with `entry_type` + `period_id` so
+/// the hard-close step can verify the closing cycle actually ran. Always posts
+/// (bypasses the auto/manual toggle) and is marked `source_type='closing'` so
+/// the manual JE editor refuses to touch it. Reuses `next_entry_no` +
+/// `apply_balance` so numbering and GL impact match every other posted entry.
+pub(crate) fn insert_closing_entry(
+    tx: &Transaction,
+    entry_date: &str,
+    description: &str,
+    entry_type: &str,
+    period_id: i64,
+    lines: &[JournalEntryLine],
+) -> Result<i64, String> {
+    let total_debit: f64 = lines.iter().map(|l| l.debit).sum();
+    let total_credit: f64 = lines.iter().map(|l| l.credit).sum();
+    if (total_debit - total_credit).abs() > 0.001 {
+        return Err(format!("قيد الإقفال غير متوازن: مدين={total_debit:.2} دائن={total_credit:.2}"));
+    }
+    if lines.len() < 2 {
+        return Err("قيد الإقفال يحتاج سطرين على الأقل".into());
+    }
+    let entry_no = next_entry_no(tx).map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO journal_entries_local(entry_no,entry_date,description,total_debit,total_credit,source_type,entry_type,status,period_id) \
+         VALUES(?1,?2,?3,?4,?5,'closing',?6,'posted',?7)",
+        params![entry_no, entry_date, description, total_debit, total_credit, entry_type, period_id],
+    )
+    .map_err(|e| e.to_string())?;
+    let je_id = tx.last_insert_rowid();
+    for l in lines {
+        tx.execute(
+            "INSERT INTO journal_entry_lines_local(entry_id,account_id,debit,credit,description) VALUES(?1,?2,?3,?4,?5)",
+            params![je_id, l.account_id, l.debit, l.credit, l.description],
+        )
+        .map_err(|e| e.to_string())?;
+        apply_balance(tx, l.account_id, l.debit, l.credit).map_err(|e| e.to_string())?;
+    }
+    Ok(je_id)
+}
+
+// ───────── Shared post / unpost core (used by both the manual JE editor and
+//           the Posting Center). The CALLER decides whether a source-doc JE may
+//           be touched: the manual editor guards manual-only, the Posting Center
+//           posts ANY draft. These never re-touch shadow balances — those were
+//           applied unconditionally at document-create time. ────────────────
+fn post_je_core(tx: &Transaction, id: i64) -> Result<(), String> {
+    // Reject posting into a closed fiscal period (period-lock guard).
+    guard_period_open_for_entry(tx, id)?;
     let mut stmt = tx.prepare("SELECT account_id,debit,credit FROM journal_entry_lines_local WHERE entry_id=?1").map_err(|e| e.to_string())?;
     let lines: Vec<(i64, f64, f64)> = stmt
         .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
@@ -661,23 +887,59 @@ pub fn journal_entry_post(id: i64) -> Result<(), String> {
     let tc: f64 = lines.iter().map(|l| l.2).sum();
     if td <= 1e-9 { return Err("إجمالي القيد يجب أن يكون أكبر من صفر".into()); }
     if (td - tc).abs() > 0.001 { return Err(format!("القيد غير متوازن: مدين={td:.2} دائن={tc:.2}")); }
-    for (acc, debit, credit) in &lines { apply_balance(&tx, *acc, *debit, *credit).map_err(|e| e.to_string())?; }
+    for (acc, debit, credit) in &lines { apply_balance(tx, *acc, *debit, *credit).map_err(|e| e.to_string())?; }
     tx.execute("UPDATE journal_entries_local SET status='posted' WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
-    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// Unposts a manual posted entry back to draft, reversing its balance impact.
-#[tauri::command]
-pub fn journal_entry_unpost(id: i64) -> Result<(), String> {
-    let mut conn = db::open().map_err(|e| e.to_string())?;
-    let (_src, status) = load_manual_guard(&conn, id)?;
-    if status != "posted" { return Err("هذا القيد ليس مرحَّلاً".into()); }
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
-    reverse_je_balance(&tx, id).map_err(|e| e.to_string())?;
+fn unpost_je_core(tx: &Transaction, id: i64) -> Result<(), String> {
+    guard_period_open_for_entry(tx, id)?;
+    reverse_je_balance(tx, id).map_err(|e| e.to_string())?;
     tx.execute("UPDATE journal_entries_local SET status='draft' WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
-    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// مركز الترحيل — bulk-post the given draft entries (ANY source, incl. document
+/// auto-generated drafts). Skips ids that are not currently drafts. Runs in ONE
+/// transaction: if any entry fails (unbalanced / closed period) the whole batch
+/// rolls back and the error is returned.
+#[tauri::command]
+pub fn posting_center_post(ids: Vec<i64>) -> Result<i64, String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let mut done = 0i64;
+    for id in ids {
+        let status: Option<String> = tx
+            .query_row("SELECT status FROM journal_entries_local WHERE id=?1", params![id], |r| r.get(0))
+            .optional().map_err(|e| e.to_string())?;
+        match status.as_deref() {
+            Some("draft") => { post_je_core(&tx, id)?; done += 1; }
+            _ => {} // already posted or missing → skip
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(done)
+}
+
+/// مركز الترحيل — bulk-unpost the given posted entries back to draft, reversing
+/// their GL impact. Allowed for ANY source here (the Posting Center is the
+/// authoritative posting console); skips ids that are not currently posted.
+#[tauri::command]
+pub fn posting_center_unpost(ids: Vec<i64>) -> Result<i64, String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let mut done = 0i64;
+    for id in ids {
+        let status: Option<String> = tx
+            .query_row("SELECT status FROM journal_entries_local WHERE id=?1", params![id], |r| r.get(0))
+            .optional().map_err(|e| e.to_string())?;
+        match status.as_deref() {
+            Some("posted") => { unpost_je_core(&tx, id)?; done += 1; }
+            _ => {}
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(done)
 }
 
 /// Deletes a manual entry (drafts or posted). A posted entry's balance impact
@@ -826,7 +1088,8 @@ pub(crate) fn post_party_opening_balance(
             description: Some(desc.clone()),
         },
     ];
-    let je_id = insert_journal_entry(tx, date, Some(&desc), Some("opening_balance"), Some(party_id), None, None, &lines)?;
+    // Opening balances are a setup action — always posted to the GL.
+    let je_id = insert_journal_entry(tx, date, Some(&desc), Some("opening_balance"), Some(party_id), None, None, &lines, true)?;
     match party_type {
         // supplier balance: positive = we owe (credit nature)
         "supplier" => {
@@ -1209,7 +1472,7 @@ pub fn purchase_create(input: PurchaseInput) -> Result<i64, String> {
     }
     lines.push(JournalEntryLine { id: None, account_id: cr_account_id, account_code: None, account_name: None, debit: 0.0, credit: grand_total, description: None });
 
-    let je_id = insert_journal_entry(&tx, &input.invoice_date, Some(&format!("فاتورة شراء {invoice_no}")), Some("purchase"), Some(purchase_id), input.branch_id, input.cost_center_id, &lines)
+    let je_id = insert_journal_entry(&tx, &input.invoice_date, Some(&format!("فاتورة شراء {invoice_no}")), Some("purchase"), Some(purchase_id), input.branch_id, input.cost_center_id, &lines, resolve_auto_post(&tx, "purchase"))
         .map_err(|e| e.to_string())?;
     tx.execute("UPDATE purchases_local SET je_id=?1 WHERE id=?2", params![je_id, purchase_id]).map_err(|e| e.to_string())?;
 
@@ -1394,7 +1657,7 @@ pub fn purchase_return_create(input: PurchaseReturnInput) -> Result<i64, String>
     if vat_total > 0.0 {
         lines.push(JournalEntryLine { id: None, account_id: vat_in_acc, account_code: None, account_name: None, debit: 0.0, credit: vat_total, description: None });
     }
-    let je_id = insert_journal_entry(&tx, &input.return_date, Some(&format!("مرتجع شراء {return_no}")), Some("purchase_return"), Some(return_id), input.branch_id, input.cost_center_id, &lines)
+    let je_id = insert_journal_entry(&tx, &input.return_date, Some(&format!("مرتجع شراء {return_no}")), Some("purchase_return"), Some(return_id), input.branch_id, input.cost_center_id, &lines, resolve_auto_post(&tx, "purchase_return"))
         .map_err(|e| e.to_string())?;
     tx.execute("UPDATE purchase_returns_local SET je_id=?1 WHERE id=?2", params![je_id, return_id]).map_err(|e| e.to_string())?;
 
@@ -1783,7 +2046,10 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
     if vat_total > 0.0 {
         lines.push(JournalEntryLine { id: None, account_id: vat_out_acc, account_code: None, account_name: None, debit: 0.0, credit: vat_total, description: None });
     }
-    let je_id = insert_journal_entry(&tx, &input.invoice_date, Some(&format!("فاتورة مبيعات {invoice_no}")), Some("sale"), Some(invoice_id), input.branch_id, input.cost_center_id, &lines)
+    // The COGS JE must share the invoice's posting status so the two never
+    // diverge (e.g. a posted revenue JE paired with a draft cost JE).
+    let post_sale = resolve_auto_post(&tx, "sale");
+    let je_id = insert_journal_entry(&tx, &input.invoice_date, Some(&format!("فاتورة مبيعات {invoice_no}")), Some("sale"), Some(invoice_id), input.branch_id, input.cost_center_id, &lines, post_sale)
         .map_err(|e| e.to_string())?;
     tx.execute("UPDATE sales_invoices_local SET je_id=?1 WHERE id=?2", params![je_id, invoice_id]).map_err(|e| e.to_string())?;
 
@@ -1795,7 +2061,7 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
             JournalEntryLine { id: None, account_id: cogs_acc, account_code: None, account_name: None, debit: cogs_total, credit: 0.0, description: Some(format!("تكلفة مبيعات {invoice_no}")) },
             JournalEntryLine { id: None, account_id: inv_acc, account_code: None, account_name: None, debit: 0.0, credit: cogs_total, description: None },
         ];
-        insert_journal_entry(&tx, &input.invoice_date, Some(&format!("تكلفة بضاعة مباعة {invoice_no}")), Some("sale_cogs"), Some(invoice_id), input.branch_id, input.cost_center_id, &cogs_lines)
+        insert_journal_entry(&tx, &input.invoice_date, Some(&format!("تكلفة بضاعة مباعة {invoice_no}")), Some("sale_cogs"), Some(invoice_id), input.branch_id, input.cost_center_id, &cogs_lines, post_sale)
             .map_err(|e| e.to_string())?;
     }
 
@@ -2525,7 +2791,9 @@ pub fn sales_return_create(input: SalesReturnInput) -> Result<i64, String> {
     }
     lines.push(JournalEntryLine { id: None, account_id: cr_account_id, account_code: None, account_name: None, debit: 0.0, credit: grand_total, description: None });
 
-    let je_id = insert_journal_entry(&tx, &input.return_date, Some(&format!("مرتجع مبيعات {return_no}")), Some("sale_return"), Some(return_id), input.branch_id, input.cost_center_id, &lines)
+    // COGS-reversal JE shares the return's posting status (see sales_invoice).
+    let post_ret = resolve_auto_post(&tx, "sale_return");
+    let je_id = insert_journal_entry(&tx, &input.return_date, Some(&format!("مرتجع مبيعات {return_no}")), Some("sale_return"), Some(return_id), input.branch_id, input.cost_center_id, &lines, post_ret)
         .map_err(|e| e.to_string())?;
     tx.execute("UPDATE sales_returns_local SET je_id=?1 WHERE id=?2", params![je_id, return_id]).map_err(|e| e.to_string())?;
 
@@ -2537,7 +2805,7 @@ pub fn sales_return_create(input: SalesReturnInput) -> Result<i64, String> {
             JournalEntryLine { id: None, account_id: inv_acc, account_code: None, account_name: None, debit: cogs_total, credit: 0.0, description: Some(format!("ارتجاع تكلفة {return_no}")) },
             JournalEntryLine { id: None, account_id: cogs_acc, account_code: None, account_name: None, debit: 0.0, credit: cogs_total, description: None },
         ];
-        insert_journal_entry(&tx, &input.return_date, Some(&format!("عكس تكلفة بضاعة {return_no}")), Some("sale_return_cogs"), Some(return_id), input.branch_id, input.cost_center_id, &cogs_lines)
+        insert_journal_entry(&tx, &input.return_date, Some(&format!("عكس تكلفة بضاعة {return_no}")), Some("sale_return_cogs"), Some(return_id), input.branch_id, input.cost_center_id, &cogs_lines, post_ret)
             .map_err(|e| e.to_string())?;
     }
 
@@ -2693,6 +2961,7 @@ pub fn financial_tx_create(input: FinancialTxInput) -> Result<i64, String> {
         Some(&format!("{} {tx_no}", if input.tx_type == "receipt" { "سند قبض" } else { "سند صرف" })),
         Some(if input.tx_type == "receipt" { "receipt" } else { "payment" }),
         Some(ftx_id), input.branch_id, input.cost_center_id, &lines,
+        resolve_auto_post(&tx, "voucher"),
     ).map_err(|e| e.to_string())?;
     tx.execute("UPDATE financial_transactions_local SET je_id=?1 WHERE id=?2", params![je_id, ftx_id]).map_err(|e| e.to_string())?;
 
@@ -3084,6 +3353,7 @@ pub fn treasury_transfer_create(input: TreasuryTransferInput) -> Result<i64, Str
     let je_id = insert_journal_entry(&tx, &input.transfer_date,
         Some(&format!("تحويل خزينة {transfer_no}")),
         Some("treasury_transfer"), Some(transfer_id), None, None, &lines,
+        resolve_auto_post(&tx, "treasury_transfer"),
     ).map_err(|e| e.to_string())?;
     tx.execute("UPDATE treasury_transfers_local SET je_id=?1 WHERE id=?2", params![je_id, transfer_id])
         .map_err(|e| e.to_string())?;

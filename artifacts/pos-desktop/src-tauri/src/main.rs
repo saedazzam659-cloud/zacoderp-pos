@@ -7,6 +7,7 @@
 mod accounting;
 mod customers;
 mod db;
+mod fiscal;
 mod inventory;
 mod invoices;
 mod items;
@@ -478,8 +479,24 @@ fn main() {
             accounting::journal_entry_unpost,
             accounting::journal_entry_delete,
             accounting::journal_entry_peek_number,
+            accounting::posting_settings_get,
+            accounting::posting_settings_set,
+            accounting::posting_center_post,
+            accounting::posting_center_unpost,
             accounting::number_series_list,
             accounting::number_series_update,
+            // Fiscal years + periods + closing wizard (الفترات المحاسبية).
+            fiscal::fiscal_years_list,
+            fiscal::fiscal_year_create,
+            fiscal::fiscal_year_delete,
+            fiscal::fiscal_year_set_status,
+            fiscal::fiscal_periods_list,
+            fiscal::fiscal_period_validate,
+            fiscal::fiscal_period_close_pl,
+            fiscal::fiscal_period_transfer_profit,
+            fiscal::fiscal_period_soft_close,
+            fiscal::fiscal_period_hard_close,
+            fiscal::fiscal_period_force_reopen,
             permissions::permissions_list_for_user,
             permissions::permissions_set,
             permissions::permissions_clear,

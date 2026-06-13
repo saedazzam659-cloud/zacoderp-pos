@@ -42,7 +42,15 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
       const list = await listAllInvoices(100);
       setInvoices(list);
       setReturnedInvoiceNos(await computeReturnedSet(list));
-    } catch { /* ignore */ }
+    } catch (e: any) {
+      // Surface the REAL reason instead of silently showing an empty list.
+      // On a LAN client this is usually an unreachable or out-of-date host
+      // (e.g. a host build older than the one that exposes list_all_invoices).
+      setToast({
+        kind: "err",
+        text: `تعذّر تحميل الفواتير: ${e?.message ?? e}`,
+      });
+    }
   }
 
   // Build the "already returned" set by scanning EVERY invoice's payload and

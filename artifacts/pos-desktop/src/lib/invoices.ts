@@ -161,17 +161,20 @@ export async function countPendingInvoices(): Promise<number> {
 // to pick an original sale to refund against.
 export async function listAllInvoices(limit = 100): Promise<PendingInvoice[]> {
   if (shouldUseBridge()) {
-    try {
-      const rows = await invoke<RustPending[]>("list_all_invoices", { limit });
-      return rows.map((r) => ({
-        id: r.id,
-        localUuid: r.local_uuid,
-        invoiceNo: r.invoice_no,
-        qrBase64: r.qr_base64,
-        createdAt: r.created_at,
-        syncStatus: r.sync_status,
-      }));
-    } catch { /* fall through */ }
+    // On a real device (Tauri host/single or a LAN client) a failure here is a
+    // genuine error — an unreachable/old host, a permission rejection, or a DB
+    // fault. Letting it propagate lets the caller show WHY the list is empty
+    // instead of silently masking it as "no invoices exist" via the browser
+    // fallback (which is only meant for the Tauri-less Vite preview).
+    const rows = await invoke<RustPending[]>("list_all_invoices", { limit });
+    return rows.map((r) => ({
+      id: r.id,
+      localUuid: r.local_uuid,
+      invoiceNo: r.invoice_no,
+      qrBase64: r.qr_base64,
+      createdAt: r.created_at,
+      syncStatus: r.sync_status,
+    }));
   }
   // Browser fallback: mirror invoices written by saveOfflineInvoice.
   try {

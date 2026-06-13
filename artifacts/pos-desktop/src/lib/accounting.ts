@@ -556,3 +556,138 @@ export async function updateNumberSeries(s: NumberSeries): Promise<void> {
     docType: s.docType, prefix: s.prefix, nextNumber: s.nextNumber, padding: s.padding,
   });
 }
+
+// ─── Posting policy (التحكم العام: ترحيل تلقائي / يدوي) ─────────────────
+// Master flag + per-doc-type overrides. A per-type value of `null` means the
+// type follows the master flag; `true`/`false` force auto/manual for it.
+// Manual (master = false) is the default: documents save as DRAFT and only hit
+// the general ledger once posted from مركز الترحيل.
+export type PostingSettings = {
+  autoPostingEnabled: boolean;
+  sale: boolean | null;
+  purchase: boolean | null;
+  saleReturn: boolean | null;
+  purchaseReturn: boolean | null;
+  voucher: boolean | null;
+  treasuryTransfer: boolean | null;
+};
+export async function getPostingSettings(): Promise<PostingSettings> {
+  if (!hasTauri()) {
+    return {
+      autoPostingEnabled: false,
+      sale: null, purchase: null, saleReturn: null,
+      purchaseReturn: null, voucher: null, treasuryTransfer: null,
+    };
+  }
+  return await invoke<PostingSettings>("posting_settings_get");
+}
+export async function setPostingSettings(input: PostingSettings): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("posting_settings_set", { input });
+}
+
+// ─── Posting Center (مركز الترحيل) ─────────────────────────────────────
+// Bulk post / unpost ANY draft / posted journal entries (incl. document
+// auto-generated drafts). The list itself is fetched via listJournalEntries
+// (which returns status / sourceType / entryType). Returns the count actioned.
+export async function postingCenterPost(ids: number[]): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("posting_center_post", { ids });
+}
+export async function postingCenterUnpost(ids: number[]): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("posting_center_unpost", { ids });
+}
+
+// ─── Fiscal years + periods (الفترات المحاسبية) ────────────────────────
+export type FiscalYear = {
+  id: number;
+  name: string;
+  startDate: string;
+  endDate: string;
+  status: "open" | "closed" | "permanently_closed";
+};
+export type FiscalPeriod = {
+  id: number;
+  fiscalYearId: number;
+  name: string;
+  startDate: string;
+  endDate: string;
+  status: "open" | "closed" | "permanently_closed";
+};
+export type PeriodValidateResult = {
+  ok: boolean;
+  drafts: number;
+  unbalanced: number;
+  openRevenueAccounts: number;
+  openExpenseAccounts: number;
+  requiresPlClose: boolean;
+  issues: string[];
+};
+export type ClosePlResult = {
+  revenueEntryId: number | null;
+  expenseEntryId: number | null;
+  totalRevenue: number;
+  totalExpense: number;
+  netIncome: number;
+};
+export type TransferProfitResult = {
+  entryId: number;
+  isProfit: boolean;
+  amount: number;
+};
+export type SoftCloseResult = { ok: boolean; forced: boolean; plClosed: boolean };
+
+export async function listFiscalYears(): Promise<FiscalYear[]> {
+  if (!hasTauri()) return [];
+  return await invoke<FiscalYear[]>("fiscal_years_list");
+}
+export async function createFiscalYear(input: {
+  name: string; startDate: string; endDate: string; generateMonthly: boolean;
+}): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("fiscal_year_create", {
+    name: input.name, startDate: input.startDate, endDate: input.endDate,
+    generateMonthly: input.generateMonthly,
+  });
+}
+export async function deleteFiscalYear(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("fiscal_year_delete", { id });
+}
+export async function setFiscalYearStatus(id: number, status: FiscalYear["status"]): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("fiscal_year_set_status", { id, status });
+}
+export async function listFiscalPeriods(yearId?: number): Promise<FiscalPeriod[]> {
+  if (!hasTauri()) return [];
+  return await invoke<FiscalPeriod[]>("fiscal_periods_list", { yearId: yearId ?? null });
+}
+export async function validateFiscalPeriod(id: number): Promise<PeriodValidateResult> {
+  if (!hasTauri()) notImpl();
+  return await invoke<PeriodValidateResult>("fiscal_period_validate", { id });
+}
+export async function closePeriodPl(id: number, plSummaryAccountId: number): Promise<ClosePlResult> {
+  if (!hasTauri()) notImpl();
+  return await invoke<ClosePlResult>("fiscal_period_close_pl", { id, plSummaryAccountId });
+}
+export async function transferPeriodProfit(
+  id: number, plSummaryAccountId: number, retainedEarningsAccountId: number,
+): Promise<TransferProfitResult> {
+  if (!hasTauri()) notImpl();
+  return await invoke<TransferProfitResult>("fiscal_period_transfer_profit", {
+    id, plSummaryAccountId, retainedEarningsAccountId,
+  });
+}
+export async function softClosePeriod(id: number, force: boolean): Promise<SoftCloseResult> {
+  if (!hasTauri()) notImpl();
+  return await invoke<SoftCloseResult>("fiscal_period_soft_close", { id, force });
+}
+export async function hardClosePeriod(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("fiscal_period_hard_close", { id });
+}
+export async function forceReopenPeriod(id: number, reason: string): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("fiscal_period_force_reopen", { id, reason });
+}

@@ -470,6 +470,10 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
             .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "list_all_invoices" => crate::invoices::list_all_invoices(i_opt("limit"))
             .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+        "daily_report_invoices" => {
+            crate::invoices::daily_report_invoices(s_req("startUtc")?, s_req("endUtc")?)
+                .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+        }
 
         // ── Shared stock ──
         "lan_stock_get_all" => lan_stock_get_all()

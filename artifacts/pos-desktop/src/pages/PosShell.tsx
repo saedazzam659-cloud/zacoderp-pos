@@ -37,6 +37,10 @@ import ExchangeRatesAdmin from "./ExchangeRatesAdmin";
 import TreasuryTransfersAdmin from "./TreasuryTransfersAdmin";
 import ChartOfAccounts from "./ChartOfAccounts";
 import JournalEntries from "./JournalEntries";
+import PostingCenter from "./PostingCenter";
+import FiscalPeriods from "./FiscalPeriods";
+import PostingControl from "./PostingControl";
+import PosInvoices from "./PosInvoices";
 import CostCentersAdmin from "./CostCentersAdmin";
 import BranchesAdmin from "./BranchesAdmin";
 import TaxesAdmin from "./TaxesAdmin";
@@ -183,7 +187,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     key: "pos",
     icon: "🛒",
     label: "نقاط بيع",
-    members: ["sales", "returns", "parked", "daily"],
+    members: ["sales", "returns", "pos_invoices", "parked", "daily"],
   },
   {
     key: "inventory",
@@ -218,7 +222,8 @@ const NAV_GROUPS: NavGroupDef[] = [
     icon: "🧮",
     label: "الحسابات العامة",
     members: [
-      "chart_of_accounts", "journal_entries", "cost_centers", "taxes",
+      "chart_of_accounts", "journal_entries", "posting_center", "fiscal_periods",
+      "cost_centers", "taxes",
       "report_account_statement", "report_customer_statement", "report_income_statement",
       "report_balance_sheet", "report_trial_balance",
     ],
@@ -230,7 +235,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     label: "التحكم العام",
     members: [
       "scale", "branches", "currencies", "exchange_rates", "dashboard",
-      "users", "user_permissions", "network", "number_series", "settings_guide", "zatca", "updates",
+      "users", "user_permissions", "posting_control", "network", "number_series", "settings_guide", "zatca", "updates",
     ],
   },
 ];
@@ -520,6 +525,7 @@ export default function PosShell({
   const standaloneNav: Array<{ id: View; icon: string; label: string; badge?: number; perm?: ScreenKey; adminOnly?: boolean }> = [
     { id: "sales",            icon: "🛒", label: "بيع", perm: "sales" },
     { id: "returns",          icon: "↩️", label: "مرتجع", perm: "returns" },
+    { id: "pos_invoices",     icon: "🧾", label: "فواتير نقطة البيع", perm: "pos_invoices" },
     { id: "parked",           icon: "📌", label: "السلال المعلّقة", badge: parkedCount > 0 ? parkedCount : undefined, perm: "parked" },
     { id: "daily",            icon: "📊", label: "تقرير اليومية", perm: "daily" },
     { id: "customers",        icon: "👥", label: "العملاء", perm: "customers" },
@@ -553,6 +559,8 @@ export default function PosShell({
     { id: "exchange_rates",   icon: "💱", label: "أسعار الصرف", perm: "exchange_rates" },
     { id: "chart_of_accounts",icon: "🌳", label: "شجرة الحسابات", perm: "chart_of_accounts" },
     { id: "journal_entries",  icon: "📒", label: "القيود اليومية", perm: "journal_entries" },
+    { id: "posting_center",   icon: "📮", label: "مركز الترحيل", perm: "posting_center" },
+    { id: "fiscal_periods",   icon: "🗓️", label: "الفترات المحاسبية", perm: "fiscal_periods" },
     { id: "cost_centers",     icon: "🎯", label: "مراكز التكلفة", perm: "cost_centers" },
     { id: "taxes",            icon: "🧾", label: "الضرائب", perm: "taxes" },
     { id: "report_account_statement", icon: "📄", label: "كشف حساب", perm: "report_account_statement" },
@@ -573,6 +581,7 @@ export default function PosShell({
       ? [
           { id: "users" as View,            icon: "🔐", label: "المستخدمون", adminOnly: true },
           { id: "number_series" as View,    icon: "🔢", label: "أرقام المسلسلات", adminOnly: true },
+          { id: "posting_control" as View,  icon: "🔀", label: "التحكم في الترحيل", adminOnly: true },
           { id: "user_permissions" as View, icon: "🛡️", label: "صلاحيات المستخدمين", adminOnly: true },
         ]
       : []),
@@ -626,6 +635,7 @@ export default function PosShell({
               : <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={effectiveCashierName} />
           )}
           {v === "returns" && <div style={S.pagePad}><ReturnsScreen companyName={effectiveCompanyName} cashierName={effectiveCashierName} /></div>}
+          {v === "pos_invoices" && <div style={S.pagePad}><PosInvoices companyName={effectiveCompanyName} cashierName={effectiveCashierName} /></div>}
           {!standalone && v === "pending" && <div style={S.pagePad}><PendingInvoices companyName={effectiveCompanyName} /></div>}
           {v === "parked" && (
             <div style={S.pagePad}>
@@ -737,6 +747,15 @@ export default function PosShell({
           )}
           {standalone && v === "journal_entries" && (isAdmin || can("journal_entries")) && (
             <div style={S.pagePad}><JournalEntries /></div>
+          )}
+          {standalone && v === "posting_center" && (isAdmin || can("posting_center")) && (
+            <div style={S.pagePad}><PostingCenter /></div>
+          )}
+          {standalone && v === "fiscal_periods" && (isAdmin || can("fiscal_periods")) && (
+            <div style={S.pagePad}><FiscalPeriods /></div>
+          )}
+          {standalone && v === "posting_control" && isAdmin && (
+            <div style={S.pagePad}><PostingControl /></div>
           )}
           {standalone && v === "cost_centers" && (isAdmin || can("cost_centers")) && (
             <div style={S.pagePad}><CostCentersAdmin /></div>
@@ -1027,6 +1046,10 @@ function labelFor(v: View): string {
     financial_tx: "المعاملات المالية",
     chart_of_accounts: "شجرة الحسابات",
     journal_entries: "القيود اليومية",
+    posting_center: "مركز الترحيل",
+    fiscal_periods: "الفترات المحاسبية",
+    posting_control: "التحكم في الترحيل",
+    pos_invoices: "فواتير نقطة البيع",
     cost_centers: "مراكز التكلفة",
     branches: "الفروع",
     report_account_statement: "كشف حساب",

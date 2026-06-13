@@ -35,6 +35,7 @@ export type WindowsView =
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "user_permissions"
+  | "posting_center" | "fiscal_periods" | "posting_control" | "pos_invoices"
   | "cost_centers" | "branches" | "taxes"
   | "report_account_statement" | "report_customer_statement" | "report_income_statement"
   | "report_balance_sheet" | "report_trial_balance"
@@ -83,6 +84,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   low_stock:    { module: "inventory", profile: "pos" },
   stock_import: { module: "inventory", profile: "pos" },
   invoice_import: { module: "pos", profile: "pos" },
+  pos_invoices: { module: "pos", profile: "pos" },
   expiry:       { module: "inventory", profile: "pos" },
   scale:        { module: "control",   profile: "pos" },
   network:      { module: "control",   profile: "pos" },
@@ -120,6 +122,8 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   exchange_rates:    { module: "cash_banks", profile: "erp" },
   chart_of_accounts: { module: "accounting", profile: "erp" },
   journal_entries:   { module: "accounting", profile: "erp" },
+  posting_center:    { module: "accounting", profile: "erp" },
+  fiscal_periods:    { module: "accounting", profile: "erp" },
   cost_centers:      { module: "accounting", profile: "erp" },
   taxes:             { module: "accounting", profile: "erp" },
   report_account_statement: { module: "accounting", profile: "erp" },
@@ -131,6 +135,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   users:             { module: "control", profile: "erp" },
   user_permissions:  { module: "control", profile: "erp" },
   number_series:     { module: "control", profile: "erp" },
+  posting_control:   { module: "control", profile: "erp" },
 };
 
 export function moduleForView(v: WindowsView): WindowsModuleKey {

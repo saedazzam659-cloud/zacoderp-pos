@@ -9,7 +9,8 @@
 // All aggregation happens in the frontend — the Rust side is a thin
 // row-fetcher so we don't have to evolve a query API per KPI.
 
-import { IS_TAURI, tauriInvoke, lsRead, LS_KEYS } from "./localStore";
+import { lsRead, LS_KEYS } from "./localStore";
+import { bridgeInvoke, shouldUseBridge } from "./bridge";
 import type { OfflineInvoicePayload } from "./invoices";
 
 export interface DailyInvoiceRow {
@@ -101,9 +102,9 @@ function localDayToUtcRange(dateYmd: string): { start: string; end: string } {
 
 async function fetchRows(dateYmd: string): Promise<DailyInvoiceRow[]> {
   const { start, end } = localDayToUtcRange(dateYmd);
-  if (IS_TAURI) {
+  if (shouldUseBridge()) {
     try {
-      const rows = await tauriInvoke<RustRow[]>("daily_report_invoices", { startUtc: start, endUtc: end });
+      const rows = await bridgeInvoke<RustRow[]>("daily_report_invoices", { startUtc: start, endUtc: end });
       return rows.map((r) => ({
         id: r.id,
         localUuid: r.local_uuid,

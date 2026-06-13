@@ -820,6 +820,11 @@ pub fn initialize() -> Result<()> {
         // values that preserve current behaviour ('general' / 'posted').
         "ALTER TABLE journal_entries_local ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'general'",
         "ALTER TABLE journal_entries_local ADD COLUMN status TEXT NOT NULL DEFAULT 'posted'",
+        // ── Fiscal-period link (الفترات المحاسبية) ──
+        // Closing entries (close-pl / transfer-profit) are tagged with the
+        // period they belong to so hard-close can verify the closing cycle ran.
+        // Nullable — ordinary entries are matched to a period by date range.
+        "ALTER TABLE journal_entries_local ADD COLUMN period_id INTEGER",
         // ── Chart-of-accounts parity with the web app ──
         // Extra metadata mirroring the web COA form. All nullable / defaulted
         // so existing seeded + user accounts keep working untouched:
@@ -876,6 +881,33 @@ pub fn initialize() -> Result<()> {
             next_number INTEGER NOT NULL DEFAULT 1,
             padding     INTEGER NOT NULL DEFAULT 6
         );
+
+        -- Fiscal years (السنوات المالية) + periods (الفترات المحاسبية).
+        -- status lifecycle mirrors the web app:
+        --   open               — postable
+        --   closed             — soft close (reversible from the wizard)
+        --   permanently_closed — hard close (irreversible; blocks posting)
+        CREATE TABLE IF NOT EXISTS fiscal_years_local (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL,
+            start_date  TEXT NOT NULL,
+            end_date    TEXT NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'open'
+                        CHECK (status IN ('open','closed','permanently_closed')),
+            created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS fiscal_periods_local (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            fiscal_year_id INTEGER NOT NULL REFERENCES fiscal_years_local(id) ON DELETE CASCADE,
+            name           TEXT NOT NULL,
+            start_date     TEXT NOT NULL,
+            end_date       TEXT NOT NULL,
+            status         TEXT NOT NULL DEFAULT 'open'
+                           CHECK (status IN ('open','closed','permanently_closed')),
+            created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_fiscal_periods_year ON fiscal_periods_local(fiscal_year_id);
+        CREATE INDEX IF NOT EXISTS idx_fiscal_periods_dates ON fiscal_periods_local(start_date, end_date);
         "#,
     )?;
     let seeds: &[(&str, &str, &str)] = &[
