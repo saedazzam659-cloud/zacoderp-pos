@@ -13,11 +13,15 @@ import ExportButtons from "@/components/ExportButtons";
 import {
   Landmark, Search, Printer, ArrowDownToLine, ArrowUpFromLine,
   Wallet, CheckCircle2, AlertTriangle, BarChart3, TrendingUp,
+  FileText, Layers, Inbox, ChevronLeft, Loader2,
 } from "lucide-react";
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend,
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
 } from "recharts";
+import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
+} from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -32,6 +36,20 @@ type CashFlowResponse = {
   bookClosing: number;
   monthly: { month: string; opening: number; deposits: Buckets; outflows: Buckets; closing: number }[];
 };
+
+// Drill-down target: which cash-flow figure the user clicked to inspect.
+type DrillState = { direction: "deposit" | "outflow"; category: string; label: string; color: string; amount: number };
+
+// Friendly Arabic labels for the source-document type of each contributing entry.
+const ENTRY_TYPE_AR: Record<string, string> = {
+  sales_invoice: "فاتورة مبيعات", pos_sale: "نقطة بيع",
+  receipt: "سند قبض", receipt_voucher: "سند قبض",
+  payment: "سند صرف", payment_voucher: "سند صرف",
+  payroll_run: "مسير رواتب", eos_payment: "نهاية الخدمة", employee_loan: "سلفة موظف",
+  general: "قيد يومية", opening_balance: "رصيد افتتاحي",
+};
+const entryTypeLabel = (t: string | null, isRtl: boolean) =>
+  isRtl ? (ENTRY_TYPE_AR[t ?? ""] ?? (t || "قيد")) : (t || "Entry");
 
 // Deposit categories (incoming) — order + label + tone for the analysis table.
 const DEPOSIT_CATS: { key: string; ar: string; en: string; tone: string; color: string }[] = [
@@ -69,6 +87,7 @@ export default function BankCashFlow() {
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
   const [monthly, setMonthly]   = useState(false);
   const [searched, setSearched] = useState(false);
+  const [drill, setDrill] = useState<DrillState | null>(null);
 
   const { data: banks = [] } = useQuery<any[]>({
     queryKey: ["bank-accounts", cid],
@@ -461,6 +480,8 @@ export default function BankCashFlow() {
               totalLabel={isRtl ? "إجمالي الإيداعات" : "Total deposits"}
               isRtl={isRtl}
               fmt={fmt}
+              direction="deposit"
+              onDrill={(c, amt) => setDrill({ direction: "deposit", category: c.key, label: isRtl ? c.ar : c.en, color: c.color, amount: amt })}
             />
             <AnalysisTable
               title={isRtl ? "استخدامات الأموال (حسب النوع)" : "Uses of funds (by type)"}
@@ -470,6 +491,8 @@ export default function BankCashFlow() {
               totalLabel={isRtl ? "إجمالي المسحوبات" : "Total uses"}
               isRtl={isRtl}
               fmt={fmt}
+              direction="outflow"
+              onDrill={(c, amt) => setDrill({ direction: "outflow", category: c.key, label: isRtl ? c.ar : c.en, color: c.color, amount: amt })}
             />
           </div>
 
@@ -514,6 +537,15 @@ export default function BankCashFlow() {
           )}
         </>
       )}
+
+      <DrillSheet
+        drill={drill}
+        onClose={() => setDrill(null)}
+        params={{ cid, mode, accountId, fromDate, toDate, branchId }}
+        headers={headers}
+        isRtl={isRtl}
+        fmt={fmt}
+      />
     </div>
   );
 }
@@ -529,10 +561,13 @@ function KpiCard({ icon, label, value, gradient, ring, text }: {
   );
 }
 
-function AnalysisTable({ title, headTone, cats, buckets, totalLabel, isRtl, fmt }: {
+type AnalysisCat = { key: string; ar: string; en: string; tone: string; color: string };
+function AnalysisTable({ title, headTone, cats, buckets, totalLabel, isRtl, fmt, direction, onDrill }: {
   title: string; headTone: string;
-  cats: { key: string; ar: string; en: string; tone: string }[];
+  cats: AnalysisCat[];
   buckets: Buckets; totalLabel: string; isRtl: boolean; fmt: (n: number) => string;
+  direction: "deposit" | "outflow";
+  onDrill: (cat: AnalysisCat, amt: number) => void;
 }) {
   const total = buckets.total || 0;
   return (
@@ -543,15 +578,28 @@ function AnalysisTable({ title, headTone, cats, buckets, totalLabel, isRtl, fmt 
           {cats.map((c) => {
             const amt = buckets[c.key] ?? 0;
             const pct = total > 0 ? (amt / total) * 100 : 0;
+            const clickable = amt > 0;
             return (
-              <tr key={c.key} className="border-t">
+              <tr
+                key={c.key}
+                className={cn("border-t transition-colors", clickable && "cursor-pointer hover:bg-muted/40")}
+                onClick={clickable ? () => onDrill(c, amt) : undefined}
+                title={clickable ? (isRtl ? "اضغط لعرض الحركات المكوّنة لهذا المبلغ" : "Click to see contributing transactions") : undefined}
+              >
                 <td className="px-4 py-2.5">
-                  <div className={cn("font-medium", c.tone)}>{isRtl ? c.ar : c.en}</div>
+                  <div className={cn("font-medium flex items-center gap-1.5", c.tone)}>
+                    {isRtl ? c.ar : c.en}
+                    {clickable && <Search className="h-3 w-3 opacity-50" />}
+                  </div>
                   <div className="mt-1 h-1.5 w-full rounded-full bg-muted overflow-hidden">
                     <div className="h-full rounded-full bg-current opacity-40" style={{ width: `${pct}%` }} />
                   </div>
                 </td>
-                <td className="px-4 py-2.5 text-end tabular-nums font-semibold w-32">{fmt(amt)}</td>
+                <td className="px-4 py-2.5 text-end tabular-nums font-semibold w-32">
+                  {clickable ? (
+                    <span className="underline decoration-dotted underline-offset-4 decoration-muted-foreground/40">{fmt(amt)}</span>
+                  ) : fmt(amt)}
+                </td>
                 <td className="px-4 py-2.5 text-end tabular-nums text-xs text-muted-foreground w-16">{pct.toFixed(1)}%</td>
               </tr>
             );
@@ -626,5 +674,138 @@ function WaterfallRow({ label, value, tone, strong, highlight }: {
       <td className={cn("px-4 py-3", strong ? "font-bold" : "font-medium", tone)}>{label}</td>
       <td className={cn("px-4 py-3 text-end tabular-nums", strong ? "font-bold text-lg" : "", tone)}>{value}</td>
     </tr>
+  );
+}
+
+// ── Drill-down slide-over ─────────────────────────────────────────────────────
+// Lists the individual transactions that make up the clicked cash-flow figure.
+// The server uses the SAME classification engine, so `data.total` always equals
+// the figure shown on the report (we surface a tiny reconciliation tick to prove it).
+type DrillRow = {
+  entryId: number; date: string; amount: number; entryType: string | null;
+  docNumber: string | null; description: string | null;
+  counterpartAr: string | null; counterpartEn: string | null;
+};
+type DrillResponse = { direction: string; category: string; total: number; count: number; rows: DrillRow[] };
+
+function DrillSheet({ drill, onClose, params, headers, isRtl, fmt }: {
+  drill: DrillState | null;
+  onClose: () => void;
+  params: { cid?: number; mode: string; accountId: string; fromDate: string; toDate: string; branchId?: number };
+  headers: Record<string, string>;
+  isRtl: boolean;
+  fmt: (n: number) => string;
+}) {
+  const isDeposit = drill?.direction === "deposit";
+  const { data, isLoading, isError } = useQuery<DrillResponse>({
+    queryKey: ["bank-cash-flow-breakdown", drill?.direction, drill?.category, params.cid, params.mode, params.accountId, params.fromDate, params.toDate, params.branchId],
+    queryFn: async () => {
+      const q = new URLSearchParams();
+      if (params.cid)       q.set("companyId", String(params.cid));
+      q.set("mode", params.mode);
+      if (params.accountId) q.set("accountId", params.accountId);
+      if (params.fromDate)  q.set("fromDate", params.fromDate);
+      if (params.toDate)    q.set("toDate", params.toDate);
+      if (params.branchId)  q.set("branchId", String(params.branchId));
+      q.set("direction", drill!.direction);
+      q.set("category", drill!.category);
+      const res = await fetch(`${API}/api/accounting-reports/bank-cash-flow/breakdown?${q}`, { headers });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || "failed"); }
+      return res.json();
+    },
+    enabled: !!drill,
+  });
+
+  const rows = data?.rows ?? [];
+  const total = data?.total ?? 0;
+  const reconciles = drill ? Math.abs(total - drill.amount) < 0.01 : true;
+  const color = drill?.color ?? "#0284c7";
+
+  return (
+    <Sheet open={!!drill} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <SheetContent side={isRtl ? "left" : "right"} className="w-full sm:max-w-xl p-0 flex flex-col gap-0">
+        <SheetHeader className="p-5 border-b space-y-0 text-start" style={{ borderTopWidth: 3, borderTopColor: color }}>
+          <SheetTitle className="flex items-center gap-2 text-base">
+            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: color }} />
+            {drill?.label}
+            <span className="text-xs font-normal text-muted-foreground">
+              {isDeposit ? (isRtl ? "إيداعات" : "Deposits") : (isRtl ? "مسحوبات" : "Uses")}
+            </span>
+          </SheetTitle>
+          <SheetDescription className="sr-only">
+            {isRtl ? "الحركات المكوّنة للمبلغ" : "Transactions contributing to this figure"}
+          </SheetDescription>
+          <div className="flex items-end justify-between pt-2">
+            <div className="text-2xl font-bold tabular-nums" style={{ color }}>{fmt(total)}</div>
+            <div className="text-xs text-muted-foreground flex items-center gap-1">
+              <Layers className="h-3.5 w-3.5" />
+              {data?.count ?? 0} {isRtl ? "حركة" : "items"}
+            </div>
+          </div>
+          {!isLoading && !isError && (
+            <div className={cn(
+              "mt-2 inline-flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 w-fit",
+              reconciles ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700",
+            )}>
+              {reconciles
+                ? (<><CheckCircle2 className="h-3 w-3" />{isRtl ? "مطابق للمبلغ المعروض في التقرير" : "Matches the report figure"}</>)
+                : (<><AlertTriangle className="h-3 w-3" />{isRtl ? `فرق ${fmt(Math.abs(total - (drill?.amount ?? 0)))}` : `Diff ${fmt(Math.abs(total - (drill?.amount ?? 0)))}`}</>)}
+            </div>
+          )}
+        </SheetHeader>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {isLoading && (
+            <div className="h-40 flex items-center justify-center text-muted-foreground gap-2 text-sm">
+              <Loader2 className="h-4 w-4 animate-spin" />{isRtl ? "جارٍ التحميل…" : "Loading…"}
+            </div>
+          )}
+          {isError && (
+            <div className="h-40 flex flex-col items-center justify-center text-rose-600 gap-2 text-sm">
+              <AlertTriangle className="h-5 w-5" />{isRtl ? "تعذّر تحميل التفاصيل" : "Failed to load details"}
+            </div>
+          )}
+          {!isLoading && !isError && rows.length === 0 && (
+            <div className="h-40 flex flex-col items-center justify-center text-muted-foreground gap-2 text-sm">
+              <Inbox className="h-6 w-6" />{isRtl ? "لا توجد حركات" : "No transactions"}
+            </div>
+          )}
+          {!isLoading && rows.map((r, i) => {
+            const counterpart = (isRtl ? r.counterpartAr : (r.counterpartEn || r.counterpartAr)) || (isRtl ? "غير محدد" : "Unspecified");
+            return (
+              <div key={`${r.entryId}-${i}`} className="rounded-lg border p-3 flex items-start justify-between gap-3 hover:bg-muted/40 transition-colors">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium truncate">{counterpart}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground whitespace-nowrap">
+                      {entryTypeLabel(r.entryType, isRtl)}
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
+                    <span className="tabular-nums">{r.date}</span>
+                    {r.docNumber && (
+                      <span className="inline-flex items-center gap-0.5">
+                        <FileText className="h-3 w-3" />{r.docNumber}
+                      </span>
+                    )}
+                  </div>
+                  {r.description && <div className="text-xs text-muted-foreground mt-1 line-clamp-2">{r.description}</div>}
+                </div>
+                <div className="text-end font-semibold tabular-nums whitespace-nowrap" style={{ color }}>
+                  {fmt(r.amount)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {!isLoading && rows.length > 0 && (
+          <div className="border-t p-4 flex items-center justify-between bg-muted/30">
+            <span className="text-sm font-medium text-muted-foreground">{isRtl ? "الإجمالي" : "Total"}</span>
+            <span className="text-base font-bold tabular-nums" style={{ color }}>{fmt(total)}</span>
+          </div>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }

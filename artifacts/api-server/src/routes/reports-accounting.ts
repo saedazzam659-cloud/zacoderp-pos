@@ -680,186 +680,197 @@ type OutflowBuckets = { salaries: number; suppliers: number; serviceBills: numbe
 function emptyDeposits(): DepositBuckets { return { sales: 0, customers: 0, partner: 0, transfersIn: 0, other: 0, total: 0 }; }
 function emptyOutflows(): OutflowBuckets { return { salaries: 0, suppliers: 0, serviceBills: 0, transfersOut: 0, other: 0, total: 0 }; }
 
+// ─── SHARED BANK CASH-FLOW CLASSIFICATION ENGINE ──────────────────────────────
+// Resolves the target treasury/GL accounts, loads the in-period bank lines and
+// builds the same per-entry classifiers used to bucket deposits / outflows.
+// BOTH the aggregate report (/bank-cash-flow) and the per-bucket drill-down
+// (/bank-cash-flow/breakdown) call this so the listed transactions ALWAYS sum
+// to the displayed figure — a single source of truth, no drift.
+type CashFlowContext = {
+  opening: number;
+  openingFilters: any[];
+  treasurySet: Set<number>;
+  bankLines: { entryId: number; entryType: string | null; entryDate: string; debit: string; credit: string }[];
+  classifyDeposit: (entryId: number, entryType: string | null) => keyof Omit<DepositBuckets, "total">;
+  classifyOutflow: (entryId: number, entryType: string | null) => keyof Omit<OutflowBuckets, "total">;
+};
+
+async function buildCashFlowContext(
+  req: any, cid: number, bid: number | undefined,
+): Promise<{ status: "deny" } | { status: "empty" } | { status: "ok"; ctx: CashFlowContext }> {
+  const { bankAccountId, fromDate, toDate } = req.query as any;
+  // `mode`: "treasury" = cash & banks (default), "ledger" = any chart-of-accounts
+  // account. `accountId` selects a single GL account directly (used by both modes).
+  const mode = String(req.query.mode ?? "treasury") === "ledger" ? "ledger" : "treasury";
+  const accountIdParam = req.query.accountId ? Number(req.query.accountId) : undefined;
+
+  // ── 0. Treasury set (all bank + cash-box GL accounts) — used both as the
+  //        default "all cash & banks" target AND to detect internal transfers
+  //        (a contra line pointing at one of these = internal transfer). ─────
+  const [allBanks, allBoxes] = await Promise.all([
+    db.select({ accountId: bankAccountsTable.accountId }).from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid)),
+    db.select({ accountId: cashBoxesTable.accountId }).from(cashBoxesTable).where(eq(cashBoxesTable.companyId, cid)),
+  ]);
+  const treasurySet = new Set<number>();
+  for (const r of [...allBanks, ...allBoxes]) if (typeof r.accountId === "number") treasurySet.add(r.accountId);
+
+  // ── 1. Resolve the target GL account(s) to analyse. ──────────────────────
+  let targetGlAccountIds: number[] = [];
+  if (Number.isInteger(accountIdParam) && (accountIdParam as number) > 0) {
+    targetGlAccountIds = [accountIdParam as number];
+  } else if (bankAccountId) {
+    const [ba] = await db.select({ accountId: bankAccountsTable.accountId })
+      .from(bankAccountsTable)
+      .where(and(eq(bankAccountsTable.companyId, cid), eq(bankAccountsTable.id, Number(bankAccountId))));
+    if (typeof ba?.accountId === "number") targetGlAccountIds = [ba.accountId];
+  } else if (mode === "treasury") {
+    targetGlAccountIds = Array.from(treasurySet);
+  }
+  if (targetGlAccountIds.length === 0) return { status: "empty" };
+
+  // ── 2. Opening book balance: every posted line on the bank GL account(s)
+  //        strictly BEFORE fromDate (sum debit − credit). ───────────────────
+  const openingFilters: any[] = [
+    eq(journalEntriesTable.companyId, cid),
+    eq(journalEntriesTable.status, "posted"),
+    inArray(journalEntryLinesTable.accountId, targetGlAccountIds),
+  ];
+  if (pushBranchScope(req, openingFilters, journalEntriesTable.branchId, bid) === "deny") {
+    return { status: "deny" };
+  }
+  let opening = 0;
+  if (fromDate) {
+    const openFilters = [...openingFilters, sql`${journalEntriesTable.entryDate} < ${fromDate}`];
+    const [o] = await db
+      .select({
+        debit:  sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}), 0)`,
+        credit: sql<string>`COALESCE(SUM(${journalEntryLinesTable.credit}), 0)`,
+      })
+      .from(journalEntryLinesTable)
+      .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+      .where(and(...openFilters));
+    opening = Number(o?.debit || 0) - Number(o?.credit || 0);
+  }
+
+  // ── 3. In-period bank lines (the movements to analyse). ──────────────────
+  const periodFilters = [...openingFilters];
+  if (fromDate) periodFilters.push(gte(journalEntriesTable.entryDate, fromDate));
+  if (toDate)   periodFilters.push(lte(journalEntriesTable.entryDate, toDate));
+  const bankLines = await db
+    .select({
+      entryId:   journalEntriesTable.id,
+      entryType: journalEntriesTable.entryType,
+      entryDate: journalEntriesTable.entryDate,
+      debit:     journalEntryLinesTable.debit,
+      credit:    journalEntryLinesTable.credit,
+    })
+    .from(journalEntryLinesTable)
+    .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+    .where(and(...periodFilters))
+    .orderBy(asc(journalEntriesTable.entryDate));
+
+  const entryIds = Array.from(new Set(bankLines.map(l => l.entryId)));
+
+  // ── 4. ALL lines of those entries (joined to accounts for the type), so we
+  //        can (a) detect internal transfers by counting how many DISTINCT
+  //        treasury accounts the entry touches and (b) classify by the
+  //        NON-treasury counterpart account type. ────────────────────────────
+  const contraByEntry = new Map<number, { types: Record<string, number>; treasuryIds: Set<number> }>();
+  if (entryIds.length > 0) {
+    const allLines = await db
+      .select({
+        entryId:     journalEntryLinesTable.entryId,
+        accountId:   journalEntryLinesTable.accountId,
+        accountType: accountsTable.accountType,
+        debit:       journalEntryLinesTable.debit,
+        credit:      journalEntryLinesTable.credit,
+      })
+      .from(journalEntryLinesTable)
+      .innerJoin(accountsTable, eq(journalEntryLinesTable.accountId, accountsTable.id))
+      .where(inArray(journalEntryLinesTable.entryId, entryIds));
+    for (const c of allLines) {
+      const amt = Math.abs(Number(c.debit || 0)) + Math.abs(Number(c.credit || 0));
+      if (amt === 0) continue;
+      let rec = contraByEntry.get(c.entryId);
+      if (!rec) { rec = { types: {}, treasuryIds: new Set<number>() }; contraByEntry.set(c.entryId, rec); }
+      if (c.accountId && treasurySet.has(c.accountId)) {
+        rec.treasuryIds.add(c.accountId);          // treasury leg — drives transfer detection
+      } else {
+        rec.types[c.accountType] = (rec.types[c.accountType] ?? 0) + amt; // counterpart for source/use
+      }
+    }
+  }
+
+  // ── 5. Voucher entity types (customer / supplier / other). ───────────────
+  const entityByEntry = new Map<number, string>();
+  if (entryIds.length > 0) {
+    const [rv, pv] = await Promise.all([
+      db.select({ jid: receiptVouchersTable.journalEntryId, et: receiptVouchersTable.entityType })
+        .from(receiptVouchersTable)
+        .where(and(eq(receiptVouchersTable.companyId, cid), inArray(receiptVouchersTable.journalEntryId, entryIds))),
+      db.select({ jid: paymentVouchersTable.journalEntryId, et: paymentVouchersTable.entityType })
+        .from(paymentVouchersTable)
+        .where(and(eq(paymentVouchersTable.companyId, cid), inArray(paymentVouchersTable.journalEntryId, entryIds))),
+    ]);
+    for (const r of [...rv, ...pv]) if (r.jid) entityByEntry.set(r.jid, r.et as string);
+  }
+
+  // Dominant contra account type for an entry (largest absolute amount).
+  function dominantContraType(entryId: number): string | null {
+    const rec = contraByEntry.get(entryId);
+    if (!rec) return null;
+    let best: string | null = null, bestAmt = -1;
+    for (const [t, a] of Object.entries(rec.types)) if (a > bestAmt) { best = t; bestAmt = a; }
+    return best;
+  }
+  function isTransfer(entryId: number): boolean {
+    const rec = contraByEntry.get(entryId);
+    if (!rec) return false;
+    // An internal transfer moves money between treasuries, so the entry must
+    // touch ≥2 DISTINCT treasury accounts (e.g. bank↔bank or bank↔cash).
+    return rec.treasuryIds.size >= 2;
+  }
+  function classifyDeposit(entryId: number, entryType: string | null): keyof Omit<DepositBuckets, "total"> {
+    if (isTransfer(entryId)) return "transfersIn";
+    const et = entryType ?? "";
+    if (et === "sales_invoice" || et === "pos_sale") return "sales";
+    const entity = entityByEntry.get(entryId);
+    if ((et === "receipt" || et === "receipt_voucher") && entity === "customer") return "customers";
+    const ct = dominantContraType(entryId);
+    if (ct === "revenue") return "sales";
+    if (ct === "equity")  return "partner";
+    if (ct === "asset")   return "customers"; // receivable settlement
+    return "other";
+  }
+  function classifyOutflow(entryId: number, entryType: string | null): keyof Omit<OutflowBuckets, "total"> {
+    if (isTransfer(entryId)) return "transfersOut";
+    const et = entryType ?? "";
+    if (et === "payroll_run" || et === "eos_payment" || et === "employee_loan") return "salaries";
+    const entity = entityByEntry.get(entryId);
+    if ((et === "payment" || et === "payment_voucher") && entity === "supplier") return "suppliers";
+    const ct = dominantContraType(entryId);
+    if (ct === "expense")   return "serviceBills";
+    if (ct === "liability") return "suppliers"; // payable settlement
+    return "other";
+  }
+
+  return { status: "ok", ctx: { opening, openingFilters, treasurySet, bankLines, classifyDeposit, classifyOutflow } };
+}
+
 router.get("/bank-cash-flow", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json({ banks: [], opening: 0, deposits: emptyDeposits(), outflows: emptyOutflows(), closing: 0, bookClosing: 0, monthly: [] }); return; }
     const bid = getBid(req);
-    const { bankAccountId, fromDate, toDate } = req.query as any;
+    const { toDate } = req.query as any;
     const monthlyMode = String(req.query.monthly ?? "") === "true" || req.query.monthly === "1";
-    // `mode`: "treasury" = cash & banks (default), "ledger" = any chart-of-accounts
-    // account. `accountId` selects a single GL account directly (used by both modes).
-    const mode = String(req.query.mode ?? "treasury") === "ledger" ? "ledger" : "treasury";
-    const accountIdParam = req.query.accountId ? Number(req.query.accountId) : undefined;
 
-    // ── 0. Treasury set (all bank + cash-box GL accounts) — used both as the
-    //        default "all cash & banks" target AND to detect internal transfers
-    //        (a contra line pointing at one of these = internal transfer). ─────
-    const [allBanks, allBoxes] = await Promise.all([
-      db.select({ accountId: bankAccountsTable.accountId }).from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid)),
-      db.select({ accountId: cashBoxesTable.accountId }).from(cashBoxesTable).where(eq(cashBoxesTable.companyId, cid)),
-    ]);
-    const treasurySet = new Set<number>();
-    for (const r of [...allBanks, ...allBoxes]) if (typeof r.accountId === "number") treasurySet.add(r.accountId);
-
-    // ── 1. Resolve the target GL account(s) to analyse. ──────────────────────
-    //   • accountId (any mode)   → that single chart-of-accounts / cash-bank GL account.
-    //   • legacy bankAccountId   → resolve its GL account from bank_accounts.
-    //   • mode=treasury, no pick → every cash & bank GL account (treasurySet).
-    //   • mode=ledger,   no pick → nothing (a specific account is required).
-    let targetGlAccountIds: number[] = [];
-    if (Number.isInteger(accountIdParam) && (accountIdParam as number) > 0) {
-      targetGlAccountIds = [accountIdParam as number];
-    } else if (bankAccountId) {
-      const [ba] = await db.select({ accountId: bankAccountsTable.accountId })
-        .from(bankAccountsTable)
-        .where(and(eq(bankAccountsTable.companyId, cid), eq(bankAccountsTable.id, Number(bankAccountId))));
-      if (typeof ba?.accountId === "number") targetGlAccountIds = [ba.accountId];
-    } else if (mode === "treasury") {
-      targetGlAccountIds = Array.from(treasurySet);
-    }
-
-    if (targetGlAccountIds.length === 0) {
+    const built = await buildCashFlowContext(req, cid, bid);
+    if (built.status !== "ok") {
       res.json({ banks: [], opening: 0, deposits: emptyDeposits(), outflows: emptyOutflows(), closing: 0, bookClosing: 0, monthly: [] });
       return;
     }
-
-    // ── 2. Opening book balance: every posted line on the bank GL account(s)
-    //        strictly BEFORE fromDate (sum debit − credit). ───────────────────
-    const openingFilters: any[] = [
-      eq(journalEntriesTable.companyId, cid),
-      eq(journalEntriesTable.status, "posted"),
-      inArray(journalEntryLinesTable.accountId, targetGlAccountIds),
-    ];
-    if (pushBranchScope(req, openingFilters, journalEntriesTable.branchId, bid) === "deny") {
-      res.json({ banks: [], opening: 0, deposits: emptyDeposits(), outflows: emptyOutflows(), closing: 0, bookClosing: 0, monthly: [] });
-      return;
-    }
-    let opening = 0;
-    if (fromDate) {
-      const openFilters = [...openingFilters, sql`${journalEntriesTable.entryDate} < ${fromDate}`];
-      const [o] = await db
-        .select({
-          debit:  sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}), 0)`,
-          credit: sql<string>`COALESCE(SUM(${journalEntryLinesTable.credit}), 0)`,
-        })
-        .from(journalEntryLinesTable)
-        .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
-        .where(and(...openFilters));
-      opening = Number(o?.debit || 0) - Number(o?.credit || 0);
-    }
-
-    // ── 3. In-period bank lines (the movements to analyse). ──────────────────
-    const periodFilters = [...openingFilters];
-    if (fromDate) periodFilters.push(gte(journalEntriesTable.entryDate, fromDate));
-    if (toDate)   periodFilters.push(lte(journalEntriesTable.entryDate, toDate));
-    const bankLines = await db
-      .select({
-        entryId:   journalEntriesTable.id,
-        entryType: journalEntriesTable.entryType,
-        entryDate: journalEntriesTable.entryDate,
-        debit:     journalEntryLinesTable.debit,
-        credit:    journalEntryLinesTable.credit,
-      })
-      .from(journalEntryLinesTable)
-      .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
-      .where(and(...periodFilters))
-      .orderBy(asc(journalEntriesTable.entryDate));
-
-    const entryIds = Array.from(new Set(bankLines.map(l => l.entryId)));
-
-    // ── 4. ALL lines of those entries (joined to accounts for the type), so we
-    //        can (a) detect internal transfers by counting how many DISTINCT
-    //        treasury accounts the entry touches and (b) classify by the
-    //        NON-treasury counterpart account type. We must NOT exclude bank GL
-    //        accounts here: in "all banks" mode both legs of a bank↔bank
-    //        transfer live in bankGlAccountIds, and excluding them would erase
-    //        the transfer signal and inflate the source/use buckets. Filtering
-    //        out treasury lines (which include the bank's own line) when summing
-    //        contra `types` keeps the classification counterpart-only.
-    const contraByEntry = new Map<number, { types: Record<string, number>; treasuryIds: Set<number> }>();
-    if (entryIds.length > 0) {
-      const allLines = await db
-        .select({
-          entryId:     journalEntryLinesTable.entryId,
-          accountId:   journalEntryLinesTable.accountId,
-          accountType: accountsTable.accountType,
-          debit:       journalEntryLinesTable.debit,
-          credit:      journalEntryLinesTable.credit,
-        })
-        .from(journalEntryLinesTable)
-        .innerJoin(accountsTable, eq(journalEntryLinesTable.accountId, accountsTable.id))
-        .where(inArray(journalEntryLinesTable.entryId, entryIds));
-      for (const c of allLines) {
-        const amt = Math.abs(Number(c.debit || 0)) + Math.abs(Number(c.credit || 0));
-        if (amt === 0) continue;
-        let rec = contraByEntry.get(c.entryId);
-        if (!rec) { rec = { types: {}, treasuryIds: new Set<number>() }; contraByEntry.set(c.entryId, rec); }
-        if (c.accountId && treasurySet.has(c.accountId)) {
-          rec.treasuryIds.add(c.accountId);          // treasury leg — drives transfer detection
-        } else {
-          rec.types[c.accountType] = (rec.types[c.accountType] ?? 0) + amt; // counterpart for source/use
-        }
-      }
-    }
-
-    // ── 5. Voucher entity types (customer / supplier / other). ───────────────
-    const entityByEntry = new Map<number, string>();
-    if (entryIds.length > 0) {
-      const [rv, pv] = await Promise.all([
-        db.select({ jid: receiptVouchersTable.journalEntryId, et: receiptVouchersTable.entityType })
-          .from(receiptVouchersTable)
-          .where(and(eq(receiptVouchersTable.companyId, cid), inArray(receiptVouchersTable.journalEntryId, entryIds))),
-        db.select({ jid: paymentVouchersTable.journalEntryId, et: paymentVouchersTable.entityType })
-          .from(paymentVouchersTable)
-          .where(and(eq(paymentVouchersTable.companyId, cid), inArray(paymentVouchersTable.journalEntryId, entryIds))),
-      ]);
-      for (const r of [...rv, ...pv]) if (r.jid) entityByEntry.set(r.jid, r.et as string);
-    }
-
-    // Dominant contra account type for an entry (largest absolute amount).
-    function dominantContraType(entryId: number): string | null {
-      const rec = contraByEntry.get(entryId);
-      if (!rec) return null;
-      let best: string | null = null, bestAmt = -1;
-      for (const [t, a] of Object.entries(rec.types)) if (a > bestAmt) { best = t; bestAmt = a; }
-      return best;
-    }
-    function isTransfer(entryId: number): boolean {
-      const rec = contraByEntry.get(entryId);
-      if (!rec) return false;
-      // An internal transfer moves money between treasuries, so the entry must
-      // touch ≥2 DISTINCT treasury accounts (e.g. bank↔bank or bank↔cash). One
-      // treasury account alone is a normal deposit/withdrawal, not a transfer.
-      // This is mode-independent — it holds whether one bank or all banks are
-      // selected, because it inspects every line of the entry, not just the
-      // non-selected contra.
-      return rec.treasuryIds.size >= 2;
-    }
-
-    function classifyDeposit(entryId: number, entryType: string | null): keyof Omit<DepositBuckets, "total"> {
-      if (isTransfer(entryId)) return "transfersIn";
-      const et = entryType ?? "";
-      if (et === "sales_invoice" || et === "pos_sale") return "sales";
-      const entity = entityByEntry.get(entryId);
-      if ((et === "receipt" || et === "receipt_voucher") && entity === "customer") return "customers";
-      const ct = dominantContraType(entryId);
-      if (ct === "revenue") return "sales";
-      if (ct === "equity")  return "partner";
-      if (ct === "asset")   return "customers"; // receivable settlement
-      return "other";
-    }
-    function classifyOutflow(entryId: number, entryType: string | null): keyof Omit<OutflowBuckets, "total"> {
-      if (isTransfer(entryId)) return "transfersOut";
-      const et = entryType ?? "";
-      if (et === "payroll_run" || et === "eos_payment" || et === "employee_loan") return "salaries";
-      const entity = entityByEntry.get(entryId);
-      if ((et === "payment" || et === "payment_voucher") && entity === "supplier") return "suppliers";
-      const ct = dominantContraType(entryId);
-      if (ct === "expense")   return "serviceBills";
-      if (ct === "liability") return "suppliers"; // payable settlement
-      return "other";
-    }
+    const { opening, openingFilters, bankLines, classifyDeposit, classifyOutflow } = built.ctx;
 
     // ── 6. Aggregate (overall + optional per-month buckets). ─────────────────
     const deposits = emptyDeposits();
@@ -925,6 +936,105 @@ router.get("/bank-cash-flow", async (req, res) => {
       bookClosing, // independently summed from the ledger — drives the reconciliation banner
       monthly: monthly,
     });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── BANK CASH-FLOW DRILL-DOWN ────────────────────────────────────────────────
+// Lists the individual bank movements that make up ONE cash-flow figure
+// (e.g. deposits → "customers"). Accepts the SAME filters as /bank-cash-flow
+// plus `direction` (deposit|outflow) and `category` (the bucket key), runs the
+// shared classification engine, then returns only the lines that landed in the
+// requested bucket — enriched with doc number, description and the dominant
+// non-treasury counterpart account name. The returned `total` therefore equals
+// the figure shown on the report (same engine, no drift).
+router.get("/bank-cash-flow/breakdown", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    const direction = String(req.query.direction ?? "deposit") === "outflow" ? "outflow" : "deposit";
+    const category = String(req.query.category ?? "");
+    // Reject unknown bucket keys so a typo can't silently return an empty list
+    // that the UI would mistake for "no transactions".
+    const allowedCats = direction === "deposit"
+      ? ["sales", "customers", "partner", "transfersIn", "other"]
+      : ["salaries", "suppliers", "serviceBills", "transfersOut", "other"];
+    if (!allowedCats.includes(category)) {
+      res.status(400).json({ error: `invalid category '${category}' for direction '${direction}'` });
+      return;
+    }
+    if (!cid) { res.json({ direction, category, total: 0, count: 0, rows: [] }); return; }
+    const bid = getBid(req);
+
+    const built = await buildCashFlowContext(req, cid, bid);
+    if (built.status !== "ok") { res.json({ direction, category, total: 0, count: 0, rows: [] }); return; }
+    const { bankLines, treasurySet, classifyDeposit, classifyOutflow } = built.ctx;
+
+    // Filter the in-period bank lines down to the requested bucket — one row per
+    // qualifying bank line (a deposit uses the debit side, an outflow the credit).
+    const matched: { entryId: number; entryType: string | null; entryDate: string; amount: number }[] = [];
+    for (const l of bankLines) {
+      const debit = Number(l.debit || 0), credit = Number(l.credit || 0);
+      if (direction === "deposit" && debit > 0) {
+        if (classifyDeposit(l.entryId, l.entryType) === category) {
+          matched.push({ entryId: l.entryId, entryType: l.entryType, entryDate: l.entryDate, amount: debit });
+        }
+      } else if (direction === "outflow" && credit > 0) {
+        if (classifyOutflow(l.entryId, l.entryType) === category) {
+          matched.push({ entryId: l.entryId, entryType: l.entryType, entryDate: l.entryDate, amount: credit });
+        }
+      }
+    }
+
+    // Enrich the matched entries: header doc number + description, and the
+    // dominant NON-treasury counterpart account name (the "where it came
+    // from / went to" label). Treasury legs are skipped so the counterpart is
+    // the customer / supplier / revenue / expense account, not the bank itself.
+    const ids = Array.from(new Set(matched.map(m => m.entryId)));
+    const metaById = new Map<number, { docNumber: string | null; description: string | null }>();
+    const counterpartById = new Map<number, { nameAr: string; nameEn: string | null; amt: number }>();
+    if (ids.length > 0) {
+      const metas = await db
+        .select({ id: journalEntriesTable.id, docNumber: journalEntriesTable.docNumber, description: journalEntriesTable.description })
+        .from(journalEntriesTable)
+        .where(inArray(journalEntriesTable.id, ids));
+      for (const m of metas) metaById.set(m.id, { docNumber: m.docNumber, description: m.description });
+
+      const lns = await db
+        .select({
+          entryId:   journalEntryLinesTable.entryId,
+          accountId: journalEntryLinesTable.accountId,
+          nameAr:    accountsTable.nameAr,
+          nameEn:    accountsTable.nameEn,
+          debit:     journalEntryLinesTable.debit,
+          credit:    journalEntryLinesTable.credit,
+        })
+        .from(journalEntryLinesTable)
+        .innerJoin(accountsTable, eq(journalEntryLinesTable.accountId, accountsTable.id))
+        .where(inArray(journalEntryLinesTable.entryId, ids));
+      for (const ln of lns) {
+        if (ln.accountId && treasurySet.has(ln.accountId)) continue; // skip the treasury leg
+        const amt = Math.abs(Number(ln.debit || 0)) + Math.abs(Number(ln.credit || 0));
+        const cur = counterpartById.get(ln.entryId);
+        if (!cur || amt > cur.amt) counterpartById.set(ln.entryId, { nameAr: ln.nameAr, nameEn: ln.nameEn, amt });
+      }
+    }
+
+    const rows = matched.map(m => {
+      const meta = metaById.get(m.entryId);
+      const cp = counterpartById.get(m.entryId);
+      return {
+        entryId: m.entryId,
+        date: m.entryDate,
+        amount: m.amount,
+        entryType: m.entryType,
+        docNumber: meta?.docNumber ?? null,
+        description: meta?.description ?? null,
+        counterpartAr: cp?.nameAr ?? null,
+        counterpartEn: cp?.nameEn ?? null,
+      };
+    });
+    const total = rows.reduce((s, r) => s + r.amount, 0);
+
+    res.json({ direction, category, total, count: rows.length, rows });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
