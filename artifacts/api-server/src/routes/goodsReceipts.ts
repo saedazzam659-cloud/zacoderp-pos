@@ -18,6 +18,7 @@ import { fullAuditFor } from "../lib/journalAudit.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { refreshItemCost } from "../lib/stockHelpers.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -606,6 +607,12 @@ router.patch("/:id/post", async (req, res) => {
           expiryDate:  c.expiryDate,
           notes:       c.notes ?? undefined,
         });
+      }
+
+      // 2a-bis. Write the new company-wide weighted-average cost back to the
+      // item master so the الأصناف (items) grid shows the latest landed cost.
+      for (const itemId of new Set(computed.map((c) => c.itemId))) {
+        await refreshItemCost(cid, itemId, tx);
       }
 
       // 2b. Insert journal entry + lines inside the same tx.

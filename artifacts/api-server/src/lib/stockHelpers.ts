@@ -1,5 +1,5 @@
 import { db } from "@workspace/db";
-import { stockBalanceTable, stockLedgerTable } from "@workspace/db";
+import { stockBalanceTable, stockLedgerTable, itemsTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 
 // ─── PHASE E — FIFO/FEFO BATCH PICKING ───────────────────────────────────────
@@ -188,4 +188,43 @@ export async function addStockLedgerEntry(entry: {
   notes?: string;
 }) {
   await db.insert(stockLedgerTable).values(entry);
+}
+
+// ─── ITEM-MASTER COST WRITE-BACK ─────────────────────────────────────────────
+// `stock_balance` holds the per-warehouse weighted-average cost, but the الأصناف
+// (items) grid displays a single `items.cost_price` that nothing updated after a
+// purchase/GRN. This recomputes the COMPANY-WIDE weighted-average cost across all
+// warehouses for one item and writes it back to `items.cost_price`, so the item
+// master reflects the latest landed cost after every inflow.
+//
+// • Company-wide WAC = SUM(qty * avg_cost) / SUM(qty) over every warehouse row.
+// • When total qty is ≤ 0 (everything out of stock) we keep the last known cost
+//   rather than zeroing it, so costing/reports don't lose the figure.
+// Pass the surrounding transaction as `executor` when called inside `/post`.
+export async function refreshItemCost(
+  companyId: number,
+  itemId: number,
+  executor: any = db,
+): Promise<void> {
+  const [agg] = await executor
+    .select({
+      totalQty: sql<string>`COALESCE(SUM(${stockBalanceTable.qty}), 0)`,
+      totalVal: sql<string>`COALESCE(SUM(${stockBalanceTable.qty} * ${stockBalanceTable.avgCost}), 0)`,
+    })
+    .from(stockBalanceTable)
+    .where(and(
+      eq(stockBalanceTable.companyId, companyId),
+      eq(stockBalanceTable.itemId, itemId),
+    ));
+  const totalQty = Number(agg?.totalQty ?? 0);
+  const totalVal = Number(agg?.totalVal ?? 0);
+  if (totalQty <= 0) return;
+  const wac = totalVal / totalQty;
+  await executor
+    .update(itemsTable)
+    .set({ costPrice: String(wac.toFixed(4)), updatedAt: new Date() })
+    .where(and(
+      eq(itemsTable.id, itemId),
+      eq(itemsTable.companyId, companyId),
+    ));
 }

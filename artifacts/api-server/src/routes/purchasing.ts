@@ -18,7 +18,7 @@ import { eq, and, asc, desc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread, multiBranchScopeSpread } from "../middleware/auth.js";
 import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
-import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
+import { upsertBalance, getBalance, addStockLedgerEntry, refreshItemCost } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
@@ -1232,6 +1232,7 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
 
     // Update stock balance for each stockable line (in base units), accumulate inventory debit per warehouse
     const inventoryByWarehouse: Record<number, number> = {};
+    const costRefreshItemIds = new Set<number>();
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
       const factor   = Number(line.conversionFactor || "1") || 1;
@@ -1247,6 +1248,7 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       if (grnSourced) continue;
 
       await upsertBalance(cid, line.itemId, line.warehouseId, qty, costUnit);
+      costRefreshItemIds.add(line.itemId);
       const newBal = await getBalance(cid, line.itemId, line.warehouseId);
       await addStockLedgerEntry({
         companyId:   cid,
@@ -1264,6 +1266,12 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
         expiryDate:  line.expiryDate  ? String(line.expiryDate)  : null,
         notes:       line.notes ?? undefined,
       });
+    }
+
+    // Write the new company-wide weighted-average cost back to the item master
+    // so the الأصناف (items) grid shows the latest landed cost after posting.
+    for (const itemId of costRefreshItemIds) {
+      await refreshItemCost(cid, itemId);
     }
 
     // ── Create journal entry (قيد محاسبي) ──────────────────────────
