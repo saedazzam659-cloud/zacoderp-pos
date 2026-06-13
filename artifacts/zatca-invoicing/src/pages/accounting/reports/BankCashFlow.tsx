@@ -725,9 +725,9 @@ function DrillSheet({ drill, onClose, params, headers, isRtl, fmt }: {
     <Dialog open={!!drill} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent
         dir={isRtl ? "rtl" : "ltr"}
-        className="w-[calc(100vw-2rem)] sm:max-w-2xl max-h-[85vh] p-0 flex flex-col gap-0 overflow-hidden"
+        className="w-[calc(100vw-2rem)] sm:max-w-2xl max-h-[85vh] p-0 flex flex-col gap-0 overflow-hidden bg-white text-slate-900 border border-slate-200 shadow-2xl"
       >
-        <DialogHeader className="p-5 border-b space-y-0 text-start" style={{ borderTopWidth: 3, borderTopColor: color }}>
+        <DialogHeader className="p-5 border-b border-slate-200 bg-white space-y-0 text-start" style={{ borderTopWidth: 3, borderTopColor: color }}>
           <DialogTitle className="flex items-center gap-2 text-base">
             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: color }} />
             {drill?.label}
@@ -757,7 +757,7 @@ function DrillSheet({ drill, onClose, params, headers, isRtl, fmt }: {
           )}
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-white">
           {isLoading && (
             <div className="h-40 flex items-center justify-center text-muted-foreground gap-2 text-sm">
               <Loader2 className="h-4 w-4 animate-spin" />{isRtl ? "جارٍ التحميل…" : "Loading…"}
@@ -776,15 +776,15 @@ function DrillSheet({ drill, onClose, params, headers, isRtl, fmt }: {
           {!isLoading && rows.map((r, i) => {
             const counterpart = (isRtl ? r.counterpartAr : (r.counterpartEn || r.counterpartAr)) || (isRtl ? "غير محدد" : "Unspecified");
             return (
-              <div key={`${r.entryId}-${i}`} className="rounded-lg border p-3 flex items-start justify-between gap-3 hover:bg-muted/40 transition-colors">
+              <div key={`${r.entryId}-${i}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3 flex items-start justify-between gap-3 hover:bg-slate-100 transition-colors">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium truncate">{counterpart}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground whitespace-nowrap">
+                    <span className="font-semibold text-slate-900 truncate">{counterpart}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 whitespace-nowrap">
                       {entryTypeLabel(r.entryType, isRtl)}
                     </span>
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
+                  <div className="text-xs text-slate-600 mt-1 flex items-center gap-2 flex-wrap">
                     <span className="tabular-nums">{r.date}</span>
                     {r.docNumber && (
                       <span className="inline-flex items-center gap-0.5">
@@ -792,7 +792,7 @@ function DrillSheet({ drill, onClose, params, headers, isRtl, fmt }: {
                       </span>
                     )}
                   </div>
-                  {r.description && <div className="text-xs text-muted-foreground mt-1 line-clamp-2">{r.description}</div>}
+                  {r.description && <div className="text-xs text-slate-600 mt-1 line-clamp-2">{r.description}</div>}
                 </div>
                 <div className="text-end font-semibold tabular-nums whitespace-nowrap" style={{ color }}>
                   {fmt(r.amount)}
@@ -803,8 +803,8 @@ function DrillSheet({ drill, onClose, params, headers, isRtl, fmt }: {
         </div>
 
         {!isLoading && rows.length > 0 && (
-          <div className="border-t p-4 flex items-center justify-between bg-muted/30">
-            <span className="text-sm font-medium text-muted-foreground">{isRtl ? "الإجمالي" : "Total"}</span>
+          <div className="border-t border-slate-200 p-4 flex items-center justify-between bg-slate-50">
+            <span className="text-sm font-semibold text-slate-700">{isRtl ? "الإجمالي" : "Total"}</span>
             <span className="text-base font-bold tabular-nums" style={{ color }}>{fmt(total)}</span>
           </div>
         )}
