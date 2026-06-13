@@ -36,7 +36,7 @@ export type WindowsView =
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "user_permissions"
   | "cost_centers" | "branches" | "taxes"
-  | "report_account_statement" | "report_income_statement"
+  | "report_account_statement" | "report_customer_statement" | "report_income_statement"
   | "report_balance_sheet" | "report_trial_balance"
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
   | "number_series" | "settings_guide" | "zatca";
@@ -122,6 +122,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   cost_centers:      { module: "accounting", profile: "erp" },
   taxes:             { module: "accounting", profile: "erp" },
   report_account_statement: { module: "accounting", profile: "erp" },
+  report_customer_statement: { module: "accounting", profile: "erp" },
   report_income_statement:  { module: "accounting", profile: "erp" },
   report_balance_sheet:     { module: "accounting", profile: "erp" },
   report_trial_balance:     { module: "accounting", profile: "erp" },

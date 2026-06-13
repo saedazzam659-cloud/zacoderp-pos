@@ -8,6 +8,7 @@ import { listItems, type LocalItem } from "../lib/items";
 import { listUom, type Uom } from "../lib/uom";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
+import { printSalesDoc, type PrintDoc } from "../lib/invoicePrint";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
@@ -178,8 +179,29 @@ function SalesDetail({ p }: { p: SalesInvoice }) {
           )}
         </tbody>
       </Table>
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button onClick={() => void printSalesDoc("a4", invoiceToPrintDoc(p))} style={btnSecondary}>🖨️ طباعة A4</button>
+        <button onClick={() => void printSalesDoc("thermal", invoiceToPrintDoc(p))} style={btnSecondary}>🧾 طباعة حرارية</button>
+      </div>
     </div>
   );
+}
+
+function invoiceToPrintDoc(p: SalesInvoice): PrintDoc {
+  return {
+    kind: "invoice",
+    docNo: p.invoiceNo,
+    date: p.invoiceDate,
+    customerName: p.buyerName ?? p.customerName,
+    customerVat: p.buyerVat ?? null,
+    paymentMethod: p.paymentMethod,
+    subtotal: p.subtotal,
+    vatTotal: p.vatTotal,
+    grandTotal: p.grandTotal,
+    notes: p.notes,
+    lines: p.lines,
+    qrBase64: p.zatcaQrBase64 ?? null,
+  };
 }
 
 function CreateForm({ deps, onCancel, onDone }: {

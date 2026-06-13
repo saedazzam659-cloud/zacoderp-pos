@@ -27,7 +27,7 @@ export type ScreenKey =
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "cost_centers" | "taxes"
-  | "report_account_statement" | "report_income_statement"
+  | "report_account_statement" | "report_customer_statement" | "report_income_statement"
   | "report_balance_sheet" | "report_trial_balance"
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
   | "number_series" | "branches"
@@ -78,6 +78,7 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "cost_centers", label: "مراكز التكلفة", icon: "🎯", group: "المحاسبة" },
   { key: "taxes", label: "الضرائب", icon: "🧾", group: "المحاسبة" },
   { key: "report_account_statement", label: "كشف حساب", icon: "📄", group: "التقارير المالية" },
+  { key: "report_customer_statement", label: "كشف حساب عميل", icon: "🧑‍💼", group: "التقارير المالية" },
   { key: "report_income_statement", label: "قائمة الدخل", icon: "📈", group: "التقارير المالية" },
   { key: "report_balance_sheet", label: "الميزانية", icon: "⚖️", group: "التقارير المالية" },
   { key: "report_trial_balance", label: "ميزان المراجعة بالمجاميع", icon: "📊", group: "التقارير المالية" },

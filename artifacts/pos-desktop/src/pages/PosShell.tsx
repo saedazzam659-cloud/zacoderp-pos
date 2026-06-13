@@ -40,6 +40,7 @@ import CostCentersAdmin from "./CostCentersAdmin";
 import BranchesAdmin from "./BranchesAdmin";
 import TaxesAdmin from "./TaxesAdmin";
 import AccountStatementReport from "./AccountStatementReport";
+import CustomerStatementReport from "./CustomerStatementReport";
 import IncomeStatementReport from "./IncomeStatementReport";
 import BalanceSheetReport from "./BalanceSheetReport";
 import TrialBalanceReport from "./TrialBalanceReport";
@@ -217,7 +218,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     label: "الحسابات العامة",
     members: [
       "chart_of_accounts", "journal_entries", "cost_centers", "taxes",
-      "report_account_statement", "report_income_statement",
+      "report_account_statement", "report_customer_statement", "report_income_statement",
       "report_balance_sheet", "report_trial_balance",
     ],
     subHeaders: { report_account_statement: "التقارير المالية" },
@@ -526,6 +527,7 @@ export default function PosShell({
     { id: "cost_centers",     icon: "🎯", label: "مراكز التكلفة", perm: "cost_centers" },
     { id: "taxes",            icon: "🧾", label: "الضرائب", perm: "taxes" },
     { id: "report_account_statement", icon: "📄", label: "كشف حساب", perm: "report_account_statement" },
+    { id: "report_customer_statement", icon: "🧑‍💼", label: "كشف حساب عميل", perm: "report_customer_statement" },
     { id: "report_income_statement",  icon: "📈", label: "قائمة الدخل", perm: "report_income_statement" },
     { id: "report_balance_sheet",     icon: "⚖️", label: "الميزانية", perm: "report_balance_sheet" },
     { id: "report_trial_balance",     icon: "📊", label: "ميزان المراجعة بالمجاميع", perm: "report_trial_balance" },
@@ -858,6 +860,9 @@ export default function PosShell({
           {standalone && view === "report_account_statement" && (isAdmin || can("report_account_statement")) && (
             <div style={S.pagePad}><AccountStatementReport initialAccountId={stmtAccountId} onConsumed={() => setStmtAccountId(null)} /></div>
           )}
+          {standalone && view === "report_customer_statement" && (isAdmin || can("report_customer_statement")) && (
+            <div style={S.pagePad}><CustomerStatementReport /></div>
+          )}
           {standalone && view === "report_income_statement" && (isAdmin || can("report_income_statement")) && (
             <div style={S.pagePad}><IncomeStatementReport /></div>
           )}
@@ -959,6 +964,7 @@ function labelFor(v: View): string {
     cost_centers: "مراكز التكلفة",
     branches: "الفروع",
     report_account_statement: "كشف حساب",
+    report_customer_statement: "كشف حساب عميل",
     report_income_statement: "قائمة الدخل",
     report_balance_sheet: "الميزانية",
     report_trial_balance: "ميزان المراجعة بالمجاميع",

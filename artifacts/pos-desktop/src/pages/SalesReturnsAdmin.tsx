@@ -7,6 +7,7 @@ import { listCustomers, type LocalCustomer } from "../lib/customers";
 import { listItems, type LocalItem } from "../lib/items";
 import { listUom, type Uom } from "../lib/uom";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
+import { printSalesDoc, type PrintDoc } from "../lib/invoicePrint";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
@@ -144,8 +145,29 @@ function ReturnDetail({ r }: { r: SalesReturn }) {
           <tr style={{ background: "#f1f5f9", fontWeight: 700 }}><Td colSpan={4 as any}>الإجمالي</Td><Td num>{fmt(r.grandTotal)}</Td></tr>
         </tbody>
       </Table>
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button onClick={() => void printSalesDoc("a4", returnToPrintDoc(r))} style={btnSecondary}>🖨️ طباعة A4</button>
+        <button onClick={() => void printSalesDoc("thermal", returnToPrintDoc(r))} style={btnSecondary}>🧾 طباعة حرارية</button>
+      </div>
     </div>
   );
+}
+
+function returnToPrintDoc(r: SalesReturn): PrintDoc {
+  return {
+    kind: "return",
+    docNo: r.returnNo,
+    date: r.returnDate,
+    customerName: r.customerName,
+    customerVat: null,
+    paymentMethod: r.paymentMethod,
+    subtotal: r.subtotal,
+    vatTotal: r.vatTotal,
+    grandTotal: r.grandTotal,
+    notes: r.notes,
+    lines: r.lines,
+    qrBase64: null,
+  };
 }
 
 function CreateForm({ deps, onCancel, onDone }: {
