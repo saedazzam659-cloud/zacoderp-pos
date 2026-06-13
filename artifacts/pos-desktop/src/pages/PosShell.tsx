@@ -25,6 +25,7 @@ import ReturnsScreen from "./ReturnsScreen";
 import DailyReportPage from "./DailyReport";
 import CustomersAdmin from "./CustomersAdmin";
 import ItemsAdmin from "./ItemsAdmin";
+import ItemGroupsAdmin from "./ItemGroupsAdmin";
 import UomAdmin from "./UomAdmin";
 import UpdatesScreen from "./UpdatesScreen";
 import StandaloneUsersAdmin from "./StandaloneUsersAdmin";
@@ -189,7 +190,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     icon: "🏬",
     label: "المخازن",
     members: [
-      "items", "uom", "warehouses", "stock_transfers",
+      "items", "item_groups", "uom", "warehouses", "stock_transfers",
       "stocktakes", "stock_adjustments", "stock_movements", "low_stock",
       "stock_import",
     ],
@@ -264,7 +265,27 @@ export default function PosShell({
   const [heartbeatErr, setHeartbeatErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [showPeripherals, setShowPeripherals] = useState(false);
-  const [view, setView] = useState<View>("sales");
+  // ── Tabbed workspace ──────────────────────────────────────────────
+  // Multiple screens stay mounted at once (keep-alive) so each preserves its
+  // own state; the user switches between them via the tab bar. `activeTab` is
+  // the visible one; every other open tab is kept in the DOM with display:none.
+  // `setView(v)` is a backward-compatible shim used by all existing handlers:
+  // it opens the tab (if not already open) and activates it.
+  const [openTabs, setOpenTabs] = useState<View[]>(["sales"]);
+  const [activeTab, setActiveTab] = useState<View>("sales");
+  const view = activeTab;
+  const setView = useCallback((v: View) => {
+    setOpenTabs((prev) => (prev.includes(v) ? prev : [...prev, v]));
+    setActiveTab(v);
+  }, []);
+  const closeTab = useCallback((v: View) => {
+    setOpenTabs((prev) => {
+      const next = prev.filter((t) => t !== v);
+      if (next.length === 0) { setActiveTab("sales"); return ["sales"]; }
+      setActiveTab((cur) => (cur === v ? next[next.length - 1] : cur));
+      return next;
+    });
+  }, []);
   // Drill-down target: set when a COA balance pill is clicked, consumed by
   // AccountStatementReport to preselect + auto-run for that account.
   const [stmtAccountId, setStmtAccountId] = useState<number | null>(null);
@@ -332,9 +353,16 @@ export default function PosShell({
     (v: View) => isModuleEnabled(v, { profile: appProfile, standalone, flags: moduleFlags }),
     [appProfile, standalone, moduleFlags],
   );
-  // If the active screen becomes gated (profile change / SuperAdmin disabled the
-  // module mid-session), fall back to the always-available sales register.
+  // If a screen becomes gated (profile change / SuperAdmin disabled the module
+  // mid-session), close every now-forbidden open tab and fall back to the
+  // always-available sales register. Pruning openTabs (not just the active view)
+  // closes the access-control gap where a previously-opened tab chip would keep
+  // a disabled module reachable.
   useEffect(() => {
+    setOpenTabs((prev) => {
+      const allowed = prev.filter((t) => t === "sales" || moduleVisible(t));
+      return allowed.length === prev.length ? prev : (allowed.length ? allowed : ["sales"]);
+    });
     if (!moduleVisible(view)) setView("sales");
   }, [moduleVisible, view]);
 
@@ -497,6 +525,7 @@ export default function PosShell({
     { id: "customers",        icon: "👥", label: "العملاء", perm: "customers" },
     { id: "suppliers",        icon: "🏭", label: "الموردون", perm: "suppliers" },
     { id: "items",            icon: "📦", label: "الأصناف", perm: "items" },
+    { id: "item_groups",      icon: "🗂️", label: "مجموعات الأصناف", perm: "item_groups" },
     { id: "stock_import",     icon: "📥", label: "استيراد الأرصدة", perm: "stock_import" },
     { id: "low_stock",        icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined, perm: "low_stock" },
     { id: "uom",              icon: "📐", label: "وحدات القياس", perm: "uom" },
@@ -570,6 +599,7 @@ export default function PosShell({
     { id: "daily",     icon: "📊", label: "تقرير اليومية" },
     { id: "customers", icon: "👥", label: "العملاء" },
     { id: "items",     icon: "📦", label: "الأصناف" },
+    { id: "item_groups", icon: "🗂️", label: "مجموعات الأصناف" },
     { id: "stock_import", icon: "📥", label: "استيراد الأرصدة" },
     { id: "invoice_import", icon: "📂", label: "استيراد الفواتير" },
     { id: "low_stock", icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined },
@@ -584,6 +614,193 @@ export default function PosShell({
   // filter above. Hides ERP-only screens in the POS-only profile and any module
   // the SuperAdmin disabled for this company (cloud mode).
   const navItems = navItemsRaw.filter((it) => moduleVisible(it.id));
+
+  // Keep-alive tab renderer: returns the single screen matching `v`. Every
+  // open tab is rendered (mounted) at once; inactive ones are hidden with
+  // display:none so their component state survives a tab switch.
+  const renderView = (v: View) => (
+    <>
+          {v === "sales" && (
+            usesNewRegisterScreen(vertical)
+              ? <RegisterScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={effectiveCashierName} />
+              : <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={effectiveCashierName} />
+          )}
+          {v === "returns" && <div style={S.pagePad}><ReturnsScreen companyName={effectiveCompanyName} cashierName={effectiveCashierName} /></div>}
+          {!standalone && v === "pending" && <div style={S.pagePad}><PendingInvoices companyName={effectiveCompanyName} /></div>}
+          {v === "parked" && (
+            <div style={S.pagePad}>
+              <ParkedCarts posSessionId={posSessionId} onResume={() => setView("sales")} />
+            </div>
+          )}
+          {v === "daily" && (
+            <div style={S.pagePad}>
+              <DailyReportPage companyName={effectiveCompanyName} cashierName={effectiveCashierName} />
+            </div>
+          )}
+          {v === "customers" && <div style={S.pagePad}><CustomersAdmin /></div>}
+          {v === "items" && <div style={S.pagePad}><ItemsAdmin /></div>}
+          {v === "item_groups" && <div style={S.pagePad}><ItemGroupsAdmin /></div>}
+          {v === "stock_import" && <div style={S.pagePad}><StockImport onDone={() => void refreshLowStock()} /></div>}
+          {v === "invoice_import" && <div style={S.pagePad}><InvoiceImport sellerName={effectiveCompanyName} /></div>}
+          {v === "low_stock" && <div style={S.pagePad}><LowStockReport onGoToImport={() => setView("stock_import")} /></div>}
+          {v === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
+          {v === "scale" && <div style={S.pagePad}><ScaleSettings /></div>}
+          {v === "network" && <div style={S.pagePad}><NetworkSettings /></div>}
+          {v === "expiry" && isPharmacy && <div style={S.pagePad}><ExpiryReport onJumpToItems={() => setView("items")} /></div>}
+          {!standalone && v === "dashboard" && (
+            <div style={S.pagePad}>
+              <DashboardView
+                deviceId={deviceId} status={status} baseUrl={baseUrl} busy={busy} pulled={pulled}
+                actionErr={actionErr} heartbeatErr={heartbeatErr}
+                onPull={doPull} onPush={doPush} pushSummary={pushSummary} onDeactivate={doDeactivate}
+              />
+            </div>
+          )}
+          {standalone && v === "dashboard" && (
+            <div style={S.pagePad}>
+              <StandaloneDashboardView
+                license={standaloneLicense}
+                session={standaloneSession}
+                onOpenPeripherals={() => setShowPeripherals(true)}
+                onOpenScale={() => setView("scale")}
+                onOpenUsers={() => setView("users")}
+                onWipe={onSignOut}
+              />
+            </div>
+          )}
+          {v === "updates" && (
+            <div style={S.pagePad}><UpdatesScreen baseUrl={baseUrl} /></div>
+          )}
+          {standalone && v === "users" && standaloneSession && isAdmin && (
+            <StandaloneUsersAdmin session={standaloneSession} maxUsers={standaloneLicense?.maxUsers ?? 1} />
+          )}
+          {/* Task #207 — accounting & operations screens (standalone only). */}
+          {standalone && v === "suppliers" && (isAdmin || can("suppliers")) && (
+            <div style={S.pagePad}><SuppliersAdmin /></div>
+          )}
+          {standalone && v === "purchases" && (isAdmin || can("purchases")) && (
+            <div style={S.pagePad}><PurchasesAdmin /></div>
+          )}
+          {standalone && v === "purchase_returns" && (isAdmin || can("purchase_returns")) && (
+            <div style={S.pagePad}><PurchaseReturnsAdmin /></div>
+          )}
+          {standalone && v === "salespersons" && (isAdmin || can("salespersons")) && (
+            <div style={S.pagePad}><SalespersonsAdmin /></div>
+          )}
+          {standalone && v === "quotations" && (isAdmin || can("quotations")) && (
+            <div style={S.pagePad}><QuotationsAdmin /></div>
+          )}
+          {standalone && v === "sales_orders" && (isAdmin || can("sales_orders")) && (
+            <div style={S.pagePad}><SalesOrdersAdmin /></div>
+          )}
+          {standalone && v === "sales_invoices" && (isAdmin || can("sales_invoices")) && (
+            <div style={S.pagePad}><SalesInvoicesAdmin /></div>
+          )}
+          {standalone && v === "sales_returns" && (isAdmin || can("sales_returns")) && (
+            <div style={S.pagePad}><SalesReturnsAdmin /></div>
+          )}
+          {standalone && v === "report_sales_daily" && (isAdmin || can("report_sales_daily")) && (
+            <div style={S.pagePad}><DailySalesReport /></div>
+          )}
+          {standalone && v === "report_sales_by_period" && (isAdmin || can("report_sales_by_period")) && (
+            <div style={S.pagePad}><SalesByPeriodReport /></div>
+          )}
+          {standalone && v === "report_sales_by_item" && (isAdmin || can("report_sales_by_item")) && (
+            <div style={S.pagePad}><SalesByItemReport /></div>
+          )}
+          {standalone && v === "report_sales_by_customer" && (isAdmin || can("report_sales_by_customer")) && (
+            <div style={S.pagePad}><SalesByCustomerReport /></div>
+          )}
+          {standalone && v === "report_sales_daily_detailed" && (isAdmin || can("report_sales_daily_detailed")) && (
+            <div style={S.pagePad}><DailyDetailedSalesReport /></div>
+          )}
+          {standalone && v === "report_sales_payment_mix" && (isAdmin || can("report_sales_payment_mix")) && (
+            <div style={S.pagePad}><SalesByPaymentMethodReport /></div>
+          )}
+          {standalone && v === "report_sales_returns" && (isAdmin || can("report_sales_returns")) && (
+            <div style={S.pagePad}><SalesReturnsReport /></div>
+          )}
+          {standalone && v === "report_sales_top_customers" && (isAdmin || can("report_sales_top_customers")) && (
+            <div style={S.pagePad}><TopCustomersReport /></div>
+          )}
+          {standalone && v === "cash_boxes" && (isAdmin || can("cash_boxes")) && (
+            <div style={S.pagePad}><CashBoxesAdmin /></div>
+          )}
+          {standalone && v === "banks" && (isAdmin || can("banks")) && (
+            <div style={S.pagePad}><BanksAdmin /></div>
+          )}
+          {standalone && v === "financial_tx" && (isAdmin || can("financial_tx")) && (
+            <div style={S.pagePad}><FinancialTransactionsAdmin /></div>
+          )}
+          {standalone && v === "chart_of_accounts" && (isAdmin || can("chart_of_accounts")) && (
+            <div style={S.pagePad}><ChartOfAccounts onDrillToStatement={(id) => { setStmtAccountId(id); setView("report_account_statement"); }} /></div>
+          )}
+          {standalone && v === "journal_entries" && (isAdmin || can("journal_entries")) && (
+            <div style={S.pagePad}><JournalEntries /></div>
+          )}
+          {standalone && v === "cost_centers" && (isAdmin || can("cost_centers")) && (
+            <div style={S.pagePad}><CostCentersAdmin /></div>
+          )}
+          {standalone && v === "branches" && (isAdmin || can("branches")) && (
+            <div style={S.pagePad}><BranchesAdmin /></div>
+          )}
+          {standalone && v === "report_account_statement" && (isAdmin || can("report_account_statement")) && (
+            <div style={S.pagePad}><AccountStatementReport initialAccountId={stmtAccountId} onConsumed={() => setStmtAccountId(null)} /></div>
+          )}
+          {standalone && v === "report_customer_statement" && (isAdmin || can("report_customer_statement")) && (
+            <div style={S.pagePad}><CustomerStatementReport /></div>
+          )}
+          {standalone && v === "report_income_statement" && (isAdmin || can("report_income_statement")) && (
+            <div style={S.pagePad}><IncomeStatementReport /></div>
+          )}
+          {standalone && v === "report_balance_sheet" && (isAdmin || can("report_balance_sheet")) && (
+            <div style={S.pagePad}><BalanceSheetReport /></div>
+          )}
+          {standalone && v === "report_trial_balance" && (isAdmin || can("report_trial_balance")) && (
+            <div style={S.pagePad}><TrialBalanceReport /></div>
+          )}
+          {standalone && v === "user_permissions" && isAdmin && standaloneSession && (
+            <div style={S.pagePad}><UserPermissionsAdmin session={standaloneSession} /></div>
+          )}
+          {standalone && v === "number_series" && isAdmin && (
+            <div style={S.pagePad}><NumberSeriesAdmin /></div>
+          )}
+          {standalone && v === "taxes" && (isAdmin || can("taxes")) && (
+            <div style={S.pagePad}><TaxesAdmin /></div>
+          )}
+          {/* Task #208 — warehouses & inventory ops (standalone only). */}
+          {standalone && v === "warehouses" && (isAdmin || can("warehouses")) && (
+            <div style={S.pagePad}><WarehousesAdmin /></div>
+          )}
+          {standalone && v === "stocktakes" && (isAdmin || can("stocktakes")) && (
+            <div style={S.pagePad}><StocktakesAdmin /></div>
+          )}
+          {standalone && v === "stock_adjustments" && (isAdmin || can("stock_adjustments")) && (
+            <div style={S.pagePad}><StockAdjustmentsAdmin /></div>
+          )}
+          {standalone && v === "stock_movements" && (isAdmin || can("stock_movements")) && (
+            <div style={S.pagePad}><StockMovementsReport /></div>
+          )}
+          {standalone && v === "stock_transfers" && (isAdmin || can("stock_transfers")) && (
+            <div style={S.pagePad}><StockTransfersAdmin /></div>
+          )}
+          {standalone && v === "currencies" && (isAdmin || can("currencies")) && (
+            <div style={S.pagePad}><CurrenciesAdmin /></div>
+          )}
+          {standalone && v === "exchange_rates" && (isAdmin || can("exchange_rates")) && (
+            <div style={S.pagePad}><ExchangeRatesAdmin /></div>
+          )}
+          {standalone && v === "treasury_transfers" && (isAdmin || can("treasury_transfers")) && (
+            <div style={S.pagePad}><TreasuryTransfersAdmin /></div>
+          )}
+          {standalone && v === "settings_guide" && (isAdmin || can("settings_guide")) && (
+            <div style={S.pagePad}><SettingsGuide /></div>
+          )}
+          {standalone && v === "zatca" && isZatcaCountry() && (isAdmin || can("zatca")) && (
+            <div style={S.pagePad}><ZatcaOnboarding /></div>
+          )}
+    </>
+  );
 
   return (
     <div dir="rtl" style={S.shell}>
@@ -732,186 +949,34 @@ export default function PosShell({
           </div>
         )}
 
+        {/* Tab bar — one chip per open screen; click to switch, × to close. */}
+        {openTabs.length > 1 && (
+          <div style={S.tabBar}>
+            {openTabs.map((tab) => {
+              const active = tab === activeTab;
+              return (
+                <div key={tab} onClick={() => setActiveTab(tab)}
+                     title={labelFor(tab)}
+                     style={active ? S.tabChipActive : S.tabChip}>
+                  <span style={S.tabChipLabel}>{labelFor(tab)}</span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); closeTab(tab); }}
+                    style={S.tabChipClose}
+                    title="إغلاق التبويب"
+                  >×</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* Page content */}
         <main style={S.content}>
-          {view === "sales" && (
-            usesNewRegisterScreen(vertical)
-              ? <RegisterScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={effectiveCashierName} />
-              : <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={effectiveCashierName} />
-          )}
-          {view === "returns" && <div style={S.pagePad}><ReturnsScreen companyName={effectiveCompanyName} cashierName={effectiveCashierName} /></div>}
-          {!standalone && view === "pending" && <div style={S.pagePad}><PendingInvoices companyName={effectiveCompanyName} /></div>}
-          {view === "parked" && (
-            <div style={S.pagePad}>
-              <ParkedCarts posSessionId={posSessionId} onResume={() => setView("sales")} />
+          {openTabs.map((tab) => (
+            <div key={tab} style={{ display: tab === activeTab ? "contents" : "none" }}>
+              {renderView(tab)}
             </div>
-          )}
-          {view === "daily" && (
-            <div style={S.pagePad}>
-              <DailyReportPage companyName={effectiveCompanyName} cashierName={effectiveCashierName} />
-            </div>
-          )}
-          {view === "customers" && <div style={S.pagePad}><CustomersAdmin /></div>}
-          {view === "items" && <div style={S.pagePad}><ItemsAdmin /></div>}
-          {view === "stock_import" && <div style={S.pagePad}><StockImport onDone={() => void refreshLowStock()} /></div>}
-          {view === "invoice_import" && <div style={S.pagePad}><InvoiceImport sellerName={effectiveCompanyName} /></div>}
-          {view === "low_stock" && <div style={S.pagePad}><LowStockReport onGoToImport={() => setView("stock_import")} /></div>}
-          {view === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
-          {view === "scale" && <div style={S.pagePad}><ScaleSettings /></div>}
-          {view === "network" && <div style={S.pagePad}><NetworkSettings /></div>}
-          {view === "expiry" && isPharmacy && <div style={S.pagePad}><ExpiryReport onJumpToItems={() => setView("items")} /></div>}
-          {!standalone && view === "dashboard" && (
-            <div style={S.pagePad}>
-              <DashboardView
-                deviceId={deviceId} status={status} baseUrl={baseUrl} busy={busy} pulled={pulled}
-                actionErr={actionErr} heartbeatErr={heartbeatErr}
-                onPull={doPull} onPush={doPush} pushSummary={pushSummary} onDeactivate={doDeactivate}
-              />
-            </div>
-          )}
-          {standalone && view === "dashboard" && (
-            <div style={S.pagePad}>
-              <StandaloneDashboardView
-                license={standaloneLicense}
-                session={standaloneSession}
-                onOpenPeripherals={() => setShowPeripherals(true)}
-                onOpenScale={() => setView("scale")}
-                onOpenUsers={() => setView("users")}
-                onWipe={onSignOut}
-              />
-            </div>
-          )}
-          {view === "updates" && (
-            <div style={S.pagePad}><UpdatesScreen baseUrl={baseUrl} /></div>
-          )}
-          {standalone && view === "users" && standaloneSession && isAdmin && (
-            <StandaloneUsersAdmin session={standaloneSession} maxUsers={standaloneLicense?.maxUsers ?? 1} />
-          )}
-          {/* Task #207 — accounting & operations screens (standalone only). */}
-          {standalone && view === "suppliers" && (isAdmin || can("suppliers")) && (
-            <div style={S.pagePad}><SuppliersAdmin /></div>
-          )}
-          {standalone && view === "purchases" && (isAdmin || can("purchases")) && (
-            <div style={S.pagePad}><PurchasesAdmin /></div>
-          )}
-          {standalone && view === "purchase_returns" && (isAdmin || can("purchase_returns")) && (
-            <div style={S.pagePad}><PurchaseReturnsAdmin /></div>
-          )}
-          {standalone && view === "salespersons" && (isAdmin || can("salespersons")) && (
-            <div style={S.pagePad}><SalespersonsAdmin /></div>
-          )}
-          {standalone && view === "quotations" && (isAdmin || can("quotations")) && (
-            <div style={S.pagePad}><QuotationsAdmin /></div>
-          )}
-          {standalone && view === "sales_orders" && (isAdmin || can("sales_orders")) && (
-            <div style={S.pagePad}><SalesOrdersAdmin /></div>
-          )}
-          {standalone && view === "sales_invoices" && (isAdmin || can("sales_invoices")) && (
-            <div style={S.pagePad}><SalesInvoicesAdmin /></div>
-          )}
-          {standalone && view === "sales_returns" && (isAdmin || can("sales_returns")) && (
-            <div style={S.pagePad}><SalesReturnsAdmin /></div>
-          )}
-          {standalone && view === "report_sales_daily" && (isAdmin || can("report_sales_daily")) && (
-            <div style={S.pagePad}><DailySalesReport /></div>
-          )}
-          {standalone && view === "report_sales_by_period" && (isAdmin || can("report_sales_by_period")) && (
-            <div style={S.pagePad}><SalesByPeriodReport /></div>
-          )}
-          {standalone && view === "report_sales_by_item" && (isAdmin || can("report_sales_by_item")) && (
-            <div style={S.pagePad}><SalesByItemReport /></div>
-          )}
-          {standalone && view === "report_sales_by_customer" && (isAdmin || can("report_sales_by_customer")) && (
-            <div style={S.pagePad}><SalesByCustomerReport /></div>
-          )}
-          {standalone && view === "report_sales_daily_detailed" && (isAdmin || can("report_sales_daily_detailed")) && (
-            <div style={S.pagePad}><DailyDetailedSalesReport /></div>
-          )}
-          {standalone && view === "report_sales_payment_mix" && (isAdmin || can("report_sales_payment_mix")) && (
-            <div style={S.pagePad}><SalesByPaymentMethodReport /></div>
-          )}
-          {standalone && view === "report_sales_returns" && (isAdmin || can("report_sales_returns")) && (
-            <div style={S.pagePad}><SalesReturnsReport /></div>
-          )}
-          {standalone && view === "report_sales_top_customers" && (isAdmin || can("report_sales_top_customers")) && (
-            <div style={S.pagePad}><TopCustomersReport /></div>
-          )}
-          {standalone && view === "cash_boxes" && (isAdmin || can("cash_boxes")) && (
-            <div style={S.pagePad}><CashBoxesAdmin /></div>
-          )}
-          {standalone && view === "banks" && (isAdmin || can("banks")) && (
-            <div style={S.pagePad}><BanksAdmin /></div>
-          )}
-          {standalone && view === "financial_tx" && (isAdmin || can("financial_tx")) && (
-            <div style={S.pagePad}><FinancialTransactionsAdmin /></div>
-          )}
-          {standalone && view === "chart_of_accounts" && (isAdmin || can("chart_of_accounts")) && (
-            <div style={S.pagePad}><ChartOfAccounts onDrillToStatement={(id) => { setStmtAccountId(id); setView("report_account_statement"); }} /></div>
-          )}
-          {standalone && view === "journal_entries" && (isAdmin || can("journal_entries")) && (
-            <div style={S.pagePad}><JournalEntries /></div>
-          )}
-          {standalone && view === "cost_centers" && (isAdmin || can("cost_centers")) && (
-            <div style={S.pagePad}><CostCentersAdmin /></div>
-          )}
-          {standalone && view === "branches" && (isAdmin || can("branches")) && (
-            <div style={S.pagePad}><BranchesAdmin /></div>
-          )}
-          {standalone && view === "report_account_statement" && (isAdmin || can("report_account_statement")) && (
-            <div style={S.pagePad}><AccountStatementReport initialAccountId={stmtAccountId} onConsumed={() => setStmtAccountId(null)} /></div>
-          )}
-          {standalone && view === "report_customer_statement" && (isAdmin || can("report_customer_statement")) && (
-            <div style={S.pagePad}><CustomerStatementReport /></div>
-          )}
-          {standalone && view === "report_income_statement" && (isAdmin || can("report_income_statement")) && (
-            <div style={S.pagePad}><IncomeStatementReport /></div>
-          )}
-          {standalone && view === "report_balance_sheet" && (isAdmin || can("report_balance_sheet")) && (
-            <div style={S.pagePad}><BalanceSheetReport /></div>
-          )}
-          {standalone && view === "report_trial_balance" && (isAdmin || can("report_trial_balance")) && (
-            <div style={S.pagePad}><TrialBalanceReport /></div>
-          )}
-          {standalone && view === "user_permissions" && isAdmin && standaloneSession && (
-            <div style={S.pagePad}><UserPermissionsAdmin session={standaloneSession} /></div>
-          )}
-          {standalone && view === "number_series" && isAdmin && (
-            <div style={S.pagePad}><NumberSeriesAdmin /></div>
-          )}
-          {standalone && view === "taxes" && (isAdmin || can("taxes")) && (
-            <div style={S.pagePad}><TaxesAdmin /></div>
-          )}
-          {/* Task #208 — warehouses & inventory ops (standalone only). */}
-          {standalone && view === "warehouses" && (isAdmin || can("warehouses")) && (
-            <div style={S.pagePad}><WarehousesAdmin /></div>
-          )}
-          {standalone && view === "stocktakes" && (isAdmin || can("stocktakes")) && (
-            <div style={S.pagePad}><StocktakesAdmin /></div>
-          )}
-          {standalone && view === "stock_adjustments" && (isAdmin || can("stock_adjustments")) && (
-            <div style={S.pagePad}><StockAdjustmentsAdmin /></div>
-          )}
-          {standalone && view === "stock_movements" && (isAdmin || can("stock_movements")) && (
-            <div style={S.pagePad}><StockMovementsReport /></div>
-          )}
-          {standalone && view === "stock_transfers" && (isAdmin || can("stock_transfers")) && (
-            <div style={S.pagePad}><StockTransfersAdmin /></div>
-          )}
-          {standalone && view === "currencies" && (isAdmin || can("currencies")) && (
-            <div style={S.pagePad}><CurrenciesAdmin /></div>
-          )}
-          {standalone && view === "exchange_rates" && (isAdmin || can("exchange_rates")) && (
-            <div style={S.pagePad}><ExchangeRatesAdmin /></div>
-          )}
-          {standalone && view === "treasury_transfers" && (isAdmin || can("treasury_transfers")) && (
-            <div style={S.pagePad}><TreasuryTransfersAdmin /></div>
-          )}
-          {standalone && view === "settings_guide" && (isAdmin || can("settings_guide")) && (
-            <div style={S.pagePad}><SettingsGuide /></div>
-          )}
-          {standalone && view === "zatca" && isZatcaCountry() && (isAdmin || can("zatca")) && (
-            <div style={S.pagePad}><ZatcaOnboarding /></div>
-          )}
+          ))}
         </main>
       </div>
 
@@ -930,6 +995,7 @@ function labelFor(v: View): string {
     daily: "تقرير اليومية",
     customers: "العملاء",
     items: "الأصناف",
+    item_groups: "مجموعات الأصناف",
     stock_import: "استيراد الأرصدة الافتتاحية",
     low_stock: "الأصناف تحت الحد الأدنى",
     uom: "وحدات القياس",
@@ -1633,6 +1699,11 @@ const S = {
     border: "1px solid #86efac", borderRadius: 6, cursor: "pointer",
     fontSize: 12, fontFamily: "inherit",
   } as const,
+  tabBar: { display: "flex", gap: 4, alignItems: "stretch", padding: "6px 10px 0", background: "#e2e8f0", borderBottom: "1px solid #cbd5e1", overflowX: "auto" as const, flexShrink: 0 } as const,
+  tabChip: { display: "flex", alignItems: "center", gap: 6, padding: "7px 10px 7px 12px", background: "#f1f5f9", color: "#475569", border: "1px solid #cbd5e1", borderBottom: "none", borderRadius: "8px 8px 0 0", cursor: "pointer", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" as const, maxWidth: 220 } as const,
+  tabChipActive: { display: "flex", alignItems: "center", gap: 6, padding: "7px 10px 7px 12px", background: "#fff", color: "#1d4ed8", border: "1px solid #cbd5e1", borderBottom: "1px solid #fff", borderRadius: "8px 8px 0 0", cursor: "pointer", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" as const, maxWidth: 220, position: "relative" as const, top: 1 } as const,
+  tabChipLabel: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const } as const,
+  tabChipClose: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 4, border: "none", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 0 } as const,
   content: { flex: 1, overflow: "hidden", minHeight: 0, display: "flex", flexDirection: "column" as const } as const,
   pagePad: { padding: 24, overflowY: "auto" as const, flex: 1 } as const,
 

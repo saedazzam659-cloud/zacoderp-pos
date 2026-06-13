@@ -49,6 +49,13 @@ export interface LocalItem {
   updatedAt?: string;
   /** Soft-delete tombstone (overlay). When true, listItems filters this row out. */
   deleted?: boolean;
+  // Classification (LOCAL-ONLY — LS overlay, no SQLite/cloud column).
+  /** FK to itemGroups.id (مجموعة الصنف). */
+  groupId?: number | null;
+  /** طبيعة الصنف: "service" = خدمي، "stock" = مخزني. */
+  nature?: "service" | "stock" | null;
+  /** نوع الصنف: تام / نصف مصنع / مواد خام / أخرى. */
+  itemType?: "finished" | "semi" | "raw" | "other" | null;
   // Pharmacy vertical (Task #200) — populated when the store's vertical is
   // "pharmacy". Mapped from snake_case Rust columns by fromRust().
   activeIngredient?: string | null;
@@ -338,6 +345,10 @@ export interface CreateItemInput {
   plu?: string | null;
   // Multi-unit pricing — LOCAL-ONLY (LS overlay).
   units?: ItemUnit[] | null;
+  // Classification — LOCAL-ONLY (LS overlay).
+  groupId?: number | null;
+  nature?: "service" | "stock" | null;
+  itemType?: "finished" | "semi" | "raw" | "other" | null;
 }
 
 export async function createItem(input: CreateItemInput): Promise<LocalItem> {
@@ -365,6 +376,9 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
     pricePerKg: input.pricePerKg ?? null,
     plu: input.plu ?? null,
     units: input.units ?? null,
+    groupId: input.groupId ?? null,
+    nature: input.nature ?? null,
+    itemType: input.itemType ?? null,
     updatedAt: new Date().toISOString(),
   };
   all.push(row);

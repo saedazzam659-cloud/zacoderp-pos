@@ -7,6 +7,7 @@ import {
   type LocalItem, type CreateItemInput, type ItemUnit,
 } from "../lib/items";
 import { listUom, getDefaultUom } from "../lib/uom";
+import { listItemGroups } from "../lib/itemGroups";
 import { getAllStockShared, type StockMap } from "../lib/stock";
 import { getVertical, type Vertical } from "../lib/standalone";
 import { currencySymbol } from "../lib/currency";
@@ -1004,6 +1005,7 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
   onSaved: (msg: string) => void;
 }) {
   const uoms = listUom();
+  const itemGroups = listItemGroups();
   const [form, setForm] = useState<CreateItemInput>({
     code: initial?.code ?? "",
     nameAr: initial?.nameAr ?? "",
@@ -1012,6 +1014,9 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
     salePrice: initial?.salePrice ?? 0,
     vatRate: initial?.vatRate ?? (isPharmacy ? 14 : 15),
     uomId: initial?.uomId ?? getDefaultUom()?.id ?? null,
+    groupId: initial?.groupId ?? null,
+    nature: initial?.nature ?? "stock",
+    itemType: initial?.itemType ?? "finished",
     // Pharmacy extension — only sent on submit when isPharmacy is true.
     activeIngredient: initial?.activeIngredient ?? "",
     dosageForm: initial?.dosageForm ?? "",
@@ -1126,31 +1131,52 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
     <div style={{ background: "#fff", border: `2px solid ${initial ? "#2563eb" : "#16a34a"}`, borderRadius: 12, padding: 20, marginBottom: 16 }}>
       <h3 style={{ ...S.modalTitle, color: initial ? "#1e40af" : "#15803d" }}>{initial ? "✏️ تعديل صنف" : "➕ صنف جديد"}</h3>
 
-        <Field label="الاسم بالعربية *">
-          <input value={form.nameAr} onChange={(e) => setForm({ ...form, nameAr: e.target.value })} style={S.input} autoFocus />
-        </Field>
-        <Field label="الاسم بالإنجليزية">
-          <input value={form.nameEn ?? ""} onChange={(e) => setForm({ ...form, nameEn: e.target.value })} style={S.input} />
-        </Field>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        {/* Core data — 4 fields per row for a denser, tidier layout. */}
+        <div style={S.formGrid4}>
+          <Field label="الاسم بالعربية *">
+            <input value={form.nameAr} onChange={(e) => setForm({ ...form, nameAr: e.target.value })} style={S.input} autoFocus />
+          </Field>
+          <Field label="الاسم بالإنجليزية">
+            <input value={form.nameEn ?? ""} onChange={(e) => setForm({ ...form, nameEn: e.target.value })} style={S.input} />
+          </Field>
           <Field label="الكود الداخلي">
             <input value={form.code ?? ""} onChange={(e) => setForm({ ...form, code: e.target.value })} style={S.input} placeholder="مثلاً: ITEM-001" />
           </Field>
           <Field label="الباركود">
             <input value={form.barcode ?? ""} onChange={(e) => setForm({ ...form, barcode: e.target.value })} style={S.input} placeholder="EAN-13" />
           </Field>
-        </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-          <Field label={form.isWeighed ? "سعر البيع (يُستبدل بـ السعر/كجم)" : "سعر البيع *"}>
-            <input type="number" step="0.01" min="0" value={form.salePrice}
-                   disabled={!!form.isWeighed}
-                   onChange={(e) => setForm({ ...form, salePrice: Number(e.target.value) })}
-                   style={{ ...S.input, opacity: form.isWeighed ? 0.5 : 1 }} />
+          <Field label="مجموعة الصنف">
+            <SearchCombobox
+              value={form.groupId ?? ""}
+              onChange={(v) => setForm({ ...form, groupId: v === "" ? null : Number(v) })}
+              style={S.input}
+              options={[
+                { value: "", label: "— بدون —" },
+                ...itemGroups.map((g) => ({
+                  value: g.id,
+                  label: `${g.nameAr}${g.code ? ` (${g.code})` : ""}`,
+                })),
+              ]}
+            />
           </Field>
-          <Field label="نسبة الضريبة %">
-            <input type="number" step="0.5" min="0" max="100" value={form.vatRate} onChange={(e) => setForm({ ...form, vatRate: Number(e.target.value) })} style={S.input} />
+          <Field label="طبيعة الصنف">
+            <select value={form.nature ?? "stock"}
+                    onChange={(e) => setForm({ ...form, nature: e.target.value as CreateItemInput["nature"] })}
+                    style={S.input}>
+              <option value="stock">مخزني</option>
+              <option value="service">خدمي</option>
+            </select>
+          </Field>
+          <Field label="نوع الصنف">
+            <select value={form.itemType ?? "finished"}
+                    onChange={(e) => setForm({ ...form, itemType: e.target.value as CreateItemInput["itemType"] })}
+                    style={S.input}>
+              <option value="finished">تام</option>
+              <option value="semi">نصف مصنع</option>
+              <option value="raw">مواد خام</option>
+              <option value="other">أخرى</option>
+            </select>
           </Field>
           <Field label="وحدة القياس">
             <SearchCombobox
@@ -1162,6 +1188,16 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
                 label: `${u.nameAr}${u.shortCode ? ` (${u.shortCode})` : ""}`,
               }))}
             />
+          </Field>
+
+          <Field label={form.isWeighed ? "سعر البيع (يُستبدل بـ السعر/كجم)" : "سعر البيع *"}>
+            <input type="number" step="0.01" min="0" value={form.salePrice}
+                   disabled={!!form.isWeighed}
+                   onChange={(e) => setForm({ ...form, salePrice: Number(e.target.value) })}
+                   style={{ ...S.input, opacity: form.isWeighed ? 0.5 : 1 }} />
+          </Field>
+          <Field label="نسبة الضريبة %">
+            <input type="number" step="0.5" min="0" max="100" value={form.vatRate} onChange={(e) => setForm({ ...form, vatRate: Number(e.target.value) })} style={S.input} />
           </Field>
         </div>
 
@@ -1336,6 +1372,7 @@ const S = {
   modalBg: { position: "fixed" as const, inset: 0, background: "rgba(15,23,42,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 } as const,
   modal: { background: "#fff", borderRadius: 12, padding: 24, maxWidth: 560, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,.25)" } as const,
   modalTitle: { margin: "0 0 16px", fontSize: 18, color: "#0f172a" } as const,
+  formGrid4: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 } as const,
   input: { width: "100%", padding: "10px 12px", fontSize: 14, border: "1px solid #cbd5e1", borderRadius: 6, fontFamily: "inherit", boxSizing: "border-box" as const } as const,
   toolbar: { display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" as const } as const,
   btnTool: { padding: "9px 14px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" as const } as const,

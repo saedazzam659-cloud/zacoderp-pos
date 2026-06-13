@@ -17,7 +17,7 @@ function hasTauri(): boolean {
 
 export type ScreenKey =
   | "sales" | "returns" | "parked" | "daily"
-  | "customers" | "items" | "uom" | "scale" | "expiry"
+  | "customers" | "items" | "item_groups" | "uom" | "scale" | "expiry"
   | "stock_import" | "low_stock"
   | "suppliers" | "purchases" | "purchase_returns"
   | "salespersons"
@@ -41,6 +41,7 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
 
   { key: "customers", label: "العملاء", icon: "👥", group: "الملفات" },
   { key: "items", label: "الأصناف", icon: "📦", group: "الملفات" },
+  { key: "item_groups", label: "مجموعات الأصناف", icon: "🗂️", group: "الملفات" },
   { key: "uom", label: "وحدات القياس", icon: "📐", group: "الملفات" },
   { key: "stock_import", label: "استيراد الأرصدة", icon: "📥", group: "الملفات" },
   { key: "low_stock", label: "أصناف تحت الحد", icon: "⚠️", group: "الملفات" },

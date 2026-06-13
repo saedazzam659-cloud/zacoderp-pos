@@ -25,7 +25,7 @@
 
 export type WindowsView =
   | "sales" | "returns" | "pending" | "parked" | "daily"
-  | "customers" | "items" | "uom" | "dashboard" | "updates" | "users"
+  | "customers" | "items" | "item_groups" | "uom" | "dashboard" | "updates" | "users"
   | "expiry" | "scale" | "stock_import" | "low_stock" | "network"
   | "suppliers" | "purchases" | "purchase_returns"
   | "salespersons"
@@ -78,6 +78,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   // Customers + the catalog basics are needed even by a pure cash register.
   customers:    { module: "customers", profile: "pos" },
   items:        { module: "inventory", profile: "pos" },
+  item_groups:  { module: "inventory", profile: "pos" },
   uom:          { module: "inventory", profile: "pos" },
   low_stock:    { module: "inventory", profile: "pos" },
   stock_import: { module: "inventory", profile: "pos" },

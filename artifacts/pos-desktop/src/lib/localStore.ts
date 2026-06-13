@@ -9,6 +9,7 @@ export const LS_KEYS = {
   items: "pos_desktop_items_v1",
   customers: "pos_desktop_customers_v1",
   uom: "pos_desktop_uom_v1",
+  itemGroups: "pos_desktop_item_groups_v1",
   invoices: "pos_desktop_invoices_v1",
   pushQueue: "pos_desktop_push_queue_v1",
   lastPullAt: "pos_desktop_last_pull_at",
