@@ -20,8 +20,8 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
 } from "recharts";
 import {
-  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
-} from "@/components/ui/sheet";
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -722,19 +722,22 @@ function DrillSheet({ drill, onClose, params, headers, isRtl, fmt }: {
   const color = drill?.color ?? "#0284c7";
 
   return (
-    <Sheet open={!!drill} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <SheetContent side={isRtl ? "left" : "right"} className="w-full sm:max-w-xl p-0 flex flex-col gap-0">
-        <SheetHeader className="p-5 border-b space-y-0 text-start" style={{ borderTopWidth: 3, borderTopColor: color }}>
-          <SheetTitle className="flex items-center gap-2 text-base">
+    <Dialog open={!!drill} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent
+        dir={isRtl ? "rtl" : "ltr"}
+        className="w-[calc(100vw-2rem)] sm:max-w-2xl max-h-[85vh] p-0 flex flex-col gap-0 overflow-hidden"
+      >
+        <DialogHeader className="p-5 border-b space-y-0 text-start" style={{ borderTopWidth: 3, borderTopColor: color }}>
+          <DialogTitle className="flex items-center gap-2 text-base">
             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: color }} />
             {drill?.label}
             <span className="text-xs font-normal text-muted-foreground">
               {isDeposit ? (isRtl ? "إيداعات" : "Deposits") : (isRtl ? "مسحوبات" : "Uses")}
             </span>
-          </SheetTitle>
-          <SheetDescription className="sr-only">
+          </DialogTitle>
+          <DialogDescription className="sr-only">
             {isRtl ? "الحركات المكوّنة للمبلغ" : "Transactions contributing to this figure"}
-          </SheetDescription>
+          </DialogDescription>
           <div className="flex items-end justify-between pt-2">
             <div className="text-2xl font-bold tabular-nums" style={{ color }}>{fmt(total)}</div>
             <div className="text-xs text-muted-foreground flex items-center gap-1">
@@ -752,7 +755,7 @@ function DrillSheet({ drill, onClose, params, headers, isRtl, fmt }: {
                 : (<><AlertTriangle className="h-3 w-3" />{isRtl ? `فرق ${fmt(Math.abs(total - (drill?.amount ?? 0)))}` : `Diff ${fmt(Math.abs(total - (drill?.amount ?? 0)))}`}</>)}
             </div>
           )}
-        </SheetHeader>
+        </DialogHeader>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {isLoading && (
@@ -805,7 +808,7 @@ function DrillSheet({ drill, onClose, params, headers, isRtl, fmt }: {
             <span className="text-base font-bold tabular-nums" style={{ color }}>{fmt(total)}</span>
           </div>
         )}
-      </SheetContent>
-    </Sheet>
+      </DialogContent>
+    </Dialog>
   );
 }
