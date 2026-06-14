@@ -254,27 +254,27 @@ export default function OfflineLicenses() {
 
   return (
     <div className="p-6 space-y-6" dir="rtl">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold">تراخيص POS Standalone (بدون سحابة)</h1>
+          <h1 className="text-xl md:text-2xl font-bold">تراخيص POS Standalone (بدون سحابة)</h1>
           <p className="text-sm text-muted-foreground mt-1">
             إصدار ملفات ترخيص موقّعة رقمياً (Ed25519) لتشغيل تطبيق POS Desktop في وضع مستقل بدون أي ربط سحابي.
           </p>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex flex-wrap gap-2 items-center">
           <Button variant="outline" onClick={() => qc.invalidateQueries()}>
             <RefreshCw className="ml-2 h-4 w-4" /> تحديث
           </Button>
           <Button onClick={() => setShowCreate(true)}>
             <Plus className="ml-2 h-4 w-4" /> ترخيص جديد
           </Button>
-          <div className="relative">
+          <div className="relative flex-1 min-w-[12rem] md:flex-none">
             <Search className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="بحث برقم الترخيص أو اسم العميل…"
-              className="w-72 pr-8"
+              className="w-full md:w-72 pr-8"
             />
           </div>
         </div>
@@ -311,7 +311,7 @@ export default function OfflineLicenses() {
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard label="إجمالي" value={statsQ.data?.total ?? 0} />
         <StatCard label="بانتظار الموافقة" value={statsQ.data?.pending ?? 0} color="text-orange-700 bg-orange-50" />
         <StatCard label="نشط" value={statsQ.data?.active ?? 0} color="text-green-700 bg-green-50" />
@@ -344,11 +344,11 @@ export default function OfflineLicenses() {
               </div>
             )}
             {filtered.map((lic) => (
-              <div key={lic.id} className="border rounded-lg p-4 flex items-center justify-between hover:bg-slate-50">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <KeyRound className="h-4 w-4 text-blue-600" />
-                    <code className="font-mono text-sm font-semibold">{lic.licenseKey}</code>
+              <div key={lic.id} className="border rounded-lg p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between hover:bg-slate-50">
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
+                    <KeyRound className="h-4 w-4 text-blue-600 shrink-0" />
+                    <code className="font-mono text-sm font-semibold break-all">{lic.licenseKey}</code>
                     <StatusBadge status={lic.status} />
                     <Badge variant="outline">{lic.vertical}</Badge>
                     {lic.source === "self_register"
@@ -376,7 +376,7 @@ export default function OfflineLicenses() {
                     </div>
                   )}
                 </div>
-                <div className="flex gap-1">
+                <div className="flex flex-wrap gap-1 md:shrink-0 md:justify-end">
                   {lic.status === "pending" && (
                     <>
                       <Button size="sm" variant="outline" onClick={() => openApprove(lic)}
