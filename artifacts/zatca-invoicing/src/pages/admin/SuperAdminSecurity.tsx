@@ -279,7 +279,7 @@ export default function SuperAdminSecurity() {
       )}
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
+        <TabsList className="flex w-full justify-start overflow-x-auto">
           <TabsTrigger value="overview">نظرة عامة</TabsTrigger>
           <TabsTrigger value="sessions">الجلسات</TabsTrigger>
           <TabsTrigger value="devices">الأجهزة</TabsTrigger>
@@ -310,7 +310,31 @@ export default function SuperAdminSecurity() {
               <X className="h-3 w-3" /> إنهاء كل الجلسات الأخرى
             </Button>
           </div>
-          <div className="bg-card border rounded-lg overflow-hidden">
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-3">
+            {sessions.length === 0 && <div className="bg-card border rounded-lg p-4 text-center text-muted-foreground text-sm">لا توجد جلسات.</div>}
+            {sessions.map(s => (
+              <div key={s.id} className="bg-card border rounded-lg p-3 space-y-2" data-testid={`session-card-m-${s.id}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium text-sm flex items-center gap-2 min-w-0">
+                    <span className="truncate">{s.deviceName || "—"}</span>
+                    {s.current && <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded shrink-0">الحالية</span>}
+                  </div>
+                  {!s.current && (
+                    <Button size="sm" variant="ghost" onClick={() => revokeSession(s.id)} disabled={busy} className="shrink-0 gap-1">
+                      <X className="h-3 w-3" /> إنهاء
+                    </Button>
+                  )}
+                </div>
+                <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
+                  <span className="font-mono" dir="ltr">IP: {s.ip}</span>
+                  <span>آخر نشاط: {new Date(s.lastSeenAt).toLocaleString("ar-SA")}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          {/* Desktop table */}
+          <div className="hidden md:block bg-card border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-muted text-xs">
                 <tr><th className="p-2 text-right">الجهاز</th><th className="p-2 text-right">IP</th><th className="p-2 text-right">آخر نشاط</th><th className="p-2 text-right">إجراء</th></tr>
@@ -341,7 +365,26 @@ export default function SuperAdminSecurity() {
 
         {/* Devices */}
         <TabsContent value="devices" className="space-y-3">
-          <div className="bg-card border rounded-lg overflow-hidden">
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-3">
+            {devices.length === 0 && <div className="bg-card border rounded-lg p-4 text-center text-muted-foreground text-sm">لا توجد أجهزة موثوقة.</div>}
+            {devices.map(d => (
+              <div key={d.id} className="bg-card border rounded-lg p-3 space-y-2" data-testid={`device-card-m-${d.id}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium text-sm truncate min-w-0">{d.deviceName || "—"}</div>
+                  <Button size="sm" variant="ghost" onClick={() => revokeDevice(d.id)} disabled={busy} className="shrink-0 gap-1">
+                    <X className="h-3 w-3" /> إلغاء الثقة
+                  </Button>
+                </div>
+                <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
+                  <span className="font-mono" dir="ltr">IP: {d.ip}</span>
+                  <span>آخر استخدام: {d.lastUsedAt ? new Date(d.lastUsedAt).toLocaleString("ar-SA") : "—"}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          {/* Desktop table */}
+          <div className="hidden md:block bg-card border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-muted text-xs">
                 <tr><th className="p-2 text-right">الجهاز</th><th className="p-2 text-right">IP</th><th className="p-2 text-right">آخر استخدام</th><th className="p-2 text-right">إجراء</th></tr>
@@ -407,7 +450,27 @@ export default function SuperAdminSecurity() {
 
         {/* Login history */}
         <TabsContent value="history" className="space-y-3">
-          <div className="bg-card border rounded-lg overflow-hidden">
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-3">
+            {history.length === 0 && <div className="bg-card border rounded-lg p-4 text-center text-muted-foreground text-sm">لا يوجد سجل.</div>}
+            {history.map(a => (
+              <div key={a.id} className="bg-card border rounded-lg p-3 space-y-2" data-testid={`history-card-m-${a.id}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium text-sm truncate min-w-0">{a.username || "—"}</div>
+                  <span className={`text-xs px-2 py-0.5 rounded shrink-0 ${a.success ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
+                    {a.success ? "نجاح" : "فشل"}
+                  </span>
+                </div>
+                <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
+                  <span className="font-mono" dir="ltr">IP: {a.ip}</span>
+                  <span>{new Date(a.createdAt).toLocaleString("ar-SA")}</span>
+                </div>
+                {a.outcome && <div className="text-xs text-muted-foreground">السبب: {a.outcome}</div>}
+              </div>
+            ))}
+          </div>
+          {/* Desktop table */}
+          <div className="hidden md:block bg-card border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-muted text-xs">
                 <tr>
