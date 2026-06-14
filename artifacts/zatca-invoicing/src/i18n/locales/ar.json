@@ -2370,6 +2370,8 @@
     "passwordEdit": "كلمة مرور جديدة (اختياري)",
     "passwordPlaceholderNew": "6 أحرف على الأقل",
     "passwordPlaceholderEdit": "اتركها فارغة لعدم التغيير",
+    "showPassword": "إظهار كلمة المرور",
+    "hidePassword": "إخفاء كلمة المرور",
     "role": "الدور",
     "roleUser": "مستخدم (يستخدم الصلاحيات أدناه)",
     "roleAdmin": "مدير الشركة (صلاحيات كاملة)",

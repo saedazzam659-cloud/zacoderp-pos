@@ -2367,6 +2367,8 @@
     "passwordEdit": "New Password (optional)",
     "passwordPlaceholderNew": "At least 6 characters",
     "passwordPlaceholderEdit": "Leave empty to keep current",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
     "role": "Role",
     "roleUser": "User (uses permissions below)",
     "roleAdmin": "Company Admin (full permissions)",

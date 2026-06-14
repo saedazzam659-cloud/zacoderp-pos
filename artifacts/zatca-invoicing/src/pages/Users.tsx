@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
 import {
   Users as UsersIcon, Plus, Pencil, Trash2, Shield, Search, KeyRound,
   CheckCircle2, XCircle, Loader2, X, Save, Check, ShieldCheck, PowerOff, Power,
-  Copy, ArrowLeftRight, Sparkles,
+  Copy, ArrowLeftRight, Sparkles, Eye, EyeOff,
 } from "lucide-react";
 import {
   PERMISSION_MODULES, PERMISSION_GROUPS, ACTION_LABELS,
@@ -131,6 +131,7 @@ export default function Users() {
   const [openForm, setOpenForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm());
+  const [showPassword, setShowPassword] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
   // Deep-link support: when arriving from Security Center via
@@ -261,6 +262,7 @@ export default function Users() {
   const openCreate = () => {
     setEditingId(null);
     setForm(emptyForm());
+    setShowPassword(false);
     setOpenForm(true);
     setConfirmDeleteId(null);
     setTimeout(() => {
@@ -314,6 +316,7 @@ export default function Users() {
       maxApprovalAmount: u.maxApprovalAmount != null ? String(u.maxApprovalAmount) : "0",
       requireSecondApproval: !!u.requireSecondApproval,
     });
+    setShowPassword(false);
     setOpenForm(true);
     setConfirmDeleteId(null);
     setTimeout(() => {
@@ -325,6 +328,7 @@ export default function Users() {
     setOpenForm(false);
     setEditingId(null);
     setForm(emptyForm());
+    setShowPassword(false);
   };
 
   const saveMut = useMutation({
@@ -685,13 +689,26 @@ export default function Users() {
                       <KeyRound className="h-3 w-3" />
                       {editingId == null ? t("users.passwordNew") : t("users.passwordEdit")}
                     </Label>
-                    <Input
-                      type="password"
-                      value={form.password}
-                      onChange={(e) => setForm({ ...form, password: e.target.value })}
-                      placeholder={editingId == null ? t("users.passwordPlaceholderNew") : t("users.passwordPlaceholderEdit")}
-                      autoComplete="new-password"
-                    />
+                    <div className="relative">
+                      <Input
+                        type={showPassword ? "text" : "password"}
+                        value={form.password}
+                        onChange={(e) => setForm({ ...form, password: e.target.value })}
+                        placeholder={editingId == null ? t("users.passwordPlaceholderNew") : t("users.passwordPlaceholderEdit")}
+                        autoComplete="new-password"
+                        className="pe-9"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        className="absolute inset-y-0 end-0 flex items-center px-2.5 text-muted-foreground hover:text-foreground"
+                        tabIndex={-1}
+                        aria-label={showPassword ? t("users.hidePassword", { defaultValue: "إخفاء كلمة المرور" }) : t("users.showPassword", { defaultValue: "إظهار كلمة المرور" })}
+                        title={showPassword ? t("users.hidePassword", { defaultValue: "إخفاء كلمة المرور" }) : t("users.showPassword", { defaultValue: "إظهار كلمة المرور" })}
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
                   </div>
                   <div>
                     <Label>{t("users.role")}</Label>
