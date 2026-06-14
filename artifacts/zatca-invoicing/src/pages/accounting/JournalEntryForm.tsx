@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils";
 import {
   Plus, Trash2, ArrowRight, BookOpen, AlertCircle,
   FileText, Printer, FileSpreadsheet, FileDown, Lock,
-  ChevronRight, ChevronLeft, Search,
+  ChevronRight, ChevronLeft, Search, Wand2,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
@@ -98,6 +98,10 @@ function today() {
 export default function JournalEntryForm() {
   const { user } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  // Company-wide "smart model" journal form. When ON, adding a line
+  // auto-fills the opposite side with the remaining imbalance so the
+  // entry stays balanced, and a "موازنة تلقائية" helper is exposed.
+  const smartForm = !!user?.company?.journalSmartForm;
   const [, navigate] = useLocation();
   const [matchNew] = useRoute("/accounting/journals/new");
   const [matchEdit, params] = useRoute("/accounting/journals/:id");
@@ -410,9 +414,45 @@ export default function JournalEntryForm() {
     // with all the others — the user explicitly asked the البيان العام to
     // appear on every row, even when adding more rows after the fact.
     const l = { ...newLine(), description: description || "" };
+    // Smart "model" mode: pre-fill the OPPOSITE side with the remaining
+    // imbalance so the entry stays balanced after each added line. The
+    // user can still overwrite the suggested amount freely.
+    if (smartForm) {
+      const d = totalDebit - totalCredit;
+      if (d > 0.001)      l.credit = d.toFixed(2);
+      else if (d < -0.001) l.debit  = (-d).toFixed(2);
+    }
     setLines(prev => [...prev, l]);
     setFocusLineId(l.id);
     return l;
+  }
+  // Smart helper: drop the remaining imbalance onto a suitable line so the
+  // entry becomes balanced in one click. Prefers an empty-amount line
+  // (focused first, then the first available), otherwise appends a new one.
+  function autoBalance() {
+    const d = totalDebit - totalCredit;
+    if (Math.abs(d) < 0.001) {
+      toast({ title: "القيد متوازن بالفعل", description: "لا يوجد فرق بين المدين والدائن." });
+      return;
+    }
+    const isEmptyAmt = (l: JournalLine) => !(parseFloat(l.debit) > 0) && !(parseFloat(l.credit) > 0);
+    const focused = lines.find(l => l.id === focusLineId && isEmptyAmt(l));
+    const firstEmpty = lines.find(isEmptyAmt);
+    const target = focused ?? firstEmpty;
+    const value = Math.abs(d).toFixed(2);
+    if (target) {
+      setLines(prev => prev.map(l =>
+        l.id === target.id
+          ? { ...l, debit: d < 0 ? value : "", credit: d > 0 ? value : "" }
+          : l));
+      setFocusLineId(target.id);
+    } else {
+      const l = { ...newLine(), description: description || "" };
+      if (d > 0) l.credit = value; else l.debit = value;
+      setLines(prev => [...prev, l]);
+      setFocusLineId(l.id);
+    }
+    toast({ title: "✓ تمت الموازنة", description: `تمت إضافة ${value} لإكمال موازنة القيد.` });
   }
 
   // ── Smart Account Browser ───────────────────────────────────────
@@ -1947,6 +1987,51 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                     </Button>
                   </div>
                 ))}
+              </div>
+
+              {/* Bottom add-line bar — mirrors the toolbar button so the user
+                  doesn't have to scroll back up. In smart mode it also exposes
+                  a live difference indicator + one-click "موازنة تلقائية". */}
+              <div className="border-t bg-muted/10 px-4 py-2.5 flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline" size="sm"
+                  onClick={addLine}
+                  disabled={isLockedSourceEntry}
+                  className="h-7 gap-1 text-xs"
+                  data-testid="btn-add-line-bottom"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  إضافة سطر
+                </Button>
+                {smartForm && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline" size="sm"
+                      onClick={autoBalance}
+                      disabled={isLockedSourceEntry || isBalanced}
+                      className="h-7 gap-1 text-xs border-violet-300 bg-gradient-to-br from-violet-50 to-fuchsia-50 hover:from-violet-100 hover:to-fuchsia-100 text-violet-700 dark:from-violet-950/30 dark:to-fuchsia-950/30 dark:border-violet-800 dark:text-violet-300"
+                      title="إكمال موازنة القيد تلقائياً بإضافة الفرق المتبقي"
+                      data-testid="btn-auto-balance"
+                    >
+                      <Wand2 className="h-3.5 w-3.5" />
+                      موازنة تلقائية
+                    </Button>
+                    <span
+                      className={cn(
+                        "text-[11px] font-medium px-2 py-1 rounded-md inline-flex items-center gap-1",
+                        isBalanced
+                          ? "bg-green-50 text-green-700"
+                          : "bg-amber-50 text-amber-700"
+                      )}
+                      data-testid="text-smart-diff"
+                    >
+                      {isBalanced
+                        ? "متوازن ✓"
+                        : `الفرق المتبقي: ${diff.toFixed(2)} — سيُملأ تلقائياً عند إضافة سطر`}
+                    </span>
+                  </>
+                )}
               </div>
 
               {/* Totals footer */}

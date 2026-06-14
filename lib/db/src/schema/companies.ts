@@ -60,6 +60,18 @@ export const companiesTable = pgTable("companies", {
   //              behavior some accountants prefer).
   // Defaults to "auto" so existing tenants keep the modern flow.
   journalEntryFormMode: text("journal_entry_form_mode").notNull().default("auto"),
+  // ─── Optional UX preferences (company-wide) ───────────────────────────
+  // Smart "model" journal-entry form. When true, the JE form shows a second
+  // "+ إضافة سطر" button at the bottom (above the totals row) and, on each
+  // new line, pre-fills the OPPOSITE side (debit/credit) with the remaining
+  // imbalance so the entry stays balanced as you type (user can still edit).
+  // Pure UX sugar — the save/balance/posting rules are unchanged. Default
+  // false so existing tenants keep the classic form until they opt in.
+  journalSmartForm: boolean("journal_smart_form").notNull().default(false),
+  // Navigation placement: "sidebar" (right vertical sidebar, current/default)
+  // or "topnav" (horizontal menu bar across the top). Presentation only —
+  // same menu data + permission gating either way.
+  menuLayout: text("menu_layout").notNull().default("sidebar"),
   // ─── Per-document-type auto-posting toggles ───────────────────────────
   // Each flag controls whether saving a document of that type immediately
   // posts the resulting journal entry (true) or leaves it as a draft for

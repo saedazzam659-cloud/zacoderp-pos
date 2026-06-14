@@ -12,7 +12,8 @@ import {
   DatabaseBackup, DatabaseZap, Sparkles, FileJson, AlertTriangle,
   Clock, Repeat, Trash, History, Play, Zap, Hand, Printer, Save,
   LogOut, Timer, ShieldCheck, CalendarDays, CalendarClock,
-  Users as UsersIcon, Percent, Calculator
+  Users as UsersIcon, Percent, Calculator,
+  Wand2, PanelTop, PanelRight, Scale
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -730,6 +731,20 @@ export default function GeneralSettings() {
           >
             <Repeat className="h-4 w-4 shrink-0" />
             <span className="truncate">إعدادات مرتجعات المبيعات</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="smartJournal"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <Wand2 className="h-4 w-4 shrink-0" />
+            <span className="truncate">شكل القيد النموذجي</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="menuLayout"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <PanelTop className="h-4 w-4 shrink-0" />
+            <span className="truncate">موضع القوائم</span>
           </TabsTrigger>
         </TabsList>
 
@@ -1702,6 +1717,197 @@ export default function GeneralSettings() {
             saving={postingSaving}
             onChange={(v) => togglePostingMode({ taxCalculationMode: v })}
           />
+        </TabsContent>
+
+        {/* ═══ TAB: Smart "Model" Journal-Entry Form ════════════════════════ */}
+        <TabsContent value="smartJournal" className="mt-5 space-y-6">
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <h2 className="font-semibold text-base flex items-center gap-2">
+              <Wand2 className="h-4 w-4 text-muted-foreground" />
+              شكل القيد النموذجي
+            </h2>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              عند التفعيل، تعمل شاشة "قيد جديد" بأسلوب ذكي: عند إضافة سطر جديد يقوم النظام تلقائياً
+              بملء الطرف المقابل (مدين/دائن) بقيمة الفرق المتبقي ليبقى القيد متوازناً —
+              مع مؤشر فرق لحظي وزر "موازنة تلقائية" وزر إضافة سطر إضافي أسفل الجدول.
+              تبقى كل القيم قابلة للتعديل يدوياً.
+            </p>
+
+            {(() => {
+              const on = !!user?.company?.journalSmartForm;
+              return (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {/* ON card */}
+                    <button
+                      type="button"
+                      disabled={postingSaving}
+                      onClick={() => togglePostingMode({ journalSmartForm: true })}
+                      className={cn(
+                        "flex flex-col items-start gap-2 rounded-xl border-2 p-4 text-right transition-all",
+                        on
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-border bg-background hover:border-primary/40"
+                      )}
+                      data-testid="card-smart-journal-on"
+                    >
+                      <div className="flex items-center gap-2 w-full">
+                        <div className={cn(
+                          "h-8 w-8 rounded-md flex items-center justify-center",
+                          on ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        )}>
+                          <Wand2 className="h-4 w-4" />
+                        </div>
+                        <span className="font-semibold text-sm">مفعَّل (الشكل النموذجي الذكي)</span>
+                        {on && (
+                          <span className="ms-auto text-[10.5px] font-semibold rounded px-1.5 py-0.5 border bg-emerald-50 text-emerald-700 border-emerald-200">
+                            مفعَّل
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                        إدخال أسرع للقيود — يملأ النظام الطرف المقابل تلقائياً بقيمة الفرق ليبقى القيد متوازناً، مع زر موازنة تلقائية ومؤشر فرق لحظي.
+                      </p>
+                    </button>
+
+                    {/* OFF card */}
+                    <button
+                      type="button"
+                      disabled={postingSaving}
+                      onClick={() => togglePostingMode({ journalSmartForm: false })}
+                      className={cn(
+                        "flex flex-col items-start gap-2 rounded-xl border-2 p-4 text-right transition-all",
+                        !on
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-border bg-background hover:border-primary/40"
+                      )}
+                      data-testid="card-smart-journal-off"
+                    >
+                      <div className="flex items-center gap-2 w-full">
+                        <div className={cn(
+                          "h-8 w-8 rounded-md flex items-center justify-center",
+                          !on ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        )}>
+                          <Hand className="h-4 w-4" />
+                        </div>
+                        <span className="font-semibold text-sm">معطَّل (الشكل العادي)</span>
+                        {!on && (
+                          <span className="ms-auto text-[10.5px] font-semibold rounded px-1.5 py-0.5 border bg-amber-50 text-amber-700 border-amber-200">
+                            مفعَّل
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                        شاشة القيد العادية بدون موازنة تلقائية — تُدخل قيم المدين والدائن يدوياً في كل سطر.
+                      </p>
+                    </button>
+                  </div>
+
+                  {postingSaving && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-2">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      جارٍ الحفظ…
+                    </p>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+        </TabsContent>
+
+        {/* ═══ TAB: Menu Placement (sidebar vs top horizontal nav) ══════════ */}
+        <TabsContent value="menuLayout" className="mt-5 space-y-6">
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <h2 className="font-semibold text-base flex items-center gap-2">
+              <PanelTop className="h-4 w-4 text-muted-foreground" />
+              موضع القوائم
+            </h2>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              اختر طريقة عرض القوائم: شريط جانبي على اليمين (الافتراضي) أو شريط أفقي علوي.
+              نفس القوائم ونفس الصلاحيات — يتغيّر العرض فقط. يُطبَّق على كل مستخدمي الشركة.
+            </p>
+
+            {(() => {
+              const layout = (user?.company?.menuLayout === "topnav") ? "topnav" : "sidebar";
+              const isSidebar = layout === "sidebar";
+              return (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {/* SIDEBAR card */}
+                    <button
+                      type="button"
+                      disabled={postingSaving}
+                      onClick={() => togglePostingMode({ menuLayout: "sidebar" })}
+                      className={cn(
+                        "flex flex-col items-start gap-2 rounded-xl border-2 p-4 text-right transition-all",
+                        isSidebar
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-border bg-background hover:border-primary/40"
+                      )}
+                      data-testid="card-menu-layout-sidebar"
+                    >
+                      <div className="flex items-center gap-2 w-full">
+                        <div className={cn(
+                          "h-8 w-8 rounded-md flex items-center justify-center",
+                          isSidebar ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        )}>
+                          <PanelRight className="h-4 w-4" />
+                        </div>
+                        <span className="font-semibold text-sm">شريط جانبي (الافتراضي)</span>
+                        {isSidebar && (
+                          <span className="ms-auto text-[10.5px] font-semibold rounded px-1.5 py-0.5 border bg-emerald-50 text-emerald-700 border-emerald-200">
+                            مفعَّل
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                        القوائم في شريط رأسي ثابت على يمين الشاشة — السلوك الحالي.
+                      </p>
+                    </button>
+
+                    {/* TOPNAV card */}
+                    <button
+                      type="button"
+                      disabled={postingSaving}
+                      onClick={() => togglePostingMode({ menuLayout: "topnav" })}
+                      className={cn(
+                        "flex flex-col items-start gap-2 rounded-xl border-2 p-4 text-right transition-all",
+                        !isSidebar
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-border bg-background hover:border-primary/40"
+                      )}
+                      data-testid="card-menu-layout-topnav"
+                    >
+                      <div className="flex items-center gap-2 w-full">
+                        <div className={cn(
+                          "h-8 w-8 rounded-md flex items-center justify-center",
+                          !isSidebar ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        )}>
+                          <PanelTop className="h-4 w-4" />
+                        </div>
+                        <span className="font-semibold text-sm">شريط علوي أفقي</span>
+                        {!isSidebar && (
+                          <span className="ms-auto text-[10.5px] font-semibold rounded px-1.5 py-0.5 border bg-amber-50 text-amber-700 border-amber-200">
+                            مفعَّل
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                        القوائم في شريط أفقي أعلى الشاشة مع قوائم منسدلة — يوفّر مساحة أفقية أكبر للمحتوى.
+                      </p>
+                    </button>
+                  </div>
+
+                  {postingSaving && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-2">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      جارٍ الحفظ…
+                    </p>
+                  )}
+                </>
+              );
+            })()}
+          </div>
         </TabsContent>
       </Tabs>
 

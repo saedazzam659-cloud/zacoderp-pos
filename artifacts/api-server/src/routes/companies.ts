@@ -163,6 +163,10 @@ router.patch("/:id/general-settings", async (req, res) => {
     // "manual" (navigate back to entries list after save). See companies
     // schema for the full semantics.
     journalEntryFormMode,
+    // Optional UX prefs (company-wide). `journalSmartForm` toggles the smart
+    // "model" journal-entry form; `menuLayout` is "sidebar" | "topnav".
+    journalSmartForm,
+    menuLayout,
     // VAT calc mode: "before_discount" | "after_discount". Validated below.
     taxCalculationMode,
   } = req.body as {
@@ -197,6 +201,8 @@ router.patch("/:id/general-settings", async (req, res) => {
     printTemplateSales?: string; printTemplateReceipt?: string;
     printTemplatePayment?: string; printTemplateJournal?: string;
     journalEntryFormMode?: string;
+    journalSmartForm?: boolean;
+    menuLayout?: string;
     taxCalculationMode?: string;
   };
   const updates: Record<string, any> = { updatedAt: new Date() };
@@ -352,6 +358,16 @@ router.patch("/:id/general-settings", async (req, res) => {
       return;
     }
     updates.journalEntryFormMode = journalEntryFormMode;
+  }
+  // Smart "model" journal-entry form — pure UX flag, coerced to boolean.
+  if (journalSmartForm !== undefined) updates.journalSmartForm = !!journalSmartForm;
+  // Menu placement — only the two layouts the UI implements.
+  if (menuLayout !== undefined) {
+    if (menuLayout !== "sidebar" && menuLayout !== "topnav") {
+      res.status(400).json({ error: "menuLayout يجب أن يكون 'sidebar' أو 'topnav'" });
+      return;
+    }
+    updates.menuLayout = menuLayout;
   }
   // Tax calc mode — only the two values the line calculators understand.
   if (taxCalculationMode !== undefined) {

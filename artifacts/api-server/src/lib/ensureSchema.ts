@@ -859,6 +859,11 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     // behavior; flipping it to false makes new manual JEs land as drafts.
     { label: "companies add auto_post_journal_entry",
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS auto_post_journal_entry BOOLEAN NOT NULL DEFAULT TRUE` },
+    // Optional UX prefs (company-wide): smart JE form + menu placement.
+    { label: "companies add journal_smart_form",
+      sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS journal_smart_form BOOLEAN NOT NULL DEFAULT FALSE` },
+    { label: "companies add menu_layout",
+      sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS menu_layout TEXT NOT NULL DEFAULT 'sidebar'` },
     // Phase 1B.2 — explicit Basic-auth secret storage and rotation marker
     { label: "gateway_clients add zatca_csid_secret_enc",
       sql:   `ALTER TABLE gateway_clients ADD COLUMN IF NOT EXISTS zatca_csid_secret_enc TEXT` },

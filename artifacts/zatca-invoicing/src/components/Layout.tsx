@@ -2132,6 +2132,264 @@ function SecurityNavGroup({
   );
 }
 
+// ─── TopNavDropdown (one top-level group as a horizontal dropdown) ─────────────
+// Used only when the company's `menuLayout === 'topnav'`. Each top-level group
+// becomes a horizontal trigger that opens its existing NavGroup component
+// (forced `open`) inside a dropdown panel — so we reuse 100% of the sidebar's
+// menu data, permission gating, and styling. `children` is a render-prop that
+// receives a `close` callback so navigating a link collapses the dropdown.
+function TopNavDropdown({
+  label,
+  children,
+}: {
+  label: string;
+  children: (close: () => void) => React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
+            open
+              ? "bg-sidebar-accent text-sidebar-foreground"
+              : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+          )}
+        >
+          <span>{label}</span>
+          <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        sideOffset={6}
+        className="w-72 max-h-[80vh] overflow-y-auto p-1.5"
+      >
+        {children(close)}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// ─── TopNavBar (horizontal top navigation) ────────────────────────────────────
+// Alternate presentation of the exact same menu as SidebarInner, rendered as a
+// horizontal bar of dropdowns. Receives the same props object as SidebarInner
+// (passed via `sharedProps`). Permission gating reuses `isGroupAllowed`; each
+// group's items come from its original NavGroup component with `open`/`reportsOpen`
+// forced true so everything shows inside the dropdown panel.
+function TopNavBar(props: any) {
+  const { t } = useTranslation();
+  const { location, isSuperAdmin, user, menuPerms, onNavigate } = props;
+  const NOOP = () => {};
+  const nav = (close: () => void) => () => {
+    close();
+    onNavigate?.();
+  };
+
+  if (isSuperAdmin) {
+    return (
+      <div
+        className="hidden md:flex items-center gap-1 overflow-x-auto border-b border-sidebar-border bg-sidebar px-3 py-1.5"
+        data-testid="topnav-bar"
+      >
+        {superAdminNav.map(item => (
+          <div key={item.href} className="shrink-0">
+            <NavItem item={item} location={location} onClick={onNavigate} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const filteredBusiness = companyBusinessNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
+  const filteredSystem = companySystemNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
+
+  const groups: { key: string; label: string; node: (close: () => void) => React.ReactNode }[] = [
+    {
+      key: "dashboard",
+      label: t("nav.dashboardGroup", { defaultValue: "الرئيسية" }),
+      node: close => (
+        <>
+          <NavItem
+            item={{ nameKey: "nav.infoBoard", href: "/", icon: LayoutDashboard, exact: true }}
+            location={location}
+            onClick={nav(close)}
+          />
+          <DashboardNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />
+        </>
+      ),
+    },
+    {
+      key: "zatca",
+      label: t("nav.zatcaGroup", { defaultValue: "الفوترة الإلكترونية" }),
+      node: close => <ZatcaNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "inventory",
+      label: t("navExtra.inventoryRoot", { defaultValue: "المخزون" }),
+      node: close => (
+        <InventoryNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} reportsOpen onReportsToggle={NOOP} />
+      ),
+    },
+    {
+      key: "sister",
+      label: t("nav.sisterGroup", { defaultValue: "الشركات الشقيقة" }),
+      node: close => <SisterNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "sales",
+      label: t("nav.salesGroup", { defaultValue: "المبيعات" }),
+      node: close => (
+        <SalesNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} reportsOpen onReportsToggle={NOOP} />
+      ),
+    },
+    {
+      key: "purchasing",
+      label: t("nav.purchasingGroup", { defaultValue: "المشتريات" }),
+      node: close => (
+        <PurchasingNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} reportsOpen onReportsToggle={NOOP} />
+      ),
+    },
+    {
+      key: "cash",
+      label: t("nav.cashGroup", { defaultValue: "الخزينة والبنوك" }),
+      node: close => (
+        <CashNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} reportsOpen onReportsToggle={NOOP} />
+      ),
+    },
+    {
+      key: "accounting",
+      label: t("navExtra.accountingRoot", { defaultValue: "المحاسبة" }),
+      node: close => (
+        <AccountingNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} reportsOpen onReportsToggle={NOOP} />
+      ),
+    },
+    {
+      key: "hr",
+      label: t("nav.hrGroup", { defaultValue: "الموارد البشرية" }),
+      node: close => <HrNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "production",
+      label: t("nav.productionGroup", { defaultValue: "الإنتاج" }),
+      node: close => <ProductionNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "safety",
+      label: t("nav.safetyGroup", { defaultValue: "السلامة" }),
+      node: close => <SafetyNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "contracting",
+      label: t("nav.contractingGroup", { defaultValue: "المقاولات" }),
+      node: close => <ContractingNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "maintenance",
+      label: t("nav.maintenanceGroup", { defaultValue: "الصيانة" }),
+      node: close => <MaintenanceNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "installments",
+      label: t("nav.installmentsGroup", { defaultValue: "التقسيط" }),
+      node: close => <InstallmentsNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "hotel",
+      label: t("nav.hotelGroup", { defaultValue: "الفنادق" }),
+      node: close => <HotelNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "hospital",
+      label: t("nav.hospitalGroup", { defaultValue: "المستشفيات" }),
+      node: close => <HospitalNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "crm",
+      label: t("nav.crmGroup", { defaultValue: "إدارة العملاء" }),
+      node: close => <CrmNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "fixedAssets",
+      label: t("nav.fixedAssetsGroup", { defaultValue: "الأصول الثابتة" }),
+      node: close => <FixedAssetsNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "multiLink",
+      label: t("nav.multiLinkGroup", { defaultValue: "الربط المتعدد" }),
+      node: close => <MultiLinkNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "pos",
+      label: t("nav.posGroup", { defaultValue: "نقاط البيع" }),
+      node: close => <PosNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "security",
+      label: t("nav.securityGroup", { defaultValue: "الأمان" }),
+      node: close => <SecurityNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "aiTools",
+      label: t("nav.aiToolsGroup", { defaultValue: "أدوات الذكاء الاصطناعي" }),
+      node: close => <AIToolsNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "voiceAssistant",
+      label: t("nav.voiceAssistantGroup", { defaultValue: "المساعد الصوتي" }),
+      node: close => <VoiceAssistantNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "sessions",
+      label: t("nav.sessionsGroup", { defaultValue: "الجلسات" }),
+      node: close => <SessionsNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "chat",
+      label: t("nav.chatGroup", { defaultValue: "المحادثة" }),
+      node: close => <ChatNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "companyMaintenance",
+      label: t("nav.companyMaintenanceGroup", { defaultValue: "صيانة الشركة" }),
+      node: close => <CompanyMaintenanceNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
+      key: "liveMonitoring",
+      label: t("nav.liveMonitoringGroup", { defaultValue: "المراقبة المباشرة" }),
+      node: close => <LiveMonitoringNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+  ];
+
+  return (
+    <div
+      className="hidden md:flex items-center gap-1 overflow-x-auto border-b border-sidebar-border bg-sidebar px-3 py-1.5"
+      data-testid="topnav-bar"
+    >
+      {groups
+        .filter(g => isGroupAllowed(menuPerms, g.key, isSuperAdmin, user))
+        .map(g => (
+          <TopNavDropdown key={g.key} label={g.label}>
+            {close => <div className="space-y-0.5">{g.node(close)}</div>}
+          </TopNavDropdown>
+        ))}
+      {filteredBusiness.map(item => (
+        <div key={item.href} className="shrink-0">
+          <NavItem item={item} location={location} onClick={onNavigate} />
+        </div>
+      ))}
+      {filteredSystem.map(item => (
+        <div key={item.href} className="shrink-0">
+          <NavItem item={item} location={location} onClick={onNavigate} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── SidebarInner (stable, top-level component) ───────────────────────────────
 // All state that needs to persist lives in Layout and is passed as props here.
 function SidebarInner({
@@ -3450,6 +3708,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onLogout: logout,
   };
 
+  // Company-wide menu placement. 'topnav' renders a horizontal top bar instead
+  // of the fixed side sidebar (desktop only; mobile always uses the drawer).
+  const topNav = !isSuperAdmin && user?.company?.menuLayout === "topnav";
+
   const { i18n } = useTranslation();
   const langCode = normalizeLang(i18n.language);
   const langMeta = SUPPORTED_LANGUAGES.find(l => l.code === langCode) ?? SUPPORTED_LANGUAGES[0];
@@ -3464,13 +3726,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           drawer (translated 100% past the viewport edge) from creating a
           phantom horizontal scrollbar — a frequent culprit for "the page
           shifts when I tap the menu" reports on real iOS Safari. */}
-      {/* Desktop Sidebar */}
-      <aside className={cn(
-        "fixed inset-y-0 z-20 hidden w-64 flex-col bg-sidebar md:flex",
-        isRtl ? "right-0 border-l border-border" : "left-0 border-r border-border"
-      )}>
-        <SidebarInner {...sharedProps} />
-      </aside>
+      {/* Desktop Sidebar — hidden when the company uses the top-nav layout. */}
+      {!topNav && (
+        <aside className={cn(
+          "fixed inset-y-0 z-20 hidden w-64 flex-col bg-sidebar md:flex",
+          isRtl ? "right-0 border-l border-border" : "left-0 border-r border-border"
+        )}>
+          <SidebarInner {...sharedProps} />
+        </aside>
+      )}
 
       {/* Mobile overlay — always mounted so we can fade it; pointer-events
           off when closed so it doesn't block touches. */}
@@ -3515,7 +3779,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Main content */}
-      <div className={cn("flex flex-col min-h-screen", isRtl ? "md:mr-64" : "md:ml-64")}>
+      <div className={cn("flex flex-col min-h-screen", topNav ? "" : (isRtl ? "md:mr-64" : "md:ml-64"))}>
         <TopBar
           location={location}
           user={user}
@@ -3523,6 +3787,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           onMobileMenu={() => setMobileOpen(true)}
           onLogout={logout}
         />
+        {/* Horizontal top navigation — only when the company opted into the
+            top-nav layout. Mobile keeps the drawer (hidden md:flex inside). */}
+        {topNav && <TopNavBar {...sharedProps} />}
         {/* Banner uses the RAW role so it stays visible while the SA is
             inside a tenant — `isSuperAdmin` above is flipped to false
             during impersonation to enable tenant routes. */}
