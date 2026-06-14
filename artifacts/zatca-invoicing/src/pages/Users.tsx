@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
 import {
   Users as UsersIcon, Plus, Pencil, Trash2, Shield, Search, KeyRound,
   CheckCircle2, XCircle, Loader2, X, Save, Check, ShieldCheck, PowerOff, Power,
-  Copy, ArrowLeftRight, Sparkles, Eye, EyeOff,
+  Copy, ArrowLeftRight, Sparkles, Eye, EyeOff, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import {
   PERMISSION_MODULES, PERMISSION_GROUPS, ACTION_LABELS,
@@ -133,6 +133,8 @@ export default function Users() {
   const [form, setForm] = useState(emptyForm());
   const [showPassword, setShowPassword] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   // Deep-link support: when arriving from Security Center via
   //   /users?companyId=:cid&selected=:id
@@ -258,6 +260,22 @@ export default function Users() {
       (u.email ?? "").toLowerCase().includes(s),
     );
   }, [users, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paged = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, page, pageSize]);
+
+  // Keep the current page valid when the filtered set / page size shrinks.
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  // Reset to the first page whenever the search term changes.
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
 
   const openCreate = () => {
     setEditingId(null);
@@ -1280,11 +1298,16 @@ export default function Users() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.map(u => {
+                  {paged.map(u => {
                     const branchNames = branches.filter(b => u.branchIds?.includes(b.id)).map(b => b.nameAr);
                     const isConfirming = confirmDeleteId === u.id;
                     return (
-                      <TableRow key={u.id} className={isConfirming ? "bg-red-50/60 dark:bg-red-950/20" : ""}>
+                      <TableRow
+                        key={u.id}
+                        onDoubleClick={() => openEdit(u)}
+                        className={cn("cursor-pointer", isConfirming && "bg-red-50/60 dark:bg-red-950/20")}
+                        title={t("users.dblClickToEdit")}
+                      >
                         <TableCell className="font-mono">{u.code || "—"}</TableCell>
                         <TableCell>{u.nameAr || "—"}</TableCell>
                         <TableCell className="text-muted-foreground">{u.nameEn || "—"}</TableCell>
@@ -1313,7 +1336,7 @@ export default function Users() {
                             </Badge>
                           )}
                         </TableCell>
-                        <TableCell>
+                        <TableCell onDoubleClick={e => e.stopPropagation()}>
                           {isConfirming ? (
                             <div className="flex items-center gap-2">
                               <span className="text-xs text-red-700 font-semibold">{t("users.confirmDelete")}</span>
@@ -1387,6 +1410,54 @@ export default function Users() {
                   })}
                 </TableBody>
               </Table>
+            </div>
+          )}
+
+          {!isLoading && filtered.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-4 mt-2 border-t">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>{t("users.rowsPerPage")}</span>
+                <Select
+                  value={String(pageSize)}
+                  onValueChange={v => { setPageSize(Number(v)); setPage(1); }}
+                >
+                  <SelectTrigger className="h-8 w-[80px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[10, 25, 50, 100].map(n => (
+                      <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-muted-foreground">
+                  {t("users.pageInfo", { page, totalPages, count: filtered.length })}
+                </span>
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 px-2"
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                    title={t("users.prevPage")}
+                  >
+                    {isRtl ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 px-2"
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                    title={t("users.nextPage")}
+                  >
+                    {isRtl ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </div>
             </div>
           )}
         </CardContent>
