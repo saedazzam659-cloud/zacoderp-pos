@@ -783,9 +783,14 @@ router.post("/sales-invoices", async (req, res) => {
     // linked to the currently-logged-in user (sales_reps.user_id). This is
     // the whole point of the user↔rep link: the salesperson logs in, opens a
     // new invoice, and their commission is automatically tagged without any
-    // manual selection. Admin/superadmin can still override by passing
-    // salesRepId explicitly in the body.
-    const effectiveRepId = salesRepId ?? await repIdForUser(cid, req.authUser?.id);
+    // manual selection. Admin/superadmin keep FULL freedom: they are NEVER
+    // auto-attributed to their own linked rep — they must pick a rep explicitly
+    // (or leave it blank for a no-rep invoice). This mirrors the unlocked rep
+    // picker they get in the UI (sales-reps /me/current returns "not linked").
+    const repRole = req.authUser?.role;
+    const isManagerRole = repRole === "admin" || repRole === "superadmin";
+    const effectiveRepId = salesRepId
+      ?? (isManagerRole ? null : await repIdForUser(cid, req.authUser?.id));
     const repInfo = await resolveRepCommission(cid, effectiveRepId, totals.totalAmount);
 
     // The central sequence engine is authoritative whenever an active

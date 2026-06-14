@@ -68,6 +68,15 @@ router.get("/me/current", async (req, res) => {
     const cid = requireCid(req, res); if (!cid) return;
     const uid = req.authUser?.id;
     if (!uid) { res.status(404).json({ error: "غير مرتبط" }); return; }
+    // Company managers (admin) and superadmins keep FULL freedom: they must be
+    // able to pick ANY rep on a document, even when their own user happens to be
+    // linked to a sales rep. Returning "not linked" here unlocks the rep picker
+    // in the UI for them (the create handler still lets them attribute to any rep
+    // by passing salesRepId explicitly).
+    const role = req.authUser?.role;
+    if (role === "admin" || role === "superadmin") {
+      res.status(404).json({ error: "مدير الشركة غير مقيّد بمندوب" }); return;
+    }
     const [rep] = await db.select().from(salesRepsTable)
       .where(and(eq(salesRepsTable.companyId, cid), eq(salesRepsTable.userId, uid)));
     if (!rep) { res.status(404).json({ error: "لا يوجد مندوب مرتبط بهذا المستخدم" }); return; }
