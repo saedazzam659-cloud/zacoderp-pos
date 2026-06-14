@@ -27,6 +27,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 interface FormState {
   date: string;
   paymentType: "cash" | "bank";
+  branchId: string;
   cashBoxId: string;
   bankAccountId: string;
   entityId: string;          // supplier id (always)
@@ -45,6 +46,7 @@ interface FormState {
 const EMPTY: FormState = {
   date: today(),
   paymentType: "cash",
+  branchId: "",
   cashBoxId: "",
   bankAccountId: "",
   entityId: "",
@@ -105,6 +107,12 @@ export default function PaymentVoucherForm() {
     queryFn: () => fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers: h }).then(r => r.json()),
     enabled: !!cid,
   });
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey: ["branches", cid],
+    queryFn: () => fetch(`${API}/api/org/branches?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    enabled: !!cid,
+    staleTime: 60_000,
+  });
   const { data: suppliers = [] } = useQuery<any[]>({
     queryKey: ["suppliers", cid],
     queryFn: () => fetch(`${API}/api/suppliers?companyId=${cid}`, { headers: h }).then(r => r.json()),
@@ -138,6 +146,16 @@ export default function PaymentVoucherForm() {
       setForm(p => ({ ...p, currencyId: String(defaultCurrencyId) }));
     }
   }, [isNew, form.currencyId, defaultCurrencyId]);
+  // Auto-pick the main/first branch on new vouchers so the mandatory
+  // branch field is pre-filled with a sensible default.
+  const defaultBranchId =
+    (branches as any[]).find((b: any) => b.isMain)?.id ??
+    (branches as any[])[0]?.id ?? null;
+  useEffect(() => {
+    if (isNew && !form.branchId && defaultBranchId) {
+      setForm(p => ({ ...p, branchId: String(defaultBranchId) }));
+    }
+  }, [isNew, form.branchId, defaultBranchId]);
   // Purchase invoices for the optional link picker. We pull the full list
   // for this tenant once and filter client-side per selected supplier —
   // simpler than maintaining a per-supplier endpoint and the data is
@@ -169,6 +187,7 @@ export default function PaymentVoucherForm() {
     setForm({
       date: existing.date ?? today(),
       paymentType: (existing.paymentType ?? "cash") as "cash" | "bank",
+      branchId: existing.branchId ? String(existing.branchId) : "",
       cashBoxId: existing.cashBoxId ? String(existing.cashBoxId) : "",
       bankAccountId: existing.bankAccountId ? String(existing.bankAccountId) : "",
       entityId: existing.entityId ? String(existing.entityId) : "",
@@ -293,6 +312,7 @@ export default function PaymentVoucherForm() {
       const amtNum = Number(cleanAmt);
       if (!isFinite(amtNum) || amtNum <= 0) throw new Error(t(`${NS}.invalidAmount`));
       if (!form.date) throw new Error(t(`${NS}.dateRequired`, "التاريخ مطلوب"));
+      if (!form.branchId) throw new Error(t(`${NS}.branchRequired`, "الرجاء اختيار الفرع"));
       if (form.paymentType === "cash" && !form.cashBoxId)
         throw new Error(t(`${NS}.cashBoxRequired`, "الخزنة مطلوبة عند الدفع نقداً"));
       if (form.paymentType === "bank" && !form.bankAccountId)
@@ -306,6 +326,7 @@ export default function PaymentVoucherForm() {
         companyId: cid,
         // Server force-overrides to "supplier" but we send it for clarity.
         entityType: "supplier",
+        branchId:     form.branchId     ? parseInt(form.branchId)     : null,
         cashBoxId:    form.cashBoxId    ? parseInt(form.cashBoxId)    : null,
         bankAccountId:form.bankAccountId? parseInt(form.bankAccountId): null,
         entityId:     form.entityId     ? parseInt(form.entityId)     : null,
@@ -624,6 +645,24 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                       {t(`${NS}.date`)} <span className="text-destructive">*</span>
                     </Label>
                     <Input type="date" value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} className="h-9 text-sm" data-testid="pv-date" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">
+                      {t(`${NS}.branch`, "الفرع")} <span className="text-destructive">*</span>
+                    </Label>
+                    <select
+                      value={form.branchId}
+                      onChange={e => setForm(p => ({ ...p, branchId: e.target.value }))}
+                      data-testid="pv-branch"
+                      className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                    >
+                      <option value="">{t(`${NS}.selectBranch`, "اختر الفرع")}</option>
+                      {(branches as any[]).map((b: any) => (
+                        <option key={b.id} value={b.id}>
+                          {b.code} — {isRtl ? b.nameAr : (b.nameEn || b.nameAr)}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">{t(`${NS}.currency`, "العملة")}</Label>

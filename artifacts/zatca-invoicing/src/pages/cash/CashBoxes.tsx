@@ -104,6 +104,7 @@ export default function CashBoxes() {
     if (form.code.trim().length > 20) e.code = t("cashBoxes.codeTooLong");
     if (!form.nameAr.trim()) e.nameAr = t("cashBoxes.nameArRequired");
     else if (form.nameAr.trim().length < 2) e.nameAr = t("cashBoxes.nameArShort");
+    if (!form.branchId) e.branchId = t("cashBoxes.branchRequired", "الرجاء اختيار الفرع");
     if (form.minBalance && isNaN(Number(form.minBalance))) e.minBalance = t("cashBoxes.invalidValue");
     else if (form.minBalance && Number(form.minBalance) < 0) e.minBalance = t("cashBoxes.cannotBeNegative");
     if (form.maxBalance && isNaN(Number(form.maxBalance))) e.maxBalance = t("cashBoxes.invalidValue");
@@ -112,7 +113,7 @@ export default function CashBoxes() {
       e.maxBalance = t("cashBoxes.maxMustBeGreater");
     }
     setErrors(e);
-    if (e.code || e.nameAr) setTab("basic");
+    if (e.code || e.nameAr || e.branchId) setTab("basic");
     else if (e.minBalance || e.maxBalance) setTab("limits");
     return Object.keys(e).length === 0;
   }
@@ -256,13 +257,13 @@ export default function CashBoxes() {
                     {(currencies as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.code} — {isRtl ? c.nameAr : (c.nameEn || c.nameAr)}</option>)}
                   </select>
                 </Field>
-                <Field label="الفرع">
+                <Field label="الفرع" required hint={errors.branchId && <span className="text-destructive">{errors.branchId}</span>}>
                   <select
-                    className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                    className={`w-full h-9 border border-input rounded-md px-3 text-sm bg-background ${errors.branchId ? errCls : ""}`}
                     value={form.branchId}
-                    onChange={e => setForm(p => ({ ...p, branchId: e.target.value }))}
+                    onChange={e => { const v = e.target.value; setForm(p => ({ ...p, branchId: v })); if (errors.branchId) setErrors(p => { const n = { ...p }; delete n.branchId; return n; }); }}
                   >
-                    <option value="">— بدون فرع محدد —</option>
+                    <option value="">— اختر الفرع —</option>
                     {(branches as any[]).map((b: any) => (
                       <option key={b.id} value={b.id}>{b.code} — {isRtl ? b.nameAr : (b.nameEn || b.nameAr)}</option>
                     ))}

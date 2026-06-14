@@ -334,7 +334,13 @@ export default function BankAccounts() {
           subtitle={t("bankAccounts.formSubtitle")}
           width="4xl"
           onClose={() => setPanel(false)}
-          onSave={() => saveMut.mutate()}
+          onSave={() => {
+            if (form.branchIds.length === 0) {
+              toast({ title: t("bankAccounts.branchRequired", "الرجاء اختيار الفرع"), variant: "destructive" });
+              return;
+            }
+            saveMut.mutate();
+          }}
           saving={saveMut.isPending}
           saveDisabled={!form.nameAr}
         >
@@ -367,7 +373,7 @@ export default function BankAccounts() {
                 {(currencies as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.code} — {isRtl ? c.nameAr : (c.nameEn || c.nameAr)}</option>)}
               </select>
             </Field>
-            <Field label="الفروع" hint={<span className="text-muted-foreground text-xs">يمكن ربط الحساب بأكثر من فرع — اتركه فارغاً ليكون مشتركاً بين كل الفروع</span>}>
+            <Field label="الفروع" required hint={<span className="text-muted-foreground text-xs">يجب ربط الحساب بفرع واحد على الأقل</span>}>
               <BranchMultiSelect
                 branches={branches as any[]}
                 value={form.branchIds}
