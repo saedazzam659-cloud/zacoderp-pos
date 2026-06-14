@@ -16,6 +16,7 @@ import { upsertItemsFromCloud } from "./items";
 import { upsertCustomersFromCloud } from "./customers";
 import { isClient } from "./bridge";
 import { saveWindowsModuleFlags } from "./windowsModules";
+import { saveRenewalMessage } from "./expiryMessage";
 
 export type PushSummary = {
   attempted: number;
@@ -53,6 +54,10 @@ export async function pullAndPersist(
   const settings = r.entities.settings?.[0];
   if (settings?.windowsModules) {
     saveWindowsModuleFlags(settings.windowsModules);
+  }
+  // SuperAdmin-editable renewal/contact text for the expiry banner.
+  if (typeof settings?.renewalMessage === "string") {
+    saveRenewalMessage(settings.renewalMessage);
   }
   lsWrite(LS_KEYS.lastPullAt, new Date().toISOString());
   return { customers, items, serverTime: r.serverTime ?? null };

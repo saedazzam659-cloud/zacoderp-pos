@@ -346,7 +346,7 @@ export default function LicenseManagement() {
             </div>
           </div>
           <div>
-            <Label className="text-xs">بيانات التواصل وأرقام الهواتف (تظهر مع رسالة الانتهاء)</Label>
+            <Label className="text-xs">رسالة التجديد وبيانات التواصل (تظهر مع رسالة الانتهاء)</Label>
             <textarea
               rows={3}
               value={noticeForm?.contactInfo ?? ""}
@@ -354,6 +354,9 @@ export default function LicenseManagement() {
               placeholder="مثال: للتجديد تواصل مع قسم المبيعات: 0501234567 — sales@example.com"
               className="mt-1 flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              يظهر هذا النص أيضاً على بانر قرب انتهاء الترخيص داخل تطبيق نقاط البيع لويندوز (يصل للأجهزة عند المزامنة). اتركه فارغاً لاستخدام النص الافتراضي.
+            </p>
           </div>
           <div className="flex justify-end">
             <Button

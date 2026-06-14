@@ -19,6 +19,7 @@ import {
   posDevicesTable, syncQueueLogTable, customersTable, itemsTable,
   posSessionsTable, salesInvoicesTable, salesInvoiceLinesTable,
   warehousesTable, cashBoxesTable, stockBalanceTable, companiesTable,
+  systemSettingsTable,
 } from "@workspace/db";
 import { eq, and, gt, desc, sql } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -206,10 +207,19 @@ router.post("/pull", async (req: DeviceAuthedRequest, res) => {
         if (parsedWm && typeof parsedWm === "object") windowsModules = parsedWm;
       } catch { /* keep empty → all enabled */ }
     }
+    // Global (all-companies) renewal/contact message shown on the device's
+    // license-expiry banner. SuperAdmin-edited via the web panel and stored in
+    // system_settings.subscription_contact_info. Empty string → device falls
+    // back to its built-in default text.
+    const [contactRow] = await db.select({ value: systemSettingsTable.value })
+      .from(systemSettingsTable)
+      .where(eq(systemSettingsTable.key, "subscription_contact_info"))
+      .limit(1);
     out.settings = [{
       enableOfflinePos: true,
       serverTime: new Date().toISOString(),
       windowsModules,
+      renewalMessage: contactRow?.value ?? "",
     }];
   }
 

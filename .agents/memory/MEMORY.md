@@ -81,3 +81,4 @@
 - [api-server not strict-typecheck-clean](api-server-not-strict-typecheck.md) — api-server has 100+ pre-existing tsc errors (runs via tsx); grep the log for YOUR file. 0-byte log = killed process, NOT clean (false negative).
 - [Item-master cost write-back](item-master-cost-writeback.md) — stock inflows only update stock_balance.avg_cost; items.cost_price (الأصناف grid تكلفة) needs an explicit refreshItemCost write-back per inflow path or it stays stale at 0.00.
 - [Sales-rep picker lock vs manager freedom](sales-rep-manager-freedom.md) — admin/superadmin must be exempt from rep lock in TWO places: /me/current 404 (UI unlock) AND create auto-attribution (else explicit-empty rep still re-tags linked rep).
+- [POS Desktop expiry banner](pos-desktop-expiry-banner.md) — banner is its OWN row below nav (never in topnavControls, breaks menus); renewal text reuses the global subscription_contact_info key via /api/sync/pull, default in standalone.

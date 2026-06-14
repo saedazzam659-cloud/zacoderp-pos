@@ -80,6 +80,7 @@ import {
   loadAllowedFromLS, defaultsForRole, type ScreenKey,
 } from "../lib/permissions";
 import { type WindowsView, type AppProfile } from "../lib/moduleRegistry";
+import { loadRenewalMessage } from "../lib/expiryMessage";
 import { isModuleEnabled, loadWindowsModuleFlags } from "../lib/windowsModules";
 import { getAppProfile } from "../lib/standalone";
 import ExpiryReport from "./ExpiryReport";
@@ -263,6 +264,10 @@ export default function PosShell({
   const effectiveCashierName = standalone
     ? (standaloneSession?.displayName ?? standaloneSession?.username)
     : (cashierContext?.nameAr || cashierContext?.username);
+  // SuperAdmin-editable renewal/contact text for the expiry banner (cached
+  // from the last sync pull). Empty → banner uses its built-in default.
+  // Re-read on every render so it refreshes right after a pull updates LS.
+  const renewalMessage = loadRenewalMessage();
 
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [pulled, setPulled] = useState<PullSummary | null>(null);
@@ -910,7 +915,6 @@ export default function PosShell({
           </div>
           {/* Right-side controls (moved here from the old white top bar) */}
           <div style={S.topnavControls}>
-            <ExpiryBanner expiresAt={expiresAt ?? null} compact />
             <button onClick={() => setShowPeripherals(true)} style={S.periphBtn} title="الأجهزة الطرفية">🖨️</button>
             {cashierContext && !standalone && (
               <div style={S.cashierChip} title={`جلسة #${cashierContext.posSessionId} — مفتوحة منذ ${new Date(cashierContext.openedAt).toLocaleString("ar-SA")}`}>
@@ -948,6 +952,11 @@ export default function PosShell({
         </nav>
         {openGroup && <div style={S.dropdownOverlay} onClick={() => setOpenGroup(null)} />}
 
+        {/* Subscription-expiry warning — its OWN slim full-width row directly
+            below the nav so it never squeezes the menu bar (the menus keep
+            their order). Message text is SuperAdmin-editable. */}
+        <ExpiryBanner expiresAt={expiresAt ?? null} renewalMessage={renewalMessage} />
+
         {/* New-version notification banner (Task #187). Cloud-only. */}
         {!standalone && updateAvailable && latestRelease && !updateDismissed && (
           <UpdateBanner
@@ -956,9 +965,6 @@ export default function PosShell({
             onDismiss={() => setUpdateDismissed(true)}
           />
         )}
-
-        {/* Subscription-expiry warning is now rendered inline inside the
-            topbar above (compact pill). No separate row here. */}
 
         {autoImportToast && (
           <div style={S.autoImportBanner}>
@@ -1087,71 +1093,45 @@ function UpdateBanner({
   );
 }
 
-function ExpiryBanner({ expiresAt, compact = false }: { expiresAt: string | null; compact?: boolean }) {
+// Slim, single-line expiry banner rendered on its OWN full-width row directly
+// below the nav — NEVER inside the topbar controls (that squeezed/broke the
+// menu bar). Shows countdown (color-coded by urgency) + exact date + the
+// SuperAdmin-editable renewal message + WhatsApp/phone shortcuts. Only appears
+// in the last 7 days before expiry.
+function ExpiryBanner({ expiresAt, renewalMessage }: { expiresAt: string | null; renewalMessage?: string }) {
   if (!expiresAt) return null;
   const ms = new Date(expiresAt).getTime() - Date.now();
   if (!Number.isFinite(ms) || ms <= 0) return null;
   const days = Math.ceil(ms / 86_400_000);
   if (days > 7) return null;
   const dateStr = new Date(expiresAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" });
-  if (compact) {
-    // Compact-but-rich pill inside the topbar. Shows the full picture
-    // in one glance: countdown (color-coded by urgency) + exact date
-    // + direct WhatsApp/phone shortcuts. Stays a single line at ~720p.
-    const urgent = days <= 3;
-    const pillStyle = urgent ? S.warnPillUrgent : S.warnPill;
-    return (
-      <div style={pillStyle}>
-        <span style={{ fontSize: 14 }}>{urgent ? "🔴" : "⚠️"}</span>
-        <span style={S.pillSegMain}>
-          ينتهي خلال{" "}
-          <strong style={{ fontSize: 13, color: urgent ? "#991b1b" : "#78350f" }}>
-            {days}
-          </strong>{" "}
-          {days === 1 ? "يوم" : "أيام"}
-        </span>
-        <span style={S.pillDivider}>·</span>
-        <span style={S.pillSegDate} title="تاريخ انتهاء الاشتراك">📅 {dateStr}</span>
-        <span style={S.pillDivider}>·</span>
-        <span style={S.pillSegContact}>للتجديد — م/ كرم عزام</span>
-        <a
-          href="https://wa.me/201000903159"
-          target="_blank"
-          rel="noreferrer"
-          style={S.pillWhatsapp}
-          title="فتح واتساب — 00201000903159"
-        >
-          💬 واتساب
-        </a>
-        <a
-          href="tel:01000903159"
-          style={S.pillPhone}
-          title="01000903159 داخل مصر · 00201000903159 خارج مصر"
-        >
-          📞 اتصال
-        </a>
-      </div>
-    );
-  }
+  const urgent = days <= 3;
+  const renewal = (renewalMessage && renewalMessage.trim()) || "للتجديد تواصل مع م/ كرم عزام";
   return (
-    <div style={S.warnBanner}>
-      <span style={{ fontSize: 18 }}>⚠️</span>
-      <span style={{ flex: 1 }}>
-        ينتهي اشتراك هذا الجهاز خلال <strong>{days}</strong> {days === 1 ? "يوم" : "أيام"} (بتاريخ {dateStr}) —
-        للتجديد تواصل مع م/ كرم عزام:&nbsp;
-        <a href="tel:01000903159" style={{ color: "#0c4a6e", fontWeight: 700, textDecoration: "underline" }}>
-          01000903159
-        </a>
-        &nbsp;(داخل مصر) /&nbsp;
-        <a href="tel:+201000903159" style={{ color: "#0c4a6e", fontWeight: 700, textDecoration: "underline" }} dir="ltr">
-          00201000903159
-        </a>
-        &nbsp;(خارج مصر) —&nbsp;
-        <a href="https://wa.me/201000903159" target="_blank" rel="noreferrer"
-           style={{ color: "#15803d", fontWeight: 700, textDecoration: "underline" }}>
-          واتساب 💬
-        </a>
+    <div style={urgent ? S.expiryRowUrgent : S.expiryRow}>
+      <span style={{ fontSize: 15 }}>{urgent ? "🔴" : "⚠️"}</span>
+      <span style={S.expiryRowText}>
+        ينتهي اشتراك هذا الجهاز خلال <strong>{days}</strong> {days === 1 ? "يوم" : "أيام"}
+        <span style={S.expiryRowDate}> (بتاريخ {dateStr})</span>
+        <span style={S.expiryRowSep}>—</span>
+        {renewal}
       </span>
+      <a
+        href="https://wa.me/201000903159"
+        target="_blank"
+        rel="noreferrer"
+        style={S.pillWhatsapp}
+        title="فتح واتساب — 00201000903159"
+      >
+        💬 واتساب
+      </a>
+      <a
+        href="tel:01000903159"
+        style={S.pillPhone}
+        title="01000903159 داخل مصر · 00201000903159 خارج مصر"
+      >
+        📞 اتصال
+      </a>
     </div>
   );
 }
@@ -1651,36 +1631,30 @@ const S = {
     fontSize: 12, fontWeight: 600, fontFamily: "inherit",
   } as const,
 
-  warnBanner: {
+  // Slim full-width expiry row — its own band below the nav (never inside the
+  // topbar controls). Single line, doesn't push the menus around.
+  expiryRow: {
     display: "flex", alignItems: "center", gap: 10,
-    padding: "10px 24px",
+    padding: "7px 18px",
     background: "linear-gradient(90deg, #fef3c7 0%, #fde68a 100%)",
     color: "#78350f", borderBottom: "1px solid #fcd34d",
-    fontSize: 13, fontWeight: 600, flexShrink: 0,
+    fontSize: 12.5, fontWeight: 600, flexShrink: 0,
+    whiteSpace: "nowrap" as const, overflow: "hidden",
   } as const,
-  // Compact pill version of the expiry banner — fits inside the topbar.
-  warnPill: {
-    display: "inline-flex", alignItems: "center", gap: 8,
-    padding: "6px 14px",
-    background: "linear-gradient(90deg, #fef3c7 0%, #fde68a 100%)",
-    color: "#78350f", border: "1px solid #fcd34d", borderRadius: 999,
-    fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" as const,
-    maxWidth: "100%", overflow: "hidden",
-    boxShadow: "0 1px 4px rgba(251,191,36,0.25)",
-  } as const,
-  warnPillUrgent: {
-    display: "inline-flex", alignItems: "center", gap: 8,
-    padding: "6px 14px",
+  expiryRowUrgent: {
+    display: "flex", alignItems: "center", gap: 10,
+    padding: "7px 18px",
     background: "linear-gradient(90deg, #fee2e2 0%, #fecaca 100%)",
-    color: "#7f1d1d", border: "1px solid #fca5a5", borderRadius: 999,
-    fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" as const,
-    maxWidth: "100%", overflow: "hidden",
-    boxShadow: "0 1px 6px rgba(220,38,38,0.25)",
+    color: "#7f1d1d", borderBottom: "1px solid #fca5a5",
+    fontSize: 12.5, fontWeight: 700, flexShrink: 0,
+    whiteSpace: "nowrap" as const, overflow: "hidden",
   } as const,
-  pillSegMain: { display: "inline-flex", gap: 3, alignItems: "center" } as const,
-  pillSegDate: { fontSize: 11.5, opacity: 0.92 } as const,
-  pillSegContact: { fontSize: 11.5, opacity: 0.85 } as const,
-  pillDivider: { opacity: 0.4, fontSize: 11 } as const,
+  expiryRowText: {
+    flex: 1, minWidth: 0, overflow: "hidden",
+    textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
+  } as const,
+  expiryRowDate: { opacity: 0.85, fontWeight: 600 } as const,
+  expiryRowSep: { opacity: 0.45, margin: "0 8px" } as const,
   pillWhatsapp: {
     display: "inline-flex", alignItems: "center", gap: 3,
     padding: "3px 10px", background: "#16a34a", color: "#fff",
