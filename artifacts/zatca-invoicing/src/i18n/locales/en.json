@@ -1341,7 +1341,7 @@
     "superAdminSub": "Manage companies and requests",
     "expires": "Expires",
     "accountSettings": "Account Settings",
-    "clearCache": "Clear Cache",
+    "clearCache": "Check for Updates",
     "clearCacheConfirm": "This will clear the app cache and reload the page to fetch the latest version. You will NOT be signed out. Continue?",
     "clearCacheDone": "Cache cleared — reloading…",
     "logout": "Sign Out"
