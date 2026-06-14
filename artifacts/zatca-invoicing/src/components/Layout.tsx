@@ -2751,6 +2751,13 @@ function SidebarInner({
               </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => clearAppCacheAndReload(t("topbar.clearCacheConfirm"))}
+              className="gap-2 cursor-pointer"
+            >
+              <HardDrive className="h-4 w-4" />{t("topbar.clearCache")}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive gap-2">
               <LogOut className="h-4 w-4" />{t("topbar.logout")}
             </DropdownMenuItem>
@@ -2759,6 +2766,28 @@ function SidebarInner({
       </div>
     </>
   );
+}
+
+// ─── Clear browser cache + service workers, then hard-reload ──────────────────
+// Lets users self-serve the "clear your cache" fix after a new build ships fresh
+// chunks. Unregisters service workers + deletes Cache Storage, but NEVER touches
+// localStorage — so the auth token / login session survives and the user is NOT
+// signed out. Best-effort: reloads regardless so fresh assets are always fetched.
+async function clearAppCacheAndReload(confirmMsg: string) {
+  if (typeof window !== "undefined" && !window.confirm(confirmMsg)) return;
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+    if (typeof caches !== "undefined") {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch {
+    // best-effort — fall through to reload
+  }
+  window.location.reload();
 }
 
 // ─── Breadcrumb Resolver ──────────────────────────────────────────────────────
@@ -3011,6 +3040,13 @@ function TopBar({
                 <Link href="/settings">
                   <Settings className="h-4 w-4" />{t("topbar.accountSettings")}
                 </Link>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => clearAppCacheAndReload(t("topbar.clearCacheConfirm"))}
+                className="gap-2 cursor-pointer"
+              >
+                <HardDrive className="h-4 w-4" />{t("topbar.clearCache")}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive gap-2">
