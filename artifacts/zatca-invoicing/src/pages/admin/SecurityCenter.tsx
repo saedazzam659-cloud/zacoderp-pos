@@ -438,7 +438,124 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
           ) : rows.length === 0 ? (
             <div className="p-12 text-center text-muted-foreground">لا توجد جلسات نشطة حالياً.</div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            <div className="md:hidden p-3 space-y-3">
+              <div className="flex items-center gap-2 px-1">
+                <Checkbox checked={allChecked} onCheckedChange={toggleAll} data-testid="select-all-sessions-m" />
+                <span className="text-xs text-muted-foreground">تحديد الكل</span>
+              </div>
+              {rows.map(r => (
+                <Card key={r.userId} className="border" data-testid={`session-card-${r.userId}`}>
+                  <CardContent className="p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2 min-w-0">
+                        <Checkbox
+                          checked={selected.has(r.userId)}
+                          onCheckedChange={() => toggle(r.userId)}
+                          data-testid={`session-select-${r.userId}-m`}
+                          className="mt-0.5"
+                        />
+                        <div className="min-w-0">
+                          <div className="font-medium truncate">{r.username}</div>
+                          {r.email && <div className="text-[11px] text-muted-foreground truncate">{r.email}</div>}
+                        </div>
+                      </div>
+                      <Badge variant="outline" className={
+                        r.role === "superadmin" ? "bg-purple-50 text-purple-700 border-purple-200" :
+                        r.role === "admin"      ? "bg-blue-50 text-blue-700 border-blue-200" :
+                                                  "bg-gray-50 text-gray-700 border-gray-200"
+                      }>{r.role}</Badge>
+                    </div>
+
+                    <div className="flex items-start justify-between gap-2 text-xs">
+                      <span className="text-muted-foreground">الشركة</span>
+                      <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                        <span>{r.companyName ?? (r.companyId == null ? "—" : `#${r.companyId}`)}</span>
+                        {r.companyLoginCount != null && r.companyLoginCount > 0 && (
+                          <Badge
+                            variant="outline"
+                            className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-mono px-1.5 py-0 h-4"
+                            title={`إجمالي تسجيلات الدخول لهذه الشركة: ${r.companyLoginCount.toLocaleString("ar-SA")}`}
+                            data-testid={`session-company-logins-${r.userId}-m`}
+                          >
+                            {r.companyLoginCount.toLocaleString("ar-SA")}
+                          </Badge>
+                        )}
+                        {r.zatcaStatus && (() => {
+                          const z = ZATCA_BADGE[r.zatcaStatus];
+                          return (
+                            <Badge
+                              variant="outline"
+                              className={`${z.cls} text-[10px] px-1.5 py-0 h-4 inline-flex items-center gap-1`}
+                              title={z.title}
+                              data-testid={`session-zatca-${r.userId}-m`}
+                            >
+                              <span className={`inline-block w-1.5 h-1.5 rounded-full ${z.dot}`} aria-hidden />
+                              {z.label}
+                            </Badge>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="text-muted-foreground">آخر تسجيل دخول</span>
+                      <span className="font-mono">{fmtDateTime(r.lastLoginAt)}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="text-muted-foreground">موقع الدخول</span>
+                      <LoginLocationCell
+                        place={r.loginPlace}
+                        address={r.loginAddress}
+                        lat={r.loginLat}
+                        lng={r.loginLng}
+                        accuracy={r.loginAccuracy}
+                        zoneName={r.loginZoneName}
+                        ipCity={r.ipCity}
+                        ipRegion={r.ipRegion}
+                        ipCountryName={r.ipCountryName}
+                        ipLat={r.ipLat}
+                        ipLng={r.ipLng}
+                        testId={`session-location-${r.userId}-m`}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="text-muted-foreground">الدولة</span>
+                      <span data-testid={`session-country-${r.userId}-m`}>
+                        {r.country ? (
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-gradient-to-l from-sky-50 to-indigo-50 border border-sky-200">
+                            <span className="text-base leading-none" aria-hidden>{countryFlag(r.country)}</span>
+                            <span className="font-medium text-slate-700">{countryName(r.country)}</span>
+                            <span className="text-[10px] font-mono text-slate-400">{r.country}</span>
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="text-[11px] text-muted-foreground break-all" title={r.userAgent ?? ""}>
+                      <span className="font-mono">{r.ip ?? "—"}</span>
+                      {r.userAgent && <span> · {shortUA(r.userAgent)}</span>}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 pt-2">
+                      <Button
+                        variant="outline" size="sm" className="text-rose-600 border-rose-200 hover:bg-rose-50"
+                        onClick={() => setConfirmEnd({ kind: "single", userId: r.userId, username: r.username })}
+                        data-testid={`session-end-${r.userId}-m`}
+                      >
+                        <LogOut className="h-3.5 w-3.5 ml-1" />
+                        إنهاء
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/40 border-b">
                   <tr className="text-right text-xs text-muted-foreground">
@@ -553,6 +670,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </CardContent>
       </Card>

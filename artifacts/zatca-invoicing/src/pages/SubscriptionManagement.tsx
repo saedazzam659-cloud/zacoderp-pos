@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Package, Search, RefreshCw, CheckCircle2, XCircle,
   Calendar, Users, FileText, ChevronDown, ChevronUp, BadgeCheck,
@@ -459,8 +460,8 @@ export default function SubscriptionManagement() {
         </div>
       )}
 
-      {/* Table */}
-      <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
+      {/* Table (desktop) */}
+      <div className="hidden md:block rounded-xl border bg-card overflow-hidden shadow-sm">
         {/* Column headers */}
         <div className="grid items-center gap-4 border-b bg-muted/40 px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide select-none"
           style={{ gridTemplateColumns: "auto 2fr 1fr 1fr 1fr 1fr 1.4fr auto" }}>
@@ -667,6 +668,201 @@ export default function SubscriptionManagement() {
             <span className="text-muted-foreground/60">انقر على أي صف لعرض الإجراءات</span>
           </div>
         )}
+      </div>
+
+      {/* Card list (mobile) */}
+      <div className="md:hidden space-y-3">
+        {!isLoading && filtered.length > 0 && (
+          <div className="flex items-center gap-2 px-1">
+            <Checkbox checked={allSelectedOnPage} onCheckedChange={toggleAll} aria-label="تحديد الكل" />
+            <span className="text-xs text-muted-foreground">تحديد الكل ({filtered.length})</span>
+          </div>
+        )}
+
+        {isLoading && (
+          <div className="space-y-3">
+            {[1, 2, 3].map(i => (
+              <Card key={i}>
+                <CardContent className="p-4 space-y-3 animate-pulse">
+                  <Skeleton className="h-5 w-40" />
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-4 w-32" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {!isLoading && filtered.length === 0 && (
+          <div className="py-16 text-center rounded-xl border bg-card">
+            <Package className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
+            <p className="text-muted-foreground font-medium">لا توجد اشتراكات{search ? " مطابقة" : ""}</p>
+          </div>
+        )}
+
+        {!isLoading && filtered.map((row: any) => {
+          const sub      = row.subscription;
+          const company  = row.company;
+          const plan     = PLAN_MAP[sub?.plan] ?? PLAN_MAP.starter;
+          const isExp    = expandedRow === sub?.id;
+          const isSelected = selected.has(sub?.id);
+          const u        = usageByCompany.get(sub?.companyId);
+          const extM     = extendForms[sub?.id] ?? 1;
+          const planForm = planForms[sub?.id] ?? { plan: sub?.plan, cycle: (sub?.billingCycle === "annual" ? "yearly" : sub?.billingCycle) ?? "monthly" };
+          const isUpgradeTarget = upgradeForId === sub?.id;
+          return (
+            <Card
+              key={sub?.id}
+              id={`sub-row-m-${sub?.id}`}
+              className={cn(
+                !sub?.isActive && "bg-muted/20",
+                isSelected && "ring-1 ring-primary/40",
+                isUpgradeTarget && "ring-2 ring-amber-400",
+              )}
+            >
+              <CardContent className="p-4 space-y-3">
+                {/* Title row */}
+                <div className="flex items-start gap-3">
+                  <div onClick={e => e.stopPropagation()} className="pt-0.5">
+                    <Checkbox checked={isSelected} onCheckedChange={() => toggleOne(sub?.id)} aria-label="تحديد" />
+                  </div>
+                  <div className="h-9 w-9 rounded-lg bg-primary/10 text-primary font-bold text-sm flex items-center justify-center shrink-0">
+                    {company?.nameAr?.[0] ?? "ش"}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-sm text-foreground flex items-center gap-1.5 flex-wrap">
+                      {company?.nameAr}
+                      {company?.status === "suspended" && (
+                        <span className="text-[10px] bg-red-100 text-red-700 border border-red-200 rounded px-1">شركة موقوفة</span>
+                      )}
+                    </p>
+                    <p className="text-[11px] font-mono text-muted-foreground truncate">{company?.vatNumber}</p>
+                  </div>
+                </div>
+
+                {/* Stacked details */}
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-muted-foreground">الباقة</span>
+                  <span className={cn("inline-flex items-center gap-1 border rounded-full px-2 py-0.5 font-semibold", plan.color)}>
+                    <Package className="h-3 w-3 shrink-0" />{plan.label}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-muted-foreground">الحالة</span>
+                  <StatusBadge sub={sub} companyStatus={company?.status} />
+                </div>
+
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-muted-foreground">المستخدمون</span>
+                  <span className={cn("flex items-center gap-1", u?.overFields?.includes("users") && "text-amber-700 font-semibold")}>
+                    <Users className="h-3.5 w-3.5" />{u ? `${u.actual.users}/` : ""}{sub?.maxUsers === 999 ? "∞" : sub?.maxUsers}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-muted-foreground">الفواتير</span>
+                  <span className={cn("flex items-center gap-1", u?.overFields?.includes("invoices") && "text-amber-700 font-semibold")}>
+                    <FileText className="h-3.5 w-3.5" />{u ? `${u.actual.invoices}/` : ""}{sub?.maxInvoices === 999999 ? "∞" : sub?.maxInvoices?.toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-muted-foreground">انتهاء الاشتراك</span>
+                  <span className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />{sub?.endDate ?? "—"}</span>
+                </div>
+
+                {/* Expand toggle */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full gap-1.5"
+                  onClick={() => { setExpandedRow(isExp ? null : sub?.id); if (isUpgradeTarget) setUpgradeForId(null); }}
+                >
+                  {isExp ? <><ChevronUp className="h-4 w-4" />إخفاء الإجراءات</> : <><ChevronDown className="h-4 w-4" />عرض الإجراءات</>}
+                </Button>
+
+                {isExp && (
+                  <div className="border-t pt-3 space-y-4">
+                    {/* Usage panel */}
+                    {u && (
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        {(["users", "branches", "warehouses", "invoices"] as const).map(k => {
+                          const over = u.overFields?.includes(k);
+                          const labels: Record<string, string> = { users: "المستخدمون", branches: "الفروع", warehouses: "المستودعات", invoices: "الفواتير" };
+                          return (
+                            <div key={k} className={cn("rounded-lg border p-2.5 bg-background/60", over && "border-amber-300 bg-amber-50")}>
+                              <p className="text-[10px] text-muted-foreground/70 uppercase tracking-wide font-semibold">{labels[k]}</p>
+                              <p className={cn("text-sm font-semibold mt-0.5 tabular-nums", over && "text-amber-800")}>
+                                {u.actual[k]?.toLocaleString()} / {u.allowed[k] >= 999 ? "∞" : u.allowed[k]?.toLocaleString()}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Extend */}
+                    <div className="rounded-lg border bg-background p-3 space-y-2">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                        <CalendarPlus className="h-3.5 w-3.5 text-primary" />تمديد الاشتراك
+                      </div>
+                      <div className="flex gap-2">
+                        <select className="flex-1 h-8 rounded-md border bg-background px-2 text-xs"
+                          value={extM}
+                          onChange={e => setExtendForms(f => ({ ...f, [sub.id]: parseInt(e.target.value) }))}>
+                          {EXTEND_OPTIONS.map(o => <option key={o.months} value={o.months}>{o.label}</option>)}
+                        </select>
+                        <Button size="sm" className="h-8 gap-1.5" disabled={extendMutation.isPending}
+                          onClick={() => extendMutation.mutate({ id: sub.id, months: extM })}>
+                          تطبيق
+                        </Button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        ينتهي حالياً في {sub.endDate} — سيمتد بمقدار الأشهر المختارة من تاريخ الانتهاء الحالي.
+                      </p>
+                    </div>
+
+                    {/* Change plan */}
+                    <div className="rounded-lg border bg-background p-3 space-y-2">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                        <Repeat className="h-3.5 w-3.5 text-primary" />تبديل الباقة
+                      </div>
+                      <div className="flex gap-2 flex-wrap">
+                        <select className="flex-1 h-8 rounded-md border bg-background px-2 text-xs"
+                          value={planForm.plan}
+                          onChange={e => setPlanForms(f => ({ ...f, [sub.id]: { ...planForm, plan: e.target.value } }))}>
+                          {PLANS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                        </select>
+                        <select className="h-8 rounded-md border bg-background px-2 text-xs"
+                          value={planForm.cycle}
+                          onChange={e => setPlanForms(f => ({ ...f, [sub.id]: { ...planForm, cycle: e.target.value as "monthly" | "yearly" } }))}>
+                          <option value="monthly">شهرية</option>
+                          <option value="yearly">سنوية</option>
+                        </select>
+                        <Button size="sm" className="h-8 gap-1.5" disabled={changePlanMutation.isPending}
+                          onClick={() => changePlanMutation.mutate({ id: sub.id, planKey: planForm.plan, billingCycle: planForm.cycle })}>
+                          تبديل
+                        </Button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        يضبط حدود وسعر الباقة الجديدة، ويبدأ دورة جديدة من اليوم.
+                      </p>
+                    </div>
+
+                    <div className="flex gap-2 pt-1 flex-wrap">
+                      <Button size="sm" variant="outline" className={cn("gap-1.5 h-8",
+                        sub?.isActive ? "border-red-300 text-red-700 hover:bg-red-50" : "border-green-300 text-green-700 hover:bg-green-50")}
+                        onClick={() => updateMutation.mutate({ id: sub.id, data: { isActive: !sub.isActive } })}>
+                        {sub?.isActive ? <><PauseCircle className="h-3.5 w-3.5" />تجميد</> : <><PlayCircle className="h-3.5 w-3.5" />تفعيل</>}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
     </div>

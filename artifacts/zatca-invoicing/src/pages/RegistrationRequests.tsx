@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   CheckCircle2, XCircle, Trash2, Clock, Building2, User,
   Search, MapPin, BadgeCheck, AlertTriangle, RefreshCw,
@@ -189,8 +190,8 @@ export default function RegistrationRequests() {
         </div>
       </div>
 
-      {/* ── Grid table ── */}
-      <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
+      {/* ── Grid table (desktop) ── */}
+      <div className="hidden md:block rounded-xl border bg-card overflow-hidden shadow-sm">
 
         {/* Column headers */}
         <div className="grid items-center gap-4 border-b bg-muted/40 px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide select-none"
@@ -403,6 +404,198 @@ export default function RegistrationRequests() {
           <div className="border-t bg-muted/20 px-4 py-2.5 text-xs text-muted-foreground flex items-center justify-between">
             <span>عدد النتائج: <strong>{filtered.length}</strong></span>
             <span className="text-muted-foreground/60">انقر على أي صف لعرض التفاصيل والإجراءات</span>
+          </div>
+        )}
+      </div>
+
+      {/* ── Mobile card list ── */}
+      <div className="md:hidden space-y-3">
+        {/* Loading skeleton */}
+        {isLoading && (
+          <div className="space-y-3">
+            {[1, 2, 3, 4, 5].map(i => (
+              <Card key={i} className="animate-pulse">
+                <CardContent className="p-4 space-y-2">
+                  <div className="h-4 w-40 bg-muted rounded" />
+                  <div className="h-3 w-28 bg-muted/60 rounded" />
+                  <div className="h-3 w-24 bg-muted/60 rounded" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!isLoading && filtered.length === 0 && (
+          <div className="rounded-xl border bg-card py-20 text-center shadow-sm">
+            <Building2 className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
+            <p className="text-muted-foreground font-medium">لا توجد طلبات{search ? " مطابقة" : ""}</p>
+          </div>
+        )}
+
+        {/* Cards */}
+        {!isLoading && filtered.map((r: any) => {
+          const co = r.company;
+          const user = r.user;
+          const sub = r.subscription;
+          const status = STATUS_CONFIG[co.status] ?? STATUS_CONFIG.pending;
+          const StatusIcon = status.icon;
+          const isPending = co.status === "pending";
+          const isExpanded = expandedRow === co.id;
+
+          return (
+            <Card key={co.id} className={cn("overflow-hidden", status.rowBg)}>
+              <CardContent className="p-4 space-y-3">
+                {/* Title row */}
+                <div className="flex items-start gap-3">
+                  <div className={cn(
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg font-bold text-sm",
+                    isPending ? "bg-amber-100 text-amber-700" :
+                    co.status === "active" ? "bg-green-100 text-green-700" :
+                    "bg-red-100 text-red-700"
+                  )}>
+                    {co.nameAr?.[0] ?? "ش"}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-sm text-foreground leading-tight">{co.nameAr}</p>
+                    {co.nameEn && <p className="text-xs text-muted-foreground leading-tight">{co.nameEn}</p>}
+                  </div>
+                  <span className={cn("inline-flex items-center gap-1 text-xs border rounded-full px-2 py-0.5 font-medium w-fit shrink-0", status.variant)}>
+                    <StatusIcon className="h-3 w-3 shrink-0" />
+                    {status.label}
+                  </span>
+                </div>
+
+                {/* Stacked detail rows */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-muted-foreground">الرقم الضريبي</span>
+                    <span className="font-mono">{co.vatNumber || "—"}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-muted-foreground">الدولة</span>
+                    <span className="inline-flex items-center gap-1.5" data-testid={`request-country-m-${co.id}`}>
+                      <Globe2 className="h-3 w-3 shrink-0 text-muted-foreground" />
+                      {getCountryName(co.country, "ar")}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-muted-foreground">المدينة</span>
+                    <span>{co.city || "—"}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-muted-foreground">المستخدم</span>
+                    <span className="font-mono">{user?.username ?? "—"}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-muted-foreground">الباقة</span>
+                    <span>
+                      {sub?.plan ? (
+                        <span className={cn("text-xs border rounded-full px-2 py-0.5 font-medium", PLAN_BADGE[sub.plan] ?? "bg-muted text-muted-foreground border-border")}>
+                          {PLAN_LABELS[sub.plan] ?? sub.plan}
+                        </span>
+                      ) : <span className="text-muted-foreground/50">—</span>}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-muted-foreground">تاريخ الطلب</span>
+                    <span>{new Date(co.createdAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" })}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <span>عنوان IP</span>
+                    <span className="font-mono truncate" title={co.registrationIp}>{co.registrationIp || "—"}</span>
+                  </div>
+                </div>
+
+                {/* Expand toggle */}
+                <button
+                  className="flex w-full items-center justify-center gap-1.5 rounded-md border bg-background/60 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted transition-colors"
+                  onClick={() => setExpandedRow(isExpanded ? null : co.id)}
+                  data-testid={`request-expand-m-${co.id}`}
+                >
+                  {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  {isExpanded ? "إخفاء التفاصيل" : "عرض التفاصيل"}
+                </button>
+
+                {/* Expanded details */}
+                {isExpanded && (
+                  <div className="border-t pt-3 space-y-4">
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      {[
+                        { icon: BadgeCheck, label: "رقم ضريبي",      value: co.vatNumber,    mono: true },
+                        { icon: Building2,  label: "سجل تجاري",       value: co.crNumber,     mono: true },
+                        { icon: MapPin,     label: "العنوان",          value: [co.street, co.district, co.city].filter(Boolean).join("، ") },
+                        { icon: Package,    label: "الباقة والفاتورة", value: sub ? `${PLAN_LABELS[sub.plan] ?? sub.plan} — ${sub.price} ر.س/${sub.billingCycle === "annual" ? "سنة" : "شهر"}` : "—" },
+                        { icon: User,       label: "اسم المستخدم",    value: user?.username,  mono: true },
+                        { icon: Wifi,       label: "عنوان IP التسجيل", value: co.registrationIp || "غير متاح", mono: true },
+                        { icon: Clock,      label: "تاريخ الطلب",      value: new Date(co.createdAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" }) },
+                        sub?.startDate && { icon: Clock, label: "بداية الاشتراك", value: sub.startDate },
+                        sub?.endDate   && { icon: Clock, label: "نهاية الاشتراك", value: sub.endDate },
+                      ].filter(Boolean).map((item: any) => (
+                        <div key={item.label} className="flex items-start gap-2 bg-background/60 rounded-lg p-2.5 border">
+                          <item.icon className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+                          <div className="min-w-0">
+                            <p className="text-[10px] text-muted-foreground/70 uppercase tracking-wide font-semibold">{item.label}</p>
+                            <p className={cn("text-xs font-medium truncate mt-0.5", item.mono ? "font-mono" : "")}>{item.value || "—"}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Rejection reason */}
+                    {co.status === "rejected" && co.rejectionReason && (
+                      <div className="flex gap-2 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
+                        <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-red-500" />
+                        <div><span className="font-semibold">سبب الرفض: </span>{co.rejectionReason}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                <div className="flex flex-wrap items-center gap-2 pt-2">
+                  {isPending && (
+                    <>
+                      <Button size="sm" className="gap-1.5 bg-green-600 hover:bg-green-700 h-8"
+                        onClick={() => approveMutation.mutate(co.id)}
+                        disabled={approveMutation.isPending}>
+                        <CheckCircle2 className="h-3.5 w-3.5" />قبول الطلب
+                      </Button>
+                      <Button size="sm" variant="outline" className="gap-1.5 h-8 border-red-300 text-red-700 hover:bg-red-50"
+                        onClick={() => setRejectDialog({ id: co.id, name: co.nameAr })}>
+                        <XCircle className="h-3.5 w-3.5" />رفض
+                      </Button>
+                    </>
+                  )}
+                  {co.status === "active" && (
+                    <Button size="sm" variant="outline" className="gap-1.5 h-8 border-red-300 text-red-700 hover:bg-red-50"
+                      onClick={() => setRejectDialog({ id: co.id, name: co.nameAr })}>
+                      <XCircle className="h-3.5 w-3.5" />إلغاء التفعيل
+                    </Button>
+                  )}
+                  {co.status === "rejected" && (
+                    <Button size="sm" className="gap-1.5 h-8 bg-green-600 hover:bg-green-700"
+                      onClick={() => approveMutation.mutate(co.id)}
+                      disabled={approveMutation.isPending}>
+                      <CheckCircle2 className="h-3.5 w-3.5" />إعادة تفعيل
+                    </Button>
+                  )}
+                  {co.status === "rejected" && (
+                    <Button size="sm" variant="ghost" className="gap-1.5 h-8 text-destructive hover:bg-destructive/10 mr-auto"
+                      onClick={() => setDeleteDialog({ id: co.id, name: co.nameAr })}>
+                      <Trash2 className="h-3.5 w-3.5" />حذف نهائياً
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+
+        {/* Footer count */}
+        {!isLoading && filtered.length > 0 && (
+          <div className="px-1 text-xs text-muted-foreground">
+            عدد النتائج: <strong>{filtered.length}</strong>
           </div>
         )}
       </div>

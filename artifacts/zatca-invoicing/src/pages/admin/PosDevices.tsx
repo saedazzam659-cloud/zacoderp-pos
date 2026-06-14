@@ -263,7 +263,86 @@ function LicensesTab({ headers }: { headers: Record<string, string> }) {
         <div className="text-sm text-muted-foreground">إجمالي: {licensesQ.data?.length || 0}</div>
         <Button onClick={() => setShowGen(true)}><Plus className="ml-2 h-4 w-4" /> توليد تراخيص</Button>
       </div>
-      <div className="overflow-x-auto">
+      {/* Mobile card list */}
+      <div className="md:hidden space-y-3">
+        {(licensesQ.data ?? []).map((l) => (
+          <Card key={l.id}>
+            <CardContent className="p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <code className="text-xs bg-muted px-2 py-1 rounded break-all flex-1">{l.licenseKey}</code>
+                <button onClick={() => copy(l.licenseKey)} className="text-muted-foreground hover:text-foreground shrink-0">
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="text-muted-foreground">#</span>
+                <span>{l.id}</span>
+              </div>
+              <div className="flex items-start justify-between gap-2 text-xs">
+                <span className="text-muted-foreground shrink-0">الشركة</span>
+                <div className="text-left">
+                  {l.companyName ? (
+                    <div className="flex flex-col gap-1 items-end">
+                      <span>{l.companyName}</span>
+                      {companyFlagFor(l.companyId) === false && (
+                        <div className="flex items-center gap-2">
+                          <Badge className="bg-amber-100 text-amber-800 text-[10px]">POS غير مفعّل</Badge>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-2 text-[11px] bg-green-50 hover:bg-green-100 border-green-300 text-green-800"
+                            onClick={() => flagMut.mutate({ companyId: l.companyId!, enable: true })}
+                            disabled={flagMut.isPending}
+                          >
+                            تفعيل الآن
+                          </Button>
+                        </div>
+                      )}
+                      {companyFlagFor(l.companyId) === true && (
+                        <Badge className="bg-green-100 text-green-800 text-[10px]">POS مفعّل ✓</Badge>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="text-muted-foreground">الخطة</span>
+                <span>{l.plan}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="text-muted-foreground">الحالة</span>
+                <span>{statusBadge(l.status)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="text-muted-foreground">انتهاء</span>
+                <span>{l.expiresAt ? new Date(l.expiresAt).toLocaleDateString("ar-SA") : "—"}</span>
+              </div>
+              <div className="flex flex-wrap gap-2 pt-2">
+                {!l.companyId && l.status === "unassigned" && (
+                  <Button size="sm" variant="outline" onClick={() => setAssignFor(l)}>تخصيص</Button>
+                )}
+                {l.status !== "revoked" && (
+                  <>
+                    <Button size="sm" variant="outline" onClick={() => { setExtendFor(l); setExtendDate(l.expiresAt ? l.expiresAt.substring(0,10) : ""); }}>
+                      <Calendar className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button size="sm" variant="destructive" onClick={() => revokeMut.mutate(l.id)}>
+                      <ShieldOff className="h-3.5 w-3.5" />
+                    </Button>
+                  </>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+        {licensesQ.data?.length === 0 && (
+          <div className="p-8 text-center text-muted-foreground">لا توجد تراخيص. ابدأ بتوليد دفعة جديدة.</div>
+        )}
+      </div>
+
+      <div className="hidden md:block overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-muted/40">
             <tr>

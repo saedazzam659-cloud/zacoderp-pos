@@ -1158,7 +1158,146 @@ export default function AuditLog() {
           ) : rows.length === 0 ? (
             <div className="p-12 text-center text-muted-foreground">{tr("noRows")}</div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            {/* Mobile-only card list (task T003). Same `rows` array as the
+                desktop table below, rendered as stacked cards so audit rows
+                stay legible on a phone instead of horizontally scrolling a
+                10-column table. Pure additive rendering — every handler,
+                mutation, and data-testid mirrors the desktop table (mobile
+                controls suffix testids with `-m` to avoid duplicate ids). */}
+            <div className="md:hidden divide-y">
+              <div className="flex items-center gap-2 px-3 py-2 bg-muted/40">
+                <Checkbox
+                  checked={headerCheckboxState}
+                  onCheckedChange={togglePageSelection}
+                  aria-label={tr("selectAllOnPage")}
+                  data-testid="audit-bulk-select-all-m"
+                />
+                <span className="text-xs text-muted-foreground">{tr("selectAllOnPage")}</span>
+              </div>
+              {rows.map(r => {
+                const cls = ACTION_CLS[r.action] ?? "bg-gray-50 text-gray-700 border-gray-200";
+                const label = trAction(r.action);
+                const tt = new Date(r.createdAt);
+                const ok = (r.statusCode ?? 0) >= 200 && (r.statusCode ?? 0) < 400;
+                const meta = (r.metadata ?? {}) as Record<string, unknown>;
+                const isTruncated = meta.truncated === true;
+                const rowCap = typeof meta.rowCap === "number" ? meta.rowCap : null;
+                const totalAvailable =
+                  typeof meta.totalAvailable === "number" ? meta.totalAvailable : null;
+                const shareLink = buildShareLinkForId(r.id);
+                const companyName = (() => {
+                  if (r.companyId == null) return "—";
+                  const c = companies.find((x) => x.id === r.companyId);
+                  if (!c) return `#${r.companyId}`;
+                  return isRtl
+                    ? (c.nameAr ?? c.nameEn ?? `#${r.companyId}`)
+                    : (c.nameEn ?? c.nameAr ?? `#${r.companyId}`);
+                })();
+                const entityNode = r.entityType ? (() => {
+                  const friendly = tr(`entityTypes.${r.entityType}`, { defaultValue: r.entityType });
+                  return `${friendly}${r.entityId ? ` #${r.entityId}` : ""}`;
+                })() : null;
+                return (
+                  <div
+                    key={r.id}
+                    data-testid="audit-row-m"
+                    data-selected={selectedRows.has(r.id) ? "true" : undefined}
+                    className={`p-3 space-y-2 ${selectedRows.has(r.id) ? "bg-primary/5" : ""}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <button
+                        type="button"
+                        className="flex-1 text-start min-w-0"
+                        onClick={() => setSelectedId(r.id)}
+                        aria-label={tr("openDetails")}
+                      >
+                        <div className="flex flex-wrap items-center gap-1">
+                          <Badge variant="outline" className={`${cls} font-normal`}>{label}</Badge>
+                          {entityNode && (
+                            <span className="text-xs font-medium">{entityNode}</span>
+                          )}
+                          {isTruncated && (
+                            <Badge
+                              variant="outline"
+                              data-testid="audit-truncated-badge-m"
+                              title={
+                                rowCap != null && totalAvailable != null
+                                  ? tr("truncatedTooltip", {
+                                      cap: rowCap.toLocaleString(locale),
+                                      total: totalAvailable.toLocaleString(locale),
+                                    })
+                                  : tr("truncatedLabel")
+                              }
+                              className="bg-amber-50 text-amber-800 border-amber-300 font-normal gap-1"
+                            >
+                              <Scissors className="h-3 w-3" />
+                              <span>{tr("truncatedLabel")}</span>
+                            </Badge>
+                          )}
+                        </div>
+                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Checkbox
+                          checked={selectedRows.has(r.id)}
+                          onCheckedChange={(v) => toggleRowSelected(r, v === true)}
+                          aria-label={tr("selectRow")}
+                          data-testid={`audit-row-select-m-${r.id}`}
+                        />
+                        <span
+                          className="inline-flex"
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            void copyRowAsMarkdownLink(r);
+                          }}
+                          data-testid={`audit-row-share-link-context-m-${r.id}`}
+                        >
+                          <CopyIconButton
+                            value={shareLink}
+                            label={shareLinkLabelForRow(r)}
+                            tr={tr}
+                            testId={`audit-row-copy-share-link-m-${r.id}`}
+                            icon={Link2}
+                          />
+                        </span>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-muted-foreground">{tr("colUser")}</span>
+                        <span className="font-medium text-end">
+                          {r.username ?? "—"}{r.role ? ` (${r.role})` : ""}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-muted-foreground">{tr("companyLabel")}</span>
+                        <span className="text-end">{companyName}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-muted-foreground shrink-0">{tr("colPath")}</span>
+                        <span className="font-mono text-end truncate max-w-[65%]" title={`${r.method ?? ""} ${r.path ?? ""}`}>
+                          {r.method} {r.path ?? "—"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-muted-foreground">{tr("colTime")}</span>
+                        <span className="font-mono text-end">{tt.toLocaleString(locale, { hour12: false })}</span>
+                      </div>
+                      {r.statusCode != null && (
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-muted-foreground">{tr("colStatus")}</span>
+                          <span className={`font-mono ${ok ? "text-emerald-600" : "text-rose-600"}`}>{r.statusCode}</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground font-mono break-all">
+                      {tr("colIp")}: {r.ip ?? "—"}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/40 border-b">
                   <tr className={`${isRtl ? "text-right" : "text-left"} text-xs text-muted-foreground`}>
@@ -1498,6 +1637,7 @@ export default function AuditLog() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
 
           {/* Pagination */}
