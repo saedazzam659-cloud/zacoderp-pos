@@ -2476,6 +2476,9 @@
     },
     "modules": {
       "dashboard": "لوحة التحكم",
+      "dashboard_kpis": "المؤشرات الرئيسية",
+      "dashboard_charts": "الرسوم التفاعلية",
+      "dashboard_alerts": "تنبيهات وأولويات",
       "dashboard_recent_invoices": "قائمة الفواتير في لوحة التحكم",
       "regions": "المناطق الجغرافية",
       "branches": "الفروع",

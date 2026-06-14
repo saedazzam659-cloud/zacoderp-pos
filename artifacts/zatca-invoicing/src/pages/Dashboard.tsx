@@ -220,6 +220,9 @@ export default function Dashboard() {
   const showSubWarning = subDays != null && subDays <= subWarningDays;
 
   const canViewRecentInvoices = usePermission("dashboard_recent_invoices", "view");
+  const canKpis   = usePermission("dashboard_kpis", "view");
+  const canCharts = usePermission("dashboard_charts", "view");
+  const canAlerts = usePermission("dashboard_alerts", "view");
 
   const { data: recentInvoices, isLoading: loadingRecent } = useGetRecentInvoices(undefined, {
     query: { queryKey: ["recent-invoices", companyId], enabled: canViewRecentInvoices },
@@ -292,6 +295,7 @@ export default function Dashboard() {
       )}
 
       {/* ─── KEY INDICATORS ──────────────────────────────────────────────── */}
+      {canKpis && (
       <div>
         <SectionHeader
           icon={TrendingUp}
@@ -373,6 +377,7 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+      )}
 
       {/* Legacy status tiles (issued / drafts / cancelled) — kept for permission-aware
           status visibility. They use the OLD invoicesTable so they reflect the legacy
@@ -424,6 +429,7 @@ export default function Dashboard() {
       </div>
 
       {/* ─── INTERACTIVE CHARTS (2x2 grid) ──────────────────────────────── */}
+      {canCharts && (
       <div>
         <SectionHeader
           icon={BarChart3}
@@ -574,8 +580,10 @@ export default function Dashboard() {
           </Card>
         </div>
       </div>
+      )}
 
       {/* ─── ALERTS & PRIORITIES ─────────────────────────────────────────── */}
+      {canAlerts && (
       <div>
         <SectionHeader
           icon={AlertTriangle}
@@ -692,6 +700,7 @@ export default function Dashboard() {
           </>
         )}
       </div>
+      )}
 
       {/* ─── MY DAY + RECENT INVOICES (side-panel) ───────────────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">

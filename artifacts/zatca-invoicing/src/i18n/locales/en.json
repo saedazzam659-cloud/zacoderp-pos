@@ -2473,6 +2473,9 @@
     },
     "modules": {
       "dashboard": "Dashboard",
+      "dashboard_kpis": "Key Indicators",
+      "dashboard_charts": "Interactive Charts",
+      "dashboard_alerts": "Alerts & Priorities",
       "dashboard_recent_invoices": "Dashboard Invoices List",
       "regions": "Regions",
       "branches": "Branches",
