@@ -14,7 +14,7 @@ import {
   journalEntryLinesTable,
 } from "@workspace/db";
 import { eq, and, sql, desc, isNull, gte, lte, inArray } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 
 const router = Router();
@@ -230,7 +230,10 @@ router.get("/", async (req, res) => {
   if (status === "open" || status === "closed" || status === "force_closed") {
     filters.push(eq(posSessionsTable.status, status));
   }
-  if (req.query.branchId) filters.push(eq(posSessionsTable.branchId, Number(req.query.branchId)));
+  // Branch scope: applies the user's branch restriction even when no explicit
+  // ?branchId is passed (restricted users were previously unscoped here); a
+  // specific ?branchId → branch_id = X OR NULL.
+  filters.push(...branchScopeSpread(req, posSessionsTable.branchId, req.query.branchId));
   if (req.query.userId)   filters.push(eq(posSessionsTable.userId,   Number(req.query.userId)));
   if (req.query.from)     filters.push(gte(posSessionsTable.openedAt, new Date(String(req.query.from))));
   if (req.query.to)       filters.push(lte(posSessionsTable.openedAt, new Date(String(req.query.to) + "T23:59:59.999Z")));

@@ -25,7 +25,7 @@ import {
   journalEntriesTable, journalEntryLinesTable,
 } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { requireModulePermission } from "../middleware/permissions.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
@@ -99,6 +99,9 @@ router.get("/", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const u = (req as any).authUser;
   const filters: any[] = [eq(accountNotesTable.companyId, cid)];
+  // Branch scope (same semantics as JEs/sales): specific ?branchId → branch_id = X OR NULL;
+  // restricted users auto-capped to assigned branches; admin w/o filter sees all.
+  filters.push(...branchScopeSpread(req, accountNotesTable.branchId, req.query.branchId));
   if (req.query.partyType === "customer" || req.query.partyType === "supplier") {
     filters.push(eq(accountNotesTable.partyType, req.query.partyType as any));
   }

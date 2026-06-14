@@ -9,7 +9,7 @@ import {
   payrollRunsTable, employeeLoansTable,
 } from "@workspace/db";
 import { eq, and, desc, sql, inArray } from "drizzle-orm";
-import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, intersectBranchRequest, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
@@ -100,7 +100,15 @@ router.get("/", async (req, res) => {
     const cid = getCompanyId(req);
     const rows = cid
       ? await db.select().from(journalEntriesTable)
-          .where(eq(journalEntriesTable.companyId, cid))
+          .where(and(
+            eq(journalEntriesTable.companyId, cid),
+            // Branch scope: a specific ?branchId yields `branch_id = X OR NULL`
+            // (NULL = shared/opening/system entries visible from every branch);
+            // restricted users are auto-capped to their assigned branches; an
+            // admin with no branchId sees all. Without this the JE list (and the
+            // Posting Center built on it) leaked every branch regardless of filter.
+            ...branchScopeSpread(req, journalEntriesTable.branchId, req.query.branchId),
+          ))
           .orderBy(desc(journalEntriesTable.createdAt))
       : await db.select().from(journalEntriesTable)
           .orderBy(desc(journalEntriesTable.createdAt));

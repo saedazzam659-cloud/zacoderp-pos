@@ -10,7 +10,7 @@ import {
   faDepreciationRunsTable, faDisposalsTable,
 } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import {
@@ -133,7 +133,12 @@ router.get("/assets", async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
     const rows = await db.select().from(fixedAssetsTable)
-      .where(eq(fixedAssetsTable.companyId, cid)).orderBy(desc(fixedAssetsTable.id));
+      .where(and(
+        eq(fixedAssetsTable.companyId, cid),
+        // Branch scope: specific ?branchId → branch_id = X OR NULL; restricted
+        // users auto-capped; admin w/o filter sees all assets.
+        ...branchScopeSpread(req, fixedAssetsTable.branchId, req.query.branchId),
+      )).orderBy(desc(fixedAssetsTable.id));
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
