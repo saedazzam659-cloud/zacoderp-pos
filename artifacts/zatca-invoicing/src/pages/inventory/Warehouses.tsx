@@ -32,7 +32,7 @@ export default function Warehouses() {
   const [editId, setEditId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [activeTab, setActiveTab] = useState("basic");
-  const [errors, setErrors] = useState<{ nameAr?: string }>({});
+  const [errors, setErrors] = useState<{ nameAr?: string; branchId?: string }>({});
 
   const { data: warehouses = [], isLoading } = useQuery({
     queryKey: ["warehouses", cid],
@@ -128,12 +128,13 @@ export default function Warehouses() {
     // Validate required: nameAr only. Code is auto-generated when missing
     // so it does not need to be validated — preventing an unnecessary block
     // on the user.
-    const newErrors: { nameAr?: string } = {};
+    const newErrors: { nameAr?: string; branchId?: string } = {};
     const nameAr = String(form.nameAr || "").trim();
     if (!nameAr) newErrors.nameAr = t("pages.warehouses.validation.nameRequired", { defaultValue: "الاسم العربي مطلوب" });
+    if (!String(form.branchId || "").trim()) newErrors.branchId = t("pages.warehouses.validation.branchRequired", { defaultValue: "اختيار الفرع إجباري" });
     if (Object.keys(newErrors).length) {
       setErrors(newErrors);
-      if (newErrors.nameAr) setActiveTab("basic");
+      if (newErrors.nameAr || newErrors.branchId) setActiveTab("basic");
       toast({ title: t("common.validationError", { defaultValue: "تحقق من البيانات" }), description: Object.values(newErrors)[0], variant: "destructive" });
       return;
     }
@@ -261,13 +262,14 @@ export default function Warehouses() {
                   </Label>
                 </div>
                 <div className="space-y-1.5 md:col-span-2">
-                  <Label>{t("pages.warehouses.fields.branch")}</Label>
+                  <Label>{t("pages.warehouses.fields.branch")} <span className="text-destructive">*</span></Label>
                   <SearchCombobox
-                    items={[{ value: "", label: t("pages.warehouses.fields.noBranch") }, ...(branches as any[]).map((b: any) => ({ value: String(b.id), code: b.code, label: b.nameAr, labelEn: b.nameEn }))]}
+                    items={(branches as any[]).map((b: any) => ({ value: String(b.id), code: b.code, label: b.nameAr, labelEn: b.nameEn }))}
                     value={form.branchId}
-                    onValueChange={v => setForm((p: any) => ({ ...p, branchId: v }))}
+                    onValueChange={v => { setForm((p: any) => ({ ...p, branchId: v })); if (errors.branchId) setErrors(p => ({ ...p, branchId: undefined })); }}
                     placeholder={t("pages.warehouses.placeholders.selectBranch")}
                   />
+                  {errors.branchId && <p className="text-[11px] text-destructive">{errors.branchId}</p>}
                   <p className="text-[10px] text-muted-foreground">{t("pages.warehouses.fields.branchHint")}</p>
                 </div>
               </div>

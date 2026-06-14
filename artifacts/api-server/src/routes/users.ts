@@ -225,12 +225,24 @@ router.patch("/:id", async (req, res) => {
     if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
 
     const {
-      password, email, role, code, nameAr, nameEn,
+      username, password, email, role, code, nameAr, nameEn,
       isActive, branchIds, permissions, viewAllBranches,
       canApprove, approvalLevel, maxApprovalAmount, requireSecondApproval,
     } = req.body ?? {};
 
     const update: any = { updatedAt: new Date() };
+    // Allow renaming the login username (incl. the company manager) from
+    // within the company. Scoped-unique per company, excluding self.
+    if (username !== undefined) {
+      const uname = String(username).trim();
+      if (!uname) { res.status(400).json({ error: "اسم المستخدم مطلوب" }); return; }
+      if (uname !== existing.username) {
+        const [dup] = await db.select({ id: usersTable.id }).from(usersTable)
+          .where(and(eq(usersTable.companyId, cid), eq(usersTable.username, uname)));
+        if (dup && dup.id !== id) { res.status(409).json({ error: "اسم المستخدم مستخدم بالفعل في هذه الشركة" }); return; }
+        update.username = uname;
+      }
+    }
     if (email !== undefined) update.email = email || null;
     if (role && ["admin", "user"].includes(role) && existing.role !== "superadmin") update.role = role;
     if (code !== undefined) update.code = code || null;

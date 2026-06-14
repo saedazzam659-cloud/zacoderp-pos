@@ -136,12 +136,13 @@ function warehouseBranchWriteScope(req: any): any {
 }
 
 // Write-side authorization for warehouse branchId. Returns the normalized
-// branchId (number | null) on success, or an {error,status} object otherwise.
-//   * admin / viewAll users: any branchId is OK as long as it belongs to the
-//     same company (or null for shared).
+// branchId (number) on success, or an {error,status} object otherwise.
+// Branch is MANDATORY on save for everyone — there are no shared/NULL
+// warehouses on create/update anymore.
+//   * admin / viewAll users: branchId must be non-null AND belong to the
+//     same company.
 //   * restricted users: branchId MUST be non-null AND in their allowed list —
-//     they cannot create or move a warehouse to another branch, nor make it
-//     a shared (null) warehouse visible to all branches.
+//     they cannot create or move a warehouse to another branch.
 async function assertWarehouseBranchWritable(req: any, rawBranchId: any, cid: number):
   Promise<{ ok: true; branchId: number | null } | { ok: false; status: number; error: string }> {
   const branchId = rawBranchId === "" || rawBranchId === undefined || rawBranchId === null
@@ -150,13 +151,15 @@ async function assertWarehouseBranchWritable(req: any, rawBranchId: any, cid: nu
   const allowed = getAllowedBranchIds(req);
 
   if (allowed === null) {
-    // Admin / viewAll: just confirm the branch belongs to this company.
-    if (branchId != null) {
-      const [b] = await db.select({ id: branchesTable.id })
-        .from(branchesTable)
-        .where(and(eq(branchesTable.id, branchId), eq(branchesTable.companyId, cid)));
-      if (!b) return { ok: false, status: 400, error: "الفرع المحدد غير صالح أو لا ينتمي لهذه الشركة" };
+    // Admin / viewAll: branch is mandatory — every warehouse must belong to a
+    // branch (shared/NULL warehouses are no longer allowed on save).
+    if (branchId == null) {
+      return { ok: false, status: 400, error: "اختيار الفرع إجباري" };
     }
+    const [b] = await db.select({ id: branchesTable.id })
+      .from(branchesTable)
+      .where(and(eq(branchesTable.id, branchId), eq(branchesTable.companyId, cid)));
+    if (!b) return { ok: false, status: 400, error: "الفرع المحدد غير صالح أو لا ينتمي لهذه الشركة" };
     return { ok: true, branchId };
   }
 

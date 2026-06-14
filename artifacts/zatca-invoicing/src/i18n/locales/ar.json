@@ -2181,7 +2181,8 @@
       "quota": "المستخدم",
       "limitReachedTitle": "وصلت للحد الأقصى",
       "validation": {
-        "nameRequired": "الاسم العربي مطلوب"
+        "nameRequired": "الاسم العربي مطلوب",
+        "branchRequired": "اختيار الفرع إجباري"
       }
     }
   },

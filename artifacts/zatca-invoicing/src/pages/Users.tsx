@@ -359,6 +359,7 @@ export default function Users() {
         if (!r.ok) throw new Error(data?.error || t("users.errSaveFailed"));
         return data;
       } else {
+        body.username = form.username;
         if (form.password) body.password = form.password;
         const r = await fetch(`${API}/api/users/${editingId}?companyId=${cid ?? ""}`, {
           method: "PATCH",
@@ -672,7 +673,6 @@ export default function Users() {
                       value={form.username}
                       onChange={(e) => setForm({ ...form, username: e.target.value })}
                       placeholder="username"
-                      disabled={editingId != null}
                       className="font-mono"
                     />
                   </div>

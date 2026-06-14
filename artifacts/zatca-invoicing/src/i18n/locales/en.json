@@ -2186,7 +2186,8 @@
       "quota": "Used",
       "limitReachedTitle": "Limit reached",
       "validation": {
-        "nameRequired": "Arabic name is required"
+        "nameRequired": "Arabic name is required",
+        "branchRequired": "Branch selection is required"
       }
     }
   },
