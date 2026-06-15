@@ -406,13 +406,32 @@ router.get("/sales-invoices", async (req, res) => {
     const lineWh = await db.select({
       invoiceId:   salesInvoiceLinesTable.invoiceId,
       warehouseId: salesInvoiceLinesTable.warehouseId,
+      qty:         salesInvoiceLinesTable.qty,
+      unitPrice:   salesInvoiceLinesTable.unitPrice,
+      discount:    salesInvoiceLinesTable.discount,
+      discountAmount: salesInvoiceLinesTable.discountAmount,
     }).from(salesInvoiceLinesTable).where(inArray(salesInvoiceLinesTable.invoiceId, ids));
     const whByInvoice = new Map<number, Set<number>>();
+    // Σ effective per-line discount (SAR) per invoice. Line discounts are
+    // folded into the stored NET `subtotal` and NEVER surface on the header
+    // `discountAmount` (which only holds the document-level discount), so the
+    // audit grid needs this to (a) show the real total discount and (b)
+    // reconstruct the GROSS subtotal. Mirrors `effectiveLineDiscount`:
+    // amount wins when set (capped at gross), else derive from the percent.
+    const lineDiscByInvoice = new Map<number, number>();
     for (const lw of lineWh) {
-      if (!lw.invoiceId || lw.warehouseId == null) continue;
-      const s = whByInvoice.get(lw.invoiceId) ?? new Set<number>();
-      s.add(Number(lw.warehouseId));
-      whByInvoice.set(lw.invoiceId, s);
+      if (!lw.invoiceId) continue;
+      if (lw.warehouseId != null) {
+        const s = whByInvoice.get(lw.invoiceId) ?? new Set<number>();
+        s.add(Number(lw.warehouseId));
+        whByInvoice.set(lw.invoiceId, s);
+      }
+      const gross = (Number(lw.qty) || 0) * (Number(lw.unitPrice) || 0);
+      const amt = Math.max(0, Number(lw.discountAmount) || 0);
+      const eff = amt > 0
+        ? Math.min(amt, gross)
+        : (gross * Math.max(0, Math.min(100, Number(lw.discount) || 0))) / 100;
+      lineDiscByInvoice.set(lw.invoiceId, (lineDiscByInvoice.get(lw.invoiceId) ?? 0) + eff);
     }
     const enriched = enrichedRows.map(r => {
       const arr = byInvoice.get(r.id) ?? [];
@@ -425,6 +444,7 @@ router.get("/sales-invoices", async (req, res) => {
       return {
         ...r,
         warehouseIds: Array.from(whByInvoice.get(r.id) ?? []),
+        lineDiscountTotal: (lineDiscByInvoice.get(r.id) ?? 0).toFixed(2),
         paymentSettlement: top ? {
           voucherId:   top.voucherId,
           code:        top.code,

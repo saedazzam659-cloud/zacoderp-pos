@@ -516,6 +516,15 @@ function fmtNum(n: unknown, dp = 2): string {
   const v = Number(n ?? 0);
   return Number.isFinite(v) ? v.toFixed(dp) : "0.00";
 }
+// ── Discount-aware totals ─────────────────────────────────────────────────
+// Line-level discounts are folded into the stored NET `subtotal` and never
+// surface on the header `discountAmount` (document-level only). The list
+// endpoint ships `lineDiscountTotal` (Σ effective per-line discount) so the
+// grid can show the REAL total discount and reconstruct the GROSS subtotal:
+//   grossSubtotal − totalDiscount + vat = total  (reconciles).
+function invLineDisc(inv: any): number { return Number(inv?.lineDiscountTotal ?? 0); }
+function invGrossSubtotal(inv: any): number { return Number(inv?.subtotal ?? 0) + invLineDisc(inv); }
+function invTotalDiscount(inv: any): number { return Number(inv?.discountAmount ?? 0) + invLineDisc(inv); }
 type LookupMaps = {
   cusMap: Record<string | number, { name?: string; vat?: string; phone?: string } | undefined>;
   branchMap: Record<string | number, string | undefined>;
@@ -534,6 +543,17 @@ function buildBulkPrintHtml(invoices: any[], maps: LookupMaps): string {
     const branch = branchMap[inv.branchId] ?? "";
     const rep = repMap[inv.salesRepId] ?? "";
     const lines: any[] = Array.isArray(inv.lines) ? inv.lines : [];
+    // Line discounts are baked into the stored NET subtotal — add them back so
+    // the printed "المجموع" is GROSS and "الخصم" shows the full discount
+    // (header document-level + per-line), keeping subtotal − discount + vat = total.
+    const lineDiscSum = lines.reduce((s: number, l: any) => {
+      // Detail endpoint returns raw schema columns → quantity is `qty`.
+      const gross = (Number(l.qty ?? l.quantity) || 0) * (Number(l.unitPrice) || 0);
+      const amt = Math.max(0, Number(l.discountAmount) || 0);
+      return s + (amt > 0 ? Math.min(amt, gross) : (gross * Math.max(0, Math.min(100, Number(l.discount) || 0))) / 100);
+    }, 0);
+    const printGrossSubtotal = (Number(inv.subtotal) || 0) + lineDiscSum;
+    const printTotalDiscount = (Number(inv.discountAmount) || 0) + lineDiscSum;
     const payment =
       inv.paymentType === "cash" ? "نقدي" :
       inv.paymentType === "bank" ? "بنكي" : "آجل";
@@ -548,7 +568,7 @@ function buildBulkPrintHtml(invoices: any[], maps: LookupMaps): string {
           <td class="c">${i + 1}</td>
           <td>${escHtml(l.descriptionAr ?? l.descriptionEn ?? l.itemName ?? l.itemCode ?? "—")}</td>
           <td class="c">${escHtml(l.itemCode ?? "—")}</td>
-          <td class="c">${fmtNum(l.quantity, 3)}</td>
+          <td class="c">${fmtNum(l.qty ?? l.quantity, 3)}</td>
           <td class="c">${fmtNum(l.unitPrice)}</td>
           <td class="c">${fmtNum(l.discountAmount ?? 0)}</td>
           <td class="c">${fmtNum(l.lineTotal ?? l.totalAmount ?? 0)}</td>
@@ -597,8 +617,8 @@ function buildBulkPrintHtml(invoices: any[], maps: LookupMaps): string {
         </table>
         <div class="totals">
           <table>
-            <tr><th>المجموع</th><td>${fmtNum(inv.subtotal)}</td></tr>
-            <tr><th>الخصم</th><td>${fmtNum(inv.discountAmount)}</td></tr>
+            <tr><th>المجموع</th><td>${fmtNum(printGrossSubtotal)}</td></tr>
+            <tr><th>الخصم</th><td>${fmtNum(printTotalDiscount)}</td></tr>
             <tr><th>ضريبة القيمة المضافة</th><td>${fmtNum(inv.vatAmount)}</td></tr>
             <tr class="grand"><th>الإجمالي النهائي</th><td>${fmtNum(inv.totalAmount)} ${escHtml(inv.currencyCode ?? "SAR")}</td></tr>
           </table>
@@ -953,6 +973,11 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
 
   // ── Selection ─────────────────────────────────────────────────────────
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  // Defers a single-click row-select so a double-click (open in edit mode)
+  // can cancel it — otherwise the two clicks composing a double-click toggle
+  // selection and make it feel like the action "jumps to other rows".
+  const rowClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (rowClickTimer.current) clearTimeout(rowClickTimer.current); }, []);
   const [bulkBusy, setBulkBusy] = useState(false);
 
   // ── AI audit state ─────────────────────────────────────────────────────
@@ -1112,8 +1137,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           case "rep":        cellValue = repMap[inv.salesRepId] ?? ""; break;
           case "payment":    cellValue = PAY_AR[inv.paymentType] ?? inv.paymentType ?? ""; break;
           case "currency":   cellValue = inv.currencyCode ?? ""; break;
-          case "subtotal":   cellValue = inv.subtotal; break;
-          case "discount":   cellValue = inv.discountAmount; break;
+          case "subtotal":   cellValue = invGrossSubtotal(inv); break;
+          case "discount":   cellValue = invTotalDiscount(inv); break;
           case "vatAmt":     cellValue = inv.vatAmount; break;
           case "total":      cellValue = inv.totalAmount; break;
           case "commission": cellValue = inv.commissionAmount ?? 0; break;
@@ -1147,8 +1172,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       case "rep":        return { v: repMap[inv.salesRepId] ?? "",                   isNum: false };
       case "payment":    return { v: inv.paymentType ?? "",                          isNum: false };
       case "currency":   return { v: inv.currencyCode ?? "",                         isNum: false };
-      case "subtotal":   return { v: Number(inv.subtotal ?? 0),                      isNum: true  };
-      case "discount":   return { v: Number(inv.discountAmount ?? 0),                isNum: true  };
+      case "subtotal":   return { v: invGrossSubtotal(inv),                          isNum: true  };
+      case "discount":   return { v: invTotalDiscount(inv),                          isNum: true  };
       case "vatAmt":     return { v: Number(inv.vatAmount ?? 0),                     isNum: true  };
       case "total":      return { v: Number(inv.totalAmount ?? 0),                   isNum: true  };
       case "commission": return { v: Number(inv.commissionAmount ?? 0),              isNum: true  };
@@ -1408,8 +1433,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   // ── Footer totals ─────────────────────────────────────────────────────
   const totals = useMemo(() => {
     return filtered.reduce((acc, inv: any) => {
-      acc.subtotal += Number(inv.subtotal ?? 0);
-      acc.discount += Number(inv.discountAmount ?? 0);
+      acc.subtotal += invGrossSubtotal(inv);
+      acc.discount += invTotalDiscount(inv);
       acc.vat      += Number(inv.vatAmount ?? 0);
       acc.total    += Number(inv.totalAmount ?? 0);
       acc.commission += Number(inv.commissionAmount ?? 0);
@@ -1484,8 +1509,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       repMap[inv.salesRepId] ?? "",
       inv.paymentType === "cash" ? "نقدي" : inv.paymentType === "bank" ? "بنكي" : "آجل",
       inv.currencyCode ?? "SAR",
-      Number(inv.subtotal ?? 0).toFixed(2),
-      Number(inv.discountAmount ?? 0).toFixed(2),
+      invGrossSubtotal(inv).toFixed(2),
+      invTotalDiscount(inv).toFixed(2),
       Number(inv.vatAmount ?? 0).toFixed(2),
       Number(inv.totalAmount ?? 0).toFixed(2),
       Number(inv.commissionAmount ?? 0).toFixed(2),
@@ -1722,8 +1747,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       rep:          repMap[inv.salesRepId] ?? "",
       paymentLabel: inv.paymentType === "cash" ? "نقدي" : inv.paymentType === "bank" ? "بنكي" : "آجل",
       currencyCode: inv.currencyCode ?? "SAR",
-      subtotal:     fmt(inv.subtotal),
-      discount:     fmt(inv.discountAmount),
+      subtotal:     fmt(invGrossSubtotal(inv)),
+      discount:     fmt(invTotalDiscount(inv)),
       vatAmount:    fmt(inv.vatAmount),
       totalAmount:  fmt(inv.totalAmount),
       statusLabel:  STATUS[inv.status]?.label ?? inv.status,
@@ -1732,8 +1757,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     }));
   }
   function buildExportTotals() {
-    const sumSub = filtered.reduce((s: number, i: any) => s + Number(i.subtotal       || 0), 0);
-    const sumDis = filtered.reduce((s: number, i: any) => s + Number(i.discountAmount || 0), 0);
+    const sumSub = filtered.reduce((s: number, i: any) => s + invGrossSubtotal(i), 0);
+    const sumDis = filtered.reduce((s: number, i: any) => s + invTotalDiscount(i), 0);
     const sumVat = filtered.reduce((s: number, i: any) => s + Number(i.vatAmount      || 0), 0);
     const sumTot = filtered.reduce((s: number, i: any) => s + Number(i.totalAmount    || 0), 0);
     return {
@@ -2655,9 +2680,9 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                       case "currency":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{inv.currencyCode}</td>;
                       case "subtotal":
-                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono">{fmt(inv.subtotal)}</td>;
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono">{fmt(invGrossSubtotal(inv))}</td>;
                       case "discount":
-                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-orange-700">{fmt(inv.discountAmount)}</td>;
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-orange-700">{fmt(invTotalDiscount(inv))}</td>;
                       case "vatAmt":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-amber-700">{fmt(inv.vatAmount)}</td>;
                       case "total":
@@ -2780,7 +2805,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                       data-has-return={hasReturn ? "1" : "0"}
                       data-zatca={inv.zatcaStatus ?? "pending"}
                       className={cn(
-                        "transition-colors cursor-pointer",
+                        "transition-colors cursor-pointer select-none",
                         // Selection wins — preserves the previous bulk-select feel.
                         isSel
                           ? SEL_TONE
@@ -2794,9 +2819,23 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                         // Don't toggle when clicking interactive children (links, buttons, inputs).
                         const tag = (e.target as HTMLElement).tagName;
                         if (tag === "BUTTON" || tag === "INPUT" || tag === "A" || (e.target as HTMLElement).closest("button,a,input")) return;
-                        toggleRow(inv.id);
+                        // Defer the select-toggle ~220ms; a double-click cancels it
+                        // and opens the invoice in edit mode instead.
+                        if (rowClickTimer.current) clearTimeout(rowClickTimer.current);
+                        rowClickTimer.current = setTimeout(() => {
+                          rowClickTimer.current = null;
+                          toggleRow(inv.id);
+                        }, 220);
                       }}
-                      onDoubleClick={() => navigate(`/sales/invoices/${inv.id}`)}
+                      onDoubleClick={(e) => {
+                        const tag = (e.target as HTMLElement).tagName;
+                        if (tag === "BUTTON" || tag === "INPUT" || tag === "A" || (e.target as HTMLElement).closest("button,a,input")) return;
+                        // Cancel the pending single-click select and clear any
+                        // accidental text selection before navigating to edit.
+                        if (rowClickTimer.current) { clearTimeout(rowClickTimer.current); rowClickTimer.current = null; }
+                        window.getSelection()?.removeAllRanges();
+                        navigate(`/sales/invoices/${inv.id}`);
+                      }}
                       title={rowTitle}
                     >
                       {visibleColumns.map(renderBodyCell)}
