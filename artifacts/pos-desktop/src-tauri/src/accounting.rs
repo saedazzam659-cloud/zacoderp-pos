@@ -2205,6 +2205,7 @@ pub fn purchase_order_convert(id: i64) -> Result<i64, String> {
         warehouse_id: order.warehouse_id,
         branch_id: order.branch_id,
         cost_center_id: order.cost_center_id,
+        lc_id: None,
         lines,
     };
     let invoice_id = purchase_create_in_tx(&tx, &invoice_input)?;
