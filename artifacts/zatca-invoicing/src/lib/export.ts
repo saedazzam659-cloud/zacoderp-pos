@@ -1247,12 +1247,10 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
   } = opts;
   const vc = opts.visibleCols ?? {};
   const v = {
-    // "نوع الوثيقة" column removed from PDF print per user request — its
-    // values (e.g. "فاتورة مبيعات آجلة") duplicate "الشرح" for most rows
-    // and waste horizontal space. The on-screen grid still shows it
-    // (controlled by the column chooser); only the printed PDF hardcodes
-    // it off.
-    docType:     false,
+    // "نوع الوثيقة" follows the on-screen column chooser like every other
+    // column — visible unless the user explicitly hides it — so the printed
+    // PDF matches exactly what is shown on screen.
+    docType:     vc.docType     !== false,
     date:        vc.date        !== false,
     docNumber:   vc.docNumber   !== false,
     type:        vc.type        !== false,
