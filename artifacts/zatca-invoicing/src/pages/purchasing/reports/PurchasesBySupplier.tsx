@@ -10,6 +10,7 @@ import BranchFilter from "@/components/BranchFilter";
 import { useTranslation } from "react-i18next";
 import { Truck, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
+import { DateField } from "@/components/ui/date-field";
 
 export default function PurchasesBySupplier() {
   const { fmt } = useFmt();
@@ -104,11 +105,11 @@ export default function PurchasesBySupplier() {
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <div className="space-y-1.5">
           <Label>{t("purchasingPages.common.fromDate")}</Label>
-          <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
+          <DateField value={from} onChange={e => setFrom(e.target.value)} />
         </div>
         <div className="space-y-1.5">
           <Label>{t("purchasingPages.common.toDate")}</Label>
-          <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
+          <DateField value={to} onChange={e => setTo(e.target.value)} />
         </div>
         <div className="space-y-1.5">
           <Label>{t("common.branch")}</Label>

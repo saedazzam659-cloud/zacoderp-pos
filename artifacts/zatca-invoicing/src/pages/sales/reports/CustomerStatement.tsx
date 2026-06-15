@@ -16,6 +16,7 @@ import AccountStatementView from "@/components/AccountStatementView";
 import { useTranslation } from "react-i18next";
 import { FileText, Search, Filter } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 function authHeaders(): Record<string, string> {
@@ -243,11 +244,11 @@ export default function CustomerStatement() {
           </div>
           <div className="space-y-1.5">
             <Label>{t("salesReports.common.from")}</Label>
-            <Input type="date" value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} />
+            <DateField value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
             <Label>{t("salesReports.common.to")}</Label>
-            <Input type="date" value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
+            <DateField value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
             <Label>{t("common.branch")}</Label>

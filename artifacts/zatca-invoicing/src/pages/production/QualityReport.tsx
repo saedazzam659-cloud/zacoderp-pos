@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
 import { Loader2, ShieldCheck, RefreshCw, AlertTriangle } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -111,11 +112,11 @@ export default function QualityReport() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <Label htmlFor="from">من تاريخ</Label>
-              <Input id="from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              <DateField id="from" value={from} onChange={(e) => setFrom(e.target.value)} />
             </div>
             <div>
               <Label htmlFor="to">إلى تاريخ</Label>
-              <Input id="to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+              <DateField id="to" value={to} onChange={(e) => setTo(e.target.value)} />
             </div>
           </div>
         </CardContent>

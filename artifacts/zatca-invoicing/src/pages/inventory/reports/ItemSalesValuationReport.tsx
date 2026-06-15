@@ -12,6 +12,7 @@ import ExportButtons from "@/components/ExportButtons";
 import { ReceiptText, Filter, X, PackageOpen, Coins, BadgePercent, Tags } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFmt } from "@/hooks/use-fmt";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -236,11 +237,11 @@ export default function ItemSalesValuationReport() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="space-y-1.5">
             <Label className="text-xs">{t("inventoryReports.common.from")}</Label>
-            <Input type="date" value={filters.from} onChange={e => setFilters(f => ({ ...f, from: e.target.value }))} />
+            <DateField value={filters.from} onChange={e => setFilters(f => ({ ...f, from: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">{t("inventoryReports.common.to")}</Label>
-            <Input type="date" value={filters.to} onChange={e => setFilters(f => ({ ...f, to: e.target.value }))} />
+            <DateField value={filters.to} onChange={e => setFilters(f => ({ ...f, to: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">{t("inventoryReports.common.warehouse")}</Label>

@@ -44,6 +44,7 @@ import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -1125,7 +1126,7 @@ ${sections}
                     />
                   </Field>
                   <Field label={tr("receiptDate")} required>
-                    <Input type="date" value={form.receiptDate}
+                    <DateField value={form.receiptDate}
                       onChange={e => setForm((p: any) => ({ ...p, receiptDate: e.target.value }))} />
                   </Field>
                   <Field label={tr("supplier")}>
@@ -1268,7 +1269,7 @@ ${sections}
                         <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
                         <Input className="h-8 text-xs" placeholder={tg("batchNumber")} value={l.batchNumber}
                           onChange={e => updateLine(l._id, "batchNumber", e.target.value)} />
-                        <Input className="h-8 text-xs" type="date" value={l.expiryDate}
+                        <DateField className="h-8 text-xs" value={l.expiryDate}
                           onChange={e => updateLine(l._id, "expiryDate", e.target.value)} />
                         <Input className="h-8 text-xs" value={l.notes}
                           onChange={e => updateLine(l._id, "notes", e.target.value)} />

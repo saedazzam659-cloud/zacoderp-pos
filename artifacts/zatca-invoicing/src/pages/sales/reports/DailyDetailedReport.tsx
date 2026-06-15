@@ -18,6 +18,7 @@ import {
   ListChecks, ChevronDown, ChevronUp, Sparkles, Loader2, AlertTriangle,
   CheckCircle2, Lightbulb,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const METHOD_TONE: Record<string, { bar: string; badge: string }> = {
   cash:     { bar: "bg-emerald-500/80", badge: "bg-emerald-50 text-emerald-700 border-emerald-200" },
@@ -187,7 +188,7 @@ export default function DailyDetailedReport() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="space-y-1.5">
           <Label>{tr("date")}</Label>
-          <Input type="date" value={date} onChange={e => { setDate(e.target.value); resetInsights(); }} />
+          <DateField value={date} onChange={e => { setDate(e.target.value); resetInsights(); }} />
         </div>
         <div className="space-y-1.5">
           <Label>{t("common.branch")}</Label>

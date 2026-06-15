@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Download, KeyRound, ShieldOff, Trash2, Copy, RefreshCw, Plus, Pencil, Search, Check, X } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -489,7 +490,7 @@ export default function OfflineLicenses() {
             </div>
             <div>
               <Label>تاريخ الانتهاء (اختياري)</Label>
-              <Input type="date" value={form.expiresAt} onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} />
+              <DateField value={form.expiresAt} onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} />
               <p className="text-xs text-muted-foreground mt-1">اتركه فارغاً لترخيص دائم.</p>
             </div>
             <div>
@@ -587,7 +588,7 @@ export default function OfflineLicenses() {
             </div>
             <div>
               <Label>تاريخ الانتهاء</Label>
-              <Input type="date" value={editForm.expiresAt}
+              <DateField value={editForm.expiresAt}
                 onChange={(e) => setEditForm({ ...editForm, expiresAt: e.target.value })} />
               <div className="flex gap-2 mt-2 flex-wrap">
                 <Button type="button" size="sm" variant="secondary" onClick={() => bumpExpiry(30)}>+30 يوم</Button>

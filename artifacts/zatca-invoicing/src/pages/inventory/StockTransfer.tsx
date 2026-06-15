@@ -22,6 +22,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
+import { DateField } from "@/components/ui/date-field";
 
 const STATUS_CONFIG: Record<string, { color: string }> = {
   draft:     { color: "bg-amber-50 text-amber-700" },
@@ -324,7 +325,7 @@ export default function StockTransfer() {
                         />
                       </Field>
                       <Field label={t("stockTransferPage.date")} required>
-                        <Input type="date" className="h-9 text-sm" value={form.transferDate} onChange={e => setForm((p: any) => ({ ...p, transferDate: e.target.value }))} />
+                        <DateField className="h-9 text-sm" value={form.transferDate} onChange={e => setForm((p: any) => ({ ...p, transferDate: e.target.value }))} />
                       </Field>
                       <Field label={t("stockTransferPage.fromWarehouse")} required>
                         <SearchCombobox items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: pickName(w.nameAr, w.nameEn) }))} value={form.fromWarehouseId} onValueChange={v => setForm((p: any) => ({ ...p, fromWarehouseId: v }))} placeholder={t("stockTransferPage.fromWarehousePlaceholder")} />

@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Download, ArrowRight, TrendingUp, FileSpreadsheet, AlertTriangle, ShieldCheck } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -229,11 +230,11 @@ export default function GatewayClientReports() {
           <div className="grid md:grid-cols-4 gap-3">
             <div>
               <label className="text-xs text-slate-500 block mb-1">من تاريخ</label>
-              <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
+              <DateField value={from} onChange={e => setFrom(e.target.value)} />
             </div>
             <div>
               <label className="text-xs text-slate-500 block mb-1">إلى تاريخ</label>
-              <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
+              <DateField value={to} onChange={e => setTo(e.target.value)} />
             </div>
             <div>
               <label className="text-xs text-slate-500 block mb-1">الحالات (مفصولة بفاصلة)</label>

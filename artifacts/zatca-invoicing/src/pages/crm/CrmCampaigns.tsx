@@ -12,6 +12,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Search, Megaphone } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -154,9 +155,9 @@ export default function CrmCampaigns() {
             <div><Label>الإيراد الفعلي</Label>
               <Input type="number" step="0.01" value={form.actualRevenue} onChange={(e)=>setForm({...form, actualRevenue:e.target.value})} /></div>
             <div><Label>تاريخ البدء</Label>
-              <Input type="date" value={form.startDate} onChange={(e)=>setForm({...form, startDate:e.target.value})} /></div>
+              <DateField value={form.startDate} onChange={(e)=>setForm({...form, startDate:e.target.value})} /></div>
             <div><Label>تاريخ الانتهاء</Label>
-              <Input type="date" value={form.endDate} onChange={(e)=>setForm({...form, endDate:e.target.value})} /></div>
+              <DateField value={form.endDate} onChange={(e)=>setForm({...form, endDate:e.target.value})} /></div>
             <div className="flex items-center gap-2 mt-6">
               <input type="checkbox" id="active" checked={form.isActive}
                 onChange={(e)=>setForm({...form, isActive:e.target.checked})} className="h-4 w-4" />

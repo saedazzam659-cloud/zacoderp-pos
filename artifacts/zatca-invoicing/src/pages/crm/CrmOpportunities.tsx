@@ -12,6 +12,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Search, Target } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -204,7 +205,7 @@ export default function CrmOpportunities() {
             <div><Label>احتمالية النجاح %</Label>
               <Input type="number" min={0} max={100} value={form.successProbability} onChange={(e)=>setForm({...form, successProbability:e.target.value})} /></div>
             <div><Label>تاريخ الإغلاق المتوقع</Label>
-              <Input type="date" value={form.expectedCloseDate} onChange={(e)=>setForm({...form, expectedCloseDate:e.target.value})} /></div>
+              <DateField value={form.expectedCloseDate} onChange={(e)=>setForm({...form, expectedCloseDate:e.target.value})} /></div>
             <div className="md:col-span-2"><Label>ملاحظات</Label>
               <Input value={form.notes} onChange={(e)=>setForm({...form, notes:e.target.value})} /></div>
           </div>

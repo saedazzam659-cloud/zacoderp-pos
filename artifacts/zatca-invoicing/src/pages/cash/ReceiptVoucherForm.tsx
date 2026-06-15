@@ -20,6 +20,7 @@ import {
   Loader2, Save, Send, Lock, FileText, Banknote,
   Wallet, Building2, User2, Printer, Link2, X, Settings2,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -648,7 +649,7 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                     <Label className="text-xs font-medium">
                       {t(`${NS}.date`)} <span className="text-destructive">*</span>
                     </Label>
-                    <Input type="date" value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} className="h-9 text-sm" data-testid="rv-date" />
+                    <DateField value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} className="h-9 text-sm" data-testid="rv-date" />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">

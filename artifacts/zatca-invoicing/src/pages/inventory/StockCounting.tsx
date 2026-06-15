@@ -20,6 +20,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 
 import { useFmt } from "@/hooks/use-fmt";
 import ExportButtons from "@/components/ExportButtons";
+import { DateField } from "@/components/ui/date-field";
 
 const STATUS_CONFIG: Record<string, { labelKey: string; color: string }> = {
   draft:  { labelKey: "statusDraft",  color: "bg-amber-50 text-amber-700" },
@@ -196,7 +197,7 @@ export default function StockCounting() {
               readOnly={seqPeek.hasSequence}
               title={seqPeek.hasSequence ? tr("sequenceTooltip", { code: seqPeek.sequenceCode ?? "" }) : undefined}
             /></Field>
-            <Field label={tr("date")} required><Input type="date" value={form.countDate} onChange={e => setForm((p: any) => ({ ...p, countDate: e.target.value }))} /></Field>
+            <Field label={tr("date")} required><DateField value={form.countDate} onChange={e => setForm((p: any) => ({ ...p, countDate: e.target.value }))} /></Field>
             <Field label={tr("warehouse")} required className="md:col-span-2">
               <SearchCombobox
                 items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: pickName(w.nameAr, w.nameEn) }))}

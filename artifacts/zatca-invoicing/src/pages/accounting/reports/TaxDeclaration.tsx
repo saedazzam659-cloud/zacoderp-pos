@@ -18,6 +18,7 @@ import {
   Scale, BookOpen, Search, Sparkles, History, ExternalLink, Eye, Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -518,8 +519,7 @@ export default function TaxDeclaration() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end pt-2 border-t border-dashed">
             <div className="space-y-1.5">
               <Label className="text-xs">{t("taxDeclaration.fromDate")}</Label>
-              <Input
-                type="date"
+              <DateField
                 value={fromDate}
                 onChange={e => { setFromDate(e.target.value); setPreset("custom"); }}
                 className="h-10"
@@ -527,8 +527,7 @@ export default function TaxDeclaration() {
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">{t("taxDeclaration.toDate")}</Label>
-              <Input
-                type="date"
+              <DateField
                 value={toDate}
                 onChange={e => { setToDate(e.target.value); setPreset("custom"); }}
                 className="h-10"

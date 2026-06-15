@@ -15,6 +15,7 @@ import {
   AlertTriangle, Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -544,13 +545,13 @@ export default function LicenseManagement() {
                     <Label className="flex items-center gap-1 mb-1.5">
                       <CalIcon className="h-3.5 w-3.5" /> تاريخ البدء
                     </Label>
-                    <Input type="date" value={form.startDate} onChange={(e) => setStart(e.target.value)} />
+                    <DateField value={form.startDate} onChange={(e) => setStart(e.target.value)} />
                   </div>
                   <div>
                     <Label className="flex items-center gap-1 mb-1.5">
                       <CalIcon className="h-3.5 w-3.5" /> تاريخ الانتهاء
                     </Label>
-                    <Input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} />
+                    <DateField value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} />
                     {daysRemaining !== null && (
                       <p className={cn(
                         "text-xs mt-1 flex items-center gap-1",

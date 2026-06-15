@@ -14,6 +14,7 @@ import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -423,7 +424,7 @@ export default function LetterOfCredit() {
             <TabsContent value="info" className="mt-0">
               <FormGrid>
                 <Field label={tr("fLcNumber")} required><Input placeholder={tr("fLcNumberPh")} dir="ltr" className="text-left" value={form.lcNumber} onChange={e => setForm((p: any) => ({ ...p, lcNumber: e.target.value }))} /></Field>
-                <Field label={tr("fDate")} required><Input type="date" value={form.lcDate} onChange={e => setForm((p: any) => ({ ...p, lcDate: e.target.value }))} /></Field>
+                <Field label={tr("fDate")} required><DateField value={form.lcDate} onChange={e => setForm((p: any) => ({ ...p, lcDate: e.target.value }))} /></Field>
                 <Field label={tr("fSupplier")}><SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder={tr("fSupplierPh")} /></Field>
                 <Field label={tr("fBank")}><Input placeholder={tr("fBankPh")} value={form.bankName} onChange={e => setForm((p: any) => ({ ...p, bankName: e.target.value }))} /></Field>
                 <Field label={tr("fAmount")} required><Input type="text" inputMode="decimal" placeholder="0.00" dir="ltr" className="text-left" value={form.totalAmount} onChange={e => setForm((p: any) => ({ ...p, totalAmount: e.target.value.replace(/[^0-9.]/g, "") }))} /></Field>
@@ -840,7 +841,7 @@ export default function LetterOfCredit() {
 
                 <FormGrid cols={2}>
                   <Field label={tr("transferDate")}>
-                    <Input type="date" value={transferForm.date}
+                    <DateField value={transferForm.date}
                       onChange={(e) => setTransferForm(p => ({ ...p, date: e.target.value }))} />
                   </Field>
                   <Field label={tr("transferSourceType")}>

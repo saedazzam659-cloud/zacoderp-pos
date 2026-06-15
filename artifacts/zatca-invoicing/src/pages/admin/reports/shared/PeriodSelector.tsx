@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 
 // Shared period selector for all SuperAdmin reports.
 // Presets mirror the backend `parsePeriod` enum exactly:
@@ -195,8 +196,7 @@ export function PeriodSelector({ period }: { period: PeriodState }) {
       </div>
       <div>
         <label className="text-xs text-muted-foreground block mb-1">من</label>
-        <Input
-          type="date"
+        <DateField
           value={period.from}
           onChange={e => { period.setFrom(e.target.value); period.setPreset("custom"); }}
           className="w-[150px]"
@@ -204,8 +204,7 @@ export function PeriodSelector({ period }: { period: PeriodState }) {
       </div>
       <div>
         <label className="text-xs text-muted-foreground block mb-1">إلى</label>
-        <Input
-          type="date"
+        <DateField
           value={period.to}
           onChange={e => { period.setTo(e.target.value); period.setPreset("custom"); }}
           className="w-[150px]"

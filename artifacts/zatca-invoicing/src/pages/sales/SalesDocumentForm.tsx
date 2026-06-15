@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck } from "lucide-react";
 import { offersApi } from "@/lib/offersApi";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -2282,8 +2283,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 {fp.isVisible("date") && (
                 <div className="space-y-1.5">
                   <Label className="text-xs">{t("salesDocForm.date")}{fp.isRequired("date") && <span className="text-destructive"> *</span>}</Label>
-                  <Input
-                    type="date" className="h-9 text-sm" value={docDate}
+                  <DateField className="h-9 text-sm" value={docDate}
                     onChange={e => setDocDate(e.target.value)}
                     required
                     readOnly={fp.isReadOnly("date") || !!dateBounds.min}
@@ -2296,7 +2296,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 {!isInvoice && fp.isVisible("validUntil") && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">{isOrder ? t("salesDocForm.expectedDeliveryDate") : t("salesDocForm.validUntil")}{fp.isRequired("validUntil") && <span className="text-destructive"> *</span>}</Label>
-                    <Input type="date" className="h-9 text-sm" value={validUntil} onChange={e => setValidUntil(e.target.value)} readOnly={fp.isReadOnly("validUntil")} />
+                    <DateField className="h-9 text-sm" value={validUntil} onChange={e => setValidUntil(e.target.value)} readOnly={fp.isReadOnly("validUntil")} />
                   </div>
                 )}
                 {fp.isVisible("customer") && (

@@ -22,6 +22,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
+import { DateField } from "@/components/ui/date-field";
 
 const STATUS_CONFIG: Record<string, { color: string }> = {
   draft:  { color: "bg-amber-50 text-amber-700" },
@@ -307,7 +308,7 @@ export default function StockAdjustment() {
                   readOnly={seqPeek.hasSequence}
                   title={seqPeek.hasSequence ? t("stockAdjustmentPage.sequenceTooltip", { code: seqPeek.sequenceCode ?? "" }) : undefined}
                 /></Field>
-                <Field label={t("stockAdjustmentPage.date")} required><Input type="date" value={form.adjustmentDate} onChange={e => setForm((p: any) => ({ ...p, adjustmentDate: e.target.value }))} /></Field>
+                <Field label={t("stockAdjustmentPage.date")} required><DateField value={form.adjustmentDate} onChange={e => setForm((p: any) => ({ ...p, adjustmentDate: e.target.value }))} /></Field>
                 <Field label={t("stockAdjustmentPage.warehouse")} required>
                   <SearchCombobox items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: pickName(w.nameAr, w.nameEn) }))} value={form.warehouseId} onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))} placeholder={t("stockAdjustmentPage.selectWarehouse")} />
                 </Field>

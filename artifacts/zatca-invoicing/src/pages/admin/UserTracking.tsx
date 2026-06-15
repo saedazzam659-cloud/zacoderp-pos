@@ -14,6 +14,7 @@ import { MapPin, Users, Clock, AlertTriangle, Trash2, Plus, BarChart3, UserPlus,
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line, Legend } from "recharts";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { DateField } from "@/components/ui/date-field";
 
 // FREE OpenStreetMap raster tile style — no API key required. Uses the
 // standard OSM tile server which has full coverage of Saudi Arabia with
@@ -86,8 +87,8 @@ export default function UserTracking() {
       {/* Filter bar */}
       <Card>
         <CardContent className="pt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          <div className="space-y-1.5"><Label>من</Label><Input type="date" value={from} onChange={e => setFrom(e.target.value)} /></div>
-          <div className="space-y-1.5"><Label>إلى</Label><Input type="date" value={to} onChange={e => setTo(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>من</Label><DateField value={from} onChange={e => setFrom(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>إلى</Label><DateField value={to} onChange={e => setTo(e.target.value)} /></div>
           <div className="space-y-1.5">
             <Label>المستخدم</Label>
             <select className="w-full h-10 rounded-md border px-3 text-sm bg-background"

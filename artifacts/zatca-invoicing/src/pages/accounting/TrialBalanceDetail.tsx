@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import TrialBalanceImportDialog from "./TrialBalanceImportDialog";
+import { DateField } from "@/components/ui/date-field";
 
 const STATUS_CLS: Record<string, string> = {
   draft:     "bg-yellow-50 text-yellow-700 border-yellow-200",
@@ -722,7 +723,7 @@ function AdjustmentDialog({ open, onOpenChange, accounts, defaultDate, onSave }:
         <div className="space-y-3">
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2"><label className="text-xs">{t("trialBalanceMaintenance.adjDescription")}</label><Input data-testid="input-adj-desc" value={description} onChange={e => setDescription(e.target.value)} /></div>
-            <div><label className="text-xs">{t("trialBalanceMaintenance.adjDate")}</label><Input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)} /></div>
+            <div><label className="text-xs">{t("trialBalanceMaintenance.adjDate")}</label><DateField value={entryDate} onChange={e => setEntryDate(e.target.value)} /></div>
             <div><label className="text-xs">{t("trialBalanceMaintenance.adjCategory")}</label>
               <Select value={category} onValueChange={setCategory}>
                 <SelectTrigger><SelectValue /></SelectTrigger>

@@ -19,6 +19,7 @@ import {
   LogIn, XCircle, Timer, Lock, AlertTriangle, Building2,
   ChevronRight, ChevronLeft, ChevronsRight, ChevronsLeft,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -810,11 +811,11 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">من تاريخ</label>
-              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              <DateField value={from} onChange={(e) => setFrom(e.target.value)} />
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">إلى تاريخ</label>
-              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+              <DateField value={to} onChange={(e) => setTo(e.target.value)} />
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">الحالة</label>

@@ -45,6 +45,7 @@ import {
 } from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
 import PurchasePrintModal from "./PurchasePrintModal";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -1295,7 +1296,7 @@ ${sections}
                 readOnly={editingId != null || seqPeek.hasSequence}
                 title={editingId != null ? t("purchasingPages.purchaseInvoiceForm.lockTitle") : (seqPeek.hasSequence ? `${seqPeek.sequenceCode ?? ""}` : undefined)}
               /></Field>
-              <Field label={t("common.date")} required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
+              <Field label={t("common.date")} required><DateField value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label={tr("supplierLabel")}>
                 <SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder={tr("supplierPlaceholder")} />
               </Field>

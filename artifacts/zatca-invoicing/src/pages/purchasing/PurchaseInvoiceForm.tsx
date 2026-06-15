@@ -26,6 +26,7 @@ import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { ArrowRight, ArrowLeft, ShoppingCart, Plus, Trash2, FileText, ListOrdered, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown, Lock } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -882,7 +883,7 @@ export default function PurchaseInvoiceForm() {
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.date")}</Label>
-                  <Input type="date" className="h-9 text-sm" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} required />
+                  <DateField className="h-9 text-sm" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} required />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.supplier")}</Label>
@@ -1348,7 +1349,7 @@ export default function PurchaseInvoiceForm() {
                       <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.finalCost)} />
                       <Input className="h-8 text-xs" placeholder="رقم الدفعة" value={l.batchNumber}
                         onChange={e => updateLine(l._id, "batchNumber", e.target.value)} />
-                      <Input className="h-8 text-xs" type="date" value={l.expiryDate}
+                      <DateField className="h-8 text-xs" value={l.expiryDate}
                         onChange={e => updateLine(l._id, "expiryDate", e.target.value)} />
                       <Input className="h-8 text-xs" value={l.notes}
                         onChange={e => updateLine(l._id, "notes", e.target.value)} />

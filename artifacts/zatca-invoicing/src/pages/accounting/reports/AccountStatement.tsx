@@ -16,6 +16,7 @@ import CostCenterFilter from "@/components/CostCenterFilter";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 import { FileText, Search, Printer, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DateField } from "@/components/ui/date-field";
 
 // Map a journal-entry row coming back from /account-statement to the URL of
 // the document that produced it. Documents with a dedicated detail page
@@ -426,11 +427,11 @@ export default function AccountStatement() {
           </div>
           <div className="space-y-1.5">
             <Label>{t("accountingReports.fromDate")}</Label>
-            <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
+            <DateField value={fromDate} onChange={e => setFromDate(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label>{t("accountingReports.toDate")}</Label>
-            <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
+            <DateField value={toDate} onChange={e => setToDate(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label>{t("common.branch")}</Label>

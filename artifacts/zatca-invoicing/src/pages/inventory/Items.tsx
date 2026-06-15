@@ -38,6 +38,7 @@ import { useTranslation } from "react-i18next";
 import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
 } from "@/lib/docRowTone";
+import { DateField } from "@/components/ui/date-field";
 
 const EMPTY = {
   code: "", nameAr: "", nameEn: "", barcode: "", itemType: "stock", itemNature: "merchandise",
@@ -1307,9 +1308,7 @@ export default function Items() {
                     label={t("inventoryMaster.items.expiryDateLabel")}
                     hint={form.isBundle ? t("inventoryMaster.items.expiryDateHintBundle") : t("inventoryMaster.items.expiryDateHintDefault")}
                   >
-                    <Input
-                      type="date"
-                      dir="ltr"
+                    <DateField
                       className="text-left"
                       value={form.expiryDate ?? ""}
                       onChange={(e) => setForm((p: any) => ({ ...p, expiryDate: e.target.value }))}
@@ -2212,8 +2211,7 @@ function ItemSuppliersPanel({ itemId }: { itemId: number }) {
             </div>
             <div>
               <label className="text-xs font-medium block mb-1">{t("pages.items.suppliers.lastPurchaseDate")}</label>
-              <Input
-                type="date"
+              <DateField
                 value={form.lastPurchaseDate}
                 onChange={(e) => setForm(f => ({ ...f, lastPurchaseDate: e.target.value }))}
                 className="h-9"

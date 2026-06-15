@@ -21,6 +21,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Plus, Search, Pencil, Trash2, Eye, Wrench, CheckCircle2, AlertCircle, Clock, FileSpreadsheet } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const STATUS_MAP: Record<string, { labelKey: string; cls: string; Icon: any }> = {
   draft:     { labelKey: "trialBalanceMaintenance.statusDraft",    cls: "bg-yellow-50 text-yellow-700 border-yellow-200", Icon: Clock },
@@ -131,11 +132,11 @@ export default function TrialBalances() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-sm">{t("trialBalanceMaintenance.periodStart")}</label>
-                  <Input data-testid="input-period-start" type="date" value={newStart} onChange={e => setNewStart(e.target.value)} />
+                  <DateField data-testid="input-period-start" value={newStart} onChange={e => setNewStart(e.target.value)} />
                 </div>
                 <div>
                   <label className="text-sm">{t("trialBalanceMaintenance.periodEnd")}</label>
-                  <Input data-testid="input-period-end" type="date" value={newEnd} onChange={e => setNewEnd(e.target.value)} />
+                  <DateField data-testid="input-period-end" value={newEnd} onChange={e => setNewEnd(e.target.value)} />
                 </div>
               </div>
               <div>

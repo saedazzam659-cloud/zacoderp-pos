@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import { cn } from "@/lib/utils";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 function authH(): Record<string, string> {
@@ -207,11 +208,11 @@ export default function LcStatement() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <div className="space-y-1.5">
             <Label>{t("purchasingPages.common.fromDate")}</Label>
-            <Input type="date" value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} />
+            <DateField value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
             <Label>{t("purchasingPages.common.toDate")}</Label>
-            <Input type="date" value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
+            <DateField value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
             <Label>{tr("supplier")}</Label>

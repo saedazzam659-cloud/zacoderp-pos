@@ -18,6 +18,7 @@ import {
   Copy, KeyRound, Monitor, RefreshCw, Plus, Trash2, ShieldOff, Calendar,
   Download, Wifi, WifiOff, Cpu, Globe, Clock, Pencil,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -438,7 +439,7 @@ function LicensesTab({ headers }: { headers: Record<string, string> }) {
                 </SelectContent>
               </Select>
             </div>
-            <div><Label>تاريخ الانتهاء (اختياري)</Label><Input type="date" value={genExpires} onChange={(e) => setGenExpires(e.target.value)} /></div>
+            <div><Label>تاريخ الانتهاء (اختياري)</Label><DateField value={genExpires} onChange={(e) => setGenExpires(e.target.value)} /></div>
             <div>
               <Label>الشركة (اختياري)</Label>
               <SearchCombobox
@@ -491,7 +492,7 @@ function LicensesTab({ headers }: { headers: Record<string, string> }) {
       <Dialog open={!!extendFor} onOpenChange={(o) => !o && setExtendFor(null)}>
         <DialogContent dir="rtl">
           <DialogHeader><DialogTitle>تمديد الترخيص</DialogTitle></DialogHeader>
-          <div><Label>تاريخ انتهاء جديد</Label><Input type="date" value={extendDate} onChange={(e) => setExtendDate(e.target.value)} /></div>
+          <div><Label>تاريخ انتهاء جديد</Label><DateField value={extendDate} onChange={(e) => setExtendDate(e.target.value)} /></div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setExtendFor(null)}>إلغاء</Button>
             <Button onClick={() => extendMut.mutate()} disabled={!extendDate || extendMut.isPending}>تمديد</Button>

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -115,11 +116,11 @@ export default function OperatorPerformance() {
         <CardContent className="p-3 flex flex-wrap items-end gap-3">
           <div>
             <Label className="text-xs">من تاريخ</Label>
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <DateField value={from} onChange={(e) => setFrom(e.target.value)} />
           </div>
           <div>
             <Label className="text-xs">إلى تاريخ</Label>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            <DateField value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
           <Button onClick={() => void load()} disabled={loading} data-testid="btn-refresh-ops">
             تحديث

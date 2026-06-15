@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sparkles, TrendingUp, AlertTriangle, BedDouble } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -153,11 +154,11 @@ export default function HotelAI() {
             </div>
             <div>
               <Label>تاريخ الدخول *</Label>
-              <Input type="date" value={recCheckIn} onChange={(e) => setRecCheckIn(e.target.value)} />
+              <DateField value={recCheckIn} onChange={(e) => setRecCheckIn(e.target.value)} />
             </div>
             <div>
               <Label>تاريخ الخروج *</Label>
-              <Input type="date" value={recCheckOut} onChange={(e) => setRecCheckOut(e.target.value)} />
+              <DateField value={recCheckOut} onChange={(e) => setRecCheckOut(e.target.value)} />
             </div>
             <div>
               <Label>عدد الضيوف</Label>

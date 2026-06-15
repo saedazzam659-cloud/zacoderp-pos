@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+import { DateField } from "@/components/ui/date-field";
 
 export default function SisterCompanyStatement() {
   const [, params] = useRoute<{ id: string }>("/inventory/sister-companies/:id/statement");
@@ -86,9 +87,9 @@ export default function SisterCompanyStatement() {
 
       <Card><CardContent className="flex flex-wrap gap-3 items-end pt-6">
         <label><span className="text-sm">من تاريخ</span>
-          <Input type="date" value={from} onChange={e => setFrom(e.target.value)} /></label>
+          <DateField value={from} onChange={e => setFrom(e.target.value)} /></label>
         <label><span className="text-sm">إلى تاريخ</span>
-          <Input type="date" value={to} onChange={e => setTo(e.target.value)} /></label>
+          <DateField value={to} onChange={e => setTo(e.target.value)} /></label>
         <Button variant="outline" onClick={() => { setFrom(""); setTo(""); }}>إعادة تعيين</Button>
       </CardContent></Card>
 

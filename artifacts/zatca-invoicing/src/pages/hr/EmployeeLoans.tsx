@@ -13,6 +13,7 @@ import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Wallet, Plus, Trash2, X, Loader2, CheckCircle2, Banknote } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { DateField } from "@/components/ui/date-field";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const EMPTY: any = { employeeId: "", loanDate: today(), loanType: "loan", amount: 0, installments: 1, installmentAmt: 0, reason: "", notes: "" };
@@ -187,7 +188,7 @@ export default function EmployeeLoans() {
               />
             </Field>
             <Field label={tr("fieldDate")}>
-              <Input type="date" value={form.loanDate} onChange={e => setForm({ ...form, loanDate: e.target.value })} data-testid="loan-date" />
+              <DateField value={form.loanDate} onChange={e => setForm({ ...form, loanDate: e.target.value })} data-testid="loan-date" />
             </Field>
             <Field label={tr("fieldAmount")}>
               <Input type="number" step="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })}

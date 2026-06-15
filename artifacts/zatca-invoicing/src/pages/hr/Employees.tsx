@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
+import { DateField } from "@/components/ui/date-field";
 
 const EMPTY: any = {
   code: "", nameAr: "", nameEn: "", idType: "iqama", idNumber: "",
@@ -216,10 +217,10 @@ export default function Employees() {
                       />
                     </Field>
                     <Field label={tr("fIdNumber")}><Input value={editing.idNumber} onChange={e => setF("idNumber", e.target.value)} /></Field>
-                    <Field label={tr("fIqamaExpiry")}><Input type="date" value={editing.iqamaExpiry || ""} onChange={e => setF("iqamaExpiry", e.target.value)} /></Field>
+                    <Field label={tr("fIqamaExpiry")}><DateField value={editing.iqamaExpiry || ""} onChange={e => setF("iqamaExpiry", e.target.value)} /></Field>
                     <Field label={tr("fNationality")}><Input value={editing.nationality} onChange={e => setF("nationality", e.target.value)} placeholder={tr("fNationalityPh")} /></Field>
                     <Field label={tr("fPassportNumber")}><Input value={editing.passportNumber} onChange={e => setF("passportNumber", e.target.value)} /></Field>
-                    <Field label={tr("fPassportExpiry")}><Input type="date" value={editing.passportExpiry || ""} onChange={e => setF("passportExpiry", e.target.value)} /></Field>
+                    <Field label={tr("fPassportExpiry")}><DateField value={editing.passportExpiry || ""} onChange={e => setF("passportExpiry", e.target.value)} /></Field>
                     <Field label={tr("fMobile")}><Input value={editing.mobile} onChange={e => setF("mobile", e.target.value)} dir="ltr" /></Field>
                     <Field label={tr("fEmail")}><Input type="email" value={editing.email} onChange={e => setF("email", e.target.value)} dir="ltr" /></Field>
                     <Field label={tr("fGender")}>
@@ -234,7 +235,7 @@ export default function Employees() {
                         className="w-full"
                       />
                     </Field>
-                    <Field label={tr("fBirthDate")}><Input type="date" value={editing.birthDate || ""} onChange={e => setF("birthDate", e.target.value)} /></Field>
+                    <Field label={tr("fBirthDate")}><DateField value={editing.birthDate || ""} onChange={e => setF("birthDate", e.target.value)} /></Field>
                     <Field label={tr("fNotes")} className="md:col-span-2"><Textarea rows={2} value={editing.notes} onChange={e => setF("notes", e.target.value)} /></Field>
                   </FormGrid>
                 </TabsContent>
@@ -245,8 +246,8 @@ export default function Employees() {
                     <Field label={tr("fJobTitle")}><Input value={editing.jobTitle} onChange={e => setF("jobTitle", e.target.value)} /></Field>
                     <Field label={tr("fProfession")}><Input value={editing.profession} onChange={e => setF("profession", e.target.value)} /></Field>
                     <Field label={tr("fSponsor")}><Input value={editing.sponsor} onChange={e => setF("sponsor", e.target.value)} /></Field>
-                    <Field label={tr("fHireDate")}><Input type="date" value={editing.hireDate || ""} onChange={e => setF("hireDate", e.target.value)} /></Field>
-                    <Field label={tr("fEndDate")}><Input type="date" value={editing.endDate || ""} onChange={e => setF("endDate", e.target.value)} /></Field>
+                    <Field label={tr("fHireDate")}><DateField value={editing.hireDate || ""} onChange={e => setF("hireDate", e.target.value)} /></Field>
+                    <Field label={tr("fEndDate")}><DateField value={editing.endDate || ""} onChange={e => setF("endDate", e.target.value)} /></Field>
                     <Field label={tr("fBasicSalary")}><Input type="number" min="0" value={editing.basicSalary} onChange={e => setF("basicSalary", e.target.value)} /></Field>
                     <Field label={tr("fHousingAllow")}><Input type="number" min="0" value={editing.housingAllow} onChange={e => setF("housingAllow", e.target.value)} /></Field>
                     <Field label={tr("fTransportAllow")}><Input type="number" min="0" value={editing.transportAllow} onChange={e => setF("transportAllow", e.target.value)} /></Field>

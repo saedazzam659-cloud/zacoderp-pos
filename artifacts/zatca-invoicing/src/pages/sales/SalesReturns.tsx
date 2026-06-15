@@ -49,6 +49,7 @@ import { DiscountRow } from "@/components/DiscountRow";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { safeLogoSrc, exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -1849,7 +1850,7 @@ ${sections}
                 readOnly={editingId != null || seqPeek.hasSequence}
                 title={editingId != null ? "الرقم محفوظ — لا يمكن تعديله" : (seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined)}
               /></Field>
-              <Field label={t("salesReturns.date")} required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
+              <Field label={t("salesReturns.date")} required><DateField value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label={t("salesReturns.customer")}><SearchCombobox items={customerItems} value={form.customerId} onValueChange={v => setForm((p: any) => ({ ...p, customerId: v }))} placeholder={t("salesReturns.customerPlaceholder")} /></Field>
               <CustomerVatControl customers={customers} customerId={form.customerId} onCustomerChange={v => setForm((p: any) => ({ ...p, customerId: v }))} />
               <Field label={t("salesReturns.salesInvoice")}><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => { setForm((p: any) => ({ ...p, invoiceId: v })); if (v) loadInvoiceIntoForm(v); }} placeholder={t("salesReturns.invoicePlaceholder")} /></Field>
@@ -2330,9 +2331,9 @@ ${sections}
           </div>
           <div className="flex items-center gap-1">
             <span className="text-slate-500">من</span>
-            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-7 text-xs w-36" />
+            <DateField value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-7 text-xs w-36" />
             <span className="text-slate-500">إلى</span>
-            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-7 text-xs w-36" />
+            <DateField value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-7 text-xs w-36" />
             {(dateFrom || dateTo) && (
               <Button type="button" size="sm" variant="ghost"
                 className="h-7 px-1.5 text-xs text-rose-700 hover:bg-rose-50"

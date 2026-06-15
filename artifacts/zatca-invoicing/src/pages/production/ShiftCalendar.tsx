@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -519,8 +520,7 @@ export default function ShiftCalendar() {
                   </div>
                   <div>
                     <Label className="text-xs">التاريخ *</Label>
-                    <Input
-                      type="date"
+                    <DateField
                       value={editingHoliday.date}
                       onChange={(e) => setEditingHoliday({ ...editingHoliday, date: e.target.value })}
                     />

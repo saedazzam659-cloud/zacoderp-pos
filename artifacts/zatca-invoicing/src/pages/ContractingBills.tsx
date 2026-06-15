@@ -17,6 +17,7 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -219,11 +220,11 @@ export default function ContractingBills() {
 
           <div>
             <label className="text-xs text-muted-foreground mb-1 block">من تاريخ</label>
-            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} data-testid="filter-date-from" />
+            <DateField value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} data-testid="filter-date-from" />
           </div>
           <div>
             <label className="text-xs text-muted-foreground mb-1 block">إلى تاريخ</label>
-            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} data-testid="filter-date-to" />
+            <DateField value={dateTo} onChange={(e) => setDateTo(e.target.value)} data-testid="filter-date-to" />
           </div>
           <div className="md:col-span-2">
             <label className="text-xs text-muted-foreground mb-1 block">بحث (رقم المستخلص / مشروع / مقاول)</label>

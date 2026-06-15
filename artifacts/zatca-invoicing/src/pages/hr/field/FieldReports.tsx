@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { BarChart3, Clock, AlertTriangle, CheckCircle2, Star } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 export default function FieldReports() {
   const today = new Date().toISOString().slice(0, 10);
@@ -24,8 +25,8 @@ export default function FieldReports() {
           <p className="text-sm text-muted-foreground mt-1">مؤشرات أداء الزيارات وSLA لكل موظف</p>
         </div>
         <div className="flex gap-2 items-end">
-          <div><Label className="text-xs">من</Label><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-36" /></div>
-          <div><Label className="text-xs">إلى</Label><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-36" /></div>
+          <div><Label className="text-xs">من</Label><DateField value={from} onChange={(e) => setFrom(e.target.value)} className="w-36" /></div>
+          <div><Label className="text-xs">إلى</Label><DateField value={to} onChange={(e) => setTo(e.target.value)} className="w-36" /></div>
         </div>
       </div>
 

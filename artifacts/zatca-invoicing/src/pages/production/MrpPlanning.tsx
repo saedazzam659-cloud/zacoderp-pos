@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -287,16 +288,14 @@ export default function MrpPlanning() {
               </div>
               <div>
                 <Label className="text-xs">بداية الفترة *</Label>
-                <Input
-                  type="date"
+                <DateField
                   value={editing.periodStart}
                   onChange={(e) => setEditing({ ...editing, periodStart: e.target.value })}
                 />
               </div>
               <div>
                 <Label className="text-xs">نهاية الفترة *</Label>
-                <Input
-                  type="date"
+                <DateField
                   value={editing.periodEnd}
                   onChange={(e) => setEditing({ ...editing, periodEnd: e.target.value })}
                 />

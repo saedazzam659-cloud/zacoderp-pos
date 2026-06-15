@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
+import { DateField } from "@/components/ui/date-field";
 
 const EMPTY_CONTRACT: any = {
   contractNumber: "", contractType: "fixed",
@@ -268,8 +269,8 @@ export default function EmployeeContracts() {
                     className="w-full"
                   />
                 </Field>
-                <Field label={tr("fStartDate")} required><Input type="date" value={editingC.startDate} onChange={e => setCF("startDate", e.target.value)} /></Field>
-                <Field label={tr("fEndDate")}><Input type="date" value={editingC.endDate || ""} onChange={e => setCF("endDate", e.target.value)} /></Field>
+                <Field label={tr("fStartDate")} required><DateField value={editingC.startDate} onChange={e => setCF("startDate", e.target.value)} /></Field>
+                <Field label={tr("fEndDate")}><DateField value={editingC.endDate || ""} onChange={e => setCF("endDate", e.target.value)} /></Field>
                 <Field label={tr("fBasicSalary")}><Input type="number" min="0" value={editingC.basicSalary} onChange={e => setCF("basicSalary", e.target.value)} /></Field>
                 <Field label={tr("fHousingAllow")}><Input type="number" min="0" value={editingC.housingAllow} onChange={e => setCF("housingAllow", e.target.value)} /></Field>
                 <Field label={tr("fTransportAllow")}><Input type="number" min="0" value={editingC.transportAllow} onChange={e => setCF("transportAllow", e.target.value)} /></Field>
@@ -382,8 +383,8 @@ export default function EmployeeContracts() {
                     className="w-full"
                   />
                 </Field>
-                <Field label={tr("fLeaveStart")} required><Input type="date" value={editingL.startDate} onChange={e => { const v = e.target.value; setLF("startDate", v); const days = Math.max(1, Math.ceil((new Date(editingL.endDate).getTime() - new Date(v).getTime()) / 86400000) + 1); if (!isNaN(days)) setLF("days", days); }} /></Field>
-                <Field label={tr("fLeaveEnd")} required><Input type="date" value={editingL.endDate} onChange={e => { const v = e.target.value; setLF("endDate", v); const days = Math.max(1, Math.ceil((new Date(v).getTime() - new Date(editingL.startDate).getTime()) / 86400000) + 1); if (!isNaN(days)) setLF("days", days); }} /></Field>
+                <Field label={tr("fLeaveStart")} required><DateField value={editingL.startDate} onChange={e => { const v = e.target.value; setLF("startDate", v); const days = Math.max(1, Math.ceil((new Date(editingL.endDate).getTime() - new Date(v).getTime()) / 86400000) + 1); if (!isNaN(days)) setLF("days", days); }} /></Field>
+                <Field label={tr("fLeaveEnd")} required><DateField value={editingL.endDate} onChange={e => { const v = e.target.value; setLF("endDate", v); const days = Math.max(1, Math.ceil((new Date(v).getTime() - new Date(editingL.startDate).getTime()) / 86400000) + 1); if (!isNaN(days)) setLF("days", days); }} /></Field>
                 <Field label={tr("fDays")}><Input type="number" min="1" value={editingL.days} onChange={e => setLF("days", Number(e.target.value))} /></Field>
                 <Field label={tr("fReason")} className="md:col-span-2"><Textarea rows={3} value={editingL.reason} onChange={e => setLF("reason", e.target.value)} placeholder={tr("fReasonPh")} /></Field>
               </FormGrid>

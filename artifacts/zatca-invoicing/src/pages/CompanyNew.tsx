@@ -23,6 +23,7 @@ import { ArrowRight, Save, Building2, MapPin, Settings, Info, AlertCircle, Check
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { COUNTRIES } from "@/lib/countries";
+import { DateField } from "@/components/ui/date-field";
 
 const INVOICE_TYPE_OPTIONS: ComboboxItem[] = [
   { value: "standard",   code: "B2B",     label: "فاتورة ضريبية (B2B)",         description: "للشركات والجهات التجارية — تُرسل إلى ZATCA للتخليص" },
@@ -961,14 +962,14 @@ export default function CompanyNew() {
                   <FormField control={form.control} name="startDate" render={({ field }) => (
                     <FormItem>
                       <FormLabel>تاريخ بدء الاشتراك</FormLabel>
-                      <FormControl><Input type="date" dir="ltr" {...field} /></FormControl>
+                      <FormControl><DateField {...field} /></FormControl>
                       <FormMessage />
                     </FormItem>
                   )} />
                   <FormField control={form.control} name="endDate" render={({ field }) => (
                     <FormItem>
                       <FormLabel>تاريخ انتهاء الاشتراك</FormLabel>
-                      <FormControl><Input type="date" dir="ltr" {...field} /></FormControl>
+                      <FormControl><DateField {...field} /></FormControl>
                       <FormMessage />
                     </FormItem>
                   )} />

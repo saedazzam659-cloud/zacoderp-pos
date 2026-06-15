@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CalendarDays, Search, Download } from "lucide-react";
 import AIInsightsPanel from "./_AIInsightsPanel";
+import { DateField } from "@/components/ui/date-field";
 
 function exportCsv(filename: string, headers: string[], rows: any[][]) {
   const esc = (v: any) => {
@@ -79,11 +80,11 @@ export default function LeavesReport() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
             <Label className="text-xs">من تاريخ</Label>
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <DateField value={from} onChange={(e) => setFrom(e.target.value)} />
           </div>
           <div>
             <Label className="text-xs">إلى تاريخ</Label>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            <DateField value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
           <div className="flex items-end">
             <Button onClick={() => setFilters({ from: from || undefined, to: to || undefined })} className="w-full gap-2">

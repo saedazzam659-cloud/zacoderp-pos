@@ -17,6 +17,7 @@ import {
 import { cn } from "@/lib/utils";
 import ExportButtons from "@/components/ExportButtons";
 import type { ExportColumn } from "@/lib/export";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -259,11 +260,11 @@ export default function SalesRepCommissions() {
           </div>
           <div className="space-y-1">
             <Label className="text-xs">{tr("from")}</Label>
-            <Input type="date" value={from} onChange={e => setFrom(e.target.value)} className="h-10 bg-card" dir="ltr" />
+            <DateField value={from} onChange={e => setFrom(e.target.value)} className="h-10 bg-card" />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">{tr("to")}</Label>
-            <Input type="date" value={to} onChange={e => setTo(e.target.value)} className="h-10 bg-card" dir="ltr" />
+            <DateField value={to} onChange={e => setTo(e.target.value)} className="h-10 bg-card" />
           </div>
           <div className="flex items-end">
             <div className="w-full">

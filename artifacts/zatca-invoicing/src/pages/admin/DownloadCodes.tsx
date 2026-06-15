@@ -18,6 +18,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { KeyRound, Plus, Trash2, ShieldOff, ShieldCheck, Copy, RefreshCw, Search } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -235,7 +236,7 @@ export default function DownloadCodes() {
               </div>
               <div className="space-y-2">
                 <Label>تاريخ الانتهاء (اختياري)</Label>
-                <Input type="date" value={form.expiresAt} onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} />
+                <DateField value={form.expiresAt} onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} />
               </div>
             </div>
             <div className="space-y-2">

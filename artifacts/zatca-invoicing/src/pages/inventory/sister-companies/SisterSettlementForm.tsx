@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 function authHeaders(): Record<string, string> {
@@ -90,7 +91,7 @@ export default function SisterSettlementForm() {
               <option key={s.id} value={s.id}>{s.nameAr}</option>)}
           </select></label>
         <label><span className="text-sm">التاريخ</span>
-          <Input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></label>
+          <DateField value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></label>
 
         <label><span className="text-sm">الاتجاه *</span>
           <select className="w-full border rounded h-9 px-2" value={form.direction}

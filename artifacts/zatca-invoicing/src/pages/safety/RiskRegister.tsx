@@ -23,6 +23,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import {
   HAZARD_CATEGORIES, RISK_STATUSES, CONTROL_TYPES, CONTROL_STATUSES,
 } from "@/lib/safetyConstants";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -416,12 +417,12 @@ export default function RiskRegister() {
 
             <div>
               <Label>تاريخ التقييم</Label>
-              <Input type="date" value={editing.assessmentDate ?? ""}
+              <DateField value={editing.assessmentDate ?? ""}
                 onChange={(e) => setEditing({ ...editing, assessmentDate: e.target.value || null })} />
             </div>
             <div>
               <Label>تاريخ المراجعة القادمة</Label>
-              <Input type="date" value={editing.reviewDate ?? ""}
+              <DateField value={editing.reviewDate ?? ""}
                 onChange={(e) => setEditing({ ...editing, reviewDate: e.target.value || null })} />
             </div>
             <div>
@@ -552,7 +553,7 @@ export default function RiskRegister() {
                 items={[{ value: "", label: "— غير محدد —" },
                   ...users.map((u) => ({ value: String(u.id), label: u.username }))]}
               />
-              <Input type="date" value={newControl.dueDate ?? ""}
+              <DateField value={newControl.dueDate ?? ""}
                 onChange={(e) => setNewControl({ ...newControl, dueDate: e.target.value || null })} />
               <Button size="sm" onClick={addControl} data-testid="btn-add-control">
                 <Plus className="h-4 w-4 me-1" /> إضافة

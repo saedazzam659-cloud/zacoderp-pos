@@ -12,6 +12,7 @@ import RegionFilter from "@/components/RegionFilter";
 import { useTranslation } from "react-i18next";
 import { RotateCcw, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 function authHeaders(): Record<string, string> {
@@ -123,11 +124,11 @@ export default function SalesReturnsReport() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
         <div className="space-y-1.5">
           <Label>{t("salesReports.common.from")}</Label>
-          <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
+          <DateField value={from} onChange={e => setFrom(e.target.value)} />
         </div>
         <div className="space-y-1.5">
           <Label>{t("salesReports.common.to")}</Label>
-          <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
+          <DateField value={to} onChange={e => setTo(e.target.value)} />
         </div>
         <BranchFilter value={branchId} onChange={setBranchId} />
         <RegionFilter value={regionId} onChange={setRegionId} />

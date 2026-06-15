@@ -17,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { posOperationsApi, type PosInvoiceRow, type PosReturnRow } from "@/lib/posOperationsApi";
+import { DateField } from "@/components/ui/date-field";
 
 const SAR = (n: number | string | null | undefined, locale: string) =>
   new Intl.NumberFormat(locale, { style: "currency", currency: "SAR", maximumFractionDigits: 2 }).format(Number(n ?? 0));
@@ -251,9 +252,9 @@ export default function PosOperations() {
             </SelectContent>
           </Select>
           <div className="flex items-center gap-2">
-            <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="w-40" />
+            <DateField value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="w-40" />
             <span className="text-muted-foreground text-sm">—</span>
-            <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="w-40" />
+            <DateField value={toDate} onChange={(e) => setToDate(e.target.value)} className="w-40" />
           </div>
         </CardContent>
       </Card>

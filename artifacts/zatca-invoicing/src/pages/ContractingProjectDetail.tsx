@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/table";
 import ContractingAIAssistant from "@/components/ContractingAIAssistant";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -771,7 +772,7 @@ function BillsTab({ projectId }: { projectId: number }) {
                 data-testid="input-bill-number"
               />
             </Field>
-            <Field label={t("contracting.bills.date", "التاريخ")} required><Input type="date" value={editing.billDate ?? ""} onChange={e => setEditing({ ...editing, billDate: e.target.value })} /></Field>
+            <Field label={t("contracting.bills.date", "التاريخ")} required><DateField value={editing.billDate ?? ""} onChange={e => setEditing({ ...editing, billDate: e.target.value })} /></Field>
             <Field label={t("contracting.bills.type", "النوع")}>
               <Select value={editing.billType ?? "interim"} onValueChange={v => setEditing({ ...editing, billType: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1265,7 +1266,7 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label={t("contracting.ownerContract.number", "رقم العقد")} required><Input value={editing.contractNumber ?? ""} onChange={e => setEditing({ ...editing, contractNumber: e.target.value })} /></Field>
-            <Field label={t("contracting.ownerContract.date", "تاريخ العقد")} required><Input type="date" value={editing.contractDate ?? ""} onChange={e => setEditing({ ...editing, contractDate: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.date", "تاريخ العقد")} required><DateField value={editing.contractDate ?? ""} onChange={e => setEditing({ ...editing, contractDate: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.type", "النوع")}>
               <Select value={editing.contractType ?? "main"} onValueChange={v => setEditing({ ...editing, contractType: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1282,9 +1283,9 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
             <Field label={t("contracting.ownerContract.retention", "محتجز %")}><Input type="number" value={editing.retentionPercent ?? "5"} onChange={e => setEditing({ ...editing, retentionPercent: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.vat", "ضريبة %")}><Input type="number" value={editing.vatPercent ?? "15"} onChange={e => setEditing({ ...editing, vatPercent: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.duration", "المدة (يوم)")}><Input type="number" value={editing.durationDays ?? 0} onChange={e => setEditing({ ...editing, durationDays: Number(e.target.value) })} /></Field>
-            <Field label={t("contracting.ownerContract.startDate", "تاريخ البدء")}><Input type="date" value={editing.startDate ?? ""} onChange={e => setEditing({ ...editing, startDate: e.target.value })} /></Field>
-            <Field label={t("contracting.ownerContract.endDate", "تاريخ الانتهاء")}><Input type="date" value={editing.endDate ?? ""} onChange={e => setEditing({ ...editing, endDate: e.target.value })} /></Field>
-            <Field label={t("contracting.ownerContract.signedAt", "تاريخ التوقيع")}><Input type="date" value={editing.signedAt ?? ""} onChange={e => setEditing({ ...editing, signedAt: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.startDate", "تاريخ البدء")}><DateField value={editing.startDate ?? ""} onChange={e => setEditing({ ...editing, startDate: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.endDate", "تاريخ الانتهاء")}><DateField value={editing.endDate ?? ""} onChange={e => setEditing({ ...editing, endDate: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.signedAt", "تاريخ التوقيع")}><DateField value={editing.signedAt ?? ""} onChange={e => setEditing({ ...editing, signedAt: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.status", "الحالة")}>
               <Select value={editing.status ?? "draft"} onValueChange={v => setEditing({ ...editing, status: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1447,16 +1448,16 @@ function SubContractsTab({ projectId }: { projectId: number }) {
               </Select>
             </Field>
             <Field label={t("contracting.subContract.number", "رقم العقد")} required><Input value={editing.contractNumber ?? ""} onChange={e => setEditing({ ...editing, contractNumber: e.target.value })} /></Field>
-            <Field label={t("contracting.subContract.date", "تاريخ العقد")} required><Input type="date" value={editing.contractDate ?? ""} onChange={e => setEditing({ ...editing, contractDate: e.target.value })} /></Field>
-            <Field label={t("contracting.subContract.signedAt", "تاريخ التوقيع")}><Input type="date" value={editing.signedAt ?? ""} onChange={e => setEditing({ ...editing, signedAt: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.date", "تاريخ العقد")} required><DateField value={editing.contractDate ?? ""} onChange={e => setEditing({ ...editing, contractDate: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.signedAt", "تاريخ التوقيع")}><DateField value={editing.signedAt ?? ""} onChange={e => setEditing({ ...editing, signedAt: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.value", "قيمة العقد (ر.س)")}><Input type="number" value={editing.value ?? "0"} onChange={e => setEditing({ ...editing, value: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.advance", "دفعة مقدمة (ر.س)")}><Input type="number" value={editing.advancePayment ?? "0"} onChange={e => setEditing({ ...editing, advancePayment: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.advancePercent", "% دفعة مقدمة")}><Input type="number" value={editing.advancePercent ?? "0"} onChange={e => setEditing({ ...editing, advancePercent: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.retention", "محتجز %")}><Input type="number" value={editing.retentionPercent ?? "10"} onChange={e => setEditing({ ...editing, retentionPercent: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.vat", "ضريبة %")}><Input type="number" value={editing.vatPercent ?? "15"} onChange={e => setEditing({ ...editing, vatPercent: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.duration", "المدة (يوم)")}><Input type="number" value={editing.durationDays ?? 0} onChange={e => setEditing({ ...editing, durationDays: Number(e.target.value) })} /></Field>
-            <Field label={t("contracting.subContract.startDate", "تاريخ البدء")}><Input type="date" value={editing.startDate ?? ""} onChange={e => setEditing({ ...editing, startDate: e.target.value })} /></Field>
-            <Field label={t("contracting.subContract.endDate", "تاريخ الانتهاء")}><Input type="date" value={editing.endDate ?? ""} onChange={e => setEditing({ ...editing, endDate: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.startDate", "تاريخ البدء")}><DateField value={editing.startDate ?? ""} onChange={e => setEditing({ ...editing, startDate: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.endDate", "تاريخ الانتهاء")}><DateField value={editing.endDate ?? ""} onChange={e => setEditing({ ...editing, endDate: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.status", "الحالة")}>
               <Select value={editing.status ?? "draft"} onValueChange={v => setEditing({ ...editing, status: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>

@@ -13,6 +13,7 @@ import * as XLSX from "xlsx";
 import {
   GitCompareArrows, Upload, Search, Filter, CheckCircle2, Link2, Link2Off, Trash2, AlertTriangle, Sparkles, Brain, FileSpreadsheet,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -552,11 +553,11 @@ export default function BankReconciliation() {
           </div>
           <div className="space-y-1.5">
             <Label>من تاريخ</Label>
-            <Input type="date" value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} />
+            <DateField value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
             <Label>إلى تاريخ</Label>
-            <Input type="date" value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
+            <DateField value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
             <Label>تسامح المطابقة (أيام)</Label>

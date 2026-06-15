@@ -14,6 +14,7 @@ import {
 import { Plus, Pencil, Trash2, Search, Package, QrCode,
   Info, ShoppingCart, Cog, TrendingDown, Shield, FileText, Receipt, Calculator } from "lucide-react";
 import { YearMonthInput } from "@/components/YearMonthInput";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -307,7 +308,7 @@ export default function FixedAssets() {
               </legend>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div><Label>تاريخ الشراء</Label>
-                  <Input type="date" value={form.purchaseDate} onChange={(e)=>setForm({...form,purchaseDate:e.target.value})} /></div>
+                  <DateField value={form.purchaseDate} onChange={(e)=>setForm({...form,purchaseDate:e.target.value})} /></div>
                 <div><Label>قيمة الشراء</Label>
                   <Input type="number" step="0.01" value={form.purchaseValue} onChange={(e)=>setForm({...form,purchaseValue:e.target.value})} /></div>
                 <div><Label>المورد</Label>
@@ -534,7 +535,7 @@ export default function FixedAssets() {
                 <div><Label>قيمة الخردة</Label>
                   <Input type="number" step="0.01" value={form.scrapValue} onChange={(e)=>setForm({...form,scrapValue:e.target.value})} /></div>
                 <div><Label>تاريخ بداية الإهلاك</Label>
-                  <Input type="date" value={form.depreciationStart} onChange={(e)=>setForm({...form,depreciationStart:e.target.value})} /></div>
+                  <DateField value={form.depreciationStart} onChange={(e)=>setForm({...form,depreciationStart:e.target.value})} /></div>
                 <div><Label>الإهلاك المتراكم</Label>
                   <Input type="number" step="0.01" value={form.accumulatedDepreciation} onChange={(e)=>setForm({...form,accumulatedDepreciation:e.target.value})} /></div>
                 <div><Label>القيمة الدفترية</Label>
@@ -556,9 +557,9 @@ export default function FixedAssets() {
                 <div><Label>قيمة التأمين</Label>
                   <Input type="number" step="0.01" value={form.insuranceValue} onChange={(e)=>setForm({...form,insuranceValue:e.target.value})} /></div>
                 <div><Label>تاريخ البداية</Label>
-                  <Input type="date" value={form.insuranceStart} onChange={(e)=>setForm({...form,insuranceStart:e.target.value})} /></div>
+                  <DateField value={form.insuranceStart} onChange={(e)=>setForm({...form,insuranceStart:e.target.value})} /></div>
                 <div><Label>تاريخ الانتهاء</Label>
-                  <Input type="date" value={form.insuranceEnd} onChange={(e)=>setForm({...form,insuranceEnd:e.target.value})} /></div>
+                  <DateField value={form.insuranceEnd} onChange={(e)=>setForm({...form,insuranceEnd:e.target.value})} /></div>
               </div>
             </fieldset>
             )}

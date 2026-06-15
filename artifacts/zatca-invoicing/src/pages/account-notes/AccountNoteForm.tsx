@@ -10,6 +10,7 @@ import { AccountCombobox } from "@/components/AccountCombobox";
 import { useToast } from "@/hooks/use-toast";
 import { accountNotesApi, type AccountNotePartyType, type AccountNoteType } from "@/lib/accountNotesApi";
 import { useCostCenters } from "@/hooks/useCostCenters";
+import { DateField } from "@/components/ui/date-field";
 
 interface Props {
   partyType: AccountNotePartyType;
@@ -205,7 +206,7 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
           credit/debit), so this layout applies everywhere. */}
       <Card><CardContent className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4 pt-6">
         <label className="flex flex-col gap-1"><span className="text-sm font-medium">التاريخ *</span>
-          <Input type="date" value={form.noteDate}
+          <DateField value={form.noteDate}
             onChange={e => setForm({ ...form, noteDate: e.target.value })} data-testid="input-date" />
         </label>
 
@@ -266,7 +267,7 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
         </label>
 
         <label className="flex flex-col gap-1"><span className="text-sm font-medium">تاريخ المرجع</span>
-          <Input type="date" value={form.referenceDate}
+          <DateField value={form.referenceDate}
             onChange={e => setForm({ ...form, referenceDate: e.target.value })}
             data-testid="input-reference-date" />
         </label>

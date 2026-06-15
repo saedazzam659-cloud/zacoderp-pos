@@ -16,6 +16,7 @@ import {
   CalendarClock, Sparkles, FileText, ArrowRightCircle, Link2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -342,10 +343,10 @@ export default function Adjustments() {
               </div>
             </Field>
             <Field label="تاريخ البداية" required>
-              <Input type="date" value={form.startDate} onChange={(e) => setForm(p => ({ ...p, startDate: e.target.value }))} />
+              <DateField value={form.startDate} onChange={(e) => setForm(p => ({ ...p, startDate: e.target.value }))} />
             </Field>
             <Field label="تاريخ النهاية" required>
-              <Input type="date" value={form.endDate} onChange={(e) => setForm(p => ({ ...p, endDate: e.target.value }))} />
+              <DateField value={form.endDate} onChange={(e) => setForm(p => ({ ...p, endDate: e.target.value }))} />
             </Field>
             <Field label="ملاحظات" className="md:col-span-2">
               <Textarea
@@ -549,11 +550,11 @@ export default function Adjustments() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">تاريخ بداية الترحيل</Label>
-                  <Input type="date" value={carryForm.start} onChange={e => setCarryForm(p => ({ ...p, start: e.target.value }))} />
+                  <DateField value={carryForm.start} onChange={e => setCarryForm(p => ({ ...p, start: e.target.value }))} />
                 </div>
                 <div>
                   <Label className="text-xs">تاريخ نهاية الترحيل</Label>
-                  <Input type="date" value={carryForm.end} onChange={e => setCarryForm(p => ({ ...p, end: e.target.value }))} />
+                  <DateField value={carryForm.end} onChange={e => setCarryForm(p => ({ ...p, end: e.target.value }))} />
                 </div>
               </div>
               {carryForm.start && carryForm.start <= carryFor.endDate && (

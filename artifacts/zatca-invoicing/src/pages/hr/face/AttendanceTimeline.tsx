@@ -10,6 +10,7 @@ import {
   Loader2, Clock, LogIn, LogOut, ScanFace, AlertTriangle, CheckCircle2,
   TrendingUp, Calendar, MapPin, Camera as CameraIcon, Activity,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 function daysAgoISO(n: number) {
@@ -102,11 +103,11 @@ export default function AttendanceTimeline() {
           </div>
           <div>
             <label className="text-xs text-muted-foreground mb-1 block">من</label>
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} data-testid="input-from" />
+            <DateField value={from} onChange={(e) => setFrom(e.target.value)} data-testid="input-from" />
           </div>
           <div>
             <label className="text-xs text-muted-foreground mb-1 block">إلى</label>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} data-testid="input-to" />
+            <DateField value={to} onChange={(e) => setTo(e.target.value)} data-testid="input-to" />
           </div>
           <div className="flex gap-1">
             <Button size="sm" variant="outline" onClick={() => setQuickRange(1)}>اليوم</Button>

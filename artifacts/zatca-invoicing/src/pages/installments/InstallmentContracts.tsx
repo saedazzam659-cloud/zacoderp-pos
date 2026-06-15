@@ -19,6 +19,7 @@ import {
   TrendingUp, ShieldCheck, ShieldAlert, ShieldX, Ban,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -443,7 +444,7 @@ export default function InstallmentContracts() {
                 </div>
                 <div>
                   <Label>تاريخ أول قسط</Label>
-                  <Input type="date" value={form.firstInstallmentDate} onChange={e => setForm({...form, firstInstallmentDate: e.target.value})} data-testid="input-first-date" />
+                  <DateField value={form.firstInstallmentDate} onChange={e => setForm({...form, firstInstallmentDate: e.target.value})} data-testid="input-first-date" />
                 </div>
                 <div>
                   <Label>ملاحظات</Label>

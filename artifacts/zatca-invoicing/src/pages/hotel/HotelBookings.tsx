@@ -12,6 +12,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Search, CalendarRange, Sparkles, LogIn, LogOut } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -293,11 +294,11 @@ export default function HotelBookings() {
             </div>
             <div>
               <Label>تاريخ الدخول *</Label>
-              <Input type="date" value={form.checkIn} onChange={(e) => setForm({ ...form, checkIn: e.target.value })} data-testid="input-checkIn" />
+              <DateField value={form.checkIn} onChange={(e) => setForm({ ...form, checkIn: e.target.value })} data-testid="input-checkIn" />
             </div>
             <div>
               <Label>تاريخ الخروج *</Label>
-              <Input type="date" value={form.checkOut} onChange={(e) => setForm({ ...form, checkOut: e.target.value })} data-testid="input-checkOut" />
+              <DateField value={form.checkOut} onChange={(e) => setForm({ ...form, checkOut: e.target.value })} data-testid="input-checkOut" />
             </div>
             <div className="md:col-span-2">
               <div className="flex items-center justify-between mb-2">

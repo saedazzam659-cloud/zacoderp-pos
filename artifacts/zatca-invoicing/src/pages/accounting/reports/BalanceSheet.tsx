@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import ExportButtons from "@/components/ExportButtons";
 import { Building2, Search, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -113,7 +114,7 @@ export default function BalanceSheet() {
         <div className="flex flex-wrap gap-4 items-end">
           <div className="space-y-1.5">
             <Label>{t("accountingReports.asOfDate")}</Label>
-            <Input type="date" value={asOfDate} onChange={e => setAsOfDate(e.target.value)} className="w-44" />
+            <DateField value={asOfDate} onChange={e => setAsOfDate(e.target.value)} className="w-44" />
           </div>
           <Button className="gap-2" onClick={() => { setSearched(true); refetch(); }} disabled={isLoading}>
             <Search className="h-4 w-4" />

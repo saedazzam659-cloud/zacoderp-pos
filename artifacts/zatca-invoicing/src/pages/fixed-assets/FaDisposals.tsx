@@ -12,6 +12,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Trash2 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -134,7 +135,7 @@ export default function FaDisposals() {
                 {TYPES.map(([v,l])=> <option key={v} value={v}>{l}</option>)}
               </select></div>
             <div><Label>التاريخ</Label>
-              <Input type="date" value={form.disposalDate} onChange={(e)=>setForm({...form,disposalDate:e.target.value})} /></div>
+              <DateField value={form.disposalDate} onChange={(e)=>setForm({...form,disposalDate:e.target.value})} /></div>
             {form.type === "sale" && <>
               <div><Label>سعر البيع</Label>
                 <Input type="number" step="0.01" value={form.salePrice} onChange={(e)=>setForm({...form,salePrice:e.target.value})} /></div>

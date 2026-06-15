@@ -14,6 +14,7 @@ import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Plus, Pencil, Trash2, Calendar, Lock, Unlock, ShieldX, Clock, AlertCircle, Sparkles, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PeriodClosingWizard } from "./PeriodClosingWizard";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -255,10 +256,10 @@ export default function FiscalPeriods() {
               />
             </Field>
             <Field label={t("fiscalPeriods.startDate")} required>
-              <Input type="date" value={yearForm.startDate} onChange={(e) => setYearForm(p => ({ ...p, startDate: e.target.value }))} />
+              <DateField value={yearForm.startDate} onChange={(e) => setYearForm(p => ({ ...p, startDate: e.target.value }))} />
             </Field>
             <Field label={t("fiscalPeriods.endDate")} required>
-              <Input type="date" value={yearForm.endDate} onChange={(e) => setYearForm(p => ({ ...p, endDate: e.target.value }))} />
+              <DateField value={yearForm.endDate} onChange={(e) => setYearForm(p => ({ ...p, endDate: e.target.value }))} />
             </Field>
             <Field label={t("fiscalPeriods.monthlyPeriodsCount")} className="md:col-span-2">
               <div className="flex gap-2">

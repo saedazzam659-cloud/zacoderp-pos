@@ -25,6 +25,7 @@ import {
   Plus, Pencil, Trash2, Search, DollarSign,
   ArrowRightLeft, Star, CheckCircle2, RefreshCw, Calendar,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const EMPTY_CUR  = { code: "", nameAr: "", nameEn: "", symbol: "", isDefault: false, isActive: true, notes: "" };
 const EMPTY_RATE = { fromCurrencyId: "", toCurrencyId: "", rate: "", effectiveDate: new Date().toISOString().slice(0, 10), notes: "" };
@@ -263,7 +264,7 @@ export default function Currencies() {
               }} placeholder="3.7500" className="h-9 text-sm font-mono text-start" dir="ltr" />
             </Field>
             <Field label={<span className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />{t("currencies.effectiveDate")}</span>} required>
-              <Input type="date" value={rateForm.effectiveDate} onChange={e => setRateForm((p: any) => ({ ...p, effectiveDate: e.target.value }))} className="h-9 text-sm" />
+              <DateField value={rateForm.effectiveDate} onChange={e => setRateForm((p: any) => ({ ...p, effectiveDate: e.target.value }))} className="h-9 text-sm" />
             </Field>
             {rateForm.fromCurrencyId && rateForm.toCurrencyId && rateForm.rate && (
               <div className="md:col-span-2 rounded-lg border bg-primary/5 border-primary/20 px-4 py-3 text-sm text-center font-medium">

@@ -19,6 +19,7 @@ import {
   Loader2, Save, Send, Lock, FileText, Banknote, Wallet, Landmark,
   Plus, Minus, RefreshCw, BookMarked, FolderTree, FolderOpen, Folder,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -604,7 +605,7 @@ export default function FinancialTransactionForm() {
                         <Label className="text-xs font-medium">
                           {t(`${NS}.date`, "التاريخ")} <span className="text-destructive">*</span>
                         </Label>
-                        <Input type="date" value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} className="h-9 text-sm" />
+                        <DateField value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} className="h-9 text-sm" />
                       </div>
                       <div className="space-y-1.5">
                         <Label className="text-xs font-medium">{t(`${NS}.currency`, "العملة")}</Label>

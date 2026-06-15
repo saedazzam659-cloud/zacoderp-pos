@@ -17,6 +17,7 @@ import {
 } from "@/lib/countries";
 import { INDUSTRIES as INDUSTRIES_FALLBACK } from "@/lib/industries";
 import { MENU_ITEM_BY_KEY, deriveModulesFromMenuKeys } from "@/lib/menuItems";
+import { DateField } from "@/components/ui/date-field";
 
 // Live row from /api/admin/industries/public — derived from the
 // `industries` table (SuperAdmin-managed in /admin/industries). Falls
@@ -1115,11 +1116,11 @@ export default function Register() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="text-sm font-medium">تاريخ بدء الاشتراك</label>
-                    <Input type="date" value={form.startDate ?? ""} onChange={e => set("startDate", e.target.value)} dir="ltr" />
+                    <DateField value={form.startDate ?? ""} onChange={e => set("startDate", e.target.value)} />
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-sm font-medium">تاريخ انتهاء الاشتراك</label>
-                    <Input type="date" value={form.endDate ?? ""} onChange={e => set("endDate", e.target.value)} dir="ltr" />
+                    <DateField value={form.endDate ?? ""} onChange={e => set("endDate", e.target.value)} />
                   </div>
                 </div>
 

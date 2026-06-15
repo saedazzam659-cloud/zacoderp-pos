@@ -14,6 +14,7 @@ import {
   ArrowRightCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DateField } from "@/components/ui/date-field";
 
 type PendingCarry = {
   id: number; name: string; type: "prepaid" | "accrued";
@@ -407,16 +408,14 @@ export function PeriodClosingWizard({ period, onClose, onPeriodUpdated }: Props)
                         <div className="grid grid-cols-2 gap-2">
                           <div>
                             <label className="text-[10px] text-muted-foreground">بداية الترحيل</label>
-                            <Input
-                              type="date" className="h-8 text-xs"
+                            <DateField className="h-8 text-xs"
                               value={d.start}
                               onChange={e => setCarryDates(p => ({ ...p, [a.id]: { start: e.target.value, end: p[a.id]?.end ?? d.end } }))}
                             />
                           </div>
                           <div>
                             <label className="text-[10px] text-muted-foreground">نهاية الترحيل</label>
-                            <Input
-                              type="date" className="h-8 text-xs"
+                            <DateField className="h-8 text-xs"
                               value={d.end}
                               onChange={e => setCarryDates(p => ({ ...p, [a.id]: { start: p[a.id]?.start ?? d.start, end: e.target.value } }))}
                             />

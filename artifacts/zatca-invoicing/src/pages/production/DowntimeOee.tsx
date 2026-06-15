@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -227,11 +228,11 @@ export default function DowntimeOee() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
             <div>
               <Label className="text-xs">من تاريخ</Label>
-              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              <DateField value={from} onChange={(e) => setFrom(e.target.value)} />
             </div>
             <div>
               <Label className="text-xs">إلى تاريخ</Label>
-              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+              <DateField value={to} onChange={(e) => setTo(e.target.value)} />
             </div>
             <div className="md:col-span-2 flex gap-2 flex-wrap">
               <Button variant="outline" onClick={() => { setFrom(daysAgoISO(0)); setTo(todayISO()); }}>اليوم</Button>

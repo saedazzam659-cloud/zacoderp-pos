@@ -24,6 +24,7 @@ import {
   Columns3, RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DateField } from "@/components/ui/date-field";
 
 // ─── Column visibility model ───────────────────────────────────────────
 type ColKey = "type" | "openDr" | "openCr" | "periodDr" | "periodCr" | "closeDr" | "closeCr";
@@ -360,11 +361,11 @@ export default function TrialBalance() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
           <div className="space-y-1.5">
             <Label>{t("accountingReports.fromDate")}</Label>
-            <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
+            <DateField value={fromDate} onChange={e => setFromDate(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label>{t("accountingReports.toDate")}</Label>
-            <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
+            <DateField value={toDate} onChange={e => setToDate(e.target.value)} />
           </div>
           <BranchFilter value={branchId} onChange={setBranchId} />
           <CostCenterFilter value={costCenterIds} onChange={setCostCenterIds} />

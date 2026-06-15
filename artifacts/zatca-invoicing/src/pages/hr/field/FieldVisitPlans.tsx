@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ClipboardList, Plus, Trash2, Search, Eye, X, MapPin, ExternalLink,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 interface ItemRow { locationId: string; purpose: string; notes: string; }
 
@@ -197,7 +198,7 @@ export default function FieldVisitPlans() {
             </div>
             <div>
               <Label>التاريخ *</Label>
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} data-testid="input-date" />
+              <DateField value={date} onChange={(e) => setDate(e.target.value)} data-testid="input-date" />
             </div>
             <div className="md:col-span-2">
               <Label>ملاحظات (اختياري)</Label>

@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -481,7 +482,7 @@ export default function OpeningBalances() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-5">
           <div>
             <label className="text-xs text-muted-foreground font-medium">{t("openingBalances.entryDate")}</label>
-            <Input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)} className="mt-1" />
+            <DateField value={entryDate} onChange={e => setEntryDate(e.target.value)} className="mt-1" />
           </div>
           <div>
             <label className="text-xs text-muted-foreground font-medium">{t("openingBalances.branch")}</label>

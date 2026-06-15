@@ -20,6 +20,7 @@ import { Plus, Pencil, Trash2, Target, Search, ChevronLeft, ChevronRight, Chevro
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Link } from "wouter";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -871,11 +872,11 @@ function TransactionsTab({ centers, headers, t, isRtl }: { centers: CostCenter[]
           </div>
           <div className="md:col-span-3">
             <Label className="text-xs font-semibold mb-1.5 block">{t("costCenters.txTab.from")}</Label>
-            <Input type="date" value={from} onChange={e => setFrom(e.target.value)} dir="ltr" />
+            <DateField value={from} onChange={e => setFrom(e.target.value)} />
           </div>
           <div className="md:col-span-3">
             <Label className="text-xs font-semibold mb-1.5 block">{t("costCenters.txTab.to")}</Label>
-            <Input type="date" value={to} onChange={e => setTo(e.target.value)} dir="ltr" />
+            <DateField value={to} onChange={e => setTo(e.target.value)} />
           </div>
           <div className="md:col-span-1">
             <Button

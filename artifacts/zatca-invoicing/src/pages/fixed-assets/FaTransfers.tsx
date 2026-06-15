@@ -12,6 +12,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Trash2, ArrowRightLeft } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -138,7 +139,7 @@ export default function FaTransfers() {
                 {assets.map(a => <option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>)}
               </select></div>
             <div><Label>تاريخ النقل</Label>
-              <Input type="date" value={form.transferDate} onChange={(e)=>setForm({...form,transferDate:e.target.value})} /></div>
+              <DateField value={form.transferDate} onChange={(e)=>setForm({...form,transferDate:e.target.value})} /></div>
             <div><Label>من فرع</Label>
               <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                 value={form.fromBranchId} onChange={(e)=>setForm({...form,fromBranchId:e.target.value})}>

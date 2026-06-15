@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
 import { inventoryApi } from "@/lib/inventoryApi";
+import { DateField } from "@/components/ui/date-field";
 
 export default function SisterReturnForm() {
   const [, setLocation] = useLocation();
@@ -98,7 +99,7 @@ export default function SisterReturnForm() {
             {(warehouses as any[]).map((w: any) => <option key={w.id} value={w.id}>{w.nameAr}</option>)}
           </select></label>
         <label><span className="text-sm">التاريخ</span>
-          <Input type="date" value={form.returnDate}
+          <DateField value={form.returnDate}
             onChange={e => setForm({ ...form, returnDate: e.target.value })} /></label>
       </CardContent></Card>
 

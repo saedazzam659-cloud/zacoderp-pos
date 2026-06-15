@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { CalendarClock, Save, Trash2, Loader2, CheckCircle2, XCircle, Clock, Sparkles, Wand2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { DateField } from "@/components/ui/date-field";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -173,7 +174,7 @@ export default function Attendance() {
           <h1 className="text-xl font-semibold">{tr("title")}</h1>
         </div>
         <div className="flex items-center gap-2">
-          <Input type="date" value={date} onChange={e => { setDate(e.target.value); setDraft({}); }} className="w-40" data-testid="input-date" />
+          <DateField value={date} onChange={e => { setDate(e.target.value); setDraft({}); }} className="w-40" data-testid="input-date" />
         </div>
       </div>
 

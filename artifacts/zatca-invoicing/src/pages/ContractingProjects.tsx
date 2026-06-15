@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/table";
 import { FormPanel } from "@/components/FormPanel";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -214,11 +215,11 @@ export default function ContractingProjects() {
                 onChange={e => setEditing({ ...editing, plannedBudget: e.target.value })} />
             </Field>
             <Field label={t("contracting.projects.plannedStartDate", "تاريخ البداية المخطط")}>
-              <Input type="date" value={editing.plannedStartDate ?? ""}
+              <DateField value={editing.plannedStartDate ?? ""}
                 onChange={e => setEditing({ ...editing, plannedStartDate: e.target.value })} />
             </Field>
             <Field label={t("contracting.projects.plannedEndDate", "تاريخ النهاية المخطط")}>
-              <Input type="date" value={editing.plannedEndDate ?? ""}
+              <DateField value={editing.plannedEndDate ?? ""}
                 onChange={e => setEditing({ ...editing, plannedEndDate: e.target.value })} />
             </Field>
             <Field label={t("contracting.projects.progress", "نسبة الإنجاز %")}>

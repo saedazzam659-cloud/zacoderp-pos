@@ -12,6 +12,7 @@ import { BookOpen, Search, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useFmt } from "@/hooks/use-fmt";
+import { DateField } from "@/components/ui/date-field";
 
 const TX_TYPE_COLOR: Record<string, string> = {
   transfer_out: "bg-orange-50 text-orange-700",
@@ -111,11 +112,11 @@ export default function StockLedger() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div className="space-y-1.5">
             <Label>{t("inventoryReports.common.from") as string}</Label>
-            <Input type="date" value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} />
+            <DateField value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
             <Label>{t("inventoryReports.common.to") as string}</Label>
-            <Input type="date" value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
+            <DateField value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
             <Label>{t("inventoryReports.common.item") as string}</Label>

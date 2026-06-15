@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 function authHeaders(): Record<string, string> {
@@ -172,11 +173,11 @@ export default function ItemCard() {
           </div>
           <div className="space-y-1.5">
             <Label>{t("inventoryReports.common.from")}</Label>
-            <Input type="date" value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} />
+            <DateField value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
             <Label>{t("inventoryReports.common.to")}</Label>
-            <Input type="date" value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
+            <DateField value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label>{t("inventoryReports.common.warehouse")}</Label>

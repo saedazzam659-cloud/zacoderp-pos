@@ -24,6 +24,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -313,11 +314,11 @@ export default function BankCashFlow() {
           </div>
           <div className="space-y-1.5">
             <Label>{isRtl ? "من تاريخ" : "From date"}</Label>
-            <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
+            <DateField value={fromDate} onChange={e => setFromDate(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label>{isRtl ? "إلى تاريخ" : "To date"}</Label>
-            <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
+            <DateField value={toDate} onChange={e => setToDate(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label>{isRtl ? "الفرع" : "Branch"}</Label>

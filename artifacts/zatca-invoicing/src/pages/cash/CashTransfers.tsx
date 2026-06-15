@@ -12,6 +12,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { TablePagination, usePagination } from "@/components/TablePagination";
 import { ArrowLeftRight, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Wallet, Landmark } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -186,7 +187,7 @@ export default function CashTransfers() {
           saveDisabled={!form.amount || !form.date}
         >
           <FormGrid>
-            <Field label={t("cashTransfers.date")} required><Input type="date" {...f("date")} /></Field>
+            <Field label={t("cashTransfers.date")} required><DateField {...f("date")} /></Field>
             <Field label={t("cashTransfers.transferType")}>
               <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.transferType} onChange={e => setForm(p => ({ ...p, transferType: e.target.value, fromCashBoxId: "", fromBankId: "", toCashBoxId: "", toBankId: "" }))}>
                 <option value="cash_to_cash">{t("cashTransfers.cashToCash")}</option>

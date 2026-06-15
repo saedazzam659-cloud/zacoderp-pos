@@ -15,6 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { DateField } from "@/components/ui/date-field";
 
 export default function EndOfService() {
   const qc = useQueryClient();
@@ -270,7 +271,7 @@ export default function EndOfService() {
                 </div>
                 <div className="space-y-1">
                   <label className="text-sm font-medium">{tr("labelPayDate")}</label>
-                  <Input type="date" value={payForm.payDate} onChange={(e) => setPayForm({ ...payForm, payDate: e.target.value })} data-testid="pay-date" />
+                  <DateField value={payForm.payDate} onChange={(e) => setPayForm({ ...payForm, payDate: e.target.value })} data-testid="pay-date" />
                 </div>
               </div>
               <div className="space-y-2">

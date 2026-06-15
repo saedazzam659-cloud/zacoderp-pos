@@ -50,6 +50,7 @@ import {
   Calendar,
   Building2,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -1028,11 +1029,11 @@ export default function AuditLog() {
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">{tr("fromLabel")}</label>
-              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              <DateField value={from} onChange={(e) => setFrom(e.target.value)} />
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">{tr("toLabel")}</label>
-              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+              <DateField value={to} onChange={(e) => setTo(e.target.value)} />
             </div>
           </div>
 

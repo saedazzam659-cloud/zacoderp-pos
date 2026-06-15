@@ -81,7 +81,10 @@ function localDateToIso(d: Date): string {
   return toIso(d.getFullYear(), d.getMonth() + 1, d.getDate());
 }
 
-export interface SmartDateInputProps {
+export type SmartDateInputProps = Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  "value" | "onChange" | "min" | "max" | "type"
+> & {
   /** Current value as ISO `YYYY-MM-DD` (or empty string for no date). */
   value: string;
   /** Called with the clamped, always-valid ISO `YYYY-MM-DD` (or "" when cleared). */
@@ -90,16 +93,7 @@ export interface SmartDateInputProps {
   min?: string;
   /** Inclusive upper bound (ISO `YYYY-MM-DD`). */
   max?: string;
-  readOnly?: boolean;
-  disabled?: boolean;
-  required?: boolean;
-  className?: string;
-  title?: string;
-  id?: string;
-  name?: string;
-  placeholder?: string;
-  "aria-label"?: string;
-}
+};
 
 /**
  * Familiar `DD/MM/YYYY` date field with a calendar popover, used as a drop-in for
@@ -110,21 +104,29 @@ export interface SmartDateInputProps {
  * is also supported; impossible days are clamped to the month end on commit.
  * The stored/emitted value (`value` / `onChange`) is always ISO `YYYY-MM-DD`.
  */
-export function SmartDateInput({
-  value,
-  onChange,
-  min,
-  max,
-  readOnly,
-  disabled,
-  required,
-  className,
-  title,
-  id,
-  name,
-  placeholder = "يوم/شهر/سنة",
-  "aria-label": ariaLabel,
-}: SmartDateInputProps) {
+export const SmartDateInput = React.forwardRef<
+  HTMLInputElement,
+  SmartDateInputProps
+>(function SmartDateInput(
+  {
+    value,
+    onChange,
+    min,
+    max,
+    readOnly,
+    disabled,
+    required,
+    className,
+    title,
+    id,
+    name,
+    placeholder = "يوم/شهر/سنة",
+    "aria-label": ariaLabel,
+    onBlur: userOnBlur,
+    ...rest
+  },
+  ref,
+) {
   const [draft, setDraft] = React.useState(() => isoToDisplay(value));
   const [open, setOpen] = React.useState(false);
 
@@ -160,21 +162,22 @@ export function SmartDateInput({
     if (DISPLAY_RE.test(norm)) commitFromDisplay(raw);
   };
 
-  const handleBlur = () => {
-    if (readOnly || disabled) return;
-    const raw = draft.trim();
-    const norm = normalizeDigits(raw);
-    if (norm === "") {
-      onChange("");
-      return;
+  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    if (!readOnly && !disabled) {
+      const raw = draft.trim();
+      const norm = normalizeDigits(raw);
+      if (norm === "") {
+        onChange("");
+      } else if (DISPLAY_RE.test(norm)) {
+        commitFromDisplay(raw);
+      } else {
+        // Unparseable on blur → restore the last committed value so the field
+        // never displays a half-typed date.
+        setDraft(isoToDisplay(value));
+      }
     }
-    if (DISPLAY_RE.test(norm)) {
-      commitFromDisplay(raw);
-      return;
-    }
-    // Unparseable on blur → restore the last committed value so the field never
-    // displays a half-typed date.
-    setDraft(isoToDisplay(value));
+    // Always notify the caller (e.g. React Hook Form's touched-state tracking).
+    userOnBlur?.(e);
   };
 
   const selected = isoToLocalDate(value);
@@ -185,6 +188,8 @@ export function SmartDateInput({
   return (
     <div className="relative w-full" dir="ltr">
       <Input
+        {...rest}
+        ref={ref}
         type="text"
         dir="ltr"
         inputMode="numeric"
@@ -247,6 +252,8 @@ export function SmartDateInput({
       )}
     </div>
   );
-}
+});
+
+SmartDateInput.displayName = "SmartDateInput";
 
 export default SmartDateInput;

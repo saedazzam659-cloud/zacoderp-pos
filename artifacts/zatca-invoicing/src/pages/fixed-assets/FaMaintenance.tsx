@@ -12,6 +12,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Wrench, Search } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -158,7 +159,7 @@ export default function FaMaintenance() {
                 {TYPES.map(([v,l])=> <option key={v} value={v}>{l}</option>)}
               </select></div>
             <div><Label>التاريخ</Label>
-              <Input type="date" value={form.serviceDate} onChange={(e)=>setForm({...form,serviceDate:e.target.value})} /></div>
+              <DateField value={form.serviceDate} onChange={(e)=>setForm({...form,serviceDate:e.target.value})} /></div>
             <div><Label>التكلفة</Label>
               <Input type="number" step="0.01" value={form.cost} onChange={(e)=>setForm({...form,cost:e.target.value})} /></div>
             <div><Label>المورد / الورشة</Label>

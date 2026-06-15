@@ -12,6 +12,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Search, ClipboardList, Eye, X, Wrench, Calendar, User, ChevronLeft } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -317,19 +318,19 @@ export default function MaintenanceOrders() {
             </div>
             <div>
               <Label>تاريخ البلاغ *</Label>
-              <Input type="date" value={form.reportedDate} onChange={(e) => setForm({ ...form, reportedDate: e.target.value })} data-testid="input-reportedDate" />
+              <DateField value={form.reportedDate} onChange={(e) => setForm({ ...form, reportedDate: e.target.value })} data-testid="input-reportedDate" />
             </div>
             <div>
               <Label>تاريخ الجدولة</Label>
-              <Input type="date" value={form.scheduledDate} onChange={(e) => setForm({ ...form, scheduledDate: e.target.value })} />
+              <DateField value={form.scheduledDate} onChange={(e) => setForm({ ...form, scheduledDate: e.target.value })} />
             </div>
             <div>
               <Label>تاريخ البدء</Label>
-              <Input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} />
+              <DateField value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} />
             </div>
             <div>
               <Label>تاريخ الإنجاز</Label>
-              <Input type="date" value={form.completionDate} onChange={(e) => setForm({ ...form, completionDate: e.target.value })} />
+              <DateField value={form.completionDate} onChange={(e) => setForm({ ...form, completionDate: e.target.value })} />
             </div>
             <div className="md:col-span-2">
               <Label>وصف المشكلة *</Label>

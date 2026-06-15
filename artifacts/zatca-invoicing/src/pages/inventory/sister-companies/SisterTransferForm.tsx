@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { DateField } from "@/components/ui/date-field";
 
 const newLine = () => ({ itemId: "", unitId: "", qty: "1", costPrice: "0", supplyPrice: "0" });
 
@@ -129,7 +130,7 @@ export default function SisterTransferForm() {
               {(warehouses as any[]).map((w: any) => <option key={w.id} value={w.id}>{w.nameAr}</option>)}
             </select></label>
           <label><span className="text-sm">التاريخ</span>
-            <Input type="date" value={form.transferDate}
+            <DateField value={form.transferDate}
               onChange={e => setForm({ ...form, transferDate: e.target.value })} /></label>
         </CardContent>
       </Card>

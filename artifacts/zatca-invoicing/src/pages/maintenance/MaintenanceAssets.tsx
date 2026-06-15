@@ -15,6 +15,7 @@ import { Plus, Pencil, Trash2, Search, Boxes, MapPin, Tag, Hash } from "lucide-r
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { fieldApi } from "@/lib/fieldServiceApi";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -224,7 +225,7 @@ export default function MaintenanceAssets() {
             </div>
             <div>
               <Label>تاريخ الشراء</Label>
-              <Input type="date" value={form.purchaseDate} onChange={(e) => setForm({ ...form, purchaseDate: e.target.value })} />
+              <DateField value={form.purchaseDate} onChange={(e) => setForm({ ...form, purchaseDate: e.target.value })} />
             </div>
             <div>
               <Label>سعر الشراء (ر.س)</Label>
@@ -232,7 +233,7 @@ export default function MaintenanceAssets() {
             </div>
             <div>
               <Label>انتهاء الضمان</Label>
-              <Input type="date" value={form.warrantyExpiry} onChange={(e) => setForm({ ...form, warrantyExpiry: e.target.value })} />
+              <DateField value={form.warrantyExpiry} onChange={(e) => setForm({ ...form, warrantyExpiry: e.target.value })} />
             </div>
             <div>
               <Label>الحالة</Label>

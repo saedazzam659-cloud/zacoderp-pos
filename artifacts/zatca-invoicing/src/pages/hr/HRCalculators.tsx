@@ -12,6 +12,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import {
   Calculator, Sparkles, Loader2, CalendarDays, HeartPulse, Clock, Shield, MailWarning, GraduationCap, BookOpen,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -166,8 +167,8 @@ export default function HRCalculators() {
         <TabsContent value="annual-leave" className="space-y-3">
           <div className="rounded-lg border bg-card p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
             <EmpPicker onPick={(e) => setAlForm({ ...alForm, hireDate: e.hireDate || "", basicSalary: Number(e.basicSalary || 0), housingAllow: Number(e.housingAllow || 0), transportAllow: Number(e.transportAllow || 0) })} />
-            <div className="space-y-1"><label className="text-xs text-muted-foreground">{tr("fieldHireDate")}</label><Input type="date" value={alForm.hireDate} onChange={e => setAlForm({ ...alForm, hireDate: e.target.value })} /></div>
-            <div className="space-y-1"><label className="text-xs text-muted-foreground">{tr("fieldAsOfDate")}</label><Input type="date" value={alForm.asOfDate} onChange={e => setAlForm({ ...alForm, asOfDate: e.target.value })} /></div>
+            <div className="space-y-1"><label className="text-xs text-muted-foreground">{tr("fieldHireDate")}</label><DateField value={alForm.hireDate} onChange={e => setAlForm({ ...alForm, hireDate: e.target.value })} /></div>
+            <div className="space-y-1"><label className="text-xs text-muted-foreground">{tr("fieldAsOfDate")}</label><DateField value={alForm.asOfDate} onChange={e => setAlForm({ ...alForm, asOfDate: e.target.value })} /></div>
             <div className="space-y-1"><label className="text-xs text-muted-foreground">{tr("fieldDaysTaken")}</label><Input type="number" min="0" value={alForm.daysTaken} onChange={e => setAlForm({ ...alForm, daysTaken: Number(e.target.value) })} /></div>
             <div className="space-y-1"><label className="text-xs text-muted-foreground">{tr("fieldBasicSalary")}</label><Input type="number" min="0" value={alForm.basicSalary} onChange={e => setAlForm({ ...alForm, basicSalary: Number(e.target.value) })} /></div>
             <div className="space-y-1"><label className="text-xs text-muted-foreground">{tr("fieldHousingAllow")}</label><Input type="number" min="0" value={alForm.housingAllow} onChange={e => setAlForm({ ...alForm, housingAllow: Number(e.target.value) })} /></div>
@@ -272,9 +273,9 @@ export default function HRCalculators() {
         <TabsContent value="probation" className="space-y-3">
           <div className="rounded-lg border bg-card p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
             <EmpPicker onPick={(e) => setPForm({ ...pForm, hireDate: e.hireDate || "" })} />
-            <div className="space-y-1"><label className="text-xs text-muted-foreground">{tr("fieldHireDate")}</label><Input type="date" value={pForm.hireDate} onChange={e => setPForm({ ...pForm, hireDate: e.target.value })} /></div>
+            <div className="space-y-1"><label className="text-xs text-muted-foreground">{tr("fieldHireDate")}</label><DateField value={pForm.hireDate} onChange={e => setPForm({ ...pForm, hireDate: e.target.value })} /></div>
             <div className="space-y-1"><label className="text-xs text-muted-foreground">{tr("fieldProbationDays")}</label><Input type="number" min="1" max="180" value={pForm.probationDays} onChange={e => setPForm({ ...pForm, probationDays: Number(e.target.value) })} /></div>
-            <div className="space-y-1"><label className="text-xs text-muted-foreground">{tr("fieldAsOfDate")}</label><Input type="date" value={pForm.asOfDate} onChange={e => setPForm({ ...pForm, asOfDate: e.target.value })} /></div>
+            <div className="space-y-1"><label className="text-xs text-muted-foreground">{tr("fieldAsOfDate")}</label><DateField value={pForm.asOfDate} onChange={e => setPForm({ ...pForm, asOfDate: e.target.value })} /></div>
             <div className="md:col-span-3 flex justify-end">
               <Button onClick={() => pMut.mutate()} disabled={!pForm.hireDate || pMut.isPending} data-testid="btn-calc-p">
                 {pMut.isPending ? <Loader2 className="size-4 me-1 animate-spin" /> : <Calculator className="size-4 me-1" />} {tr("btnCalculate")}

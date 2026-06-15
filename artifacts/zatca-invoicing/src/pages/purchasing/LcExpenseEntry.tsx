@@ -12,6 +12,7 @@ import { CreditCard, Plus, Banknote, Loader2, ListOrdered, Sparkles, ArrowRight 
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -345,7 +346,7 @@ export default function LcExpenseEntry() {
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">{tr("date")}</Label>
-            <Input type="date" value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} />
+            <DateField value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">{trLc("expenseCurrency")}</Label>

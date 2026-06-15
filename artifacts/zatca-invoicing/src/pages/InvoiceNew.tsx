@@ -23,6 +23,7 @@ import { Link } from "wouter";
 import { ZATCA_UNIT_CODES } from "@/lib/zatca-units";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBaseCurrencySymbol } from "@/hooks/useCurrencySymbol";
+import { DateField } from "@/components/ui/date-field";
 
 const PAYMENT_METHOD_ITEMS: ComboboxItem[] = [
   { value: "10", code: "10", label: "نقدي",             labelEn: "Cash" },
@@ -425,7 +426,7 @@ export default function InvoiceNew() {
                     <FormField control={form.control} name="issueDate" render={({ field }) => (
                       <FormItem>
                         <FormLabel>تاريخ الإصدار <span className="text-destructive">*</span></FormLabel>
-                        <FormControl><Input type="date" {...field} /></FormControl>
+                        <FormControl><DateField {...field} /></FormControl>
                         <FormDescription>يجب ألا يكون في المستقبل</FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -434,7 +435,7 @@ export default function InvoiceNew() {
                     <FormField control={form.control} name="supplyDate" render={({ field }) => (
                       <FormItem>
                         <FormLabel>تاريخ التوريد / التسليم</FormLabel>
-                        <FormControl><Input type="date" {...field} /></FormControl>
+                        <FormControl><DateField {...field} /></FormControl>
                         <FormDescription>إن اختلف عن تاريخ الإصدار — اختياري</FormDescription>
                         <FormMessage />
                       </FormItem>

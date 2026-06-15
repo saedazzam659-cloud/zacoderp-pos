@@ -23,6 +23,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import {
   INCIDENT_TYPES, SEVERITY_CLASSES, INCIDENT_STATUSES, ACTION_TYPES,
 } from "@/lib/safetyConstants";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -530,7 +531,7 @@ export default function Incidents() {
                 placeholder="المسؤول — غير محدد —" searchPlaceholder="ابحث…"
                 items={[{ value: "", label: "— غير محدد —" },
                   ...users.map((u) => ({ value: String(u.id), label: u.fullName || u.username || `#${u.id}` }))]} />
-              <Input type="date" value={newAction.dueDate ?? ""}
+              <DateField value={newAction.dueDate ?? ""}
                 onChange={(e) => setNewAction({ ...newAction, dueDate: e.target.value || null })} />
               <Button size="sm" onClick={addAction} data-testid="btn-add-action">
                 <Plus className="h-4 w-4 me-1" /> إضافة

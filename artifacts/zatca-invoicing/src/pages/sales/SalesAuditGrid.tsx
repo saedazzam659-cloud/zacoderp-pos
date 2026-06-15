@@ -105,6 +105,7 @@ import {
   buildToneTooltip,
   type LegendItem,
 } from "@/lib/docRowTone";
+import { DateField } from "@/components/ui/date-field";
 
 // ── Column descriptor ─────────────────────────────────────────────────────
 // Drives header, per-column filter row, and footer alignment. Keys match the
@@ -2252,9 +2253,9 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           {fp.isVisible("date_range") && (
           <div className="flex items-center gap-1">
             <span className="text-slate-600">من:</span>
-            <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-7 text-xs w-32" />
+            <DateField value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-7 text-xs w-32" />
             <span className="text-slate-600">إلى:</span>
-            <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-7 text-xs w-32" />
+            <DateField value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-7 text-xs w-32" />
             {(dateFrom || dateTo) && (
               <Button
                 type="button"

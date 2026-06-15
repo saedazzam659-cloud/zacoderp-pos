@@ -41,6 +41,7 @@ import {
 import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
+import { DateField } from "@/components/ui/date-field";
 
 // Maps a journal-entry's `entryType` + resolved `sourceId` to the route of the
 // source document that produced it. For sourced entry types we ALWAYS return a
@@ -1267,8 +1268,7 @@ ${sections}
               (dateFrom || dateTo) ? "text-blue-700" : "text-slate-500",
             )} />
             <span className="text-[11px] text-slate-600 font-medium">من</span>
-            <Input
-              type="date"
+            <DateField
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
               max={dateTo || undefined}
@@ -1276,8 +1276,7 @@ ${sections}
               data-testid="filter-date-from"
             />
             <span className="text-[11px] text-slate-600 font-medium">إلى</span>
-            <Input
-              type="date"
+            <DateField
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
               min={dateFrom || undefined}

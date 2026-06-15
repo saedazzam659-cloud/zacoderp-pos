@@ -19,6 +19,7 @@ import {
   Copy, ArrowLeftRight, FileSearch, PlayCircle, AlertTriangle,
   CheckCircle2, Loader2, Info, ShieldAlert,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -236,11 +237,11 @@ export default function DataCopyJournalEntries() {
           <div className="grid md:grid-cols-3 gap-4">
             <div>
               <Label className="mb-1 block">من تاريخ (اختياري)</Label>
-              <Input type="date" value={fromDate} onChange={e => { setFromDate(e.target.value); setResult(null); }} />
+              <DateField value={fromDate} onChange={e => { setFromDate(e.target.value); setResult(null); }} />
             </div>
             <div>
               <Label className="mb-1 block">إلى تاريخ (اختياري)</Label>
-              <Input type="date" value={toDate} onChange={e => { setToDate(e.target.value); setResult(null); }} />
+              <DateField value={toDate} onChange={e => { setToDate(e.target.value); setResult(null); }} />
             </div>
             <div>
               <Label className="mb-1 block">حالات القيود المنسوخة</Label>

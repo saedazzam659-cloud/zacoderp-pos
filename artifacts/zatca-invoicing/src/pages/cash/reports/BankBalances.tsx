@@ -10,6 +10,7 @@ import BranchFilter from "@/components/BranchFilter";
 import { useTranslation } from "react-i18next";
 import { Landmark, Filter } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
+import { DateField } from "@/components/ui/date-field";
 
 export default function BankBalances() {
   const { fmt } = useFmt();
@@ -73,7 +74,7 @@ export default function BankBalances() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="space-y-1.5">
             <Label>{t("cashReports.common.asOf")}</Label>
-            <Input type="date" value={asOf} onChange={e => setAsOf(e.target.value)} />
+            <DateField value={asOf} onChange={e => setAsOf(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label>{t("common.branch")}</Label>

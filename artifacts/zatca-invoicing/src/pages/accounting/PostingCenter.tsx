@@ -37,6 +37,7 @@ import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { cn } from "@/lib/utils";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { useBranches } from "@/hooks/useBranches";
+import { DateField } from "@/components/ui/date-field";
 
 // Auth header helper — mirrors the pattern used by every other API client
 // in this app (journalEntriesApi.ts, salesAnalyticsApi.ts, etc.). The
@@ -627,12 +628,12 @@ export default function PostingCenter() {
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">من تاريخ</label>
-            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+            <DateField value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
                    data-testid="input-date-from" />
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">إلى تاريخ</label>
-            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+            <DateField value={dateTo} onChange={(e) => setDateTo(e.target.value)}
                    data-testid="input-date-to" />
           </div>
         </div>

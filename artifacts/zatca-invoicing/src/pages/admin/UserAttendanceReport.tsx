@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { CalendarCheck, CalendarX, Clock, AlertTriangle, Download, Users, Activity } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 function fmtMin(min: number): string {
   if (!min || min <= 0) return "—";
@@ -109,8 +110,8 @@ export default function UserAttendanceReport() {
       {/* Filter bar */}
       <Card>
         <CardContent className="pt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
-          <div className="space-y-1.5"><Label>من</Label><Input type="date" value={from} onChange={e => setFrom(e.target.value)} /></div>
-          <div className="space-y-1.5"><Label>إلى</Label><Input type="date" value={to} onChange={e => setTo(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>من</Label><DateField value={from} onChange={e => setFrom(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>إلى</Label><DateField value={to} onChange={e => setTo(e.target.value)} /></div>
           <div className="space-y-1.5">
             <Label>المستخدم</Label>
             <select className="w-full h-10 rounded-md border px-3 text-sm bg-background"

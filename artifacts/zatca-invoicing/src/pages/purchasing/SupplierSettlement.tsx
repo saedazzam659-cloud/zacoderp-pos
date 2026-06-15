@@ -25,6 +25,7 @@ import {
 } from "@/components/auditGrid/AuditGridControls";
 import { buildVoucherPrintHtml, openVoucherPrintWindow } from "@/lib/voucherPrint";
 import { getSaveToastTitle } from "@/lib/saveToast";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -284,7 +285,7 @@ export default function SupplierSettlement() {
         >
           <FormGrid>
             <Field label={t("purchasingPages.supplierSettlement.fields.docNumber")}><Input placeholder={t("purchasingPages.supplierSettlement.fields.docNumberPh")} value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
-            <Field label={t("purchasingPages.supplierSettlement.fields.date")} required><Input type="date" value={form.settlementDate} onChange={e => setForm((p: any) => ({ ...p, settlementDate: e.target.value }))} /></Field>
+            <Field label={t("purchasingPages.supplierSettlement.fields.date")} required><DateField value={form.settlementDate} onChange={e => setForm((p: any) => ({ ...p, settlementDate: e.target.value }))} /></Field>
             <Field label={t("purchasingPages.supplierSettlement.fields.supplier")} required className="md:col-span-2">
               <SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder={t("purchasingPages.supplierSettlement.fields.supplierPh")} />
             </Field>

@@ -11,6 +11,7 @@ import BranchFilter from "@/components/BranchFilter";
 import { useTranslation } from "react-i18next";
 import { ArrowDownCircle, Filter } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
+import { DateField } from "@/components/ui/date-field";
 
 export default function ReceiptVouchersReport() {
   const { fmt } = useFmt();
@@ -85,11 +86,11 @@ export default function ReceiptVouchersReport() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <div className="space-y-1.5">
             <Label>{trc("fromDate")}</Label>
-            <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
+            <DateField value={from} onChange={e => setFrom(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label>{trc("toDate")}</Label>
-            <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
+            <DateField value={to} onChange={e => setTo(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label>{t("common.branch")}</Label>

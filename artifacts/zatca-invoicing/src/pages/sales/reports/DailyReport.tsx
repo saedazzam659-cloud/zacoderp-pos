@@ -13,6 +13,7 @@ import {
   Sun, FileText, Wallet, Banknote, CreditCard, Package, Users,
   RotateCcw, Receipt, TrendingUp, Clock, Building2, UserCheck, PieChart,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const STATUS_TONE: Record<string, string> = {
   posted:    "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -140,7 +141,7 @@ export default function DailyReport() {
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <div className="space-y-1.5">
           <Label>{tr("date")}</Label>
-          <Input type="date" value={date} onChange={e => setDate(e.target.value)} />
+          <DateField value={date} onChange={e => setDate(e.target.value)} />
         </div>
         <div className="space-y-1.5">
           <Label>{t("common.branch")}</Label>

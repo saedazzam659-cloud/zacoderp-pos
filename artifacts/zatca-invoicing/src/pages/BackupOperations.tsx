@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -554,13 +555,13 @@ export default function BackupOperations() {
         <div className="flex items-end gap-2">
           <div className="space-y-1">
             <Label className="text-[11px] text-muted-foreground">من تاريخ</Label>
-            <Input type="date" className="h-9 text-xs w-[150px]"
+            <DateField className="h-9 text-xs w-[150px]"
               value={dateFrom} onChange={e => setDateFrom(e.target.value)}
               data-testid="backup-date-from" />
           </div>
           <div className="space-y-1">
             <Label className="text-[11px] text-muted-foreground">إلى تاريخ</Label>
-            <Input type="date" className="h-9 text-xs w-[150px]"
+            <DateField className="h-9 text-xs w-[150px]"
               value={dateTo} onChange={e => setDateTo(e.target.value)}
               data-testid="backup-date-to" />
           </div>

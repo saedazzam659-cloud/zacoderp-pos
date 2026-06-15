@@ -34,6 +34,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { ToastAction, type ToastActionElement } from "@/components/ui/toast";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -1900,16 +1901,14 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
             <div className="pb-2 pt-0.5 flex flex-wrap items-end gap-2 text-[11px]">
               <div className="flex flex-col gap-0.5">
                 <label className="text-muted-foreground">من تاريخ</label>
-                <Input
-                  type="date" value={emailHistFrom}
+                <DateField value={emailHistFrom}
                   onChange={(e) => setEmailHistFrom(e.target.value)}
                   className="h-7 w-[130px] text-xs"
                 />
               </div>
               <div className="flex flex-col gap-0.5">
                 <label className="text-muted-foreground">إلى تاريخ</label>
-                <Input
-                  type="date" value={emailHistTo}
+                <DateField value={emailHistTo}
                   onChange={(e) => setEmailHistTo(e.target.value)}
                   className="h-7 w-[130px] text-xs"
                 />
@@ -3205,8 +3204,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
             <div className="px-3 pb-2 pt-0.5 flex flex-wrap items-end gap-2 text-[11px]">
               <div className="flex flex-col gap-0.5">
                 <label className="text-muted-foreground">من تاريخ</label>
-                <Input
-                  type="date" value={historyFrom}
+                <DateField value={historyFrom}
                   onChange={(e) => setHistoryFrom(e.target.value)}
                   disabled={!companyId}
                   className="h-7 w-[130px] text-xs"
@@ -3214,8 +3212,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
               </div>
               <div className="flex flex-col gap-0.5">
                 <label className="text-muted-foreground">إلى تاريخ</label>
-                <Input
-                  type="date" value={historyTo}
+                <DateField value={historyTo}
                   onChange={(e) => setHistoryTo(e.target.value)}
                   disabled={!companyId}
                   className="h-7 w-[130px] text-xs"

@@ -46,6 +46,7 @@ import {
   ArrowRight, ArrowLeft, ClipboardList, Plus, Trash2, FileText, ListOrdered,
   Wallet, CreditCard, CheckCircle, XCircle, FileCheck2, RotateCcw,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -725,11 +726,11 @@ export default function PurchaseOrderForm() {
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.orderDate")}</Label>
-                  <Input type="date" className="h-9 text-sm" value={orderDate} onChange={e => setOrderDate(e.target.value)} required />
+                  <DateField className="h-9 text-sm" value={orderDate} onChange={e => setOrderDate(e.target.value)} required />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.expectedDeliveryDate")}</Label>
-                  <Input type="date" className="h-9 text-sm" value={expectedDeliveryDate} onChange={e => setExpectedDeliveryDate(e.target.value)} />
+                  <DateField className="h-9 text-sm" value={expectedDeliveryDate} onChange={e => setExpectedDeliveryDate(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.supplier")}</Label>

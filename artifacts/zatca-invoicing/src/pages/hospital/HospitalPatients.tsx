@@ -12,6 +12,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Search, UserSquare2 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -198,7 +199,7 @@ export default function HospitalPatients() {
             <div><Label>الاسم بالإنجليزية</Label>
               <Input value={form.fullNameEn} onChange={(e)=>setForm({...form, fullNameEn:e.target.value})} /></div>
             <div><Label>تاريخ الميلاد</Label>
-              <Input type="date" value={form.dob} onChange={(e)=>setForm({...form, dob:e.target.value})} /></div>
+              <DateField value={form.dob} onChange={(e)=>setForm({...form, dob:e.target.value})} /></div>
             <div><Label>الجنس</Label>
               <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                 value={form.gender} onChange={(e)=>setForm({...form, gender:e.target.value})}>
@@ -229,7 +230,7 @@ export default function HospitalPatients() {
             <div><Label>رقم البوليصة</Label>
               <Input value={form.policyNo} onChange={(e)=>setForm({...form, policyNo:e.target.value})} /></div>
             <div><Label>تاريخ انتهاء البوليصة</Label>
-              <Input type="date" value={form.policyExpires} onChange={(e)=>setForm({...form, policyExpires:e.target.value})} /></div>
+              <DateField value={form.policyExpires} onChange={(e)=>setForm({...form, policyExpires:e.target.value})} /></div>
             <div><Label>نسبة التغطية %</Label>
               <Input type="number" min={0} max={100} step="0.01" value={form.coveragePct}
                 onChange={(e)=>setForm({...form, coveragePct:e.target.value})} /></div>

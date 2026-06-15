@@ -16,6 +16,7 @@ import {
   LogIn, LogOut, Clock, AlertTriangle, Download, Users, MapPin,
   Activity, ChevronDown, ChevronUp, Route as RouteIcon, Calendar,
 } from "lucide-react";
+import { DateField } from "@/components/ui/date-field";
 
 function fmtTime(s: string | null): string {
   if (!s) return "—";
@@ -146,17 +147,17 @@ export default function UserMovementReport() {
           {mode === "day" ? (
             <div className="space-y-1.5">
               <Label>اليوم</Label>
-              <Input type="date" value={day} onChange={e => setDay(e.target.value)} />
+              <DateField value={day} onChange={e => setDay(e.target.value)} />
             </div>
           ) : (
             <>
               <div className="space-y-1.5">
                 <Label>من</Label>
-                <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
+                <DateField value={from} onChange={e => setFrom(e.target.value)} />
               </div>
               <div className="space-y-1.5">
                 <Label>إلى</Label>
-                <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
+                <DateField value={to} onChange={e => setTo(e.target.value)} />
               </div>
             </>
           )}

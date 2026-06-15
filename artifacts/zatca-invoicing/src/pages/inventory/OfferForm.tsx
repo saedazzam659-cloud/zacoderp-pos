@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { offersApi, type OfferPayload, type OfferDiscountType, type OfferApplyTo } from "@/lib/offersApi";
 import { parseError } from "@/lib/parseError";
+import { DateField } from "@/components/ui/date-field";
 
 type Scope = "all" | "specific";
 
@@ -360,7 +361,7 @@ export default function OfferForm() {
                   <Calendar className="h-3 w-3 text-muted-foreground" />
                   {t("offers.f.startDate", "تاريخ البداية")}
                 </Label>
-                <Input className="h-9 text-sm" type="date" value={startDate}
+                <DateField className="h-9 text-sm" value={startDate}
                   onChange={(e) => setStartDate(e.target.value)} />
               </div>
               <div className="space-y-1.5">
@@ -368,7 +369,7 @@ export default function OfferForm() {
                   <Calendar className="h-3 w-3 text-muted-foreground" />
                   {t("offers.f.expiry", "تاريخ الانتهاء")}
                 </Label>
-                <Input className="h-9 text-sm" type="date" value={expiryDate}
+                <DateField className="h-9 text-sm" value={expiryDate}
                   onChange={(e) => setExpiryDate(e.target.value)} />
               </div>
               <div className="space-y-1.5 col-span-2 lg:col-span-2">

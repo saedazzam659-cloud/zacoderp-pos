@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import BranchFilter from "@/components/BranchFilter";
 import { useTranslation } from "react-i18next";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -242,11 +243,11 @@ export default function ZatcaReport() {
           <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
             <div>
               <Label className="text-xs">{tr("from")}</Label>
-              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+              <DateField value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
             </div>
             <div>
               <Label className="text-xs">{tr("to")}</Label>
-              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+              <DateField value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
             </div>
             <div>
               <Label className="text-xs">{tr("branch")}</Label>

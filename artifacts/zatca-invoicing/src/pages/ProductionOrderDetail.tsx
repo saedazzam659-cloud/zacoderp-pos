@@ -18,6 +18,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
 import UnitCodeSelect from "@/components/UnitCodeSelect";
+import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -494,8 +495,7 @@ export default function ProductionOrderDetail() {
                 {/* PHASE D — Optional FG expiry stamped on the receipt batch */}
                 <div>
                   <Label className="text-xs">تاريخ انتهاء البضاعة التامة (اختياري)</Label>
-                  <Input
-                    type="date"
+                  <DateField
                     value={completion.fgExpiryDate}
                     onChange={(e) => setCompletion({ ...completion, fgExpiryDate: e.target.value })}
                     data-testid="input-fg-expiry" className="mt-1"
