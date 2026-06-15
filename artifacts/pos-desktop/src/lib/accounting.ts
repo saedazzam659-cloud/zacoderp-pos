@@ -35,6 +35,7 @@ export type Supplier = {
   buildingNumber: string | null; postalCode: string | null; country: string | null;
   nationalAddressShort: string | null;
   includeInStatements: boolean; apAccountId: number | null;
+  groupId: number | null;
 };
 export type SupplierInput = {
   code: string | null; nameAr: string; nameEn: string | null;
@@ -53,6 +54,8 @@ export type SupplierInput = {
   includeInStatements?: boolean;
   /** Editable payables control account; omit/0 keeps the existing one (defaults to 2100). */
   apAccountId?: number | null;
+  /** Optional supplier-group classification (omit/0 clears it). */
+  groupId?: number | null;
 };
 
 export type CashBox = { id: number; name: string; balance: number; accountId: number | null; currencyCode: string };
@@ -106,6 +109,7 @@ export type Purchase = {
   paymentMethod: PaymentMethod; cashBoxId: number | null; bankId: number | null;
   jeId: number | null; notes: string | null;
   supplierInvoiceNo: string | null; warehouseId: number | null;
+  lcId: number | null;
   lines: PurchaseLine[];
 };
 export type PurchaseInput = {
@@ -114,6 +118,9 @@ export type PurchaseInput = {
   supplierInvoiceNo?: string | null;
   warehouseId?: number | null;
   branchId?: number | null; costCenterId?: number | null;
+  /** When set, the goods (subtotal) portion credits the LC settlement account
+   *  instead of supplier-payable/cash/bank, and the LC's used_amount draws down. */
+  lcId?: number | null;
   lines: PurchaseLine[];
 };
 
@@ -843,4 +850,168 @@ export async function hardClosePeriod(id: number): Promise<void> {
 export async function forceReopenPeriod(id: number, reason: string): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("fiscal_period_force_reopen", { id, reason });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// W4 — Supplier Groups, Supplier Settlement, Letters of Credit + Expenses
+// ═══════════════════════════════════════════════════════════════════════
+
+// ─── Supplier Groups ────────────────────────────────────────────────
+export type SupplierGroup = {
+  id: number; code: string; nameAr: string; nameEn: string | null;
+  discountPercent: number; notes: string | null; isActive: boolean;
+};
+export type SupplierGroupInput = {
+  code: string; nameAr: string; nameEn?: string | null;
+  discountPercent?: number; notes?: string | null; isActive?: boolean;
+};
+
+export async function listSupplierGroups(): Promise<SupplierGroup[]> {
+  if (!hasTauri()) return [];
+  return await invoke<SupplierGroup[]>("supplier_groups_list");
+}
+export async function getSupplierGroup(id: number): Promise<SupplierGroup> {
+  if (!hasTauri()) notImpl();
+  return await invoke<SupplierGroup>("supplier_group_get", { id });
+}
+export async function createSupplierGroup(input: SupplierGroupInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("supplier_group_create", { input });
+}
+export async function updateSupplierGroup(id: number, input: SupplierGroupInput): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("supplier_group_update", { id, input });
+}
+export async function deleteSupplierGroup(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("supplier_group_delete", { id });
+}
+
+// ─── Supplier Settlement ─────────────────────────────────────────────
+export type SettlementStatus = "draft" | "posted";
+export type SupplierSettlement = {
+  id: number; docNo: string; settlementDate: string;
+  supplierId: number; supplierName: string | null;
+  paymentMethod: "cash" | "bank"; cashBoxId: number | null; bankId: number | null;
+  amount: number; currencyCode: string; exchangeRate: number;
+  status: SettlementStatus; jeId: number | null; notes: string | null;
+  branchId: number | null; costCenterId: number | null;
+};
+export type SupplierSettlementInput = {
+  settlementDate: string; supplierId: number;
+  paymentMethod: "cash" | "bank"; cashBoxId?: number | null; bankId?: number | null;
+  amount: number; notes?: string | null;
+  branchId?: number | null; costCenterId?: number | null;
+};
+
+export async function listSupplierSettlements(limit?: number): Promise<SupplierSettlement[]> {
+  if (!hasTauri()) return [];
+  return await invoke<SupplierSettlement[]>("supplier_settlements_list", { limit });
+}
+export async function getSupplierSettlement(id: number): Promise<SupplierSettlement> {
+  if (!hasTauri()) notImpl();
+  return await invoke<SupplierSettlement>("supplier_settlement_get", { id });
+}
+export async function createSupplierSettlement(input: SupplierSettlementInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("supplier_settlement_create", { input });
+}
+export async function updateSupplierSettlement(id: number, input: SupplierSettlementInput): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("supplier_settlement_update", { id, input });
+}
+export async function postSupplierSettlement(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("supplier_settlement_post", { id });
+}
+export async function unpostSupplierSettlement(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("supplier_settlement_unpost", { id });
+}
+export async function deleteSupplierSettlement(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("supplier_settlement_delete", { id });
+}
+
+// ─── Letters of Credit + Expenses ────────────────────────────────────
+export type LcStatus = "open" | "partial" | "closed";
+export type LetterOfCredit = {
+  id: number; lcNumber: string; lcDate: string;
+  supplierId: number; supplierName: string | null; bankName: string | null;
+  currencyCode: string; exchangeRate: number;
+  totalAmount: number; usedAmount: number;
+  settlementAccountId: number | null; status: LcStatus; notes: string | null;
+  branchId: number | null; costCenterId: number | null;
+};
+export type LetterOfCreditInput = {
+  lcNumber?: string | null; lcDate: string; supplierId: number;
+  bankName?: string | null; currencyCode?: string | null; exchangeRate?: number;
+  totalAmount?: number; settlementAccountId?: number | null; notes?: string | null;
+  branchId?: number | null; costCenterId?: number | null;
+};
+export type LcFundingInput = {
+  lcId: number; fundingDate: string; amount: number;
+  paymentMethod: "cash" | "bank"; cashBoxId?: number | null; bankId?: number | null;
+  notes?: string | null; branchId?: number | null; costCenterId?: number | null;
+};
+export type LcExpense = {
+  id: number; lcId: number; expenseType: string; accountId: number | null;
+  amount: number; currencyCode: string; exchangeRate: number; notes: string | null;
+};
+export type LcExpenseInput = {
+  lcId: number; expenseType: string; accountId?: number | null;
+  amount?: number; currencyCode?: string | null; exchangeRate?: number; notes?: string | null;
+};
+
+export async function listLettersOfCredit(limit?: number): Promise<LetterOfCredit[]> {
+  if (!hasTauri()) return [];
+  return await invoke<LetterOfCredit[]>("lc_list", { limit });
+}
+export async function getLetterOfCredit(id: number): Promise<LetterOfCredit> {
+  if (!hasTauri()) notImpl();
+  return await invoke<LetterOfCredit>("lc_get", { id });
+}
+export async function createLetterOfCredit(input: LetterOfCreditInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("lc_create", { input });
+}
+export async function updateLetterOfCredit(id: number, input: LetterOfCreditInput): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("lc_update", { id, input });
+}
+export async function deleteLetterOfCredit(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("lc_delete", { id });
+}
+export async function closeLetterOfCredit(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("lc_close", { id });
+}
+export async function reopenLetterOfCredit(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("lc_reopen", { id });
+}
+export async function recomputeLcUsage(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("lc_recompute_usage", { id });
+}
+export async function postLcFunding(input: LcFundingInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("lc_post_funding", { input });
+}
+export async function listLcExpenses(lcId: number): Promise<LcExpense[]> {
+  if (!hasTauri()) return [];
+  return await invoke<LcExpense[]>("lc_expenses_list", { lcId });
+}
+export async function createLcExpense(input: LcExpenseInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("lc_expense_create", { input });
+}
+export async function updateLcExpense(id: number, input: LcExpenseInput): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("lc_expense_update", { id, input });
+}
+export async function deleteLcExpense(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("lc_expense_delete", { id });
 }

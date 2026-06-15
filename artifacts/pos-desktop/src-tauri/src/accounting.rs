@@ -210,6 +210,8 @@ const NUMBER_SERIES_DOC_TYPES: &[&str] = &[
     "sales_return",
     "quotation",
     "sales_order",
+    "supplier_settlement",
+    "letter_of_credit",
 ];
 
 #[tauri::command]
@@ -992,6 +994,7 @@ pub struct Supplier {
     pub national_address_short: Option<String>,
     pub include_in_statements: bool,
     pub ap_account_id: Option<i64>,
+    pub group_id: Option<i64>,
 }
 
 fn row_to_supplier(r: &rusqlite::Row<'_>) -> rusqlite::Result<Supplier> {
@@ -1003,6 +1006,7 @@ fn row_to_supplier(r: &rusqlite::Row<'_>) -> rusqlite::Result<Supplier> {
         street: r.get(13)?, building_number: r.get(14)?, postal_code: r.get(15)?,
         country: r.get(16)?, national_address_short: r.get(17)?,
         include_in_statements: r.get::<_, i64>(18)? != 0, ap_account_id: r.get(19)?,
+        group_id: r.get(20)?,
     })
 }
 
@@ -1011,7 +1015,7 @@ pub fn suppliers_list() -> Result<Vec<Supplier>, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
         "SELECT id,code,name_ar,name_en,phone,vat_number,balance,notes,currency_code,\
-                email,cr_number,city,district,street,building_number,postal_code,country,national_address_short,include_in_statements,ap_account_id \
+                email,cr_number,city,district,street,building_number,postal_code,country,national_address_short,include_in_statements,ap_account_id,group_id \
          FROM suppliers_local ORDER BY name_ar"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], row_to_supplier).map_err(|e| e.to_string())?;
@@ -1062,6 +1066,9 @@ pub struct SupplierInput {
     /// Editable payables control account; falls back to 2100 when absent.
     #[serde(default)]
     pub ap_account_id: Option<i64>,
+    /// Optional supplier-group classification (soft ref to supplier_groups_local).
+    #[serde(default)]
+    pub group_id: Option<i64>,
 }
 
 #[tauri::command]
@@ -1079,11 +1086,11 @@ pub fn suppliers_create(input: SupplierInput) -> Result<i64, String> {
     let country = input.country.clone().or_else(|| Some("SA".to_string()));
     tx.execute(
         "INSERT INTO suppliers_local(code,name_ar,name_en,phone,vat_number,notes,ap_account_id,currency_code,\
-                email,cr_number,city,district,street,building_number,postal_code,country,national_address_short,include_in_statements) \
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+                email,cr_number,city,district,street,building_number,postal_code,country,national_address_short,include_in_statements,group_id) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
         params![input.code, input.name_ar, input.name_en, input.phone, input.vat_number, input.notes, ap, cur,
                 input.email, input.cr_number, input.city, input.district, input.street, input.building_number,
-                input.postal_code, country, input.national_address_short, include],
+                input.postal_code, country, input.national_address_short, include, input.group_id.filter(|g| *g > 0)],
     ).map_err(|e| e.to_string())?;
     let id = tx.last_insert_rowid();
     let ob = input.opening_balance.unwrap_or(0.0).abs();
@@ -1176,12 +1183,12 @@ pub fn suppliers_update(id: i64, input: SupplierInput) -> Result<(), String> {
     conn.execute(
         "UPDATE suppliers_local SET code=?1,name_ar=?2,name_en=?3,phone=?4,vat_number=?5,notes=?6,currency_code=?7,\
                 email=?8,cr_number=?9,city=?10,district=?11,street=?12,building_number=?13,postal_code=?14,country=?15,\
-                national_address_short=?16,include_in_statements=?17,ap_account_id=COALESCE(?18, ap_account_id) \
-         WHERE id=?19",
+                national_address_short=?16,include_in_statements=?17,ap_account_id=COALESCE(?18, ap_account_id),group_id=?19 \
+         WHERE id=?20",
         params![input.code, input.name_ar, input.name_en, input.phone, input.vat_number, input.notes, cur,
                 input.email, input.cr_number, input.city, input.district, input.street, input.building_number,
                 input.postal_code, input.country, input.national_address_short, include,
-                input.ap_account_id.filter(|a| *a > 0), id],
+                input.ap_account_id.filter(|a| *a > 0), input.group_id.filter(|g| *g > 0), id],
     ).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -1406,6 +1413,8 @@ pub struct Purchase {
     pub notes: Option<String>,
     pub supplier_invoice_no: Option<String>,
     pub warehouse_id: Option<i64>,
+    #[serde(default)]
+    pub lc_id: Option<i64>,
     pub lines: Vec<PurchaseLine>,
 }
 
@@ -1427,6 +1436,12 @@ pub struct PurchaseInput {
     pub branch_id: Option<i64>,
     #[serde(default)]
     pub cost_center_id: Option<i64>,
+    /// Optional letter-of-credit link. When set, the goods portion (subtotal)
+    /// is credited to the LC's settlement account instead of the supplier/cash/
+    /// bank, and the LC's used_amount is drawn down. VAT (if any) still credits
+    /// the chosen payment account.
+    #[serde(default)]
+    pub lc_id: Option<i64>,
     pub lines: Vec<PurchaseLine>,
 }
 
@@ -1440,7 +1455,7 @@ pub fn purchases_list(limit: Option<i64>) -> Result<Vec<Purchase>, String> {
     let lim = limit.unwrap_or(200);
     let mut stmt = conn.prepare(
         "SELECT p.id,p.invoice_no,p.supplier_id,s.name_ar,p.invoice_date,p.subtotal,p.vat_total,p.grand_total,
-                p.payment_method,p.cash_box_id,p.bank_id,p.je_id,p.notes,p.supplier_invoice_no,p.warehouse_id
+                p.payment_method,p.cash_box_id,p.bank_id,p.je_id,p.notes,p.supplier_invoice_no,p.warehouse_id,p.lc_id
          FROM purchases_local p JOIN suppliers_local s ON s.id=p.supplier_id
          ORDER BY p.id DESC LIMIT ?1"
     ).map_err(|e| e.to_string())?;
@@ -1448,7 +1463,7 @@ pub fn purchases_list(limit: Option<i64>) -> Result<Vec<Purchase>, String> {
         id: r.get(0)?, invoice_no: r.get(1)?, supplier_id: r.get(2)?, supplier_name: r.get(3)?,
         invoice_date: r.get(4)?, subtotal: r.get(5)?, vat_total: r.get(6)?, grand_total: r.get(7)?,
         payment_method: r.get(8)?, cash_box_id: r.get(9)?, bank_id: r.get(10)?, je_id: r.get(11)?,
-        notes: r.get(12)?, supplier_invoice_no: r.get(13)?, warehouse_id: r.get(14)?, lines: Vec::new(),
+        notes: r.get(12)?, supplier_invoice_no: r.get(13)?, warehouse_id: r.get(14)?, lc_id: r.get(15)?, lines: Vec::new(),
     })).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows { out.push(r.map_err(|e| e.to_string())?); }
@@ -1460,14 +1475,14 @@ pub fn purchase_get(id: i64) -> Result<Purchase, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     let mut p: Purchase = conn.query_row(
         "SELECT p.id,p.invoice_no,p.supplier_id,s.name_ar,p.invoice_date,p.subtotal,p.vat_total,p.grand_total,
-                p.payment_method,p.cash_box_id,p.bank_id,p.je_id,p.notes,p.supplier_invoice_no,p.warehouse_id
+                p.payment_method,p.cash_box_id,p.bank_id,p.je_id,p.notes,p.supplier_invoice_no,p.warehouse_id,p.lc_id
          FROM purchases_local p JOIN suppliers_local s ON s.id=p.supplier_id
          WHERE p.id=?1",
         params![id], |r| Ok(Purchase {
             id: r.get(0)?, invoice_no: r.get(1)?, supplier_id: r.get(2)?, supplier_name: r.get(3)?,
             invoice_date: r.get(4)?, subtotal: r.get(5)?, vat_total: r.get(6)?, grand_total: r.get(7)?,
             payment_method: r.get(8)?, cash_box_id: r.get(9)?, bank_id: r.get(10)?, je_id: r.get(11)?,
-            notes: r.get(12)?, supplier_invoice_no: r.get(13)?, warehouse_id: r.get(14)?, lines: Vec::new(),
+            notes: r.get(12)?, supplier_invoice_no: r.get(13)?, warehouse_id: r.get(14)?, lc_id: r.get(15)?, lines: Vec::new(),
         })
     ).map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
@@ -1507,11 +1522,11 @@ fn purchase_create_in_tx(tx: &Transaction, input: &PurchaseInput) -> Result<i64,
     // Resolve default warehouse for stock ledger inserts (Task #208).
     let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(tx)? };
     tx.execute(
-        "INSERT INTO purchases_local(invoice_no,supplier_id,invoice_date,subtotal,vat_total,grand_total,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id,supplier_invoice_no,warehouse_id)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+        "INSERT INTO purchases_local(invoice_no,supplier_id,invoice_date,subtotal,vat_total,grand_total,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id,supplier_invoice_no,warehouse_id,lc_id)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
         params![invoice_no, input.supplier_id, input.invoice_date, subtotal, vat_total, grand_total,
                 input.payment_method, input.cash_box_id, input.bank_id, input.notes, input.branch_id, input.cost_center_id,
-                input.supplier_invoice_no, default_wh],
+                input.supplier_invoice_no, default_wh, input.lc_id],
     ).map_err(|e| e.to_string())?;
     let purchase_id = tx.last_insert_rowid();
 
@@ -1566,8 +1581,20 @@ fn apply_purchase_impact(
     // Build & post JE: DR Inventory(subtotal) + DR VAT-In(vat) / CR (supplier|cash|bank)(grand)
     let inv_acc = account_id_by_code(tx, "1300").map_err(|e| e.to_string())?;
     let vat_in_acc = account_id_by_code(tx, "1400").map_err(|e| e.to_string())?;
-    let cr_account_id = resolve_payment_credit_account(tx, &input.payment_method, input.supplier_id, input.cash_box_id, input.bank_id)
-        .map_err(|e| e.to_string())?;
+
+    // LC-linked purchase: the goods portion (subtotal) is credited to the LC
+    // settlement account, and only the VAT (if any) lands on the chosen payment
+    // account. A non-LC purchase credits the whole grand_total to the payment
+    // account as before.
+    let lc_active = input.lc_id.filter(|x| *x > 0);
+    // Resolve the supplier/cash/bank payment account only when something will
+    // actually be credited to it (non-LC, or LC with a VAT portion). This avoids
+    // demanding a cash box / bank on a VAT-free LC purchase that doesn't use one.
+    let need_payment_acc = lc_active.is_none() || vat_total > 0.0;
+    let cr_account_id = if need_payment_acc {
+        Some(resolve_payment_credit_account(tx, &input.payment_method, input.supplier_id, input.cash_box_id, input.bank_id)
+            .map_err(|e| e.to_string())?)
+    } else { None };
 
     let mut lines = vec![
         JournalEntryLine { id: None, account_id: inv_acc, account_code: None, account_name: None, debit: subtotal, credit: 0.0, description: Some(format!("شراء {invoice_no}")) },
@@ -1575,18 +1602,42 @@ fn apply_purchase_impact(
     if vat_total > 0.0 {
         lines.push(JournalEntryLine { id: None, account_id: vat_in_acc, account_code: None, account_name: None, debit: vat_total, credit: 0.0, description: None });
     }
-    lines.push(JournalEntryLine { id: None, account_id: cr_account_id, account_code: None, account_name: None, debit: 0.0, credit: grand_total, description: None });
+    if let Some(lc_id) = lc_active {
+        let (settle_acc, lc_status, lc_supplier): (Option<i64>, String, i64) = tx.query_row(
+            "SELECT settlement_account_id, status, supplier_id FROM letters_of_credit_local WHERE id=?1",
+            params![lc_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).map_err(|_| "الاعتماد المستندي غير موجود".to_string())?;
+        if lc_status == "closed" { return Err("لا يمكن ربط فاتورة باعتماد مقفل".into()); }
+        if lc_supplier != input.supplier_id { return Err("الاعتماد المستندي يخص مورّداً آخر".into()); }
+        let settle_acc = settle_acc.ok_or_else(|| "حدد حساب تسوية الاعتماد المستندي أولاً".to_string())?;
+        lines.push(JournalEntryLine { id: None, account_id: settle_acc, account_code: None, account_name: None, debit: 0.0, credit: subtotal, description: Some(format!("اعتماد مستندي #{lc_id}")) });
+        if vat_total > 0.0 {
+            lines.push(JournalEntryLine { id: None, account_id: cr_account_id.unwrap(), account_code: None, account_name: None, debit: 0.0, credit: vat_total, description: None });
+        }
+    } else {
+        lines.push(JournalEntryLine { id: None, account_id: cr_account_id.unwrap(), account_code: None, account_name: None, debit: 0.0, credit: grand_total, description: None });
+    }
 
     let je_id = insert_journal_entry(tx, &input.invoice_date, Some(&format!("فاتورة شراء {invoice_no}")), Some("purchase"), Some(purchase_id), input.branch_id, input.cost_center_id, &lines, resolve_auto_post(tx, "purchase"))
         .map_err(|e| e.to_string())?;
     tx.execute("UPDATE purchases_local SET je_id=?1 WHERE id=?2", params![je_id, purchase_id]).map_err(|e| e.to_string())?;
 
-    // Update party balance shadow.
-    match input.payment_method.as_str() {
-        "credit" => { tx.execute("UPDATE suppliers_local SET balance=balance+?1 WHERE id=?2", params![grand_total, input.supplier_id]).map_err(|e| e.to_string())?; }
-        "cash" => { if let Some(cb) = input.cash_box_id { tx.execute("UPDATE cash_boxes_local SET balance=balance-?1 WHERE id=?2", params![grand_total, cb]).map_err(|e| e.to_string())?; } }
-        "bank" => { if let Some(b) = input.bank_id { tx.execute("UPDATE banks_local SET balance=balance-?1 WHERE id=?2", params![grand_total, b]).map_err(|e| e.to_string())?; } }
-        _ => {}
+    // Update party/treasury balance shadow. With an LC link, only the VAT
+    // portion moved on the payment account (the goods are funded by the LC).
+    let shadow_amt = if lc_active.is_some() { vat_total } else { grand_total };
+    if shadow_amt > 0.0 {
+        match input.payment_method.as_str() {
+            "credit" => { tx.execute("UPDATE suppliers_local SET balance=balance+?1 WHERE id=?2", params![shadow_amt, input.supplier_id]).map_err(|e| e.to_string())?; }
+            "cash" => { if let Some(cb) = input.cash_box_id { tx.execute("UPDATE cash_boxes_local SET balance=balance-?1 WHERE id=?2", params![shadow_amt, cb]).map_err(|e| e.to_string())?; } }
+            "bank" => { if let Some(b) = input.bank_id { tx.execute("UPDATE banks_local SET balance=balance-?1 WHERE id=?2", params![shadow_amt, b]).map_err(|e| e.to_string())?; } }
+            _ => {}
+        }
+    }
+
+    // Draw down the LC by the goods value and refresh its open/partial status.
+    if let Some(lc_id) = lc_active {
+        tx.execute("UPDATE letters_of_credit_local SET used_amount=used_amount+?1 WHERE id=?2", params![subtotal, lc_id]).map_err(|e| e.to_string())?;
+        lc_recompute_status_in_tx(tx, lc_id)?;
     }
     Ok(())
 }
@@ -1596,11 +1647,11 @@ fn apply_purchase_impact(
 /// unwinds the party/treasury shadow, and DELETES the purchase lines. The header
 /// row is left intact for the caller (update re-applies, delete drops it).
 fn reverse_purchase_impact(tx: &Transaction, purchase_id: i64) -> Result<(), String> {
-    let (pm, sup, cb, bank, grand, date, gr_src): (String, i64, Option<i64>, Option<i64>, f64, String, Option<i64>) = tx
+    let (pm, sup, cb, bank, grand, date, gr_src, lc_id, subtotal, vat_total): (String, i64, Option<i64>, Option<i64>, f64, String, Option<i64>, Option<i64>, f64, f64) = tx
         .query_row(
-            "SELECT payment_method,supplier_id,cash_box_id,bank_id,grand_total,invoice_date,source_goods_receipt_id FROM purchases_local WHERE id=?1",
+            "SELECT payment_method,supplier_id,cash_box_id,bank_id,grand_total,invoice_date,source_goods_receipt_id,lc_id,subtotal,vat_total FROM purchases_local WHERE id=?1",
             params![purchase_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?)),
         )
         .map_err(|e| e.to_string())?;
 
@@ -1655,12 +1706,24 @@ fn reverse_purchase_impact(tx: &Transaction, purchase_id: i64) -> Result<(), Str
         }
     }
 
-    // 3) Unwind the party/treasury shadow (mirror of the create-time bump).
-    match pm.as_str() {
-        "credit" => { tx.execute("UPDATE suppliers_local SET balance=balance-?1 WHERE id=?2", params![grand, sup]).map_err(|e| e.to_string())?; }
-        "cash" => { if let Some(c) = cb { tx.execute("UPDATE cash_boxes_local SET balance=balance+?1 WHERE id=?2", params![grand, c]).map_err(|e| e.to_string())?; } }
-        "bank" => { if let Some(b) = bank { tx.execute("UPDATE banks_local SET balance=balance+?1 WHERE id=?2", params![grand, b]).map_err(|e| e.to_string())?; } }
-        _ => {}
+    // 3) Unwind the party/treasury shadow (mirror of the create-time bump). With
+    //    an LC link only the VAT portion moved on the payment account.
+    let lc_active = lc_id.filter(|x| *x > 0);
+    let shadow_amt = if lc_active.is_some() { vat_total } else { grand };
+    if shadow_amt > 0.0 {
+        match pm.as_str() {
+            "credit" => { tx.execute("UPDATE suppliers_local SET balance=balance-?1 WHERE id=?2", params![shadow_amt, sup]).map_err(|e| e.to_string())?; }
+            "cash" => { if let Some(c) = cb { tx.execute("UPDATE cash_boxes_local SET balance=balance+?1 WHERE id=?2", params![shadow_amt, c]).map_err(|e| e.to_string())?; } }
+            "bank" => { if let Some(b) = bank { tx.execute("UPDATE banks_local SET balance=balance+?1 WHERE id=?2", params![shadow_amt, b]).map_err(|e| e.to_string())?; } }
+            _ => {}
+        }
+    }
+
+    // 3b) Return the drawn-down goods value to the LC and refresh its status.
+    if let Some(lc) = lc_active {
+        let _ = subtotal; // goods value drawn at create time
+        tx.execute("UPDATE letters_of_credit_local SET used_amount=MAX(0, used_amount-?1) WHERE id=?2", params![subtotal, lc]).map_err(|e| e.to_string())?;
+        lc_recompute_status_in_tx(tx, lc)?;
     }
 
     // 4) Drop the line rows (header is the caller's responsibility).
@@ -1691,10 +1754,10 @@ pub fn purchase_update(id: i64, input: PurchaseInput) -> Result<(), String> {
     reverse_purchase_impact(&tx, id)?;
     let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
     tx.execute(
-        "UPDATE purchases_local SET supplier_id=?1,invoice_date=?2,subtotal=?3,vat_total=?4,grand_total=?5,payment_method=?6,cash_box_id=?7,bank_id=?8,notes=?9,branch_id=?10,cost_center_id=?11,supplier_invoice_no=?12,warehouse_id=?13,je_id=NULL WHERE id=?14",
+        "UPDATE purchases_local SET supplier_id=?1,invoice_date=?2,subtotal=?3,vat_total=?4,grand_total=?5,payment_method=?6,cash_box_id=?7,bank_id=?8,notes=?9,branch_id=?10,cost_center_id=?11,supplier_invoice_no=?12,warehouse_id=?13,lc_id=?14,je_id=NULL WHERE id=?15",
         params![input.supplier_id, input.invoice_date, subtotal, vat_total, grand_total,
                 input.payment_method, input.cash_box_id, input.bank_id, input.notes, input.branch_id, input.cost_center_id,
-                input.supplier_invoice_no, default_wh, id],
+                input.supplier_invoice_no, default_wh, input.lc_id, id],
     ).map_err(|e| e.to_string())?;
     // Invoice number is immutable across an edit (preserve the original).
     apply_purchase_impact(&tx, id, &invoice_no, &input, subtotal, vat_total, grand_total, default_wh)?;
@@ -5212,5 +5275,636 @@ pub fn tax_set_default(id: i64) -> Result<(), String> {
     ).map_err(|e| e.to_string())?;
     if n == 0 { return Err("الضريبة غير موجودة".into()); }
     tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// W4 — Supplier Groups, Supplier Settlement, Letters of Credit + Expenses
+// ═══════════════════════════════════════════════════════════════════════
+
+// ───────────────────────── Supplier Groups ──────────────────────────
+// Classification + a default discount % for suppliers. A supplier carries an
+// optional group_id (suppliers_local.group_id). Pure master-data — no GL impact.
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SupplierGroup {
+    pub id: i64,
+    pub code: String,
+    pub name_ar: String,
+    pub name_en: Option<String>,
+    pub discount_percent: f64,
+    pub notes: Option<String>,
+    pub is_active: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SupplierGroupInput {
+    pub code: String,
+    pub name_ar: String,
+    #[serde(default)] pub name_en: Option<String>,
+    #[serde(default)] pub discount_percent: f64,
+    #[serde(default)] pub notes: Option<String>,
+    #[serde(default = "default_true")] pub is_active: bool,
+}
+
+fn row_to_supplier_group(r: &rusqlite::Row<'_>) -> rusqlite::Result<SupplierGroup> {
+    Ok(SupplierGroup {
+        id: r.get(0)?, code: r.get(1)?, name_ar: r.get(2)?, name_en: r.get(3)?,
+        discount_percent: r.get(4)?, notes: r.get(5)?, is_active: r.get::<_, i64>(6)? != 0,
+    })
+}
+
+#[tauri::command]
+pub fn supplier_groups_list() -> Result<Vec<SupplierGroup>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id,code,name_ar,name_en,discount_percent,notes,is_active FROM supplier_groups_local ORDER BY code"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], row_to_supplier_group).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn supplier_group_get(id: i64) -> Result<SupplierGroup, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.query_row(
+        "SELECT id,code,name_ar,name_en,discount_percent,notes,is_active FROM supplier_groups_local WHERE id=?1",
+        params![id], row_to_supplier_group,
+    ).map_err(|_| "المجموعة غير موجودة".to_string())
+}
+
+#[tauri::command]
+pub fn supplier_group_create(input: SupplierGroupInput) -> Result<i64, String> {
+    if input.code.trim().is_empty() || input.name_ar.trim().is_empty() {
+        return Err("الكود والاسم مطلوبان".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO supplier_groups_local(code,name_ar,name_en,discount_percent,notes,is_active) VALUES(?1,?2,?3,?4,?5,?6)",
+        params![input.code.trim(), input.name_ar.trim(), input.name_en, input.discount_percent, input.notes, if input.is_active {1} else {0}],
+    ).map_err(|e| if e.to_string().contains("UNIQUE") { "كود المجموعة مستخدم من قبل".to_string() } else { e.to_string() })?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[tauri::command]
+pub fn supplier_group_update(id: i64, input: SupplierGroupInput) -> Result<(), String> {
+    if input.code.trim().is_empty() || input.name_ar.trim().is_empty() {
+        return Err("الكود والاسم مطلوبان".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let n = conn.execute(
+        "UPDATE supplier_groups_local SET code=?1,name_ar=?2,name_en=?3,discount_percent=?4,notes=?5,is_active=?6 WHERE id=?7",
+        params![input.code.trim(), input.name_ar.trim(), input.name_en, input.discount_percent, input.notes, if input.is_active {1} else {0}, id],
+    ).map_err(|e| if e.to_string().contains("UNIQUE") { "كود المجموعة مستخدم من قبل".to_string() } else { e.to_string() })?;
+    if n == 0 { return Err("المجموعة غير موجودة".into()); }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn supplier_group_delete(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let used: i64 = conn.query_row("SELECT COUNT(*) FROM suppliers_local WHERE group_id=?1", params![id], |r| r.get(0)).map_err(|e| e.to_string())?;
+    if used > 0 { return Err("لا يمكن حذف مجموعة مرتبطة بموردين".into()); }
+    conn.execute("DELETE FROM supplier_groups_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ───────────────── Shared cash/bank settlement helpers ───────────────
+
+/// AP control account for a supplier (its own ap_account_id, else default 2100).
+fn supplier_ap_account(conn: &Connection, supplier_id: i64) -> Result<i64, String> {
+    let ap: Option<i64> = conn
+        .query_row("SELECT ap_account_id FROM suppliers_local WHERE id=?1", params![supplier_id], |r| r.get(0))
+        .map_err(|_| "المورد غير موجود".to_string())?;
+    match ap { Some(a) if a > 0 => Ok(a), _ => account_id_by_code(conn, "2100").map_err(|e| e.to_string()) }
+}
+
+/// Validates a cash|bank payment selection (settlements / LC funding never use
+/// the supplier-credit method — these are real cash outflows).
+fn validate_cash_bank_payment(method: &str, cash_box_id: Option<i64>, bank_id: Option<i64>) -> Result<(), String> {
+    match method {
+        "cash" => { if cash_box_id.is_none() { return Err("اختر الخزينة".into()); } }
+        "bank" => { if bank_id.is_none() { return Err("اختر البنك".into()); } }
+        _ => return Err("طريقة دفع غير صالحة".into()),
+    }
+    Ok(())
+}
+
+/// Native currency of the selected cash box / bank (defaults to SAR).
+fn cash_bank_currency(conn: &Connection, method: &str, cash_box_id: Option<i64>, bank_id: Option<i64>) -> Result<String, String> {
+    match method {
+        "cash" => {
+            let c = cash_box_id.ok_or("اختر الخزينة")?;
+            conn.query_row("SELECT COALESCE(currency_code,'SAR') FROM cash_boxes_local WHERE id=?1", params![c], |r| r.get(0)).map_err(|e| e.to_string())
+        }
+        "bank" => {
+            let b = bank_id.ok_or("اختر البنك")?;
+            conn.query_row("SELECT COALESCE(currency_code,'SAR') FROM banks_local WHERE id=?1", params![b], |r| r.get(0)).map_err(|e| e.to_string())
+        }
+        _ => Err("طريقة دفع غير صالحة".into()),
+    }
+}
+
+// ─────────────────────── Supplier Settlement ────────────────────────
+// Outgoing payment against a supplier's payable. Lifecycle draft → posted.
+// Posting books DR supplier-payable / CR cash|bank in BASE currency; the cash/
+// bank shadow moves in the treasury's native currency (mirrors financial_tx).
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SupplierSettlement {
+    pub id: i64,
+    pub doc_no: String,
+    pub settlement_date: String,
+    pub supplier_id: i64,
+    pub supplier_name: Option<String>,
+    pub payment_method: String,
+    pub cash_box_id: Option<i64>,
+    pub bank_id: Option<i64>,
+    pub amount: f64,
+    pub currency_code: String,
+    pub exchange_rate: f64,
+    pub status: String,
+    pub je_id: Option<i64>,
+    pub notes: Option<String>,
+    pub branch_id: Option<i64>,
+    pub cost_center_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SupplierSettlementInput {
+    pub settlement_date: String,
+    pub supplier_id: i64,
+    pub payment_method: String,
+    #[serde(default)] pub cash_box_id: Option<i64>,
+    #[serde(default)] pub bank_id: Option<i64>,
+    pub amount: f64,
+    #[serde(default)] pub notes: Option<String>,
+    #[serde(default)] pub branch_id: Option<i64>,
+    #[serde(default)] pub cost_center_id: Option<i64>,
+}
+
+fn row_to_settlement(r: &rusqlite::Row<'_>) -> rusqlite::Result<SupplierSettlement> {
+    Ok(SupplierSettlement {
+        id: r.get(0)?, doc_no: r.get(1)?, settlement_date: r.get(2)?, supplier_id: r.get(3)?,
+        supplier_name: r.get(4)?, payment_method: r.get(5)?, cash_box_id: r.get(6)?, bank_id: r.get(7)?,
+        amount: r.get(8)?, currency_code: r.get(9)?, exchange_rate: r.get(10)?, status: r.get(11)?,
+        je_id: r.get(12)?, notes: r.get(13)?, branch_id: r.get(14)?, cost_center_id: r.get(15)?,
+    })
+}
+
+const SETTLEMENT_SELECT: &str =
+    "SELECT s.id,s.doc_no,s.settlement_date,s.supplier_id,sup.name_ar,s.payment_method,s.cash_box_id,s.bank_id,\
+            s.amount,s.currency_code,s.exchange_rate,s.status,s.je_id,s.notes,s.branch_id,s.cost_center_id \
+     FROM supplier_settlements_local s JOIN suppliers_local sup ON sup.id=s.supplier_id";
+
+#[tauri::command]
+pub fn supplier_settlements_list(limit: Option<i64>) -> Result<Vec<SupplierSettlement>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let lim = limit.unwrap_or(200);
+    let sql = format!("{SETTLEMENT_SELECT} ORDER BY s.id DESC LIMIT ?1");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([lim], row_to_settlement).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn supplier_settlement_get(id: i64) -> Result<SupplierSettlement, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let sql = format!("{SETTLEMENT_SELECT} WHERE s.id=?1");
+    conn.query_row(&sql, params![id], row_to_settlement).map_err(|_| "سند التسوية غير موجود".to_string())
+}
+
+#[tauri::command]
+pub fn supplier_settlement_create(input: SupplierSettlementInput) -> Result<i64, String> {
+    if input.amount <= 0.0 { return Err("المبلغ يجب أن يكون أكبر من صفر".into()); }
+    validate_cash_bank_payment(&input.payment_method, input.cash_box_id, input.bank_id)?;
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let doc_no = next_doc_no(&tx, "supplier_settlement").map_err(|e| e.to_string())?;
+    let cur = cash_bank_currency(&tx, &input.payment_method, input.cash_box_id, input.bank_id)?;
+    let rate = current_rate_to_base(&tx, &cur).map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO supplier_settlements_local(doc_no,settlement_date,supplier_id,payment_method,cash_box_id,bank_id,amount,currency_code,exchange_rate,status,notes,branch_id,cost_center_id) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'draft',?10,?11,?12)",
+        params![doc_no, input.settlement_date, input.supplier_id, input.payment_method, input.cash_box_id, input.bank_id, input.amount, cur, rate, input.notes, input.branch_id, input.cost_center_id],
+    ).map_err(|e| e.to_string())?;
+    let id = tx.last_insert_rowid();
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn supplier_settlement_update(id: i64, input: SupplierSettlementInput) -> Result<(), String> {
+    if input.amount <= 0.0 { return Err("المبلغ يجب أن يكون أكبر من صفر".into()); }
+    validate_cash_bank_payment(&input.payment_method, input.cash_box_id, input.bank_id)?;
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let status: String = tx.query_row("SELECT status FROM supplier_settlements_local WHERE id=?1", params![id], |r| r.get(0))
+        .map_err(|_| "سند التسوية غير موجود".to_string())?;
+    if status != "draft" { return Err("لا يمكن تعديل سند مرحّل — ألغِ الترحيل أولاً".into()); }
+    let cur = cash_bank_currency(&tx, &input.payment_method, input.cash_box_id, input.bank_id)?;
+    let rate = current_rate_to_base(&tx, &cur).map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE supplier_settlements_local SET settlement_date=?1,supplier_id=?2,payment_method=?3,cash_box_id=?4,bank_id=?5,amount=?6,currency_code=?7,exchange_rate=?8,notes=?9,branch_id=?10,cost_center_id=?11,updated_at=CURRENT_TIMESTAMP WHERE id=?12",
+        params![input.settlement_date, input.supplier_id, input.payment_method, input.cash_box_id, input.bank_id, input.amount, cur, rate, input.notes, input.branch_id, input.cost_center_id, id],
+    ).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn supplier_settlement_post(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (status, supplier_id, method, cb, bank, amount, date, branch, cc, notes, doc_no): (String, i64, String, Option<i64>, Option<i64>, f64, String, Option<i64>, Option<i64>, Option<String>, String) =
+        tx.query_row(
+            "SELECT status,supplier_id,payment_method,cash_box_id,bank_id,amount,settlement_date,branch_id,cost_center_id,notes,doc_no FROM supplier_settlements_local WHERE id=?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?)),
+        ).map_err(|_| "سند التسوية غير موجود".to_string())?;
+    if status != "draft" { return Err("السند مرحّل بالفعل".into()); }
+    if amount <= 0.0 { return Err("المبلغ يجب أن يكون أكبر من صفر".into()); }
+    // Refresh the FX rate at post time (it may have moved since the draft).
+    let cur = cash_bank_currency(&tx, &method, cb, bank)?;
+    let rate = current_rate_to_base(&tx, &cur).map_err(|e| e.to_string())?;
+    let amount_base = amount * rate;
+    let ap = supplier_ap_account(&tx, supplier_id)?;
+    let credit_acc = resolve_payment_credit_account(&tx, &method, supplier_id, cb, bank).map_err(|e| e.to_string())?;
+    let desc = format!("تسوية مورد {doc_no}");
+    let lines = vec![
+        JournalEntryLine { id: None, account_id: ap, account_code: None, account_name: None, debit: amount_base, credit: 0.0, description: notes.clone().or_else(|| Some(desc.clone())) },
+        JournalEntryLine { id: None, account_id: credit_acc, account_code: None, account_name: None, debit: 0.0, credit: amount_base, description: None },
+    ];
+    let je_id = insert_journal_entry(&tx, &date, Some(&desc), Some("supplier_settlement"), Some(id), branch, cc, &lines, true).map_err(|e| e.to_string())?;
+    tx.execute("UPDATE supplier_settlements_local SET status='posted', je_id=?1, currency_code=?2, exchange_rate=?3, updated_at=CURRENT_TIMESTAMP WHERE id=?4", params![je_id, cur, rate, id]).map_err(|e| e.to_string())?;
+    // Shadow: supplier payable (base) ↓ ; treasury (native) ↓.
+    tx.execute("UPDATE suppliers_local SET balance=balance-?1 WHERE id=?2", params![amount_base, supplier_id]).map_err(|e| e.to_string())?;
+    match method.as_str() {
+        "cash" => { if let Some(c) = cb { tx.execute("UPDATE cash_boxes_local SET balance=balance-?1 WHERE id=?2", params![amount, c]).map_err(|e| e.to_string())?; } }
+        "bank" => { if let Some(b) = bank { tx.execute("UPDATE banks_local SET balance=balance-?1 WHERE id=?2", params![amount, b]).map_err(|e| e.to_string())?; } }
+        _ => {}
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn supplier_settlement_unpost(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (status, je_id, supplier_id, method, cb, bank, amount, rate): (String, Option<i64>, i64, String, Option<i64>, Option<i64>, f64, f64) =
+        tx.query_row(
+            "SELECT status,je_id,supplier_id,payment_method,cash_box_id,bank_id,amount,exchange_rate FROM supplier_settlements_local WHERE id=?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
+        ).map_err(|_| "سند التسوية غير موجود".to_string())?;
+    if status != "posted" { return Err("السند غير مرحّل".into()); }
+    let amount_base = amount * rate;
+    if let Some(je) = je_id {
+        reverse_je_balance(&tx, je).map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM journal_entry_lines_local WHERE entry_id=?1", params![je]).map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM journal_entries_local WHERE id=?1", params![je]).map_err(|e| e.to_string())?;
+    }
+    tx.execute("UPDATE supplier_settlements_local SET status='draft', je_id=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    tx.execute("UPDATE suppliers_local SET balance=balance+?1 WHERE id=?2", params![amount_base, supplier_id]).map_err(|e| e.to_string())?;
+    match method.as_str() {
+        "cash" => { if let Some(c) = cb { tx.execute("UPDATE cash_boxes_local SET balance=balance+?1 WHERE id=?2", params![amount, c]).map_err(|e| e.to_string())?; } }
+        "bank" => { if let Some(b) = bank { tx.execute("UPDATE banks_local SET balance=balance+?1 WHERE id=?2", params![amount, b]).map_err(|e| e.to_string())?; } }
+        _ => {}
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn supplier_settlement_delete(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let status: String = conn.query_row("SELECT status FROM supplier_settlements_local WHERE id=?1", params![id], |r| r.get(0))
+        .map_err(|_| "سند التسوية غير موجود".to_string())?;
+    if status == "posted" { return Err("لا يمكن حذف سند مرحّل — ألغِ الترحيل أولاً".into()); }
+    conn.execute("DELETE FROM supplier_settlements_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ──────────────────────── Letters of Credit ─────────────────────────
+// A bank-issued purchasing facility. total_amount is the face value in the LC
+// currency; used_amount accumulates the BASE-currency goods value drawn down by
+// linked purchase invoices (maintained by apply/reverse_purchase_impact).
+// settlement_account_id is the clearing account a linked purchase credits for
+// its goods portion. Status open → partial is auto; closed is a manual action.
+
+/// Refreshes an LC's open/partial status from its used amount. Never overrides a
+/// manual 'closed' and never auto-closes — a fully drawn LC stays 'partial'
+/// until the operator closes it explicitly.
+fn lc_recompute_status_in_tx(tx: &Transaction, lc_id: i64) -> Result<(), String> {
+    let (used, status): (f64, String) = tx.query_row(
+        "SELECT used_amount, status FROM letters_of_credit_local WHERE id=?1",
+        params![lc_id], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|e| e.to_string())?;
+    if status == "closed" { return Ok(()); }
+    let new_status = if used <= 0.0001 { "open" } else { "partial" };
+    if new_status != status {
+        tx.execute("UPDATE letters_of_credit_local SET status=?1 WHERE id=?2", params![new_status, lc_id]).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LetterOfCredit {
+    pub id: i64,
+    pub lc_number: String,
+    pub lc_date: String,
+    pub supplier_id: i64,
+    pub supplier_name: Option<String>,
+    pub bank_name: Option<String>,
+    pub currency_code: String,
+    pub exchange_rate: f64,
+    pub total_amount: f64,
+    pub used_amount: f64,
+    pub settlement_account_id: Option<i64>,
+    pub status: String,
+    pub notes: Option<String>,
+    pub branch_id: Option<i64>,
+    pub cost_center_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LetterOfCreditInput {
+    #[serde(default)] pub lc_number: Option<String>,
+    pub lc_date: String,
+    pub supplier_id: i64,
+    #[serde(default)] pub bank_name: Option<String>,
+    #[serde(default)] pub currency_code: Option<String>,
+    #[serde(default)] pub exchange_rate: Option<f64>,
+    #[serde(default)] pub total_amount: f64,
+    #[serde(default)] pub settlement_account_id: Option<i64>,
+    #[serde(default)] pub notes: Option<String>,
+    #[serde(default)] pub branch_id: Option<i64>,
+    #[serde(default)] pub cost_center_id: Option<i64>,
+}
+
+fn row_to_lc(r: &rusqlite::Row<'_>) -> rusqlite::Result<LetterOfCredit> {
+    Ok(LetterOfCredit {
+        id: r.get(0)?, lc_number: r.get(1)?, lc_date: r.get(2)?, supplier_id: r.get(3)?,
+        supplier_name: r.get(4)?, bank_name: r.get(5)?, currency_code: r.get(6)?, exchange_rate: r.get(7)?,
+        total_amount: r.get(8)?, used_amount: r.get(9)?, settlement_account_id: r.get(10)?,
+        status: r.get(11)?, notes: r.get(12)?, branch_id: r.get(13)?, cost_center_id: r.get(14)?,
+    })
+}
+
+const LC_SELECT: &str =
+    "SELECT lc.id,lc.lc_number,lc.lc_date,lc.supplier_id,sup.name_ar,lc.bank_name,lc.currency_code,lc.exchange_rate,\
+            lc.total_amount,lc.used_amount,lc.settlement_account_id,lc.status,lc.notes,lc.branch_id,lc.cost_center_id \
+     FROM letters_of_credit_local lc JOIN suppliers_local sup ON sup.id=lc.supplier_id";
+
+#[tauri::command]
+pub fn lc_list(limit: Option<i64>) -> Result<Vec<LetterOfCredit>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let lim = limit.unwrap_or(200);
+    let sql = format!("{LC_SELECT} ORDER BY lc.id DESC LIMIT ?1");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([lim], row_to_lc).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn lc_get(id: i64) -> Result<LetterOfCredit, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let sql = format!("{LC_SELECT} WHERE lc.id=?1");
+    conn.query_row(&sql, params![id], row_to_lc).map_err(|_| "الاعتماد المستندي غير موجود".to_string())
+}
+
+#[tauri::command]
+pub fn lc_create(input: LetterOfCreditInput) -> Result<i64, String> {
+    if input.total_amount < 0.0 { return Err("قيمة الاعتماد غير صالحة".into()); }
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let lc_number = match input.lc_number.as_deref().map(str::trim) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => next_doc_no(&tx, "letter_of_credit").map_err(|e| e.to_string())?,
+    };
+    let cur = input.currency_code.clone().unwrap_or_else(|| "SAR".to_string());
+    let rate = input.exchange_rate.filter(|r| *r > 0.0).unwrap_or(1.0);
+    tx.execute(
+        "INSERT INTO letters_of_credit_local(lc_number,lc_date,supplier_id,bank_name,currency_code,exchange_rate,total_amount,used_amount,settlement_account_id,status,notes,branch_id,cost_center_id) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,0,?8,'open',?9,?10,?11)",
+        params![lc_number, input.lc_date, input.supplier_id, input.bank_name, cur, rate, input.total_amount,
+                input.settlement_account_id.filter(|a| *a > 0), input.notes, input.branch_id, input.cost_center_id],
+    ).map_err(|e| if e.to_string().contains("UNIQUE") { "رقم الاعتماد مستخدم من قبل".to_string() } else { e.to_string() })?;
+    let id = tx.last_insert_rowid();
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn lc_update(id: i64, input: LetterOfCreditInput) -> Result<(), String> {
+    if input.total_amount < 0.0 { return Err("قيمة الاعتماد غير صالحة".into()); }
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (status, used): (String, f64) = tx.query_row(
+        "SELECT status, used_amount FROM letters_of_credit_local WHERE id=?1", params![id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|_| "الاعتماد المستندي غير موجود".to_string())?;
+    if status == "closed" { return Err("الاعتماد مقفل — أعد فتحه أولاً".into()); }
+    if input.total_amount + 0.0001 < used { return Err("لا يمكن أن تقل قيمة الاعتماد عن المبلغ المستخدم".into()); }
+    let cur = input.currency_code.unwrap_or_else(|| "SAR".to_string());
+    let rate = input.exchange_rate.filter(|r| *r > 0.0).unwrap_or(1.0);
+    // lc_number is left immutable on edit (preserve the original reference).
+    let n = tx.execute(
+        "UPDATE letters_of_credit_local SET lc_date=?1,supplier_id=?2,bank_name=?3,currency_code=?4,exchange_rate=?5,total_amount=?6,settlement_account_id=?7,notes=?8,branch_id=?9,cost_center_id=?10 WHERE id=?11",
+        params![input.lc_date, input.supplier_id, input.bank_name, cur, rate, input.total_amount,
+                input.settlement_account_id.filter(|a| *a > 0), input.notes, input.branch_id, input.cost_center_id, id],
+    ).map_err(|e| e.to_string())?;
+    if n == 0 { return Err("الاعتماد المستندي غير موجود".into()); }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn lc_delete(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let linked: i64 = conn.query_row("SELECT COUNT(*) FROM purchases_local WHERE lc_id=?1", params![id], |r| r.get(0)).map_err(|e| e.to_string())?;
+    if linked > 0 { return Err("لا يمكن حذف اعتماد مرتبط بفواتير شراء".into()); }
+    // lc_expenses cascade-delete via the FK ON DELETE CASCADE.
+    conn.execute("DELETE FROM letters_of_credit_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn lc_close(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let n = conn.execute("UPDATE letters_of_credit_local SET status='closed' WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    if n == 0 { return Err("الاعتماد المستندي غير موجود".into()); }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn lc_reopen(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let n = tx.execute("UPDATE letters_of_credit_local SET status='open' WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    if n == 0 { return Err("الاعتماد المستندي غير موجود".into()); }
+    lc_recompute_status_in_tx(&tx, id)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Rebuilds used_amount from the SUM(subtotal) of all linked purchases and
+/// refreshes the open/partial status. A repair tool if the running figure ever
+/// drifts from the source documents.
+#[tauri::command]
+pub fn lc_recompute_usage(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let used: f64 = tx.query_row("SELECT COALESCE(SUM(subtotal),0) FROM purchases_local WHERE lc_id=?1", params![id], |r| r.get(0)).map_err(|e| e.to_string())?;
+    let n = tx.execute("UPDATE letters_of_credit_local SET used_amount=?1 WHERE id=?2", params![used, id]).map_err(|e| e.to_string())?;
+    if n == 0 { return Err("الاعتماد المستندي غير موجود".into()); }
+    lc_recompute_status_in_tx(&tx, id)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LcFundingInput {
+    pub lc_id: i64,
+    pub funding_date: String,
+    pub amount: f64,
+    pub payment_method: String,
+    #[serde(default)] pub cash_box_id: Option<i64>,
+    #[serde(default)] pub bank_id: Option<i64>,
+    #[serde(default)] pub notes: Option<String>,
+    #[serde(default)] pub branch_id: Option<i64>,
+    #[serde(default)] pub cost_center_id: Option<i64>,
+}
+
+/// Funds the LC settlement/clearing account from cash|bank: DR settlement / CR
+/// cash|bank, posted to the GL. (Offline replacement for the web AI-journal —
+/// the operator picks the funding source explicitly.)
+#[tauri::command]
+pub fn lc_post_funding(input: LcFundingInput) -> Result<i64, String> {
+    if input.amount <= 0.0 { return Err("المبلغ يجب أن يكون أكبر من صفر".into()); }
+    validate_cash_bank_payment(&input.payment_method, input.cash_box_id, input.bank_id)?;
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (settle_acc, lc_number): (Option<i64>, String) = tx.query_row(
+        "SELECT settlement_account_id, lc_number FROM letters_of_credit_local WHERE id=?1",
+        params![input.lc_id], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|_| "الاعتماد المستندي غير موجود".to_string())?;
+    let settle_acc = settle_acc.ok_or_else(|| "حدد حساب تسوية الاعتماد أولاً".to_string())?;
+    let cur = cash_bank_currency(&tx, &input.payment_method, input.cash_box_id, input.bank_id)?;
+    let rate = current_rate_to_base(&tx, &cur).map_err(|e| e.to_string())?;
+    let amount_base = input.amount * rate;
+    let credit_acc = resolve_payment_credit_account(&tx, &input.payment_method, 0, input.cash_box_id, input.bank_id).map_err(|e| e.to_string())?;
+    let desc = format!("تمويل اعتماد مستندي {lc_number}");
+    let lines = vec![
+        JournalEntryLine { id: None, account_id: settle_acc, account_code: None, account_name: None, debit: amount_base, credit: 0.0, description: input.notes.clone().or_else(|| Some(desc.clone())) },
+        JournalEntryLine { id: None, account_id: credit_acc, account_code: None, account_name: None, debit: 0.0, credit: amount_base, description: None },
+    ];
+    let je_id = insert_journal_entry(&tx, &input.funding_date, Some(&desc), Some("lc_funding"), Some(input.lc_id), input.branch_id, input.cost_center_id, &lines, true).map_err(|e| e.to_string())?;
+    // Shadow treasury in its native currency.
+    match input.payment_method.as_str() {
+        "cash" => { if let Some(c) = input.cash_box_id { tx.execute("UPDATE cash_boxes_local SET balance=balance-?1 WHERE id=?2", params![input.amount, c]).map_err(|e| e.to_string())?; } }
+        "bank" => { if let Some(b) = input.bank_id { tx.execute("UPDATE banks_local SET balance=balance-?1 WHERE id=?2", params![input.amount, b]).map_err(|e| e.to_string())?; } }
+        _ => {}
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(je_id)
+}
+
+// ──────────────────────────── LC Expenses ───────────────────────────
+// Documents costs (freight, customs, bank fees …) booked against an LC. Pure
+// record-keeping in the offline app — no GL impact (the cash outflow itself is
+// recorded via the funding JE / settlements).
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LcExpense {
+    pub id: i64,
+    pub lc_id: i64,
+    pub expense_type: String,
+    pub account_id: Option<i64>,
+    pub amount: f64,
+    pub currency_code: String,
+    pub exchange_rate: f64,
+    pub notes: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LcExpenseInput {
+    pub lc_id: i64,
+    pub expense_type: String,
+    #[serde(default)] pub account_id: Option<i64>,
+    #[serde(default)] pub amount: f64,
+    #[serde(default)] pub currency_code: Option<String>,
+    #[serde(default)] pub exchange_rate: Option<f64>,
+    #[serde(default)] pub notes: Option<String>,
+}
+
+fn row_to_lc_expense(r: &rusqlite::Row<'_>) -> rusqlite::Result<LcExpense> {
+    Ok(LcExpense {
+        id: r.get(0)?, lc_id: r.get(1)?, expense_type: r.get(2)?, account_id: r.get(3)?,
+        amount: r.get(4)?, currency_code: r.get(5)?, exchange_rate: r.get(6)?, notes: r.get(7)?,
+    })
+}
+
+#[tauri::command]
+pub fn lc_expenses_list(lc_id: i64) -> Result<Vec<LcExpense>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id,lc_id,expense_type,account_id,amount,currency_code,exchange_rate,notes FROM lc_expenses_local WHERE lc_id=?1 ORDER BY id"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([lc_id], row_to_lc_expense).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn lc_expense_create(input: LcExpenseInput) -> Result<i64, String> {
+    if input.expense_type.trim().is_empty() { return Err("نوع المصروف مطلوب".into()); }
+    if input.amount < 0.0 { return Err("قيمة المصروف غير صالحة".into()); }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let cur = input.currency_code.unwrap_or_else(|| "SAR".to_string());
+    let rate = input.exchange_rate.filter(|r| *r > 0.0).unwrap_or(1.0);
+    conn.execute(
+        "INSERT INTO lc_expenses_local(lc_id,expense_type,account_id,amount,currency_code,exchange_rate,notes) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+        params![input.lc_id, input.expense_type.trim(), input.account_id.filter(|a| *a > 0), input.amount, cur, rate, input.notes],
+    ).map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[tauri::command]
+pub fn lc_expense_update(id: i64, input: LcExpenseInput) -> Result<(), String> {
+    if input.expense_type.trim().is_empty() { return Err("نوع المصروف مطلوب".into()); }
+    if input.amount < 0.0 { return Err("قيمة المصروف غير صالحة".into()); }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let cur = input.currency_code.unwrap_or_else(|| "SAR".to_string());
+    let rate = input.exchange_rate.filter(|r| *r > 0.0).unwrap_or(1.0);
+    let n = conn.execute(
+        "UPDATE lc_expenses_local SET expense_type=?1,account_id=?2,amount=?3,currency_code=?4,exchange_rate=?5,notes=?6 WHERE id=?7",
+        params![input.expense_type.trim(), input.account_id.filter(|a| *a > 0), input.amount, cur, rate, input.notes, id],
+    ).map_err(|e| e.to_string())?;
+    if n == 0 { return Err("المصروف غير موجود".into()); }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn lc_expense_delete(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM lc_expenses_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
     Ok(())
 }

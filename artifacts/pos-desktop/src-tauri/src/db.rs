@@ -355,6 +355,89 @@ pub fn initialize() -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_fintx_date ON financial_transactions_local(tx_date DESC);
 
+        -- ── Supplier groups (مجموعات الموردين) ───────────────────────
+        -- Classification + default discount % for suppliers. suppliers_local
+        -- carries an optional group_id (added via ALTER below).
+        CREATE TABLE IF NOT EXISTS supplier_groups_local (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            code             TEXT NOT NULL,
+            name_ar          TEXT NOT NULL,
+            name_en          TEXT,
+            discount_percent REAL NOT NULL DEFAULT 0,
+            notes            TEXT,
+            is_active        INTEGER NOT NULL DEFAULT 1,
+            created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_supplier_groups_code ON supplier_groups_local(code);
+
+        -- ── Supplier settlements (تسوية الموردين / سند صرف للمورد) ────
+        -- Outgoing settlement against a supplier's payable. Posting books
+        -- DR supplier-payable / CR cash|bank. Lifecycle draft → posted.
+        CREATE TABLE IF NOT EXISTS supplier_settlements_local (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            doc_no          TEXT NOT NULL UNIQUE,
+            settlement_date TEXT NOT NULL,
+            supplier_id     INTEGER NOT NULL REFERENCES suppliers_local(id),
+            payment_method  TEXT NOT NULL DEFAULT 'cash'
+                            CHECK (payment_method IN ('cash','bank')),
+            cash_box_id     INTEGER REFERENCES cash_boxes_local(id),
+            bank_id         INTEGER REFERENCES banks_local(id),
+            amount          REAL NOT NULL DEFAULT 0,
+            currency_code   TEXT NOT NULL DEFAULT 'SAR',
+            exchange_rate   REAL NOT NULL DEFAULT 1,
+            status          TEXT NOT NULL DEFAULT 'draft'
+                            CHECK (status IN ('draft','posted')),
+            je_id           INTEGER REFERENCES journal_entries_local(id),
+            notes           TEXT,
+            branch_id       INTEGER,
+            cost_center_id  INTEGER,
+            created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_setl_supplier ON supplier_settlements_local(supplier_id);
+        CREATE INDEX IF NOT EXISTS idx_setl_date ON supplier_settlements_local(settlement_date DESC);
+
+        -- ── Letters of credit (الاعتمادات المستندية) ─────────────────
+        -- An LC is a bank-issued purchasing facility. total_amount is the
+        -- face value in lc currency; used_amount accumulates the base-currency
+        -- goods value drawn down by linked posted purchase invoices.
+        -- settlement_account_id is the clearing/asset account a linked
+        -- purchase invoice credits for its goods portion. Lifecycle
+        -- open → partial → closed (auto by usage, or manual close/reopen).
+        CREATE TABLE IF NOT EXISTS letters_of_credit_local (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            lc_number             TEXT NOT NULL UNIQUE,
+            lc_date               TEXT NOT NULL,
+            supplier_id           INTEGER NOT NULL REFERENCES suppliers_local(id),
+            bank_name             TEXT,
+            currency_code         TEXT NOT NULL DEFAULT 'SAR',
+            exchange_rate         REAL NOT NULL DEFAULT 1,
+            total_amount          REAL NOT NULL DEFAULT 0,
+            used_amount           REAL NOT NULL DEFAULT 0,
+            settlement_account_id INTEGER REFERENCES accounts_local(id),
+            status                TEXT NOT NULL DEFAULT 'open'
+                                  CHECK (status IN ('open','partial','closed')),
+            notes                 TEXT,
+            branch_id             INTEGER,
+            cost_center_id        INTEGER,
+            created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_lc_supplier ON letters_of_credit_local(supplier_id);
+        CREATE INDEX IF NOT EXISTS idx_lc_date ON letters_of_credit_local(lc_date DESC);
+
+        CREATE TABLE IF NOT EXISTS lc_expenses_local (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            lc_id         INTEGER NOT NULL REFERENCES letters_of_credit_local(id) ON DELETE CASCADE,
+            expense_type  TEXT NOT NULL,
+            account_id    INTEGER REFERENCES accounts_local(id),
+            amount        REAL NOT NULL DEFAULT 0,
+            currency_code TEXT NOT NULL DEFAULT 'SAR',
+            exchange_rate REAL NOT NULL DEFAULT 1,
+            notes         TEXT,
+            created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_lcexp_lc ON lc_expenses_local(lc_id);
+
         -- Per-user screen permissions (overrides on top of role defaults).
         -- A row means "user_id has explicit can_view for screen_key".
         -- Absence → fall back to role default.
@@ -918,6 +1001,13 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE purchase_returns_local ADD COLUMN cost_center_id INTEGER",
         "ALTER TABLE purchase_returns_local ADD COLUMN reason TEXT",
         "ALTER TABLE purchases_local ADD COLUMN source_goods_receipt_id INTEGER",
+        // ── W4: supplier groups + letters of credit links ──
+        // group_id classifies a supplier (soft ref to supplier_groups_local);
+        // lc_id links a purchase invoice to a letter of credit so posting can
+        // clear the LC settlement account + draw down used_amount. Both
+        // nullable — existing rows stay unclassified / non-LC.
+        "ALTER TABLE suppliers_local ADD COLUMN group_id INTEGER",
+        "ALTER TABLE purchases_local ADD COLUMN lc_id INTEGER",
         "ALTER TABLE financial_transactions_local ADD COLUMN branch_id INTEGER",
         "ALTER TABLE financial_transactions_local ADD COLUMN cost_center_id INTEGER",
         // ── Manual journal-entry parity with the web app ──
@@ -1030,6 +1120,8 @@ pub fn initialize() -> Result<()> {
         ("sales_return",    "SRT-",  "sales_returns_local"),
         ("quotation",       "QT-",   "quotations_local"),
         ("sales_order",     "SO-",   "sales_orders_local"),
+        ("supplier_settlement", "SETL-", "supplier_settlements_local"),
+        ("letter_of_credit",    "LC-",   "letters_of_credit_local"),
     ];
     for (doc_type, prefix, table) in seeds {
         let sql = format!(

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import {
   listSuppliers, createSupplier, updateSupplier, deleteSupplier, listCurrencies, listAccounts,
-  type Supplier, type SupplierInput, type Currency, type Account,
+  listSupplierGroups,
+  type Supplier, type SupplierInput, type Currency, type Account, type SupplierGroup,
 } from "../lib/accounting";
 import {
-  Page, Card, Table, Th, Td, Empty,
+  Page, Card, Table, Th, Td, Empty, SearchCombobox,
   btnPrimary, btnLink, fmtCurrency,
 } from "./_adminUi";
 
@@ -13,7 +14,7 @@ const emptyInput: SupplierInput = {
   currencyCode: "SAR", openingBalance: 0, openingNature: "credit",
   email: null, crNumber: null, city: null, district: null, street: null,
   buildingNumber: null, postalCode: null, country: "SA", nationalAddressShort: null,
-  includeInStatements: true, apAccountId: null,
+  includeInStatements: true, apAccountId: null, groupId: null,
 };
 
 type EditState =
@@ -31,13 +32,14 @@ export default function SuppliersAdmin() {
   const [rows, setRows] = useState<Supplier[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [groups, setGroups] = useState<SupplierGroup[]>([]);
   const [edit, setEdit] = useState<EditState>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   async function refresh() {
-    const [s, cur, acc] = await Promise.all([listSuppliers(), listCurrencies(true), listAccounts()]);
-    setRows(s); setCurrencies(cur); setAccounts(acc);
+    const [s, cur, acc, grp] = await Promise.all([listSuppliers(), listCurrencies(true), listAccounts(), listSupplierGroups()]);
+    setRows(s); setCurrencies(cur); setAccounts(acc); setGroups(grp);
   }
   useEffect(() => { void refresh(); }, []);
 
@@ -52,6 +54,7 @@ export default function SuppliersAdmin() {
       street: s.street, buildingNumber: s.buildingNumber, postalCode: s.postalCode,
       country: s.country || "SA", nationalAddressShort: s.nationalAddressShort,
       includeInStatements: s.includeInStatements, apAccountId: s.apAccountId,
+      groupId: s.groupId,
     } });
   }
   function cancel() { setEdit(null); setErr(null); }
@@ -77,6 +80,7 @@ export default function SuppliersAdmin() {
           street: f.street, buildingNumber: f.buildingNumber, postalCode: f.postalCode,
           country: f.country, nationalAddressShort: f.nationalAddressShort,
           includeInStatements: f.includeInStatements, apAccountId: f.apAccountId,
+          groupId: f.groupId,
         });
       }
       setEdit(null);
@@ -115,6 +119,7 @@ export default function SuppliersAdmin() {
           err={err}
           currencyOpts={currencyOpts}
           accounts={accounts}
+          groups={groups}
         />
       )}
 
@@ -152,7 +157,7 @@ export default function SuppliersAdmin() {
   );
 }
 
-function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, currencyOpts, accounts }: {
+function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, currencyOpts, accounts, groups }: {
   mode: "new" | "edit";
   data: SupplierInput;
   setField: <K extends keyof SupplierInput>(k: K, v: SupplierInput[K]) => void;
@@ -160,6 +165,7 @@ function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, curre
   busy: boolean; err: string | null;
   currencyOpts: string[];
   accounts: Account[];
+  groups: SupplierGroup[];
 }) {
   // Payables control accounts: liability type only (mirrors the web AP picker).
   const apAccounts = accounts.filter((a) => a.type === "liability" && a.isActive);
@@ -194,6 +200,14 @@ function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, curre
           <select value={data.currencyCode ?? "SAR"} onChange={(e) => setField("currencyCode", e.target.value)} style={F.bigInput}>
             {currencyOpts.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
+        </Field>
+        <Field label="مجموعة الموردين">
+          <SearchCombobox
+            value={data.groupId ?? ""}
+            onChange={(v) => setField("groupId", v === "" ? null : Number(v))}
+            options={[{ value: "", label: "— بدون —" }, ...groups.map((g) => ({ value: g.id, label: g.nameAr }))]}
+            placeholder="— بدون —"
+          />
         </Field>
       </div>
 

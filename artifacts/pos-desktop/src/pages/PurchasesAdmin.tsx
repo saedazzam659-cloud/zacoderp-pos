@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import {
   listPurchases, getPurchase, createPurchase, updatePurchase, deletePurchase,
-  listSuppliers, listCashBoxes, listBanks,
+  listSuppliers, listCashBoxes, listBanks, listLettersOfCredit,
   type Purchase, type PurchaseLine, type PaymentMethod, type Supplier, type CashBox, type Bank,
+  type LetterOfCredit,
 } from "../lib/accounting";
 import { listItems, type LocalItem } from "../lib/items";
 import { listUom, type Uom } from "../lib/uom";
@@ -33,6 +34,7 @@ type FormSeed = {
   supplierId: number; invoiceDate: string; paymentMethod: PaymentMethod;
   cashBoxId: number | null; bankId: number | null; warehouseId: number;
   supplierInvoiceNo: string; notes: string;
+  lcId: number | null;
   lines: FLine[];
 };
 
@@ -41,7 +43,7 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<Purchase | null>(null);
   const [form, setForm] = useState<FormSeed | null>(null);
-  const [deps, setDeps] = useState<{ suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[] } | null>(null);
+  const [deps, setDeps] = useState<{ suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[]; lcs: LetterOfCredit[] } | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const creating = form !== null;
@@ -50,8 +52,8 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
   useEffect(() => {
     void refresh();
     void (async () => {
-      const [suppliers, cashBoxes, banks, items, warehouses] = await Promise.all([listSuppliers(), listCashBoxes(), listBanks(), listItems(), listWarehouses()]);
-      setDeps({ suppliers, cashBoxes, banks, items, warehouses });
+      const [suppliers, cashBoxes, banks, items, warehouses, lcs] = await Promise.all([listSuppliers(), listCashBoxes(), listBanks(), listItems(), listWarehouses(), listLettersOfCredit()]);
+      setDeps({ suppliers, cashBoxes, banks, items, warehouses, lcs });
     })();
   }, []);
 
@@ -76,6 +78,7 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
       warehouseId: (deps?.warehouses.find((w) => w.is_default) ?? deps?.warehouses[0])?.id ?? 0,
       supplierInvoiceNo: "",
       notes: "",
+      lcId: null,
       lines: [],
     };
   }
@@ -107,6 +110,7 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
       warehouseId: inv.warehouseId ?? (deps?.warehouses.find((w) => w.is_default) ?? deps?.warehouses[0])?.id ?? 0,
       supplierInvoiceNo: inv.supplierInvoiceNo ?? "",
       notes: inv.notes ?? "",
+      lcId: inv.lcId ?? null,
       lines: seedFromPurchase(inv),
     });
   }
@@ -123,6 +127,7 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
       warehouseId: inv.warehouseId ?? (deps?.warehouses.find((w) => w.is_default) ?? deps?.warehouses[0])?.id ?? 0,
       supplierInvoiceNo: "",
       notes: inv.notes ?? "",
+      lcId: inv.lcId ?? null,
       lines: seedFromPurchase(inv),
     });
   }
@@ -311,7 +316,7 @@ function PurchaseDetail({ p }: { p: Purchase }) {
 }
 
 function CreateForm({ deps, seed, onCancel, onDone }: {
-  deps: { suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[] };
+  deps: { suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[]; lcs: LetterOfCredit[] };
   seed: FormSeed;
   onCancel: () => void; onDone: () => void;
 }) {
@@ -325,6 +330,13 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
     seed.warehouseId || (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id || 0,
   );
   const [supplierInvoiceNo, setSupplierInvoiceNo] = useState(seed.supplierInvoiceNo);
+  const [lcId, setLcId] = useState<number | "">(seed.lcId ?? "");
+  // Clear the LC link if the chosen supplier no longer matches the LC's supplier.
+  useEffect(() => {
+    if (lcId === "") return;
+    const lc = deps.lcs.find((x) => x.id === lcId);
+    if (lc && lc.supplierId !== supplierId) setLcId("");
+  }, [supplierId]); // eslint-disable-line react-hooks/exhaustive-deps
   const { branches, costCenters } = useDimensions();
   const [branchId, setBranchId] = useState<number | "">("");
   useEffect(() => { if (branchId === "" && branches.length === 1) setBranchId(branches[0].id); }, [branches]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -435,6 +447,7 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
         supplierInvoiceNo: supplierInvoiceNo.trim() || null,
         branchId: branchId === "" ? null : branchId,
         costCenterId: costCenterId === "" ? null : costCenterId,
+        lcId: lcId === "" ? null : lcId,
         notes: notes || null, lines: payloadLines,
       };
       const id = isEdit ? (await updatePurchase(seed.editId!, payload), seed.editId!) : await createPurchase(payload);
@@ -499,6 +512,19 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
         </Field>
         <Field label="مركز التكلفة">
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
+        </Field>
+        <Field label="الاعتماد المستندي">
+          <SearchCombobox
+            value={lcId}
+            onChange={(v) => setLcId(v === "" ? "" : Number(v))}
+            style={input}
+            options={[
+              { value: "", label: "— بدون —" },
+              ...deps.lcs
+                .filter((lc) => (lc.supplierId === supplierId) && (lc.status !== "closed" || lc.id === seed.lcId))
+                .map((lc) => ({ value: lc.id, label: `${lc.lcNumber} — ${lc.supplierName ?? ""}`, hint: lc.status })),
+            ]}
+          />
         </Field>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
         {paymentMethod === "cash" && (

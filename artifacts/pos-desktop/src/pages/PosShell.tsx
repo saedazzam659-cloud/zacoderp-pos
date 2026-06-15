@@ -30,6 +30,9 @@ import UomAdmin from "./UomAdmin";
 import UpdatesScreen from "./UpdatesScreen";
 import StandaloneUsersAdmin from "./StandaloneUsersAdmin";
 import SuppliersAdmin from "./SuppliersAdmin";
+import SupplierGroupsAdmin from "./SupplierGroupsAdmin";
+import SupplierSettlementAdmin from "./SupplierSettlementAdmin";
+import LettersOfCreditAdmin from "./LettersOfCreditAdmin";
 import CashBoxesAdmin from "./CashBoxesAdmin";
 import BanksAdmin from "./BanksAdmin";
 import CurrenciesAdmin from "./CurrenciesAdmin";
@@ -222,7 +225,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     key: "purchasing",
     icon: "🛒",
     label: "المشتريات والموردون",
-    members: ["suppliers", "purchase_orders", "goods_receipts", "purchases", "purchase_returns", "report_purchases_by_supplier", "report_purchases_by_item", "report_purchases_by_period", "report_purchases_returns", "report_top_suppliers", "report_supplier_statement", "report_supplier_statement_detailed", "report_supplier_balances", "report_supplier_aging", "report_lc_statement"],
+    members: ["suppliers", "supplier_groups", "purchase_orders", "goods_receipts", "purchases", "purchase_returns", "letters_of_credit", "supplier_settlement", "report_purchases_by_supplier", "report_purchases_by_item", "report_purchases_by_period", "report_purchases_returns", "report_top_suppliers", "report_supplier_statement", "report_supplier_statement_detailed", "report_supplier_balances", "report_supplier_aging", "report_lc_statement"],
   },
   {
     key: "cash_banks",
@@ -547,6 +550,7 @@ export default function PosShell({
     { id: "daily",            icon: "📊", label: "تقرير اليومية", perm: "daily" },
     { id: "customers",        icon: "👥", label: "العملاء", perm: "customers" },
     { id: "suppliers",        icon: "🏭", label: "الموردون", perm: "suppliers" },
+    { id: "supplier_groups",  icon: "🗂️", label: "مجموعات الموردين", perm: "supplier_groups" },
     { id: "items",            icon: "📦", label: "الأصناف", perm: "items" },
     { id: "item_groups",      icon: "🗂️", label: "مجموعات الأصناف", perm: "item_groups" },
     { id: "stock_import",     icon: "📥", label: "استيراد الأرصدة", perm: "stock_import" },
@@ -556,6 +560,8 @@ export default function PosShell({
     { id: "goods_receipts",   icon: "📥", label: "سندات الاستلام", perm: "goods_receipts" },
     { id: "purchases",        icon: "🧾", label: "فواتير الشراء", perm: "purchases" },
     { id: "purchase_returns", icon: "🔁", label: "مرتجع الشراء", perm: "purchase_returns" },
+    { id: "letters_of_credit", icon: "🌐", label: "الاعتمادات المستندية", perm: "letters_of_credit" },
+    { id: "supplier_settlement", icon: "🤝", label: "تسوية الموردين", perm: "supplier_settlement" },
     { id: "report_purchases_by_supplier", icon: "🏭", label: "المشتريات حسب المورد", perm: "report_purchases_by_supplier" },
     { id: "report_purchases_by_item",     icon: "📦", label: "المشتريات حسب الصنف", perm: "report_purchases_by_item" },
     { id: "report_purchases_by_period",   icon: "🗓️", label: "المشتريات حسب الفترة", perm: "report_purchases_by_period" },
@@ -717,6 +723,9 @@ export default function PosShell({
           {standalone && v === "suppliers" && (isAdmin || can("suppliers")) && (
             <div style={S.pagePad}><SuppliersAdmin /></div>
           )}
+          {standalone && v === "supplier_groups" && (isAdmin || can("supplier_groups")) && (
+            <div style={S.pagePad}><SupplierGroupsAdmin /></div>
+          )}
           {standalone && v === "purchase_orders" && (isAdmin || can("purchase_orders")) && (
             <div style={S.pagePad}><PurchaseOrdersAdmin onNavigate={setView} /></div>
           )}
@@ -728,6 +737,12 @@ export default function PosShell({
           )}
           {standalone && v === "purchase_returns" && (isAdmin || can("purchase_returns")) && (
             <div style={S.pagePad}><PurchaseReturnsAdmin /></div>
+          )}
+          {standalone && v === "letters_of_credit" && (isAdmin || can("letters_of_credit")) && (
+            <div style={S.pagePad}><LettersOfCreditAdmin /></div>
+          )}
+          {standalone && v === "supplier_settlement" && (isAdmin || can("supplier_settlement")) && (
+            <div style={S.pagePad}><SupplierSettlementAdmin /></div>
           )}
           {standalone && v === "report_purchases_by_supplier" && (isAdmin || can("report_purchases_by_supplier")) && (
             <div style={S.pagePad}><PurchasesBySupplierReport /></div>
@@ -1091,10 +1106,13 @@ function labelFor(v: View): string {
     updates: "التحديثات",
     users: "المستخدمون المحليون",
     suppliers: "الموردون",
+    supplier_groups: "مجموعات الموردين",
     purchase_orders: "أوامر الشراء",
     goods_receipts: "سندات الاستلام",
     purchases: "فواتير الشراء",
     purchase_returns: "مرتجع الشراء",
+    letters_of_credit: "الاعتمادات المستندية",
+    supplier_settlement: "تسوية الموردين",
     salespersons: "مندوبو المبيعات",
     quotations: "عروض الأسعار",
     sales_orders: "أوامر البيع",

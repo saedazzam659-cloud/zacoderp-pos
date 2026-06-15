@@ -48,6 +48,7 @@
 - [GROUP_PERMISSION_KEYS sync](group-permission-keys-sync.md) — every isGroupAllowed("<group>") in Layout.tsx needs a GROUP_PERMISSION_KEYS entry or undefined.some() white-screens all logged-in non-SA users.
 - [Foreign-currency VAT in SAR](foreign-currency-vat-in-sar.md) — ZATCA: foreign-currency tax invoices/returns must print the VAT amount in SAR (base = foreign × rate); gate to tax docs, not quotations.
 - [POS Desktop ZATCA bridge](pos-desktop-zatca-bridge.md) — back-office sales invoices reuse the register's offline_invoices→sync pipeline; build QR/payload from the PERSISTED invoice (not form) to avoid drift; idempotency key sinv-<id>.
+- [POS Desktop LC↔purchase link](pos-desktop-lc-purchase-link.md) — LC-linked purchase credits LC settlement acct for goods; LC must match purchase supplier (guard backend+UI); group code uniqueness needs an explicit UNIQUE INDEX.
 - [companies.ts router only blocks anonymous](companies-router-auth-gap.md) — its router middleware does NOT enforce superadmin; every new cross-tenant policy-write route needs its own role guard.
 - [POS Desktop online license control](pos-desktop-online-license-control.md) — self_register vs admin licenses must never cross; public revalidate gates to source='self_register' (404 else); grace-lock fails closed; dedup via partial unique index.
 - [ZATCA app English localization](zatca-i18n-localization.md) — parallel i18n via per-page FRAGMENT json + single-writer merge (no JSON race); full-English needs language-aware pickName(nameAr,nameEn), not just t() on UI strings.
