@@ -1486,17 +1486,26 @@ pub fn purchase_get(id: i64) -> Result<Purchase, String> {
 
 #[tauri::command]
 pub fn purchase_create(input: PurchaseInput) -> Result<i64, String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let purchase_id = purchase_create_in_tx(&tx, &input)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(purchase_id)
+}
+
+/// Header insert + full stock/GL impact for a NEW purchase invoice, inside the
+/// caller's transaction. Shared by `purchase_create` (own tx) and the
+/// purchase-order → invoice conversion (which wraps it in its own tx so the
+/// order-status flip and the invoice creation commit atomically).
+fn purchase_create_in_tx(tx: &Transaction, input: &PurchaseInput) -> Result<i64, String> {
     if input.lines.is_empty() { return Err("لا يمكن حفظ فاتورة بدون أصناف".into()); }
     if !["credit","cash","bank"].contains(&input.payment_method.as_str()) {
         return Err("طريقة دفع غير صالحة".into());
     }
-    let mut conn = db::open().map_err(|e| e.to_string())?;
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
-
     let (subtotal, vat_total, grand_total) = purchase_doc_totals(&input.lines);
-    let invoice_no = next_purchase_no(&tx).map_err(|e| e.to_string())?;
+    let invoice_no = next_purchase_no(tx).map_err(|e| e.to_string())?;
     // Resolve default warehouse for stock ledger inserts (Task #208).
-    let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
+    let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(tx)? };
     tx.execute(
         "INSERT INTO purchases_local(invoice_no,supplier_id,invoice_date,subtotal,vat_total,grand_total,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id,supplier_invoice_no,warehouse_id)
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
@@ -1506,9 +1515,7 @@ pub fn purchase_create(input: PurchaseInput) -> Result<i64, String> {
     ).map_err(|e| e.to_string())?;
     let purchase_id = tx.last_insert_rowid();
 
-    apply_purchase_impact(&tx, purchase_id, &invoice_no, &input, subtotal, vat_total, grand_total, default_wh)?;
-
-    tx.commit().map_err(|e| e.to_string())?;
+    apply_purchase_impact(tx, purchase_id, &invoice_no, input, subtotal, vat_total, grand_total, default_wh)?;
     Ok(purchase_id)
 }
 
@@ -1589,11 +1596,11 @@ fn apply_purchase_impact(
 /// unwinds the party/treasury shadow, and DELETES the purchase lines. The header
 /// row is left intact for the caller (update re-applies, delete drops it).
 fn reverse_purchase_impact(tx: &Transaction, purchase_id: i64) -> Result<(), String> {
-    let (pm, sup, cb, bank, grand, date): (String, i64, Option<i64>, Option<i64>, f64, String) = tx
+    let (pm, sup, cb, bank, grand, date, gr_src): (String, i64, Option<i64>, Option<i64>, f64, String, Option<i64>) = tx
         .query_row(
-            "SELECT payment_method,supplier_id,cash_box_id,bank_id,grand_total,invoice_date FROM purchases_local WHERE id=?1",
+            "SELECT payment_method,supplier_id,cash_box_id,bank_id,grand_total,invoice_date,source_goods_receipt_id FROM purchases_local WHERE id=?1",
             params![purchase_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
         )
         .map_err(|e| e.to_string())?;
 
@@ -1635,13 +1642,17 @@ fn reverse_purchase_impact(tx: &Transaction, purchase_id: i64) -> Result<(), Str
         for r in rows { v.push(r.map_err(|e| e.to_string())?); }
         v
     };
-    for (item_id, qty, unit_cost, cf, wh) in &restore {
-        let factor = if *cf > 0.0 { *cf } else { 1.0 };
-        let line_wh = match wh { Some(w) if *w > 0 => *w, _ => default_wh };
-        crate::inventory::ledger_push_in_tx(
-            tx, *item_id, line_wh, -(*qty * factor), *unit_cost / factor,
-            "purchase_void", Some(purchase_id), &date,
-        )?;
+    // GR-sourced invoices NEVER added stock (the goods receipt already did),
+    // so they must NOT push any stock back out on reverse — only the GL clears.
+    if gr_src.is_none() {
+        for (item_id, qty, unit_cost, cf, wh) in &restore {
+            let factor = if *cf > 0.0 { *cf } else { 1.0 };
+            let line_wh = match wh { Some(w) if *w > 0 => *w, _ => default_wh };
+            crate::inventory::ledger_push_in_tx(
+                tx, *item_id, line_wh, -(*qty * factor), *unit_cost / factor,
+                "purchase_void", Some(purchase_id), &date,
+            )?;
+        }
     }
 
     // 3) Unwind the party/treasury shadow (mirror of the create-time bump).
@@ -1665,10 +1676,13 @@ pub fn purchase_update(id: i64, input: PurchaseInput) -> Result<(), String> {
     }
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let (invoice_no, old_date): (String, String) = tx.query_row(
-        "SELECT invoice_no, invoice_date FROM purchases_local WHERE id=?1",
-        params![id], |r| Ok((r.get(0)?, r.get(1)?)),
+    let (invoice_no, old_date, gr_src): (String, String, Option<i64>) = tx.query_row(
+        "SELECT invoice_no, invoice_date, source_goods_receipt_id FROM purchases_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     ).map_err(|e| e.to_string())?;
+    if gr_src.is_some() {
+        return Err("هذه الفاتورة ناتجة عن سند استلام — عدّلها من شاشة سندات الاستلام".into());
+    }
     // Both the original and the new posting dates must fall in open periods.
     guard_period_open_for_date(&tx, &old_date).map_err(|e| e.to_string())?;
     guard_period_open_for_date(&tx, &input.invoice_date).map_err(|e| e.to_string())?;
@@ -1692,8 +1706,9 @@ pub fn purchase_update(id: i64, input: PurchaseInput) -> Result<(), String> {
 pub fn purchase_delete(id: i64) -> Result<(), String> {
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let date: String = tx.query_row(
-        "SELECT invoice_date FROM purchases_local WHERE id=?1", params![id], |r| r.get(0),
+    let (date, gr_src): (String, Option<i64>) = tx.query_row(
+        "SELECT invoice_date, source_goods_receipt_id FROM purchases_local WHERE id=?1", params![id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
     ).map_err(|e| e.to_string())?;
     guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
     // Block delete when a return still references this purchase (FK integrity).
@@ -1703,6 +1718,14 @@ pub fn purchase_delete(id: i64) -> Result<(), String> {
     if ret_count > 0 { return Err("لا يمكن حذف فاتورة لها مرتجعات — احذف المرتجع أولاً".into()); }
     reverse_purchase_impact(&tx, id)?;
     tx.execute("DELETE FROM purchases_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    // A GR-sourced invoice deletion releases the goods receipt back to 'posted'
+    // so it can be re-converted (its stock/clearing posting stays intact).
+    if let Some(gr_id) = gr_src {
+        tx.execute(
+            "UPDATE goods_receipts_local SET status='posted', converted_invoice_id=NULL WHERE id=?1 AND converted_invoice_id=?2",
+            params![gr_id, id],
+        ).map_err(|e| e.to_string())?;
+    }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -1749,6 +1772,7 @@ pub struct PurchaseReturn {
     pub grand_total: f64,
     pub je_id: Option<i64>,
     pub notes: Option<String>,
+    pub reason: Option<String>,
     pub lines: Vec<PurchaseLine>,
 }
 
@@ -1759,6 +1783,8 @@ pub struct PurchaseReturnInput {
     pub purchase_id: Option<i64>,
     pub return_date: String,
     pub notes: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
     /// Header warehouse the lines move stock out of. None → company default.
     pub warehouse_id: Option<i64>,
     #[serde(default)]
@@ -1777,14 +1803,14 @@ pub fn purchase_returns_list(limit: Option<i64>) -> Result<Vec<PurchaseReturn>, 
     let conn = db::open().map_err(|e| e.to_string())?;
     let lim = limit.unwrap_or(200);
     let mut stmt = conn.prepare(
-        "SELECT r.id,r.return_no,r.supplier_id,s.name_ar,r.purchase_id,r.return_date,r.subtotal,r.vat_total,r.grand_total,r.je_id,r.notes
+        "SELECT r.id,r.return_no,r.supplier_id,s.name_ar,r.purchase_id,r.return_date,r.subtotal,r.vat_total,r.grand_total,r.je_id,r.notes,r.reason
          FROM purchase_returns_local r JOIN suppliers_local s ON s.id=r.supplier_id
          ORDER BY r.id DESC LIMIT ?1"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([lim], |r| Ok(PurchaseReturn {
         id: r.get(0)?, return_no: r.get(1)?, supplier_id: r.get(2)?, supplier_name: r.get(3)?,
         purchase_id: r.get(4)?, return_date: r.get(5)?, subtotal: r.get(6)?, vat_total: r.get(7)?,
-        grand_total: r.get(8)?, je_id: r.get(9)?, notes: r.get(10)?, lines: Vec::new(),
+        grand_total: r.get(8)?, je_id: r.get(9)?, notes: r.get(10)?, reason: r.get(11)?, lines: Vec::new(),
     })).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows { out.push(r.map_err(|e| e.to_string())?); }
@@ -1795,12 +1821,12 @@ pub fn purchase_returns_list(limit: Option<i64>) -> Result<Vec<PurchaseReturn>, 
 pub fn purchase_return_get(id: i64) -> Result<PurchaseReturn, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     let mut p: PurchaseReturn = conn.query_row(
-        "SELECT r.id,r.return_no,r.supplier_id,s.name_ar,r.purchase_id,r.return_date,r.subtotal,r.vat_total,r.grand_total,r.je_id,r.notes
+        "SELECT r.id,r.return_no,r.supplier_id,s.name_ar,r.purchase_id,r.return_date,r.subtotal,r.vat_total,r.grand_total,r.je_id,r.notes,r.reason
          FROM purchase_returns_local r JOIN suppliers_local s ON s.id=r.supplier_id WHERE r.id=?1",
         params![id], |r| Ok(PurchaseReturn {
             id: r.get(0)?, return_no: r.get(1)?, supplier_id: r.get(2)?, supplier_name: r.get(3)?,
             purchase_id: r.get(4)?, return_date: r.get(5)?, subtotal: r.get(6)?, vat_total: r.get(7)?,
-            grand_total: r.get(8)?, je_id: r.get(9)?, notes: r.get(10)?, lines: Vec::new(),
+            grand_total: r.get(8)?, je_id: r.get(9)?, notes: r.get(10)?, reason: r.get(11)?, lines: Vec::new(),
         })
     ).map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
@@ -1835,9 +1861,9 @@ pub fn purchase_return_create(input: PurchaseReturnInput) -> Result<i64, String>
 
     let return_no = next_pret_no(&tx).map_err(|e| e.to_string())?;
     tx.execute(
-        "INSERT INTO purchase_returns_local(return_no,supplier_id,purchase_id,return_date,subtotal,vat_total,grand_total,notes,branch_id,cost_center_id)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-        params![return_no, input.supplier_id, input.purchase_id, input.return_date, subtotal, vat_total, grand_total, input.notes, input.branch_id, input.cost_center_id],
+        "INSERT INTO purchase_returns_local(return_no,supplier_id,purchase_id,return_date,subtotal,vat_total,grand_total,notes,branch_id,cost_center_id,reason)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+        params![return_no, input.supplier_id, input.purchase_id, input.return_date, subtotal, vat_total, grand_total, input.notes, input.branch_id, input.cost_center_id, input.reason],
     ).map_err(|e| e.to_string())?;
     let return_id = tx.last_insert_rowid();
 
@@ -1880,6 +1906,570 @@ pub fn purchase_return_create(input: PurchaseReturnInput) -> Result<i64, String>
 
     tx.commit().map_err(|e| e.to_string())?;
     Ok(return_id)
+}
+
+// ───────────────────────── Purchase Orders ───────────────────────────
+// A purchase order (أمر شراء) is a NON-financial document: it never touches
+// stock or the GL. It only records the intended purchase. Converting it to an
+// invoice runs the standard purchase pipeline (`purchase_create_in_tx`) and
+// stamps the order `converted`. Lifecycle: draft → confirmed → converted /
+// cancelled.
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PurchaseOrder {
+    pub id: i64,
+    pub order_no: String,
+    pub supplier_id: i64,
+    pub supplier_name: Option<String>,
+    pub order_date: String,
+    pub expected_date: Option<String>,
+    pub payment_method: String,
+    pub status: String,
+    pub converted_invoice_id: Option<i64>,
+    pub subtotal: f64,
+    pub vat_total: f64,
+    pub grand_total: f64,
+    pub notes: Option<String>,
+    pub supplier_invoice_no: Option<String>,
+    pub warehouse_id: Option<i64>,
+    pub branch_id: Option<i64>,
+    pub cost_center_id: Option<i64>,
+    pub cash_box_id: Option<i64>,
+    pub bank_id: Option<i64>,
+    pub lines: Vec<PurchaseLine>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PurchaseOrderInput {
+    pub supplier_id: i64,
+    pub order_date: String,
+    #[serde(default)]
+    pub expected_date: Option<String>,
+    #[serde(default = "default_po_payment_method")]
+    pub payment_method: String,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub supplier_invoice_no: Option<String>,
+    #[serde(default)]
+    pub warehouse_id: Option<i64>,
+    #[serde(default)]
+    pub branch_id: Option<i64>,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
+    #[serde(default)]
+    pub cash_box_id: Option<i64>,
+    #[serde(default)]
+    pub bank_id: Option<i64>,
+    pub lines: Vec<PurchaseLine>,
+}
+
+fn default_po_payment_method() -> String { "credit".into() }
+
+fn po_lines_load(conn: &Connection, order_id: i64) -> Result<Vec<PurchaseLine>, String> {
+    let mut stmt = conn.prepare(
+        "SELECT pl.id,pl.item_id,i.name_ar,pl.qty,pl.unit_cost,pl.vat_rate,pl.line_total,pl.uom_id,pl.uom_name,pl.conversion_factor
+         FROM purchase_order_lines_local pl JOIN items_local i ON i.id=pl.item_id
+         WHERE pl.order_id=?1 ORDER BY pl.id"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([order_id], |r| Ok(PurchaseLine {
+        id: r.get(0)?, item_id: r.get(1)?, item_name: r.get(2)?, qty: r.get(3)?,
+        unit_cost: r.get(4)?, vat_rate: r.get(5)?, line_total: r.get(6)?,
+        uom_id: r.get(7)?, uom_name: r.get(8)?, conversion_factor: r.get(9)?,
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn purchase_orders_list(limit: Option<i64>) -> Result<Vec<PurchaseOrder>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let lim = limit.unwrap_or(200);
+    let mut stmt = conn.prepare(
+        "SELECT o.id,o.order_no,o.supplier_id,s.name_ar,o.order_date,o.expected_date,o.payment_method,o.status,
+                o.converted_invoice_id,o.subtotal,o.vat_total,o.grand_total,o.notes,o.supplier_invoice_no,o.warehouse_id,o.cash_box_id,o.bank_id,o.branch_id,o.cost_center_id
+         FROM purchase_orders_local o JOIN suppliers_local s ON s.id=o.supplier_id
+         ORDER BY o.id DESC LIMIT ?1"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([lim], |r| Ok(PurchaseOrder {
+        id: r.get(0)?, order_no: r.get(1)?, supplier_id: r.get(2)?, supplier_name: r.get(3)?,
+        order_date: r.get(4)?, expected_date: r.get(5)?, payment_method: r.get(6)?, status: r.get(7)?,
+        converted_invoice_id: r.get(8)?, subtotal: r.get(9)?, vat_total: r.get(10)?, grand_total: r.get(11)?,
+        notes: r.get(12)?, supplier_invoice_no: r.get(13)?, warehouse_id: r.get(14)?, cash_box_id: r.get(15)?, bank_id: r.get(16)?,
+        branch_id: r.get(17)?, cost_center_id: r.get(18)?,
+        lines: Vec::new(),
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn purchase_order_get(id: i64) -> Result<PurchaseOrder, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut o: PurchaseOrder = conn.query_row(
+        "SELECT o.id,o.order_no,o.supplier_id,s.name_ar,o.order_date,o.expected_date,o.payment_method,o.status,
+                o.converted_invoice_id,o.subtotal,o.vat_total,o.grand_total,o.notes,o.supplier_invoice_no,o.warehouse_id,o.cash_box_id,o.bank_id,o.branch_id,o.cost_center_id
+         FROM purchase_orders_local o JOIN suppliers_local s ON s.id=o.supplier_id WHERE o.id=?1",
+        params![id], |r| Ok(PurchaseOrder {
+            id: r.get(0)?, order_no: r.get(1)?, supplier_id: r.get(2)?, supplier_name: r.get(3)?,
+            order_date: r.get(4)?, expected_date: r.get(5)?, payment_method: r.get(6)?, status: r.get(7)?,
+            converted_invoice_id: r.get(8)?, subtotal: r.get(9)?, vat_total: r.get(10)?, grand_total: r.get(11)?,
+            notes: r.get(12)?, supplier_invoice_no: r.get(13)?, warehouse_id: r.get(14)?, cash_box_id: r.get(15)?, bank_id: r.get(16)?,
+            branch_id: r.get(17)?, cost_center_id: r.get(18)?,
+            lines: Vec::new(),
+        })
+    ).map_err(|e| e.to_string())?;
+    o.lines = po_lines_load(&conn, id)?;
+    Ok(o)
+}
+
+/// Insert the order's lines (no stock, no GL). Shared by create + update.
+fn po_apply_lines(tx: &Transaction, order_id: i64, input: &PurchaseOrderInput) -> Result<(), String> {
+    for l in &input.lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+        let line_sub = l.qty * l.unit_cost;
+        let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        tx.execute(
+            "INSERT INTO purchase_order_lines_local(order_id,item_id,qty,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor,warehouse_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![order_id, l.item_id, l.qty, l.unit_cost, l.vat_rate, lt, l.uom_id, l.uom_name, factor, input.warehouse_id],
+        ).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn purchase_order_create(input: PurchaseOrderInput) -> Result<i64, String> {
+    if input.lines.is_empty() { return Err("لا يمكن حفظ أمر شراء بدون أصناف".into()); }
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (subtotal, vat_total, grand_total) = purchase_doc_totals(&input.lines);
+    let order_no = next_doc_no(&tx, "purchase_order").map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO purchase_orders_local(order_no,supplier_id,order_date,expected_date,payment_method,status,subtotal,vat_total,grand_total,notes,branch_id,cost_center_id,warehouse_id,cash_box_id,bank_id,supplier_invoice_no)
+         VALUES(?1,?2,?3,?4,?5,'draft',?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+        params![order_no, input.supplier_id, input.order_date, input.expected_date, input.payment_method,
+                subtotal, vat_total, grand_total, input.notes, input.branch_id, input.cost_center_id,
+                input.warehouse_id, input.cash_box_id, input.bank_id, input.supplier_invoice_no],
+    ).map_err(|e| e.to_string())?;
+    let order_id = tx.last_insert_rowid();
+    po_apply_lines(&tx, order_id, &input)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(order_id)
+}
+
+#[tauri::command]
+pub fn purchase_order_update(id: i64, input: PurchaseOrderInput) -> Result<(), String> {
+    if input.lines.is_empty() { return Err("لا يمكن حفظ أمر شراء بدون أصناف".into()); }
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let status: String = tx.query_row("SELECT status FROM purchase_orders_local WHERE id=?1", params![id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if status == "converted" { return Err("لا يمكن تعديل أمر شراء تم تحويله لفاتورة".into()); }
+    let (subtotal, vat_total, grand_total) = purchase_doc_totals(&input.lines);
+    tx.execute(
+        "UPDATE purchase_orders_local SET supplier_id=?1,order_date=?2,expected_date=?3,payment_method=?4,subtotal=?5,vat_total=?6,grand_total=?7,notes=?8,branch_id=?9,cost_center_id=?10,warehouse_id=?11,cash_box_id=?12,bank_id=?13,supplier_invoice_no=?14 WHERE id=?15",
+        params![input.supplier_id, input.order_date, input.expected_date, input.payment_method, subtotal, vat_total, grand_total,
+                input.notes, input.branch_id, input.cost_center_id, input.warehouse_id, input.cash_box_id, input.bank_id, input.supplier_invoice_no, id],
+    ).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM purchase_order_lines_local WHERE order_id=?1", params![id]).map_err(|e| e.to_string())?;
+    po_apply_lines(&tx, id, &input)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn purchase_order_delete(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let status: String = conn.query_row("SELECT status FROM purchase_orders_local WHERE id=?1", params![id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if status == "converted" { return Err("لا يمكن حذف أمر شراء تم تحويله لفاتورة".into()); }
+    conn.execute("DELETE FROM purchase_orders_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// draft ↔ confirmed ↔ cancelled. `converted` is reached only via convert.
+#[tauri::command]
+pub fn purchase_order_set_status(id: i64, status: String) -> Result<(), String> {
+    if !["draft","confirmed","cancelled"].contains(&status.as_str()) {
+        return Err("حالة غير صالحة".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let cur: String = conn.query_row("SELECT status FROM purchase_orders_local WHERE id=?1", params![id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if cur == "converted" { return Err("أمر الشراء محوّل لفاتورة بالفعل".into()); }
+    conn.execute("UPDATE purchase_orders_local SET status=?1 WHERE id=?2", params![status, id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Convert a purchase order into a real purchase invoice, atomically. Reuses the
+/// shared `purchase_create_in_tx` so the resulting invoice is identical to one
+/// keyed by hand (stock IN + DR 1300/VAT / CR supplier|cash|bank). The order is
+/// stamped `converted` + linked to the new invoice id in the SAME transaction.
+#[tauri::command]
+pub fn purchase_order_convert(id: i64) -> Result<i64, String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let order: PurchaseOrder = tx.query_row(
+        "SELECT o.id,o.order_no,o.supplier_id,'',o.order_date,o.expected_date,o.payment_method,o.status,
+                o.converted_invoice_id,o.subtotal,o.vat_total,o.grand_total,o.notes,o.supplier_invoice_no,o.warehouse_id,o.cash_box_id,o.bank_id,o.branch_id,o.cost_center_id
+         FROM purchase_orders_local o WHERE o.id=?1",
+        params![id], |r| Ok(PurchaseOrder {
+            id: r.get(0)?, order_no: r.get(1)?, supplier_id: r.get(2)?, supplier_name: r.get(3)?,
+            order_date: r.get(4)?, expected_date: r.get(5)?, payment_method: r.get(6)?, status: r.get(7)?,
+            converted_invoice_id: r.get(8)?, subtotal: r.get(9)?, vat_total: r.get(10)?, grand_total: r.get(11)?,
+            notes: r.get(12)?, supplier_invoice_no: r.get(13)?, warehouse_id: r.get(14)?, cash_box_id: r.get(15)?, bank_id: r.get(16)?,
+            branch_id: r.get(17)?, cost_center_id: r.get(18)?,
+            lines: Vec::new(),
+        })
+    ).map_err(|e| e.to_string())?;
+    if order.status == "converted" { return Err("أمر الشراء محوّل لفاتورة بالفعل".into()); }
+    if order.status == "cancelled" { return Err("لا يمكن تحويل أمر شراء ملغي".into()); }
+    let lines = po_lines_load(&tx, id)?;
+    if lines.is_empty() { return Err("أمر الشراء لا يحتوي أصناف".into()); }
+
+    let invoice_input = PurchaseInput {
+        supplier_id: order.supplier_id,
+        invoice_date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+        payment_method: order.payment_method.clone(),
+        cash_box_id: order.cash_box_id,
+        bank_id: order.bank_id,
+        notes: order.notes.clone(),
+        supplier_invoice_no: order.supplier_invoice_no.clone(),
+        warehouse_id: order.warehouse_id,
+        branch_id: order.branch_id,
+        cost_center_id: order.cost_center_id,
+        lines,
+    };
+    let invoice_id = purchase_create_in_tx(&tx, &invoice_input)?;
+    let updated = tx.execute(
+        "UPDATE purchase_orders_local SET status='converted', converted_invoice_id=?1 WHERE id=?2 AND status IN ('draft','confirmed')",
+        params![invoice_id, id],
+    ).map_err(|e| e.to_string())?;
+    if updated == 0 { return Err("تعذّر تحويل أمر الشراء (الحالة تغيّرت)".into()); }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(invoice_id)
+}
+
+// ───────────────────────── Goods Receipts ────────────────────────────
+// A goods receipt (سند استلام بضاعة) receives stock BEFORE the supplier invoice
+// arrives. Posting pushes stock IN and books DR Inventory(1300) / CR Receiving-
+// Clearing(11091) at goods cost EX-VAT (no VAT yet, no payable yet). Converting
+// to an invoice clears 11091, claims input VAT, and raises the supplier payable
+// WITHOUT moving stock again — the resulting `purchases_local` row carries
+// `source_goods_receipt_id` so its reverse skips the stock leg.
+
+/// Lazily create the receiving-clearing account (11091) on databases that were
+/// seeded before it existed (`seed_default_accounts` only runs on empty trees).
+fn ensure_receiving_clearing_account(tx: &Transaction) -> Result<i64, String> {
+    if let Ok(id) = account_id_by_code(tx, "11091") { return Ok(id); }
+    let parent_id: Option<i64> = tx
+        .query_row("SELECT id FROM accounts_local WHERE code='1000'", [], |r| r.get(0))
+        .optional().map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO accounts_local(code,name_ar,type,parent_id,is_leaf) VALUES('11091','وسيط استلام البضاعة','asset',?1,1)",
+        params![parent_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(tx.last_insert_rowid())
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GoodsReceipt {
+    pub id: i64,
+    pub receipt_no: String,
+    pub supplier_id: i64,
+    pub supplier_name: Option<String>,
+    pub receipt_date: String,
+    pub supplier_invoice_no: Option<String>,
+    pub status: String,
+    pub je_id: Option<i64>,
+    pub converted_invoice_id: Option<i64>,
+    pub subtotal: f64,
+    pub vat_total: f64,
+    pub grand_total: f64,
+    pub notes: Option<String>,
+    pub warehouse_id: Option<i64>,
+    pub lines: Vec<PurchaseLine>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoodsReceiptInput {
+    pub supplier_id: i64,
+    pub receipt_date: String,
+    #[serde(default)]
+    pub supplier_invoice_no: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub warehouse_id: Option<i64>,
+    #[serde(default)]
+    pub branch_id: Option<i64>,
+    #[serde(default)]
+    pub cost_center_id: Option<i64>,
+    pub lines: Vec<PurchaseLine>,
+}
+
+/// Conversion params: the supplier invoice arriving for a posted goods receipt.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoodsReceiptConvertInput {
+    pub invoice_date: String,
+    #[serde(default = "default_po_payment_method")]
+    pub payment_method: String,
+    #[serde(default)]
+    pub cash_box_id: Option<i64>,
+    #[serde(default)]
+    pub bank_id: Option<i64>,
+    #[serde(default)]
+    pub supplier_invoice_no: Option<String>,
+}
+
+fn gr_lines_load(conn: &Connection, receipt_id: i64) -> Result<Vec<PurchaseLine>, String> {
+    let mut stmt = conn.prepare(
+        "SELECT pl.id,pl.item_id,i.name_ar,pl.qty,pl.unit_cost,pl.vat_rate,pl.line_total,pl.uom_id,pl.uom_name,pl.conversion_factor
+         FROM goods_receipt_lines_local pl JOIN items_local i ON i.id=pl.item_id
+         WHERE pl.receipt_id=?1 ORDER BY pl.id"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([receipt_id], |r| Ok(PurchaseLine {
+        id: r.get(0)?, item_id: r.get(1)?, item_name: r.get(2)?, qty: r.get(3)?,
+        unit_cost: r.get(4)?, vat_rate: r.get(5)?, line_total: r.get(6)?,
+        uom_id: r.get(7)?, uom_name: r.get(8)?, conversion_factor: r.get(9)?,
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn goods_receipts_list(limit: Option<i64>) -> Result<Vec<GoodsReceipt>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let lim = limit.unwrap_or(200);
+    let mut stmt = conn.prepare(
+        "SELECT g.id,g.receipt_no,g.supplier_id,s.name_ar,g.receipt_date,g.supplier_invoice_no,g.status,g.je_id,
+                g.converted_invoice_id,g.subtotal,g.vat_total,g.grand_total,g.notes,g.warehouse_id
+         FROM goods_receipts_local g JOIN suppliers_local s ON s.id=g.supplier_id
+         ORDER BY g.id DESC LIMIT ?1"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([lim], |r| Ok(GoodsReceipt {
+        id: r.get(0)?, receipt_no: r.get(1)?, supplier_id: r.get(2)?, supplier_name: r.get(3)?,
+        receipt_date: r.get(4)?, supplier_invoice_no: r.get(5)?, status: r.get(6)?, je_id: r.get(7)?,
+        converted_invoice_id: r.get(8)?, subtotal: r.get(9)?, vat_total: r.get(10)?, grand_total: r.get(11)?,
+        notes: r.get(12)?, warehouse_id: r.get(13)?, lines: Vec::new(),
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn goods_receipt_get(id: i64) -> Result<GoodsReceipt, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut g: GoodsReceipt = conn.query_row(
+        "SELECT g.id,g.receipt_no,g.supplier_id,s.name_ar,g.receipt_date,g.supplier_invoice_no,g.status,g.je_id,
+                g.converted_invoice_id,g.subtotal,g.vat_total,g.grand_total,g.notes,g.warehouse_id
+         FROM goods_receipts_local g JOIN suppliers_local s ON s.id=g.supplier_id WHERE g.id=?1",
+        params![id], |r| Ok(GoodsReceipt {
+            id: r.get(0)?, receipt_no: r.get(1)?, supplier_id: r.get(2)?, supplier_name: r.get(3)?,
+            receipt_date: r.get(4)?, supplier_invoice_no: r.get(5)?, status: r.get(6)?, je_id: r.get(7)?,
+            converted_invoice_id: r.get(8)?, subtotal: r.get(9)?, vat_total: r.get(10)?, grand_total: r.get(11)?,
+            notes: r.get(12)?, warehouse_id: r.get(13)?, lines: Vec::new(),
+        })
+    ).map_err(|e| e.to_string())?;
+    g.lines = gr_lines_load(&conn, id)?;
+    Ok(g)
+}
+
+/// Insert a goods receipt as a DRAFT (no stock, no GL). Posting is a separate
+/// explicit step so the operator can review before it hits inventory.
+#[tauri::command]
+pub fn goods_receipt_create(input: GoodsReceiptInput) -> Result<i64, String> {
+    if input.lines.is_empty() { return Err("لا يمكن حفظ سند استلام بدون أصناف".into()); }
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (subtotal, vat_total, grand_total) = purchase_doc_totals(&input.lines);
+    let receipt_no = next_doc_no(&tx, "goods_receipt").map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO goods_receipts_local(receipt_no,supplier_id,receipt_date,supplier_invoice_no,status,subtotal,vat_total,grand_total,notes,branch_id,cost_center_id,warehouse_id)
+         VALUES(?1,?2,?3,?4,'draft',?5,?6,?7,?8,?9,?10,?11)",
+        params![receipt_no, input.supplier_id, input.receipt_date, input.supplier_invoice_no, subtotal, vat_total, grand_total,
+                input.notes, input.branch_id, input.cost_center_id, input.warehouse_id],
+    ).map_err(|e| e.to_string())?;
+    let receipt_id = tx.last_insert_rowid();
+    for l in &input.lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+        let line_sub = l.qty * l.unit_cost;
+        let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        tx.execute(
+            "INSERT INTO goods_receipt_lines_local(receipt_id,item_id,qty,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor,warehouse_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![receipt_id, l.item_id, l.qty, l.unit_cost, l.vat_rate, lt, l.uom_id, l.uom_name, factor, input.warehouse_id],
+        ).map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(receipt_id)
+}
+
+/// Post a draft goods receipt: stock IN + DR Inventory(1300) / CR Receiving-
+/// Clearing(11091) at EX-VAT goods cost. No VAT, no supplier payable yet.
+#[tauri::command]
+pub fn goods_receipt_post(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (status, date, branch_id, cost_center_id, wh): (String, String, Option<i64>, Option<i64>, Option<i64>) = tx.query_row(
+        "SELECT status,receipt_date,branch_id,cost_center_id,warehouse_id FROM goods_receipts_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    ).map_err(|e| e.to_string())?;
+    if status != "draft" { return Err("سند الاستلام ليس في حالة مسودة".into()); }
+    let receipt_no: String = tx.query_row("SELECT receipt_no FROM goods_receipts_local WHERE id=?1", params![id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let lines = gr_lines_load(&tx, id)?;
+    if lines.is_empty() { return Err("سند الاستلام لا يحتوي أصناف".into()); }
+    let default_wh = match wh { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
+
+    let mut subtotal = 0.0_f64;
+    for l in &lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+        subtotal += l.qty * l.unit_cost;
+        crate::inventory::ledger_push_in_tx(
+            &tx, l.item_id, default_wh, l.qty * factor, l.unit_cost / factor,
+            "goods_receipt", Some(id), &date,
+        )?;
+    }
+
+    let inv_acc = account_id_by_code(&tx, "1300").map_err(|e| e.to_string())?;
+    let clearing_acc = ensure_receiving_clearing_account(&tx)?;
+    let je_lines = vec![
+        JournalEntryLine { id: None, account_id: inv_acc,      account_code: None, account_name: None, debit: subtotal, credit: 0.0, description: Some(format!("استلام بضاعة {receipt_no}")) },
+        JournalEntryLine { id: None, account_id: clearing_acc, account_code: None, account_name: None, debit: 0.0, credit: subtotal, description: None },
+    ];
+    let je_id = insert_journal_entry(&tx, &date, Some(&format!("سند استلام {receipt_no}")), Some("goods_receipt"), Some(id), branch_id, cost_center_id, &je_lines, resolve_auto_post(&tx, "goods_receipt"))
+        .map_err(|e| e.to_string())?;
+    tx.execute("UPDATE goods_receipts_local SET status='posted', je_id=?1 WHERE id=?2", params![je_id, id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Delete a goods receipt. A draft drops directly. A posted receipt first
+/// reverses its JE + pushes the received stock back OUT. A converted receipt is
+/// blocked (delete its invoice first, which releases it back to `posted`).
+#[tauri::command]
+pub fn goods_receipt_delete(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (status, date, wh): (String, String, Option<i64>) = tx.query_row(
+        "SELECT status,receipt_date,warehouse_id FROM goods_receipts_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).map_err(|e| e.to_string())?;
+    if status == "converted" { return Err("سند الاستلام محوّل لفاتورة — احذف الفاتورة أولاً".into()); }
+    if status == "posted" {
+        guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
+        // Reverse + delete the receipt JE.
+        let je_rows: Vec<(i64, String)> = {
+            let mut stmt = tx.prepare("SELECT id,status FROM journal_entries_local WHERE source_id=?1 AND source_type='goods_receipt'")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt.query_map(params![id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+                .map_err(|e| e.to_string())?;
+            let mut v = Vec::new();
+            for r in rows { v.push(r.map_err(|e| e.to_string())?); }
+            v
+        };
+        for (je_id, st) in &je_rows {
+            if st == "posted" { reverse_je_balance(&tx, *je_id).map_err(|e| e.to_string())?; }
+            tx.execute("DELETE FROM journal_entry_lines_local WHERE entry_id=?1", params![je_id]).map_err(|e| e.to_string())?;
+            tx.execute("DELETE FROM journal_entries_local WHERE id=?1", params![je_id]).map_err(|e| e.to_string())?;
+        }
+        // Push the received stock back OUT at the SAME per-base cost it entered.
+        let default_wh = match wh { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
+        let lines = gr_lines_load(&tx, id)?;
+        for l in &lines {
+            let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+            crate::inventory::ledger_push_in_tx(
+                &tx, l.item_id, default_wh, -(l.qty * factor), l.unit_cost / factor,
+                "goods_receipt_void", Some(id), &date,
+            )?;
+        }
+    }
+    tx.execute("DELETE FROM goods_receipts_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Convert a POSTED goods receipt into a purchase invoice. The invoice clears
+/// the receiving-clearing balance (DR 11091), claims input VAT (DR 1400), and
+/// raises the supplier payable / treasury outflow (CR) — with NO stock movement
+/// (already received). The new `purchases_local` row carries the
+/// `source_goods_receipt_id` link so its reverse skips the stock leg.
+#[tauri::command]
+pub fn goods_receipt_convert_to_invoice(id: i64, input: GoodsReceiptConvertInput) -> Result<i64, String> {
+    if !["credit","cash","bank"].contains(&input.payment_method.as_str()) {
+        return Err("طريقة دفع غير صالحة".into());
+    }
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (status, supplier_id, branch_id, cost_center_id, wh, gr_inv_no, notes): (String, i64, Option<i64>, Option<i64>, Option<i64>, Option<String>, Option<String>) = tx.query_row(
+        "SELECT status,supplier_id,branch_id,cost_center_id,warehouse_id,supplier_invoice_no,notes FROM goods_receipts_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+    ).map_err(|e| e.to_string())?;
+    if status != "posted" { return Err("لا يمكن تحويل سند استلام غير مُرحّل".into()); }
+    guard_period_open_for_date(&tx, &input.invoice_date).map_err(|e| e.to_string())?;
+    let lines = gr_lines_load(&tx, id)?;
+    if lines.is_empty() { return Err("سند الاستلام لا يحتوي أصناف".into()); }
+    let (subtotal, vat_total, grand_total) = purchase_doc_totals(&lines);
+
+    let default_wh = match wh { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
+    let invoice_no = next_purchase_no(&tx).map_err(|e| e.to_string())?;
+    let supplier_invoice_no = input.supplier_invoice_no.clone().or(gr_inv_no);
+    tx.execute(
+        "INSERT INTO purchases_local(invoice_no,supplier_id,invoice_date,subtotal,vat_total,grand_total,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id,supplier_invoice_no,warehouse_id,source_goods_receipt_id)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+        params![invoice_no, supplier_id, input.invoice_date, subtotal, vat_total, grand_total,
+                input.payment_method, input.cash_box_id, input.bank_id, notes, branch_id, cost_center_id,
+                supplier_invoice_no, default_wh, id],
+    ).map_err(|e| e.to_string())?;
+    let invoice_id = tx.last_insert_rowid();
+
+    // Lines WITHOUT a stock ledger push (stock already entered via the receipt).
+    for l in &lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+        let line_sub = l.qty * l.unit_cost;
+        let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        tx.execute(
+            "INSERT INTO purchase_lines_local(purchase_id,item_id,qty,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor,warehouse_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![invoice_id, l.item_id, l.qty, l.unit_cost, l.vat_rate, lt, l.uom_id, l.uom_name, factor, default_wh],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    // JE: DR Receiving-Clearing(subtotal) + DR VAT-In(vat) / CR supplier|cash|bank(grand).
+    let clearing_acc = ensure_receiving_clearing_account(&tx)?;
+    let vat_in_acc = account_id_by_code(&tx, "1400").map_err(|e| e.to_string())?;
+    let cr_account_id = resolve_payment_credit_account(&tx, &input.payment_method, supplier_id, input.cash_box_id, input.bank_id)
+        .map_err(|e| e.to_string())?;
+    let mut je_lines = vec![
+        JournalEntryLine { id: None, account_id: clearing_acc, account_code: None, account_name: None, debit: subtotal, credit: 0.0, description: Some(format!("فاتورة شراء {invoice_no} (من سند استلام)")) },
+    ];
+    if vat_total > 0.0 {
+        je_lines.push(JournalEntryLine { id: None, account_id: vat_in_acc, account_code: None, account_name: None, debit: vat_total, credit: 0.0, description: None });
+    }
+    je_lines.push(JournalEntryLine { id: None, account_id: cr_account_id, account_code: None, account_name: None, debit: 0.0, credit: grand_total, description: None });
+    let je_id = insert_journal_entry(&tx, &input.invoice_date, Some(&format!("فاتورة شراء {invoice_no}")), Some("purchase"), Some(invoice_id), branch_id, cost_center_id, &je_lines, resolve_auto_post(&tx, "purchase"))
+        .map_err(|e| e.to_string())?;
+    tx.execute("UPDATE purchases_local SET je_id=?1 WHERE id=?2", params![je_id, invoice_id]).map_err(|e| e.to_string())?;
+
+    // Raise the supplier payable / treasury outflow shadow (the invoice's bill).
+    match input.payment_method.as_str() {
+        "credit" => { tx.execute("UPDATE suppliers_local SET balance=balance+?1 WHERE id=?2", params![grand_total, supplier_id]).map_err(|e| e.to_string())?; }
+        "cash" => { if let Some(cb) = input.cash_box_id { tx.execute("UPDATE cash_boxes_local SET balance=balance-?1 WHERE id=?2", params![grand_total, cb]).map_err(|e| e.to_string())?; } }
+        "bank" => { if let Some(b) = input.bank_id { tx.execute("UPDATE banks_local SET balance=balance-?1 WHERE id=?2", params![grand_total, b]).map_err(|e| e.to_string())?; } }
+        _ => {}
+    }
+
+    tx.execute("UPDATE goods_receipts_local SET status='converted', converted_invoice_id=?1 WHERE id=?2", params![invoice_id, id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(invoice_id)
 }
 
 // ───────────────────────── Sales Invoices ────────────────────────────

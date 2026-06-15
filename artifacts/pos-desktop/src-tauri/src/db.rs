@@ -249,6 +249,92 @@ pub fn initialize() -> Result<()> {
             line_total  REAL NOT NULL
         );
 
+        -- Purchase orders (أوامر الشراء): NON-posting procurement documents.
+        -- Lifecycle draft → confirmed → converted (spawns a purchase invoice) |
+        -- cancelled. They NEVER touch stock or the GL on their own.
+        CREATE TABLE IF NOT EXISTS purchase_orders_local (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_no             TEXT NOT NULL UNIQUE,
+            supplier_id          INTEGER NOT NULL REFERENCES suppliers_local(id),
+            order_date           TEXT NOT NULL,
+            expected_date        TEXT,
+            payment_method       TEXT NOT NULL DEFAULT 'credit'
+                                 CHECK (payment_method IN ('credit','cash','bank')),
+            status               TEXT NOT NULL DEFAULT 'draft'
+                                 CHECK (status IN ('draft','confirmed','converted','cancelled')),
+            converted_invoice_id INTEGER REFERENCES purchases_local(id),
+            subtotal             REAL NOT NULL DEFAULT 0,
+            vat_total            REAL NOT NULL DEFAULT 0,
+            grand_total          REAL NOT NULL DEFAULT 0,
+            notes                TEXT,
+            branch_id            INTEGER,
+            cost_center_id       INTEGER,
+            warehouse_id         INTEGER,
+            cash_box_id          INTEGER REFERENCES cash_boxes_local(id),
+            bank_id              INTEGER REFERENCES banks_local(id),
+            supplier_invoice_no  TEXT,
+            created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_po_supplier ON purchase_orders_local(supplier_id);
+        CREATE INDEX IF NOT EXISTS idx_po_date ON purchase_orders_local(order_date DESC);
+
+        CREATE TABLE IF NOT EXISTS purchase_order_lines_local (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id          INTEGER NOT NULL REFERENCES purchase_orders_local(id) ON DELETE CASCADE,
+            item_id           INTEGER NOT NULL REFERENCES items_local(id),
+            qty               REAL NOT NULL,
+            unit_cost         REAL NOT NULL,
+            vat_rate          REAL NOT NULL DEFAULT 15,
+            line_total        REAL NOT NULL,
+            uom_id            INTEGER,
+            uom_name          TEXT,
+            conversion_factor REAL NOT NULL DEFAULT 1,
+            warehouse_id      INTEGER
+        );
+
+        -- Goods receipts (سندات الاستلام): receive stock BEFORE the supplier
+        -- invoice arrives. Posting books DR Inventory / CR Receiving-Clearing
+        -- (11091) at goods cost (ex-VAT) and pushes stock IN. Converting to an
+        -- invoice clears 11091 + claims input VAT against the supplier, WITHOUT
+        -- re-receiving stock. Lifecycle draft → posted → converted.
+        CREATE TABLE IF NOT EXISTS goods_receipts_local (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            receipt_no           TEXT NOT NULL UNIQUE,
+            supplier_id          INTEGER NOT NULL REFERENCES suppliers_local(id),
+            receipt_date         TEXT NOT NULL,
+            supplier_invoice_no  TEXT,
+            status               TEXT NOT NULL DEFAULT 'draft'
+                                 CHECK (status IN ('draft','posted','converted')),
+            je_id                INTEGER REFERENCES journal_entries_local(id),
+            converted_invoice_id INTEGER REFERENCES purchases_local(id),
+            subtotal             REAL NOT NULL DEFAULT 0,
+            vat_total            REAL NOT NULL DEFAULT 0,
+            grand_total          REAL NOT NULL DEFAULT 0,
+            notes                TEXT,
+            branch_id            INTEGER,
+            cost_center_id       INTEGER,
+            warehouse_id         INTEGER,
+            created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_grn_supplier ON goods_receipts_local(supplier_id);
+        CREATE INDEX IF NOT EXISTS idx_grn_date ON goods_receipts_local(receipt_date DESC);
+
+        CREATE TABLE IF NOT EXISTS goods_receipt_lines_local (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            receipt_id        INTEGER NOT NULL REFERENCES goods_receipts_local(id) ON DELETE CASCADE,
+            item_id           INTEGER NOT NULL REFERENCES items_local(id),
+            qty               REAL NOT NULL,
+            unit_cost         REAL NOT NULL,
+            vat_rate          REAL NOT NULL DEFAULT 15,
+            line_total        REAL NOT NULL,
+            uom_id            INTEGER,
+            uom_name          TEXT,
+            conversion_factor REAL NOT NULL DEFAULT 1,
+            warehouse_id      INTEGER,
+            batch_no          TEXT,
+            expiry_date       TEXT
+        );
+
         -- Financial transactions (المعاملات المالية): receipts & payments.
         --   tx_type 'receipt'  → DR cash/bank, CR customer/revenue
         --   tx_type 'payment'  → DR supplier/expense, CR cash/bank
@@ -830,6 +916,8 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE purchases_local ADD COLUMN cost_center_id INTEGER",
         "ALTER TABLE purchase_returns_local ADD COLUMN branch_id INTEGER",
         "ALTER TABLE purchase_returns_local ADD COLUMN cost_center_id INTEGER",
+        "ALTER TABLE purchase_returns_local ADD COLUMN reason TEXT",
+        "ALTER TABLE purchases_local ADD COLUMN source_goods_receipt_id INTEGER",
         "ALTER TABLE financial_transactions_local ADD COLUMN branch_id INTEGER",
         "ALTER TABLE financial_transactions_local ADD COLUMN cost_center_id INTEGER",
         // ── Manual journal-entry parity with the web app ──
@@ -936,6 +1024,8 @@ pub fn initialize() -> Result<()> {
         ("journal_entry",   "JE-",   "journal_entries_local"),
         ("purchase",        "PUR-",  "purchases_local"),
         ("purchase_return", "PRT-",  "purchase_returns_local"),
+        ("purchase_order",  "PO-",   "purchase_orders_local"),
+        ("goods_receipt",   "GRN-",  "goods_receipts_local"),
         ("sales_invoice",   "SINV-", "sales_invoices_local"),
         ("sales_return",    "SRT-",  "sales_returns_local"),
         ("quotation",       "QT-",   "quotations_local"),
@@ -1053,6 +1143,7 @@ fn seed_default_accounts(conn: &Connection) -> Result<()> {
         ("1101", "الخزينة الرئيسية",      "asset",     Some("1100"), 1),
         ("1200", "البنوك",                "asset",     Some("1000"), 0),
         ("1300", "المخزون",               "asset",     Some("1000"), 1),
+        ("11091","وسيط استلام البضاعة",   "asset",     Some("1000"), 1),
         ("1400", "ضريبة القيمة المضافة - مدخلات", "asset", Some("1000"), 1),
         ("1500", "العملاء (مدينون)",      "asset",     Some("1000"), 1),
         ("2000", "الخصوم",                "liability", None,         0),

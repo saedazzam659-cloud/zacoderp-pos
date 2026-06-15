@@ -79,6 +79,8 @@ import StockAdjustmentsAdmin from "./StockAdjustmentsAdmin";
 import StockMovementsReport from "./StockMovementsReport";
 import StockTransfersAdmin from "./StockTransfersAdmin";
 import PurchaseReturnsAdmin from "./PurchaseReturnsAdmin";
+import PurchaseOrdersAdmin from "./PurchaseOrdersAdmin";
+import GoodsReceiptsAdmin from "./GoodsReceiptsAdmin";
 import FinancialTransactionsAdmin from "./FinancialTransactionsAdmin";
 import UserPermissionsAdmin from "./UserPermissionsAdmin";
 import NumberSeriesAdmin from "./NumberSeriesAdmin";
@@ -220,7 +222,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     key: "purchasing",
     icon: "🛒",
     label: "المشتريات والموردون",
-    members: ["suppliers", "purchases", "purchase_returns", "report_purchases_by_supplier", "report_purchases_by_item", "report_purchases_by_period", "report_purchases_returns", "report_top_suppliers", "report_supplier_statement", "report_supplier_statement_detailed", "report_supplier_balances", "report_supplier_aging", "report_lc_statement"],
+    members: ["suppliers", "purchase_orders", "goods_receipts", "purchases", "purchase_returns", "report_purchases_by_supplier", "report_purchases_by_item", "report_purchases_by_period", "report_purchases_returns", "report_top_suppliers", "report_supplier_statement", "report_supplier_statement_detailed", "report_supplier_balances", "report_supplier_aging", "report_lc_statement"],
   },
   {
     key: "cash_banks",
@@ -550,6 +552,8 @@ export default function PosShell({
     { id: "stock_import",     icon: "📥", label: "استيراد الأرصدة", perm: "stock_import" },
     { id: "low_stock",        icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined, perm: "low_stock" },
     { id: "uom",              icon: "📐", label: "وحدات القياس", perm: "uom" },
+    { id: "purchase_orders",  icon: "📋", label: "أوامر الشراء", perm: "purchase_orders" },
+    { id: "goods_receipts",   icon: "📥", label: "سندات الاستلام", perm: "goods_receipts" },
     { id: "purchases",        icon: "🧾", label: "فواتير الشراء", perm: "purchases" },
     { id: "purchase_returns", icon: "🔁", label: "مرتجع الشراء", perm: "purchase_returns" },
     { id: "report_purchases_by_supplier", icon: "🏭", label: "المشتريات حسب المورد", perm: "report_purchases_by_supplier" },
@@ -712,6 +716,12 @@ export default function PosShell({
           {/* Task #207 — accounting & operations screens (standalone only). */}
           {standalone && v === "suppliers" && (isAdmin || can("suppliers")) && (
             <div style={S.pagePad}><SuppliersAdmin /></div>
+          )}
+          {standalone && v === "purchase_orders" && (isAdmin || can("purchase_orders")) && (
+            <div style={S.pagePad}><PurchaseOrdersAdmin onNavigate={setView} /></div>
+          )}
+          {standalone && v === "goods_receipts" && (isAdmin || can("goods_receipts")) && (
+            <div style={S.pagePad}><GoodsReceiptsAdmin onNavigate={setView} /></div>
           )}
           {standalone && v === "purchases" && (isAdmin || can("purchases")) && (
             <div style={S.pagePad}><PurchasesAdmin onNavigate={setView} /></div>
@@ -1081,6 +1091,8 @@ function labelFor(v: View): string {
     updates: "التحديثات",
     users: "المستخدمون المحليون",
     suppliers: "الموردون",
+    purchase_orders: "أوامر الشراء",
+    goods_receipts: "سندات الاستلام",
     purchases: "فواتير الشراء",
     purchase_returns: "مرتجع الشراء",
     salespersons: "مندوبو المبيعات",

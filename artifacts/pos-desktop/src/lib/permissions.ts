@@ -19,7 +19,7 @@ export type ScreenKey =
   | "sales" | "returns" | "parked" | "daily"
   | "customers" | "items" | "item_groups" | "uom" | "scale" | "expiry"
   | "stock_import" | "low_stock"
-  | "suppliers" | "purchases" | "purchase_returns"
+  | "suppliers" | "purchases" | "purchase_orders" | "goods_receipts" | "purchase_returns"
   | "salespersons"
   | "sales_invoices" | "quotations" | "sales_orders" | "sales_returns" | "invoice_import"
   | "report_sales_daily" | "report_sales_by_period" | "report_sales_by_item" | "report_sales_by_customer"
@@ -54,6 +54,8 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "expiry", label: "تقرير الصلاحية", icon: "⏳", group: "الملفات" },
 
   { key: "suppliers", label: "الموردون", icon: "🏭", group: "المشتريات" },
+  { key: "purchase_orders", label: "أوامر الشراء", icon: "📋", group: "المشتريات" },
+  { key: "goods_receipts", label: "سندات الاستلام", icon: "📥", group: "المشتريات" },
   { key: "purchases", label: "فواتير الشراء", icon: "🧾", group: "المشتريات" },
   { key: "purchase_returns", label: "مرتجع الشراء", icon: "📤", group: "المشتريات" },
 

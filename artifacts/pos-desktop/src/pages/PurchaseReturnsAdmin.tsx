@@ -23,6 +23,11 @@ import { takePurchaseReturnPrefill, type PurchaseReturnPrefill } from "../lib/re
 
 type FLine = PurchaseLine & DiscFields;
 
+const RETURN_REASONS = [
+  "تالف", "منتهي الصلاحية", "خطأ في الصنف", "زيادة في الكمية",
+  "اتفاق مع المورد", "أخرى",
+] as const;
+
 export default function PurchaseReturnsAdmin() {
   const [rows, setRows] = useState<PurchaseReturn[]>([]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -127,6 +132,12 @@ function ReturnDetail({ r }: { r: PurchaseReturn }) {
   const discTotal = disc ? (disc.lineDiscountTotal + disc.headerDiscountValue) : 0;
   return (
     <div style={{ padding: 12 }}>
+      {(r.reason || r.purchaseId) && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginBottom: 10, fontSize: 13, color: "#475569" }}>
+          {r.reason && <span>سبب الإرجاع: <b style={{ color: "#0f172a" }}>{r.reason}</b></span>}
+          {r.purchaseId && <span>فاتورة الشراء المرتبطة: <b style={{ color: "#0f172a" }}>#{r.purchaseId}</b></span>}
+        </div>
+      )}
       <Table>
         <thead><tr><Th>الصنف</Th><Th>الوحدة</Th><Th style={{ textAlign: "left" }}>الكمية</Th><Th style={{ textAlign: "left" }}>سعر الوحدة</Th><Th style={{ textAlign: "left" }}>الإجمالي</Th></tr></thead>
         <tbody>
@@ -159,6 +170,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
   const [branchId, setBranchId] = useState<number | "">("");
   useEffect(() => { if (branchId === "" && branches.length === 1) setBranchId(branches[0].id); }, [branches]); // eslint-disable-line react-hooks/exhaustive-deps
   const [costCenterId, setCostCenterId] = useState<number | "">("");
+  const [reason, setReason] = useState<string>("");
   const [notes, setNotes] = useState("");
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
@@ -260,7 +272,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
           uomId: l.uomId, uomName: l.uomName, conversionFactor: l.conversionFactor,
         };
       });
-      const id = await createPurchaseReturn({ supplierId, purchaseId: initial?.purchaseId ?? null, returnDate: date, warehouseId: warehouseId || null, branchId: branchId === "" ? null : branchId, costCenterId: costCenterId === "" ? null : costCenterId, notes: notes || null, lines: payloadLines });
+      const id = await createPurchaseReturn({ supplierId, purchaseId: initial?.purchaseId ?? null, returnDate: date, warehouseId: warehouseId || null, branchId: branchId === "" ? null : branchId, costCenterId: costCenterId === "" ? null : costCenterId, reason: reason || null, notes: notes || null, lines: payloadLines });
       saveDocDiscount("purchase_return", id, {
         grossSubtotal: r.grossSubtotal * effRate, lineDiscountTotal: r.lineDiscountTotal * effRate, headerDiscountValue: r.headerDiscountValue * effRate,
         currencyCode: currency, exchangeRate: effRate,
@@ -305,6 +317,17 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
         </Field>
         <Field label="مركز التكلفة">
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
+        </Field>
+        <Field label="سبب الإرجاع">
+          <SearchCombobox
+            value={reason}
+            onChange={(v) => setReason(String(v))}
+            style={input}
+            options={[
+              { value: "", label: "— بدون —" },
+              ...RETURN_REASONS.map((rr) => ({ value: rr, label: rr })),
+            ]}
+          />
         </Field>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
       </div>

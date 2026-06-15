@@ -27,7 +27,7 @@ export type WindowsView =
   | "sales" | "returns" | "pending" | "parked" | "daily"
   | "customers" | "items" | "item_groups" | "uom" | "dashboard" | "updates" | "users"
   | "expiry" | "scale" | "stock_import" | "low_stock" | "network"
-  | "suppliers" | "purchases" | "purchase_returns"
+  | "suppliers" | "purchases" | "purchase_orders" | "goods_receipts" | "purchase_returns"
   | "report_purchases_by_supplier" | "report_purchases_by_item" | "report_purchases_by_period"
   | "report_purchases_returns" | "report_top_suppliers"
   | "report_supplier_statement" | "report_supplier_statement_detailed"
@@ -104,6 +104,8 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   stock_transfers:   { module: "inventory", profile: "erp" },
   suppliers:         { module: "purchasing", profile: "erp" },
   purchases:         { module: "purchasing", profile: "erp" },
+  purchase_orders:   { module: "purchasing", profile: "erp" },
+  goods_receipts:    { module: "purchasing", profile: "erp" },
   purchase_returns:  { module: "purchasing", profile: "erp" },
   report_purchases_by_supplier:       { module: "purchasing", profile: "erp" },
   report_purchases_by_item:           { module: "purchasing", profile: "erp" },

@@ -121,13 +121,54 @@ export type PurchaseReturn = {
   id: number; returnNo: string; supplierId: number; supplierName: string | null;
   purchaseId: number | null; returnDate: string;
   subtotal: number; vatTotal: number; grandTotal: number;
-  jeId: number | null; notes: string | null; lines: PurchaseLine[];
+  jeId: number | null; notes: string | null; reason: string | null; lines: PurchaseLine[];
 };
 export type PurchaseReturnInput = {
   supplierId: number; purchaseId: number | null; returnDate: string;
-  notes: string | null; warehouseId?: number | null;
+  notes: string | null; reason?: string | null; warehouseId?: number | null;
   branchId?: number | null; costCenterId?: number | null;
   lines: PurchaseLine[];
+};
+
+export type PurchaseOrderStatus = "draft" | "confirmed" | "converted" | "cancelled";
+export type PurchaseOrder = {
+  id: number; orderNo: string; supplierId: number; supplierName: string | null;
+  orderDate: string; expectedDate: string | null;
+  paymentMethod: PaymentMethod; status: PurchaseOrderStatus;
+  convertedInvoiceId: number | null;
+  subtotal: number; vatTotal: number; grandTotal: number;
+  notes: string | null; supplierInvoiceNo: string | null;
+  warehouseId: number | null; cashBoxId: number | null; bankId: number | null;
+  branchId: number | null; costCenterId: number | null;
+  lines: PurchaseLine[];
+};
+export type PurchaseOrderInput = {
+  supplierId: number; orderDate: string; expectedDate?: string | null;
+  paymentMethod?: PaymentMethod; notes?: string | null; supplierInvoiceNo?: string | null;
+  warehouseId?: number | null; branchId?: number | null; costCenterId?: number | null;
+  cashBoxId?: number | null; bankId?: number | null;
+  lines: PurchaseLine[];
+};
+
+export type GoodsReceiptStatus = "draft" | "posted" | "converted";
+export type GoodsReceipt = {
+  id: number; receiptNo: string; supplierId: number; supplierName: string | null;
+  receiptDate: string; supplierInvoiceNo: string | null;
+  status: GoodsReceiptStatus; jeId: number | null; convertedInvoiceId: number | null;
+  subtotal: number; vatTotal: number; grandTotal: number;
+  notes: string | null; warehouseId: number | null;
+  lines: PurchaseLine[];
+};
+export type GoodsReceiptInput = {
+  supplierId: number; receiptDate: string; supplierInvoiceNo?: string | null;
+  notes?: string | null; warehouseId?: number | null;
+  branchId?: number | null; costCenterId?: number | null;
+  lines: PurchaseLine[];
+};
+export type GoodsReceiptConvertInput = {
+  invoiceDate: string; paymentMethod?: PaymentMethod;
+  cashBoxId?: number | null; bankId?: number | null;
+  supplierInvoiceNo?: string | null;
 };
 
 export type SalesLine = {
@@ -432,6 +473,62 @@ export async function getPurchaseReturn(id: number): Promise<PurchaseReturn> {
 export async function createPurchaseReturn(input: PurchaseReturnInput): Promise<number> {
   if (!hasTauri()) notImpl();
   return await invoke<number>("purchase_return_create", { input });
+}
+
+// ─── Purchase orders ─────────────────────────────────────────────────
+export async function listPurchaseOrders(limit = 200): Promise<PurchaseOrder[]> {
+  if (!hasTauri()) return [];
+  return await invoke<PurchaseOrder[]>("purchase_orders_list", { limit });
+}
+export async function getPurchaseOrder(id: number): Promise<PurchaseOrder> {
+  if (!hasTauri()) notImpl();
+  return await invoke<PurchaseOrder>("purchase_order_get", { id });
+}
+export async function createPurchaseOrder(input: PurchaseOrderInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("purchase_order_create", { input });
+}
+export async function updatePurchaseOrder(id: number, input: PurchaseOrderInput): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("purchase_order_update", { id, input });
+}
+export async function deletePurchaseOrder(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("purchase_order_delete", { id });
+}
+export async function setPurchaseOrderStatus(id: number, status: PurchaseOrderStatus): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("purchase_order_set_status", { id, status });
+}
+export async function convertPurchaseOrder(id: number): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("purchase_order_convert", { id });
+}
+
+// ─── Goods receipts ──────────────────────────────────────────────────
+export async function listGoodsReceipts(limit = 200): Promise<GoodsReceipt[]> {
+  if (!hasTauri()) return [];
+  return await invoke<GoodsReceipt[]>("goods_receipts_list", { limit });
+}
+export async function getGoodsReceipt(id: number): Promise<GoodsReceipt> {
+  if (!hasTauri()) notImpl();
+  return await invoke<GoodsReceipt>("goods_receipt_get", { id });
+}
+export async function createGoodsReceipt(input: GoodsReceiptInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("goods_receipt_create", { input });
+}
+export async function postGoodsReceipt(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("goods_receipt_post", { id });
+}
+export async function deleteGoodsReceipt(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("goods_receipt_delete", { id });
+}
+export async function convertGoodsReceiptToInvoice(id: number, input: GoodsReceiptConvertInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("goods_receipt_convert_to_invoice", { id, input });
 }
 
 // ─── Sales invoices ──────────────────────────────────────────────────
