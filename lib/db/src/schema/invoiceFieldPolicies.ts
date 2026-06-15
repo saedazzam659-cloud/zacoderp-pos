@@ -83,6 +83,7 @@ export const FIELD_CATALOGUE: Record<PolicyScope, FieldDef[]> = {
     { key: "date",            labelAr: "تاريخ الفاتورة",       labelEn: "Invoice date", isDate: true },
     { key: "validUntil",      labelAr: "صالحة حتى",            labelEn: "Valid until" },
     { key: "customer",        labelAr: "العميل",               labelEn: "Customer" },
+    { key: "addCustomerTool", labelAr: "أداة إضافة عميل جديد",  labelEn: "Quick add-customer tool" },
     { key: "salesperson",     labelAr: "مندوب المبيعات",       labelEn: "Salesperson" },
     { key: "branch",          labelAr: "الفرع",                labelEn: "Branch" },
     { key: "costCenter",      labelAr: "مركز التكلفة",         labelEn: "Cost center" },

@@ -2307,7 +2307,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </div>
                 </div>
                 )}
-                <CustomerVatControl customers={customers} customerId={customerId} onCustomerChange={setCustomerId} />
+                <CustomerVatControl customers={customers} customerId={customerId} onCustomerChange={setCustomerId} hidden={!fp.isVisible("addCustomerTool")} readOnly={fp.isReadOnly("addCustomerTool")} />
                 {isInvoice && isNew && (
                   <div className="space-y-1.5">
                     <Label className="text-xs flex items-center gap-1.5">

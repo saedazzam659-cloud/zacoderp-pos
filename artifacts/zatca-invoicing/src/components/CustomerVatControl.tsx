@@ -16,9 +16,13 @@ type Props = {
   customers: any[];
   customerId: string;
   onCustomerChange: (id: string) => void;
+  /** سياسة الحقول (الحوكمة): إخفاء الأداة بالكامل من شاشة الفاتورة. */
+  hidden?: boolean;
+  /** سياسة الحقول (الحوكمة): تعطيل زر «+ عميل جديد» (للقراءة فقط). */
+  readOnly?: boolean;
 };
 
-export function CustomerVatControl({ customers, customerId, onCustomerChange }: Props) {
+export function CustomerVatControl({ customers, customerId, onCustomerChange, hidden, readOnly }: Props) {
   const { user, token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -128,14 +132,18 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
     onError: (e: any) => toast({ title: "تعذّر إضافة العميل", description: e?.message, variant: "destructive" }),
   });
 
+  if (hidden) return null;
+
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2 leading-none">
         <Label className="text-xs font-medium text-foreground/80">الرقم الضريبي للعميل</Label>
         <button
           type="button"
-          className="text-[11px] leading-none text-primary hover:underline inline-flex items-center gap-0.5"
-          onClick={() => { resetForm(); setOpen(true); }}
+          disabled={readOnly}
+          title={readOnly ? "غير مسموح حسب سياسة الحقول" : undefined}
+          className="text-[11px] leading-none text-primary hover:underline inline-flex items-center gap-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
+          onClick={() => { if (readOnly) return; resetForm(); setOpen(true); }}
         >
           <Plus className="h-2.5 w-2.5" />عميل جديد
         </button>
