@@ -28,6 +28,10 @@ export type WindowsView =
   | "customers" | "items" | "item_groups" | "uom" | "dashboard" | "updates" | "users"
   | "expiry" | "scale" | "stock_import" | "low_stock" | "network"
   | "suppliers" | "purchases" | "purchase_returns"
+  | "report_purchases_by_supplier" | "report_purchases_by_item" | "report_purchases_by_period"
+  | "report_purchases_returns" | "report_top_suppliers"
+  | "report_supplier_statement" | "report_supplier_statement_detailed"
+  | "report_supplier_balances" | "report_supplier_aging" | "report_lc_statement"
   | "salespersons"
   | "sales_invoices" | "quotations" | "sales_orders" | "sales_returns" | "invoice_import"
   | "report_sales_daily" | "report_sales_by_period" | "report_sales_by_item" | "report_sales_by_customer"
@@ -101,6 +105,16 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   suppliers:         { module: "purchasing", profile: "erp" },
   purchases:         { module: "purchasing", profile: "erp" },
   purchase_returns:  { module: "purchasing", profile: "erp" },
+  report_purchases_by_supplier:       { module: "purchasing", profile: "erp" },
+  report_purchases_by_item:           { module: "purchasing", profile: "erp" },
+  report_purchases_by_period:         { module: "purchasing", profile: "erp" },
+  report_purchases_returns:           { module: "purchasing", profile: "erp" },
+  report_top_suppliers:               { module: "purchasing", profile: "erp" },
+  report_supplier_statement:          { module: "purchasing", profile: "erp" },
+  report_supplier_statement_detailed: { module: "purchasing", profile: "erp" },
+  report_supplier_balances:           { module: "purchasing", profile: "erp" },
+  report_supplier_aging:              { module: "purchasing", profile: "erp" },
+  report_lc_statement:                { module: "purchasing", profile: "erp" },
   salespersons:      { module: "sales_docs", profile: "erp" },
   sales_invoices:    { module: "sales_docs", profile: "erp" },
   quotations:        { module: "sales_docs", profile: "erp" },

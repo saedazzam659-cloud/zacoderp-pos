@@ -84,3 +84,4 @@
 - [POS Desktop expiry banner](pos-desktop-expiry-banner.md) — banner is its OWN row below nav (never in topnavControls, breaks menus); renewal text reuses the global subscription_contact_info key via /api/sync/pull, default in standalone.
 - [Typecheck large artifact via workflow](huge-app-tsc-via-workflow.md) — full tsc exceeds bash 120s + subagent 300s + detached jobs get reaped; run it as a temp console workflow, finished+empty output = clean.
 - [DateField adapter](date-field-adapter.md) — zatca-invoicing uses DateField→SmartDateInput (DD/MM/YYYY, ISO stored) everywhere; never native <input type=date> (garbled Hijri on Saudi devices); forwards ref/onBlur/data-*.
+- [POS Desktop purchase AP gating](pos-desktop-purchase-ap-gating.md) — supplier statements: gate purchases to payment_method='credit', but NEVER gate returns (no payment_method col; purchase_return_create always debits AP).

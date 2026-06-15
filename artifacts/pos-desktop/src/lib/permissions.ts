@@ -24,6 +24,10 @@ export type ScreenKey =
   | "sales_invoices" | "quotations" | "sales_orders" | "sales_returns" | "invoice_import"
   | "report_sales_daily" | "report_sales_by_period" | "report_sales_by_item" | "report_sales_by_customer"
   | "report_sales_daily_detailed" | "report_sales_payment_mix" | "report_sales_returns" | "report_sales_top_customers"
+  | "report_purchases_by_supplier" | "report_purchases_by_item" | "report_purchases_by_period"
+  | "report_purchases_returns" | "report_top_suppliers"
+  | "report_supplier_statement" | "report_supplier_statement_detailed"
+  | "report_supplier_balances" | "report_supplier_aging" | "report_lc_statement"
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
   | "chart_of_accounts" | "journal_entries" | "cost_centers" | "taxes"
@@ -68,6 +72,17 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "report_sales_payment_mix", label: "المبيعات حسب طريقة الدفع", icon: "💳", group: "تقارير المبيعات" },
   { key: "report_sales_returns", label: "مرتجعات المبيعات", icon: "↩️", group: "تقارير المبيعات" },
   { key: "report_sales_top_customers", label: "أفضل العملاء", icon: "🏆", group: "تقارير المبيعات" },
+
+  { key: "report_purchases_by_supplier", label: "المشتريات حسب المورد", icon: "🏭", group: "تقارير المشتريات" },
+  { key: "report_purchases_by_item", label: "المشتريات حسب الصنف", icon: "📦", group: "تقارير المشتريات" },
+  { key: "report_purchases_by_period", label: "المشتريات حسب الفترة", icon: "🗓️", group: "تقارير المشتريات" },
+  { key: "report_purchases_returns", label: "مرتجعات المشتريات", icon: "🔁", group: "تقارير المشتريات" },
+  { key: "report_top_suppliers", label: "أكبر الموردين", icon: "🏆", group: "تقارير المشتريات" },
+  { key: "report_supplier_statement", label: "كشف حساب مورد", icon: "📄", group: "تقارير المشتريات" },
+  { key: "report_supplier_statement_detailed", label: "كشف حساب مورد تفصيلي", icon: "📑", group: "تقارير المشتريات" },
+  { key: "report_supplier_balances", label: "أرصدة الموردين", icon: "💼", group: "تقارير المشتريات" },
+  { key: "report_supplier_aging", label: "أعمار ديون الموردين", icon: "⏱️", group: "تقارير المشتريات" },
+  { key: "report_lc_statement", label: "كشف الاعتمادات المستندية", icon: "🌐", group: "تقارير المشتريات" },
 
   { key: "cash_boxes", label: "الخزن", icon: "💰", group: "الخزينة والبنوك" },
   { key: "banks", label: "البنوك", icon: "🏦", group: "الخزينة والبنوك" },

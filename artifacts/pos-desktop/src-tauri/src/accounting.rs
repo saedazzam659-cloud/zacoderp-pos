@@ -4069,6 +4069,162 @@ pub fn report_sales_returns(
     Ok(out)
 }
 
+// ──────────────────── Purchasing reports (تقارير المشتريات) ────────────────
+// Mirror of the sales-report datasets above: Rust only fetches filtered rows;
+// all grouping (by supplier / item / period) + supplier-statement aggregation
+// is done in the React pages (purchaseReports.ts consumers) so the SQL stays
+// trivial and the heavy logic is verifiable without a Rust recompile.
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PurchaseInvoiceReportRow {
+    pub id: i64,
+    pub invoice_no: String,
+    pub invoice_date: String,
+    pub supplier_id: Option<i64>,
+    pub supplier_name: Option<String>,
+    pub payment_method: String,
+    pub subtotal: f64,
+    pub vat_total: f64,
+    pub grand_total: f64,
+    pub line_count: i64,
+}
+
+/// Back-office purchase invoices in a date range, optionally scoped by branch /
+/// supplier (local rows have no status column — every saved invoice counts).
+/// Powers the Purchases-by-Period, Purchases-by-Supplier and Top-Suppliers
+/// screens (which group these rows client-side).
+#[tauri::command]
+pub fn report_purchase_invoices(
+    from_date: Option<String>,
+    to_date: Option<String>,
+    branch_id: Option<i64>,
+    supplier_id: Option<i64>,
+) -> Result<Vec<PurchaseInvoiceReportRow>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut sql = String::from(
+        "SELECT p.id, p.invoice_no, p.invoice_date, p.supplier_id, s.name_ar, \
+         p.payment_method, p.subtotal, p.vat_total, p.grand_total, \
+         (SELECT COUNT(*) FROM purchase_lines_local l WHERE l.purchase_id = p.id) \
+         FROM purchases_local p \
+         LEFT JOIN suppliers_local s ON s.id = p.supplier_id WHERE 1=1"
+    );
+    let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(d) = &from_date { sql.push_str(" AND p.invoice_date >= ?"); args.push(Box::new(d.clone())); }
+    if let Some(d) = &to_date { sql.push_str(" AND p.invoice_date <= ?"); args.push(Box::new(d.clone())); }
+    if let Some(b) = branch_id { sql.push_str(" AND p.branch_id = ?"); args.push(Box::new(b)); }
+    if let Some(su) = supplier_id { sql.push_str(" AND p.supplier_id = ?"); args.push(Box::new(su)); }
+    sql.push_str(" ORDER BY p.invoice_date, p.id");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(rusqlite::params_from_iter(params_ref), |r| Ok(PurchaseInvoiceReportRow {
+        id: r.get(0)?, invoice_no: r.get(1)?, invoice_date: r.get(2)?, supplier_id: r.get(3)?,
+        supplier_name: r.get(4)?, payment_method: r.get(5)?, subtotal: r.get(6)?,
+        vat_total: r.get(7)?, grand_total: r.get(8)?, line_count: r.get(9)?,
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PurchaseLineReportRow {
+    pub purchase_id: i64,
+    pub invoice_no: String,
+    pub invoice_date: String,
+    pub supplier_id: Option<i64>,
+    pub supplier_name: Option<String>,
+    pub item_id: i64,
+    pub item_code: Option<String>,
+    pub item_name: String,
+    pub qty: f64,
+    pub unit_cost: f64,
+    pub line_total: f64,
+    pub vat_rate: f64,
+}
+
+/// Line-level purchase rows in a date range (one row per invoice line), joined
+/// to item + supplier master data. Powers the Purchases-by-Item screen.
+#[tauri::command]
+pub fn report_purchase_invoice_lines(
+    from_date: Option<String>,
+    to_date: Option<String>,
+    branch_id: Option<i64>,
+) -> Result<Vec<PurchaseLineReportRow>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut sql = String::from(
+        "SELECT l.purchase_id, p.invoice_no, p.invoice_date, p.supplier_id, s.name_ar, \
+         l.item_id, i.code, i.name_ar, l.qty, l.unit_cost, l.line_total, l.vat_rate \
+         FROM purchase_lines_local l \
+         JOIN purchases_local p ON p.id = l.purchase_id \
+         LEFT JOIN suppliers_local s ON s.id = p.supplier_id \
+         LEFT JOIN items_local i ON i.id = l.item_id WHERE 1=1"
+    );
+    let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(d) = &from_date { sql.push_str(" AND p.invoice_date >= ?"); args.push(Box::new(d.clone())); }
+    if let Some(d) = &to_date { sql.push_str(" AND p.invoice_date <= ?"); args.push(Box::new(d.clone())); }
+    if let Some(b) = branch_id { sql.push_str(" AND p.branch_id = ?"); args.push(Box::new(b)); }
+    sql.push_str(" ORDER BY p.invoice_date, l.id");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(rusqlite::params_from_iter(params_ref), |r| Ok(PurchaseLineReportRow {
+        purchase_id: r.get(0)?, invoice_no: r.get(1)?, invoice_date: r.get(2)?, supplier_id: r.get(3)?,
+        supplier_name: r.get(4)?, item_id: r.get(5)?, item_code: r.get(6)?, item_name: r.get(7)?,
+        qty: r.get(8)?, unit_cost: r.get(9)?, line_total: r.get(10)?, vat_rate: r.get(11)?,
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PurchaseReturnReportRow {
+    pub id: i64,
+    pub return_no: String,
+    pub return_date: String,
+    pub supplier_id: Option<i64>,
+    pub supplier_name: Option<String>,
+    pub subtotal: f64,
+    pub vat_total: f64,
+    pub grand_total: f64,
+}
+
+/// Purchase returns (debit notes) in a date range, optionally scoped by branch /
+/// supplier. Feeds the net-purchases column on Purchases-by-Supplier and the
+/// dedicated Purchase Returns report.
+#[tauri::command]
+pub fn report_purchase_returns(
+    from_date: Option<String>,
+    to_date: Option<String>,
+    branch_id: Option<i64>,
+    supplier_id: Option<i64>,
+) -> Result<Vec<PurchaseReturnReportRow>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut sql = String::from(
+        "SELECT r.id, r.return_no, r.return_date, r.supplier_id, s.name_ar, \
+         r.subtotal, r.vat_total, r.grand_total \
+         FROM purchase_returns_local r \
+         LEFT JOIN suppliers_local s ON s.id = r.supplier_id WHERE 1=1"
+    );
+    let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(d) = &from_date { sql.push_str(" AND r.return_date >= ?"); args.push(Box::new(d.clone())); }
+    if let Some(d) = &to_date { sql.push_str(" AND r.return_date <= ?"); args.push(Box::new(d.clone())); }
+    if let Some(b) = branch_id { sql.push_str(" AND r.branch_id = ?"); args.push(Box::new(b)); }
+    if let Some(su) = supplier_id { sql.push_str(" AND r.supplier_id = ?"); args.push(Box::new(su)); }
+    sql.push_str(" ORDER BY r.return_date, r.id");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(rusqlite::params_from_iter(params_ref), |r| Ok(PurchaseReturnReportRow {
+        id: r.get(0)?, return_no: r.get(1)?, return_date: r.get(2)?, supplier_id: r.get(3)?,
+        supplier_name: r.get(4)?, subtotal: r.get(5)?, vat_total: r.get(6)?, grand_total: r.get(7)?,
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
 // ─────────────────────────── Taxes (الضرائب) ───────────────────────────
 // Dynamic master list of taxes. Each tax owns one GL account + a rate, and
 // declares per-direction availability + debit/credit nature. Exactly one row

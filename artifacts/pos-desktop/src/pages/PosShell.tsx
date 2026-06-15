@@ -61,6 +61,16 @@ import DailyDetailedSalesReport from "./DailyDetailedSalesReport";
 import SalesByPaymentMethodReport from "./SalesByPaymentMethodReport";
 import SalesReturnsReport from "./SalesReturnsReport";
 import TopCustomersReport from "./TopCustomersReport";
+import PurchasesBySupplierReport from "./PurchasesBySupplierReport";
+import PurchasesByItemReport from "./PurchasesByItemReport";
+import PurchasesByPeriodReport from "./PurchasesByPeriodReport";
+import PurchaseReturnsReport from "./PurchaseReturnsReport";
+import TopSuppliersReport from "./TopSuppliersReport";
+import SupplierStatementReport from "./SupplierStatementReport";
+import SupplierStatementDetailedReport from "./SupplierStatementDetailedReport";
+import SupplierBalancesReport from "./SupplierBalancesReport";
+import SupplierAgingReport from "./SupplierAgingReport";
+import LcStatementReport from "./LcStatementReport";
 import SalespersonsAdmin from "./SalespersonsAdmin";
 import SalesReturnsAdmin from "./SalesReturnsAdmin";
 import WarehousesAdmin from "./WarehousesAdmin";
@@ -210,7 +220,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     key: "purchasing",
     icon: "🛒",
     label: "المشتريات والموردون",
-    members: ["suppliers", "purchases", "purchase_returns"],
+    members: ["suppliers", "purchases", "purchase_returns", "report_purchases_by_supplier", "report_purchases_by_item", "report_purchases_by_period", "report_purchases_returns", "report_top_suppliers", "report_supplier_statement", "report_supplier_statement_detailed", "report_supplier_balances", "report_supplier_aging", "report_lc_statement"],
   },
   {
     key: "cash_banks",
@@ -542,6 +552,16 @@ export default function PosShell({
     { id: "uom",              icon: "📐", label: "وحدات القياس", perm: "uom" },
     { id: "purchases",        icon: "🧾", label: "فواتير الشراء", perm: "purchases" },
     { id: "purchase_returns", icon: "🔁", label: "مرتجع الشراء", perm: "purchase_returns" },
+    { id: "report_purchases_by_supplier", icon: "🏭", label: "المشتريات حسب المورد", perm: "report_purchases_by_supplier" },
+    { id: "report_purchases_by_item",     icon: "📦", label: "المشتريات حسب الصنف", perm: "report_purchases_by_item" },
+    { id: "report_purchases_by_period",   icon: "🗓️", label: "المشتريات حسب الفترة", perm: "report_purchases_by_period" },
+    { id: "report_purchases_returns",     icon: "🔁", label: "مرتجعات المشتريات", perm: "report_purchases_returns" },
+    { id: "report_top_suppliers",         icon: "🏆", label: "أكبر الموردين", perm: "report_top_suppliers" },
+    { id: "report_supplier_statement",    icon: "📄", label: "كشف حساب مورد", perm: "report_supplier_statement" },
+    { id: "report_supplier_statement_detailed", icon: "📑", label: "كشف حساب مورد تفصيلي", perm: "report_supplier_statement_detailed" },
+    { id: "report_supplier_balances",     icon: "💼", label: "أرصدة الموردين", perm: "report_supplier_balances" },
+    { id: "report_supplier_aging",        icon: "⏱️", label: "أعمار ديون الموردين", perm: "report_supplier_aging" },
+    { id: "report_lc_statement",          icon: "🌐", label: "كشف الاعتمادات المستندية", perm: "report_lc_statement" },
     { id: "salespersons",     icon: "🧑‍💼", label: "مندوبو المبيعات", perm: "salespersons" },
     { id: "quotations",       icon: "📝", label: "عروض الأسعار", perm: "quotations" },
     { id: "sales_orders",     icon: "📋", label: "أوامر البيع", perm: "sales_orders" },
@@ -698,6 +718,36 @@ export default function PosShell({
           )}
           {standalone && v === "purchase_returns" && (isAdmin || can("purchase_returns")) && (
             <div style={S.pagePad}><PurchaseReturnsAdmin /></div>
+          )}
+          {standalone && v === "report_purchases_by_supplier" && (isAdmin || can("report_purchases_by_supplier")) && (
+            <div style={S.pagePad}><PurchasesBySupplierReport /></div>
+          )}
+          {standalone && v === "report_purchases_by_item" && (isAdmin || can("report_purchases_by_item")) && (
+            <div style={S.pagePad}><PurchasesByItemReport /></div>
+          )}
+          {standalone && v === "report_purchases_by_period" && (isAdmin || can("report_purchases_by_period")) && (
+            <div style={S.pagePad}><PurchasesByPeriodReport /></div>
+          )}
+          {standalone && v === "report_purchases_returns" && (isAdmin || can("report_purchases_returns")) && (
+            <div style={S.pagePad}><PurchaseReturnsReport /></div>
+          )}
+          {standalone && v === "report_top_suppliers" && (isAdmin || can("report_top_suppliers")) && (
+            <div style={S.pagePad}><TopSuppliersReport /></div>
+          )}
+          {standalone && v === "report_supplier_statement" && (isAdmin || can("report_supplier_statement")) && (
+            <div style={S.pagePad}><SupplierStatementReport /></div>
+          )}
+          {standalone && v === "report_supplier_statement_detailed" && (isAdmin || can("report_supplier_statement_detailed")) && (
+            <div style={S.pagePad}><SupplierStatementDetailedReport /></div>
+          )}
+          {standalone && v === "report_supplier_balances" && (isAdmin || can("report_supplier_balances")) && (
+            <div style={S.pagePad}><SupplierBalancesReport /></div>
+          )}
+          {standalone && v === "report_supplier_aging" && (isAdmin || can("report_supplier_aging")) && (
+            <div style={S.pagePad}><SupplierAgingReport /></div>
+          )}
+          {standalone && v === "report_lc_statement" && (isAdmin || can("report_lc_statement")) && (
+            <div style={S.pagePad}><LcStatementReport /></div>
           )}
           {standalone && v === "salespersons" && (isAdmin || can("salespersons")) && (
             <div style={S.pagePad}><SalespersonsAdmin /></div>
@@ -1047,6 +1097,16 @@ function labelFor(v: View): string {
     report_sales_payment_mix: "المبيعات حسب طريقة الدفع",
     report_sales_returns: "مرتجعات المبيعات",
     report_sales_top_customers: "أفضل العملاء",
+    report_purchases_by_supplier: "المشتريات حسب المورد",
+    report_purchases_by_item: "المشتريات حسب الصنف",
+    report_purchases_by_period: "المشتريات حسب الفترة",
+    report_purchases_returns: "مرتجعات المشتريات",
+    report_top_suppliers: "أكبر الموردين",
+    report_supplier_statement: "كشف حساب مورد",
+    report_supplier_statement_detailed: "كشف حساب مورد تفصيلي",
+    report_supplier_balances: "أرصدة الموردين",
+    report_supplier_aging: "أعمار ديون الموردين",
+    report_lc_statement: "كشف الاعتمادات المستندية",
     cash_boxes: "الخزن",
     banks: "البنوك",
     financial_tx: "المعاملات المالية",
