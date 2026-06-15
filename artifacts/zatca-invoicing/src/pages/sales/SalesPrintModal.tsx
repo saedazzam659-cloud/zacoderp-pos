@@ -2417,6 +2417,30 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     },
   });
   const enUnitsMap = useMemo(() => buildEnUnitsMap(enUnitsQuery.data ?? []), [enUnitsQuery.data]);
+  // Live chart-of-accounts → resolve the customer's linked GL account id to
+  // its real account CODE (e.g. 1103010004) for the "كود الحساب" field. Without
+  // this the template falls back to a synthetic "A-<accountId>" placeholder
+  // that is NOT the account's actual code in شجرة الحسابات.
+  const accountsQuery = useQuery({
+    queryKey: ["print-accounts", itemsCompanyId],
+    enabled: !!open && !!itemsCompanyId && !!token,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/accounts?companyId=${itemsCompanyId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) return [] as any[];
+      const j = await r.json();
+      return Array.isArray(j) ? j : (j.accounts ?? j.items ?? j.data ?? []);
+    },
+  });
+  const accountCodeMap = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const a of (accountsQuery.data ?? [])) {
+      if (a?.id != null && a?.code != null) m.set(Number(a.id), String(a.code));
+    }
+    return m;
+  }, [accountsQuery.data]);
   // Re-sync the selected template when the caller's preference or the
   // company's visibility config changes.
   useEffect(() => { setSelected(resolveInitialId()); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [defaultTemplate, companyCfg.printEnabledTemplates, companyCfg.printDefaultTemplate]);
@@ -2505,6 +2529,25 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     }
     (data as any)._enNames = namesForPrint;
     (data as any)._enUnits = unitsForPrint;
+    // Resolve the customer's linked GL account id → real chart-of-accounts
+    // code (e.g. 1103010004) so the printed "كود الحساب" matches شجرة الحسابات
+    // instead of the synthetic "A-<id>" fallback. Refetch if the accounts
+    // query hasn't resolved yet (e.g. auto-print on open).
+    if (data.customer?.accountId != null) {
+      let map = accountCodeMap;
+      if (map.size === 0 && itemsCompanyId) {
+        try {
+          const res = await accountsQuery.refetch();
+          const m = new Map<number, string>();
+          for (const a of ((res.data as any[]) ?? [])) {
+            if (a?.id != null && a?.code != null) m.set(Number(a.id), String(a.code));
+          }
+          map = m;
+        } catch { /* fall back to the template's A-<id> placeholder */ }
+      }
+      const resolved = map.get(Number(data.customer.accountId));
+      if (resolved) (data.customer as any).accountCode = resolved;
+    }
     const html = tmpl.fn(data);
     // Use a hidden same-origin iframe instead of `window.open` so popup
     // blockers don't kill auto-print after save (no user-gesture path)
