@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { Plus, Send, RotateCcw, Trash2, FileText, Edit } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,6 +37,7 @@ const ROUTE_BASE: Record<string, string> = {
 export default function AccountNotesList({ partyType, noteType }: Props) {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const key = `${partyType}.${noteType}`;
   const base = ROUTE_BASE[key];
 
@@ -104,14 +105,18 @@ export default function AccountNotesList({ partyType, noteType }: Props) {
               <th className="p-2 text-right">VAT</th>
               <th className="p-2 text-right">الإجمالي</th>
               <th className="p-2 text-right">الحالة</th>
+              <th className="p-2 text-right">رقم القيد</th>
               <th className="p-2"></th>
             </tr></thead>
             <tbody>
               {(rows as any[]).length === 0 && (
-                <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">لا توجد إشعارات</td></tr>
+                <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">لا توجد إشعارات</td></tr>
               )}
               {(rows as any[]).map((r: any) => (
-                <tr key={r.id} className="border-t hover:bg-muted/30" data-testid={`row-note-${r.id}`}>
+                <tr key={r.id}
+                  className="border-t hover:bg-muted/30 cursor-pointer select-none"
+                  onClick={() => setLocation(`${base}/${r.id}`)}
+                  data-testid={`row-note-${r.id}`}>
                   <td className="p-2 font-mono">{r.noteNumber}</td>
                   <td className="p-2">{r.noteDate}</td>
                   <td className="p-2">{partyMap[r.partyId] ?? `#${r.partyId}`}</td>
@@ -123,7 +128,16 @@ export default function AccountNotesList({ partyType, noteType }: Props) {
                       {r.status === "posted" ? "مُرحَّل" : r.status === "cancelled" ? "ملغي" : "مسودة"}
                     </span>
                   </td>
-                  <td className="p-2 flex gap-1 justify-end">
+                  <td className="p-2">
+                    {r.journalEntryId ? (
+                      <Link href={`/accounting/journals/${r.journalEntryId}`}>
+                        <a className="text-blue-600 hover:underline font-mono"
+                          onClick={(e) => e.stopPropagation()}
+                          data-testid={`link-je-${r.id}`}>#{r.journalEntryId}</a>
+                      </Link>
+                    ) : <span className="text-muted-foreground">—</span>}
+                  </td>
+                  <td className="p-2 flex gap-1 justify-end" onClick={(e) => e.stopPropagation()}>
                     {r.status === "draft" && (
                       <>
                         <Link href={`${base}/${r.id}`}>
@@ -155,7 +169,7 @@ export default function AccountNotesList({ partyType, noteType }: Props) {
                 <tr className="border-t bg-muted/30 font-semibold">
                   <td colSpan={5} className="p-2 text-right">الإجمالي</td>
                   <td className="p-2 text-left">{total.toFixed(2)}</td>
-                  <td colSpan={2}></td>
+                  <td colSpan={3}></td>
                 </tr>
               )}
             </tbody>

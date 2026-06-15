@@ -24,13 +24,14 @@ import {
   accountsTable,
   journalEntriesTable, journalEntryLinesTable,
 } from "@workspace/db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { requireModulePermission } from "../middleware/permissions.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { loadMappings } from "../lib/accountingMappings.js";
 import { contractingProjectsTable } from "@workspace/db";
 
 /**
@@ -123,6 +124,63 @@ router.get("/", async (req, res) => {
     rows = rows.filter(r => (r.partyType === "customer" ? allowedCustomer : allowedSupplier));
   }
   res.json(rows);
+});
+
+// ═════════════════════════════════════════════════════════════════
+// DEFAULTS — auto-fill the contra + VAT accounts based on the note type
+// ═════════════════════════════════════════════════════════════════
+// Resolves from the company's accounting-mappings (the SAME source the
+// sales/purchase invoices use, so a note posts to the SAME revenue / VAT
+// accounts → consistent reports). VAT side follows the international
+// output-vs-input convention:
+//   customer → sales_invoice    : contra = revenue,  vat = vat_output (ضريبة المخرجات)
+//   supplier → purchase_invoice : contra = discount(credit)/inventory(debit),
+//                                 vat = vat_input (ضريبة المدخلات)
+// We also return each account's `accountType` so the UI can skip auto-filling
+// the contra when its type falls outside that route's allowed picker types
+// (the AccountCombobox only renders accounts within `filterTypes`, so a
+// type-mismatched value would otherwise display blank). Returns nulls for
+// unmapped companies → the UI falls back to manual selection.
+// NOTE: registered BEFORE `/:id` so the literal "defaults" segment is not
+// swallowed by the `:id` param (Express 5 / path-to-regexp 8 quirk).
+router.get("/defaults", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const partyType = req.query.partyType;
+  const noteType  = req.query.noteType;
+  if (partyType !== "customer" && partyType !== "supplier") {
+    res.status(400).json({ error: "نوع الطرف غير صالح" }); return;
+  }
+  const docType = partyType === "customer" ? "sales_invoice" : "purchase_invoice";
+  const map = await loadMappings(cid, docType);
+
+  let contraAccountId: number | null;
+  let vatAccountId: number | null;
+  if (partyType === "customer") {
+    contraAccountId = map(docType, "revenue");
+    vatAccountId    = map(docType, "vat_output");
+  } else {
+    // Supplier-side contra is a P&L purchase account: credit notes reduce
+    // purchases (مردودات/خصم مشتريات → "discount" role), debit notes add cost.
+    contraAccountId = noteType === "credit" ? map(docType, "discount") : map(docType, "inventory");
+    vatAccountId    = map(docType, "vat_input");
+  }
+
+  // Resolve the account types in one round-trip for the UI gating above.
+  const ids = [contraAccountId, vatAccountId].filter((x): x is number => !!x);
+  const typeOf = new Map<number, string>();
+  if (ids.length) {
+    const accs = await db.select({ id: accountsTable.id, accountType: accountsTable.accountType })
+      .from(accountsTable)
+      .where(and(eq(accountsTable.companyId, cid), inArray(accountsTable.id, ids)));
+    for (const a of accs) typeOf.set(a.id, a.accountType as any);
+  }
+
+  res.json({
+    contraAccountId:   contraAccountId ?? null,
+    contraAccountType: contraAccountId ? (typeOf.get(contraAccountId) ?? null) : null,
+    vatAccountId:      vatAccountId ?? null,
+    vatAccountType:    vatAccountId ? (typeOf.get(vatAccountId) ?? null) : null,
+  });
 });
 
 router.get("/:id", async (req, res) => {

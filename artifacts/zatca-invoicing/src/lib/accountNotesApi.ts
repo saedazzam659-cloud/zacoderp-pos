@@ -65,6 +65,14 @@ export const accountNotesApi = {
   get(id: number): Promise<AccountNote> {
     return fetch(`${API}/api/account-notes/${id}`, { headers: authHeaders() }).then(jsonOrThrow);
   },
+  defaults(partyType: AccountNotePartyType, noteType?: AccountNoteType): Promise<{
+    contraAccountId: number | null; contraAccountType: string | null;
+    vatAccountId: number | null;    vatAccountType: string | null;
+  }> {
+    const qs = new URLSearchParams({ partyType });
+    if (noteType) qs.set("noteType", noteType);
+    return fetch(`${API}/api/account-notes/defaults?${qs.toString()}`, { headers: authHeaders() }).then(jsonOrThrow);
+  },
   create(body: Partial<AccountNote>): Promise<AccountNote> {
     return fetch(`${API}/api/account-notes`, { method: "POST", headers: authHeaders(), body: JSON.stringify(body) }).then(jsonOrThrow);
   },

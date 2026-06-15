@@ -1,16 +1,17 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
-import { FileText, Save } from "lucide-react";
+import { FileText, Save, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useToast } from "@/hooks/use-toast";
-import { accountNotesApi, type AccountNotePartyType, type AccountNoteType } from "@/lib/accountNotesApi";
+import { accountNotesApi, type AccountNote, type AccountNotePartyType, type AccountNoteType } from "@/lib/accountNotesApi";
 import { useCostCenters } from "@/hooks/useCostCenters";
 import { DateField } from "@/components/ui/date-field";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface Props {
   partyType: AccountNotePartyType;
@@ -39,6 +40,11 @@ const CONTRA_HINTS: Record<string, string> = {
   "supplier.debit":  "مثال: مصاريف إضافية / غرامات",
 };
 
+function esc(s: any): string {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+}
+
 function authHeaders(): Record<string, string> {
   const t = localStorage.getItem("zatca_token");
   const acting = localStorage.getItem("zatca_acting_company_id");
@@ -56,11 +62,16 @@ async function fetchJson(path: string) {
 export default function AccountNoteForm({ partyType, noteType }: Props) {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { user } = useAuth() as any;
   const qc = useQueryClient();
   const key = `${partyType}.${noteType}`;
   const base = ROUTE_BASE[key];
   const [, params] = useRoute(`${base}/:id`);
   const editingId = params?.id && params.id !== "new" ? Number(params.id) : null;
+  // Full persisted note (edit mode) — needed for printing (number/status/JE).
+  const [existing, setExisting] = useState<AccountNote | null>(null);
+  // Guards the one-time defaults auto-fill so it never fights manual edits.
+  const autoFilledRef = useRef(false);
 
   const [form, setForm] = useState<any>({
     noteDate: new Date().toISOString().slice(0, 10),
@@ -111,6 +122,7 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
         costCenter:      n.costCenter      ?? "",
         projectId:       n.projectId ? String(n.projectId) : "",
       });
+      setExisting(n);
       return n;
     },
   });
@@ -121,6 +133,35 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
     const p = (parties as any[]).find((x: any) => String(x.id) === String(form.partyId));
     if (p?.accountId) setForm((f: any) => ({ ...f, partyAccountId: String(p.accountId) }));
   }, [form.partyId, parties]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Auto-fill contra + VAT accounts on a NEW note ──────────────────
+  // Pulls the company's mapped revenue/VAT accounts so the note posts to
+  // the SAME accounts as its sales/purchase invoices. Runs once, only fills
+  // EMPTY fields (never overrides manual edits), and skips the contra when
+  // its account type isn't selectable in this route's picker (else it would
+  // display blank — see AccountCombobox filterTypes).
+  const { data: defaults } = useQuery({
+    queryKey: ["account-note-defaults", partyType, noteType],
+    enabled: !editingId,
+    staleTime: 60_000,
+    queryFn: () => accountNotesApi.defaults(partyType, noteType),
+  });
+  useEffect(() => {
+    if (editingId || !defaults || autoFilledRef.current) return;
+    autoFilledRef.current = true;
+    setForm((f: any) => {
+      const next = { ...f };
+      if (!f.contraAccountId && defaults.contraAccountId &&
+          defaults.contraAccountType && contraTypeFilter.includes(defaults.contraAccountType)) {
+        next.contraAccountId = String(defaults.contraAccountId);
+      }
+      if (defaults.vatAccountId && !f.vatAccountId) {
+        next.vatAccountId = String(defaults.vatAccountId);
+        if (!f.vatEnabled) next.vatEnabled = true;
+      }
+      return next;
+    });
+  }, [defaults, editingId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const amount    = Number(form.amount || 0);
   const vatAmount = form.vatEnabled ? +(amount * Number(form.vatRate || 0) / 100).toFixed(2) : 0;
@@ -196,9 +237,67 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
     return ["expense"];
   }, [partyType, noteType]);
 
+  // ── Print the persisted note ───────────────────────────────────────
+  function printNote() {
+    if (!existing) return;
+    const company = user?.company ?? {};
+    const fmt = (n: any) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const statusLabel = existing.status === "posted" ? "مُرحَّل" : "مسودة";
+    const rows: Array<[string, string]> = [
+      ["رقم الإشعار", esc(existing.noteNumber ?? String(existing.id))],
+      ["التاريخ", esc(existing.noteDate ?? "")],
+      ["الحالة", statusLabel],
+      [partyLabel, esc(selectedParty?.nameAr ?? "")],
+      ["الرقم الضريبي", esc(selectedParty?.taxNumber ?? "—")],
+      ["المبلغ", `${fmt(existing.amount)} ر.س`],
+    ];
+    if (existing.vatEnabled) {
+      rows.push(["ضريبة القيمة المضافة", `${fmt(existing.vatAmount)} ر.س (${fmt(existing.vatRate)}%)`]);
+    }
+    rows.push(["الإجمالي", `${fmt(existing.totalAmount)} ر.س`]);
+    if (existing.journalEntryId) rows.push(["رقم القيد", `#${existing.journalEntryId}`]);
+
+    const win = window.open("", "_blank", "width=800,height=900");
+    if (!win) { toast({ title: "تعذّر فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة", variant: "destructive" }); return; }
+    win.document.write(`<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8" />
+      <title>${esc(TITLES[key])} ${esc(existing.noteNumber ?? "")}</title>
+      <style>
+        *{box-sizing:border-box} body{font-family:'Tahoma','Arial',sans-serif;margin:0;padding:32px;color:#1a1a1a}
+        .hdr{text-align:center;border-bottom:2px solid #333;padding-bottom:12px;margin-bottom:20px}
+        .hdr h1{margin:0 0 4px;font-size:20px} .hdr h2{margin:0;font-size:16px;color:#555;font-weight:normal}
+        table{width:100%;border-collapse:collapse;margin-top:8px}
+        td{padding:9px 12px;border:1px solid #ccc;font-size:14px}
+        td.k{background:#f4f4f4;font-weight:bold;width:38%}
+        .desc{margin-top:18px;font-size:14px;white-space:pre-wrap}
+        .desc b{display:block;margin-bottom:4px}
+        .ft{margin-top:40px;text-align:center;font-size:12px;color:#888}
+        @media print{body{padding:12px}}
+      </style></head><body>
+      <div class="hdr">
+        <h1>${esc(company.nameAr ?? company.name ?? "")}</h1>
+        <h2>${esc(TITLES[key])}</h2>
+      </div>
+      <table><tbody>
+        ${rows.map(([k, v]) => `<tr><td class="k">${esc(k)}</td><td>${v}</td></tr>`).join("")}
+      </tbody></table>
+      ${existing.description ? `<div class="desc"><b>البيان</b>${esc(existing.description)}</div>` : ""}
+      ${existing.notes ? `<div class="desc"><b>ملاحظات</b>${esc(existing.notes)}</div>` : ""}
+      <div class="ft">طُبع في ${new Date().toLocaleString("ar-EG")}</div>
+      <script>window.onload=function(){setTimeout(function(){window.print()},250)}<\/script>
+      </body></html>`);
+    win.document.close();
+  }
+
   return (
     <form onSubmit={(e) => submit(e, false)} className="p-6 space-y-4">
-      <h1 className="text-xl font-bold flex items-center gap-2"><FileText className="h-5 w-5" /> {TITLES[key]}</h1>
+      <div className="flex items-center justify-between gap-2">
+        <h1 className="text-xl font-bold flex items-center gap-2"><FileText className="h-5 w-5" /> {TITLES[key]}</h1>
+        {editingId && existing && (
+          <Button type="button" variant="outline" size="sm" onClick={printNote} data-testid="button-print">
+            <Printer className="h-4 w-4 ms-1" /> طباعة
+          </Button>
+        )}
+      </div>
 
       {/* 3-column grid — each field gets a labelled cell, naturally ~1/3
           screen wide on desktop. البيان/ملاحظات span the full row. The
