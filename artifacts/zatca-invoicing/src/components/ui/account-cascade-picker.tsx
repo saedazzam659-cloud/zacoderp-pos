@@ -79,11 +79,16 @@ export function AccountCascadePicker({
   const [mainId, setMainId] = useState("");
 
   // Edit mode: derive the main from the selected leaf's direct parent.
+  // Derive deterministically so navigating between vouchers (value changes to a
+  // leaf under a DIFFERENT main) re-syncs the main picker instead of keeping a
+  // stale one. We intentionally do NOT reset mainId when value is empty: the
+  // main-selection flow clears value (onValueChange("")) while keeping the main
+  // the user just picked, and that must survive.
   useEffect(() => {
     if (!value) return;
     const sel = accounts.find((a) => String(a.id) === value);
     if (sel && sel.parentId != null) {
-      setMainId((prev) => prev || String(sel.parentId));
+      setMainId(String(sel.parentId));
     }
   }, [value, accounts]);
 
