@@ -323,6 +323,7 @@ import SalesByPeriod        from "@/pages/sales/reports/SalesByPeriod";
 import DailyReport          from "@/pages/sales/reports/DailyReport";
 import PaymentMixReport     from "@/pages/sales/reports/PaymentMixReport";
 import DailyDetailedReport  from "@/pages/sales/reports/DailyDetailedReport";
+import CustomerGroups       from "@/pages/sales/CustomerGroups";
 import TopCustomers         from "@/pages/sales/reports/TopCustomers";
 import SalesReturnsReport   from "@/pages/sales/reports/SalesReturnsReport";
 import FreeReturnsReport    from "@/pages/sales/reports/FreeReturnsReport";
@@ -923,6 +924,7 @@ function AppRoutes() {
 
             {/* Sales routes */}
             {!isSuperAdmin && <Route path="/sales" component={SalesHub} />}
+            {!isSuperAdmin && <PermRoute path="/sales/customer-groups" module="customers"        component={CustomerGroups} />}
             {!isSuperAdmin && <PermRoute path="/sales/invoices/new"   module="sales_invoices"   action="create" component={SalesInvoiceForm} />}
             {!isSuperAdmin && <PermRoute path="/sales/invoices/:id"   module="sales_invoices"   component={SalesInvoiceForm} />}
             {/* /sales/audit-grid kept as alias for any old links/bookmarks */}

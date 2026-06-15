@@ -469,6 +469,7 @@ const purchasingSubNav: NavDef[] = [
 ];
 const salesSubNav: NavDef[] = [
   { nameKey: "nav.customers",            href: "/customers",         icon: Users,           permKey: "customers" },
+  { nameKey: "nav.customerGroups",       href: "/sales/customer-groups", icon: Users,       permKey: "customers" },
   { nameKey: "nav.salesReps",            href: "/sales/reps",        icon: BadgeCheck,      permKey: "sales_reps" },
   { nameKey: "nav.salesRepCommissions",  href: "/sales/reps/commissions", icon: Wallet,     permKey: "sales_reps" },
   { nameKey: "nav.quotations",           href: "/sales/quotations",  icon: FileSignature,   permKey: "sales_quotations" },

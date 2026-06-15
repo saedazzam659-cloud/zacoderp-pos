@@ -72,3 +72,16 @@ export const customersTable = pgTable("customers", {
 export const insertCustomerSchema = createInsertSchema(customersTable).omit({ id: true, createdAt: true });
 export type InsertCustomer = z.infer<typeof insertCustomerSchema>;
 export type Customer = typeof customersTable.$inferSelect;
+
+// ─── Customer Groups ────────────────────────────────────────────────────────
+export const customerGroupsTable = pgTable("customer_groups", {
+  id:        serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  code:      text("code").notNull(),
+  nameAr:    text("name_ar").notNull(),
+  nameEn:    text("name_en"),
+  notes:     text("notes"),
+  isActive:  boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+export type CustomerGroup = typeof customerGroupsTable.$inferSelect;

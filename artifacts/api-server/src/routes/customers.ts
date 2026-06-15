@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, branchesTable } from "@workspace/db";
-import { and, eq, sql } from "drizzle-orm";
+import { customersTable, customerGroupsTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, branchesTable } from "@workspace/db";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
@@ -96,6 +96,59 @@ router.get("/balances", async (req, res) => {
 
     res.json(Object.entries(map).map(([id, balance]) => ({ customerId: Number(id), balance })));
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════
+// CUSTOMER GROUPS  (registered before "/:id" so the literal is not swallowed)
+// ═══════════════════════════════════════════════
+router.get("/customer-groups", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+    const rows = cid
+      ? await db.select().from(customerGroupsTable)
+          .where(eq(customerGroupsTable.companyId, cid))
+          .orderBy(asc(customerGroupsTable.code))
+      : [];
+    res.json(rows);
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
+router.post("/customer-groups", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const { code, nameAr, nameEn, notes, isActive } = req.body;
+    if (!code || !nameAr) { res.status(400).json({ error: "الكود والاسم مطلوبان" }); return; }
+    const [row] = await db.insert(customerGroupsTable).values({
+      companyId: cid, code, nameAr, nameEn: nameEn || null,
+      notes: notes || null, isActive: isActive ?? true,
+    }).returning();
+    res.status(201).json(row);
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
+router.put("/customer-groups/:id", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const id = Number(req.params.id);
+    const { code, nameAr, nameEn, notes, isActive } = req.body;
+    const [row] = await db.update(customerGroupsTable).set({
+      code, nameAr, nameEn: nameEn || null, notes: notes || null, isActive,
+    }).where(and(eq(customerGroupsTable.id, id), eq(customerGroupsTable.companyId, cid))).returning();
+    if (!row) { res.status(404).json({ error: "المجموعة غير موجودة" }); return; }
+    res.json(row);
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
+router.delete("/customer-groups/:id", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const id = Number(req.params.id);
+    await db.delete(customerGroupsTable).where(and(eq(customerGroupsTable.id, id), eq(customerGroupsTable.companyId, cid)));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // NOTE: customer-isolation no longer relies on sales-rep linkage.

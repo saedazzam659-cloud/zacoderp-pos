@@ -779,6 +779,7 @@
     "supplierSettlements": "تسوية الموردين",
     "salesGroup": "العملاء والمبيعات",
     "customers": "العملاء",
+    "customerGroups": "مجموعات العملاء",
     "salesReps": "مناديب المبيعات",
     "salesRepCommissions": "عمولات المناديب",
     "quotations": "عروض الأسعار",
@@ -3839,6 +3840,40 @@
       "price": "السعر",
       "discount": "الخصم %",
       "qty": "الحد الأدنى للكمية"
+    }
+  },
+  "salesPages": {
+    "customerGroups": {
+      "title": "مجموعات العملاء",
+      "subtitle": "تصنيف العملاء إلى مجموعات",
+      "addNew": "مجموعة جديدة",
+      "formNew": "مجموعة جديدة",
+      "formEdit": "تعديل مجموعة عميل",
+      "formSubtitle": "حدّد كود واسم مجموعة العملاء",
+      "fCode": "الكود",
+      "fCodePh": "CG001",
+      "fNameAr": "الاسم العربي",
+      "fNameArPh": "عملاء الجملة",
+      "fNameEn": "الاسم الإنجليزي",
+      "fNameEnPh": "Wholesale Customers",
+      "fStatus": "الحالة",
+      "fNotes": "ملاحظات",
+      "fNotesPh": "اختياري",
+      "stActive": "نشط",
+      "stInactive": "موقوف",
+      "saveAdd": "إضافة المجموعة",
+      "saveEdit": "حفظ التعديل",
+      "loading": "جاري التحميل...",
+      "noGroups": "لا توجد مجموعات بعد",
+      "colCode": "الكود",
+      "colName": "الاسم",
+      "colNameEn": "الاسم (EN)",
+      "colStatus": "الحالة",
+      "colActions": "إجراءات",
+      "deleteConfirm": "حذف المجموعة؟",
+      "toastSaved": "تم حفظ المجموعة",
+      "toastUpdated": "تم التعديل",
+      "toastDeleted": "تم الحذف"
     }
   },
   "purchasingPages": {

@@ -778,6 +778,7 @@
     "supplierSettlements": "Supplier Settlements",
     "salesGroup": "Customers & Sales",
     "customers": "Customers",
+    "customerGroups": "Customer Groups",
     "salesReps": "Sales Representatives",
     "salesRepCommissions": "Sales Rep Commissions",
     "quotations": "Quotations",
@@ -3762,6 +3763,40 @@
       "price": "Price",
       "discount": "Discount %",
       "qty": "Min. Qty"
+    }
+  },
+  "salesPages": {
+    "customerGroups": {
+      "title": "Customer Groups",
+      "subtitle": "Classify customers into groups",
+      "addNew": "New Group",
+      "formNew": "New Group",
+      "formEdit": "Edit Customer Group",
+      "formSubtitle": "Set the customer group code and name",
+      "fCode": "Code",
+      "fCodePh": "CG001",
+      "fNameAr": "Arabic Name",
+      "fNameArPh": "عملاء الجملة",
+      "fNameEn": "English Name",
+      "fNameEnPh": "Wholesale Customers",
+      "fStatus": "Status",
+      "fNotes": "Notes",
+      "fNotesPh": "Optional",
+      "stActive": "Active",
+      "stInactive": "Inactive",
+      "saveAdd": "Add Group",
+      "saveEdit": "Save Changes",
+      "loading": "Loading...",
+      "noGroups": "No groups yet",
+      "colCode": "Code",
+      "colName": "Name",
+      "colNameEn": "Name (EN)",
+      "colStatus": "Status",
+      "colActions": "Actions",
+      "deleteConfirm": "Delete this group?",
+      "toastSaved": "Group saved",
+      "toastUpdated": "Updated",
+      "toastDeleted": "Deleted"
     }
   },
   "purchasingPages": {
