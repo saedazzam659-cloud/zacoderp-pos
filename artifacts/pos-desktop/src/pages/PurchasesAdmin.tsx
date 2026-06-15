@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
-  listPurchases, getPurchase, createPurchase, listSuppliers, listCashBoxes, listBanks,
+  listPurchases, getPurchase, createPurchase, updatePurchase, deletePurchase,
+  listSuppliers, listCashBoxes, listBanks,
   type Purchase, type PurchaseLine, type PaymentMethod, type Supplier, type CashBox, type Bank,
 } from "../lib/accounting";
 import { listItems, type LocalItem } from "../lib/items";
@@ -16,22 +17,34 @@ import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_
 import { useInvoiceTaxes } from "./_invoiceTax";
 import { baseCurrencyCode, currencyByCode } from "../lib/currency";
 import {
-  computeDiscount, lineNet, saveDocDiscount, getDocDiscount,
+  computeDiscount, lineNet, saveDocDiscount, getDocDiscount, clearDocDiscount,
   type DiscType, type DiscFields,
 } from "../lib/discount";
 import { setPurchaseReturnPrefill } from "../lib/returnPrefill";
+import { printSalesDoc, type PrintKind } from "../lib/invoicePrint";
 import { type WindowsView } from "../lib/moduleRegistry";
 
 type FLine = PurchaseLine & DiscFields;
+
+// Edit/duplicate seed for the create form. `editId` set → update mode;
+// otherwise the seeded lines/header are used to mint a brand-new invoice.
+type FormSeed = {
+  editId?: number;
+  supplierId: number; invoiceDate: string; paymentMethod: PaymentMethod;
+  cashBoxId: number | null; bankId: number | null; warehouseId: number;
+  supplierInvoiceNo: string; notes: string;
+  lines: FLine[];
+};
 
 export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: WindowsView) => void }) {
   const [rows, setRows] = useState<Purchase[]>([]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<Purchase | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState<FormSeed | null>(null);
   const [deps, setDeps] = useState<{ suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[] } | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const creating = form !== null;
 
   async function refresh() { setRows(await listPurchases(5000)); }
   useEffect(() => {
@@ -53,6 +66,98 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
     setExpandedId((cur) => { if (cur === id) setExpandedDetail(fetched); return cur; });
   }
 
+  function blankSeed(): FormSeed {
+    return {
+      supplierId: deps?.suppliers[0]?.id ?? 0,
+      invoiceDate: todayStr(),
+      paymentMethod: "credit",
+      cashBoxId: deps?.cashBoxes[0]?.id ?? null,
+      bankId: deps?.banks[0]?.id ?? null,
+      warehouseId: (deps?.warehouses.find((w) => w.is_default) ?? deps?.warehouses[0])?.id ?? 0,
+      supplierInvoiceNo: "",
+      notes: "",
+      lines: [],
+    };
+  }
+
+  // Rebuild editable FLine[] from a persisted invoice. The stored lines are
+  // already in BASE currency with any original discount baked into unitCost, so
+  // edit/duplicate work in base currency (no FX/discount reconstruction). Net
+  // amounts are preserved exactly; re-saving keeps the same totals.
+  function seedFromPurchase(inv: Purchase): FLine[] {
+    return inv.lines.map((l) => ({
+      id: l.id, itemId: l.itemId, itemName: l.itemName,
+      qty: l.qty, unitCost: l.unitCost,
+      vatRate: l.vatRate, lineTotal: l.lineTotal,
+      uomId: l.uomId, uomName: l.uomName, conversionFactor: l.conversionFactor,
+      disc: 0, discType: "percent",
+    }));
+  }
+
+  async function startEdit(id: number) {
+    const inv = await getPurchase(id);
+    setExpandedId(null); setExpandedDetail(null);
+    setForm({
+      editId: inv.id,
+      supplierId: inv.supplierId,
+      invoiceDate: inv.invoiceDate,
+      paymentMethod: inv.paymentMethod,
+      cashBoxId: inv.cashBoxId,
+      bankId: inv.bankId,
+      warehouseId: inv.warehouseId ?? (deps?.warehouses.find((w) => w.is_default) ?? deps?.warehouses[0])?.id ?? 0,
+      supplierInvoiceNo: inv.supplierInvoiceNo ?? "",
+      notes: inv.notes ?? "",
+      lines: seedFromPurchase(inv),
+    });
+  }
+
+  async function duplicate(id: number) {
+    const inv = await getPurchase(id);
+    setExpandedId(null); setExpandedDetail(null);
+    setForm({
+      supplierId: inv.supplierId,
+      invoiceDate: todayStr(),
+      paymentMethod: inv.paymentMethod,
+      cashBoxId: inv.cashBoxId,
+      bankId: inv.bankId,
+      warehouseId: inv.warehouseId ?? (deps?.warehouses.find((w) => w.is_default) ?? deps?.warehouses[0])?.id ?? 0,
+      supplierInvoiceNo: "",
+      notes: inv.notes ?? "",
+      lines: seedFromPurchase(inv),
+    });
+  }
+
+  async function remove(id: number) {
+    if (!confirm("حذف فاتورة الشراء؟ سيتم عكس القيد المحاسبي وحركة المخزون.")) return;
+    try {
+      await deletePurchase(id);
+      clearDocDiscount("purchase", id);
+      if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
+      await refresh();
+    } catch (e: any) { alert(e?.message ?? "فشل الحذف"); }
+  }
+
+  async function printDoc(id: number, kind: PrintKind) {
+    const inv = await getPurchase(id);
+    await printSalesDoc(kind, {
+      kind: "invoice",
+      docNo: inv.invoiceNo,
+      date: inv.invoiceDate,
+      customerName: inv.supplierName,
+      paymentMethod: inv.paymentMethod,
+      subtotal: inv.subtotal,
+      vatTotal: inv.vatTotal,
+      grandTotal: inv.grandTotal,
+      notes: inv.notes,
+      qrBase64: null,
+      lines: inv.lines.map((l) => ({
+        itemId: l.itemId, itemName: l.itemName, qty: l.qty,
+        unitPrice: l.unitCost, vatRate: l.vatRate, lineTotal: l.lineTotal,
+        uomId: l.uomId, uomName: l.uomName, conversionFactor: l.conversionFactor,
+      })),
+    });
+  }
+
   // إرجاع: build a purchase-return prefill from the PERSISTED purchase invoice
   // (authoritative qty/cost/uom) then navigate to the purchase-returns screen.
   async function startReturn(id: number) {
@@ -60,9 +165,10 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
     setPurchaseReturnPrefill({
       purchaseId: inv.id,
       supplierId: inv.supplierId,
-      // Purchase header/lines don't persist a warehouse → let the return form
-      // fall back to the company default warehouse.
-      warehouseId: null,
+      // Default the return to the SOURCE purchase warehouse so stock-out unwinds
+      // from the same warehouse the goods were received into (falls back to the
+      // company default only when the source purchase has no warehouse).
+      warehouseId: inv.warehouseId ?? null,
       lines: inv.lines.map((l) => ({
         itemId: l.itemId, itemName: l.itemName, qty: l.qty, unitCost: l.unitCost,
         vatRate: l.vatRate, lineTotal: l.lineTotal,
@@ -77,16 +183,16 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
       title="فواتير الشراء"
       subtitle={`${rows.length} فاتورة — يتم ترحيل قيد المحاسبة تلقائياً عند الحفظ`}
       right={
-        <button onClick={() => setCreating(true)} disabled={!deps || creating}
+        <button onClick={() => setForm(blankSeed())} disabled={!deps || creating}
           style={{ ...btnPrimary, opacity: (!deps || creating) ? 0.5 : 1, cursor: (!deps || creating) ? "not-allowed" : "pointer" }}>
           + فاتورة شراء
         </button>
       }
     >
-      {creating && deps && (
+      {creating && deps && form && (
         <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
           <div style={{ padding: 16 }}>
-            <CreateForm deps={deps} onCancel={() => setCreating(false)} onDone={() => { setCreating(false); void refresh(); }} />
+            <CreateForm deps={deps} seed={form} onCancel={() => setForm(null)} onDone={() => { setForm(null); void refresh(); }} />
           </div>
         </Card>
       )}
@@ -110,16 +216,34 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
                     <Td>
-                      <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
-                        style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                        {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
-                      </button>
-                      {onNavigate && (
-                        <button onClick={() => void startReturn(p.id)} disabled={creating} title="إنشاء مرتجع من هذه الفاتورة"
-                          style={{ ...btnLink, marginInlineStart: 8, color: "#b45309", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                          ↩ إرجاع
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                        <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
+                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                          {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
                         </button>
-                      )}
+                        <button onClick={() => void startEdit(p.id)} disabled={creating} title="تعديل الفاتورة"
+                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                          ✎ تعديل
+                        </button>
+                        <button onClick={() => void duplicate(p.id)} disabled={creating} title="نسخ كفاتورة جديدة"
+                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                          ⧉ نسخ
+                        </button>
+                        <button onClick={() => void printDoc(p.id, "a4")} disabled={creating} title="طباعة A4"
+                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                          🖶 طباعة
+                        </button>
+                        {onNavigate && (
+                          <button onClick={() => void startReturn(p.id)} disabled={creating} title="إنشاء مرتجع من هذه الفاتورة"
+                            style={{ ...btnLink, color: "#b45309", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                            ↩ إرجاع
+                          </button>
+                        )}
+                        <button onClick={() => void remove(p.id)} disabled={creating} title="حذف الفاتورة"
+                          style={{ ...btnLink, color: "#dc2626", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                          حذف
+                        </button>
+                      </div>
                     </Td>
                   </tr>
                   {expandedId === p.id && (
@@ -186,30 +310,33 @@ function PurchaseDetail({ p }: { p: Purchase }) {
   );
 }
 
-function CreateForm({ deps, onCancel, onDone }: {
+function CreateForm({ deps, seed, onCancel, onDone }: {
   deps: { suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[] };
+  seed: FormSeed;
   onCancel: () => void; onDone: () => void;
 }) {
-  const [supplierId, setSupplierId] = useState<number>(deps.suppliers[0]?.id ?? 0);
-  const [date, setDate] = useState(todayStr());
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("credit");
-  const [cashBoxId, setCashBoxId] = useState<number | null>(deps.cashBoxes[0]?.id ?? null);
-  const [bankId, setBankId] = useState<number | null>(deps.banks[0]?.id ?? null);
+  const isEdit = seed.editId != null;
+  const [supplierId, setSupplierId] = useState<number>(seed.supplierId || deps.suppliers[0]?.id || 0);
+  const [date, setDate] = useState(seed.invoiceDate || todayStr());
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(seed.paymentMethod);
+  const [cashBoxId, setCashBoxId] = useState<number | null>(seed.cashBoxId ?? deps.cashBoxes[0]?.id ?? null);
+  const [bankId, setBankId] = useState<number | null>(seed.bankId ?? deps.banks[0]?.id ?? null);
   const [warehouseId, setWarehouseId] = useState<number>(
-    (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id ?? 0,
+    seed.warehouseId || (deps.warehouses.find((w) => w.is_default) ?? deps.warehouses[0])?.id || 0,
   );
+  const [supplierInvoiceNo, setSupplierInvoiceNo] = useState(seed.supplierInvoiceNo);
   const { branches, costCenters } = useDimensions();
   const [branchId, setBranchId] = useState<number | "">("");
   useEffect(() => { if (branchId === "" && branches.length === 1) setBranchId(branches[0].id); }, [branches]); // eslint-disable-line react-hooks/exhaustive-deps
   const [costCenterId, setCostCenterId] = useState<number | "">("");
-  const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState(seed.notes);
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
   const blankLine = (): FLine => ({
     itemId: 0, qty: 1, unitCost: 0, vatRate: 15, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
-  const [lines, setLines] = useState<FLine[]>(() => [blankLine()]);
+  const [lines, setLines] = useState<FLine[]>(() => seed.lines.length ? seed.lines : [blankLine()]);
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
   const [currency, setCurrency] = useState<string>(() => baseCurrencyCode());
@@ -300,15 +427,19 @@ function CreateForm({ deps, onCancel, onDone }: {
           uomId: l.uomId, uomName: l.uomName, conversionFactor: l.conversionFactor,
         };
       });
-      const id = await createPurchase({
+      const payload = {
         supplierId, invoiceDate: date, paymentMethod,
         cashBoxId: paymentMethod === "cash" ? cashBoxId : null,
         bankId:    paymentMethod === "bank" ? bankId : null,
         warehouseId: warehouseId || null,
+        supplierInvoiceNo: supplierInvoiceNo.trim() || null,
         branchId: branchId === "" ? null : branchId,
         costCenterId: costCenterId === "" ? null : costCenterId,
         notes: notes || null, lines: payloadLines,
-      });
+      };
+      const id = isEdit ? (await updatePurchase(seed.editId!, payload), seed.editId!) : await createPurchase(payload);
+      // Refresh the discount overlay for this invoice (clear stale, then save).
+      clearDocDiscount("purchase", id);
       saveDocDiscount("purchase", id, {
         grossSubtotal: r.grossSubtotal * effRate, lineDiscountTotal: r.lineDiscountTotal * effRate, headerDiscountValue: r.headerDiscountValue * effRate,
         currencyCode: currency, exchangeRate: effRate,
@@ -320,7 +451,7 @@ function CreateForm({ deps, onCancel, onDone }: {
 
   return (
     <div>
-      <h3 style={{ marginTop: 0 }}>فاتورة شراء جديدة</h3>
+      <h3 style={{ marginTop: 0 }}>{isEdit ? `تعديل فاتورة الشراء` : "فاتورة شراء جديدة"}</h3>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="المورد *">
           <SearchCombobox
@@ -334,6 +465,9 @@ function CreateForm({ deps, onCancel, onDone }: {
           />
         </Field>
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
+        <Field label="رقم فاتورة المورد">
+          <input value={supplierInvoiceNo} onChange={(e) => setSupplierInvoiceNo(e.target.value)} style={input} placeholder="مرجع المورد" />
+        </Field>
         <Field label="طريقة الدفع">
           <SearchCombobox
             value={paymentMethod}
@@ -444,7 +578,7 @@ function CreateForm({ deps, onCancel, onDone }: {
       <ErrorMsg text={err} />
       <Actions>
         <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : "حفظ وترحيل"}</button>
+        <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : (isEdit ? "حفظ التعديلات" : "حفظ وترحيل")}</button>
       </Actions>
     </div>
   );

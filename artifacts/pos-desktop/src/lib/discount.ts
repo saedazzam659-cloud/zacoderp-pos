@@ -130,3 +130,14 @@ export function saveDocDiscount(docType: DocType, id: number, d: StoredDisc): vo
 export function getDocDiscount(docType: DocType, id: number): StoredDisc | null {
   return readAll()[`${docType}:${id}`] ?? null;
 }
+
+export function clearDocDiscount(docType: DocType, id: number): void {
+  if (!id) return;
+  try {
+    const all = readAll();
+    if (`${docType}:${id}` in all) {
+      delete all[`${docType}:${id}`];
+      localStorage.setItem(DISC_KEY, JSON.stringify(all));
+    }
+  } catch { /* overlay is best-effort */ }
+}

@@ -30,6 +30,11 @@ export type Supplier = {
   id: number; code: string | null; nameAr: string; nameEn: string | null;
   phone: string | null; vatNumber: string | null; balance: number; notes: string | null;
   currencyCode: string;
+  email: string | null; crNumber: string | null;
+  city: string | null; district: string | null; street: string | null;
+  buildingNumber: string | null; postalCode: string | null; country: string | null;
+  nationalAddressShort: string | null;
+  includeInStatements: boolean; apAccountId: number | null;
 };
 export type SupplierInput = {
   code: string | null; nameAr: string; nameEn: string | null;
@@ -40,6 +45,14 @@ export type SupplierInput = {
   /** "debit" (مدين) or "credit" (دائن — default for suppliers, we owe them). */
   openingNature?: "debit" | "credit";
   openingDate?: string;
+  /** Profile parity with web (Phase W2). */
+  email?: string | null; crNumber?: string | null;
+  city?: string | null; district?: string | null; street?: string | null;
+  buildingNumber?: string | null; postalCode?: string | null; country?: string | null;
+  nationalAddressShort?: string | null;
+  includeInStatements?: boolean;
+  /** Editable payables control account; omit/0 keeps the existing one (defaults to 2100). */
+  apAccountId?: number | null;
 };
 
 export type CashBox = { id: number; name: string; balance: number; accountId: number | null; currencyCode: string };
@@ -91,11 +104,14 @@ export type Purchase = {
   id: number; invoiceNo: string; supplierId: number; supplierName: string | null;
   invoiceDate: string; subtotal: number; vatTotal: number; grandTotal: number;
   paymentMethod: PaymentMethod; cashBoxId: number | null; bankId: number | null;
-  jeId: number | null; notes: string | null; lines: PurchaseLine[];
+  jeId: number | null; notes: string | null;
+  supplierInvoiceNo: string | null; warehouseId: number | null;
+  lines: PurchaseLine[];
 };
 export type PurchaseInput = {
   supplierId: number; invoiceDate: string; paymentMethod: PaymentMethod;
   cashBoxId: number | null; bankId: number | null; notes: string | null;
+  supplierInvoiceNo?: string | null;
   warehouseId?: number | null;
   branchId?: number | null; costCenterId?: number | null;
   lines: PurchaseLine[];
@@ -394,6 +410,14 @@ export async function getPurchase(id: number): Promise<Purchase> {
 export async function createPurchase(input: PurchaseInput): Promise<number> {
   if (!hasTauri()) notImpl();
   return await invoke<number>("purchase_create", { input });
+}
+export async function updatePurchase(id: number, input: PurchaseInput): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("purchase_update", { id, input });
+}
+export async function deletePurchase(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("purchase_delete", { id });
 }
 
 // ─── Purchase returns ────────────────────────────────────────────────

@@ -448,6 +448,8 @@ fn main() {
             accounting::purchases_list,
             accounting::purchase_get,
             accounting::purchase_create,
+            accounting::purchase_update,
+            accounting::purchase_delete,
             accounting::purchase_returns_list,
             accounting::purchase_return_get,
             accounting::purchase_return_create,

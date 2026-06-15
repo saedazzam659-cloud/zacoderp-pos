@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
-  listSuppliers, createSupplier, updateSupplier, deleteSupplier, listCurrencies,
-  type Supplier, type SupplierInput, type Currency,
+  listSuppliers, createSupplier, updateSupplier, deleteSupplier, listCurrencies, listAccounts,
+  type Supplier, type SupplierInput, type Currency, type Account,
 } from "../lib/accounting";
 import {
   Page, Card, Table, Th, Td, Empty,
@@ -11,6 +11,9 @@ import {
 const emptyInput: SupplierInput = {
   code: null, nameAr: "", nameEn: null, phone: null, vatNumber: null, notes: null,
   currencyCode: "SAR", openingBalance: 0, openingNature: "credit",
+  email: null, crNumber: null, city: null, district: null, street: null,
+  buildingNumber: null, postalCode: null, country: "SA", nationalAddressShort: null,
+  includeInStatements: true, apAccountId: null,
 };
 
 type EditState =
@@ -27,13 +30,14 @@ function balanceNature(bal: number): { label: string; color: string } {
 export default function SuppliersAdmin() {
   const [rows, setRows] = useState<Supplier[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [edit, setEdit] = useState<EditState>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   async function refresh() {
-    const [s, cur] = await Promise.all([listSuppliers(), listCurrencies(true)]);
-    setRows(s); setCurrencies(cur);
+    const [s, cur, acc] = await Promise.all([listSuppliers(), listCurrencies(true), listAccounts()]);
+    setRows(s); setCurrencies(cur); setAccounts(acc);
   }
   useEffect(() => { void refresh(); }, []);
 
@@ -44,6 +48,10 @@ export default function SuppliersAdmin() {
       code: s.code, nameAr: s.nameAr, nameEn: s.nameEn,
       phone: s.phone, vatNumber: s.vatNumber, notes: s.notes,
       currencyCode: s.currencyCode || "SAR",
+      email: s.email, crNumber: s.crNumber, city: s.city, district: s.district,
+      street: s.street, buildingNumber: s.buildingNumber, postalCode: s.postalCode,
+      country: s.country || "SA", nationalAddressShort: s.nationalAddressShort,
+      includeInStatements: s.includeInStatements, apAccountId: s.apAccountId,
     } });
   }
   function cancel() { setEdit(null); setErr(null); }
@@ -65,6 +73,10 @@ export default function SuppliersAdmin() {
           code: f.code, nameAr: f.nameAr, nameEn: f.nameEn,
           phone: f.phone, vatNumber: f.vatNumber, notes: f.notes,
           currencyCode: f.currencyCode,
+          email: f.email, crNumber: f.crNumber, city: f.city, district: f.district,
+          street: f.street, buildingNumber: f.buildingNumber, postalCode: f.postalCode,
+          country: f.country, nationalAddressShort: f.nationalAddressShort,
+          includeInStatements: f.includeInStatements, apAccountId: f.apAccountId,
         });
       }
       setEdit(null);
@@ -102,6 +114,7 @@ export default function SuppliersAdmin() {
           busy={busy}
           err={err}
           currencyOpts={currencyOpts}
+          accounts={accounts}
         />
       )}
 
@@ -139,14 +152,17 @@ export default function SuppliersAdmin() {
   );
 }
 
-function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, currencyOpts }: {
+function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, currencyOpts, accounts }: {
   mode: "new" | "edit";
   data: SupplierInput;
   setField: <K extends keyof SupplierInput>(k: K, v: SupplierInput[K]) => void;
   onSave: () => void; onCancel: () => void;
   busy: boolean; err: string | null;
   currencyOpts: string[];
+  accounts: Account[];
 }) {
+  // Payables control accounts: liability type only (mirrors the web AP picker).
+  const apAccounts = accounts.filter((a) => a.type === "liability" && a.isActive);
   return (
     <div style={F.formCard}>
       <div style={F.formTitle}>{mode === "new" ? "مورد جديد" : "تعديل بيانات المورد"}</div>
@@ -165,13 +181,60 @@ function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, curre
         <Field label="رقم الهاتف">
           <input value={data.phone ?? ""} onChange={(e) => setField("phone", e.target.value || null)} style={F.bigInput} placeholder="هاتف" />
         </Field>
+        <Field label="البريد الإلكتروني">
+          <input value={data.email ?? ""} onChange={(e) => setField("email", e.target.value || null)} style={F.bigInput} placeholder="email@example.com" />
+        </Field>
         <Field label="الرقم الضريبي">
           <input value={data.vatNumber ?? ""} onChange={(e) => setField("vatNumber", e.target.value || null)} style={{ ...F.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="الرقم الضريبي" />
+        </Field>
+        <Field label="السجل التجاري">
+          <input value={data.crNumber ?? ""} onChange={(e) => setField("crNumber", e.target.value || null)} style={{ ...F.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="رقم السجل التجاري" />
         </Field>
         <Field label="العملة">
           <select value={data.currencyCode ?? "SAR"} onChange={(e) => setField("currencyCode", e.target.value)} style={F.bigInput}>
             {currencyOpts.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
+        </Field>
+      </div>
+
+      <div style={F.section}>العنوان الوطني</div>
+      <div style={F.grid}>
+        <Field label="المدينة">
+          <input value={data.city ?? ""} onChange={(e) => setField("city", e.target.value || null)} style={F.bigInput} placeholder="المدينة" />
+        </Field>
+        <Field label="الحي">
+          <input value={data.district ?? ""} onChange={(e) => setField("district", e.target.value || null)} style={F.bigInput} placeholder="الحي" />
+        </Field>
+        <Field label="الشارع">
+          <input value={data.street ?? ""} onChange={(e) => setField("street", e.target.value || null)} style={F.bigInput} placeholder="الشارع" />
+        </Field>
+        <Field label="رقم المبنى">
+          <input value={data.buildingNumber ?? ""} onChange={(e) => setField("buildingNumber", e.target.value || null)} style={F.bigInput} placeholder="رقم المبنى" />
+        </Field>
+        <Field label="الرمز البريدي">
+          <input value={data.postalCode ?? ""} onChange={(e) => setField("postalCode", e.target.value || null)} style={F.bigInput} placeholder="الرمز البريدي" />
+        </Field>
+        <Field label="الدولة">
+          <input value={data.country ?? ""} onChange={(e) => setField("country", e.target.value || null)} style={F.bigInput} placeholder="SA" />
+        </Field>
+        <Field label="العنوان الوطني المختصر">
+          <input value={data.nationalAddressShort ?? ""} onChange={(e) => setField("nationalAddressShort", e.target.value || null)} style={{ ...F.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="مثال: RIYD2929" />
+        </Field>
+      </div>
+
+      <div style={F.section}>الإعدادات المحاسبية</div>
+      <div style={F.grid}>
+        <Field label="حساب الذمم الدائنة (المورد)">
+          <select value={data.apAccountId ?? 0} onChange={(e) => setField("apAccountId", Number(e.target.value) || null)} style={F.bigInput}>
+            <option value={0}>الافتراضي (الدائنون 2100)</option>
+            {apAccounts.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>)}
+          </select>
+        </Field>
+        <Field label="إظهار في كشوف الحسابات">
+          <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 0", fontSize: 15, color: "#0f172a" }}>
+            <input type="checkbox" checked={data.includeInStatements ?? true} onChange={(e) => setField("includeInStatements", e.target.checked)} style={{ width: 18, height: 18 }} />
+            تضمين المورد في كشف الحساب
+          </label>
         </Field>
       </div>
 

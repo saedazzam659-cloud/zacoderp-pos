@@ -768,6 +768,28 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE customers_local ADD COLUMN location_link TEXT",
         "ALTER TABLE customers_local ADD COLUMN include_in_statements INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE customers_local ADD COLUMN branch_id INTEGER",
+        // ── Supplier profile parity with web (Phase W2) ──
+        // CR number, email, full national address, and statement-participation
+        // flag mirroring the customer columns. ap_account_id already exists.
+        // All locally-set; the cloud Pull never overwrites them.
+        "ALTER TABLE suppliers_local ADD COLUMN email TEXT",
+        "ALTER TABLE suppliers_local ADD COLUMN cr_number TEXT",
+        "ALTER TABLE suppliers_local ADD COLUMN city TEXT",
+        "ALTER TABLE suppliers_local ADD COLUMN district TEXT",
+        "ALTER TABLE suppliers_local ADD COLUMN street TEXT",
+        "ALTER TABLE suppliers_local ADD COLUMN building_number TEXT",
+        "ALTER TABLE suppliers_local ADD COLUMN postal_code TEXT",
+        "ALTER TABLE suppliers_local ADD COLUMN country TEXT DEFAULT 'SA'",
+        "ALTER TABLE suppliers_local ADD COLUMN national_address_short TEXT",
+        "ALTER TABLE suppliers_local ADD COLUMN include_in_statements INTEGER NOT NULL DEFAULT 1",
+        // ── Purchase invoice header parity (Phase W2) ──
+        // supplier_invoice_no = the supplier's OWN document number (reference).
+        // The header warehouse is persisted so the edit form can prefill it and
+        // reversal can restore stock to the right warehouse (also stored per
+        // line for an exact, warehouse-correct unwind).
+        "ALTER TABLE purchases_local ADD COLUMN supplier_invoice_no TEXT",
+        "ALTER TABLE purchases_local ADD COLUMN warehouse_id INTEGER",
+        "ALTER TABLE purchase_lines_local ADD COLUMN warehouse_id INTEGER",
         // Line-level unit of measure (الوحدة). uom_id/uom_name are the selected
         // unit; conversion_factor converts the line qty into BASE units for the
         // stock ledger & COGS (e.g. carton=12 → factor 12). Financial totals stay
