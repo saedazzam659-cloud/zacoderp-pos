@@ -479,20 +479,25 @@ export default function JournalEntryForm() {
   }
 
   // ── قيد الضريبة (Tax Entry) ─────────────────────────────────────
-  // Adds a 15% VAT line for EACH eligible existing line, on the same
-  // side, WITHOUT modifying any original amount.
-  //   • "input"  → ضريبة المدخلات: for every line with debit > 0,
+  // Adds ONE VAT line computed on the line the user is currently
+  // standing on (the focused row), on the same side, WITHOUT modifying
+  // the original amount — appended as the LAST row.
+  //   • "input"  → ضريبة المدخلات: if the focused line has debit > 0,
   //                 append a new Dr line of 15% × debit using the
   //                 input-VAT account.
-  //   • "output" → ضريبة المخرجات: for every line with credit > 0,
+  //   • "output" → ضريبة المخرجات: if the focused line has credit > 0,
   //                 append a new Cr line of 15% × credit using the
   //                 output-VAT account.
-  // Lines that are themselves previously-generated VAT lines (same
-  // VAT account or description starting with "ضريبة …") are skipped
-  // so re-clicking does not pyramid tax on tax.
-  // NOTE: the original amounts are intentionally left untouched, so
-  // the entry will become unbalanced by the total VAT amount — the
-  // user is expected to add the offsetting payable/receivable side.
+  // The focused line is taxed regardless of what other lines hold, so
+  // the user controls exactly which row gets a VAT sibling. A line that
+  // is itself a previously-generated VAT line (description starting with
+  // "ضريبة …") or an already-net-extracted line is rejected, so the
+  // workflow never pyramids tax on tax. After insertion focus moves to
+  // the new VAT line, so an accidental re-click targets that VAT row
+  // (rejected) instead of double-taxing the source.
+  // NOTE: in exclusive mode the original amount is left untouched, so
+  // the entry becomes unbalanced by the VAT amount — the user adds the
+  // offsetting payable/receivable side (or clicks موازنة تلقائية).
   // Dynamic VAT rate — sourced from the company's DEFAULT tax in the dynamic
   // tax catalog (الضرائب). Falls back to 0.15 (KSA standard) when no percent
   // default exists, so existing Saudi tenants keep behaving exactly as before.
@@ -538,60 +543,25 @@ export default function JournalEntryForm() {
     }
     const sideField: "debit" | "credit" = direction === "input" ? "debit" : "credit";
 
-    // Pre-collect amounts that already have a generated VAT line for
-    // the SAME direction (input/output). Re-clicking the button must
-    // be fully idempotent: a source line of 1000 that already has a
-    // "ضريبة المدخلات 15% على 1000.00" sibling must NOT get another
-    // 150 appended.
-    const directionPrefix = direction === "input" ? "ضريبة المدخلات" : "ضريبة المخرجات";
-    // Count how many VAT lines already exist for each source amount.
-    // We use a multiset (Map<amountKey, count>) instead of a Set so
-    // that if the user has TWO source lines of 1000 but only ONE VAT
-    // line was generated previously, the second 1000 still gets its
-    // own VAT line on the next click. Bug fix: the old Set caused any
-    // line sharing an amount with a previously-taxed line to be
-    // silently skipped, even when it had no tax yet.
-    const alreadyTaxedCounts = new Map<string, number>();
-    for (const ln of lines) {
-      const d = (ln.description || "").trim();
-      if (!d.startsWith(directionPrefix)) continue;
-      const m = d.match(/على\s+([0-9]+(?:\.[0-9]+)?)/);
-      if (m) {
-        const k = Number(m[1]).toFixed(2);
-        alreadyTaxedCounts.set(k, (alreadyTaxedCounts.get(k) ?? 0) + 1);
-      }
-    }
+    // Tax ONLY the line the user is currently standing on (the focused row),
+    // NOT every eligible line. This matches the manual workflow the user asked
+    // for: stand on the row you want taxed, pick input/output, and a single VAT
+    // line is appended as the LAST row, computed on THAT row's amount. Falls
+    // back to the last row when nothing is focused yet.
+    const sourceLine = lines.find(l => l.id === focusLineId) ?? lines[lines.length - 1];
+    const amount = parseFloat(sourceLine[sideField] || "0") || 0;
+    const srcDesc = (sourceLine.description || "").trim();
+    const sourceIsVatLine =
+      srcDesc.startsWith("ضريبة المدخلات") || srcDesc.startsWith("ضريبة المخرجات");
+    // Inclusive mode marks already-net-extracted lines — never re-tax those.
+    const sourceIsNetExtracted = srcDesc.includes(NET_MARKER_PREFIX);
 
-    // Pick all lines with an account + a positive amount on the
-    // relevant side. Skip prior VAT lines themselves AND consume one
-    // unit from alreadyTaxedCounts per matching source line so the
-    // remainder still gets a fresh VAT line.
-    const remainingTaxed = new Map(alreadyTaxedCounts);
-    const eligible = lines
-      .map((ln, idx) => ({ ln, idx, amount: parseFloat(ln[sideField] || "0") || 0 }))
-      .filter(({ ln, amount }) => {
-        if (amount <= 0) return false;
-        if (!ln.accountId) return false;
-        const desc = (ln.description || "").trim();
-        if (desc.startsWith("ضريبة المدخلات") || desc.startsWith("ضريبة المخرجات")) return false;
-        // Inclusive mode marks net-extracted lines with NET_MARKER —
-        // skip them on subsequent clicks so we don't re-tax the net.
-        if (desc.includes(NET_MARKER_PREFIX)) return false;
-        const k = amount.toFixed(2);
-        const left = remainingTaxed.get(k) ?? 0;
-        if (left > 0) {
-          remainingTaxed.set(k, left - 1);
-          return false;
-        }
-        return true;
-      });
-
-    if (eligible.length === 0) {
+    if (!sourceLine.accountId || amount <= 0 || sourceIsVatLine || sourceIsNetExtracted) {
       toast({
-        title: direction === "input" ? "لا توجد سطور مدينة صالحة" : "لا توجد سطور دائنة صالحة",
+        title: direction === "input" ? "السطر الحالي غير صالح لضريبة المدخلات" : "السطر الحالي غير صالح لضريبة المخرجات",
         description: direction === "input"
-          ? "أضف على الأقل سطراً واحداً فيه حساب ومبلغ مدين قبل توليد ضريبة المدخلات."
-          : "أضف على الأقل سطراً واحداً فيه حساب ومبلغ دائن قبل توليد ضريبة المخرجات.",
+          ? "قف على سطر فيه حساب ومبلغ مدين (وليس سطر ضريبة) ثم اضغط قيد الضريبة."
+          : "قف على سطر فيه حساب ومبلغ دائن (وليس سطر ضريبة) ثم اضغط قيد الضريبة.",
         variant: "destructive",
       });
       return;
@@ -642,75 +612,57 @@ export default function JournalEntryForm() {
     }
     const vatAccountId = String(resolvedAccountId);
 
-    // Build one VAT line per eligible source line, preserving the
-    // source's costCenter so the tax follows the same dimension.
-    // In INCLUSIVE mode we additionally rewrite the source line's
-    // amount down to the net (gross − VAT) so the journal stays
-    // balanced — exactly the way invoice "السعر شامل الضريبة"
-    // behaves on sales/purchase screens.
-    const vatLines: JournalLine[] = [];
-    const sourceUpdates = new Map<string, { amount: string; description: string }>();
-    let totalVat = 0;
-    for (const { ln, amount } of eligible) {
-      // Skip lines that already use the chosen VAT account itself
-      // (defensive — covers the case where description was edited).
-      if (ln.accountId === vatAccountId) continue;
-
-      let vatAmount: number;
-      let baseForLabel: number;
-      let pendingNet: number | null = null;
-      if (vatInclusive) {
-        // amount is the GROSS, extract VAT from inside it
-        vatAmount = Math.round(amount * (VAT_RATE / (1 + VAT_RATE)) * 100) / 100;
-        baseForLabel = amount;
-        pendingNet = Math.round((amount - vatAmount) * 100) / 100;
-      } else {
-        // amount is the NET, add VAT on top (existing behaviour)
-        vatAmount = Math.round(amount * VAT_RATE * 100) / 100;
-        baseForLabel = amount;
-      }
-      if (vatAmount <= 0) continue;
-      // Only mark the source line as net-extracted AFTER we are sure
-      // a VAT line will actually be emitted — otherwise sub-cent rows
-      // would be tagged with NET_MARKER and become non-taxable later.
-      if (vatInclusive && pendingNet !== null) {
-        sourceUpdates.set(ln.id, {
-          amount: pendingNet.toFixed(2),
-          description: ((ln.description || "") + NET_MARKER).trim(),
-        });
-      }
-      totalVat += vatAmount;
-      const incTag = vatInclusive ? " (شاملة)" : "";
-      vatLines.push({
-        id: crypto.randomUUID(),
-        accountId: vatAccountId,
-        costCenter: ln.costCenter ?? "",
-        debit:  direction === "input"  ? vatAmount.toFixed(2) : "",
-        credit: direction === "output" ? vatAmount.toFixed(2) : "",
-        description: direction === "input"
-          ? `ضريبة المدخلات ${ratePctLabel}${incTag} ${vatInclusive ? "من" : "على"} ${baseForLabel.toFixed(2)}`
-          : `ضريبة المخرجات ${ratePctLabel}${incTag} ${vatInclusive ? "من" : "على"} ${baseForLabel.toFixed(2)}`,
-      });
-    }
-
-    if (vatLines.length === 0) {
-      toast({ title: "قيمة الضريبة صفر", description: "تحقّق من قيم السطور.", variant: "destructive" });
+    // Defensive: the focused line itself must not be the VAT account.
+    if (sourceLine.accountId === vatAccountId) {
+      toast({ title: "تعذّر توليد الضريبة", description: "السطر الحالي يستخدم حساب الضريبة نفسه.", variant: "destructive" });
       return;
     }
 
+    // Build ONE VAT line on the same side as the focused line, preserving its
+    // costCenter so the tax follows the same dimension. In INCLUSIVE mode we
+    // additionally rewrite the focused line's amount down to the net
+    // (gross − VAT) so the journal stays balanced — exactly the way invoice
+    // "السعر شامل الضريبة" behaves on sales/purchase screens.
+    let vatAmount: number;
+    let pendingNet: number | null = null;
+    if (vatInclusive) {
+      // amount is the GROSS, extract VAT from inside it
+      vatAmount = Math.round(amount * (VAT_RATE / (1 + VAT_RATE)) * 100) / 100;
+      pendingNet = Math.round((amount - vatAmount) * 100) / 100;
+    } else {
+      // amount is the NET, add VAT on top (existing behaviour)
+      vatAmount = Math.round(amount * VAT_RATE * 100) / 100;
+    }
+    if (vatAmount <= 0) {
+      toast({ title: "قيمة الضريبة صفر", description: "تحقّق من قيمة السطر.", variant: "destructive" });
+      return;
+    }
+
+    const incTag = vatInclusive ? " (شاملة)" : "";
+    const vatLine: JournalLine = {
+      id: crypto.randomUUID(),
+      accountId: vatAccountId,
+      costCenter: sourceLine.costCenter ?? "",
+      debit:  direction === "input"  ? vatAmount.toFixed(2) : "",
+      credit: direction === "output" ? vatAmount.toFixed(2) : "",
+      description: direction === "input"
+        ? `ضريبة المدخلات ${ratePctLabel}${incTag} ${vatInclusive ? "من" : "على"} ${amount.toFixed(2)}`
+        : `ضريبة المخرجات ${ratePctLabel}${incTag} ${vatInclusive ? "من" : "على"} ${amount.toFixed(2)}`,
+    };
+
     setLines(prev => {
-      const updated = prev.map(l => {
-        const u = sourceUpdates.get(l.id);
-        if (!u) return l;
-        return { ...l, [sideField]: u.amount, description: u.description };
-      });
-      return [...updated, ...vatLines];
+      const updated = (vatInclusive && pendingNet !== null)
+        ? prev.map(l => l.id === sourceLine.id
+            ? { ...l, [sideField]: pendingNet!.toFixed(2), description: ((l.description || "") + NET_MARKER).trim() }
+            : l)
+        : prev;
+      return [...updated, vatLine];
     });
-    setFocusLineId(vatLines[vatLines.length - 1].id);
+    setFocusLineId(vatLine.id);
 
     toast({
-      title: direction === "input" ? "تمت إضافة سطور ضريبة المدخلات" : "تمت إضافة سطور ضريبة المخرجات",
-      description: `${vatLines.length} سطر • إجمالي الضريبة ${totalVat.toFixed(2)} ${currency} • ${resolvedAccountLabel} • ${resolvedSource === "tax" ? "حساب الضريبة المعرّف" : resolvedSource === "ai" ? "اقتراح ذكاء اصطناعي" : "قواعد محلية"}`,
+      title: direction === "input" ? "تمت إضافة سطر ضريبة المدخلات" : "تمت إضافة سطر ضريبة المخرجات",
+      description: `إجمالي الضريبة ${vatAmount.toFixed(2)} ${currency} • ${resolvedAccountLabel} • ${resolvedSource === "tax" ? "حساب الضريبة المعرّف" : resolvedSource === "ai" ? "اقتراح ذكاء اصطناعي" : "قواعد محلية"}`,
     });
   }
 
@@ -1753,8 +1705,8 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                       <span className="font-semibold">مدين — ضريبة المدخلات</span>
                       <span className="text-[10px] text-muted-foreground">
                         {vatInclusive
-                          ? `استخراج ${ratePctLabel} من داخل كل مبلغ مدين (شامل الضريبة)`
-                          : `إضافة ${ratePctLabel} فوق كل مبلغ مدين`}
+                          ? `استخراج ${ratePctLabel} من داخل مبلغ السطر الحالي (شامل الضريبة)`
+                          : `إضافة ${ratePctLabel} فوق مبلغ السطر الحالي المدين`}
                       </span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
@@ -1764,8 +1716,8 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                       <span className="font-semibold">دائن — ضريبة المخرجات</span>
                       <span className="text-[10px] text-muted-foreground">
                         {vatInclusive
-                          ? `استخراج ${ratePctLabel} من داخل كل مبلغ دائن (شامل الضريبة)`
-                          : `إضافة ${ratePctLabel} فوق كل مبلغ دائن`}
+                          ? `استخراج ${ratePctLabel} من داخل مبلغ السطر الحالي (شامل الضريبة)`
+                          : `إضافة ${ratePctLabel} فوق مبلغ السطر الحالي الدائن`}
                       </span>
                     </DropdownMenuItem>
                   </DropdownMenuContent>
