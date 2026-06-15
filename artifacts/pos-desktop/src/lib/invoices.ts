@@ -37,7 +37,14 @@ export interface OfflineInvoicePayload {
   customerName?: string;
   vatNumber?: string;
   paymentMethod: "cash" | "card";
-  lines: { itemId: number; nameAr: string; qty: number; unitPrice: number; vatRate: number; }[];
+  lines: {
+    itemId: number; nameAr: string; qty: number; unitPrice: number; vatRate: number;
+    // Optional, additive (backward-compatible): preserve multi-unit / weighed
+    // semantics so "استخدام" (reuse) can faithfully rebuild the cart. Old
+    // invoices lack these → reuse falls back to a base-unit line.
+    unitId?: string | null; unitName?: string | null; unitFactor?: number | null;
+    weighed?: boolean;
+  }[];
   subtotal: number;
   vat: number;
   grandTotal: number;
@@ -131,6 +138,22 @@ export async function getOfflineInvoice(id: number): Promise<FullInvoice | null>
     createdAt: r.created_at,
     syncStatus: r.sync_status,
   };
+}
+
+// Permanently delete a saved offline invoice (local row). POS invoices are
+// ZATCA-signed; deleting one only removes the LOCAL record — it does not
+// un-submit anything already accepted by ZATCA. Callers must confirm first.
+export async function deleteOfflineInvoice(id: number): Promise<void> {
+  if (!shouldUseBridge()) {
+    try {
+      const raw = localStorage.getItem("pos_desktop_invoices_v1");
+      const arr: any[] = raw ? JSON.parse(raw) : [];
+      const next = arr.filter((i) => i.id !== id);
+      localStorage.setItem("pos_desktop_invoices_v1", JSON.stringify(next));
+    } catch { /* non-fatal */ }
+    return;
+  }
+  await invoke<void>("delete_offline_invoice", { id });
 }
 
 export async function listPendingInvoices(): Promise<PendingInvoice[]> {

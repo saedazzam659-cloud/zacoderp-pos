@@ -147,7 +147,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   cost_centers:      { module: "accounting", profile: "erp" },
   taxes:             { module: "accounting", profile: "erp" },
   report_account_statement: { module: "accounting", profile: "erp" },
-  report_customer_statement: { module: "accounting", profile: "erp" },
+  report_customer_statement: { module: "sales_docs", profile: "erp" },
   report_income_statement:  { module: "accounting", profile: "erp" },
   report_balance_sheet:     { module: "accounting", profile: "erp" },
   report_trial_balance:     { module: "accounting", profile: "erp" },

@@ -238,6 +238,16 @@ pub fn count_pending() -> Result<i64> {
     Ok(n)
 }
 
+// Permanently delete a saved offline invoice (local row only). The POS invoice
+// may already be ZATCA-signed/submitted; removing the local record does NOT
+// un-submit it from ZATCA — it only clears the device-side history entry. The
+// frontend confirms with the cashier before calling this.
+pub fn delete_offline(id: i64) -> Result<()> {
+    let conn = db::open()?;
+    conn.execute("DELETE FROM offline_invoices WHERE id = ?1", [id])?;
+    Ok(())
+}
+
 // ─── Tauri commands ──────────────────────────────────────────────────
 #[tauri::command]
 pub fn save_offline_invoice(
@@ -267,6 +277,11 @@ pub fn get_offline_invoice(id: i64) -> Result<Option<FullInvoice>, String> {
 #[tauri::command]
 pub fn count_pending_invoices() -> Result<i64, String> {
     count_pending().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_offline_invoice(id: i64) -> Result<(), String> {
+    delete_offline(id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -26,7 +26,7 @@ function appendOverrideLog(entry: OverrideLog) {
   } catch { /* non-fatal */ }
 }
 import { listCustomers, createCustomer, type LocalCustomer } from "../lib/customers";
-import { saveOfflineInvoice, type OfflineInvoicePayload } from "../lib/invoices";
+import { saveOfflineInvoice, getOfflineInvoice, type OfflineInvoicePayload } from "../lib/invoices";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { useCurrencySymbol, currencySymbol } from "../lib/currency";
 import {
@@ -57,9 +57,14 @@ function newLineId(): string {
   return (crypto as any).randomUUID?.() ?? `ln_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
-type Props = { companyName?: string; vatNumber?: string; posSessionId?: number; cashierName?: string };
+type Props = {
+  companyName?: string; vatNumber?: string; posSessionId?: number; cashierName?: string;
+  /** "استخدام": id of a saved POS invoice to duplicate into a NEW cart. */
+  reuseInvoiceId?: number | null;
+  onReuseConsumed?: () => void;
+};
 
-export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003", posSessionId = 0, cashierName }: Props) {
+export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003", posSessionId = 0, cashierName, reuseInvoiceId = null, onReuseConsumed }: Props) {
   const sym = useCurrencySymbol();
   const [cart, setCart] = useState<CartLine[]>([]);
   const [checkoutKey, setCheckoutKey] = useState<string | null>(null);
@@ -128,6 +133,58 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [posSessionId]);
+
+  // ─── "استخدام" handoff from PosInvoices ───────────────────────────
+  // Duplicate a saved POS invoice's lines into a NEW cart. The original
+  // offline invoice is ZATCA-signed and immutable, so this never edits it —
+  // it pre-fills the register so the cashier can ring up a fresh, similar sale.
+  useEffect(() => {
+    if (!reuseInvoiceId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const full = await getOfflineInvoice(reuseInvoiceId);
+        if (cancelled) return;
+        if (!full) { setMsg({ kind: "err", text: "تعذّر تحميل الفاتورة لإعادة الاستخدام" }); return; }
+        let payload: OfflineInvoicePayload;
+        try { payload = JSON.parse(full.payloadJson) as OfflineInvoicePayload; }
+        catch { setMsg({ kind: "err", text: "بيانات الفاتورة تالفة" }); return; }
+        const lines: CartLine[] = payload.lines.map((l) => {
+          // Only strip the trailing unit/weight suffix WE appended at checkout
+          // when the dedicated metadata confirms this line carried one — never
+          // touch legitimate parentheses in a plain base-item name.
+          const hadSuffix = l.weighed === true || l.unitName != null;
+          const cleanName = hadSuffix
+            ? (l.nameAr.replace(/\s*\([^()]*\)\s*$/u, "").trim() || l.nameAr)
+            : l.nameAr;
+          return {
+            lineId: newLineId(),
+            item: {
+              id: l.itemId, nameAr: cleanName, salePrice: l.unitPrice,
+              vatRate: l.vatRate, barcode: null,
+              code: "", nameEn: null, updatedAt: null,
+            } as unknown as LocalItem,
+            qty: l.qty,
+            ...(l.weighed ? { weighed: true } : {}),
+            ...(l.unitId != null && l.unitName != null && l.unitFactor != null
+              ? { unit: { id: l.unitId, name: l.unitName, factor: l.unitFactor } }
+              : {}),
+          };
+        });
+        if (cancelled) return;
+        setCart(lines);
+        setActiveParkedId(null);
+        setCheckoutKey(null);
+        setMsg({ kind: "ok", text: `✅ تم تحميل أصناف الفاتورة ${full.invoiceNo} في فاتورة جديدة` });
+      } catch (e: any) {
+        if (!cancelled) setMsg({ kind: "err", text: `فشل إعادة الاستخدام: ${e?.message ?? e}` });
+      } finally {
+        if (!cancelled) onReuseConsumed?.();
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reuseInvoiceId]);
 
   async function parkCart() {
     if (cart.length === 0) return;
@@ -418,6 +475,8 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
             ? `${l.item.nameAr} (${l.qty.toFixed(3)} كجم)`
             : l.unit ? `${l.item.nameAr} (${l.unit.name})` : l.item.nameAr,
           qty: l.qty, unitPrice: l.item.salePrice, vatRate: l.item.vatRate,
+          ...(l.unit ? { unitId: l.unit.id, unitName: l.unit.name, unitFactor: l.unit.factor } : {}),
+          ...(l.weighed ? { weighed: true } : {}),
         })),
       };
       // Task #209 — on a CLIENT, decrement stock on the HOST *before* the

@@ -219,7 +219,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     key: "selling",
     icon: "🧾",
     label: "المبيعات والعملاء",
-    members: ["customers", "salespersons", "quotations", "sales_orders", "sales_invoices", "sales_returns", "invoice_import", "report_sales_daily", "report_sales_by_period", "report_sales_by_item", "report_sales_by_customer", "report_sales_daily_detailed", "report_sales_payment_mix", "report_sales_returns", "report_sales_top_customers"],
+    members: ["customers", "salespersons", "quotations", "sales_orders", "sales_invoices", "sales_returns", "invoice_import", "report_customer_statement", "report_sales_daily", "report_sales_by_period", "report_sales_by_item", "report_sales_by_customer", "report_sales_daily_detailed", "report_sales_payment_mix", "report_sales_returns", "report_sales_top_customers"],
   },
   {
     key: "purchasing",
@@ -240,7 +240,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     members: [
       "chart_of_accounts", "journal_entries", "posting_center", "fiscal_periods",
       "cost_centers", "taxes",
-      "report_account_statement", "report_customer_statement", "report_income_statement",
+      "report_account_statement", "report_income_statement",
       "report_balance_sheet", "report_trial_balance",
     ],
     subHeaders: { report_account_statement: "التقارير المالية" },
@@ -259,6 +259,32 @@ const NAV_GROUPS: NavGroupDef[] = [
 const VIEW_TO_GROUP: Partial<Record<View, string>> = Object.fromEntries(
   NAV_GROUPS.flatMap((g) => g.members.map((m) => [m, g.key])),
 ) as Partial<Record<View, string>>;
+
+// ── Tab-workspace persistence ───────────────────────────────────────────
+// Persist the open tab chips + the active tab so a restart restores the same
+// workspace. Key carries the `pos_desktop_` prefix so the standalone mode
+// switch wipes it alongside every other device-local key. Restored tabs are
+// validated against `labelFor` (unknown ids dropped) and "sales" is always
+// guaranteed present; now-gated tabs are pruned later by the moduleVisible
+// effect.
+const OPEN_TABS_LS = "pos_desktop_open_tabs_v1";
+function loadPersistedTabs(): { tabs: View[]; active: View } | null {
+  try {
+    const raw = localStorage.getItem(OPEN_TABS_LS);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { tabs?: unknown; active?: unknown };
+    const rawTabs = Array.isArray(parsed.tabs) ? parsed.tabs : [];
+    const valid = rawTabs.filter(
+      (t): t is View => typeof t === "string" && labelFor(t as View) != null,
+    );
+    const tabs: View[] = valid.includes("sales") ? valid : ["sales", ...valid];
+    if (tabs.length === 0) return null;
+    const active = typeof parsed.active === "string" && tabs.includes(parsed.active as View)
+      ? (parsed.active as View)
+      : "sales";
+    return { tabs, active };
+  } catch { return null; }
+}
 
 export default function PosShell({
   baseUrl, deviceToken, userToken, cashierContext,
@@ -296,8 +322,8 @@ export default function PosShell({
   // the visible one; every other open tab is kept in the DOM with display:none.
   // `setView(v)` is a backward-compatible shim used by all existing handlers:
   // it opens the tab (if not already open) and activates it.
-  const [openTabs, setOpenTabs] = useState<View[]>(["sales"]);
-  const [activeTab, setActiveTab] = useState<View>("sales");
+  const [openTabs, setOpenTabs] = useState<View[]>(() => loadPersistedTabs()?.tabs ?? ["sales"]);
+  const [activeTab, setActiveTab] = useState<View>(() => loadPersistedTabs()?.active ?? "sales");
   const view = activeTab;
   const setView = useCallback((v: View) => {
     setOpenTabs((prev) => (prev.includes(v) ? prev : [...prev, v]));
@@ -311,9 +337,19 @@ export default function PosShell({
       return next;
     });
   }, []);
+  // Persist the open tabs + active tab so a restart restores the workspace.
+  useEffect(() => {
+    try {
+      localStorage.setItem(OPEN_TABS_LS, JSON.stringify({ tabs: openTabs, active: activeTab }));
+    } catch { /* quota / unavailable — non-fatal */ }
+  }, [openTabs, activeTab]);
   // Drill-down target: set when a COA balance pill is clicked, consumed by
   // AccountStatementReport to preselect + auto-run for that account.
   const [stmtAccountId, setStmtAccountId] = useState<number | null>(null);
+  // "استخدام" handoff: set when a saved POS invoice is reused from PosInvoices,
+  // consumed by SalesScreen to hydrate a NEW cart (the original signed invoice
+  // is immutable — this duplicates its lines into a fresh sale).
+  const [reuseInvoiceId, setReuseInvoiceId] = useState<number | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [parkedCount, setParkedCount] = useState(0);
   const [pushSummary, setPushSummary] = useState<PushSummary | null>(null);
@@ -325,10 +361,11 @@ export default function PosShell({
   const [openGroup, setOpenGroup] = useState<string | null>(
     () => VIEW_TO_GROUP[view] ?? null,
   );
-  useEffect(() => {
-    const g = VIEW_TO_GROUP[view];
-    if (g) setOpenGroup(g);
-  }, [view]);
+  // NOTE: the sidebar accordion is now controlled SOLELY by explicit clicks on
+  // group headers. We intentionally do NOT auto-open the active view's group on
+  // every `view` change — switching tabs (clicking a tab chip) used to re-open
+  // the owning nav dropdown, which the user found disruptive. The active screen
+  // still gets a highlight via `hasActive` regardless of the open/closed state.
   const { latest: latestRelease, isNewer: updateAvailable } = useLatestVersion(baseUrl);
   // Vertical preset (Task #200) — drives pharmacy-only nav (تقرير الصلاحية).
   // Read once on mount; switching verticals requires a re-launch.
@@ -666,11 +703,11 @@ export default function PosShell({
     <>
           {v === "sales" && (
             usesNewRegisterScreen(vertical)
-              ? <RegisterScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={effectiveCashierName} />
-              : <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={effectiveCashierName} />
+              ? <RegisterScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={effectiveCashierName} reuseInvoiceId={reuseInvoiceId} onReuseConsumed={() => setReuseInvoiceId(null)} />
+              : <SalesScreen companyName={effectiveCompanyName} posSessionId={posSessionId} cashierName={effectiveCashierName} reuseInvoiceId={reuseInvoiceId} onReuseConsumed={() => setReuseInvoiceId(null)} />
           )}
           {v === "returns" && <div style={S.pagePad}><ReturnsScreen companyName={effectiveCompanyName} cashierName={effectiveCashierName} /></div>}
-          {v === "pos_invoices" && <div style={S.pagePad}><PosInvoices companyName={effectiveCompanyName} cashierName={effectiveCashierName} /></div>}
+          {v === "pos_invoices" && <div style={S.pagePad}><PosInvoices companyName={effectiveCompanyName} cashierName={effectiveCashierName} onReuse={(id) => { setReuseInvoiceId(id); setView("sales"); }} /></div>}
           {!standalone && v === "pending" && <div style={S.pagePad}><PendingInvoices companyName={effectiveCompanyName} /></div>}
           {v === "parked" && (
             <div style={S.pagePad}>

@@ -169,11 +169,26 @@ function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, curre
 }) {
   // Payables control accounts: liability type only (mirrors the web AP picker).
   const apAccounts = accounts.filter((a) => a.type === "liability" && a.isActive);
+  const [tab, setTab] = useState<"basic" | "address" | "accounting">("basic");
+
+  function handleSave() {
+    // Required field lives on the basic tab — surface it if the user is elsewhere.
+    if (!data.nameAr.trim()) { setTab("basic"); }
+    onSave();
+  }
+
   return (
     <div style={F.formCard}>
       <div style={F.formTitle}>{mode === "new" ? "مورد جديد" : "تعديل بيانات المورد"}</div>
 
-      <div style={F.section}>المعلومات الأساسية</div>
+      <div style={F.tabBar}>
+        <button type="button" onClick={() => setTab("basic")} style={tab === "basic" ? F.tabActive : F.tab}>المعلومات الأساسية</button>
+        <button type="button" onClick={() => setTab("address")} style={tab === "address" ? F.tabActive : F.tab}>العنوان الوطني</button>
+        <button type="button" onClick={() => setTab("accounting")} style={tab === "accounting" ? F.tabActive : F.tab}>الإعدادات المحاسبية</button>
+      </div>
+
+      {tab === "basic" && (
+      <>
       <div style={F.grid}>
         <Field label="الكود">
           <input value={data.code ?? ""} onChange={(e) => setField("code", e.target.value || null)} style={F.bigInput} placeholder="كود المورد" />
@@ -211,7 +226,10 @@ function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, curre
         </Field>
       </div>
 
-      <div style={F.section}>العنوان الوطني</div>
+      </>
+      )}
+
+      {tab === "address" && (
       <div style={F.grid}>
         <Field label="المدينة">
           <input value={data.city ?? ""} onChange={(e) => setField("city", e.target.value || null)} style={F.bigInput} placeholder="المدينة" />
@@ -235,8 +253,10 @@ function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, curre
           <input value={data.nationalAddressShort ?? ""} onChange={(e) => setField("nationalAddressShort", e.target.value || null)} style={{ ...F.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="مثال: RIYD2929" />
         </Field>
       </div>
+      )}
 
-      <div style={F.section}>الإعدادات المحاسبية</div>
+      {tab === "accounting" && (
+      <>
       <div style={F.grid}>
         <Field label="حساب الذمم الدائنة (المورد)">
           <select value={data.apAccountId ?? 0} onChange={(e) => setField("apAccountId", Number(e.target.value) || null)} style={F.bigInput}>
@@ -277,11 +297,13 @@ function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, curre
           <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 8 }}>يُرحَّل قيد افتتاحي مقابل حقوق الملكية عند الحفظ.</div>
         </>
       )}
+      </>
+      )}
 
       {err && <div style={F.formErr}>⚠️ {err}</div>}
 
       <div style={F.formActions}>
-        <button onClick={onSave} disabled={busy} style={F.btnSave}>{busy ? "جاري الحفظ..." : "حفظ"}</button>
+        <button onClick={handleSave} disabled={busy} style={F.btnSave}>{busy ? "جاري الحفظ..." : "حفظ"}</button>
         <button onClick={onCancel} disabled={busy} style={F.btnCancel}>إلغاء</button>
       </div>
     </div>
@@ -300,6 +322,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const F = {
   formCard: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 24, marginBottom: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" } as const,
   formTitle: { fontSize: 18, fontWeight: 700, color: "#0f172a", marginBottom: 8 } as const,
+  tabBar: { display: "flex", gap: 8, flexWrap: "wrap" as const, borderBottom: "2px solid #e2e8f0", marginBottom: 18, marginTop: 6 } as const,
+  tab: { padding: "10px 18px", background: "transparent", color: "#64748b", border: "none", borderBottom: "3px solid transparent", borderRadius: 0, cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: "inherit", marginBottom: -2 } as const,
+  tabActive: { padding: "10px 18px", background: "transparent", color: "#2563eb", border: "none", borderBottom: "3px solid #2563eb", borderRadius: 0, cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: "inherit", marginBottom: -2 } as const,
   section: { fontSize: 13, fontWeight: 700, color: "#2563eb", marginTop: 18, marginBottom: 10, paddingBottom: 6, borderBottom: "1px solid #eff6ff" } as const,
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 } as const,
   field: { display: "flex", flexDirection: "column" as const, gap: 6 } as const,

@@ -468,6 +468,8 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
             .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "count_pending_invoices" => crate::invoices::count_pending_invoices()
             .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+        "delete_offline_invoice" => crate::invoices::delete_offline_invoice(i_req("id")?)
+            .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "list_all_invoices" => crate::invoices::list_all_invoices(i_opt("limit"))
             .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "daily_report_invoices" => {

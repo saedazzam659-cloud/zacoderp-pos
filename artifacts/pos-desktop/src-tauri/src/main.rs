@@ -410,6 +410,7 @@ fn main() {
             invoices::daily_report_invoices,
             invoices::get_offline_invoice,
             invoices::count_pending_invoices,
+            invoices::delete_offline_invoice,
             sync::sync_push_now,
             standalone::standalone_get_mode,
             standalone::standalone_set_mode,

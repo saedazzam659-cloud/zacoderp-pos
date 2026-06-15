@@ -29,6 +29,7 @@
 - [POS Desktop FX on invoice forms](pos-desktop-fx-overlay.md) — foreign prices baked to base (×rate) before save; detect foreign by currency identity not rate≠1; validate rate>0.
 - [POS Desktop invoice discounts](pos-desktop-invoice-discounts.md) — no SQLite/Rust discount column; fold net unit price into payload so VAT lands on net; pre-discount breakdown lives only in a localStorage overlay for re-display.
 - [POS Desktop add-to-cart gates](pos-desktop-add-to-cart-gates.md) — every cart-add path must reuse shared ensureExpiryAllowed gate; multi-unit pricing is LS-overlay-only, stock deducts qty×factor in base unit.
+- [POS Desktop invoice reuse unit metadata](pos-desktop-invoice-reuse-unit-metadata.md) — "استخدام" needs OPTIONAL unit/weighed fields on payload lines (additive, Rust stores payload_json opaque) or reused multi-unit lines deduct wrong stock.
 - [Date field traps](native-date-input-clamp.md) — native `type=date` silently drops impossible day+month combos (no change event); `toISOString()` default is a day behind in UTC+3; use SmartDateInput (DD/MM/YYYY).
 - [Sequence monthly reset](sequence-monthly-reset.md) — web-ERP numbering counters keyed (sequence,branch,period); per-month rows when reset on (""=continuous); month seeds from logs max+1; peek must mirror issuance bucket+branch or badge drifts.
 - [POS Desktop numbering series](pos-desktop-numbering-series.md) — user-editable prefix/next/padding per doc type; dup numbers prevented ONLY by column UNIQUE — new numbered doc types MUST add their own UNIQUE or numbering can mint duplicates.

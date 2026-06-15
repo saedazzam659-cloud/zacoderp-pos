@@ -15,6 +15,7 @@ import type { ReactNode } from "react";
 import {
   listAllInvoices,
   getOfflineInvoice,
+  deleteOfflineInvoice,
   type PendingInvoice,
   type OfflineInvoicePayload,
   type FullInvoice,
@@ -73,12 +74,13 @@ function fmtDate(iso: string): string {
   return d.toLocaleString("ar-SA");
 }
 
-export default function PosInvoices({ companyName, cashierName }: { companyName?: string; cashierName?: string }) {
+export default function PosInvoices({ companyName, cashierName, onReuse }: { companyName?: string; cashierName?: string; onReuse?: (id: number) => void }) {
   const sym = currencySymbol();
   const [rows, setRows] = useState<PendingInvoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterKind>("all");
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   // Detail modal state.
   const [detail, setDetail] = useState<FullInvoice | null>(null);
@@ -98,6 +100,24 @@ export default function PosInvoices({ companyName, cashierName }: { companyName?
       setErr(`تعذّر تحميل الفواتير: ${e?.message ?? e}`);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleDelete(row: PendingInvoice) {
+    const ok = window.confirm(
+      `حذف الفاتورة ${row.invoiceNo} نهائياً من هذا الجهاز؟\n` +
+      `هذا يحذف السجل المحلي فقط ولا يلغي أي فاتورة مُرسلة إلى هيئة الزكاة والضريبة.`,
+    );
+    if (!ok) return;
+    setDeletingId(row.id);
+    setErr(null);
+    try {
+      await deleteOfflineInvoice(row.id);
+      await refresh();
+    } catch (e: any) {
+      setErr(`تعذّر حذف الفاتورة: ${e?.message ?? e}`);
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -196,6 +216,7 @@ export default function PosInvoices({ companyName, cashierName }: { companyName?
                 <Th>التاريخ</Th>
                 <Th>النوع</Th>
                 <Th>حالة المزامنة</Th>
+                <Th>إجراءات</Th>
               </tr>
             </thead>
             <tbody>
@@ -209,6 +230,34 @@ export default function PosInvoices({ companyName, cashierName }: { companyName?
                   <Td>{fmtDate(r.createdAt)}</Td>
                   <Td>{invoiceTypeLabel(r.invoiceNo)}</Td>
                   <Td><SyncBadge status={r.syncStatus} /></Td>
+                  <Td>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {onReuse && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onReuse(r.id); }}
+                          style={{
+                            ...btnSecondary, padding: "4px 12px", fontSize: 13,
+                            background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe",
+                          }}
+                          title="تحميل أصناف الفاتورة في سلة جديدة"
+                        >
+                          استخدام
+                        </button>
+                      )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); void handleDelete(r); }}
+                        disabled={deletingId === r.id}
+                        style={{
+                          ...btnSecondary, padding: "4px 12px", fontSize: 13,
+                          background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca",
+                          opacity: deletingId === r.id ? 0.6 : 1,
+                        }}
+                        title="حذف السجل المحلي للفاتورة"
+                      >
+                        {deletingId === r.id ? "..." : "حذف"}
+                      </button>
+                    </div>
+                  </Td>
                 </tr>
               ))}
             </tbody>
