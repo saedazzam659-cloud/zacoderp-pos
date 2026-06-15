@@ -4,6 +4,7 @@ import {
   type Account, type AccountInput, type AccountType, type ReportDirection,
 } from "../lib/accounting";
 import { listCostCenters, type CostCenter } from "../lib/costCenters";
+import { reportLedgerLines } from "../lib/reports";
 import {
   Page, Card, Table, Th, Td, Empty, Modal, Field, Row, Actions, ErrorMsg,
   input, btnPrimary, btnSecondary, btnLink, fmt, SearchCombobox,
@@ -42,6 +43,12 @@ type Props = { onDrillToStatement?: (accountId: number) => void };
 
 export default function ChartOfAccounts({ onDrillToStatement }: Props) {
   const [rows, setRows] = useState<Account[]>([]);
+  // Posted-only raw (debit − credit) balance per account id, derived from the
+  // POSTED journal-entry ledger — NOT the denormalized accounts_local.balance
+  // (which non-posting paths like inventory COGS / opening balances mutate).
+  // This keeps شجرة الحسابات consistent with the financial reports: balances
+  // appear only after the entries are posted (مرحّلة).
+  const [postedRaw, setPostedRaw] = useState<Map<number, number>>(() => new Map());
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState<"all" | AccountType>("all");
@@ -58,7 +65,13 @@ export default function ChartOfAccounts({ onDrillToStatement }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const codeRef = useRef<HTMLInputElement | null>(null);
 
-  async function refresh() { setRows(await listAccounts()); }
+  async function refresh() {
+    const [accs, lines] = await Promise.all([listAccounts(), reportLedgerLines({})]);
+    setRows(accs);
+    const m = new Map<number, number>();
+    for (const l of lines) m.set(l.accountId, (m.get(l.accountId) ?? 0) + (l.debit - l.credit));
+    setPostedRaw(m);
+  }
   useEffect(() => {
     void refresh();
     void (async () => setCostCenters(await listCostCenters()))();
@@ -77,9 +90,10 @@ export default function ChartOfAccounts({ onDrillToStatement }: Props) {
   }
 
   // ── Aggregated balances (raw debit-credit signed) ──
-  // Stored balance is TYPE-ADJUSTED (natural positive). Convert each account
-  // to raw debit-credit (positive = debit side) so sums across a subtree are
-  // in a consistent unit, then a parent's balance = own + Σ children.
+  // Each account's own balance is the POSTED ledger sum Σ(debit − credit)
+  // (positive = debit side) so sums across a subtree are in a consistent unit;
+  // a parent's balance = own + Σ children. Unposted (draft) entries contribute
+  // nothing because reportLedgerLines filters status='posted'.
   const byId = useMemo(() => new Map(rows.map((a) => [a.id, a])), [rows]);
   const childrenIndex = useMemo(() => {
     const m = new Map<number | null, Account[]>();
@@ -93,9 +107,9 @@ export default function ChartOfAccounts({ onDrillToStatement }: Props) {
     return m;
   }, [rows]);
   function rawBalance(a: Account): number {
-    return a.type === "asset" || a.type === "expense" ? a.balance : -a.balance;
+    return postedRaw.get(a.id) ?? 0;
   }
-  const balanceCache = useMemo(() => new Map<number, number>(), [rows]);
+  const balanceCache = useMemo(() => new Map<number, number>(), [rows, postedRaw]);
   function computeBalance(id: number, seen: Set<number> = new Set()): number {
     if (balanceCache.has(id)) return balanceCache.get(id)!;
     if (seen.has(id)) return 0;

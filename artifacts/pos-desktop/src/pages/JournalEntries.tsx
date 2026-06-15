@@ -31,6 +31,29 @@ const NET_MARKER = " (صافٍ من الضريبة)";
 const VAT_DESC_PREFIX = "ضريبة القيمة المضافة";
 const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 
+// ── Month grouping (audit-grid visual polish, mirrors the web list) ──────
+// Rows are grouped under a month-accent separator derived from `entryDate`.
+// Twelve hand-picked accent tones read well against the slate table body.
+const MONTH_NAMES_AR: Record<number, string> = {
+  1: "يناير", 2: "فبراير", 3: "مارس", 4: "أبريل", 5: "مايو", 6: "يونيو",
+  7: "يوليو", 8: "أغسطس", 9: "سبتمبر", 10: "أكتوبر", 11: "نوفمبر", 12: "ديسمبر",
+};
+const MONTH_ACCENTS: Record<number, string> = {
+  1: "#fb7185", 2: "#f472b6", 3: "#e879f9", 4: "#c084fc", 5: "#a78bfa", 6: "#818cf8",
+  7: "#60a5fa", 8: "#38bdf8", 9: "#2dd4bf", 10: "#34d399", 11: "#f59e0b", 12: "#f97316",
+};
+function monthInfo(entryDate: string | null | undefined): { key: string; label: string; accent: string } {
+  const m = String(entryDate ?? "").match(/^(\d{4})-(\d{2})/);
+  if (!m) return { key: "—", label: "بدون تاريخ", accent: "#cbd5e1" };
+  const year = m[1];
+  const month = Number(m[2]);
+  return {
+    key: `${year}-${m[2]}`,
+    label: `${MONTH_NAMES_AR[month] ?? m[2]} ${year}`,
+    accent: MONTH_ACCENTS[month] ?? "#cbd5e1",
+  };
+}
+
 type FormState =
   | { kind: "create"; initial: null }
   | { kind: "edit"; id: number; initial: ManualJeDetail }
@@ -50,6 +73,8 @@ export default function JournalEntries() {
   const [search, setSearch] = useState("");
   const [printData, setPrintData] = useState<ManualJeDetail | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   async function refresh() {
     const [list, accs] = await Promise.all([listJournalEntries(500), listAccounts()]);
@@ -121,6 +146,87 @@ export default function JournalEntries() {
     });
   }, [rows, statusFilter, search]);
 
+  // ── Form prev/next navigation: cycle through the filtered MANUAL entries
+  //    by display order (newest-first as returned by the list). ───────────
+  const navIds = useMemo(() => filtered.filter(isManual).map((e) => e.id), [filtered]);
+
+  // ── Bulk selection (manual entries only) ─────────────────────────────
+  // A row is selectable when it is manual. Bulk-post then operates on the
+  // DRAFT subset and bulk-delete on every selected manual row, mirroring the
+  // per-row guards.
+  const selectableIds = useMemo(() => filtered.filter(isManual).map((e) => e.id), [filtered]);
+  // Prune selections that fell out of the current filter so counts stay honest.
+  useEffect(() => {
+    setSelected((prev) => {
+      const allow = new Set(selectableIds);
+      let changed = false;
+      const next = new Set<number>();
+      prev.forEach((id) => { if (allow.has(id)) next.add(id); else changed = true; });
+      return changed ? next : prev;
+    });
+  }, [selectableIds]);
+
+  const selectedIds = useMemo(() => Array.from(selected), [selected]);
+  const draftSelectedIds = useMemo(() => {
+    const sel = new Set(selected);
+    return rows.filter((e) => sel.has(e.id) && isManual(e) && e.status === "draft").map((e) => e.id);
+  }, [rows, selected]);
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
+
+  function toggleSel(id: number) {
+    setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+  function toggleSelectAll() {
+    setSelected((prev) => prev.size >= selectableIds.length && selectableIds.every((id) => prev.has(id))
+      ? new Set()
+      : new Set(selectableIds));
+  }
+
+  // Sequentially run a single-entry op over `ids`, collecting per-row failures.
+  async function bulkRun(ids: number[], fn: (id: number) => Promise<void>): Promise<{ ok: number; failures: string[] }> {
+    let ok = 0; const failures: string[] = [];
+    for (const id of ids) {
+      const e = rows.find((r) => r.id === id);
+      const label = e ? e.entryNo : String(id);
+      try { await fn(id); ok++; } catch (err: any) { failures.push(`${label}: ${err?.message ?? "فشل"}`); }
+    }
+    return { ok, failures };
+  }
+
+  async function handleBulkPost() {
+    if (draftSelectedIds.length === 0) return;
+    if (!confirm(`سيتم ترحيل ${draftSelectedIds.length} قيد محدد. متابعة؟`)) return;
+    setBulkBusy(true);
+    try {
+      const { ok, failures } = await bulkRun(draftSelectedIds, (id) => postJournalEntry(id));
+      await refresh();
+      setSelected(new Set());
+      if (failures.length > 0) {
+        alert(`تم ترحيل ${ok} من ${draftSelectedIds.length} قيد.\n${failures.length} قيد فشل:\n• ${failures.slice(0, 8).join("\n• ")}`);
+      } else if (ok > 0) {
+        alert(`تم ترحيل ${ok} قيد بنجاح`);
+      }
+    } finally { setBulkBusy(false); }
+  }
+
+  async function handleBulkDelete() {
+    const ids = rows.filter((e) => selected.has(e.id) && isManual(e)).map((e) => e.id);
+    if (ids.length === 0) return;
+    if (!confirm(`حذف ${ids.length} قيد محدد؟ لا يمكن التراجع، وستُلغى آثار القيود المرحَّلة على الأرصدة.`)) return;
+    setBulkBusy(true);
+    try {
+      const { ok, failures } = await bulkRun(ids, (id) => deleteJournalEntry(id));
+      if (expandedId != null && ids.includes(expandedId)) { setExpandedId(null); setExpandedDetail(null); }
+      await refresh();
+      setSelected(new Set());
+      if (failures.length > 0) {
+        alert(`تم حذف ${ok} من ${ids.length} قيد.\n${failures.length} قيد فشل:\n• ${failures.slice(0, 8).join("\n• ")}`);
+      } else if (ok > 0) {
+        alert(`تم حذف ${ok} قيد بنجاح`);
+      }
+    } finally { setBulkBusy(false); }
+  }
+
   const draftCount = rows.filter((e) => e.status === "draft").length;
   const formKey = form ? (form.kind === "edit" ? `edit-${form.id}` : form.kind === "duplicate" ? `dup-${form.initial.id}` : "create") : "none";
 
@@ -142,6 +248,8 @@ export default function JournalEntries() {
               key={formKey}
               accounts={accounts}
               state={form}
+              navIds={navIds}
+              onNavigate={(id) => void openEdit(id)}
               onCancel={() => setForm(null)}
               onDone={() => { setForm(null); void refresh(); }}
             />
@@ -166,6 +274,23 @@ export default function JournalEntries() {
             style={{ ...input, maxWidth: 300 }}
           />
           <span style={{ color: "#64748b", fontSize: 13 }}>{filtered.length} نتيجة</span>
+          {selectedIds.length > 0 && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginInlineStart: "auto", flexWrap: "wrap" }}>
+              <span style={{ color: "#0f172a", fontSize: 13, fontWeight: 600 }}>{selectedIds.length} محدد</span>
+              <button type="button" onClick={() => void handleBulkPost()}
+                disabled={bulkBusy || draftSelectedIds.length === 0}
+                style={{ ...btnPrimary, background: "#15803d", padding: "6px 14px",
+                  opacity: (bulkBusy || draftSelectedIds.length === 0) ? 0.5 : 1,
+                  cursor: (bulkBusy || draftSelectedIds.length === 0) ? "not-allowed" : "pointer" }}>
+                {bulkBusy ? "..." : `ترحيل المحدد (${draftSelectedIds.length})`}
+              </button>
+              <button type="button" onClick={() => void handleBulkDelete()} disabled={bulkBusy}
+                style={{ ...btnDanger, padding: "6px 14px", opacity: bulkBusy ? 0.5 : 1 }}>
+                {bulkBusy ? "..." : `حذف المحدد (${selectedIds.length})`}
+              </button>
+              <button type="button" onClick={() => setSelected(new Set())} disabled={bulkBusy} style={btnLink}>إلغاء التحديد</button>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -173,60 +298,90 @@ export default function JournalEntries() {
         {filtered.length === 0 ? <Empty text="لا توجد قيود مطابقة" /> : (
           <Table>
             <thead><tr>
+              <Th style={{ width: 38 }}>
+                <input type="checkbox" checked={allSelected} disabled={selectableIds.length === 0}
+                  title="تحديد كل القيود اليدوية" onChange={toggleSelectAll} />
+              </Th>
               <Th>رقم القيد</Th><Th>التاريخ</Th><Th>النوع</Th><Th>البيان</Th><Th>المصدر</Th><Th>الحالة</Th>
               <Th style={{ textAlign: "left" }}>المدين</Th><Th style={{ textAlign: "left" }}>الدائن</Th>
               <Th style={{ width: 260 }}></Th>
             </tr></thead>
             <tbody>
-              {filtered.map((e) => {
-                const manual = isManual(e);
-                const rowBusy = busyId === e.id;
-                return (
-                  <React.Fragment key={e.id}>
-                    <tr>
-                      <Td mono style={{ fontWeight: 600 }}>{e.entryNo}</Td>
-                      <Td>{e.entryDate}</Td>
-                      <Td>{ENTRY_TYPE_LABEL[e.entryType] ?? e.entryType}</Td>
-                      <Td>{e.description ?? "—"}</Td>
-                      <Td><SourceTag source={e.sourceType} /></Td>
-                      <Td><StatusTag status={e.status} /></Td>
-                      <Td num>{fmt(e.totalDebit)}</Td>
-                      <Td num>{fmt(e.totalCredit)}</Td>
-                      <Td>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                          <button onClick={() => void toggleView(e.id)} disabled={!!form} aria-expanded={expandedId === e.id}
-                            style={{ ...btnLink, opacity: form ? 0.5 : 1 }}>
-                            {expandedId === e.id ? "▲ إخفاء" : "▼ عرض"}
-                          </button>
-                          {manual && (
-                            <button onClick={() => void openEdit(e.id)} disabled={!!form || rowBusy} style={btnLink}>تعديل</button>
-                          )}
-                          <button onClick={() => void openDuplicate(e.id)} disabled={!!form || rowBusy} style={btnLink}>نسخ</button>
-                          <button onClick={() => void doPrint(e.id)} disabled={rowBusy} style={btnLink}>طباعة</button>
-                          {manual && e.status === "draft" && (
-                            <button onClick={() => void doPost(e.id)} disabled={rowBusy} style={{ ...btnLink, color: "#15803d", fontWeight: 600 }}>ترحيل</button>
-                          )}
-                          {manual && e.status === "posted" && (
-                            <button onClick={() => void doUnpost(e.id)} disabled={rowBusy} style={{ ...btnLink, color: "#b45309" }}>فك ترحيل</button>
-                          )}
-                          {manual && (
-                            <button onClick={() => void doDelete(e.id, e.entryNo)} disabled={rowBusy} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
-                          )}
-                        </div>
-                      </Td>
-                    </tr>
-                    {expandedId === e.id && (
-                      <tr style={{ background: "#f8fafc" }}>
-                        <Td colSpan={9 as any}>
-                          {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>... جاري التحميل</div> : (
-                            <EntryDetail entry={expandedDetail} />
-                          )}
+              {(() => {
+                let lastMonthKey = "";
+                const nodes: React.ReactNode[] = [];
+                for (const e of filtered) {
+                  const manual = isManual(e);
+                  const rowBusy = busyId === e.id;
+                  const mi = monthInfo(e.entryDate);
+                  if (mi.key !== lastMonthKey) {
+                    lastMonthKey = mi.key;
+                    nodes.push(
+                      <tr key={`m-${mi.key}`}>
+                        <td colSpan={10} style={{
+                          borderInlineStart: `4px solid ${mi.accent}`,
+                          background: "#f8fafc", padding: "6px 14px",
+                          fontSize: 12, fontWeight: 700, color: "#334155",
+                          borderTop: "1px solid #e2e8f0",
+                        }}>
+                          {mi.label}
+                        </td>
+                      </tr>,
+                    );
+                  }
+                  nodes.push(
+                    <React.Fragment key={e.id}>
+                      <tr>
+                        <Td style={{ borderInlineStart: `4px solid ${mi.accent}` }}>
+                          {manual ? (
+                            <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleSel(e.id)} />
+                          ) : null}
+                        </Td>
+                        <Td mono style={{ fontWeight: 600 }}>{e.entryNo}</Td>
+                        <Td>{e.entryDate}</Td>
+                        <Td>{ENTRY_TYPE_LABEL[e.entryType] ?? e.entryType}</Td>
+                        <Td>{e.description ?? "—"}</Td>
+                        <Td><SourceTag source={e.sourceType} /></Td>
+                        <Td><StatusTag status={e.status} /></Td>
+                        <Td num>{fmt(e.totalDebit)}</Td>
+                        <Td num>{fmt(e.totalCredit)}</Td>
+                        <Td>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                            <button onClick={() => void toggleView(e.id)} disabled={!!form} aria-expanded={expandedId === e.id}
+                              style={{ ...btnLink, opacity: form ? 0.5 : 1 }}>
+                              {expandedId === e.id ? "▲ إخفاء" : "▼ عرض"}
+                            </button>
+                            {manual && (
+                              <button onClick={() => void openEdit(e.id)} disabled={!!form || rowBusy} style={btnLink}>تعديل</button>
+                            )}
+                            <button onClick={() => void openDuplicate(e.id)} disabled={!!form || rowBusy} style={btnLink}>نسخ</button>
+                            <button onClick={() => void doPrint(e.id)} disabled={rowBusy} style={btnLink}>طباعة</button>
+                            {manual && e.status === "draft" && (
+                              <button onClick={() => void doPost(e.id)} disabled={rowBusy} style={{ ...btnLink, color: "#15803d", fontWeight: 600 }}>ترحيل</button>
+                            )}
+                            {manual && e.status === "posted" && (
+                              <button onClick={() => void doUnpost(e.id)} disabled={rowBusy} style={{ ...btnLink, color: "#b45309" }}>فك ترحيل</button>
+                            )}
+                            {manual && (
+                              <button onClick={() => void doDelete(e.id, e.entryNo)} disabled={rowBusy} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
+                            )}
+                          </div>
                         </Td>
                       </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
+                      {expandedId === e.id && (
+                        <tr style={{ background: "#f8fafc" }}>
+                          <Td colSpan={10 as any}>
+                            {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>... جاري التحميل</div> : (
+                              <EntryDetail entry={expandedDetail} />
+                            )}
+                          </Td>
+                        </tr>
+                      )}
+                    </React.Fragment>,
+                  );
+                }
+                return nodes;
+              })()}
             </tbody>
           </Table>
         )}
@@ -282,12 +437,30 @@ function emptyLine(): ManualJeLine {
   return { accountId: 0, debit: 0, credit: 0, description: null, costCenterId: null };
 }
 
-function JeForm({ accounts, state, onCancel, onDone }: {
-  accounts: Account[]; state: FormState; onCancel: () => void; onDone: () => void;
+function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
+  accounts: Account[]; state: FormState; navIds?: number[];
+  onNavigate?: (id: number) => void; onCancel: () => void; onDone: () => void;
 }) {
   const { branches, costCenters } = useDimensions();
   const init = state.initial;
   const isEdit = state.kind === "edit";
+
+  // ── Source-lock: an auto-generated (non-manual) entry must be edited from
+  //    its source document. Editing it here would break the link, so we lock
+  //    the form read-only and show a banner. (Reachable defensively; the list
+  //    only opens manual entries for edit.) Posted manual entries are NOT
+  //    locked — offline supports re-posting (reverse + re-apply) — but we show
+  //    an informational notice so the user understands the impact on balances.
+  const sourceLocked = isEdit && !!init && !isManual(init);
+  const postedNotice = isEdit && !!init && init.status === "posted" && !sourceLocked;
+  const readOnly = sourceLocked;
+
+  // Prev/next navigation across the current filtered MANUAL entries (edit mode).
+  const navList = navIds ?? [];
+  const curId = state.kind === "edit" ? state.id : null;
+  const curIdx = curId != null ? navList.indexOf(curId) : -1;
+  const prevId = curIdx > 0 ? navList[curIdx - 1] : null;
+  const nextId = curIdx >= 0 && curIdx < navList.length - 1 ? navList[curIdx + 1] : null;
 
   const [date, setDate] = useState(isEdit && init ? init.entryDate : todayStr());
   const [desc, setDesc] = useState(init?.description ?? "");
@@ -298,6 +471,7 @@ function JeForm({ accounts, state, onCancel, onDone }: {
   const [autoCopyDesc, setAutoCopyDesc] = useState(true);
   const [vatMode, setVatMode] = useState<"exclusive" | "inclusive">("exclusive");
   const [suggestedNo, setSuggestedNo] = useState("");
+  const [activeLine, setActiveLine] = useState<number | null>(null);
   const [lines, setLines] = useState<ManualJeLine[]>(
     init && init.lines.length
       ? init.lines.map((l) => ({ ...l, id: isEdit ? l.id : undefined }))
@@ -346,6 +520,30 @@ function JeForm({ accounts, state, onCancel, onDone }: {
   }
   function addLine() { setLines((ls) => [...ls, { ...emptyLine(), costCenterId: costCenterId === "" ? null : costCenterId }]); }
   function removeLine(i: number) { setLines((ls) => ls.length > 1 ? ls.filter((_, k) => k !== i) : ls); }
+
+  // Smart auto-balance: drop the remaining imbalance onto a suitable line so
+  // the entry becomes balanced in one click. Prefers an empty-amount line
+  // (the active/focused one first, then the first empty), otherwise appends a
+  // new line. Idempotent — a no-op when the entry is already balanced.
+  function autoBalance() {
+    const d = round2(totalDr - totalCr);
+    if (Math.abs(d) < 0.001) return; // already balanced → no-op
+    const isEmptyAmt = (l: ManualJeLine) => !((Number(l.debit) || 0) > 0) && !((Number(l.credit) || 0) > 0);
+    const value = round2(Math.abs(d));
+    let targetIdx = (activeLine != null && activeLine >= 0 && activeLine < lines.length && isEmptyAmt(lines[activeLine]))
+      ? activeLine
+      : lines.findIndex(isEmptyAmt);
+    if (targetIdx >= 0) {
+      setLine(targetIdx, d < 0 ? { debit: value, credit: 0 } : { credit: value, debit: 0 });
+    } else {
+      setLines((ls) => [...ls, {
+        ...emptyLine(),
+        description: desc || null,
+        costCenterId: costCenterId === "" ? null : costCenterId,
+        ...(d > 0 ? { credit: value } : { debit: value }),
+      }]);
+    }
+  }
 
   function onHeaderDescChange(v: string) {
     setDesc(v);
@@ -450,6 +648,7 @@ function JeForm({ accounts, state, onCancel, onDone }: {
   }
 
   async function save(status: JeStatus) {
+    if (readOnly) return; // source-locked entries are view-only (defense for keyboard paths)
     if (status === "draft" && validCount < 1) { setErr("أضف سطراً واحداً صالحاً على الأقل"); return; }
     if (status === "posted" && !balanced) { setErr("القيد غير متوازن أو يحتوي أقل من سطرين"); return; }
     setBusy(true); setErr(null);
@@ -468,6 +667,7 @@ function JeForm({ accounts, state, onCancel, onDone }: {
     function onKey(ev: KeyboardEvent) {
       if (busy) return;
       if (ev.key === "Escape") { ev.preventDefault(); onCancel(); return; }
+      if (readOnly) return; // source-locked: Esc still closes, all edit shortcuts are inert
       if (!(ev.ctrlKey || ev.metaKey)) return;
       const k = ev.key.toLowerCase();
       if (k === "s" || ev.key === "Enter") { ev.preventDefault(); void save("posted"); }
@@ -477,13 +677,57 @@ function JeForm({ accounts, state, onCancel, onDone }: {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, lines, date, desc, entryType, docNumber, branchId, costCenterId]);
+  }, [busy, readOnly, lines, date, desc, entryType, docNumber, branchId, costCenterId]);
 
   const title = isEdit ? `تعديل القيد ${init?.entryNo ?? ""}` : state.kind === "duplicate" ? `نسخة من ${init?.entryNo ?? ""}` : "إضافة قيد يومية يدوي";
 
+  const badgeText = isEdit ? (init?.entryNo ?? "") : (docNumber || suggestedNo);
+
   return (
     <div>
-      <h3 style={{ marginTop: 0 }}>{title}</h3>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+        <h3 style={{ margin: 0 }}>{title}</h3>
+        {badgeText && (
+          <span style={{
+            display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px",
+            background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 999,
+            color: "#1d4ed8", fontWeight: 700, fontSize: 13, fontFamily: "monospace",
+          }} title={isEdit ? "رقم القيد" : "الرقم المقترح"}>
+            <span style={{ fontFamily: "inherit" }}>#</span>{badgeText}
+            {!isEdit && <span style={{ fontSize: 11, fontWeight: 500, color: "#64748b" }}>مقترح</span>}
+          </span>
+        )}
+        {isEdit && navList.length > 0 && (
+          <div style={{ display: "inline-flex", gap: 6, marginInlineStart: "auto", alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: "#64748b" }}>{curIdx >= 0 ? `${curIdx + 1} / ${navList.length}` : ""}</span>
+            <button type="button" onClick={() => prevId != null && onNavigate?.(prevId)} disabled={prevId == null}
+              style={{ ...btnSecondary, padding: "4px 10px", opacity: prevId == null ? 0.4 : 1, cursor: prevId == null ? "not-allowed" : "pointer" }}>
+              ‹ السابق
+            </button>
+            <button type="button" onClick={() => nextId != null && onNavigate?.(nextId)} disabled={nextId == null}
+              style={{ ...btnSecondary, padding: "4px 10px", opacity: nextId == null ? 0.4 : 1, cursor: nextId == null ? "not-allowed" : "pointer" }}>
+              التالي ›
+            </button>
+          </div>
+        )}
+      </div>
+
+      {sourceLocked && (
+        <div style={{
+          marginBottom: 12, padding: "10px 14px", borderRadius: 6,
+          background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", fontSize: 13,
+        }}>
+          🔒 هذا القيد تلقائي (مصدره: {init?.sourceType ?? "—"}) ولا يمكن تعديله من هنا. الحقول للعرض فقط — عدّل المستند الأصلي بدلاً من ذلك.
+        </div>
+      )}
+      {postedNotice && (
+        <div style={{
+          marginBottom: 12, padding: "10px 14px", borderRadius: 6,
+          background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", fontSize: 13,
+        }}>
+          ⚠️ هذا القيد مُرحَّل. أي تعديل ثم حفظ سيُلغي الأثر القديم على الأرصدة ويُعيد تطبيق الأثر الجديد.
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "180px 180px 1fr", gap: 10 }}>
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
@@ -542,9 +786,9 @@ function JeForm({ accounts, state, onCancel, onDone }: {
               <Td>
                 <SearchCombobox value={l.costCenterId ?? ""} onChange={(v) => setLine(i, { costCenterId: v === "" ? null : Number(v) })} style={input} options={ccOptions} />
               </Td>
-              <Td><input type="number" step="0.01" value={l.debit || ""} onChange={(e) => setLine(i, { debit: Number(e.target.value) || 0, credit: 0 })} style={input} /></Td>
-              <Td><input type="number" step="0.01" value={l.credit || ""} onChange={(e) => setLine(i, { credit: Number(e.target.value) || 0, debit: 0 })} style={input} /></Td>
-              <Td><button onClick={() => removeLine(i)} type="button" style={{ ...btnLink, color: "#dc2626" }}>×</button></Td>
+              <Td><input type="number" step="0.01" value={l.debit || ""} disabled={readOnly} onFocus={() => setActiveLine(i)} onChange={(e) => setLine(i, { debit: Number(e.target.value) || 0, credit: 0 })} style={input} /></Td>
+              <Td><input type="number" step="0.01" value={l.credit || ""} disabled={readOnly} onFocus={() => setActiveLine(i)} onChange={(e) => setLine(i, { credit: Number(e.target.value) || 0, debit: 0 })} style={input} /></Td>
+              <Td><button onClick={() => removeLine(i)} type="button" disabled={readOnly} style={{ ...btnLink, color: "#dc2626" }}>×</button></Td>
             </tr>
           ))}
           <tr style={{ background: "#f8fafc", fontWeight: 700 }}>
@@ -556,8 +800,14 @@ function JeForm({ accounts, state, onCancel, onDone }: {
         </tbody>
       </Table>
 
-      <div style={{ marginTop: 8 }}>
-        <button onClick={addLine} type="button" style={btnSecondary}>+ سطر</button>
+      <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <button onClick={addLine} type="button" disabled={readOnly} style={btnSecondary}>+ سطر</button>
+        <button onClick={autoBalance} type="button"
+          disabled={readOnly || Math.abs(totalDr - totalCr) < 0.001}
+          title="إكمال الموازنة: يضع الفرق في الجانب الفارغ من السطر النشط أو في سطر جديد"
+          style={{ ...btnSecondary, opacity: (readOnly || Math.abs(totalDr - totalCr) < 0.001) ? 0.5 : 1 }}>
+          ⚖ موازنة تلقائية
+        </button>
         {!balanced && totalDr > 0 && Math.abs(totalDr - totalCr) >= 0.001 && (
           <span style={{ marginInlineStart: 12, color: "#dc2626", fontSize: 13 }}>القيد غير متوازن — الفرق {fmt(Math.abs(totalDr - totalCr))}</span>
         )}
@@ -565,9 +815,13 @@ function JeForm({ accounts, state, onCancel, onDone }: {
 
       <ErrorMsg text={err} />
       <Actions>
-        <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء (Esc)</button>
-        <button onClick={() => void save("draft")} disabled={busy} type="button" style={btnDanger}>{busy ? "..." : "حفظ كمسودة (Ctrl+D)"}</button>
-        <button onClick={() => void save("posted")} disabled={busy || !balanced} type="button" style={btnPrimary}>{busy ? "..." : "حفظ وترحيل (Ctrl+S)"}</button>
+        <button onClick={onCancel} type="button" style={btnSecondary}>{readOnly ? "إغلاق (Esc)" : "إلغاء (Esc)"}</button>
+        {!readOnly && (
+          <>
+            <button onClick={() => void save("draft")} disabled={busy} type="button" style={btnDanger}>{busy ? "..." : "حفظ كمسودة (Ctrl+D)"}</button>
+            <button onClick={() => void save("posted")} disabled={busy || !balanced} type="button" style={btnPrimary}>{busy ? "..." : "حفظ وترحيل (Ctrl+S)"}</button>
+          </>
+        )}
       </Actions>
     </div>
   );

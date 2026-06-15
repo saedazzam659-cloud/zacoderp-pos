@@ -798,13 +798,38 @@ pub fn journal_entry_unpost(id: i64) -> Result<(), String> {
 }
 
 // ───────── Fiscal-period lock guard ─────────
-// Rejects posting / unposting a journal entry whose date falls inside a fiscal
-// period that has been soft-closed (`closed`) or hard-closed
-// (`permanently_closed`). Entries whose date is outside any defined period are
-// always allowed — fiscal-period setup is optional, so a company that never
-// created periods is never blocked. The date is normalised to its YYYY-MM-DD
-// prefix so timestamps (if any) still match a period's day range.
+// Rejects posting / editing / deleting any operation whose date falls inside a
+// soft-closed (`closed`) or hard-closed (`permanently_closed`) fiscal PERIOD or
+// fiscal YEAR, AND rejects any date that falls in NO fiscal period at all
+// (fiscal-period setup is now mandatory — nothing can post/edit without first
+// creating a period: «الرجاء إنشاء فترة مالية»). The date is normalised to its
+// YYYY-MM-DD prefix so timestamps (if any) still match a period's day range.
 pub(crate) fn guard_period_open_for_date(tx: &Transaction, date: &str) -> Result<(), String> {
+    // (1) Fiscal-YEAR closure locks everything dated inside it. Closing a whole
+    // year (fiscal_year_set_status) does NOT cascade to its periods, so the
+    // period check below would miss it — check the parent year explicitly.
+    let year_status: Option<String> = tx
+        .query_row(
+            "SELECT status FROM fiscal_years_local \
+             WHERE substr(?1,1,10) >= start_date AND substr(?1,1,10) <= end_date \
+             ORDER BY start_date DESC LIMIT 1",
+            params![date],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    match year_status.as_deref() {
+        Some("closed") => return Err(
+            "لا يمكن الترحيل أو التعديل — السنة المالية لهذا التاريخ مقفلة. افتح السنة من شاشة الفترات المحاسبية أولاً".into(),
+        ),
+        Some("permanently_closed") => return Err(
+            "لا يمكن الترحيل أو التعديل — السنة المالية لهذا التاريخ مقفلة نهائياً".into(),
+        ),
+        _ => {}
+    }
+    // (2) Period status + (3) no-period guard. A date that falls in NO fiscal
+    // period is rejected so nothing can post/edit without first creating a
+    // period (الرجاء إنشاء فترة مالية).
     let status: Option<String> = tx
         .query_row(
             "SELECT status FROM fiscal_periods_local \
@@ -816,13 +841,15 @@ pub(crate) fn guard_period_open_for_date(tx: &Transaction, date: &str) -> Result
         .optional()
         .map_err(|e| e.to_string())?;
     match status.as_deref() {
+        Some("open") => Ok(()),
         Some("closed") => Err(
-            "لا يمكن الترحيل — الفترة المحاسبية لهذا التاريخ مقفلة (إقفال ناعم). افتح الفترة من شاشة الفترات المحاسبية أولاً".into(),
+            "لا يمكن الترحيل أو التعديل — الفترة المحاسبية لهذا التاريخ مقفلة (إقفال ناعم). افتح الفترة من شاشة الفترات المحاسبية أولاً".into(),
         ),
         Some("permanently_closed") => Err(
-            "لا يمكن الترحيل — الفترة المحاسبية لهذا التاريخ مقفلة نهائياً".into(),
+            "لا يمكن الترحيل أو التعديل — الفترة المحاسبية لهذا التاريخ مقفلة نهائياً".into(),
         ),
-        _ => Ok(()),
+        // No period covers this date (and no closed year matched above).
+        _ => Err("الرجاء إنشاء فترة مالية".into()),
     }
 }
 
@@ -960,6 +987,7 @@ pub fn journal_entry_delete(id: i64) -> Result<(), String> {
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let (_src, status) = load_manual_guard(&conn, id)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    guard_period_open_for_entry(&tx, id)?;
     if status == "posted" {
         reverse_je_balance(&tx, id).map_err(|e| e.to_string())?;
     }
@@ -1503,6 +1531,7 @@ pub fn purchase_get(id: i64) -> Result<Purchase, String> {
 pub fn purchase_create(input: PurchaseInput) -> Result<i64, String> {
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    guard_period_open_for_date(&tx, &input.invoice_date)?;
     let purchase_id = purchase_create_in_tx(&tx, &input)?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(purchase_id)
@@ -1911,6 +1940,7 @@ pub fn purchase_return_create(input: PurchaseReturnInput) -> Result<i64, String>
     if input.lines.is_empty() { return Err("لا يمكن حفظ مرتجع بدون أصناف".into()); }
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    guard_period_open_for_date(&tx, &input.return_date)?;
 
     let mut subtotal = 0.0_f64;
     let mut vat_total = 0.0_f64;
@@ -2355,6 +2385,7 @@ pub fn goods_receipt_create(input: GoodsReceiptInput) -> Result<i64, String> {
     if input.lines.is_empty() { return Err("لا يمكن حفظ سند استلام بدون أصناف".into()); }
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    guard_period_open_for_date(&tx, &input.receipt_date)?;
     let (subtotal, vat_total, grand_total) = purchase_doc_totals(&input.lines);
     let receipt_no = next_doc_no(&tx, "goods_receipt").map_err(|e| e.to_string())?;
     tx.execute(
@@ -2388,6 +2419,7 @@ pub fn goods_receipt_post(id: i64) -> Result<(), String> {
         params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
     ).map_err(|e| e.to_string())?;
     if status != "draft" { return Err("سند الاستلام ليس في حالة مسودة".into()); }
+    guard_period_open_for_date(&tx, &date)?;
     let receipt_no: String = tx.query_row("SELECT receipt_no FROM goods_receipts_local WHERE id=?1", params![id], |r| r.get(0))
         .map_err(|e| e.to_string())?;
     let lines = gr_lines_load(&tx, id)?;
@@ -2984,6 +3016,7 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
     }
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    guard_period_open_for_date(&tx, &input.invoice_date)?;
 
     let mut subtotal = 0.0_f64;
     let mut vat_total = 0.0_f64;
@@ -3922,6 +3955,7 @@ pub fn sales_return_create(input: SalesReturnInput) -> Result<i64, String> {
     }
     let grand_total = subtotal + vat_total;
 
+    guard_period_open_for_date(&tx, &input.return_date)?;
     let return_no = next_sret_no(&tx).map_err(|e| e.to_string())?;
     tx.execute(
         "INSERT INTO sales_returns_local(return_no,customer_id,invoice_id,return_date,subtotal,vat_total,grand_total,cogs_total,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id)
@@ -4081,6 +4115,7 @@ pub fn financial_tx_create(input: FinancialTxInput) -> Result<i64, String> {
 
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    guard_period_open_for_date(&tx, &input.tx_date)?;
     let tx_no = next_fintx_no(&tx, &input.tx_type).map_err(|e| e.to_string())?;
 
     // Resolve our cash/bank account + its native currency. Receipts/payments
@@ -4464,6 +4499,7 @@ pub fn treasury_transfer_create(input: TreasuryTransferInput) -> Result<i64, Str
     }
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    guard_period_open_for_date(&tx, &input.transfer_date)?;
 
     // Look up both endpoints + balances.
     let (from_acc, from_cur, _from_name, from_bal) = treasury_endpoint(&tx, &input.from_kind, input.from_id)
@@ -5489,6 +5525,7 @@ pub fn supplier_settlement_create(input: SupplierSettlementInput) -> Result<i64,
     validate_cash_bank_payment(&input.payment_method, input.cash_box_id, input.bank_id)?;
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    guard_period_open_for_date(&tx, &input.settlement_date)?;
     let doc_no = next_doc_no(&tx, "supplier_settlement").map_err(|e| e.to_string())?;
     let cur = cash_bank_currency(&tx, &input.payment_method, input.cash_box_id, input.bank_id)?;
     let rate = current_rate_to_base(&tx, &cur).map_err(|e| e.to_string())?;
@@ -5533,6 +5570,7 @@ pub fn supplier_settlement_post(id: i64) -> Result<(), String> {
         ).map_err(|_| "سند التسوية غير موجود".to_string())?;
     if status != "draft" { return Err("السند مرحّل بالفعل".into()); }
     if amount <= 0.0 { return Err("المبلغ يجب أن يكون أكبر من صفر".into()); }
+    guard_period_open_for_date(&tx, &date)?;
     // Refresh the FX rate at post time (it may have moved since the draft).
     let cur = cash_bank_currency(&tx, &method, cb, bank)?;
     let rate = current_rate_to_base(&tx, &cur).map_err(|e| e.to_string())?;
@@ -5561,13 +5599,17 @@ pub fn supplier_settlement_post(id: i64) -> Result<(), String> {
 pub fn supplier_settlement_unpost(id: i64) -> Result<(), String> {
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let (status, je_id, supplier_id, method, cb, bank, amount, rate): (String, Option<i64>, i64, String, Option<i64>, Option<i64>, f64, f64) =
+    let (status, je_id, supplier_id, method, cb, bank, amount, rate, date): (String, Option<i64>, i64, String, Option<i64>, Option<i64>, f64, f64, String) =
         tx.query_row(
-            "SELECT status,je_id,supplier_id,payment_method,cash_box_id,bank_id,amount,exchange_rate FROM supplier_settlements_local WHERE id=?1",
+            "SELECT status,je_id,supplier_id,payment_method,cash_box_id,bank_id,amount,exchange_rate,settlement_date FROM supplier_settlements_local WHERE id=?1",
             params![id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
         ).map_err(|_| "سند التسوية غير موجود".to_string())?;
     if status != "posted" { return Err("السند غير مرحّل".into()); }
+    // Unposting reverses GL balances → it must respect the period lock: refuse
+    // when the settlement's date falls inside a closed/permanently-closed
+    // year/period (full-lock policy), same as every other GL-moving path.
+    guard_period_open_for_date(&tx, &date)?;
     let amount_base = amount * rate;
     if let Some(je) = je_id {
         reverse_je_balance(&tx, je).map_err(|e| e.to_string())?;
@@ -5587,11 +5629,16 @@ pub fn supplier_settlement_unpost(id: i64) -> Result<(), String> {
 
 #[tauri::command]
 pub fn supplier_settlement_delete(id: i64) -> Result<(), String> {
-    let conn = db::open().map_err(|e| e.to_string())?;
-    let status: String = conn.query_row("SELECT status FROM supplier_settlements_local WHERE id=?1", params![id], |r| r.get(0))
-        .map_err(|_| "سند التسوية غير موجود".to_string())?;
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (status, date): (String, String) = tx.query_row(
+        "SELECT status, settlement_date FROM supplier_settlements_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|_| "سند التسوية غير موجود".to_string())?;
     if status == "posted" { return Err("لا يمكن حذف سند مرحّل — ألغِ الترحيل أولاً".into()); }
-    conn.execute("DELETE FROM supplier_settlements_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    guard_period_open_for_date(&tx, &date)?;
+    tx.execute("DELETE FROM supplier_settlements_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -5800,6 +5847,7 @@ pub fn lc_post_funding(input: LcFundingInput) -> Result<i64, String> {
     validate_cash_bank_payment(&input.payment_method, input.cash_box_id, input.bank_id)?;
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    guard_period_open_for_date(&tx, &input.funding_date)?;
     let (settle_acc, lc_number): (Option<i64>, String) = tx.query_row(
         "SELECT settlement_account_id, lc_number FROM letters_of_credit_local WHERE id=?1",
         params![input.lc_id], |r| Ok((r.get(0)?, r.get(1)?)),
