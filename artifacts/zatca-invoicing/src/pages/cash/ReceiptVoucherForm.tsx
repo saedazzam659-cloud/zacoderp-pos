@@ -15,10 +15,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
+import { AccountCascadePicker } from "@/components/ui/account-cascade-picker";
 import {
   ArrowDownCircle, ArrowRight, ChevronLeft, Search,
   Loader2, Save, Send, Lock, FileText, Banknote,
-  Wallet, Building2, User2, Printer, Link2, X, Settings2,
+  Wallet, Building2, User2, Layers, Printer, Link2, X, Settings2,
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
 
@@ -31,7 +32,8 @@ interface FormState {
   branchId: string;
   cashBoxId: string;
   bankAccountId: string;
-  entityId: string;       // customer id (always)
+  entityId: string;       // customer id (party mode)
+  accountId: string;      // GL account id (general-account mode)
   entityName: string;     // cached name for JE preview
   amount: string;
   currencyId: string;
@@ -51,6 +53,7 @@ const EMPTY: FormState = {
   cashBoxId: "",
   bankAccountId: "",
   entityId: "",
+  accountId: "",
   entityName: "",
   amount: "",
   currencyId: "",
@@ -62,6 +65,25 @@ const EMPTY: FormState = {
   notes: "",
   costCenter: "",
 };
+
+// ── Branch matching for treasuries ───────────────────────────────
+// A cash box belongs to the selected branch when its branchId matches, OR
+// when it has NO branch (NULL = company-wide / shared, visible everywhere).
+function boxMatchesBranch(c: any, bid: string): boolean {
+  if (!bid) return true;
+  if (c.branchId == null) return true;
+  return String(c.branchId) === String(bid);
+}
+// A bank account may be linked via the legacy single branchId OR the
+// multi-branch branchIds[] array (source of truth). No link at all = shared.
+function bankMatchesBranch(b: any, bid: string): boolean {
+  if (!bid) return true;
+  const ids: any[] = Array.isArray(b.branchIds) ? b.branchIds : [];
+  const shared = b.branchId == null && ids.length === 0;
+  if (shared) return true;
+  if (b.branchId != null && String(b.branchId) === String(bid)) return true;
+  return ids.map(String).includes(String(bid));
+}
 
 export default function ReceiptVoucherForm() {
   const { user, token } = useAuth();
@@ -95,6 +117,9 @@ export default function ReceiptVoucherForm() {
 
   const [form, setForm] = useState<FormState>(EMPTY);
   const [linkInvoice, setLinkInvoice] = useState(false);
+  // "party"   → settle against a customer (default, legacy behaviour)
+  // "account" → settle against a general GL account picked from the tree
+  const [entityMode, setEntityMode] = useState<"party" | "account">("party");
 
   // ── Sequence preview for new vouchers ───────────────────────────
   const seqPeek = useNextSequenceNumber("receipt_voucher", isNew);
@@ -120,6 +145,13 @@ export default function ReceiptVoucherForm() {
     queryKey: ["customers", cid],
     queryFn: () => fetch(`${API}/api/customers?companyId=${cid}`, { headers: h }).then(r => r.json()),
     enabled: !!cid,
+  });
+  // Chart of accounts — feeds the general-account cascade picker.
+  const { data: accounts = [] } = useQuery<any[]>({
+    queryKey: ["accounts", cid],
+    queryFn: () => fetch(`${API}/api/accounts?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    enabled: !!cid,
+    staleTime: 60_000,
   });
   const { data: currencies = [] } = useQuery<any[]>({
     queryKey: ["currencies", cid],
@@ -159,6 +191,27 @@ export default function ReceiptVoucherForm() {
       setForm(p => ({ ...p, branchId: String(defaultBranchId) }));
     }
   }, [isNew, form.branchId, defaultBranchId]);
+  // When the user changes the branch, drop any selected cash box / bank
+  // that is not linked to the new branch (shared NULL-branch ones are kept).
+  const prevBranchRef = useRef<string>("");
+  useEffect(() => {
+    const bid = form.branchId;
+    const prev = prevBranchRef.current;
+    prevBranchRef.current = bid;
+    if (!prev || prev === bid) return;
+    setForm(p => {
+      let next = p;
+      if (p.cashBoxId) {
+        const c = (cashBoxes as any[]).find((x: any) => String(x.id) === p.cashBoxId);
+        if (c && !boxMatchesBranch(c, bid)) next = { ...next, cashBoxId: "" };
+      }
+      if (p.bankAccountId) {
+        const b = (bankAccounts as any[]).find((x: any) => String(x.id) === p.bankAccountId);
+        if (b && !bankMatchesBranch(b, bid)) next = { ...next, bankAccountId: "" };
+      }
+      return next;
+    });
+  }, [form.branchId, cashBoxes, bankAccounts]);
   // Sales invoices for the optional link picker. We pull the full list
   // for this tenant once and filter client-side per selected customer —
   // simpler than maintaining a per-customer endpoint and the data is
@@ -196,6 +249,7 @@ export default function ReceiptVoucherForm() {
       cashBoxId: existing.cashBoxId ? String(existing.cashBoxId) : "",
       bankAccountId: existing.bankAccountId ? String(existing.bankAccountId) : "",
       entityId: existing.entityId ? String(existing.entityId) : "",
+      accountId: existing.accountId ? String(existing.accountId) : "",
       entityName: existing.entityName ?? "",
       amount: existing.amount ?? "",
       currencyId: existing.currencyId ? String(existing.currencyId) : "",
@@ -208,7 +262,20 @@ export default function ReceiptVoucherForm() {
       costCenter: existing.costCenter ?? "",
     });
     setLinkInvoice(!!existing.salesInvoiceId);
+    setEntityMode(existing.accountId && !existing.entityId ? "account" : "party");
   }, [existing]);
+
+  // Toggle between settling a party (customer) and a general GL account.
+  // Switching clears the now-irrelevant side so we never submit both.
+  function switchEntityMode(m: "party" | "account") {
+    setEntityMode(m);
+    if (m === "account") {
+      setLinkInvoice(false);
+      setForm(p => ({ ...p, entityId: "", salesInvoiceId: "", entityName: "" }));
+    } else {
+      setForm(p => ({ ...p, accountId: "", entityName: "" }));
+    }
+  }
 
   // ── Document navigation (prev/next/jump-by-search) ─────────────
   const navList = vouchers as any[];
@@ -238,17 +305,17 @@ export default function ReceiptVoucherForm() {
 
   // ── Build searchable combobox items ────────────────────────────
   const cashBoxItems: ComboboxItem[] = useMemo(() =>
-    (cashBoxes as any[]).map(c => ({
+    (cashBoxes as any[]).filter(c => boxMatchesBranch(c, form.branchId)).map(c => ({
       value: String(c.id),
       label: isRtl ? c.nameAr : (c.nameEn || c.nameAr),
-    })), [cashBoxes, isRtl]);
+    })), [cashBoxes, isRtl, form.branchId]);
 
   const bankAccountItems: ComboboxItem[] = useMemo(() =>
-    (bankAccounts as any[]).map(b => ({
+    (bankAccounts as any[]).filter(b => bankMatchesBranch(b, form.branchId)).map(b => ({
       value: String(b.id),
       label: isRtl ? b.nameAr : (b.nameEn || b.nameAr),
       description: b.accountNumber ?? b.iban ?? undefined,
-    })), [bankAccounts, isRtl]);
+    })), [bankAccounts, isRtl, form.branchId]);
 
   const customerItems: ComboboxItem[] = useMemo(() =>
     (customers as any[]).map(c => ({
@@ -302,8 +369,12 @@ export default function ReceiptVoucherForm() {
       ? (ba ? t(`${NS}.bankPrefix`, { name: baName }) : t(`${NS}.noBankSelected`))
       : (cb ? t(`${NS}.cashPrefix`, { name: cbName }) : t(`${NS}.noCashSelected`));
     const crLabel = form.entityName
-      ? t(`${NS}.customerPrefix`, { name: form.entityName })
-      : t(`${NS}.noCustomerSelected`, "— لم يتم اختيار العميل —");
+      ? (entityMode === "account"
+          ? form.entityName
+          : t(`${NS}.customerPrefix`, { name: form.entityName }))
+      : (entityMode === "account"
+          ? t(`${NS}.noAccountSelected`, "— لم يتم اختيار الحساب —")
+          : t(`${NS}.noCustomerSelected`, "— لم يتم اختيار العميل —"));
     return { drLabel, crLabel, amount: amt };
   }
 
@@ -322,9 +393,14 @@ export default function ReceiptVoucherForm() {
         throw new Error(t(`${NS}.cashBoxRequired`, "الخزنة مطلوبة عند الدفع نقداً"));
       if (form.paymentType === "bank" && !form.bankAccountId)
         throw new Error(t(`${NS}.bankRequired`, "الحساب البنكي مطلوب عند الدفع بنكاً"));
-      if (!form.entityId)
-        throw new Error(t(`${NS}.customerRequired`, "اختيار العميل مطلوب"));
+      if (entityMode === "party") {
+        if (!form.entityId)
+          throw new Error(t(`${NS}.customerRequired`, "اختيار العميل مطلوب"));
+      } else if (!form.accountId) {
+        throw new Error(t(`${NS}.accountRequired`, "اختيار الحساب مطلوب"));
+      }
 
+      const isAccountMode = entityMode === "account";
       const body = {
         ...form,
         amount: amtNum.toFixed(2),
@@ -334,9 +410,12 @@ export default function ReceiptVoucherForm() {
         branchId:     form.branchId     ? parseInt(form.branchId)     : null,
         cashBoxId:    form.cashBoxId    ? parseInt(form.cashBoxId)    : null,
         bankAccountId:form.bankAccountId? parseInt(form.bankAccountId): null,
-        entityId:     form.entityId     ? parseInt(form.entityId)     : null,
+        // Account mode credits a general GL account (accountId) with no party;
+        // party mode credits the customer and leaves accountId null.
+        accountId:    isAccountMode && form.accountId ? parseInt(form.accountId) : null,
+        entityId:     isAccountMode ? null : (form.entityId ? parseInt(form.entityId) : null),
         currencyId:   form.currencyId   ? parseInt(form.currencyId)   : null,
-        salesInvoiceId: linkInvoice && form.salesInvoiceId
+        salesInvoiceId: !isAccountMode && linkInvoice && form.salesInvoiceId
           ? parseInt(form.salesInvoiceId) : null,
       };
 
@@ -790,32 +869,83 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 pb-4 space-y-4">
-                {/* Customer (only entity option) */}
+                {/* Credit-side mode: customer vs general GL account */}
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">
-                    {t(`${NS}.customer`)} <span className="text-destructive">*</span>
-                  </Label>
-                  <SearchCombobox
-                    items={customerItems}
-                    value={form.entityId}
-                    onValueChange={v => {
-                      const found = (customers as any[]).find((x: any) => String(x.id) === v);
-                      setForm(p => ({
-                        ...p,
-                        entityId: v,
-                        entityName: (isRtl ? found?.nameAr : (found?.nameEn || found?.nameAr)) || "",
-                        // Linking a different customer invalidates the linked invoice.
-                        salesInvoiceId: "",
-                      }));
-                    }}
-                    placeholder={t(`${NS}.selectCustomer`, "— اختر العميل —")}
-                    searchPlaceholder={t(`${NS}.searchEntity`, "ابحث بالاسم أو الكود...")}
-                    emptyText={t(`${NS}.noResults`, "لا توجد نتائج")}
-                  />
-                  <p className="text-[11px] text-muted-foreground mt-1">
-                    {t(`${NS}.jeHintCr`, "العميل سيكون دائناً في القيد المحاسبي")}
-                  </p>
+                  <Label className="text-xs font-medium">{t(`${NS}.creditSide`, "الطرف الدائن")}</Label>
+                  <div className="inline-flex rounded-lg border bg-muted/20 p-0.5">
+                    <button type="button"
+                      onClick={() => switchEntityMode("party")}
+                      data-testid="rv-entitymode-party"
+                      className={cn(
+                        "px-4 h-8 rounded-md text-xs font-medium flex items-center gap-1.5 transition",
+                        entityMode === "party"
+                          ? "bg-blue-100 text-blue-800 shadow-sm"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}>
+                      <User2 className="h-3.5 w-3.5" /> {t(`${NS}.modeCustomer`, "عميل")}
+                    </button>
+                    <button type="button"
+                      onClick={() => switchEntityMode("account")}
+                      data-testid="rv-entitymode-account"
+                      className={cn(
+                        "px-4 h-8 rounded-md text-xs font-medium flex items-center gap-1.5 transition",
+                        entityMode === "account"
+                          ? "bg-emerald-100 text-emerald-800 shadow-sm"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}>
+                      <Layers className="h-3.5 w-3.5" /> {t(`${NS}.modeAccount`, "حساب عام")}
+                    </button>
+                  </div>
                 </div>
+
+                {entityMode === "party" ? (
+                  /* Customer */
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">
+                      {t(`${NS}.customer`)} <span className="text-destructive">*</span>
+                    </Label>
+                    <SearchCombobox
+                      items={customerItems}
+                      value={form.entityId}
+                      onValueChange={v => {
+                        const found = (customers as any[]).find((x: any) => String(x.id) === v);
+                        setForm(p => ({
+                          ...p,
+                          entityId: v,
+                          entityName: (isRtl ? found?.nameAr : (found?.nameEn || found?.nameAr)) || "",
+                          // Linking a different customer invalidates the linked invoice.
+                          salesInvoiceId: "",
+                        }));
+                      }}
+                      placeholder={t(`${NS}.selectCustomer`, "— اختر العميل —")}
+                      searchPlaceholder={t(`${NS}.searchEntity`, "ابحث بالاسم أو الكود...")}
+                      emptyText={t(`${NS}.noResults`, "لا توجد نتائج")}
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      {t(`${NS}.jeHintCr`, "العميل سيكون دائناً في القيد المحاسبي")}
+                    </p>
+                  </div>
+                ) : (
+                  /* General GL account (main → sub cascade) */
+                  <div className="space-y-1.5">
+                    <AccountCascadePicker
+                      accounts={accounts as any[]}
+                      value={form.accountId}
+                      isRtl={isRtl}
+                      onValueChange={(aid) => {
+                        const a = (accounts as any[]).find((x: any) => String(x.id) === aid);
+                        setForm(p => ({
+                          ...p,
+                          accountId: aid,
+                          entityName: a ? ((isRtl ? (a.nameAr || a.nameEn) : (a.nameEn || a.nameAr)) || "") : "",
+                        }));
+                      }}
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      {t(`${NS}.jeHintCrAccount`, "الحساب المختار سيكون دائناً في القيد المحاسبي")}
+                    </p>
+                  </div>
+                )}
 
                 {/* Amount — large prominent input */}
                 <div className="space-y-1.5">
@@ -835,7 +965,8 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                   </div>
                 </div>
 
-                {/* Optional: link to a sales invoice */}
+                {/* Optional: link to a sales invoice (party mode only) */}
+                {entityMode === "party" && (
                 <div className="rounded-lg border border-dashed border-blue-200 bg-blue-50/30 p-3 space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
@@ -891,6 +1022,7 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                     </div>
                   )}
                 </div>
+                )}
               </CardContent>
             </Card>
 
