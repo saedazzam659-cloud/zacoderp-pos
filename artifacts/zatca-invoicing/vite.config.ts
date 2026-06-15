@@ -83,6 +83,9 @@ export default defineConfig({
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
     sourcemap: false,
+    // Skip the gzip-size report — on this app's large bundle it adds
+    // meaningful build time and peak memory for no production benefit.
+    reportCompressedSize: false,
     chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
