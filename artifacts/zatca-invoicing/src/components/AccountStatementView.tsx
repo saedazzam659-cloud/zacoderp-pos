@@ -470,7 +470,7 @@ export default function AccountStatementView({
                         </Td>
                       )}
                       {v.balance     && <Td center mono className="font-bold text-slate-800">{fmt(l.balance)}</Td>}
-                      {v.description && <Td className="text-slate-700 min-w-[260px]">{l.description}</Td>}
+                      {v.description && <Td wrap className="text-slate-700 min-w-[320px]">{l.description}</Td>}
                     </tr>
                   ))}
                 </tbody>
@@ -510,18 +510,18 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
 }
 function Th({ children, center }: { children: React.ReactNode; center?: boolean }) {
   return (
-    <th className={`px-3 py-2.5 font-semibold border-b border-slate-300 ${center ? "text-center" : "text-start"}`}>
+    <th className={`px-3 py-2.5 font-semibold border-b border-slate-300 whitespace-nowrap ${center ? "text-center" : "text-start"}`}>
       {children}
     </th>
   );
 }
-function Td({ children, center, mono, colSpan, className = "" }: {
-  children: React.ReactNode; center?: boolean; mono?: boolean; colSpan?: number; className?: string;
+function Td({ children, center, mono, colSpan, wrap, className = "" }: {
+  children: React.ReactNode; center?: boolean; mono?: boolean; colSpan?: number; wrap?: boolean; className?: string;
 }) {
   return (
     <td
       colSpan={colSpan}
-      className={`px-3 py-2 ${center ? "text-center" : "text-start"} ${mono ? "font-mono tabular-nums" : ""} ${className}`}
+      className={`px-3 py-2 ${wrap ? "whitespace-normal break-words align-top" : "whitespace-nowrap"} ${center ? "text-center" : "text-start"} ${mono ? "font-mono tabular-nums" : ""} ${className}`}
     >
       {children}
     </td>
