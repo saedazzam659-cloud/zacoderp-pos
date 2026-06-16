@@ -21,6 +21,9 @@ export interface PendingInvoice {
   qrBase64: string | null;
   createdAt: string;
   syncStatus: string;
+  // "sale" | "return", derived backend-side from the payload's `kind`. Optional
+  // for backward-compat (older rows / browser fallback fall back to the prefix).
+  docType?: string | null;
 }
 
 interface RustSaved { local_uuid: string; invoice_no: string; }
@@ -31,6 +34,7 @@ interface RustPending {
   qr_base64: string | null;
   created_at: string;
   sync_status: string;
+  doc_type?: string | null;
 }
 
 export interface OfflineInvoicePayload {
@@ -166,6 +170,7 @@ export async function listPendingInvoices(): Promise<PendingInvoice[]> {
     qrBase64: r.qr_base64,
     createdAt: r.created_at,
     syncStatus: r.sync_status,
+    docType: r.doc_type ?? null,
   }));
 }
 
@@ -197,6 +202,7 @@ export async function listAllInvoices(limit = 100): Promise<PendingInvoice[]> {
       qrBase64: r.qr_base64,
       createdAt: r.created_at,
       syncStatus: r.sync_status,
+      docType: r.doc_type ?? null,
     }));
   }
   // Browser fallback: mirror invoices written by saveOfflineInvoice.
@@ -213,6 +219,7 @@ export async function listAllInvoices(limit = 100): Promise<PendingInvoice[]> {
         qrBase64: i.qrBase64 ?? null,
         createdAt: i.createdAt,
         syncStatus: i.syncStatus ?? "pending",
+        docType: (i.invoiceNo as string).startsWith("RET") ? "return" : "sale",
       }));
   } catch { return []; }
 }

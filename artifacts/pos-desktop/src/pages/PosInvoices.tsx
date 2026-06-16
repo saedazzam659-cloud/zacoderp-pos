@@ -34,8 +34,19 @@ const FILTERS: { value: FilterKind; label: string }[] = [
   { value: "returns", label: "مرتجعات" },
 ];
 
-function invoiceTypeLabel(invoiceNo: string): string {
-  return invoiceNo.startsWith("RET") ? "مرتجع" : "بيع";
+// Reliable sale/return classification. The Rust backend now stamps every row
+// with `docType` (parsed from the payload's `kind`); both sales AND returns
+// share the "OFF-" invoice_no prefix on a real device, so the old prefix test
+// mis-classified every return as a sale. We still fall back to the prefix for
+// browser-dev rows that predate `docType`.
+function docKindOf(r: { invoiceNo: string; docType?: string | null }): "sale" | "return" {
+  if (r.docType === "return") return "return";
+  if (r.docType === "sale") return "sale";
+  return r.invoiceNo.startsWith("RET") ? "return" : "sale";
+}
+
+function typeLabel(kind: "sale" | "return"): string {
+  return kind === "return" ? "مرتجع" : "بيع";
 }
 
 function paymentMethodLabel(m: string | undefined): string {
@@ -122,8 +133,8 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
   }
 
   const filtered = useMemo(() => {
-    if (filter === "sales") return rows.filter((r) => r.invoiceNo.startsWith("OFF"));
-    if (filter === "returns") return rows.filter((r) => r.invoiceNo.startsWith("RET"));
+    if (filter === "sales") return rows.filter((r) => docKindOf(r) === "sale");
+    if (filter === "returns") return rows.filter((r) => docKindOf(r) === "return");
     return rows;
   }, [rows, filter]);
 
@@ -228,7 +239,7 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
                 >
                   <Td mono>{r.invoiceNo}</Td>
                   <Td>{fmtDate(r.createdAt)}</Td>
-                  <Td>{invoiceTypeLabel(r.invoiceNo)}</Td>
+                  <Td>{typeLabel(docKindOf(r))}</Td>
                   <Td><SyncBadge status={r.syncStatus} /></Td>
                   <Td>
                     <div style={{ display: "flex", gap: 6 }}>
@@ -277,7 +288,7 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
                 padding: "12px 16px", marginBottom: 12, fontSize: 14,
               }}>
                 <DetailRow k="رقم الفاتورة" v={detail.invoiceNo} mono />
-                <DetailRow k="النوع" v={invoiceTypeLabel(detail.invoiceNo)} />
+                <DetailRow k="النوع" v={typeLabel(((detailPayload as any)?.kind === "return" || detail.invoiceNo.startsWith("RET")) ? "return" : "sale")} />
                 <DetailRow k="التاريخ" v={fmtDate(detailPayload?.timestamp || detail.createdAt)} />
                 <DetailRow k="حالة المزامنة" node={<SyncBadge status={detail.syncStatus} />} />
                 <DetailRow k="العميل" v={detailPayload?.customerName || "—"} />

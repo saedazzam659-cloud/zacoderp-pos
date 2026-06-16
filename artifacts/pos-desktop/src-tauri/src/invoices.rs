@@ -34,6 +34,12 @@ pub struct PendingInvoice {
     pub qr_base64: Option<String>,
     pub created_at: String,
     pub sync_status: String,
+    // "sale" | "return", parsed from the payload's `kind`. Both sales and
+    // returns share the "OFF-" invoice_no prefix on a device, so the listing
+    // UI can no longer classify them by prefix — this carries the truth.
+    // None for the badge-poll path (list_pending) which doesn't load payloads.
+    #[serde(default)]
+    pub doc_type: Option<String>,
 }
 
 pub fn save(
@@ -165,6 +171,7 @@ pub fn list_pending() -> Result<Vec<PendingInvoice>> {
             qr_base64: r.get(3)?,
             created_at: r.get(4)?,
             sync_status: r.get(5)?,
+            doc_type: None,
         })
     })?;
     let mut out = Vec::new();
@@ -211,19 +218,31 @@ pub fn get(id: i64) -> Result<Option<FullInvoice>> {
 pub fn list_all(limit: i64) -> Result<Vec<PendingInvoice>> {
     let conn = db::open()?;
     let mut stmt = conn.prepare(
-        "SELECT id, local_uuid, invoice_no, qr_base64, created_at, sync_status
+        "SELECT id, local_uuid, invoice_no, qr_base64, created_at, sync_status, payload_json
          FROM offline_invoices
          ORDER BY id DESC
          LIMIT ?1",
     )?;
-    let rows = stmt.query_map([limit], |r| Ok(PendingInvoice {
-        id: r.get(0)?,
-        local_uuid: r.get(1)?,
-        invoice_no: r.get(2)?,
-        qr_base64: r.get(3)?,
-        created_at: r.get(4)?,
-        sync_status: r.get(5)?,
-    }))?;
+    let rows = stmt.query_map([limit], |r| {
+        // Classify sale vs return from the payload's `kind` (returns carry
+        // `kind:"return"`). Default to "sale" when the payload is missing the
+        // flag or fails to parse — the overwhelming majority are sales.
+        let payload: String = r.get(6)?;
+        let doc_type = serde_json::from_str::<serde_json::Value>(&payload)
+            .ok()
+            .and_then(|v| v.get("kind").and_then(|k| k.as_str()).map(|s| s.to_string()))
+            .map(|k| if k == "return" { "return".to_string() } else { "sale".to_string() })
+            .or_else(|| Some("sale".to_string()));
+        Ok(PendingInvoice {
+            id: r.get(0)?,
+            local_uuid: r.get(1)?,
+            invoice_no: r.get(2)?,
+            qr_base64: r.get(3)?,
+            created_at: r.get(4)?,
+            sync_status: r.get(5)?,
+            doc_type,
+        })
+    })?;
     let mut out = Vec::new();
     for r in rows { out.push(r?); }
     Ok(out)

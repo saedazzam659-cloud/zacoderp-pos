@@ -18,8 +18,10 @@ type StatusFilter = "draft" | "posted" | "all";
 // math stays untouched in its original module.
 const MODULE_FILTERS: { value: string; label: string; match: (s: string | null) => boolean }[] = [
   { value: "", label: "كل الأنواع", match: () => true },
-  { value: "pos_sale", label: "فواتير نقاط البيع", match: (s) => s === "sale" || s === "sale_cogs" },
-  { value: "pos_return", label: "مرتجع نقاط البيع", match: (s) => s === "sale_return" || s === "sale_return_cogs" },
+  { value: "sales_customers", label: "المبيعات والعملاء", match: (s) => s === "sale" || s === "sale_cogs" },
+  { value: "sales_customers_return", label: "مرتجعات المبيعات والعملاء", match: (s) => s === "sale_return" || s === "sale_return_cogs" },
+  { value: "pos_sale", label: "مبيعات نقاط البيع", match: (s) => s === "pos_sale" || s === "pos_sale_cogs" },
+  { value: "pos_return", label: "مرتجعات نقاط البيع", match: (s) => s === "pos_return" || s === "pos_return_cogs" },
   { value: "purchase", label: "فواتير المشتريات", match: (s) => s === "purchase" },
   { value: "purchase_return", label: "مرتجعات المشتريات", match: (s) => s === "purchase_return" },
   { value: "goods_receipt", label: "سندات الاستلام", match: (s) => s === "goods_receipt" },
@@ -37,6 +39,10 @@ const SOURCE_LABEL: Record<string, string> = {
   sale_cogs: "تكلفة بضاعة مباعة",
   sale_return: "مرتجع مبيعات",
   sale_return_cogs: "عكس تكلفة بضاعة مباعة",
+  pos_sale: "فاتورة نقاط بيع",
+  pos_sale_cogs: "تكلفة بضاعة - نقاط بيع",
+  pos_return: "مرتجع نقاط بيع",
+  pos_return_cogs: "عكس تكلفة - نقاط بيع",
   purchase: "فاتورة مشتريات",
   purchase_return: "مرتجع مشتريات",
   goods_receipt: "سند استلام",
