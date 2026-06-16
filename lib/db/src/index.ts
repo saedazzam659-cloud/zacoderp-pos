@@ -20,12 +20,14 @@ const toInt = (v: string | undefined, fallback: number): number => {
 // only if you want a hard ceiling. 0 / unset = no statement timeout.
 const statementTimeout = Number(process.env.PG_STATEMENT_TIMEOUT_MS);
 
+const poolMax = toInt(process.env.PG_POOL_MAX, 20);
+
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   // Pool sizing — default 10 (pg default) is far too small for a multi-tenant
   // ERP under load: every request waits on a free client, causing site-wide
   // "hang"/slowness. Tunable via env without a code redeploy.
-  max: toInt(process.env.PG_POOL_MAX, 20),
+  max: poolMax,
   // Fail fast instead of hanging forever when the pool is saturated, so a
   // slow/stuck request can't make the whole UI appear frozen.
   connectionTimeoutMillis: toInt(process.env.PG_CONNECTION_TIMEOUT_MS, 10_000),
@@ -41,6 +43,22 @@ export const pool = new Pool({
 pool.on("error", (err) => {
   console.error("[pg pool] idle client error:", err.message);
 });
+
+// Lightweight saturation monitor: silent under normal load, warns ONLY when
+// clients are actually queued waiting for a connection (waitingCount > 0) —
+// the early-warning signal of pool exhaustion. .unref() so it never keeps the
+// process alive or blocks shutdown, and zero log noise when healthy. Disable
+// with PG_POOL_LOG=0; tune cadence with PG_POOL_LOG_INTERVAL_MS.
+if (process.env.PG_POOL_LOG !== "0" && process.env.PG_POOL_LOG !== "false") {
+  const monitor = setInterval(() => {
+    if (pool.waitingCount > 0) {
+      console.warn(
+        `[pg pool] saturated: waiting=${pool.waitingCount} total=${pool.totalCount} idle=${pool.idleCount} max=${poolMax}`,
+      );
+    }
+  }, toInt(process.env.PG_POOL_LOG_INTERVAL_MS, 30_000));
+  monitor.unref();
+}
 
 export const db = drizzle(pool, { schema });
 
