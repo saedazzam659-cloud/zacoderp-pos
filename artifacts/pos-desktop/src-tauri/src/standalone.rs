@@ -30,7 +30,16 @@ pub fn standalone_set_setting(key: String, value: String) -> Result<(), String> 
     if key == MODE_KEY || key == SESSION_KEY {
         return Err("reserved key".to_string());
     }
-    settings_set(&key, &value).map_err(|e| e.to_string())
+    settings_set(&key, &value).map_err(|e| e.to_string())?;
+    // When the operator chooses their country, base the accounting currency to
+    // match — but only on a still-pristine ledger (rebase_currency_for_country
+    // guards against any DB that already has journal entries / invoices).
+    if key == "pos_desktop_country" {
+        if let Ok(conn) = db::open() {
+            let _ = db::rebase_currency_for_country(&conn, &value);
+        }
+    }
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize, Clone)]

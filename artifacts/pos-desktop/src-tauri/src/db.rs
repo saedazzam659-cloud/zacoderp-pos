@@ -1152,6 +1152,193 @@ pub fn initialize() -> Result<()> {
     seed_currencies(&conn)?;
     // Seed default POS payment methods (cash + card) on first run.
     seed_pos_payment_methods(&conn)?;
+    // Seed the current fiscal year + its 12 monthly periods on first run.
+    seed_fiscal_year(&conn)?;
+    // Seed default commercial master data (walk-in customer + supplier).
+    seed_company_masters(&conn)?;
+    // If a country was already chosen (e.g. cloud activation persisted it before
+    // this open), base the accounting currency to match. No-op for SA, unknown
+    // countries, or any DB that already has transactions.
+    let chosen_country: Option<String> = conn
+        .query_row(
+            "SELECT value FROM app_settings WHERE key='pos_desktop_country'",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    if let Some(iso) = chosen_country {
+        let _ = rebase_currency_for_country(&conn, &iso);
+    }
+    Ok(())
+}
+
+/// ISO-2 country → (currency code, name_ar, name_en, symbol, decimals).
+/// Mirrors the Arab-state catalogue in `src/lib/currency.ts` so the offline DB
+/// base currency matches the operator's chosen country.
+fn currency_for_country(
+    iso: &str,
+) -> Option<(&'static str, &'static str, &'static str, &'static str, i64)> {
+    let v = match iso.to_uppercase().as_str() {
+        "SA" => ("SAR", "الريال السعودي", "Saudi Riyal", "ر.س", 2),
+        "EG" => ("EGP", "الجنيه المصري", "Egyptian Pound", "ج.م", 2),
+        "AE" => ("AED", "الدرهم الإماراتي", "UAE Dirham", "د.إ", 2),
+        "KW" => ("KWD", "الدينار الكويتي", "Kuwaiti Dinar", "د.ك", 3),
+        "QA" => ("QAR", "الريال القطري", "Qatari Riyal", "ر.ق", 2),
+        "BH" => ("BHD", "الدينار البحريني", "Bahraini Dinar", "د.ب", 3),
+        "OM" => ("OMR", "الريال العُماني", "Omani Rial", "ر.ع", 3),
+        "JO" => ("JOD", "الدينار الأردني", "Jordanian Dinar", "د.أ", 3),
+        "LB" => ("LBP", "الليرة اللبنانية", "Lebanese Pound", "ل.ل", 2),
+        "IQ" => ("IQD", "الدينار العراقي", "Iraqi Dinar", "د.ع", 2),
+        "YE" => ("YER", "الريال اليمني", "Yemeni Rial", "ر.ي", 2),
+        "SY" => ("SYP", "الليرة السورية", "Syrian Pound", "ل.س", 2),
+        "DZ" => ("DZD", "الدينار الجزائري", "Algerian Dinar", "د.ج", 2),
+        "TN" => ("TND", "الدينار التونسي", "Tunisian Dinar", "د.ت", 3),
+        "MA" => ("MAD", "الدرهم المغربي", "Moroccan Dirham", "د.م", 2),
+        "LY" => ("LYD", "الدينار الليبي", "Libyan Dinar", "د.ل", 3),
+        "SD" => ("SDG", "الجنيه السوداني", "Sudanese Pound", "ج.س", 2),
+        "PS" => ("ILS", "الشيكل", "Israeli Shekel", "₪", 2),
+        "MR" => ("MRU", "الأوقية الموريتانية", "Mauritanian Ouguiya", "أوقية", 2),
+        "SO" => ("SOS", "الشلن الصومالي", "Somali Shilling", "ش.ص", 2),
+        "DJ" => ("DJF", "الفرنك الجيبوتي", "Djiboutian Franc", "ف.ج", 2),
+        "KM" => ("KMF", "الفرنك القمري", "Comorian Franc", "ف.ق", 2),
+        _ => return None,
+    };
+    Some(v)
+}
+
+/// Re-base the offline accounting currency to the country's currency. Safe ONLY
+/// on a fresh company with no journal entries or invoices yet — re-basing after
+/// transactions exist would corrupt the books, so it is a no-op then. Also a
+/// no-op when the country maps to the currency that is already the base.
+pub fn rebase_currency_for_country(conn: &Connection, iso: &str) -> Result<()> {
+    use rusqlite::params;
+    let (code, name_ar, name_en, symbol, dec) = match currency_for_country(iso) {
+        Some(v) => v,
+        None => return Ok(()),
+    };
+    // Already the base? nothing to do.
+    let already: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM currencies_local WHERE code=?1 AND is_base=1",
+            params![code],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if already > 0 {
+        return Ok(());
+    }
+    // Guard: only re-base a pristine ledger.
+    let je: i64 = conn
+        .query_row("SELECT COUNT(*) FROM journal_entries_local", [], |r| r.get(0))
+        .unwrap_or(0);
+    let inv: i64 = conn
+        .query_row("SELECT COUNT(*) FROM offline_invoices", [], |r| r.get(0))
+        .unwrap_or(0);
+    if je > 0 || inv > 0 {
+        return Ok(());
+    }
+    // Ensure the target currency row exists before flipping the base flag.
+    let exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM currencies_local WHERE code=?1",
+            params![code],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if exists == 0 {
+        let _ = conn.execute(
+            "INSERT INTO currencies_local(code,name_ar,name_en,symbol,decimals,is_base,is_active) VALUES(?1,?2,?3,?4,?5,0,1)",
+            params![code, name_ar, name_en, symbol, dec],
+        );
+    }
+    conn.execute("UPDATE currencies_local SET is_base=0", [])?;
+    conn.execute(
+        "UPDATE currencies_local SET is_base=1, is_active=1 WHERE code=?1",
+        params![code],
+    )?;
+    let today: String = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO currency_rates_local(currency_code,rate_to_base,as_of_date,notes) VALUES(?1,1.0,?2,'تلقائي — العملة الأساسية')",
+        params![code, today],
+    );
+    Ok(())
+}
+
+fn seed_fiscal_year(conn: &Connection) -> Result<()> {
+    use rusqlite::params;
+    let n: i64 = conn
+        .query_row("SELECT COUNT(*) FROM fiscal_years_local", [], |r| r.get(0))
+        .unwrap_or(0);
+    if n > 0 {
+        return Ok(());
+    }
+    let year: i32 = chrono::Utc::now()
+        .format("%Y")
+        .to_string()
+        .parse()
+        .unwrap_or(2025);
+    conn.execute(
+        "INSERT INTO fiscal_years_local(name,start_date,end_date,status) VALUES(?1,?2,?3,'open')",
+        params![
+            format!("السنة المالية {year}"),
+            format!("{year}-01-01"),
+            format!("{year}-12-31")
+        ],
+    )?;
+    let fy_id = conn.last_insert_rowid();
+    let months = [
+        "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر",
+        "أكتوبر", "نوفمبر", "ديسمبر",
+    ];
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    for (i, mname) in months.iter().enumerate() {
+        let m = (i + 1) as i32;
+        let last_day = match m {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 => {
+                if leap {
+                    29
+                } else {
+                    28
+                }
+            }
+            _ => 30,
+        };
+        conn.execute(
+            "INSERT INTO fiscal_periods_local(fiscal_year_id,name,start_date,end_date,status) VALUES(?1,?2,?3,?4,'open')",
+            params![
+                fy_id,
+                format!("{mname} {year}"),
+                format!("{year}-{m:02}-01"),
+                format!("{year}-{m:02}-{last_day:02}")
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn seed_company_masters(conn: &Connection) -> Result<()> {
+    // Default walk-in customer (editable/deletable like any other).
+    let nc: i64 = conn
+        .query_row("SELECT COUNT(*) FROM customers_local", [], |r| r.get(0))
+        .unwrap_or(0);
+    if nc == 0 {
+        let _ = conn.execute(
+            "INSERT INTO customers_local(name_ar,name_en) VALUES('عميل نقدي','Cash Customer')",
+            [],
+        );
+    }
+    // Default supplier.
+    let ns: i64 = conn
+        .query_row("SELECT COUNT(*) FROM suppliers_local", [], |r| r.get(0))
+        .unwrap_or(0);
+    if ns == 0 {
+        let _ = conn.execute(
+            "INSERT INTO suppliers_local(code,name_ar,name_en) VALUES('SUP-001','مورد افتراضي','Default Supplier')",
+            [],
+        );
+    }
     Ok(())
 }
 
@@ -1272,19 +1459,47 @@ fn seed_default_accounts(conn: &Connection) -> Result<()> {
         ("1100", "الخزن",                 "asset",     Some("1000"), 0),
         ("1101", "الخزينة الرئيسية",      "asset",     Some("1100"), 1),
         ("1200", "البنوك",                "asset",     Some("1000"), 0),
+        ("1201", "البنك الرئيسي",         "asset",     Some("1200"), 1),
         ("1300", "المخزون",               "asset",     Some("1000"), 1),
         ("11091","وسيط استلام البضاعة",   "asset",     Some("1000"), 1),
         ("1400", "ضريبة القيمة المضافة - مدخلات", "asset", Some("1000"), 1),
         ("1500", "العملاء (مدينون)",      "asset",     Some("1000"), 1),
+        ("1102", "العهد والسلف",          "asset",     Some("1000"), 1),
+        ("1103", "مصروفات مدفوعة مقدماً", "asset",     Some("1000"), 1),
+        ("1600", "الأصول الثابتة",        "asset",     Some("1000"), 0),
+        ("1610", "أراضٍ ومبانٍ",          "asset",     Some("1600"), 1),
+        ("1620", "أثاث ومعدات",           "asset",     Some("1600"), 1),
+        ("1630", "أجهزة وحاسبات",         "asset",     Some("1600"), 1),
+        ("1640", "سيارات ووسائل نقل",     "asset",     Some("1600"), 1),
+        ("1700", "مجمع إهلاك الأصول الثابتة","asset",  Some("1000"), 1),
         ("2000", "الخصوم",                "liability", None,         0),
         ("2100", "الموردون (دائنون)",     "liability", Some("2000"), 1),
         ("2200", "ضريبة القيمة المضافة - مخرجات", "liability", Some("2000"), 1),
+        ("2105", "رواتب وأجور مستحقة",    "liability", Some("2000"), 1),
+        ("2106", "الزكاة وضريبة الدخل مستحقة","liability",Some("2000"),1),
+        ("2107", "مصروفات مستحقة",        "liability", Some("2000"), 1),
+        ("2300", "قروض طويلة الأجل",      "liability", Some("2000"), 1),
+        ("2310", "مخصص مكافأة نهاية الخدمة","liability",Some("2000"), 1),
         ("3000", "حقوق الملكية",          "equity",    None,         1),
+        ("3100", "رأس المال المدفوع",     "equity",    Some("3000"), 1),
+        ("3200", "الأرباح المُرحّلة",      "equity",    Some("3000"), 1),
+        ("3300", "أرباح/خسائر العام الحالي","equity",  Some("3000"), 1),
+        ("3400", "المسحوبات الشخصية",     "equity",    Some("3000"), 1),
         ("4000", "الإيرادات",             "revenue",   None,         0),
         ("4100", "إيرادات المبيعات",      "revenue",   Some("4000"), 1),
+        ("4200", "إيرادات أخرى",          "revenue",   Some("4000"), 1),
+        ("4300", "خصم مكتسب",             "revenue",   Some("4000"), 1),
         ("5000", "المصروفات",             "expense",   None,         0),
         ("5100", "تكلفة البضاعة المباعة","expense",   Some("5000"), 1),
         ("5200", "مصروفات تشغيلية",       "expense",   Some("5000"), 1),
+        ("5400", "رواتب وأجور",           "expense",   Some("5000"), 1),
+        ("5410", "إيجارات",               "expense",   Some("5000"), 1),
+        ("5420", "كهرباء ومياه واتصالات", "expense",   Some("5000"), 1),
+        ("5430", "مصروف الإهلاك",         "expense",   Some("5000"), 1),
+        ("5440", "صيانة وإصلاحات",        "expense",   Some("5000"), 1),
+        ("5450", "تسويق ودعاية",          "expense",   Some("5000"), 1),
+        ("5460", "مصروفات ورسوم بنكية",   "expense",   Some("5000"), 1),
+        ("5500", "خصم مسموح به",          "expense",   Some("5000"), 1),
     ];
 
     use rusqlite::params;
