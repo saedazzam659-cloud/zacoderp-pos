@@ -395,6 +395,8 @@ export interface AdvancedReportGridProps<R> {
   toolbarExtras?: ReactNode;
   /** Optional row-level conditional className based on the row itself. */
   rowClassName?: (row: R) => string;
+  /** Optional double-click handler on a data row (e.g. drill into source doc). */
+  onRowDoubleClick?: (row: R) => void;
 }
 
 export default function AdvancedReportGrid<R>({
@@ -405,6 +407,7 @@ export default function AdvancedReportGrid<R>({
   emptyMessage = "لا توجد بيانات",
   toolbarExtras,
   rowClassName,
+  onRowDoubleClick,
 }: AdvancedReportGridProps<R>) {
   /* ── Layout (order / colors / page-size) ─────────────────────────────── */
   const allKeys = useMemo(() => columns.map(c => c.key), [columns]);
@@ -695,6 +698,7 @@ export default function AdvancedReportGrid<R>({
                       subtotals={sub}
                       rowKey={rowKey}
                       rowClassName={rowClassName}
+                      onRowDoubleClick={onRowDoubleClick}
                       cellBgFor={cellBgFor}
                       fmt={fmt}
                     />
@@ -709,7 +713,9 @@ export default function AdvancedReportGrid<R>({
                 ) : (
                   pagedRows.map((r, i) => (
                     <tr key={rowKey(r, i) ?? i}
+                        onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(r) : undefined}
                         className={cn("border-t border-slate-200 even:bg-slate-50/40 hover:bg-sky-50/40 transition-colors",
+                                      onRowDoubleClick && "cursor-pointer",
                                       rowClassName?.(r))}>
                       {orderedColumns.map(c => {
                         const bg = cellBgFor(r, c);
@@ -783,10 +789,11 @@ interface GroupBlockProps<R> {
   subtotals: Record<string, number>;
   rowKey: (row: R, index: number) => number | string;
   rowClassName?: (row: R) => string;
+  onRowDoubleClick?: (row: R) => void;
   cellBgFor: (row: R, col: GridColumn<R>) => string;
   fmt: (n: number) => string;
 }
-function GroupBlock<R>({ group, orderedColumns, subtotals, rowKey, rowClassName, cellBgFor, fmt }: GroupBlockProps<R>) {
+function GroupBlock<R>({ group, orderedColumns, subtotals, rowKey, rowClassName, onRowDoubleClick, cellBgFor, fmt }: GroupBlockProps<R>) {
   return (
     <>
       <tr className="bg-blue-50 border-t-2 border-blue-300 text-blue-900 font-bold">
@@ -798,7 +805,9 @@ function GroupBlock<R>({ group, orderedColumns, subtotals, rowKey, rowClassName,
       </tr>
       {group.rows.map((r, i) => (
         <tr key={rowKey(r, i) ?? `${group.key}_${i}`}
-            className={cn("border-t border-slate-200 even:bg-slate-50/40 hover:bg-sky-50/40", rowClassName?.(r))}>
+            onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(r) : undefined}
+            className={cn("border-t border-slate-200 even:bg-slate-50/40 hover:bg-sky-50/40",
+                          onRowDoubleClick && "cursor-pointer", rowClassName?.(r))}>
           {orderedColumns.map(c => {
             const bg = cellBgFor(r, c);
             return (

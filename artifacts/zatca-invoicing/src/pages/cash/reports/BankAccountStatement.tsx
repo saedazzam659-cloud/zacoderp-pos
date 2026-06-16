@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
-import { cashAnalyticsApi } from "@/lib/cashAnalyticsApi";
-import { Input } from "@/components/ui/input";
+import { cashAnalyticsApi, type StatementLine } from "@/lib/cashAnalyticsApi";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,6 +13,9 @@ import { useTranslation } from "react-i18next";
 import { Banknote, Search, Filter } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import { DateField } from "@/components/ui/date-field";
+import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
+
+type StatementRow = StatementLine & { balance: number };
 
 const API = import.meta.env.VITE_API_URL ?? "";
 function authHeaders(): Record<string, string> {
@@ -24,6 +27,7 @@ export default function BankAccountStatement() {
   const { fmt } = useFmt();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
+  const [, navigate] = useLocation();
   const tr = (k: string, opts?: any) => t(`cashReports.bankStatement.${k}`, opts) as string;
   const trc = (k: string, opts?: any) => t(`cashReports.common.${k}`, opts) as string;
   const pickName = (r: { nameAr?: string | null; nameEn?: string | null } | undefined) =>
@@ -82,6 +86,30 @@ export default function BankAccountStatement() {
   const closing = (data?.opening ?? 0) + totals.debit - totals.credit;
 
   const dash = trc("noneCharDash");
+
+  // Double-click a row → open the underlying source document in edit mode.
+  // Transfers have no per-id edit form, so they land on the transfers list.
+  const openSource = (l: StatementRow) => {
+    if (l.type === "receipt")      navigate(`/cash/receipt-vouchers/${l.id}`);
+    else if (l.type === "payment") navigate(`/cash/payment-vouchers/${l.id}`);
+    else                           navigate(`/cash/transfers`);
+  };
+
+  const gridColumns: GridColumn<StatementRow>[] = [
+    { key: "date",        label: trc("date"),         type: "text", value: l => l.date,
+      className: "tabular-nums text-xs text-muted-foreground" },
+    { key: "type",        label: trc("movementType"), type: "text",
+      value: l => TYPE_LABEL[l.type] ?? l.type },
+    { key: "docNumber",   label: trc("docNumber"),    type: "text",
+      value: l => l.docNumber ?? dash, className: "font-mono text-xs text-muted-foreground" },
+    { key: "description", label: trc("description"),  type: "text", value: l => l.description },
+    { key: "debit",       label: trc("income"),       type: "num", align: "center", totalable: true,
+      value: l => l.debit, render: l => <span className="font-bold text-emerald-600 tabular-nums">{l.debit ? fmt(l.debit) : dash}</span> },
+    { key: "credit",      label: trc("outcome"),      type: "num", align: "center", totalable: true,
+      value: l => l.credit, render: l => <span className="font-bold text-rose-600 tabular-nums">{l.credit ? fmt(l.credit) : dash}</span> },
+    { key: "balance",     label: trc("balance"),      type: "num", align: "center",
+      value: l => l.balance, render: l => <span className="font-bold tabular-nums">{fmt(l.balance)}</span> },
+  ];
 
   const exportRows = [
     ...(applied.bankAccountId ? [{
@@ -200,7 +228,42 @@ export default function BankAccountStatement() {
       )}
 
       {applied.bankAccountId ? (
-        <div className="rounded-xl border bg-card overflow-hidden">
+        <>
+          {/* Interactive grid (screen only). Double-click a row → source doc. */}
+          <div className="print:hidden">
+            {isLoading ? (
+              <div className="rounded-xl border bg-card p-4 space-y-2">
+                {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-6 w-full" />)}
+              </div>
+            ) : (
+              <AdvancedReportGrid
+                slug="bankAccountStatementGrid"
+                cid={cid}
+                columns={gridColumns}
+                rowKey={(l, i) => `${l.type}-${l.id}-${i}`}
+                rows={augmented}
+                onRowDoubleClick={openSource}
+                unitLabel={t("cashReports.common.movementUnit", "حركة")}
+                emptyMessage={tr("noTx")}
+                leadingRows={[{
+                  date: applied.from,
+                  type: trc("openingBalance"),
+                  debit: (data?.opening ?? 0) > 0 ? fmt(data!.opening) : dash,
+                  credit: (data?.opening ?? 0) < 0 ? fmt(-(data!.opening)) : dash,
+                  balance: <span className="font-bold tabular-nums">{fmt(data?.opening ?? 0)}</span>,
+                }]}
+                totalsRow={augmented.length > 0 ? {
+                  __label: trc("totalRow"),
+                  debit: <span className="text-emerald-700">{fmt(totals.debit)}</span>,
+                  credit: <span className="text-rose-700">{fmt(totals.credit)}</span>,
+                  balance: fmt(closing),
+                } : null}
+              />
+            )}
+          </div>
+
+        {/* Static table (print only). */}
+        <div className="rounded-xl border bg-card overflow-hidden hidden print:block">
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[700px]">
               <thead className="bg-muted/50 border-b">
@@ -251,6 +314,7 @@ export default function BankAccountStatement() {
             </table>
           </div>
         </div>
+        </>
       ) : (
         <div className="rounded-xl border bg-card p-12 text-center text-muted-foreground">
           <Banknote className="h-10 w-10 mx-auto mb-3 opacity-30" />

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { customersTable, customerGroupsTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, branchesTable } from "@workspace/db";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql, gte, lte } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
@@ -29,6 +29,10 @@ router.get("/balances", async (req, res) => {
     const companyId = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
     if (!companyId) { res.json([]); return; }
     const bid = req.query.branchId ? Number(req.query.branchId) : undefined;
+    // Optional date window (movements within [from, to]). Date columns are
+    // ISO-text so lexicographic gte/lte is correct.
+    const from = req.query.from ? String(req.query.from) : undefined;
+    const to   = req.query.to   ? String(req.query.to)   : undefined;
     // ─── Customer-isolation scope ─────────────────────────────
     // Restrict the aggregated balances to customers visible under the
     // caller's branch scope, so a branch user can't infer the AR exposure
@@ -56,6 +60,8 @@ router.get("/balances", async (req, res) => {
         eq(salesInvoicesTable.companyId, companyId),
         eq(salesInvoicesTable.status, "posted"),
         eq(salesInvoicesTable.paymentType, "credit"),
+        ...(from ? [gte(salesInvoicesTable.invoiceDate, from)] : []),
+        ...(to   ? [lte(salesInvoicesTable.invoiceDate, to)]   : []),
         ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
       ))
       .groupBy(salesInvoicesTable.customerId);
@@ -69,6 +75,8 @@ router.get("/balances", async (req, res) => {
       .where(and(
         eq(salesReturnsTable.companyId, companyId),
         eq(salesReturnsTable.status, "posted"),
+        ...(from ? [gte(salesReturnsTable.returnDate, from)] : []),
+        ...(to   ? [lte(salesReturnsTable.returnDate, to)]   : []),
         ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
       ))
       .groupBy(salesReturnsTable.customerId);
@@ -83,6 +91,8 @@ router.get("/balances", async (req, res) => {
         eq(receiptVouchersTable.companyId, companyId),
         eq(receiptVouchersTable.status, "posted"),
         eq(receiptVouchersTable.entityType, "customer"),
+        ...(from ? [gte(receiptVouchersTable.date, from)] : []),
+        ...(to   ? [lte(receiptVouchersTable.date, to)]   : []),
         ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
       ))
       .groupBy(receiptVouchersTable.entityId);

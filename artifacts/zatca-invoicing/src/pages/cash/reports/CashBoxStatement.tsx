@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
-import { cashAnalyticsApi } from "@/lib/cashAnalyticsApi";
-import { Input } from "@/components/ui/input";
+import { cashAnalyticsApi, type StatementLine } from "@/lib/cashAnalyticsApi";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 import { FileText, Search, Filter } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import { DateField } from "@/components/ui/date-field";
+import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 function authHeaders(): Record<string, string> {
@@ -20,10 +21,13 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
 }
 
+type StatementRow = StatementLine & { balance: number };
+
 export default function CashBoxStatement() {
   const { fmt } = useFmt();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
+  const [, navigate] = useLocation();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
@@ -77,6 +81,30 @@ export default function CashBoxStatement() {
 
   const totals = augmented.reduce((s, l) => ({ debit: s.debit + l.debit, credit: s.credit + l.credit }), { debit: 0, credit: 0 });
   const closing = (data?.opening ?? 0) + totals.debit - totals.credit;
+
+  // Double-click a row → open the underlying source document in edit mode.
+  // Transfers have no per-id edit form, so they land on the transfers list.
+  const openSource = (l: StatementRow) => {
+    if (l.type === "receipt")      navigate(`/cash/receipt-vouchers/${l.id}`);
+    else if (l.type === "payment") navigate(`/cash/payment-vouchers/${l.id}`);
+    else                           navigate(`/cash/transfers`);
+  };
+
+  const gridColumns: GridColumn<StatementRow>[] = [
+    { key: "date",        label: t("cashReports.common.date"),         type: "text", value: l => l.date,
+      className: "tabular-nums text-xs text-muted-foreground" },
+    { key: "type",        label: t("cashReports.common.movementType"), type: "text",
+      value: l => TYPE_LABEL[l.type] ?? l.type },
+    { key: "docNumber",   label: t("cashReports.common.docNumber"),    type: "text",
+      value: l => l.docNumber ?? "—", className: "font-mono text-xs text-muted-foreground" },
+    { key: "description", label: t("cashReports.common.description"),  type: "text", value: l => l.description },
+    { key: "debit",       label: t("cashReports.common.income"),       type: "num", align: "center", totalable: true,
+      value: l => l.debit, render: l => <span className="font-bold text-emerald-600 tabular-nums">{l.debit ? fmt(l.debit) : "—"}</span> },
+    { key: "credit",      label: t("cashReports.common.outcome"),      type: "num", align: "center", totalable: true,
+      value: l => l.credit, render: l => <span className="font-bold text-rose-600 tabular-nums">{l.credit ? fmt(l.credit) : "—"}</span> },
+    { key: "balance",     label: t("cashReports.common.balance"),      type: "num", align: "center",
+      value: l => l.balance, render: l => <span className="font-bold tabular-nums">{fmt(l.balance)}</span> },
+  ];
 
   const exportRows = [
     ...(applied.cashBoxId ? [{
@@ -195,7 +223,42 @@ export default function CashBoxStatement() {
       )}
 
       {applied.cashBoxId ? (
-        <div className="rounded-xl border bg-card overflow-hidden">
+        <>
+          {/* Interactive grid (screen only). Double-click a row → source doc. */}
+          <div className="print:hidden">
+            {isLoading ? (
+              <div className="rounded-xl border bg-card p-4 space-y-2">
+                {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-6 w-full" />)}
+              </div>
+            ) : (
+              <AdvancedReportGrid
+                slug="cashBoxStatementGrid"
+                cid={cid}
+                columns={gridColumns}
+                rowKey={(l, i) => `${l.type}-${l.id}-${i}`}
+                rows={augmented}
+                onRowDoubleClick={openSource}
+                unitLabel={t("cashReports.common.movementUnit", "حركة")}
+                emptyMessage={t("cashReports.cashBoxStatement.noTx")}
+                leadingRows={[{
+                  date: applied.from,
+                  type: t("cashReports.common.openingBalance"),
+                  debit: (data?.opening ?? 0) > 0 ? fmt(data!.opening) : "—",
+                  credit: (data?.opening ?? 0) < 0 ? fmt(-(data!.opening)) : "—",
+                  balance: <span className="font-bold tabular-nums">{fmt(data?.opening ?? 0)}</span>,
+                }]}
+                totalsRow={augmented.length > 0 ? {
+                  __label: t("cashReports.common.totalRow"),
+                  debit: <span className="text-emerald-700">{fmt(totals.debit)}</span>,
+                  credit: <span className="text-rose-700">{fmt(totals.credit)}</span>,
+                  balance: fmt(closing),
+                } : null}
+              />
+            )}
+          </div>
+
+        {/* Static table (print only). */}
+        <div className="rounded-xl border bg-card overflow-hidden hidden print:block">
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[700px]">
               <thead className="bg-muted/50 border-b">
@@ -246,6 +309,7 @@ export default function CashBoxStatement() {
             </table>
           </div>
         </div>
+        </>
       ) : (
         <div className="rounded-xl border bg-card p-12 text-center text-muted-foreground">
           <FileText className="h-10 w-10 mx-auto mb-3 opacity-30" />

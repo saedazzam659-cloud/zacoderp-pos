@@ -11,6 +11,7 @@ import { companiesTable } from "./companies";
 export const sisterCompaniesTable = pgTable("sister_companies", {
   id:        serial("id").primaryKey(),
   companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId:  integer("branch_id"),
   nameAr:    text("name_ar").notNull(),
   nameEn:    text("name_en"),
   vatNumber: text("vat_number"),

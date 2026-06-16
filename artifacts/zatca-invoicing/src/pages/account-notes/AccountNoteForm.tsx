@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useToast } from "@/hooks/use-toast";
 import { accountNotesApi, type AccountNote, type AccountNotePartyType, type AccountNoteType } from "@/lib/accountNotesApi";
+import { printAccountNote } from "@/lib/accountNotePrint";
 import { useCostCenters } from "@/hooks/useCostCenters";
 import { DateField } from "@/components/ui/date-field";
 import { useAuth } from "@/contexts/AuthContext";
@@ -39,11 +40,6 @@ const CONTRA_HINTS: Record<string, string> = {
   "supplier.credit": "مثال: خصم مكتسب / مردودات مشتريات",
   "supplier.debit":  "مثال: مصاريف إضافية / غرامات",
 };
-
-function esc(s: any): string {
-  return String(s ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
-}
 
 function authHeaders(): Record<string, string> {
   const t = localStorage.getItem("zatca_token");
@@ -237,55 +233,16 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
     return ["expense"];
   }, [partyType, noteType]);
 
-  // ── Print the persisted note ───────────────────────────────────────
+  // ── Print the persisted note (sales-invoice-style A4, no item lines) ──
   function printNote() {
     if (!existing) return;
-    const company = user?.company ?? {};
-    const fmt = (n: any) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const statusLabel = existing.status === "posted" ? "مُرحَّل" : "مسودة";
-    const rows: Array<[string, string]> = [
-      ["رقم الإشعار", esc(existing.noteNumber ?? String(existing.id))],
-      ["التاريخ", esc(existing.noteDate ?? "")],
-      ["الحالة", statusLabel],
-      [partyLabel, esc(selectedParty?.nameAr ?? "")],
-      ["الرقم الضريبي", esc(selectedParty?.taxNumber ?? "—")],
-      ["المبلغ", `${fmt(existing.amount)} ر.س`],
-    ];
-    if (existing.vatEnabled) {
-      rows.push(["ضريبة القيمة المضافة", `${fmt(existing.vatAmount)} ر.س (${fmt(existing.vatRate)}%)`]);
-    }
-    rows.push(["الإجمالي", `${fmt(existing.totalAmount)} ر.س`]);
-    if (existing.journalEntryId) rows.push(["رقم القيد", `#${existing.journalEntryId}`]);
-
-    const win = window.open("", "_blank", "width=800,height=900");
-    if (!win) { toast({ title: "تعذّر فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة", variant: "destructive" }); return; }
-    win.document.write(`<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8" />
-      <title>${esc(TITLES[key])} ${esc(existing.noteNumber ?? "")}</title>
-      <style>
-        *{box-sizing:border-box} body{font-family:'Tahoma','Arial',sans-serif;margin:0;padding:32px;color:#1a1a1a}
-        .hdr{text-align:center;border-bottom:2px solid #333;padding-bottom:12px;margin-bottom:20px}
-        .hdr h1{margin:0 0 4px;font-size:20px} .hdr h2{margin:0;font-size:16px;color:#555;font-weight:normal}
-        table{width:100%;border-collapse:collapse;margin-top:8px}
-        td{padding:9px 12px;border:1px solid #ccc;font-size:14px}
-        td.k{background:#f4f4f4;font-weight:bold;width:38%}
-        .desc{margin-top:18px;font-size:14px;white-space:pre-wrap}
-        .desc b{display:block;margin-bottom:4px}
-        .ft{margin-top:40px;text-align:center;font-size:12px;color:#888}
-        @media print{body{padding:12px}}
-      </style></head><body>
-      <div class="hdr">
-        <h1>${esc(company.nameAr ?? company.name ?? "")}</h1>
-        <h2>${esc(TITLES[key])}</h2>
-      </div>
-      <table><tbody>
-        ${rows.map(([k, v]) => `<tr><td class="k">${esc(k)}</td><td>${v}</td></tr>`).join("")}
-      </tbody></table>
-      ${existing.description ? `<div class="desc"><b>البيان</b>${esc(existing.description)}</div>` : ""}
-      ${existing.notes ? `<div class="desc"><b>ملاحظات</b>${esc(existing.notes)}</div>` : ""}
-      <div class="ft">طُبع في ${new Date().toLocaleString("ar-EG")}</div>
-      <script>window.onload=function(){setTimeout(function(){window.print()},250)}<\/script>
-      </body></html>`);
-    win.document.close();
+    printAccountNote({
+      note: existing,
+      party: selectedParty ?? null,
+      company: user?.company ?? {},
+      partyLabel,
+      onError: (msg) => toast({ title: msg, variant: "destructive" }),
+    });
   }
 
   return (

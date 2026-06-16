@@ -34,6 +34,7 @@ export type BankBalanceRow = {
 };
 
 export type StatementLine = {
+  id: number;
   date: string;
   type: "receipt" | "payment" | "transfer_in" | "transfer_out";
   docNumber: string | null;

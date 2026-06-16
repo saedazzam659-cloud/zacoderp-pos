@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
+import { DateField } from "@/components/ui/date-field";
 import { useTranslation } from "react-i18next";
 import { Wallet, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
@@ -15,9 +16,13 @@ function authHeaders(): Record<string, string> {
   const token = localStorage.getItem("zatca_token");
   return token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
 }
-function withBranch(url: string, branchId?: number) {
-  if (branchId === undefined) return url;
-  return url + (url.includes("?") ? "&" : "?") + "branchId=" + branchId;
+function withParams(url: string, params: Record<string, string | number | undefined>) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "") qs.set(k, String(v));
+  }
+  const s = qs.toString();
+  return s ? url + (url.includes("?") ? "&" : "?") + s : url;
 }
 
 export default function CustomerBalances() {
@@ -31,6 +36,8 @@ export default function CustomerBalances() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "debit" | "credit">("all");
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
 
   const EXPORT_COLS = [
     { key: "customerName", header: tr("exportColCustomer"), width: 32 },
@@ -48,10 +55,10 @@ export default function CustomerBalances() {
     },
   });
   const { data: balances = [], isLoading } = useQuery({
-    queryKey: ["customer-balances", cid, branchId],
+    queryKey: ["customer-balances", cid, branchId, from, to],
     queryFn: async () => {
       const base = cid ? `${API}/api/customers/balances?companyId=${cid}` : `${API}/api/customers/balances`;
-      const r = await fetch(withBranch(base, branchId), { headers: authHeaders() });
+      const r = await fetch(withParams(base, { branchId, from, to }), { headers: authHeaders() });
       return r.json();
     },
   });
@@ -72,10 +79,10 @@ export default function CustomerBalances() {
     },
   });
   const { data: sisterBalances = [] } = useQuery({
-    queryKey: ["sister-balances", cid],
+    queryKey: ["sister-balances", cid, from, to],
     queryFn: async () => {
-      const url = cid ? `${API}/api/sister-companies/balances?companyId=${cid}` : `${API}/api/sister-companies/balances`;
-      const r = await fetch(url, { headers: authHeaders() });
+      const base = cid ? `${API}/api/sister-companies/balances?companyId=${cid}` : `${API}/api/sister-companies/balances`;
+      const r = await fetch(withParams(base, { from, to }), { headers: authHeaders() });
       if (!r.ok) return [];
       const d = await r.json();
       return Array.isArray(d) ? d : [];
@@ -88,7 +95,7 @@ export default function CustomerBalances() {
   (sisterBalances as any[]).forEach(b => { balBySister[b.sisterCompanyId] = Number(b.balance); });
 
   const matchesFilters = (row: { balance: number; nameAr?: string; nameEn?: string; phone?: string }) =>
-    (branchId === undefined || row.balance !== 0) &&
+    ((branchId === undefined && !from && !to) || row.balance !== 0) &&
     (filter === "all" ? true : filter === "debit" ? row.balance > 0 : row.balance < 0) &&
     (!search || row.nameAr?.includes(search) || row.nameEn?.toLowerCase().includes(search.toLowerCase()) || row.phone?.includes(search));
 
@@ -101,7 +108,7 @@ export default function CustomerBalances() {
       .filter(matchesFilters)
       .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance));
   },
-    [customers, balances, sisters, sisterBalances, search, filter, branchId]
+    [customers, balances, sisters, sisterBalances, search, filter, branchId, from, to]
   );
 
   const totalDebit  = enriched.filter(c => c.balance > 0).reduce((s, c) => s + c.balance, 0);
@@ -147,10 +154,18 @@ export default function CustomerBalances() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+      <div className="grid grid-cols-1 sm:grid-cols-6 gap-3 items-end">
         <div className="relative sm:col-span-2">
           <Search className={`absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground`} />
           <Input className={isRtl ? "pr-9" : "pl-9"} placeholder={tr("searchPh")} value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-xs text-muted-foreground">{tr("fromDate")}</label>
+          <DateField value={from} onChange={e => setFrom(e.target.value)} />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-xs text-muted-foreground">{tr("toDate")}</label>
+          <DateField value={to} onChange={e => setTo(e.target.value)} />
         </div>
         <BranchFilter value={branchId} onChange={setBranchId} />
         <select className="border rounded-md px-3 py-2 text-sm bg-card h-9" value={filter} onChange={e => setFilter(e.target.value as any)}>

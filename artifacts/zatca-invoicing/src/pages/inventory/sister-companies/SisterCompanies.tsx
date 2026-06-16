@@ -9,9 +9,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi, type SisterCompany } from "@/lib/sisterCompaniesApi";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { useBranches } from "@/hooks/useBranches";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 
 const EMPTY: Partial<SisterCompany> = {
+  branchId: null,
   nameAr: "", nameEn: "", vatNumber: "", crNumber: "", phone: "", email: "",
   address: "", accountId: null, defaultCogsAccountId: null,
   defaultRevenueAccountId: null, defaultInventoryAccountId: null,
@@ -23,6 +25,7 @@ export default function SisterCompanies() {
   const { toast } = useToast();
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Partial<SisterCompany>>(EMPTY);
+  const { data: branches = [] } = useBranches();
 
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["sister-companies"],
@@ -111,6 +114,17 @@ export default function SisterCompanies() {
                 <Input value={editing.phone ?? ""} onChange={e => setEditing(p => ({ ...p, phone: e.target.value }))} /></label>
               <label className="block"><span className="text-sm">البريد الإلكتروني</span>
                 <Input type="email" value={editing.email ?? ""} onChange={e => setEditing(p => ({ ...p, email: e.target.value }))} /></label>
+              <label className="block"><span className="text-sm">الفرع</span>
+                <select
+                  className="w-full border rounded-md px-3 py-2 text-sm bg-card h-9"
+                  value={editing.branchId != null ? String(editing.branchId) : ""}
+                  onChange={e => setEditing(p => ({ ...p, branchId: e.target.value ? Number(e.target.value) : null }))}
+                  data-testid="select-sister-branch"
+                >
+                  <option value="">بدون فرع</option>
+                  {branches.map(b => <option key={b.id} value={b.id}>{b.nameAr}</option>)}
+                </select>
+              </label>
               <label className="block md:col-span-2"><span className="text-sm">العنوان</span>
                 <Input value={editing.address ?? ""} onChange={e => setEditing(p => ({ ...p, address: e.target.value }))} /></label>
             </div>

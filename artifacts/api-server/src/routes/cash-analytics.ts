@@ -254,6 +254,7 @@ router.get("/bank-balances", async (req, res) => {
 });
 
 type StatementLine = {
+  id: number;      // source-document id (voucher / transfer) for drill-down
   date: string;
   type: "receipt" | "payment" | "transfer_in" | "transfer_out";
   docNumber: string | null;
@@ -377,22 +378,22 @@ async function buildAccountStatement(opts: {
 
   const lines: StatementLine[] = [
     ...receipts.map(r => ({
-      date: r.date, type: "receipt" as const, docNumber: r.code,
+      id: r.id, date: r.date, type: "receipt" as const, docNumber: r.code,
       description: r.description ?? `سند قبض${r.entityName ? ` — ${r.entityName}` : ""}`,
       debit: Number(r.amount), credit: 0,
     })),
     ...payments.map(p => ({
-      date: p.date, type: "payment" as const, docNumber: p.code,
+      id: p.id, date: p.date, type: "payment" as const, docNumber: p.code,
       description: p.description ?? `سند صرف${p.entityName ? ` — ${p.entityName}` : ""}`,
       debit: 0, credit: Number(p.amount),
     })),
     ...transfersIn.map(t => ({
-      date: t.date, type: "transfer_in" as const, docNumber: t.code,
+      id: t.id, date: t.date, type: "transfer_in" as const, docNumber: t.code,
       description: t.description ?? `تحويل وارد (${TRANSFER_TYPE_LABEL[t.transferType] ?? t.transferType})`,
       debit: Number(t.amount), credit: 0,
     })),
     ...transfersOut.map(t => ({
-      date: t.date, type: "transfer_out" as const, docNumber: t.code,
+      id: t.id, date: t.date, type: "transfer_out" as const, docNumber: t.code,
       description: t.description ?? `تحويل صادر (${TRANSFER_TYPE_LABEL[t.transferType] ?? t.transferType})`,
       debit: 0, credit: Number(t.amount),
     })),

@@ -25,6 +25,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 export interface SisterCompany {
   id: number;
   companyId: number;
+  branchId: number | null;
   nameAr: string;
   nameEn: string | null;
   vatNumber: string | null;

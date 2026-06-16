@@ -6439,6 +6439,8 @@
       "totalCredit": "Total Credit (overpaid)",
       "net": "Net Receivables",
       "searchPh": "Search by name or phone...",
+      "fromDate": "From Date",
+      "toDate": "To Date",
       "filterAll": "All Customers",
       "filterDebit": "Debit Only",
       "filterCredit": "Credit Only",

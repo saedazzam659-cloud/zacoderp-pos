@@ -107,24 +107,34 @@ router.get("/", async (req, res) => {
 // a literal segment after `/:id` gets swallowed as the id param).
 router.get("/balances", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
+  // Optional date window — mirrors /api/customers/balances so the merged
+  // Customer-Balances report applies one [from, to] to both sources.
+  const from = req.query.from ? String(req.query.from) : undefined;
+  const to   = req.query.to   ? String(req.query.to)   : undefined;
   const transfers = await db.select({
     sid: sisterTransfersTable.sisterCompanyId,
     total: sql<string>`COALESCE(SUM(${sisterTransfersTable.totalSupply}), 0)`,
   }).from(sisterTransfersTable)
-    .where(and(eq(sisterTransfersTable.companyId, cid), eq(sisterTransfersTable.status, "posted")))
+    .where(and(eq(sisterTransfersTable.companyId, cid), eq(sisterTransfersTable.status, "posted"),
+      ...(from ? [gte(sisterTransfersTable.transferDate, from)] : []),
+      ...(to   ? [lte(sisterTransfersTable.transferDate, to)]   : [])))
     .groupBy(sisterTransfersTable.sisterCompanyId);
   const returns_ = await db.select({
     sid: sisterReturnsTable.sisterCompanyId,
     total: sql<string>`COALESCE(SUM(${sisterReturnsTable.totalSupply}), 0)`,
   }).from(sisterReturnsTable)
-    .where(and(eq(sisterReturnsTable.companyId, cid), eq(sisterReturnsTable.status, "posted")))
+    .where(and(eq(sisterReturnsTable.companyId, cid), eq(sisterReturnsTable.status, "posted"),
+      ...(from ? [gte(sisterReturnsTable.returnDate, from)] : []),
+      ...(to   ? [lte(sisterReturnsTable.returnDate, to)]   : [])))
     .groupBy(sisterReturnsTable.sisterCompanyId);
   const settlements = await db.select({
     sid: sisterSettlementsTable.sisterCompanyId,
     dir: sisterSettlementsTable.direction,
     total: sql<string>`COALESCE(SUM(${sisterSettlementsTable.amount}), 0)`,
   }).from(sisterSettlementsTable)
-    .where(and(eq(sisterSettlementsTable.companyId, cid), eq(sisterSettlementsTable.status, "posted")))
+    .where(and(eq(sisterSettlementsTable.companyId, cid), eq(sisterSettlementsTable.status, "posted"),
+      ...(from ? [gte(sisterSettlementsTable.date, from)] : []),
+      ...(to   ? [lte(sisterSettlementsTable.date, to)]   : [])))
     .groupBy(sisterSettlementsTable.sisterCompanyId, sisterSettlementsTable.direction);
   const map: Record<number, number> = {};
   for (const t of transfers)   if (t.sid != null) map[t.sid] = (map[t.sid] ?? 0) + Number(t.total);
@@ -139,6 +149,7 @@ router.post("/", async (req, res) => {
   if (!b.nameAr || !String(b.nameAr).trim()) { res.status(400).json({ error: "الاسم بالعربية مطلوب" }); return; }
   const [row] = await db.insert(sisterCompaniesTable).values({
     companyId: cid,
+    branchId: b.branchId ?? null,
     nameAr: String(b.nameAr).trim(),
     nameEn: b.nameEn ?? null,
     vatNumber: b.vatNumber ?? null,
@@ -813,6 +824,7 @@ router.put("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const b = req.body ?? {};
   const [updated] = await db.update(sisterCompaniesTable).set({
+    ...(b.branchId !== undefined ? { branchId: b.branchId ?? null } : {}),
     nameAr: b.nameAr,
     nameEn: b.nameEn ?? null,
     vatNumber: b.vatNumber ?? null,
