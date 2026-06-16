@@ -22,6 +22,7 @@ import {
   Wallet, Building2, User2, Layers, Printer, Link2, X, Settings2,
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
+import { printCashVoucher } from "@/lib/cashVoucherPrint";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -532,64 +533,44 @@ export default function ReceiptVoucherForm() {
     advanceFromTarget(target);
   }
 
-  // ── Print (single voucher) ─────────────────────────────────────
-  function escapeHtml(s: any) {
-    return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
-  }
+  // ── Print (single voucher, RAGM layout) ────────────────────────
   function openPrintWindow() {
     if (!existing) return;
-    const w = window.open("", "_blank", "width=900,height=700");
-    if (!w) {
-      // Browser blocked the popup. Surface a clear message so the
-      // user knows to allow popups for this site instead of seeing
-      // nothing happen after clicking "طباعة".
-      toast({
-        title: "تم منع النوافذ المنبثقة",
-        description: "اسمح بفتح النوافذ المنبثقة من هذا الموقع لإجراء الطباعة.",
-        variant: "destructive",
-      });
-      return;
-    }
     const cb = (cashBoxes as any[]).find((c: any) => String(c.id) === String(existing.cashBoxId));
     const ba = (bankAccounts as any[]).find((b: any) => String(b.id) === String(existing.bankAccountId));
-    const treasuryName = existing.paymentType === "bank"
-      ? (ba ? (isRtl ? ba.nameAr : (ba.nameEn || ba.nameAr)) : "—")
-      : (cb ? (isRtl ? cb.nameAr : (cb.nameEn || cb.nameAr)) : "—");
-    const linkedInv = existing.salesInvoiceId
-      ? (salesInvoices as any[]).find((i: any) => i.id === existing.salesInvoiceId)
+    const treasury = existing.paymentType === "bank"
+      ? (ba ? { code: ba.code, name: (isRtl ? ba.nameAr : (ba.nameEn || ba.nameAr)) } : null)
+      : (cb ? { code: cb.code, name: (isRtl ? cb.nameAr : (cb.nameEn || cb.nameAr)) } : null);
+    // Counterparty shown in the account row: customer (party mode) or GL
+    // account (general-account mode).
+    const cust = existing.entityId
+      ? (customers as any[]).find((c: any) => String(c.id) === String(existing.entityId))
       : null;
-    const html = `<!doctype html><html dir="rtl"><head><meta charset="utf-8"/><title>سند قبض ${escapeHtml(existing.code)}</title>
-<style>
-body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:24px; }
-h1 { color:#1e3a8a; border-bottom: 2px solid #1e3a8a; padding-bottom:8px; margin:0 0 16px; font-size:22px; }
-.grid { display:grid; grid-template-columns: 1fr 1fr; gap:8px 16px; font-size:13px; padding:12px; border:1px solid #e5e7eb; border-radius:8px; background:#fafbfd; margin-bottom:16px; }
-.lbl { color:#6b7280; font-size:11px; }
-.val { font-weight:600; }
-.amount-box { padding:14px; border:2px solid #1e3a8a; border-radius:8px; background:#eef2ff; text-align:center; margin:12px 0; }
-.amount-box .lbl { font-size:12px; color:#1e3a8a; }
-.amount-box .num { font-size:28px; font-weight:800; color:#1e3a8a; font-family:"Consolas",monospace; }
-.desc { padding:10px; border:1px dashed #cbd5e1; border-radius:6px; font-size:13px; }
-.print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; }
-@media print { .print-btn { display:none; } }
-</style></head><body>
-<button class="print-btn" onclick="window.print()">طباعة</button>
-<h1>سند قبض — ${escapeHtml(existing.code)}</h1>
-<div class="grid">
-  <div><div class="lbl">التاريخ</div><div class="val">${escapeHtml(existing.date)}</div></div>
-  <div><div class="lbl">الحالة</div><div class="val">${existing.status === "posted" ? "مرحَّل" : "مسودة"}</div></div>
-  <div><div class="lbl">وسيلة الدفع</div><div class="val">${existing.paymentType === "bank" ? "بنك" : "نقداً"}</div></div>
-  <div><div class="lbl">${existing.paymentType === "bank" ? "الحساب البنكي" : "الخزنة"}</div><div class="val">${escapeHtml(treasuryName)}</div></div>
-  <div><div class="lbl">العميل</div><div class="val">${escapeHtml(existing.entityName ?? "—")}</div></div>
-  <div><div class="lbl">فاتورة المبيعات المرتبطة</div><div class="val">${linkedInv ? escapeHtml(linkedInv.docNumber ?? `SI-${linkedInv.id}`) : "—"}</div></div>
-</div>
-<div class="amount-box">
-  <div class="lbl">المبلغ المستلم</div>
-  <div class="num">${Number(existing.amount).toFixed(2)} ${escapeHtml(existing.currency || "SAR")}</div>
-</div>
-${existing.description ? `<div class="desc"><div class="lbl">البيان</div>${escapeHtml(existing.description)}</div>` : ""}
-<script>setTimeout(()=>window.print(),300);</script>
-</body></html>`;
-    w.document.open(); w.document.write(html); w.document.close();
+    const acct = existing.accountId
+      ? (accounts as any[]).find((a: any) => String(a.id) === String(existing.accountId))
+      : null;
+    const account = {
+      code: cust?.code ?? acct?.code ?? "",
+      name: existing.entityName
+        || (cust ? (isRtl ? cust.nameAr : (cust.nameEn || cust.nameAr)) : "")
+        || (acct ? (isRtl ? acct.nameAr : (acct.nameEn || acct.nameAr)) : ""),
+    };
+    printCashVoucher({
+      kind: "receipt",
+      doc: {
+        code: existing.code,
+        date: existing.date,
+        amount: existing.amount,
+        currency: existing.currency,
+        description: existing.description,
+      },
+      treasury,
+      account,
+      company: (user as any)?.company ?? null,
+      preparedBy: user?.username ?? null,
+      onError: (msg) =>
+        toast({ title: "تم منع النوافذ المنبثقة", description: msg, variant: "destructive" }),
+    });
   }
 
   // ── Loading state ──────────────────────────────────────────────
