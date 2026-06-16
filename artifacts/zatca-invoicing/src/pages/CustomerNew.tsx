@@ -92,6 +92,7 @@ export default function CustomerNew() {
   const [companyText, setCompanyText] = useState("");
   const [custAccountId, setCustAccountId] = useState("");
   const [branchId, setBranchId] = useState("");
+  const [customerGroupId, setCustomerGroupId] = useState("");
   const [location, setLocation_] = useState<LocationValue>({ lat: null, lng: null, link: null });
   const [fetchingNA, setFetchingNA] = useState(false);
   const { token } = useAuth() as any;
@@ -145,6 +146,14 @@ export default function CustomerNew() {
     enabled: !!userCompanyId,
     queryFn: async () => {
       const r = await fetch(`${API}/api/org/branches`, { headers: { Authorization: `Bearer ${token}` } });
+      return r.ok ? r.json() : [];
+    },
+  });
+  const { data: customerGroups = [] } = useQuery<any[]>({
+    queryKey: ["customer-groups", userCompanyId],
+    enabled: !!userCompanyId,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/customers/customer-groups`, { headers: { Authorization: `Bearer ${token}` } });
       return r.ok ? r.json() : [];
     },
   });
@@ -203,6 +212,7 @@ export default function CustomerNew() {
     });
     if (c.accountId) setCustAccountId(String(c.accountId));
     setBranchId(c.branchId ? String(c.branchId) : "");
+    setCustomerGroupId(c.customerGroupId ? String(c.customerGroupId) : "");
     setLocation_({
       lat: c.locationLat ?? null,
       lng: c.locationLng ?? null,
@@ -229,6 +239,7 @@ export default function CustomerNew() {
       ...rest,
       accountId: custAccountId ? Number(custAccountId) : null,
       branchId: branchId ? Number(branchId) : null,
+      customerGroupId: customerGroupId ? Number(customerGroupId) : null,
       locationLat: location.lat,
       locationLng: location.lng,
       locationLink: location.link,
@@ -480,6 +491,26 @@ export default function CustomerNew() {
                         <FormMessage />
                       </FormItem>
                     )} />
+
+                    {/* مجموعة العملاء */}
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium flex items-center gap-1.5">
+                        <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                        مجموعة العملاء
+                      </label>
+                      <select
+                        value={customerGroupId}
+                        onChange={e => setCustomerGroupId(e.target.value)}
+                        className="w-full h-10 border border-input rounded-md px-3 text-sm bg-background"
+                        data-testid="customer-group"
+                      >
+                        <option value="">— بدون مجموعة —</option>
+                        {(customerGroups as any[]).filter((g: any) => g.isActive !== false).map((g: any) => (
+                          <option key={g.id} value={g.id}>{g.nameAr ?? g.nameEn ?? `#${g.id}`}</option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-muted-foreground">اختياري — لتصنيف العميل ضمن مجموعة</p>
+                    </div>
                   </div>
 
                   <div className="flex justify-start mt-6 pt-4 border-t">

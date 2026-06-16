@@ -27,6 +27,7 @@ export const lettersOfCreditTable = pgTable("letters_of_credit", {
   lcNumber:     text("lc_number").notNull(),
   lcDate:       text("lc_date").notNull(),
   supplierId:   integer("supplier_id").references(() => suppliersTable.id),
+  branchId:     integer("branch_id"),
   bankName:     text("bank_name"),
   currencyCode: text("currency_code").notNull().default("SAR"),
   exchangeRate: numeric("exchange_rate", { precision: 15, scale: 6 }).notNull().default("1"),

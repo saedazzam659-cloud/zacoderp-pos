@@ -9,7 +9,7 @@ import {
   purchaseReturnsTable, purchaseReturnLinesTable,
   supplierSettlementsTable, suppliersTable,
   cashBoxesTable, bankAccountsTable, journalEntriesTable, journalEntryLinesTable,
-  stockBalanceTable, stockLedgerTable, warehousesTable,
+  stockBalanceTable, stockLedgerTable, warehousesTable, branchesTable,
   receiptVouchersTable, paymentVouchersTable,
   currenciesTable,
   itemsTable,
@@ -651,14 +651,21 @@ router.get("/letters-of-credit/:id", async (req, res) => {
 router.post("/letters-of-credit", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { lcNumber, lcDate, supplierId, bankName, currencyCode, exchangeRate,
+    const { lcNumber, lcDate, supplierId, branchId, bankName, currencyCode, exchangeRate,
             totalAmount, settlementAccountId, notes, expenses } = req.body;
     if (!lcNumber || !lcDate || !totalAmount) {
       res.status(400).json({ error: "رقم الاعتماد والتاريخ والقيمة مطلوبة" }); return;
     }
+    if (branchId) {
+      const bid = Number(branchId);
+      if (!Number.isInteger(bid) || bid <= 0) { res.status(400).json({ error: "الفرع المحدّد غير صحيح" }); return; }
+      const [br] = await db.select().from(branchesTable).where(and(eq(branchesTable.id, bid), eq(branchesTable.companyId, cid)));
+      if (!br) { res.status(400).json({ error: "الفرع المحدّد غير موجود في هذه الشركة" }); return; }
+    }
     const [lc] = await db.insert(lettersOfCreditTable).values({
       companyId: cid, lcNumber, lcDate,
       supplierId: supplierId ? Number(supplierId) : null,
+      branchId: branchId ? Number(branchId) : null,
       bankName: bankName || null, currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate ?? "1"),
       totalAmount: String(totalAmount), usedAmount: "0",
@@ -704,11 +711,18 @@ router.put("/letters-of-credit/:id", async (req, res) => {
       });
       return;
     }
-    const { lcNumber, lcDate, supplierId, bankName, currencyCode, exchangeRate,
+    const { lcNumber, lcDate, supplierId, branchId, bankName, currencyCode, exchangeRate,
             totalAmount, settlementAccountId, notes, expenses } = req.body;
+    if (branchId) {
+      const bid = Number(branchId);
+      if (!Number.isInteger(bid) || bid <= 0) { res.status(400).json({ error: "الفرع المحدّد غير صحيح" }); return; }
+      const [br] = await db.select().from(branchesTable).where(and(eq(branchesTable.id, bid), eq(branchesTable.companyId, cid)));
+      if (!br) { res.status(400).json({ error: "الفرع المحدّد غير موجود في هذه الشركة" }); return; }
+    }
     const [lc] = await db.update(lettersOfCreditTable).set({
       lcNumber, lcDate,
       supplierId: supplierId ? Number(supplierId) : null,
+      branchId: branchId ? Number(branchId) : null,
       bankName: bankName || null, currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate ?? "1"),
       totalAmount: String(totalAmount),

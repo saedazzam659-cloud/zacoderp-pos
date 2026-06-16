@@ -24,6 +24,8 @@ export const customersTable = pgTable("customers", {
   locationLng: numeric("location_lng", { precision: 10, scale: 7 }),
   locationLink: text("location_link"),
   accountId: integer("account_id"),
+  /** Optional customer group (مجموعة العملاء) for segmentation/reporting. Nullable. */
+  customerGroupId: integer("customer_group_id"),
   salesRepId: integer("sales_rep_id"),
   /**
    * Optional home branch for this customer. Used as the default branch on

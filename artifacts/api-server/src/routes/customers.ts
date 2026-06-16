@@ -219,6 +219,15 @@ router.post("/", async (req, res) => {
     if (!b) { res.status(400).json({ error: "الفرع المحدّد غير موجود في هذه الشركة" }); return; }
   }
 
+  // Validate customerGroupId belongs to the same company
+  const rawGroupId = (req.body as any)?.customerGroupId;
+  if (rawGroupId) {
+    const gid = Number(rawGroupId);
+    if (!Number.isInteger(gid) || gid <= 0) { res.status(400).json({ error: "مجموعة العملاء غير صحيحة" }); return; }
+    const [g] = await db.select().from(customerGroupsTable).where(and(eq(customerGroupsTable.id, gid), eq(customerGroupsTable.companyId, effectiveCompanyId)));
+    if (!g) { res.status(400).json({ error: "مجموعة العملاء المحدّدة غير موجودة في هذه الشركة" }); return; }
+  }
+
   let accountId: number | null = (data as any).accountId ? Number((data as any).accountId) : null;
   if (!accountId) {
     try {
@@ -251,6 +260,7 @@ router.post("/", async (req, res) => {
     accountId,
     salesRepId: effectiveSalesRepId,
     branchId: (req.body as any)?.branchId ? Number((req.body as any).branchId) : null,
+    customerGroupId: (req.body as any)?.customerGroupId ? Number((req.body as any).customerGroupId) : null,
     // "Display-only" flag — accept from raw body since it is not part of the
     // generated CreateCustomerBody zod schema yet. Defaults to true (full
     // statement participation) when omitted.
@@ -386,6 +396,18 @@ router.put("/:id", async (req, res) => {
       const [br] = await db.select().from(branchesTable).where(and(eq(branchesTable.id, Number(bv)), eq(branchesTable.companyId, existing.companyId)));
       if (!br) { res.status(400).json({ error: "الفرع المحدّد غير موجود في هذه الشركة" }); return; }
       setData.branchId = Number(bv);
+    }
+  }
+  if ((req.body as any)?.customerGroupId !== undefined) {
+    const gv = (req.body as any).customerGroupId;
+    if (gv === null || gv === "") {
+      setData.customerGroupId = null;
+    } else {
+      const gid = Number(gv);
+      if (!Number.isInteger(gid) || gid <= 0) { res.status(400).json({ error: "مجموعة العملاء غير صحيحة" }); return; }
+      const [g] = await db.select().from(customerGroupsTable).where(and(eq(customerGroupsTable.id, gid), eq(customerGroupsTable.companyId, existing.companyId)));
+      if (!g) { res.status(400).json({ error: "مجموعة العملاء المحدّدة غير موجودة في هذه الشركة" }); return; }
+      setData.customerGroupId = gid;
     }
   }
   const [customer] = await db.update(customersTable).set(setData).where(eq(customersTable.id, id)).returning();

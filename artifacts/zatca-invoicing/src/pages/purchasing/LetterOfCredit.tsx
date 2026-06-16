@@ -19,7 +19,7 @@ import { DateField } from "@/components/ui/date-field";
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
-const EMPTY_LC  = { lcNumber: "", lcDate: today(), supplierId: "", bankName: "", currencyCode: "SAR", exchangeRate: "1", totalAmount: "", settlementAccountId: "", notes: "" };
+const EMPTY_LC  = { lcNumber: "", lcDate: today(), supplierId: "", branchId: "", bankName: "", currencyCode: "SAR", exchangeRate: "1", totalAmount: "", settlementAccountId: "", notes: "" };
 const EMPTY_EXP = { expenseType: "", accountId: "", amount: "", currencyCode: "SAR", exchangeRate: "1", notes: "" };
 
 export default function LetterOfCredit() {
@@ -87,6 +87,15 @@ export default function LetterOfCredit() {
     queryFn: async () => {
       const url = cid ? `${API}/api/suppliers?companyId=${cid}` : `${API}/api/suppliers`;
       const res = await fetch(url, { headers: authH }); return res.json();
+    },
+    enabled: !!user,
+  });
+
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey: ["branches", cid],
+    queryFn: async () => {
+      const res = await fetch(`${API}/api/org/branches`, { headers: authH });
+      return res.ok ? res.json() : [];
     },
     enabled: !!user,
   });
@@ -298,6 +307,7 @@ export default function LetterOfCredit() {
     const res = await fetch(`${API}/api/purchasing/letters-of-credit/${lc.id}?companyId=${cid}`, { headers: authH });
     const data = await res.json();
     setForm({ lcNumber: data.lcNumber, lcDate: data.lcDate, supplierId: data.supplierId ? String(data.supplierId) : "",
+              branchId: data.branchId ? String(data.branchId) : "",
               bankName: data.bankName ?? "", currencyCode: data.currencyCode,
               exchangeRate: String(data.exchangeRate ?? "1"),
               totalAmount: String(data.totalAmount),
@@ -379,6 +389,7 @@ export default function LetterOfCredit() {
   }
 
   const supplierItems = [{ value: "", label: tr("supplierNone") }, ...suppliers.map((s: any) => ({ value: String(s.id), label: pickName(s.nameAr, s.nameEn) }))];
+  const branchItems = [{ value: "", label: "— بدون فرع —" }, ...branches.map((b: any) => ({ value: String(b.id), label: pickName(b.nameAr, b.nameEn) }))];
   const accountItems  = [{ value: "", label: tr("accountNone") }, ...accounts.filter((a: any) => a.isPosting).map((a: any) => ({ value: String(a.id), label: `${a.code} — ${pickName(a.nameAr, a.nameEn)}` }))];
   const currencyItems = currencies.length > 0
     ? currencies.map((c: any) => ({
@@ -426,6 +437,7 @@ export default function LetterOfCredit() {
                 <Field label={tr("fLcNumber")} required><Input placeholder={tr("fLcNumberPh")} dir="ltr" className="text-left" value={form.lcNumber} onChange={e => setForm((p: any) => ({ ...p, lcNumber: e.target.value }))} /></Field>
                 <Field label={tr("fDate")} required><DateField value={form.lcDate} onChange={e => setForm((p: any) => ({ ...p, lcDate: e.target.value }))} /></Field>
                 <Field label={tr("fSupplier")}><SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder={tr("fSupplierPh")} /></Field>
+                <Field label="الفرع"><SearchCombobox items={branchItems} value={form.branchId ?? ""} onValueChange={v => setForm((p: any) => ({ ...p, branchId: v }))} placeholder="— بدون فرع —" /></Field>
                 <Field label={tr("fBank")}><Input placeholder={tr("fBankPh")} value={form.bankName} onChange={e => setForm((p: any) => ({ ...p, bankName: e.target.value }))} /></Field>
                 <Field label={tr("fAmount")} required><Input type="text" inputMode="decimal" placeholder="0.00" dir="ltr" className="text-left" value={form.totalAmount} onChange={e => setForm((p: any) => ({ ...p, totalAmount: e.target.value.replace(/[^0-9.]/g, "") }))} /></Field>
                 <Field label={tr("fCurrency")}><SearchCombobox items={currencyItems} value={form.currencyCode} onValueChange={v => setForm((p: any) => ({ ...p, currencyCode: v }))} placeholder={tr("fCurrencyPh")} /></Field>
