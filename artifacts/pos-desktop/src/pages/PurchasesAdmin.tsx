@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   listPurchases, getPurchase, createPurchase, updatePurchase, deletePurchase,
+  unpostPurchase, postPurchase, listFinancialTx,
   listSuppliers, listCashBoxes, listBanks, listLettersOfCredit,
   type Purchase, type PurchaseLine, type PaymentMethod, type Supplier, type CashBox, type Bank,
   type LetterOfCredit,
@@ -12,6 +13,7 @@ import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
+  useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -47,8 +49,20 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const creating = form !== null;
+  // Paid-so-far per purchase: Σ posted payments tagged appliedDocType=purchase.
+  const [paidByPurchase, setPaidByPurchase] = useState<Map<number, number>>(new Map());
 
-  async function refresh() { setRows(await listPurchases(5000)); }
+  async function refresh() {
+    const [invs, tx] = await Promise.all([listPurchases(5000), listFinancialTx(5000)]);
+    setRows(invs);
+    const m = new Map<number, number>();
+    for (const t of tx) {
+      if (t.txType === "payment" && t.appliedDocType === "purchase" && t.appliedDocId != null) {
+        m.set(t.appliedDocId, (m.get(t.appliedDocId) ?? 0) + t.amount);
+      }
+    }
+    setPaidByPurchase(m);
+  }
   useEffect(() => {
     void refresh();
     void (async () => {
@@ -57,9 +71,23 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
     })();
   }, []);
 
-  const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
-  const pageRows = rows.slice(start, end);
+  const columns = useMemo<GridColumn<Purchase>[]>(() => [
+    { key: "invoiceNo", label: "رقم الفاتورة", value: (p) => p.invoiceNo },
+    { key: "date", label: "التاريخ", value: (p) => p.invoiceDate },
+    { key: "supplier", label: "المورد", value: (p) => p.supplierName ?? "" },
+    { key: "payment", label: "طريقة الدفع", value: (p) => p.paymentMethod },
+    { key: "status", label: "الحالة", value: (p) => p.status ?? "" },
+    { key: "subtotal", label: "المجموع", type: "number", value: (p) => p.subtotal },
+    { key: "vat", label: "الضريبة", type: "number", value: (p) => p.vatTotal },
+    { key: "grand", label: "الإجمالي", type: "number", value: (p) => p.grandTotal },
+    { key: "paid", label: "المدفوع", type: "number", value: (p) => paidByPurchase.get(p.id) ?? 0 },
+  ], [paidByPurchase]);
+  const grid = useGridFilter(rows, columns);
+
+  const { start, end, page: clampedPage } = pageSlice(grid.view.length, page, pageSize);
+  const pageRows = grid.view.slice(start, end);
   useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
+  useEffect(() => { setPage(1); }, [grid.search, grid.columnFilters, grid.sort]);
 
   async function toggleView(id: number) {
     if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); return; }
@@ -133,13 +161,32 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
   }
 
   async function remove(id: number) {
-    if (!confirm("حذف فاتورة الشراء؟ سيتم عكس القيد المحاسبي وحركة المخزون.")) return;
+    if (!confirm("حذف فاتورة الشراء؟")) return;
     try {
       await deletePurchase(id);
       clearDocDiscount("purchase", id);
       if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
       await refresh();
     } catch (e: any) { alert(e?.message ?? "فشل الحذف"); }
+  }
+
+  // فك الترحيل / ترحيل: reverse or re-apply a non-GR purchase's GL/stock/AP
+  // impact. GR-sourced invoices are rejected at the Rust layer (no draft cycle).
+  async function unpost(id: number) {
+    if (!confirm("فك ترحيل فاتورة الشراء؟ سيتم عكس القيد والمخزون وتتحول إلى مسودة قابلة للتعديل.")) return;
+    try {
+      await unpostPurchase(id);
+      if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
+      await refresh();
+    } catch (e: any) { alert(e?.message ?? "تعذّر فك الترحيل"); }
+  }
+  async function post(id: number) {
+    if (!confirm("ترحيل فاتورة الشراء؟ سيتم توليد القيد المحاسبي وإضافة المخزون.")) return;
+    try {
+      await postPurchase(id);
+      if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
+      await refresh();
+    } catch (e: any) { alert(e?.message ?? "تعذّر الترحيل"); }
   }
 
   async function printDoc(id: number, kind: PrintKind) {
@@ -201,14 +248,25 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
           </div>
         </Card>
       )}
+      {rows.length > 0 && !creating && <GridToolbar grid={grid} placeholder="🔍 بحث في فواتير الشراء…" />}
       <Card>
-        {rows.length === 0 && !creating ? <Empty text="لا توجد فواتير شراء" /> : (
+        {rows.length === 0 && !creating ? <Empty text="لا توجد فواتير شراء" /> : grid.view.length === 0 ? <Empty text="لا نتائج مطابقة للبحث" /> : (
           <Table>
-            <thead><tr>
-              <Th>رقم الفاتورة</Th><Th>التاريخ</Th><Th>المورد</Th><Th>طريقة الدفع</Th>
-              <Th style={{ textAlign: "left" }}>المجموع</Th><Th style={{ textAlign: "left" }}>الضريبة</Th>
-              <Th style={{ textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 100 }}></Th>
-            </tr></thead>
+            <thead>
+              <tr>
+                <SortableTh grid={grid} colKey="invoiceNo">رقم الفاتورة</SortableTh>
+                <SortableTh grid={grid} colKey="date">التاريخ</SortableTh>
+                <SortableTh grid={grid} colKey="supplier">المورد</SortableTh>
+                <SortableTh grid={grid} colKey="payment">طريقة الدفع</SortableTh>
+                <SortableTh grid={grid} colKey="status">الحالة</SortableTh>
+                <SortableTh grid={grid} colKey="subtotal" style={{ textAlign: "left" }}>المجموع</SortableTh>
+                <SortableTh grid={grid} colKey="vat" style={{ textAlign: "left" }}>الضريبة</SortableTh>
+                <SortableTh grid={grid} colKey="grand" style={{ textAlign: "left" }}>الإجمالي</SortableTh>
+                <SortableTh grid={grid} colKey="paid" style={{ textAlign: "left" }}>المدفوع / المتبقّي</SortableTh>
+                <Th style={{ width: 100 }}></Th>
+              </tr>
+              <GridFilterRow grid={grid} columns={columns} trailing={1} />
+            </thead>
             <tbody>
               {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
@@ -217,18 +275,16 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
                     <Td>{p.invoiceDate}</Td>
                     <Td>{p.supplierName}</Td>
                     <Td><PayBadge m={p.paymentMethod} /></Td>
+                    <Td><StatusBadge status={p.status} gr={p.sourceGoodsReceiptId != null} /></Td>
                     <Td num>{fmt(p.subtotal)}</Td>
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
+                    <Td num>{paidCell(p, paidByPurchase.get(p.id) ?? 0)}</Td>
                     <Td>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                         <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
                           style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
                           {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
-                        </button>
-                        <button onClick={() => void startEdit(p.id)} disabled={creating} title="تعديل الفاتورة"
-                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                          ✎ تعديل
                         </button>
                         <button onClick={() => void duplicate(p.id)} disabled={creating} title="نسخ كفاتورة جديدة"
                           style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
@@ -244,16 +300,43 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
                             ↩ إرجاع
                           </button>
                         )}
-                        <button onClick={() => void remove(p.id)} disabled={creating} title="حذف الفاتورة"
-                          style={{ ...btnLink, color: "#dc2626", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                          حذف
-                        </button>
+                        {p.sourceGoodsReceiptId != null ? (
+                          // GR-sourced: legacy lifecycle (always posted, managed from
+                          // goods-receipts) — no draft cycle, edit blocked at the Rust layer.
+                          <>
+                            <span title="ناتجة عن سند استلام — تُدار من شاشة سندات الاستلام" style={{ fontSize: 12, color: "#94a3b8" }}>🔒 من سند استلام</span>
+                            <button onClick={() => void remove(p.id)} disabled={creating} title="حذف الفاتورة"
+                              style={{ ...btnLink, color: "#dc2626", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                              حذف
+                            </button>
+                          </>
+                        ) : p.status === "draft" ? (
+                          <>
+                            <button onClick={() => void post(p.id)} disabled={creating} title="ترحيل الفاتورة"
+                              style={{ ...btnLink, color: "#15803d", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                              ترحيل
+                            </button>
+                            <button onClick={() => void startEdit(p.id)} disabled={creating} title="تعديل الفاتورة"
+                              style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                              ✎ تعديل
+                            </button>
+                            <button onClick={() => void remove(p.id)} disabled={creating} title="حذف الفاتورة"
+                              style={{ ...btnLink, color: "#dc2626", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                              حذف
+                            </button>
+                          </>
+                        ) : (
+                          <button onClick={() => void unpost(p.id)} disabled={creating} title="فك الترحيل لتعديل أو حذف الفاتورة"
+                            style={{ ...btnLink, color: "#b45309", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
+                            فك الترحيل
+                          </button>
+                        )}
                       </div>
                     </Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>
-                      <Td colSpan={8 as any}>
+                      <Td colSpan={10 as any}>
                         {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>... جاري التحميل</div> : (
                           <PurchaseDetail p={expandedDetail} />
                         )}
@@ -266,7 +349,7 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
           </Table>
         )}
         {rows.length > 0 && (
-          <Pagination total={rows.length} page={page} pageSize={pageSize}
+          <Pagination total={grid.view.length} page={page} pageSize={pageSize}
             onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />
         )}
       </Card>
@@ -276,10 +359,32 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
 
 import React from "react";
 
+// المدفوع / المتبقّي cell: cash/bank purchases are settled at purchase → "مدفوعة".
+// Credit purchases show Σ paid (سند صرف) and the outstanding remainder.
+function paidCell(p: Purchase, paid: number) {
+  if (p.paymentMethod !== "credit") return <span style={{ color: "#15803d" }}>مدفوعة</span>;
+  const remaining = p.grandTotal - paid;
+  if (paid <= 0.005) return <span style={{ color: "#b45309" }}>غير مدفوعة</span>;
+  return (
+    <span>
+      <span style={{ color: "#15803d", fontWeight: 600 }}>{fmt(paid)}</span>
+      {remaining > 0.005 && <span style={{ color: "#b45309" }}> / {fmt(remaining)}</span>}
+      {remaining <= 0.005 && <span style={{ color: "#15803d" }}> ✓</span>}
+    </span>
+  );
+}
+
 function PayBadge({ m }: { m: PaymentMethod }) {
   const map = { credit: { l: "آجل", c: "#9a3412" }, cash: { l: "نقدي", c: "#15803d" }, bank: { l: "بنك", c: "#1e40af" } } as const;
   const x = map[m];
   return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{x.l}</span>;
+}
+
+function StatusBadge({ status, gr }: { status?: string; gr?: boolean }) {
+  const draft = status === "draft";
+  const c = draft ? "#b45309" : "#15803d";
+  const label = draft ? "مسودة" : gr ? "مُرحّلة (استلام)" : "مُرحّلة";
+  return <span style={{ background: c + "20", color: c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{label}</span>;
 }
 
 function PurchaseDetail({ p }: { p: Purchase }) {

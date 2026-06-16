@@ -1751,6 +1751,14 @@ pub struct Purchase {
     pub warehouse_id: Option<i64>,
     #[serde(default)]
     pub lc_id: Option<i64>,
+    /// Posting state: "posted" or "draft" (see SalesInvoice.status).
+    #[serde(default)]
+    pub status: String,
+    /// Source goods-receipt id when this invoice was created by converting a
+    /// GR. GR-sourced invoices keep their legacy lifecycle (no draft / posting
+    /// lock — they are managed from the goods-receipts screen).
+    #[serde(default)]
+    pub source_goods_receipt_id: Option<i64>,
     pub lines: Vec<PurchaseLine>,
 }
 
@@ -1791,7 +1799,7 @@ pub fn purchases_list(limit: Option<i64>) -> Result<Vec<Purchase>, String> {
     let lim = limit.unwrap_or(200);
     let mut stmt = conn.prepare(
         "SELECT p.id,p.invoice_no,p.supplier_id,s.name_ar,p.invoice_date,p.subtotal,p.vat_total,p.grand_total,
-                p.payment_method,p.cash_box_id,p.bank_id,p.je_id,p.notes,p.supplier_invoice_no,p.warehouse_id,p.lc_id
+                p.payment_method,p.cash_box_id,p.bank_id,p.je_id,p.notes,p.supplier_invoice_no,p.warehouse_id,p.lc_id,p.status,p.source_goods_receipt_id
          FROM purchases_local p JOIN suppliers_local s ON s.id=p.supplier_id
          ORDER BY p.id DESC LIMIT ?1"
     ).map_err(|e| e.to_string())?;
@@ -1799,7 +1807,8 @@ pub fn purchases_list(limit: Option<i64>) -> Result<Vec<Purchase>, String> {
         id: r.get(0)?, invoice_no: r.get(1)?, supplier_id: r.get(2)?, supplier_name: r.get(3)?,
         invoice_date: r.get(4)?, subtotal: r.get(5)?, vat_total: r.get(6)?, grand_total: r.get(7)?,
         payment_method: r.get(8)?, cash_box_id: r.get(9)?, bank_id: r.get(10)?, je_id: r.get(11)?,
-        notes: r.get(12)?, supplier_invoice_no: r.get(13)?, warehouse_id: r.get(14)?, lc_id: r.get(15)?, lines: Vec::new(),
+        notes: r.get(12)?, supplier_invoice_no: r.get(13)?, warehouse_id: r.get(14)?, lc_id: r.get(15)?,
+        status: r.get(16)?, source_goods_receipt_id: r.get(17)?, lines: Vec::new(),
     })).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows { out.push(r.map_err(|e| e.to_string())?); }
@@ -1811,14 +1820,15 @@ pub fn purchase_get(id: i64) -> Result<Purchase, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     let mut p: Purchase = conn.query_row(
         "SELECT p.id,p.invoice_no,p.supplier_id,s.name_ar,p.invoice_date,p.subtotal,p.vat_total,p.grand_total,
-                p.payment_method,p.cash_box_id,p.bank_id,p.je_id,p.notes,p.supplier_invoice_no,p.warehouse_id,p.lc_id
+                p.payment_method,p.cash_box_id,p.bank_id,p.je_id,p.notes,p.supplier_invoice_no,p.warehouse_id,p.lc_id,p.status,p.source_goods_receipt_id
          FROM purchases_local p JOIN suppliers_local s ON s.id=p.supplier_id
          WHERE p.id=?1",
         params![id], |r| Ok(Purchase {
             id: r.get(0)?, invoice_no: r.get(1)?, supplier_id: r.get(2)?, supplier_name: r.get(3)?,
             invoice_date: r.get(4)?, subtotal: r.get(5)?, vat_total: r.get(6)?, grand_total: r.get(7)?,
             payment_method: r.get(8)?, cash_box_id: r.get(9)?, bank_id: r.get(10)?, je_id: r.get(11)?,
-            notes: r.get(12)?, supplier_invoice_no: r.get(13)?, warehouse_id: r.get(14)?, lc_id: r.get(15)?, lines: Vec::new(),
+            notes: r.get(12)?, supplier_invoice_no: r.get(13)?, warehouse_id: r.get(14)?, lc_id: r.get(15)?,
+            status: r.get(16)?, source_goods_receipt_id: r.get(17)?, lines: Vec::new(),
         })
     ).map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
@@ -2076,19 +2086,25 @@ pub fn purchase_update(id: i64, input: PurchaseInput) -> Result<(), String> {
     }
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let (invoice_no, old_date, gr_src): (String, String, Option<i64>) = tx.query_row(
-        "SELECT invoice_no, invoice_date, source_goods_receipt_id FROM purchases_local WHERE id=?1",
-        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    let (_invoice_no, old_date, gr_src, status): (String, String, Option<i64>, String) = tx.query_row(
+        "SELECT invoice_no, invoice_date, source_goods_receipt_id, status FROM purchases_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
     ).map_err(|e| e.to_string())?;
     if gr_src.is_some() {
         return Err("هذه الفاتورة ناتجة عن سند استلام — عدّلها من شاشة سندات الاستلام".into());
+    }
+    // Posting lock: editing a posted invoice in place would corrupt the GL/stock
+    // link → force an explicit فك الترحيل first.
+    if status == "posted" {
+        return Err("لا يمكن تعديل فاتورة مرحّلة — افكَّ الترحيل أولاً".into());
     }
     // Both the original and the new posting dates must fall in open periods.
     guard_period_open_for_date(&tx, &old_date).map_err(|e| e.to_string())?;
     guard_period_open_for_date(&tx, &input.invoice_date).map_err(|e| e.to_string())?;
 
     let (subtotal, vat_total, grand_total) = purchase_doc_totals(&input.lines);
-    reverse_purchase_impact(&tx, id)?;
+    // Draft path only (posted is blocked above). A draft carries NO impact, so
+    // rewrite the header in place and re-insert the lines WITHOUT side-effects.
     let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
     tx.execute(
         "UPDATE purchases_local SET supplier_id=?1,invoice_date=?2,subtotal=?3,vat_total=?4,grand_total=?5,payment_method=?6,cash_box_id=?7,bank_id=?8,notes=?9,branch_id=?10,cost_center_id=?11,supplier_invoice_no=?12,warehouse_id=?13,lc_id=?14,je_id=NULL WHERE id=?15",
@@ -2096,8 +2112,99 @@ pub fn purchase_update(id: i64, input: PurchaseInput) -> Result<(), String> {
                 input.payment_method, input.cash_box_id, input.bank_id, input.notes, input.branch_id, input.cost_center_id,
                 input.supplier_invoice_no, default_wh, input.lc_id, id],
     ).map_err(|e| e.to_string())?;
-    // Invoice number is immutable across an edit (preserve the original).
+    tx.execute("DELETE FROM purchase_lines_local WHERE purchase_id=?1", params![id]).map_err(|e| e.to_string())?;
+    insert_purchase_lines_only(&tx, id, &input, default_wh)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Inserts the purchase line rows WITHOUT any stock-ledger / GL / shadow impact,
+/// mirroring the line-insert columns in `apply_purchase_impact`. Used by the
+/// draft lifecycle (draft create/update + the `unpost → keep lines` step).
+fn insert_purchase_lines_only(tx: &Transaction, purchase_id: i64, input: &PurchaseInput, default_wh: i64) -> Result<(), String> {
+    for l in &input.lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+        let line_sub = l.qty * l.unit_cost;
+        let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        tx.execute(
+            "INSERT INTO purchase_lines_local(purchase_id,item_id,qty,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor,warehouse_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![purchase_id, l.item_id, l.qty, l.unit_cost, l.vat_rate, lt, l.uom_id, l.uom_name, factor, default_wh],
+        ).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Rebuilds a `PurchaseInput` from the persisted purchase + line rows so the
+/// post/unpost lifecycle can re-run `apply_purchase_impact`. Lines came in on
+/// the header warehouse, which is returned as the input's `warehouse_id`.
+fn load_purchase_input(tx: &Transaction, id: i64) -> Result<(PurchaseInput, i64), String> {
+    let (supplier_id, invoice_date, payment_method, cash_box_id, bank_id, notes, supplier_invoice_no, warehouse_id, branch_id, cost_center_id, lc_id):
+        (i64, String, String, Option<i64>, Option<i64>, Option<String>, Option<String>, Option<i64>, Option<i64>, Option<i64>, Option<i64>) = tx.query_row(
+        "SELECT supplier_id,invoice_date,payment_method,cash_box_id,bank_id,notes,supplier_invoice_no,warehouse_id,branch_id,cost_center_id,lc_id FROM purchases_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?)),
+    ).map_err(|e| e.to_string())?;
+    let default_wh = match warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(tx)? };
+    let mut lines: Vec<PurchaseLine> = Vec::new();
+    {
+        let mut stmt = tx.prepare(
+            "SELECT item_id,qty,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor FROM purchase_lines_local WHERE purchase_id=?1 ORDER BY id ASC"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(params![id], |r| Ok(PurchaseLine {
+            id: None, item_id: r.get(0)?, item_name: None, qty: r.get(1)?, unit_cost: r.get(2)?,
+            vat_rate: r.get(3)?, line_total: r.get(4)?, uom_id: r.get(5)?, uom_name: r.get(6)?, conversion_factor: r.get(7)?,
+        })).map_err(|e| e.to_string())?;
+        for r in rows { lines.push(r.map_err(|e| e.to_string())?); }
+    }
+    Ok((PurchaseInput {
+        supplier_id, invoice_date, payment_method, cash_box_id, bank_id, notes,
+        supplier_invoice_no, warehouse_id, branch_id, cost_center_id, lc_id, lines,
+    }, default_wh))
+}
+
+/// فك الترحيل — reverse a posted purchase invoice's full impact but KEEP the
+/// document as a draft (lines preserved, je_id cleared). GR-sourced invoices are
+/// rejected — they have no draft lifecycle (managed from goods-receipts).
+#[tauri::command]
+pub fn purchase_unpost(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (date, gr_src, status): (String, Option<i64>, String) = tx.query_row(
+        "SELECT invoice_date, source_goods_receipt_id, status FROM purchases_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).map_err(|e| e.to_string())?;
+    if gr_src.is_some() {
+        return Err("هذه الفاتورة ناتجة عن سند استلام — تُدار من شاشة سندات الاستلام".into());
+    }
+    if status != "posted" { return Err("الفاتورة غير مرحّلة بالفعل".into()); }
+    guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
+    let (input, default_wh) = load_purchase_input(&tx, id)?;
+    reverse_purchase_impact(&tx, id)?;
+    insert_purchase_lines_only(&tx, id, &input, default_wh)?;
+    tx.execute("UPDATE purchases_local SET status='draft', je_id=NULL WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// ترحيل — re-apply a draft purchase invoice's full impact and mark it posted.
+#[tauri::command]
+pub fn purchase_post(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (invoice_no, date, gr_src, status): (String, String, Option<i64>, String) = tx.query_row(
+        "SELECT invoice_no, invoice_date, source_goods_receipt_id, status FROM purchases_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    ).map_err(|e| e.to_string())?;
+    if gr_src.is_some() {
+        return Err("هذه الفاتورة ناتجة عن سند استلام — تُدار من شاشة سندات الاستلام".into());
+    }
+    if status == "posted" { return Err("الفاتورة مرحّلة بالفعل".into()); }
+    guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
+    let (input, default_wh) = load_purchase_input(&tx, id)?;
+    if input.lines.is_empty() { return Err("لا يمكن ترحيل فاتورة بدون أصناف".into()); }
+    let (subtotal, vat_total, grand_total) = purchase_doc_totals(&input.lines);
+    tx.execute("DELETE FROM purchase_lines_local WHERE purchase_id=?1", params![id]).map_err(|e| e.to_string())?;
     apply_purchase_impact(&tx, id, &invoice_no, &input, subtotal, vat_total, grand_total, default_wh)?;
+    tx.execute("UPDATE purchases_local SET status='posted' WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -2106,9 +2213,9 @@ pub fn purchase_update(id: i64, input: PurchaseInput) -> Result<(), String> {
 pub fn purchase_delete(id: i64) -> Result<(), String> {
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let (date, gr_src): (String, Option<i64>) = tx.query_row(
-        "SELECT invoice_date, source_goods_receipt_id FROM purchases_local WHERE id=?1", params![id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
+    let (date, gr_src, status): (String, Option<i64>, String) = tx.query_row(
+        "SELECT invoice_date, source_goods_receipt_id, status FROM purchases_local WHERE id=?1", params![id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     ).map_err(|e| e.to_string())?;
     guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
     // Block delete when a return still references this purchase (FK integrity).
@@ -2116,16 +2223,27 @@ pub fn purchase_delete(id: i64) -> Result<(), String> {
         "SELECT COUNT(*) FROM purchase_returns_local WHERE purchase_id=?1", params![id], |r| r.get(0),
     ).map_err(|e| e.to_string())?;
     if ret_count > 0 { return Err("لا يمكن حذف فاتورة لها مرتجعات — احذف المرتجع أولاً".into()); }
-    reverse_purchase_impact(&tx, id)?;
-    tx.execute("DELETE FROM purchases_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
-    // A GR-sourced invoice deletion releases the goods receipt back to 'posted'
-    // so it can be re-converted (its stock/clearing posting stays intact).
+    // GR-sourced invoices keep the LEGACY lifecycle: they are always "posted"
+    // (no draft / فك الترحيل) and managed from the goods-receipts screen, so
+    // their delete must still reverse the GL impact AND release the source GR.
     if let Some(gr_id) = gr_src {
+        reverse_purchase_impact(&tx, id)?;
+        tx.execute("DELETE FROM purchases_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
         tx.execute(
             "UPDATE goods_receipts_local SET status='posted', converted_invoice_id=NULL WHERE id=?1 AND converted_invoice_id=?2",
             params![gr_id, id],
         ).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        return Ok(());
     }
+    // Posting lock (non-GR invoices): a posted invoice must be unposted first so
+    // its impact is reversed in a single explicit step.
+    if status == "posted" {
+        return Err("لا يمكن حذف فاتورة مرحّلة — افكَّ الترحيل أولاً".into());
+    }
+    // A draft carries NO impact → drop the rows only.
+    tx.execute("DELETE FROM purchase_lines_local WHERE purchase_id=?1", params![id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM purchases_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -2923,6 +3041,10 @@ pub struct SalesInvoice {
     pub bank_id: Option<i64>,
     pub je_id: Option<i64>,
     pub notes: Option<String>,
+    /// Posting state: "posted" (full impact applied) or "draft" (impact
+    /// reversed via فك الترحيل — editable/deletable; zero report/stock effect).
+    #[serde(default)]
+    pub status: String,
     /// Salesperson / rep attribution + commission % snapshot (back-office only).
     #[serde(default)]
     pub sales_rep_id: Option<i64>,
@@ -3041,7 +3163,7 @@ pub fn sales_invoices_list(limit: Option<i64>) -> Result<Vec<SalesInvoice>, Stri
         "SELECT s.id,s.invoice_no,s.customer_id,c.name_ar,s.invoice_date,s.subtotal,s.vat_total,s.grand_total,
                 s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes,
                 s.sales_rep_id,sp.name_ar,s.commission_pct,s.invoice_type,s.buyer_name,s.buyer_vat,s.buyer_address,
-                oi.sync_status,s.branch_id,s.cost_center_id
+                oi.sync_status,s.branch_id,s.cost_center_id,s.status
          FROM sales_invoices_local s
          LEFT JOIN customers_local c ON c.id=s.customer_id
          LEFT JOIN salespersons_local sp ON sp.id=s.sales_rep_id
@@ -3057,7 +3179,7 @@ pub fn sales_invoices_list(limit: Option<i64>) -> Result<Vec<SalesInvoice>, Stri
         invoice_type: r.get(17)?, buyer_name: r.get(18)?, buyer_vat: r.get(19)?, buyer_address: r.get(20)?,
         lines: Vec::new(),
         zatca_qr_base64: None, zatca_status: r.get(21)?,
-        branch_id: r.get(22)?, cost_center_id: r.get(23)?,
+        branch_id: r.get(22)?, cost_center_id: r.get(23)?, status: r.get(24)?,
     })).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows { out.push(r.map_err(|e| e.to_string())?); }
@@ -3071,7 +3193,7 @@ pub fn sales_invoice_get(id: i64) -> Result<SalesInvoice, String> {
         "SELECT s.id,s.invoice_no,s.customer_id,c.name_ar,s.invoice_date,s.subtotal,s.vat_total,s.grand_total,
                 s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes,
                 s.sales_rep_id,sp.name_ar,s.commission_pct,s.invoice_type,s.buyer_name,s.buyer_vat,s.buyer_address,
-                s.zatca_qr_base64,oi.sync_status,s.branch_id,s.cost_center_id
+                s.zatca_qr_base64,oi.sync_status,s.branch_id,s.cost_center_id,s.status
          FROM sales_invoices_local s
          LEFT JOIN customers_local c ON c.id=s.customer_id
          LEFT JOIN salespersons_local sp ON sp.id=s.sales_rep_id
@@ -3086,7 +3208,7 @@ pub fn sales_invoice_get(id: i64) -> Result<SalesInvoice, String> {
             invoice_type: r.get(17)?, buyer_name: r.get(18)?, buyer_vat: r.get(19)?, buyer_address: r.get(20)?,
             lines: Vec::new(),
             zatca_qr_base64: r.get(21)?, zatca_status: r.get(22)?,
-            branch_id: r.get(23)?, cost_center_id: r.get(24)?,
+            branch_id: r.get(23)?, cost_center_id: r.get(24)?, status: r.get(25)?,
         })
     ).map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
@@ -3427,11 +3549,18 @@ pub fn sales_invoice_delete(id: i64) -> Result<(), String> {
     // ZATCA-bridged invoices are legally immutable → must be reversed via إرجاع.
     guard_sales_invoice_not_bridged(&tx, id)?;
     // Period lock: the invoice's own date must sit in an open fiscal period.
-    let date: String = tx.query_row(
-        "SELECT invoice_date FROM sales_invoices_local WHERE id=?1", params![id], |r| r.get(0),
+    let (date, status): (String, String) = tx.query_row(
+        "SELECT invoice_date, status FROM sales_invoices_local WHERE id=?1", params![id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
     ).map_err(|e| e.to_string())?;
+    // Posting lock: a posted invoice must be unposted (فك الترحيل) first so its
+    // GL/stock/shadow impact is reversed in a single, explicit step.
+    if status == "posted" {
+        return Err("لا يمكن حذف فاتورة مرحّلة — افكَّ الترحيل أولاً".into());
+    }
     guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
-    reverse_sales_invoice_impact(&tx, id)?;
+    // A draft carries NO impact (unpost already reversed it) → drop rows only.
+    tx.execute("DELETE FROM sales_invoice_lines_local WHERE invoice_id=?1", params![id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM sales_invoices_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
@@ -3452,20 +3581,23 @@ pub fn sales_invoice_update(id: i64, input: SalesInvoiceInput) -> Result<(), Str
     guard_sales_invoice_not_bridged(&tx, id)?;
     // Preserve the existing number; period-lock BOTH the old & new dates so an
     // edit can never move impact into (or out of) a closed period.
-    let (invoice_no, old_date): (String, String) = tx.query_row(
-        "SELECT invoice_no, invoice_date FROM sales_invoices_local WHERE id=?1",
-        params![id], |r| Ok((r.get(0)?, r.get(1)?)),
+    let (invoice_no, old_date, status): (String, String, String) = tx.query_row(
+        "SELECT invoice_no, invoice_date, status FROM sales_invoices_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     ).map_err(|e| e.to_string())?;
+    // Posting lock: editing a posted invoice in place would corrupt the GL/stock
+    // link → force an explicit فك الترحيل first.
+    if status == "posted" {
+        return Err("لا يمكن تعديل فاتورة مرحّلة — افكَّ الترحيل أولاً".into());
+    }
     guard_period_open_for_date(&tx, &old_date).map_err(|e| e.to_string())?;
     guard_period_open_for_date(&tx, &input.invoice_date).map_err(|e| e.to_string())?;
 
     let (subtotal, vat_total, grand_total) = sales_doc_totals(&input.lines);
 
-    // Reverse the OLD impact, rewrite the header in place (keeping id +
-    // invoice_no), then re-apply the fresh impact from the new lines. Credit-
-    // control is intentionally NOT re-run: this is an edit of existing exposure,
-    // not new exposure.
-    reverse_sales_invoice_impact(&tx, id)?;
+    // Draft path only (posted is blocked above). A draft carries NO impact, so
+    // rewrite the header in place (keeping id + invoice_no), drop the old line
+    // rows and re-insert the new ones WITHOUT any GL/stock/shadow side-effects.
     let invoice_type = match input.invoice_type.as_deref() { Some("standard") => "standard", _ => "simplified" };
     let commission_pct = input.commission_pct.unwrap_or(0.0).clamp(0.0, 100.0);
     let sales_rep_id = match input.sales_rep_id { Some(r) if r > 0 => Some(r), _ => None };
@@ -3475,7 +3607,107 @@ pub fn sales_invoice_update(id: i64, input: SalesInvoiceInput) -> Result<(), Str
                 input.payment_method, input.cash_box_id, input.bank_id, input.notes, input.branch_id, input.cost_center_id,
                 sales_rep_id, commission_pct, invoice_type, input.buyer_name, input.buyer_vat, input.buyer_address, id],
     ).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM sales_invoice_lines_local WHERE invoice_id=?1", params![id]).map_err(|e| e.to_string())?;
+    insert_sales_lines_only(&tx, id, &input)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Inserts the sale's line rows WITHOUT any GL / stock-ledger / shadow-balance
+/// impact. Used by the draft lifecycle (draft create/update and the
+/// `unpost → keep lines` step). `unit_cost` is snapshotted from the current
+/// moving cost so a later `post` can still restore stock at the right value,
+/// but NO ledger movement happens here. Mirrors the line-insert columns in
+/// `apply_sales_invoice_impact`.
+fn insert_sales_lines_only(tx: &Transaction, invoice_id: i64, input: &SalesInvoiceInput) -> Result<(), String> {
+    let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(tx)? };
+    for l in &input.lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+        let line_sub = l.qty * l.unit_price;
+        let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        let line_wh = match l.warehouse_id { Some(w) if w > 0 => w, _ => default_wh };
+        let free_qty = if l.free_qty > 0.0 { l.free_qty } else { 0.0 };
+        let unit_cost = item_cost_in_tx(tx, l.item_id, line_wh);
+        tx.execute(
+            "INSERT INTO sales_invoice_lines_local(invoice_id,item_id,qty,unit_price,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor,free_qty,note,warehouse_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+            params![invoice_id, l.item_id, l.qty, l.unit_price, unit_cost, l.vat_rate, lt, l.uom_id, l.uom_name, factor, free_qty, l.note, line_wh],
+        ).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Rebuilds a `SalesInvoiceInput` from the persisted invoice + line rows so the
+/// post/unpost lifecycle can re-run `apply_sales_invoice_impact`. `warehouse_id`
+/// is left None at the header level — each line already carries its resolved
+/// `warehouse_id`, so impact re-application stays warehouse-faithful.
+fn load_sales_invoice_input(tx: &Transaction, id: i64) -> Result<SalesInvoiceInput, String> {
+    let (customer_id, invoice_date, payment_method, cash_box_id, bank_id, notes, branch_id, cost_center_id, sales_rep_id, commission_pct, invoice_type, buyer_name, buyer_vat, buyer_address):
+        (Option<i64>, String, String, Option<i64>, Option<i64>, Option<String>, Option<i64>, Option<i64>, Option<i64>, f64, String, Option<String>, Option<String>, Option<String>) = tx.query_row(
+        "SELECT customer_id,invoice_date,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id,sales_rep_id,commission_pct,invoice_type,buyer_name,buyer_vat,buyer_address FROM sales_invoices_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?, r.get(12)?, r.get(13)?)),
+    ).map_err(|e| e.to_string())?;
+    let mut lines: Vec<SalesLine> = Vec::new();
+    {
+        let mut stmt = tx.prepare(
+            "SELECT item_id,qty,unit_price,vat_rate,line_total,uom_id,uom_name,conversion_factor,free_qty,note,warehouse_id FROM sales_invoice_lines_local WHERE invoice_id=?1 ORDER BY id ASC"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(params![id], |r| Ok(SalesLine {
+            id: None, item_id: r.get(0)?, item_name: None, qty: r.get(1)?, unit_price: r.get(2)?, vat_rate: r.get(3)?,
+            line_total: r.get(4)?, uom_id: r.get(5)?, uom_name: r.get(6)?, conversion_factor: r.get(7)?, free_qty: r.get(8)?,
+            note: r.get(9)?, warehouse_id: r.get(10)?,
+        })).map_err(|e| e.to_string())?;
+        for r in rows { lines.push(r.map_err(|e| e.to_string())?); }
+    }
+    Ok(SalesInvoiceInput {
+        customer_id, invoice_date, payment_method, cash_box_id, bank_id, notes,
+        branch_id, cost_center_id, sales_rep_id, commission_pct: Some(commission_pct),
+        invoice_type: Some(invoice_type), buyer_name, buyer_vat, buyer_address,
+        warehouse_id: None, lines,
+    })
+}
+
+/// فك الترحيل — reverse a posted sales invoice's full GL/stock/shadow impact but
+/// KEEP the document as a draft (lines preserved, je_id cleared, cogs zeroed).
+#[tauri::command]
+pub fn sales_invoice_unpost(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    guard_sales_invoice_not_bridged(&tx, id)?;
+    let (date, status): (String, String) = tx.query_row(
+        "SELECT invoice_date, status FROM sales_invoices_local WHERE id=?1", params![id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|e| e.to_string())?;
+    if status != "posted" { return Err("الفاتورة غير مرحّلة بالفعل".into()); }
+    guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
+    // Snapshot the input BEFORE reverse drops the line rows, then reverse and
+    // re-insert the lines impact-free so the draft keeps its detail.
+    let input = load_sales_invoice_input(&tx, id)?;
+    reverse_sales_invoice_impact(&tx, id)?;
+    insert_sales_lines_only(&tx, id, &input)?;
+    tx.execute("UPDATE sales_invoices_local SET status='draft', je_id=NULL, cogs_total=0 WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// ترحيل — re-apply a draft sales invoice's full impact and mark it posted.
+#[tauri::command]
+pub fn sales_invoice_post(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    guard_sales_invoice_not_bridged(&tx, id)?;
+    let (invoice_no, date, status): (String, String, String) = tx.query_row(
+        "SELECT invoice_no, invoice_date, status FROM sales_invoices_local WHERE id=?1", params![id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).map_err(|e| e.to_string())?;
+    if status == "posted" { return Err("الفاتورة مرحّلة بالفعل".into()); }
+    guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
+    let input = load_sales_invoice_input(&tx, id)?;
+    if input.lines.is_empty() { return Err("لا يمكن ترحيل فاتورة بدون أصناف".into()); }
+    let (subtotal, vat_total, grand_total) = sales_doc_totals(&input.lines);
+    // Drop the impact-free draft lines; apply_* re-inserts them WITH stock/JE.
+    tx.execute("DELETE FROM sales_invoice_lines_local WHERE invoice_id=?1", params![id]).map_err(|e| e.to_string())?;
     apply_sales_invoice_impact(&tx, id, &invoice_no, &input, subtotal, vat_total, grand_total)?;
+    tx.execute("UPDATE sales_invoices_local SET status='posted' WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -4363,6 +4595,12 @@ pub struct FinancialTx {
     pub amount: f64,
     pub description: Option<String>,
     pub je_id: Option<i64>,
+    /// Optional link to the document this voucher settles ("sales_invoice" |
+    /// "purchase"), so an invoice list can show its paid amount.
+    #[serde(default)]
+    pub applied_doc_type: Option<String>,
+    #[serde(default)]
+    pub applied_doc_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -4381,6 +4619,10 @@ pub struct FinancialTxInput {
     pub branch_id: Option<i64>,
     #[serde(default)]
     pub cost_center_id: Option<i64>,
+    #[serde(default)]
+    pub applied_doc_type: Option<String>,
+    #[serde(default)]
+    pub applied_doc_id: Option<i64>,
 }
 
 fn next_fintx_no(conn: &Connection, tx_type: &str) -> Result<String> {
@@ -4398,13 +4640,14 @@ pub fn financial_tx_list(limit: Option<i64>) -> Result<Vec<FinancialTx>, String>
                 CASE f.party_type WHEN 'customer' THEN (SELECT name_ar FROM customers_local WHERE id=f.party_id)
                                   WHEN 'supplier' THEN (SELECT name_ar FROM suppliers_local WHERE id=f.party_id)
                                   ELSE NULL END,
-                f.cash_box_id,f.bank_id,f.counter_account_id,f.amount,f.description,f.je_id
+                f.cash_box_id,f.bank_id,f.counter_account_id,f.amount,f.description,f.je_id,f.applied_doc_type,f.applied_doc_id
          FROM financial_transactions_local f ORDER BY f.id DESC LIMIT ?1"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([lim], |r| Ok(FinancialTx {
         id: r.get(0)?, tx_no: r.get(1)?, tx_date: r.get(2)?, tx_type: r.get(3)?, party_type: r.get(4)?, party_id: r.get(5)?,
         party_name: r.get(6)?, cash_box_id: r.get(7)?, bank_id: r.get(8)?, counter_account_id: r.get(9)?,
         amount: r.get(10)?, description: r.get(11)?, je_id: r.get(12)?,
+        applied_doc_type: r.get(13)?, applied_doc_id: r.get(14)?,
     })).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows { out.push(r.map_err(|e| e.to_string())?); }
@@ -4457,9 +4700,9 @@ pub fn financial_tx_create(input: FinancialTxInput) -> Result<i64, String> {
     };
 
     tx.execute(
-        "INSERT INTO financial_transactions_local(tx_no,tx_date,tx_type,party_type,party_id,cash_box_id,bank_id,counter_account_id,amount,description,branch_id,cost_center_id)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
-        params![tx_no, input.tx_date, input.tx_type, input.party_type, input.party_id, input.cash_box_id, input.bank_id, counter_acc, input.amount, input.description, input.branch_id, input.cost_center_id],
+        "INSERT INTO financial_transactions_local(tx_no,tx_date,tx_type,party_type,party_id,cash_box_id,bank_id,counter_account_id,amount,description,branch_id,cost_center_id,applied_doc_type,applied_doc_id)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+        params![tx_no, input.tx_date, input.tx_type, input.party_type, input.party_id, input.cash_box_id, input.bank_id, counter_acc, input.amount, input.description, input.branch_id, input.cost_center_id, input.applied_doc_type, input.applied_doc_id],
     ).map_err(|e| e.to_string())?;
     let ftx_id = tx.last_insert_rowid();
 
@@ -4499,6 +4742,17 @@ pub fn financial_tx_create(input: FinancialTxInput) -> Result<i64, String> {
         //   • receipt from supplier (refund/over-credit) → DR cash / CR AP → AP credit balance ↑ → +amount_base
         let supp_delta = if input.tx_type == "receipt" { amount_base } else { -amount_base };
         tx.execute("UPDATE suppliers_local SET balance=balance+?1 WHERE id=?2", params![supp_delta, input.party_id.unwrap()]).map_err(|e| e.to_string())?;
+    }
+    if input.party_type.as_deref() == Some("customer") {
+        // customers_local.balance follows AR normal-debit convention (positive =
+        // "they owe us"), the same sign sales_invoice_create uses on a credit
+        // sale (balance += grand_total). Mirrors the JE side in base currency:
+        //   • receipt from customer  → DR cash / CR AR → AR debit balance ↓ → -amount_base
+        //   • payment to customer (refund) → DR AR / CR cash → AR debit balance ↑ → +amount_base
+        let cust_delta = if input.tx_type == "receipt" { -amount_base } else { amount_base };
+        if let Some(pid) = input.party_id {
+            tx.execute("UPDATE customers_local SET balance=balance+?1 WHERE id=?2", params![cust_delta, pid]).map_err(|e| e.to_string())?;
+        }
     }
 
     tx.commit().map_err(|e| e.to_string())?;

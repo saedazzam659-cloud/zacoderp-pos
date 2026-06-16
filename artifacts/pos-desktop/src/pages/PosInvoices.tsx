@@ -23,6 +23,7 @@ import {
 import {
   Page, Card, Table, Th, Td, Modal, ErrorMsg, Empty,
   input, btnSecondary, fmt,
+  useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
 } from "./_adminUi";
 import { currencySymbol } from "../lib/currency";
 
@@ -138,6 +139,14 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
     return rows;
   }, [rows, filter]);
 
+  const columns = useMemo<GridColumn<PendingInvoice>[]>(() => [
+    { key: "invoiceNo", label: "رقم الفاتورة", value: (r) => r.invoiceNo },
+    { key: "date", label: "التاريخ", value: (r) => r.createdAt },
+    { key: "type", label: "النوع", value: (r) => typeLabel(docKindOf(r)) },
+    { key: "sync", label: "حالة المزامنة", value: (r) => r.syncStatus },
+  ], []);
+  const grid = useGridFilter(filtered, columns);
+
   async function openDetail(row: PendingInvoice) {
     setDetail(null);
     setDetailPayload(null);
@@ -214,24 +223,29 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
 
       <ErrorMsg text={err} />
 
+      {filtered.length > 0 && <GridToolbar grid={grid} placeholder="🔍 بحث في الفواتير…" />}
+
       <Card style={{ marginTop: 8 }}>
         {loading ? (
           <Empty text="جارٍ التحميل…" />
         ) : filtered.length === 0 ? (
           <Empty text="لا توجد فواتير" />
+        ) : grid.view.length === 0 ? (
+          <Empty text="لا نتائج مطابقة للبحث" />
         ) : (
           <Table>
             <thead>
               <tr>
-                <Th>رقم الفاتورة</Th>
-                <Th>التاريخ</Th>
-                <Th>النوع</Th>
-                <Th>حالة المزامنة</Th>
+                <SortableTh grid={grid} colKey="invoiceNo">رقم الفاتورة</SortableTh>
+                <SortableTh grid={grid} colKey="date">التاريخ</SortableTh>
+                <SortableTh grid={grid} colKey="type">النوع</SortableTh>
+                <SortableTh grid={grid} colKey="sync">حالة المزامنة</SortableTh>
                 <Th>إجراءات</Th>
               </tr>
+              <GridFilterRow grid={grid} columns={columns} trailing={1} />
             </thead>
             <tbody>
-              {filtered.map((r) => (
+              {grid.view.map((r) => (
                 <tr
                   key={r.id}
                   onClick={() => void openDetail(r)}

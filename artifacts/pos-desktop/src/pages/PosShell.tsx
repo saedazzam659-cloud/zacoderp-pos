@@ -86,6 +86,8 @@ import PurchaseReturnsAdmin from "./PurchaseReturnsAdmin";
 import PurchaseOrdersAdmin from "./PurchaseOrdersAdmin";
 import GoodsReceiptsAdmin from "./GoodsReceiptsAdmin";
 import FinancialTransactionsAdmin from "./FinancialTransactionsAdmin";
+import CustomerCollectionAdmin from "./CustomerCollectionAdmin";
+import SupplierPaymentAdmin from "./SupplierPaymentAdmin";
 import UserPermissionsAdmin from "./UserPermissionsAdmin";
 import NumberSeriesAdmin from "./NumberSeriesAdmin";
 import SettingsGuide from "./SettingsGuide";
@@ -220,13 +222,13 @@ const NAV_GROUPS: NavGroupDef[] = [
     key: "selling",
     icon: "🧾",
     label: "المبيعات والعملاء",
-    members: ["customers", "salespersons", "quotations", "sales_orders", "sales_invoices", "sales_returns", "invoice_import", "report_customer_statement", "report_sales_daily", "report_sales_by_period", "report_sales_by_item", "report_sales_by_customer", "report_sales_daily_detailed", "report_sales_payment_mix", "report_sales_returns", "report_sales_top_customers"],
+    members: ["customers", "salespersons", "quotations", "sales_orders", "sales_invoices", "sales_returns", "customer_collection", "invoice_import", "report_customer_statement", "report_sales_daily", "report_sales_by_period", "report_sales_by_item", "report_sales_by_customer", "report_sales_daily_detailed", "report_sales_payment_mix", "report_sales_returns", "report_sales_top_customers"],
   },
   {
     key: "purchasing",
     icon: "🛒",
     label: "المشتريات والموردون",
-    members: ["suppliers", "supplier_groups", "purchase_orders", "goods_receipts", "purchases", "purchase_returns", "letters_of_credit", "supplier_settlement", "report_purchases_by_supplier", "report_purchases_by_item", "report_purchases_by_period", "report_purchases_returns", "report_top_suppliers", "report_supplier_statement", "report_supplier_statement_detailed", "report_supplier_balances", "report_supplier_aging", "report_lc_statement"],
+    members: ["suppliers", "supplier_groups", "purchase_orders", "goods_receipts", "purchases", "purchase_returns", "letters_of_credit", "supplier_settlement", "supplier_payment", "report_purchases_by_supplier", "report_purchases_by_item", "report_purchases_by_period", "report_purchases_returns", "report_top_suppliers", "report_supplier_statement", "report_supplier_statement_detailed", "report_supplier_balances", "report_supplier_aging", "report_lc_statement"],
   },
   {
     key: "cash_banks",
@@ -600,6 +602,7 @@ export default function PosShell({
     { id: "purchase_returns", icon: "🔁", label: "مرتجع الشراء", perm: "purchase_returns" },
     { id: "letters_of_credit", icon: "🌐", label: "الاعتمادات المستندية", perm: "letters_of_credit" },
     { id: "supplier_settlement", icon: "🤝", label: "تسوية الموردين", perm: "supplier_settlement" },
+    { id: "supplier_payment",  icon: "💵", label: "سند صرف لمورد", perm: "supplier_payment" },
     { id: "report_purchases_by_supplier", icon: "🏭", label: "المشتريات حسب المورد", perm: "report_purchases_by_supplier" },
     { id: "report_purchases_by_item",     icon: "📦", label: "المشتريات حسب الصنف", perm: "report_purchases_by_item" },
     { id: "report_purchases_by_period",   icon: "🗓️", label: "المشتريات حسب الفترة", perm: "report_purchases_by_period" },
@@ -615,6 +618,7 @@ export default function PosShell({
     { id: "sales_orders",     icon: "📋", label: "أوامر البيع", perm: "sales_orders" },
     { id: "sales_invoices",   icon: "🧾", label: "فواتير المبيعات", perm: "sales_invoices" },
     { id: "sales_returns",    icon: "🔁", label: "مرتجع المبيعات", perm: "sales_returns" },
+    { id: "customer_collection", icon: "💵", label: "تحصيل من عميل", perm: "customer_collection" },
     { id: "invoice_import",   icon: "📂", label: "استيراد الفواتير", perm: "invoice_import" },
     { id: "report_sales_daily",       icon: "📅", label: "تقرير المبيعات اليومي", perm: "report_sales_daily" },
     { id: "report_sales_by_period",   icon: "🗓️", label: "المبيعات حسب الفترة", perm: "report_sales_by_period" },
@@ -783,6 +787,9 @@ export default function PosShell({
           {standalone && v === "supplier_settlement" && (isAdmin || can("supplier_settlement")) && (
             <div style={S.pagePad}><SupplierSettlementAdmin /></div>
           )}
+          {standalone && v === "supplier_payment" && (isAdmin || can("supplier_payment")) && (
+            <div style={S.pagePad}><SupplierPaymentAdmin /></div>
+          )}
           {standalone && v === "report_purchases_by_supplier" && (isAdmin || can("report_purchases_by_supplier")) && (
             <div style={S.pagePad}><PurchasesBySupplierReport /></div>
           )}
@@ -827,6 +834,9 @@ export default function PosShell({
           )}
           {standalone && v === "sales_returns" && (isAdmin || can("sales_returns")) && (
             <div style={S.pagePad}><SalesReturnsAdmin /></div>
+          )}
+          {standalone && v === "customer_collection" && (isAdmin || can("customer_collection")) && (
+            <div style={S.pagePad}><CustomerCollectionAdmin /></div>
           )}
           {standalone && v === "report_sales_daily" && (isAdmin || can("report_sales_daily")) && (
             <div style={S.pagePad}><DailySalesReport /></div>
@@ -1155,6 +1165,8 @@ function labelFor(v: View): string {
     purchase_returns: "مرتجع الشراء",
     letters_of_credit: "الاعتمادات المستندية",
     supplier_settlement: "تسوية الموردين",
+    supplier_payment: "سند صرف لمورد",
+    customer_collection: "تحصيل من عميل",
     salespersons: "مندوبو المبيعات",
     quotations: "عروض الأسعار",
     sales_orders: "أوامر البيع",

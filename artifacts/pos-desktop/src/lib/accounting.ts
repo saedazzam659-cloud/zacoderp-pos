@@ -178,6 +178,12 @@ export type Purchase = {
   jeId: number | null; notes: string | null;
   supplierInvoiceNo: string | null; warehouseId: number | null;
   lcId: number | null;
+  /** Posting state: "posted" (full impact applied) or "draft" (impact reversed
+   *  via فك الترحيل — editable/deletable, zero report/stock effect). */
+  status?: string;
+  /** Source goods-receipt id when converted from a GR (legacy lifecycle, no
+   *  draft / posting lock — managed from the goods-receipts screen). */
+  sourceGoodsReceiptId?: number | null;
   lines: PurchaseLine[];
 };
 export type PurchaseInput = {
@@ -262,6 +268,9 @@ export type SalesInvoice = {
   invoiceDate: string; subtotal: number; vatTotal: number; grandTotal: number; cogsTotal: number;
   paymentMethod: PaymentMethod; cashBoxId: number | null; bankId: number | null;
   jeId: number | null; notes: string | null;
+  /** Posting state: "posted" (full impact applied) or "draft" (impact reversed
+   *  via فك الترحيل — editable/deletable, zero report/stock effect). */
+  status?: string;
   // Salesperson attribution + commission snapshot, ZATCA doc type, frozen buyer.
   salesRepId?: number | null; salesRepName?: string | null; commissionPct?: number;
   branchId?: number | null; costCenterId?: number | null;
@@ -353,6 +362,9 @@ export type FinancialTx = {
   partyType: PartyType | null; partyId: number | null; partyName: string | null;
   cashBoxId: number | null; bankId: number | null; counterAccountId: number | null;
   amount: number; description: string | null; jeId: number | null;
+  /** Optional link to the settled document ("sales_invoice" | "purchase") so an
+   *  invoice list can surface its paid amount. */
+  appliedDocType?: string | null; appliedDocId?: number | null;
 };
 export type FinancialTxInput = {
   txDate: string; txType: TxType;
@@ -360,6 +372,7 @@ export type FinancialTxInput = {
   cashBoxId: number | null; bankId: number | null; counterAccountId: number | null;
   amount: number; description: string | null;
   branchId?: number | null; costCenterId?: number | null;
+  appliedDocType?: string | null; appliedDocId?: number | null;
 };
 
 export type JournalEntryLine = {
@@ -535,6 +548,17 @@ export async function deletePurchase(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("purchase_delete", { id });
 }
+/** فك الترحيل: reverse a posted purchase's GL/stock/AP impact, keep header+lines
+ *  as a draft (status='draft', je_id NULL). Rejected for GR-sourced invoices. */
+export async function unpostPurchase(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("purchase_unpost", { id });
+}
+/** ترحيل: re-apply a draft purchase's full impact and flip status back to posted. */
+export async function postPurchase(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("purchase_post", { id });
+}
 
 // ─── Purchase returns ────────────────────────────────────────────────
 export async function listPurchaseReturns(limit = 200): Promise<PurchaseReturn[]> {
@@ -629,6 +653,17 @@ export async function updateSalesInvoice(id: number, input: SalesInvoiceInput): 
 export async function deleteSalesInvoice(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("sales_invoice_delete", { id });
+}
+/** فك الترحيل: reverse a posted sales invoice's GL/stock/AR impact, keep
+ *  header+lines as a draft (status='draft', je_id NULL). */
+export async function unpostSalesInvoice(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("sales_invoice_unpost", { id });
+}
+/** ترحيل: re-apply a draft sales invoice's full impact and flip status to posted. */
+export async function postSalesInvoice(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("sales_invoice_post", { id });
 }
 /** Persist the ZATCA bridge link (QR + offline_invoices local_uuid) onto a sales invoice. */
 export async function setSalesInvoiceZatca(

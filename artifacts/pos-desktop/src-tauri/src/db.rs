@@ -1069,6 +1069,16 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE sales_invoice_lines_local ADD COLUMN free_qty REAL NOT NULL DEFAULT 0",
         "ALTER TABLE sales_invoice_lines_local ADD COLUMN note TEXT",
         "ALTER TABLE sales_invoice_lines_local ADD COLUMN warehouse_id INTEGER",
+        // Posting lock: a back-office invoice is created 'posted' (full impact
+        // applied). فك الترحيل flips it to 'draft' (impact reversed, lines kept)
+        // so it can be edited/deleted; ترحيل re-applies impact. Pre-existing
+        // rows default to 'posted', matching their already-applied impact.
+        "ALTER TABLE sales_invoices_local ADD COLUMN status TEXT NOT NULL DEFAULT 'posted'",
+        "ALTER TABLE purchases_local ADD COLUMN status TEXT NOT NULL DEFAULT 'posted'",
+        // Voucher → document link (سند تحصيل/صرف applied against a specific
+        // invoice) so the invoice list can show a paid-amount per row.
+        "ALTER TABLE financial_transactions_local ADD COLUMN applied_doc_type TEXT",
+        "ALTER TABLE financial_transactions_local ADD COLUMN applied_doc_id INTEGER",
     ];
     for sql in alters { let _ = conn.execute(sql, []); }
 

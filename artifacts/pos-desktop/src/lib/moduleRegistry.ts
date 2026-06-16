@@ -33,7 +33,7 @@ export type WindowsView =
   | "report_purchases_returns" | "report_top_suppliers"
   | "report_supplier_statement" | "report_supplier_statement_detailed"
   | "report_supplier_balances" | "report_supplier_aging" | "report_lc_statement"
-  | "salespersons"
+  | "salespersons" | "customer_collection" | "supplier_payment"
   | "sales_invoices" | "quotations" | "sales_orders" | "sales_returns" | "invoice_import"
   | "report_sales_daily" | "report_sales_by_period" | "report_sales_by_item" | "report_sales_by_customer"
   | "report_sales_daily_detailed" | "report_sales_payment_mix" | "report_sales_returns" | "report_sales_top_customers"
@@ -108,6 +108,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   suppliers:         { module: "purchasing", profile: "erp" },
   supplier_groups:   { module: "purchasing", profile: "erp" },
   supplier_settlement:{ module: "purchasing", profile: "erp" },
+  supplier_payment:  { module: "purchasing", profile: "erp" },
   purchases:         { module: "purchasing", profile: "erp" },
   purchase_orders:   { module: "purchasing", profile: "erp" },
   goods_receipts:    { module: "purchasing", profile: "erp" },
@@ -124,6 +125,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   report_supplier_aging:              { module: "purchasing", profile: "erp" },
   report_lc_statement:                { module: "purchasing", profile: "erp" },
   salespersons:      { module: "sales_docs", profile: "erp" },
+  customer_collection: { module: "sales_docs", profile: "erp" },
   sales_invoices:    { module: "sales_docs", profile: "erp" },
   quotations:        { module: "sales_docs", profile: "erp" },
   sales_orders:      { module: "sales_docs", profile: "erp" },

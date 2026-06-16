@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   listSalesInvoices, getSalesInvoice, createSalesInvoice, updateSalesInvoice, deleteSalesInvoice,
-  listCashBoxes, listBanks,
+  unpostSalesInvoice, postSalesInvoice, listCashBoxes, listBanks, listFinancialTx,
   type SalesInvoice, type SalesLine, type PaymentMethod, type CashBox, type Bank,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
@@ -14,6 +14,7 @@ import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
+  useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -41,8 +42,20 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
   const [deps, setDeps] = useState<{ customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[]; salespersons: Salesperson[] } | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  // Paid-so-far per invoice: Σ posted receipts tagged appliedDocType=sales_invoice.
+  const [paidByInvoice, setPaidByInvoice] = useState<Map<number, number>>(new Map());
 
-  async function refresh() { setRows(await listSalesInvoices(5000)); }
+  async function refresh() {
+    const [invs, tx] = await Promise.all([listSalesInvoices(5000), listFinancialTx(5000)]);
+    setRows(invs);
+    const m = new Map<number, number>();
+    for (const t of tx) {
+      if (t.txType === "receipt" && t.appliedDocType === "sales_invoice" && t.appliedDocId != null) {
+        m.set(t.appliedDocId, (m.get(t.appliedDocId) ?? 0) + t.amount);
+      }
+    }
+    setPaidByInvoice(m);
+  }
 
   // ZATCA-bridged invoices are legally immutable → block edit/delete and steer
   // the user to a credit-note return instead. `zatcaStatus` is the linked
@@ -66,13 +79,38 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
   async function remove(id: number, invoiceNo: string, zatcaStatus?: string | null) {
     setErr(null);
     if (zatcaStatus) { setErr(bridgedMsg()); return; }
-    if (!confirm(`حذف الفاتورة ${invoiceNo}؟ سيتم عكس القيد المحاسبي وإرجاع المخزون.`)) return;
+    if (!confirm(`حذف الفاتورة ${invoiceNo}؟`)) return;
     setBusyId(id);
     try {
       await deleteSalesInvoice(id);
       if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
       await refresh();
     } catch (e: any) { setErr(e?.message ?? "تعذّر حذف الفاتورة"); }
+    finally { setBusyId(null); }
+  }
+
+  // فك الترحيل: reverse a posted invoice's GL/stock/AR impact, leaving it as an
+  // editable draft. ترحيل: re-apply a draft's impact. Both refresh the list.
+  async function unpost(id: number, invoiceNo: string) {
+    setErr(null);
+    if (!confirm(`فك ترحيل الفاتورة ${invoiceNo}؟ سيتم عكس القيد المحاسبي والمخزون وتتحول إلى مسودة قابلة للتعديل.`)) return;
+    setBusyId(id);
+    try {
+      await unpostSalesInvoice(id);
+      if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
+      await refresh();
+    } catch (e: any) { setErr(e?.message ?? "تعذّر فك الترحيل"); }
+    finally { setBusyId(null); }
+  }
+  async function post(id: number, invoiceNo: string) {
+    setErr(null);
+    if (!confirm(`ترحيل الفاتورة ${invoiceNo}؟ سيتم توليد القيد المحاسبي وخصم المخزون.`)) return;
+    setBusyId(id);
+    try {
+      await postSalesInvoice(id);
+      if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
+      await refresh();
+    } catch (e: any) { setErr(e?.message ?? "تعذّر الترحيل"); }
     finally { setBusyId(null); }
   }
   useEffect(() => {
@@ -83,9 +121,30 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
     })();
   }, []);
 
-  const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
-  const pageRows = rows.slice(start, end);
+  const zatca = isZatcaCountry();
+  const columns = useMemo<GridColumn<SalesInvoice>[]>(() => {
+    const base: GridColumn<SalesInvoice>[] = [
+      { key: "invoiceNo", label: "رقم الفاتورة", value: (p) => p.invoiceNo },
+      { key: "date", label: "التاريخ", value: (p) => p.invoiceDate },
+      { key: "customer", label: "العميل", value: (p) => p.customerName ?? "نقدي/بدون عميل" },
+      { key: "payment", label: "طريقة الدفع", value: (p) => p.paymentMethod },
+      { key: "status", label: "الحالة", value: (p) => p.status ?? "" },
+    ];
+    if (zatca) base.push({ key: "zatca", label: "زاتكا", value: (p) => p.zatcaStatus ?? "" });
+    base.push(
+      { key: "subtotal", label: "المجموع", type: "number", value: (p) => p.subtotal },
+      { key: "vat", label: "الضريبة", type: "number", value: (p) => p.vatTotal },
+      { key: "grand", label: "الإجمالي", type: "number", value: (p) => p.grandTotal },
+      { key: "paid", label: "المسدّد", type: "number", value: (p) => paidByInvoice.get(p.id) ?? 0 },
+    );
+    return base;
+  }, [zatca, paidByInvoice]);
+  const grid = useGridFilter(rows, columns);
+
+  const { start, end, page: clampedPage } = pageSlice(grid.view.length, page, pageSize);
+  const pageRows = grid.view.slice(start, end);
   useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
+  useEffect(() => { setPage(1); }, [grid.search, grid.columnFilters, grid.sort]);
 
   async function toggleView(id: number) {
     if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); return; }
@@ -134,14 +193,26 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
           </div>
         </Card>
       )}
+      {rows.length > 0 && !formOpen && <GridToolbar grid={grid} placeholder="🔍 بحث في فواتير المبيعات…" />}
       <Card>
-        {rows.length === 0 && !formOpen ? <Empty text="لا توجد فواتير مبيعات" /> : (
+        {rows.length === 0 && !formOpen ? <Empty text="لا توجد فواتير مبيعات" /> : grid.view.length === 0 ? <Empty text="لا نتائج مطابقة للبحث" /> : (
           <Table>
-            <thead><tr>
-              <Th>رقم الفاتورة</Th><Th>التاريخ</Th><Th>العميل</Th><Th>طريقة الدفع</Th>{isZatcaCountry() && <Th>زاتكا</Th>}
-              <Th style={{ textAlign: "left" }}>المجموع</Th><Th style={{ textAlign: "left" }}>الضريبة</Th>
-              <Th style={{ textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 100 }}></Th>
-            </tr></thead>
+            <thead>
+              <tr>
+                <SortableTh grid={grid} colKey="invoiceNo">رقم الفاتورة</SortableTh>
+                <SortableTh grid={grid} colKey="date">التاريخ</SortableTh>
+                <SortableTh grid={grid} colKey="customer">العميل</SortableTh>
+                <SortableTh grid={grid} colKey="payment">طريقة الدفع</SortableTh>
+                <SortableTh grid={grid} colKey="status">الحالة</SortableTh>
+                {zatca && <SortableTh grid={grid} colKey="zatca">زاتكا</SortableTh>}
+                <SortableTh grid={grid} colKey="subtotal" style={{ textAlign: "left" }}>المجموع</SortableTh>
+                <SortableTh grid={grid} colKey="vat" style={{ textAlign: "left" }}>الضريبة</SortableTh>
+                <SortableTh grid={grid} colKey="grand" style={{ textAlign: "left" }}>الإجمالي</SortableTh>
+                <SortableTh grid={grid} colKey="paid" style={{ textAlign: "left" }}>المسدّد / المتبقّي</SortableTh>
+                <Th style={{ width: 100 }}></Th>
+              </tr>
+              <GridFilterRow grid={grid} columns={columns} trailing={1} />
+            </thead>
             <tbody>
               {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
@@ -150,10 +221,12 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
                     <Td>{p.invoiceDate}</Td>
                     <Td>{p.customerName ?? "نقدي/بدون عميل"}</Td>
                     <Td><PayBadge m={p.paymentMethod} /></Td>
+                    <Td><StatusBadge status={p.status} /></Td>
                     {isZatcaCountry() && <Td><ZatcaBadge status={p.zatcaStatus} /></Td>}
                     <Td num>{fmt(p.subtotal)}</Td>
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
+                    <Td num>{paidCell(p, paidByInvoice.get(p.id) ?? 0)}</Td>
                     <Td>
                       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
                         <button onClick={() => void toggleView(p.id)} disabled={formOpen} aria-expanded={expandedId === p.id}
@@ -168,18 +241,21 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
                         )}
                         {p.zatcaStatus ? (
                           <span title={bridgedMsg()} style={{ fontSize: 12, color: "#94a3b8" }}>🔒 مُرحّلة لزاتكا</span>
-                        ) : (
+                        ) : p.status === "draft" ? (
                           <>
+                            <button onClick={() => void post(p.id, p.invoiceNo)} disabled={busyId === p.id || formOpen} style={{ ...btnLink, color: "#15803d" }}>ترحيل</button>
                             <button onClick={() => void startEdit(p.id)} disabled={busyId === p.id || formOpen} style={btnLink}>تعديل</button>
                             <button onClick={() => void remove(p.id, p.invoiceNo, p.zatcaStatus)} disabled={busyId === p.id || formOpen} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
                           </>
+                        ) : (
+                          <button onClick={() => void unpost(p.id, p.invoiceNo)} disabled={busyId === p.id || formOpen} title="فك الترحيل لتعديل أو حذف الفاتورة" style={{ ...btnLink, color: "#b45309" }}>فك الترحيل</button>
                         )}
                       </div>
                     </Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>
-                      <Td colSpan={9 as any}>
+                      <Td colSpan={11 as any}>
                         {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>... جاري التحميل</div> : (
                           <SalesDetail p={expandedDetail} />
                         )}
@@ -192,7 +268,7 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
           </Table>
         )}
         {rows.length > 0 && (
-          <Pagination total={rows.length} page={page} pageSize={pageSize}
+          <Pagination total={grid.view.length} page={page} pageSize={pageSize}
             onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />
         )}
       </Card>
@@ -200,10 +276,33 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
   );
 }
 
+// المسدّد / المتبقّي cell: cash/bank invoices are settled at sale → "مدفوعة".
+// Credit invoices show Σ collected (تحصيل) and the outstanding remainder.
+function paidCell(p: SalesInvoice, paid: number) {
+  if (p.paymentMethod !== "credit") return <span style={{ color: "#15803d" }}>مدفوعة</span>;
+  const remaining = p.grandTotal - paid;
+  if (paid <= 0.005) return <span style={{ color: "#b45309" }}>غير مسدّدة</span>;
+  return (
+    <span>
+      <span style={{ color: "#15803d", fontWeight: 600 }}>{fmt(paid)}</span>
+      {remaining > 0.005 && <span style={{ color: "#b45309" }}> / {fmt(remaining)}</span>}
+      {remaining <= 0.005 && <span style={{ color: "#15803d" }}> ✓</span>}
+    </span>
+  );
+}
+
 function PayBadge({ m }: { m: PaymentMethod }) {
   const map = { credit: { l: "آجل", c: "#9a3412" }, cash: { l: "نقدي", c: "#15803d" }, bank: { l: "بنك", c: "#1e40af" } } as const;
   const x = map[m];
   return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{x.l}</span>;
+}
+
+// Posting state badge: a draft has its impact reversed (no GL/stock effect) and
+// is editable; posted is the normal, locked state. Absent status ⇒ posted.
+function StatusBadge({ status }: { status?: string }) {
+  const draft = status === "draft";
+  const c = draft ? "#b45309" : "#15803d";
+  return <span style={{ background: c + "20", color: c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{draft ? "مسودة" : "مُرحّلة"}</span>;
 }
 
 // ZATCA sync state of the linked offline_invoices row. `null` = not bridged

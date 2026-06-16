@@ -622,3 +622,181 @@ export function fmtCurrency(n: number, code: string = "SAR", decimals = getDecim
 export function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Reusable grid search / filter / sort engine (extracted from ItemsAdmin's
+// Excel-like grid so every list screen — invoices, vouchers, POS — shares the
+// same UX). Generic over the row type T; callers supply a column spec.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type GridColType = "text" | "number";
+
+export interface GridColumn<T> {
+  key: string;
+  label: string;
+  type?: GridColType; // defaults to "text"
+  /** Sort key + number-filter source. */
+  value: (row: T) => string | number | null;
+  /** Searchable/text-filter source. Defaults to String(value). */
+  text?: (row: T) => string;
+}
+
+/** Number column quick-filter: supports >, >=, <, <=, =, a-b range, else substring. */
+export function matchNumberExpr(val: number | null, expr: string): boolean {
+  const e = expr.trim();
+  if (!e) return true;
+  if (val == null) return false;
+  const range = e.match(/^(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)$/);
+  if (range) { const a = +range[1], b = +range[2]; return val >= Math.min(a, b) && val <= Math.max(a, b); }
+  const m = e.match(/^(>=|<=|>|<|=)?\s*(-?\d+(?:\.\d+)?)$/);
+  if (m) {
+    const op = m[1] || "="; const n = +m[2];
+    switch (op) { case ">": return val > n; case ">=": return val >= n; case "<": return val < n; case "<=": return val <= n; default: return val === n; }
+  }
+  return String(val).includes(e);
+}
+
+function colText<T>(col: GridColumn<T>, row: T): string {
+  if (col.text) return col.text(row);
+  const v = col.value(row);
+  return v == null ? "" : String(v);
+}
+
+export interface GridSort { key: string; dir: "asc" | "desc"; }
+
+export interface GridFilter<T> {
+  view: T[];
+  search: string;
+  setSearch: (s: string) => void;
+  columnFilters: Record<string, string>;
+  setColumnFilter: (key: string, value: string) => void;
+  showFilters: boolean;
+  setShowFilters: (v: boolean) => void;
+  sort: GridSort | null;
+  toggleSort: (key: string) => void;
+  clearAll: () => void;
+  hasActive: boolean;
+}
+
+/** Filter + sort `rows` by a quick global search (across all column text),
+ *  optional per-column filters, and a single-column sort. Pure/derived — pair
+ *  with Pagination on the returned `view`. */
+export function useGridFilter<T>(rows: T[], columns: GridColumn<T>[]): GridFilter<T> {
+  const [search, setSearch] = useState("");
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const [showFilters, setShowFilters] = useState(false);
+  const [sort, setSort] = useState<GridSort | null>(null);
+
+  const setColumnFilter = (key: string, value: string) =>
+    setColumnFilters((prev) => ({ ...prev, [key]: value }));
+
+  const toggleSort = (key: string) =>
+    setSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: "asc" };
+      if (prev.dir === "asc") return { key, dir: "desc" };
+      return null;
+    });
+
+  const clearAll = () => { setSearch(""); setColumnFilters({}); setSort(null); };
+
+  const view = useMemo(() => {
+    let list = rows.slice();
+    const q = search.trim().toLowerCase();
+    if (q) {
+      list = list.filter((row) => columns.some((c) => colText(c, row).toLowerCase().includes(q)));
+    }
+    const fEntries = Object.entries(columnFilters).filter(([, v]) => (v ?? "").trim() !== "");
+    if (fEntries.length) {
+      list = list.filter((row) =>
+        fEntries.every(([k, v]) => {
+          const col = columns.find((c) => c.key === k);
+          if (!col) return true;
+          if ((col.type ?? "text") === "number") return matchNumberExpr(col.value(row) as number | null, v);
+          return colText(col, row).toLowerCase().includes(v.trim().toLowerCase());
+        }),
+      );
+    }
+    if (sort) {
+      const col = columns.find((c) => c.key === sort.key);
+      if (col) {
+        list.sort((a, b) => {
+          const va = col.value(a); const vb = col.value(b);
+          if (va == null && vb == null) return 0;
+          if (va == null) return 1;
+          if (vb == null) return -1;
+          const cmp = (col.type ?? "text") === "number"
+            ? (va as number) - (vb as number)
+            : String(va).localeCompare(String(vb), "ar");
+          return sort.dir === "asc" ? cmp : -cmp;
+        });
+      }
+    }
+    return list;
+  }, [rows, columns, search, columnFilters, sort]);
+
+  const hasActive = search.trim() !== "" || Object.values(columnFilters).some((v) => (v ?? "").trim() !== "");
+
+  return { view, search, setSearch, columnFilters, setColumnFilter, showFilters, setShowFilters, sort, toggleSort, clearAll, hasActive };
+}
+
+/** Quick-search toolbar: search box + column-filter toggle + clear button.
+ *  Drop above a <Table>; `extra` renders extra controls inline (e.g. tabs). */
+export function GridToolbar<T>({ grid, placeholder, extra }: { grid: GridFilter<T>; placeholder?: string; extra?: ReactNode }) {
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+      <input
+        value={grid.search}
+        onChange={(e) => grid.setSearch(e.target.value)}
+        placeholder={placeholder ?? "🔍 بحث…"}
+        style={{ ...input, flex: 1, minWidth: 220, marginBottom: 0 }}
+      />
+      <button type="button" onClick={() => grid.setShowFilters(!grid.showFilters)}
+        style={{ ...btnSecondary, background: grid.showFilters ? "#2563eb" : "#f1f5f9", color: grid.showFilters ? "#fff" : "#0f172a", border: grid.showFilters ? "1px solid #2563eb" : "1px solid #cbd5e1" }}
+        title="إظهار صف فلتر تحت كل عمود">
+        ⛃ فلاتر الأعمدة
+      </button>
+      {(grid.hasActive || grid.sort) && (
+        <button type="button" onClick={grid.clearAll} style={{ ...btnSecondary, color: "#b91c1c" }}>✕ مسح الفلاتر</button>
+      )}
+      {extra}
+    </div>
+  );
+}
+
+/** Sortable header cell. Renders the label + a sort arrow; click toggles
+ *  asc → desc → off. Use in place of <Th> for sortable columns. */
+export function SortableTh<T>({ grid, colKey, children, style }: { grid: GridFilter<T>; colKey: string; children?: ReactNode; style?: CSSProperties }) {
+  const active = grid.sort?.key === colKey;
+  const arrow = !active ? "↕" : grid.sort!.dir === "asc" ? "▲" : "▼";
+  return (
+    <Th style={{ ...style, cursor: "pointer", userSelect: "none" }}>
+      <span onClick={() => grid.toggleSort(colKey)} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+        {children}
+        <span style={{ fontSize: 10, color: active ? "#2563eb" : "#cbd5e1" }}>{arrow}</span>
+      </span>
+    </Th>
+  );
+}
+
+/** Per-column filter input row. Render inside <thead> below the header row when
+ *  `grid.showFilters`. `columns` lists the filterable keys (in column order);
+ *  `leading`/`trailing` add empty <th> cells to align with non-filter columns. */
+export function GridFilterRow<T>({ grid, columns, leading = 0, trailing = 0 }: { grid: GridFilter<T>; columns: GridColumn<T>[]; leading?: number; trailing?: number }) {
+  if (!grid.showFilters) return null;
+  return (
+    <tr style={{ background: "#f8fafc" }}>
+      {Array.from({ length: leading }).map((_, i) => <th key={`l${i}`} />)}
+      {columns.map((c) => (
+        <th key={c.key} style={{ padding: "4px 6px" }}>
+          <input
+            value={grid.columnFilters[c.key] ?? ""}
+            onChange={(e) => grid.setColumnFilter(c.key, e.target.value)}
+            placeholder={(c.type ?? "text") === "number" ? "> 0 ، 1-9…" : "تصفية…"}
+            style={{ ...input, marginBottom: 0, padding: "5px 8px", fontSize: 12 }}
+          />
+        </th>
+      ))}
+      {Array.from({ length: trailing }).map((_, i) => <th key={`t${i}`} />)}
+    </tr>
+  );
+}
