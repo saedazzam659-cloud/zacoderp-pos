@@ -517,6 +517,314 @@ fn insert_journal_entry(
     Ok(je_id)
 }
 
+// ───────────────────── POS payment methods + local JE ─────────────────
+// Dynamic, user-managed payment methods for the register. Each maps to a GL
+// account (cash/bank) or, for kind="credit", to receivables (1500). A register
+// sale posts a LOCAL journal entry through `post_pos_invoice_je` so مركز الترحيل
+// + the financial reports reflect cashier activity. The cloud re-derives its
+// OWN accounting from the synced offline_invoices and the device never ships
+// local JEs upward (sync push carries only the raw invoices), so the two
+// ledgers each count a sale exactly once.
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PosPaymentMethod {
+    pub id: i64,
+    pub name_ar: String,
+    pub kind: String, // cash | bank | credit | other
+    pub account_id: Option<i64>,
+    pub is_active: bool,
+    pub sort_order: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PosPaymentMethodInput {
+    pub name_ar: String,
+    pub kind: String,
+    #[serde(default)]
+    pub account_id: Option<i64>,
+    #[serde(default = "default_true")]
+    pub is_active: bool,
+    #[serde(default)]
+    pub sort_order: i64,
+}
+
+fn valid_pm_kind(k: &str) -> bool { matches!(k, "cash" | "bank" | "credit" | "other") }
+
+#[tauri::command]
+pub fn pos_payment_methods_list() -> Result<Vec<PosPaymentMethod>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id,name_ar,kind,account_id,is_active,sort_order FROM pos_payment_methods_local ORDER BY sort_order, id")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(PosPaymentMethod {
+                id: r.get(0)?,
+                name_ar: r.get(1)?,
+                kind: r.get(2)?,
+                account_id: r.get(3)?,
+                is_active: r.get::<_, i64>(4)? != 0,
+                sort_order: r.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn pos_payment_method_create(input: PosPaymentMethodInput) -> Result<i64, String> {
+    if input.name_ar.trim().is_empty() { return Err("الاسم مطلوب".into()); }
+    if !valid_pm_kind(&input.kind) { return Err("نوع طريقة الدفع غير صالح".into()); }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO pos_payment_methods_local(name_ar,kind,account_id,is_active,sort_order) VALUES(?1,?2,?3,?4,?5)",
+        params![input.name_ar.trim(), input.kind, input.account_id, input.is_active as i64, input.sort_order],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[tauri::command]
+pub fn pos_payment_method_update(id: i64, input: PosPaymentMethodInput) -> Result<(), String> {
+    if input.name_ar.trim().is_empty() { return Err("الاسم مطلوب".into()); }
+    if !valid_pm_kind(&input.kind) { return Err("نوع طريقة الدفع غير صالح".into()); }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let n = conn
+        .execute(
+            "UPDATE pos_payment_methods_local SET name_ar=?1,kind=?2,account_id=?3,is_active=?4,sort_order=?5 WHERE id=?6",
+            params![input.name_ar.trim(), input.kind, input.account_id, input.is_active as i64, input.sort_order, id],
+        )
+        .map_err(|e| e.to_string())?;
+    if n == 0 { return Err("طريقة الدفع غير موجودة".into()); }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn pos_payment_method_delete(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM pos_payment_methods_local WHERE id=?1", params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ── POS register sale → local JE ──────────────────────────────────────
+// Minimal view of the offline payload — only the fields the JE needs. serde
+// ignores the rest (ZATCA/UBL data, line descriptions, …). All fields default
+// so a partial/legacy payload never fails to deserialize.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PosJeLine {
+    #[serde(default)]
+    item_id: Option<i64>,
+    #[serde(default)]
+    qty: f64,
+    #[serde(default)]
+    unit_factor: Option<f64>,
+    #[serde(default)]
+    cost: Option<f64>,
+}
+
+/// Per-BASE-unit cost for a POS line. A payload-supplied `cost` (already per
+/// base unit) wins; otherwise we read the maintained moving cost from
+/// `stock_on_hand_local` (the warehouse holding the most stock). Returns 0 when
+/// no cost is known so the COGS leg is simply skipped for that line.
+fn pos_line_base_cost(tx: &Transaction, line: &PosJeLine) -> f64 {
+    if let Some(c) = line.cost {
+        if c > 0.0 { return c; }
+    }
+    if let Some(iid) = line.item_id {
+        let c: Option<f64> = tx
+            .query_row(
+                "SELECT last_cost FROM stock_on_hand_local WHERE item_id=?1 AND last_cost > 0 ORDER BY qty DESC LIMIT 1",
+                params![iid],
+                |r| r.get(0),
+            )
+            .optional()
+            .unwrap_or(None);
+        return c.unwrap_or(0.0);
+    }
+    0.0
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PosJePayload {
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    customer_id: Option<i64>,
+    #[serde(default)]
+    payment_method: Option<String>,
+    #[serde(default)]
+    payment_method_id: Option<i64>,
+    #[serde(default)]
+    subtotal: f64,
+    #[serde(default)]
+    vat: f64,
+    #[serde(default)]
+    grand_total: f64,
+    #[serde(default)]
+    lines: Vec<PosJeLine>,
+    #[serde(default)]
+    timestamp: Option<String>,
+}
+
+fn je_line(account_id: i64, debit: f64, credit: f64, description: Option<String>) -> JournalEntryLine {
+    JournalEntryLine { id: None, account_id, account_code: None, account_name: None, debit, credit, description }
+}
+
+/// Resolve a POS GL account: an explicit per-key override id in app_settings
+/// (validated to still exist) wins; otherwise fall back to a hardcoded COA code.
+fn pos_acct(tx: &Transaction, setting_key: &str, fallback_code: &str) -> Result<i64> {
+    if let Some(v) = setting_raw_tx(tx, setting_key) {
+        if let Ok(id) = v.trim().parse::<i64>() {
+            let found: Option<i64> = tx
+                .query_row("SELECT id FROM accounts_local WHERE id=?1", params![id], |r| r.get(0))
+                .optional()?;
+            if let Some(id) = found { return Ok(id); }
+        }
+    }
+    account_id_by_code(tx, fallback_code)
+}
+
+/// Resolve the debit (treasury / receivable) account for a register sale and
+/// whether it is a credit (on-account) sale. Credit always lands on AR (1500)
+/// and additionally bumps the customer sub-ledger. A selected method with no
+/// linked account falls back to the default cash account so a sale never fails.
+fn resolve_pos_debit(tx: &Transaction, p: &PosJePayload) -> Result<(i64, bool)> {
+    if let Some(mid) = p.payment_method_id {
+        let row: Option<(String, Option<i64>)> = tx
+            .query_row(
+                "SELECT kind, account_id FROM pos_payment_methods_local WHERE id=?1",
+                params![mid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        if let Some((kind, acc)) = row {
+            if kind == "credit" {
+                return Ok((account_id_by_code(tx, "1500")?, true));
+            }
+            if let Some(a) = acc {
+                return Ok((a, false));
+            }
+            return Ok((pos_acct(tx, "pos_acct_cash", "1101")?, false));
+        }
+    }
+    match p.payment_method.as_deref() {
+        Some("credit") => Ok((account_id_by_code(tx, "1500")?, true)),
+        _ => Ok((pos_acct(tx, "pos_acct_cash", "1101")?, false)),
+    }
+}
+
+/// Posts the device-local journal entry (+ COGS leg + customer sub-ledger) for
+/// a register sale or return, parsing the raw offline payload. The COGS leg is
+/// posted only when the payload carried per-line cost. Distinct source_types
+/// (pos_sale / pos_sale_cogs / pos_return / pos_return_cogs) let مركز الترحيل
+/// filter cashier activity apart from back-office sales. The caller treats any
+/// error as NON-FATAL (logs + swallows) so a cashier sale is never blocked by
+/// an accounting misconfiguration.
+pub(crate) fn post_pos_invoice_je(payload_json: &str, invoice_id: i64, invoice_no: &str) -> Result<()> {
+    let payload: PosJePayload = serde_json::from_str(payload_json)
+        .map_err(|e| anyhow!(format!("تعذّر قراءة بيانات الفاتورة: {e}")))?;
+    // Defensive: nothing monetary → nothing to post.
+    if payload.grand_total.abs() < 0.0001 && payload.subtotal.abs() < 0.0001 {
+        return Ok(());
+    }
+    let is_return = payload.kind.as_deref() == Some("return");
+    let date = payload
+        .timestamp
+        .as_deref()
+        .and_then(|t| t.get(0..10).map(|s| s.to_string()))
+        .filter(|s| s.len() == 10)
+        .unwrap_or_else(today_iso);
+
+    let mut conn = db::open()?;
+    let tx = conn.transaction()?;
+
+    let rev = pos_acct(&tx, "pos_acct_revenue", "4100")?;
+    let vat_acc = pos_acct(&tx, "pos_acct_vat", "2200")?;
+    let (debit_acc, is_credit) = resolve_pos_debit(&tx, &payload)?;
+
+    let subtotal = payload.subtotal;
+    let vat = payload.vat;
+    let grand = payload.grand_total;
+    let post = resolve_auto_post(&tx, if is_return { "pos_return" } else { "pos_sale" });
+
+    // Revenue / treasury JE.
+    let mut lines = Vec::new();
+    if is_return {
+        lines.push(je_line(rev, subtotal, 0.0, Some(format!("مرتجع مبيعات نقاط بيع {invoice_no}"))));
+        if vat > 0.0 { lines.push(je_line(vat_acc, vat, 0.0, None)); }
+        lines.push(je_line(debit_acc, 0.0, grand, None));
+    } else {
+        lines.push(je_line(debit_acc, grand, 0.0, Some(format!("مبيعات نقاط بيع {invoice_no}"))));
+        lines.push(je_line(rev, 0.0, subtotal, None));
+        if vat > 0.0 { lines.push(je_line(vat_acc, 0.0, vat, None)); }
+    }
+    insert_journal_entry(
+        &tx,
+        &date,
+        Some(&format!("{} نقاط بيع {invoice_no}", if is_return { "مرتجع" } else { "فاتورة" })),
+        Some(if is_return { "pos_return" } else { "pos_sale" }),
+        Some(invoice_id),
+        None,
+        None,
+        &lines,
+        post,
+    )?;
+
+    // COGS leg — cost resolved per line (payload cost wins, else maintained
+    // moving cost from stock_on_hand_local). Skipped entirely when no line has
+    // a known cost (cogs_total ≈ 0), e.g. a freshly-seeded company.
+    let cogs_total: f64 = payload
+        .lines
+        .iter()
+        .map(|l| pos_line_base_cost(&tx, l) * l.qty * l.unit_factor.unwrap_or(1.0))
+        .sum();
+    if cogs_total > 0.0001 {
+        let cogs = pos_acct(&tx, "pos_acct_cogs", "5100")?;
+        let inv = pos_acct(&tx, "pos_acct_inventory", "1300")?;
+        let cogs_lines = if is_return {
+            vec![
+                je_line(inv, cogs_total, 0.0, Some(format!("مرتجع تكلفة بضاعة نقاط بيع {invoice_no}"))),
+                je_line(cogs, 0.0, cogs_total, None),
+            ]
+        } else {
+            vec![
+                je_line(cogs, cogs_total, 0.0, Some(format!("تكلفة بضاعة مباعة نقاط بيع {invoice_no}"))),
+                je_line(inv, 0.0, cogs_total, None),
+            ]
+        };
+        insert_journal_entry(
+            &tx,
+            &date,
+            Some(&format!("{}تكلفة بضاعة نقاط بيع {invoice_no}", if is_return { "مرتجع " } else { "" })),
+            Some(if is_return { "pos_return_cogs" } else { "pos_sale_cogs" }),
+            Some(invoice_id),
+            None,
+            None,
+            &cogs_lines,
+            post,
+        )?;
+    }
+
+    // Customer sub-ledger (credit only): a credit sale increases what the
+    // customer owes; a credit return decreases it.
+    if is_credit {
+        if let Some(cid) = payload.customer_id {
+            let delta = if is_return { -grand } else { grand };
+            tx.execute("UPDATE customers_local SET balance=balance+?1 WHERE id=?2", params![delta, cid])?;
+        }
+    }
+
+    tx.commit()?;
+    Ok(())
+}
+
 // ───────────────────── Posting policy (التحكم العام) ──────────────────
 // Master + per-doc-type toggles deciding whether new documents post their JE
 // straight to the GL (auto) or stay as a draft for مركز الترحيل (manual).

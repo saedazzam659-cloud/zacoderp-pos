@@ -85,6 +85,7 @@ pub fn save(
     // realistic daily volume; the index + retry are belt-and-braces.
     let date_part = Utc::now().format("%y%m%d").to_string();
     let mut last_err: Option<rusqlite::Error> = None;
+    let mut saved: Option<(String, i64)> = None;
     for _ in 0..5 {
         let fresh = Uuid::new_v4().to_string().replace('-', "");
         let suffix: String = fresh.chars().take(10).collect::<String>().to_uppercase();
@@ -95,7 +96,7 @@ pub fn save(
              VALUES (?1, ?2, ?3, ?4, ?5, 'pending')",
             rusqlite::params![local_uuid, invoice_no, payload_json, signed_xml, qr_base64],
         ) {
-            Ok(_) => return Ok(SavedInvoice { local_uuid, invoice_no }),
+            Ok(_) => { saved = Some((invoice_no, conn.last_insert_rowid())); break; }
             Err(e) => {
                 // Retry only on a constraint violation on invoice_no. Any
                 // other error (incl. local_uuid clash when idempotency key
@@ -110,9 +111,25 @@ pub fn save(
             }
         }
     }
-    Err(anyhow::anyhow!(
+    let (invoice_no, invoice_id) = saved.ok_or_else(|| anyhow::anyhow!(
         "could not allocate unique invoice_no after 5 retries: {:?}", last_err
-    ))
+    ))?;
+
+    // Release the SQLite write handle BEFORE the accounting pass — the JE opens
+    // its own transaction and SQLite is single-writer, so an overlapping handle
+    // would deadlock.
+    drop(conn);
+
+    // Device-local journal entry for this register sale/return. NON-FATAL by
+    // design: the invoice is already durable, and a misconfigured chart of
+    // accounts must never block a cashier. Cloud mode re-derives its OWN GL
+    // entry from the synced invoice (sync push ships only offline_invoices,
+    // never local JEs), so the device + cloud ledgers each count the sale once.
+    if let Err(e) = crate::accounting::post_pos_invoice_je(payload_json, invoice_id, &invoice_no) {
+        log::warn!("[pos-je] local JE skipped for {invoice_no}: {e}");
+    }
+
+    Ok(SavedInvoice { local_uuid, invoice_no })
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -20,6 +20,14 @@ import { listItems, findItemUnitByBarcode, seedDemoItems, type LocalItem, type I
 import { isClient, getChangeVersion } from "../lib/bridge";
 import { listCustomers, createCustomer, type LocalCustomer } from "../lib/customers";
 import { saveOfflineInvoice, getOfflineInvoice, type OfflineInvoicePayload } from "../lib/invoices";
+import { listPosPaymentMethods, type PosPaymentMethod, type PosPaymentMethodKind } from "../lib/accounting";
+
+// Map a dynamic payment-method kind to the legacy 3-value payload field that
+// the local JE + ZATCA bridge understand. cash → "cash" (drawer + paid box),
+// credit → "credit" (debits receivables), everything else → "card".
+function legacyPm(kind: PosPaymentMethodKind): "cash" | "card" | "credit" {
+  return kind === "cash" ? "cash" : kind === "credit" ? "credit" : "card";
+}
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { useCurrencySymbol, currencySymbol } from "../lib/currency";
 import {
@@ -80,7 +88,8 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
   const [unitPickItem, setUnitPickItem] = useState<LocalItem | null>(null);
   const [pendingUnitQty, setPendingUnitQty] = useState(1);
   const [paidStr, setPaidStr] = useState("");
-  const [payMethod, setPayMethod] = useState<"cash" | "card">("cash");
+  const [payMethods, setPayMethods] = useState<PosPaymentMethod[]>([]);
+  const [payMethodId, setPayMethodId] = useState<number | null>(null);
   const [now, setNow] = useState(new Date());
   // Fast-entry row
   const [fastCode, setFastCode] = useState("");
@@ -100,6 +109,20 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
   }, []);
 
   useEffect(() => { void seedDemoItems().catch(() => {}); }, []);
+
+  // Load the dynamic register payment methods (cash / card / credit / …).
+  // Falls back to an implicit cash button if none are configured.
+  useEffect(() => {
+    (async () => {
+      try {
+        const pms = (await listPosPaymentMethods())
+          .filter((m) => m.isActive)
+          .sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
+        setPayMethods(pms);
+        setPayMethodId((prev) => prev ?? (pms[0]?.id ?? null));
+      } catch { /* browser-dev / no methods → footer shows the implicit cash button */ }
+    })();
+  }, []);
 
   // Resume handoff from ParkedCarts page.
   useEffect(() => {
@@ -360,8 +383,16 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
     setCart([]); setCheckoutKey(null); setActiveParkedId(null); setCustomer(null); setPaidStr("");
   }
 
-  async function checkout(paymentMethod: "cash" | "card") {
+  async function checkout(method: PosPaymentMethod | null) {
     if (cart.length === 0) return;
+    const kind: PosPaymentMethodKind = method?.kind ?? "cash";
+    const paymentMethod = legacyPm(kind);
+    const methodLabel = method?.nameAr ?? "نقداً";
+    // Credit (آجل) must book to a real customer's receivables sub-ledger.
+    if (kind === "credit" && !customer) {
+      setMsg({ kind: "err", text: "البيع الآجل يتطلب اختيار عميل أولاً." });
+      return;
+    }
     const printer = localStorage.getItem(LS_PRINTER);
     setPaying(true); setMsg(null);
     try {
@@ -373,6 +404,9 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
       });
       const payload: OfflineInvoicePayload = {
         vatNumber, paymentMethod, timestamp: ts,
+        paymentMethodId: method?.id ?? null,
+        customerId: customer?.id ?? null,
+        kind: "sale",
         customerName: customer?.nameAr,
         subtotal: Number(totals.subtotal.toFixed(2)),
         vat: Number(totals.vat.toFixed(2)),
@@ -443,9 +477,9 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
       body.push({ text: `المجموع قبل الضريبة:  ${totals.subtotal.toFixed(2)}` });
       body.push({ text: `ضريبة القيمة المضافة: ${totals.vat.toFixed(2)}` });
       body.push({ text: `الإجمالي:             ${totals.grandTotal.toFixed(2)}`, bold: true });
-      body.push({ text: `طريقة الدفع: ${paymentMethod === "cash" ? "نقداً" : "بطاقة"}` });
+      body.push({ text: `طريقة الدفع: ${methodLabel}` });
       const paidNum = parseFloat(paidStr) || 0;
-      if (paymentMethod === "cash" && paidNum > 0) {
+      if (kind === "cash" && paidNum > 0) {
         body.push({ text: `المبلغ المدفوع:       ${paidNum.toFixed(2)}` });
         const change = paidNum - totals.grandTotal;
         if (change >= 0) body.push({ text: `الباقي للعميل:        ${change.toFixed(2)}`, bold: true });
@@ -470,9 +504,9 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
           body,
           footer: [{ text: "شكراً لزيارتكم", center: true }],
           qrData: isZatcaCountry() ? qr : undefined, cut: true,
-          openDrawer: paymentMethod === "cash",
+          openDrawer: kind === "cash",
         });
-        if (paymentMethod === "cash") {
+        if (kind === "cash") {
           try { await openCashDrawer(printer); } catch { /* ignore */ }
         }
       }
@@ -493,6 +527,7 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
   const hasPaid = paidStr.trim() !== "" && paidNum > 0;
   const enough = paidNum >= totals.grandTotal;
   const totalQty = cart.reduce((s, l) => s + l.qty, 0);
+  const selectedMethod = payMethods.find((m) => m.id === payMethodId) ?? null;
 
   return (
     <div dir="rtl" style={S.wrap}>
@@ -671,11 +706,23 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
 
               {/* Small action buttons — pushed to the left of the screen */}
               <div style={S.miniActions}>
-                <button onClick={() => setPayMethod("cash")} style={payMethod === "cash" ? S.miniToggleActive : S.miniToggle}>💵 نقدي</button>
-                <button onClick={() => setPayMethod("card")} style={payMethod === "card" ? S.miniToggleActive : S.miniToggle}>💳 شبكة</button>
+                {payMethods.length === 0 ? (
+                  <button style={S.miniToggleActive} disabled>💵 نقدي</button>
+                ) : (
+                  payMethods.map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => setPayMethodId(m.id)}
+                      style={payMethodId === m.id ? S.miniToggleActive : S.miniToggle}
+                      title={m.nameAr}
+                    >
+                      {m.kind === "cash" ? "💵" : m.kind === "credit" ? "🧾" : "💳"} {m.nameAr}
+                    </button>
+                  ))
+                )}
                 <button onClick={parkCart} disabled={cart.length === 0} style={S.miniBtn}>📌 تعليق</button>
                 <button onClick={clearCart} disabled={cart.length === 0} style={S.miniBtn}>🧾 جديدة</button>
-                <button onClick={() => checkout(payMethod)} disabled={paying || cart.length === 0} style={S.miniSaveBtn}>
+                <button onClick={() => checkout(selectedMethod)} disabled={paying || cart.length === 0} style={S.miniSaveBtn}>
                   {paying ? "..." : "💾 حفظ وطباعة"}
                 </button>
               </div>

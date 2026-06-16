@@ -43,6 +43,7 @@ import JournalEntries from "./JournalEntries";
 import PostingCenter from "./PostingCenter";
 import FiscalPeriods from "./FiscalPeriods";
 import PostingControl from "./PostingControl";
+import PosAccountsSettings from "./PosAccountsSettings";
 import PosInvoices from "./PosInvoices";
 import CostCentersAdmin from "./CostCentersAdmin";
 import BranchesAdmin from "./BranchesAdmin";
@@ -654,6 +655,7 @@ export default function PosShell({
           { id: "users" as View,            icon: "🔐", label: "المستخدمون", adminOnly: true },
           { id: "number_series" as View,    icon: "🔢", label: "أرقام المسلسلات", adminOnly: true },
           { id: "posting_control" as View,  icon: "🔀", label: "التحكم في الترحيل", adminOnly: true },
+          { id: "pos_accounts" as View,     icon: "💳", label: "إعدادات حسابات نقاط البيع", adminOnly: true },
           { id: "user_permissions" as View, icon: "🛡️", label: "صلاحيات المستخدمين", adminOnly: true },
         ]
       : []),
@@ -873,6 +875,9 @@ export default function PosShell({
           )}
           {standalone && v === "posting_control" && isAdmin && (
             <div style={S.pagePad}><PostingControl /></div>
+          )}
+          {standalone && v === "pos_accounts" && isAdmin && (
+            <div style={S.pagePad}><PosAccountsSettings /></div>
           )}
           {standalone && v === "cost_centers" && (isAdmin || can("cost_centers")) && (
             <div style={S.pagePad}><CostCentersAdmin /></div>
@@ -1182,6 +1187,7 @@ function labelFor(v: View): string {
     posting_center: "مركز الترحيل",
     fiscal_periods: "الفترات المحاسبية",
     posting_control: "التحكم في الترحيل",
+    pos_accounts: "إعدادات حسابات نقاط البيع",
     pos_invoices: "فواتير نقطة البيع",
     cost_centers: "مراكز التكلفة",
     branches: "الفروع",

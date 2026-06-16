@@ -61,6 +61,74 @@ export type SupplierInput = {
 export type CashBox = { id: number; name: string; balance: number; accountId: number | null; currencyCode: string };
 export type Bank = { id: number; name: string; accountNo: string | null; balance: number; accountId: number | null; currencyCode: string };
 
+// ─── POS payment methods + GL account overrides ──────────────────────
+// Dynamic register payment methods (نقداً / بطاقة / آجل / …). Each maps to a
+// GL account; kind="credit" always debits receivables (1500) + the customer
+// sub-ledger, ignoring accountId. Backs `post_pos_invoice_je` on the Rust side.
+export type PosPaymentMethodKind = "cash" | "bank" | "credit" | "other";
+export type PosPaymentMethod = {
+  id: number; nameAr: string; kind: PosPaymentMethodKind;
+  accountId: number | null; isActive: boolean; sortOrder: number;
+};
+export type PosPaymentMethodInput = {
+  nameAr: string; kind: PosPaymentMethodKind;
+  accountId?: number | null; isActive?: boolean; sortOrder?: number;
+};
+
+export async function listPosPaymentMethods(): Promise<PosPaymentMethod[]> {
+  if (!hasTauri()) return [];
+  return await invoke<PosPaymentMethod[]>("pos_payment_methods_list");
+}
+export async function createPosPaymentMethod(input: PosPaymentMethodInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("pos_payment_method_create", { input });
+}
+export async function updatePosPaymentMethod(id: number, input: PosPaymentMethodInput): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("pos_payment_method_update", { id, input });
+}
+export async function deletePosPaymentMethod(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("pos_payment_method_delete", { id });
+}
+
+// POS GL account overrides (app_settings KV). null = use the hardcoded fallback
+// code shown in POS_ACCT_FALLBACK. Mirrors the Rust `pos_acct()` resolution.
+export const POS_ACCT_KEYS = [
+  "pos_acct_revenue", "pos_acct_vat", "pos_acct_cogs", "pos_acct_inventory", "pos_acct_cash",
+] as const;
+export type PosAcctKey = (typeof POS_ACCT_KEYS)[number];
+export const POS_ACCT_LABELS: Record<PosAcctKey, string> = {
+  pos_acct_revenue: "حساب الإيرادات (المبيعات)",
+  pos_acct_vat: "حساب ضريبة القيمة المضافة",
+  pos_acct_cogs: "حساب تكلفة البضاعة المباعة",
+  pos_acct_inventory: "حساب المخزون",
+  pos_acct_cash: "حساب الصندوق الافتراضي",
+};
+export const POS_ACCT_FALLBACK: Record<PosAcctKey, string> = {
+  pos_acct_revenue: "4100", pos_acct_vat: "2200", pos_acct_cogs: "5100",
+  pos_acct_inventory: "1300", pos_acct_cash: "1101",
+};
+
+export async function getPosAccountSettings(): Promise<Record<PosAcctKey, number | null>> {
+  const out = {} as Record<PosAcctKey, number | null>;
+  for (const k of POS_ACCT_KEYS) out[k] = null;
+  if (!hasTauri()) return out;
+  for (const k of POS_ACCT_KEYS) {
+    try {
+      const v = await invoke<string | null>("standalone_get_setting", { key: k });
+      const n = v == null || v.trim() === "" ? NaN : Number(v);
+      out[k] = Number.isInteger(n) && n > 0 ? n : null;
+    } catch { /* leave null → fallback code applies */ }
+  }
+  return out;
+}
+export async function setPosAccountSetting(key: PosAcctKey, accountId: number | null): Promise<void> {
+  if (!hasTauri()) notImpl();
+  // Empty string clears the override (Rust then falls back to the hardcoded code).
+  await invoke("standalone_set_setting", { key, value: accountId == null ? "" : String(accountId) });
+}
+
 // ─── Multi-currency (Task #209) ──────────────────────────────────────
 export type Currency = {
   code: string; nameAr: string; nameEn: string | null; symbol: string | null;

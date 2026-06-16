@@ -120,6 +120,19 @@ pub fn initialize() -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_accounts_parent ON accounts_local(parent_id);
 
+        -- POS register payment methods (Task #4). User-managed; each maps to a
+        -- GL account (cash/bank) or, for kind='credit', to receivables (1500).
+        -- Drives the register's dynamic payment buttons + the debit leg of the
+        -- POS sale journal entry posted by accounting::post_pos_invoice_je.
+        CREATE TABLE IF NOT EXISTS pos_payment_methods_local (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name_ar     TEXT NOT NULL,
+            kind        TEXT NOT NULL DEFAULT 'cash',
+            account_id  INTEGER REFERENCES accounts_local(id),
+            is_active   INTEGER NOT NULL DEFAULT 1,
+            sort_order  INTEGER NOT NULL DEFAULT 0
+        );
+
         -- Suppliers (الموردين). AR balance posted via JE on purchase/return/payment.
         CREATE TABLE IF NOT EXISTS suppliers_local (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1137,6 +1150,31 @@ pub fn initialize() -> Result<()> {
     seed_inventory_defaults(&conn)?;
     // Seed currencies + fx gain/loss accounts (idempotent).
     seed_currencies(&conn)?;
+    // Seed default POS payment methods (cash + card) on first run.
+    seed_pos_payment_methods(&conn)?;
+    Ok(())
+}
+
+fn seed_pos_payment_methods(conn: &Connection) -> Result<()> {
+    use rusqlite::params;
+    let n: i64 = conn
+        .query_row("SELECT COUNT(*) FROM pos_payment_methods_local", [], |r| r.get(0))
+        .unwrap_or(0);
+    if n > 0 { return Ok(()); }
+    // Cash → the seeded main treasury leaf (1101). Card starts UNLINKED so the
+    // operator picks a bank/POS-clearing account in إعدادات حسابات نقاط البيع;
+    // until then the JE falls back to the default cash account (never fails).
+    let cash_acc: Option<i64> = conn
+        .query_row("SELECT id FROM accounts_local WHERE code='1101'", [], |r| r.get(0))
+        .ok();
+    conn.execute(
+        "INSERT INTO pos_payment_methods_local(name_ar,kind,account_id,is_active,sort_order) VALUES('نقداً','cash',?1,1,0)",
+        params![cash_acc],
+    )?;
+    conn.execute(
+        "INSERT INTO pos_payment_methods_local(name_ar,kind,account_id,is_active,sort_order) VALUES('بطاقة','bank',NULL,1,1)",
+        [],
+    )?;
     Ok(())
 }
 

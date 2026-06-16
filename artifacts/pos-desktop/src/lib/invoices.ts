@@ -40,7 +40,14 @@ interface RustPending {
 export interface OfflineInvoicePayload {
   customerName?: string;
   vatNumber?: string;
-  paymentMethod: "cash" | "card";
+  paymentMethod: "cash" | "card" | "credit";
+  // Optional, additive: the device-local JE (post_pos_invoice_je) uses these to
+  // resolve the treasury/AR debit account + the customer sub-ledger. Old
+  // payloads lack them → the JE falls back to the default cash account.
+  paymentMethodId?: number | null;
+  customerId?: number | null;
+  /** "return" flips the local JE to its reversal source_types. */
+  kind?: "sale" | "return";
   lines: {
     itemId: number; nameAr: string; qty: number; unitPrice: number; vatRate: number;
     // Optional, additive (backward-compatible): preserve multi-unit / weighed
@@ -48,6 +55,9 @@ export interface OfflineInvoicePayload {
     // invoices lack these → reuse falls back to a base-unit line.
     unitId?: string | null; unitName?: string | null; unitFactor?: number | null;
     weighed?: boolean;
+    /** Per-BASE-unit cost override for the COGS leg; omitted → Rust reads the
+     *  maintained moving cost from stock_on_hand_local. */
+    cost?: number | null;
   }[];
   subtotal: number;
   vat: number;

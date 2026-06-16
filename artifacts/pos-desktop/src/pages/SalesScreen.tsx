@@ -27,6 +27,14 @@ function appendOverrideLog(entry: OverrideLog) {
 }
 import { listCustomers, createCustomer, type LocalCustomer } from "../lib/customers";
 import { saveOfflineInvoice, getOfflineInvoice, type OfflineInvoicePayload } from "../lib/invoices";
+import { listPosPaymentMethods, type PosPaymentMethod, type PosPaymentMethodKind } from "../lib/accounting";
+
+// Map a dynamic payment-method kind to the legacy 3-value payload field that
+// the local JE + ZATCA bridge understand. cash → "cash" (drawer + paid box),
+// credit → "credit" (debits receivables), everything else → "card".
+function legacyPm(kind: PosPaymentMethodKind): "cash" | "card" | "credit" {
+  return kind === "cash" ? "cash" : kind === "credit" ? "credit" : "card";
+}
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { useCurrencySymbol, currencySymbol } from "../lib/currency";
 import {
@@ -85,6 +93,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
   const [customer, setCustomer] = useState<LocalCustomer | null>(null);
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
   const [paidStr, setPaidStr] = useState("");
+  const [payMethods, setPayMethods] = useState<PosPaymentMethod[]>([]);
   // Task #201 — weight-capture modal state. Holds the item awaiting a weight.
   const [weighItem, setWeighItem] = useState<LocalItem | null>(null);
   // Multi-unit picker modal state. Holds the item whose sale-unit (base /
@@ -95,6 +104,19 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
   const isPharmacy = vertical === "pharmacy";
 
   useEffect(() => { void seedDemoItems().catch(() => {}); }, []);
+
+  // Load the dynamic register payment methods (cash / card / credit / …).
+  // Falls back to implicit نقداً/بطاقة buttons if none are configured.
+  useEffect(() => {
+    (async () => {
+      try {
+        const pms = (await listPosPaymentMethods())
+          .filter((m) => m.isActive)
+          .sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
+        setPayMethods(pms);
+      } catch { /* browser-dev / no methods → implicit cash/card buttons */ }
+    })();
+  }, []);
 
   // ─── Resume handoff from ParkedCarts page ─────────────────────────
   // ParkedCarts writes the id into sessionStorage and switches view;
@@ -448,8 +470,16 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
     });
   }
 
-  async function checkout(paymentMethod: "cash" | "card") {
+  async function checkout(method: PosPaymentMethod | null) {
     if (cart.length === 0) return;
+    const kind: PosPaymentMethodKind = method?.kind ?? "cash";
+    const paymentMethod = legacyPm(kind);
+    const methodLabel = method?.nameAr ?? (kind === "cash" ? "نقداً" : "بطاقة");
+    // Credit (آجل) must book to a real customer's receivables sub-ledger.
+    if (kind === "credit" && !customer) {
+      setMsg({ kind: "err", text: "البيع الآجل يتطلب اختيار عميل أولاً." });
+      return;
+    }
     // Printer is OPTIONAL — if not configured, the sale is still recorded
     // (and a non-blocking warning is shown so the cashier can set it up later
     // from "لوحة التحكم → الأجهزة الطرفية"). This unblocks day-1 usage on
@@ -465,6 +495,9 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       });
       const payload: OfflineInvoicePayload = {
         vatNumber, paymentMethod, timestamp: ts,
+        paymentMethodId: method?.id ?? null,
+        customerId: customer?.id ?? null,
+        kind: "sale",
         customerName: customer?.nameAr,
         subtotal: Number(totals.subtotal.toFixed(2)),
         vat: Number(totals.vat.toFixed(2)),
@@ -563,9 +596,9 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       body.push({ text: `المجموع قبل الضريبة:  ${totals.subtotal.toFixed(2)}` });
       body.push({ text: `ضريبة القيمة المضافة: ${totals.vat.toFixed(2)}` });
       body.push({ text: `الإجمالي:             ${totals.grandTotal.toFixed(2)}`, bold: true });
-      body.push({ text: `طريقة الدفع: ${paymentMethod === "cash" ? "نقداً" : "بطاقة"}` });
+      body.push({ text: `طريقة الدفع: ${methodLabel}` });
       const paidNum = parseFloat(paidStr) || 0;
-      if (paymentMethod === "cash" && paidNum > 0) {
+      if (kind === "cash" && paidNum > 0) {
         body.push({ text: `المبلغ المدفوع:       ${paidNum.toFixed(2)}` });
         const change = paidNum - totals.grandTotal;
         if (change >= 0) {
@@ -592,9 +625,9 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           body,
           footer: [{ text: "شكراً لزيارتكم", center: true }],
           qrData: isZatcaCountry() ? qr : undefined, cut: true,
-          openDrawer: paymentMethod === "cash",
+          openDrawer: kind === "cash",
         });
-        if (paymentMethod === "cash") {
+        if (kind === "cash") {
           try { await openCashDrawer(printer); } catch { /* ignore */ }
         }
       }
@@ -853,12 +886,28 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           })()}
 
           <div style={S.payRow}>
-            <button onClick={() => checkout("cash")} disabled={paying || cart.length === 0} style={S.payCash}>
-              {paying ? "..." : "💵 نقداً"}
-            </button>
-            <button onClick={() => checkout("card")} disabled={paying || cart.length === 0} style={S.payCard}>
-              {paying ? "..." : "💳 بطاقة"}
-            </button>
+            {payMethods.length === 0 ? (
+              <>
+                <button onClick={() => checkout({ id: 0, nameAr: "نقداً", kind: "cash", accountId: null, isActive: true, sortOrder: 0 })} disabled={paying || cart.length === 0} style={S.payCash}>
+                  {paying ? "..." : "💵 نقداً"}
+                </button>
+                <button onClick={() => checkout({ id: 0, nameAr: "بطاقة", kind: "bank", accountId: null, isActive: true, sortOrder: 1 })} disabled={paying || cart.length === 0} style={S.payCard}>
+                  {paying ? "..." : "💳 بطاقة"}
+                </button>
+              </>
+            ) : (
+              payMethods.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => checkout(m)}
+                  disabled={paying || cart.length === 0}
+                  style={m.kind === "cash" ? S.payCash : S.payCard}
+                  title={m.nameAr}
+                >
+                  {paying ? "..." : `${m.kind === "cash" ? "💵" : m.kind === "credit" ? "🧾" : "💳"} ${m.nameAr}`}
+                </button>
+              ))
+            )}
           </div>
 
           {msg && (
