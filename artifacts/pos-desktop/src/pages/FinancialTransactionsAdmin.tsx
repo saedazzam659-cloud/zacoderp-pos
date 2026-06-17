@@ -3,6 +3,7 @@ import {
   listFinancialTx, createFinancialTx, listSuppliers, listCashBoxes, listBanks, listAccounts,
   type FinancialTx, type TxType, type PartyType, type Supplier, type CashBox, type Bank, type Account,
 } from "../lib/accounting";
+import { listCustomers, type LocalCustomer } from "../lib/customers";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
@@ -12,16 +13,16 @@ import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_
 export default function FinancialTransactionsAdmin() {
   const [rows, setRows] = useState<FinancialTx[]>([]);
   const [creating, setCreating] = useState<null | { type: TxType }>(null);
-  const [deps, setDeps] = useState<{ suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; accounts: Account[] } | null>(null);
+  const [deps, setDeps] = useState<{ suppliers: Supplier[]; customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; accounts: Account[] } | null>(null);
 
   async function refresh() { setRows(await listFinancialTx()); }
   useEffect(() => {
     void refresh();
     void (async () => {
-      const [suppliers, cashBoxes, banks, accounts] = await Promise.all([
-        listSuppliers(), listCashBoxes(), listBanks(), listAccounts(),
+      const [suppliers, customers, cashBoxes, banks, accounts] = await Promise.all([
+        listSuppliers(), listCustomers(), listCashBoxes(), listBanks(), listAccounts(),
       ]);
-      setDeps({ suppliers, cashBoxes, banks, accounts });
+      setDeps({ suppliers, customers, cashBoxes, banks, accounts });
     })();
   }, []);
 
@@ -81,7 +82,7 @@ export default function FinancialTransactionsAdmin() {
 
 function CreateForm({ type, deps, onCancel, onDone }: {
   type: TxType;
-  deps: { suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; accounts: Account[] };
+  deps: { suppliers: Supplier[]; customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; accounts: Account[] };
   onCancel: () => void; onDone: () => void;
 }) {
   const { branches, costCenters } = useDimensions();
@@ -181,6 +182,19 @@ function CreateForm({ type, deps, onCancel, onDone }: {
             options={[
               { value: "", label: "— اختر —" },
               ...deps.suppliers.map((s) => ({ value: s.id, label: `${s.nameAr} (رصيد: ${fmt(s.balance)})` })),
+            ]}
+          />
+        </Field>
+      )}
+      {partyType === "customer" && (
+        <Field label="العميل">
+          <SearchCombobox
+            value={partyId ?? ""}
+            onChange={(v) => setPartyId(Number(v) || null)}
+            style={input}
+            options={[
+              { value: "", label: "— اختر —" },
+              ...deps.customers.map((c) => ({ value: c.id, label: `${c.nameAr} (رصيد: ${fmt(c.balance ?? 0)})` })),
             ]}
           />
         </Field>
