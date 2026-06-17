@@ -43,6 +43,7 @@ export interface SisterCompany {
 
 export interface SisterTransfer {
   id: number;
+  branchId: number | null;
   transferNumber: string;
   transferDate: string;
   sisterCompanyId: number;
@@ -57,6 +58,7 @@ export interface SisterTransfer {
 
 export interface SisterReturn {
   id: number;
+  branchId: number | null;
   returnNumber: string;
   returnDate: string;
   transferId: number;
@@ -72,6 +74,7 @@ export interface SisterReturn {
 
 export interface SisterSettlement {
   id: number;
+  branchId: number | null;
   code: string;
   date: string;
   sisterCompanyId: number;
@@ -118,10 +121,11 @@ export const sisterCompaniesApi = {
   deleteSettlement:  (id: number)   => req<{ ok: true }>("DELETE", `/settlements/${id}`),
 
   // ── Statement
-  statement: (sisterCompanyId: number, from?: string, to?: string) => {
+  statement: (sisterCompanyId: number, from?: string, to?: string, branchId?: number) => {
     const qs = new URLSearchParams();
     if (from) qs.set("from", from);
     if (to)   qs.set("to", to);
+    if (branchId) qs.set("branchId", String(branchId));
     return req<{
       opening: number;
       closing: number;

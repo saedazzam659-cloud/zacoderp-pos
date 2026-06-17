@@ -38,6 +38,7 @@ export const sisterDocStatusEnum = pgEnum("sister_doc_status", ["draft", "posted
 export const sisterTransfersTable = pgTable("sister_transfers", {
   id:                serial("id").primaryKey(),
   companyId:         integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId:          integer("branch_id"),
   transferNumber:    text("transfer_number").notNull(),
   transferDate:      date("transfer_date").notNull(),
   sisterCompanyId:   integer("sister_company_id").notNull().references(() => sisterCompaniesTable.id),
@@ -72,6 +73,7 @@ export const sisterTransferItemsTable = pgTable("sister_transfer_items", {
 export const sisterReturnsTable = pgTable("sister_returns", {
   id:                serial("id").primaryKey(),
   companyId:         integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId:          integer("branch_id"),
   returnNumber:      text("return_number").notNull(),
   returnDate:        date("return_date").notNull(),
   // The original transfer being reversed. Required so we restore stock at
@@ -111,6 +113,7 @@ export const sisterSettlementPaymentTypeEnum = pgEnum("sister_settlement_payment
 export const sisterSettlementsTable = pgTable("sister_settlements", {
   id:                serial("id").primaryKey(),
   companyId:         integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId:          integer("branch_id"),
   code:              text("code").notNull(),
   date:              date("date").notNull(),
   sisterCompanyId:   integer("sister_company_id").notNull().references(() => sisterCompaniesTable.id),

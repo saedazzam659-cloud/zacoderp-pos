@@ -18,7 +18,7 @@ import {
   warehousesTable, accountsTable,
 } from "@workspace/db";
 import { eq, and, desc, sql, inArray, gte, lte, lt } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { requireModulePermission, moduleAudit } from "../middleware/permissions.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
@@ -173,11 +173,12 @@ router.post("/", async (req, res) => {
 router.get("/transfers", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const sid = req.query.sisterCompanyId ? Number(req.query.sisterCompanyId) : null;
-  const where = sid
-    ? and(eq(sisterTransfersTable.companyId, cid), eq(sisterTransfersTable.sisterCompanyId, sid))
-    : eq(sisterTransfersTable.companyId, cid);
   const rows = await db.select().from(sisterTransfersTable)
-    .where(where).orderBy(desc(sisterTransfersTable.id));
+    .where(and(
+      eq(sisterTransfersTable.companyId, cid),
+      ...(sid ? [eq(sisterTransfersTable.sisterCompanyId, sid)] : []),
+      ...branchScopeSpread(req, sisterTransfersTable.branchId, req.query.branchId),
+    )).orderBy(desc(sisterTransfersTable.id));
   res.json(await withJeNumbers(rows));
 });
 
@@ -238,6 +239,7 @@ router.post("/transfers", async (req, res) => {
 
   const [tr] = await db.insert(sisterTransfersTable).values({
     companyId: cid,
+    branchId: b.branchId != null ? Number(b.branchId) : null,
     transferNumber: num,
     transferDate: b.transferDate,
     sisterCompanyId: Number(b.sisterCompanyId),
@@ -295,6 +297,7 @@ router.put("/transfers/:id", async (req, res) => {
     : { cost: Number(existing.totalCost), supply: Number(existing.totalSupply) };
 
   await db.update(sisterTransfersTable).set({
+    ...(b.branchId !== undefined ? { branchId: b.branchId != null ? Number(b.branchId) : null } : {}),
     transferDate: b.transferDate ?? existing.transferDate,
     sisterCompanyId: b.sisterCompanyId ?? existing.sisterCompanyId,
     fromWarehouseId: b.fromWarehouseId ?? existing.fromWarehouseId,
@@ -369,7 +372,7 @@ router.post("/transfers/:id/post", async (req, res) => {
   const desc = `تحويل لشركة شقيقة ${tr.transferNumber} - ${sister.nameAr}`;
   const jeStatus = await resolvePostingStatus(cid, "stockMovement");
   const [entry] = await db.insert(journalEntriesTable).values({
-    companyId: cid, docNumber: tr.transferNumber, entryDate: tr.transferDate as any,
+    companyId: cid, branchId: tr.branchId ?? null, docNumber: tr.transferNumber, entryDate: tr.transferDate as any,
     currency: "SAR", exchangeRate: "1",
     description: desc, entryType: "sister_transfer",
     status: jeStatus, periodId: writability.period?.id ?? null,
@@ -407,7 +410,10 @@ router.delete("/transfers/:id", async (req, res) => {
 router.get("/returns", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const rows = await db.select().from(sisterReturnsTable)
-    .where(eq(sisterReturnsTable.companyId, cid))
+    .where(and(
+      eq(sisterReturnsTable.companyId, cid),
+      ...branchScopeSpread(req, sisterReturnsTable.branchId, req.query.branchId),
+    ))
     .orderBy(desc(sisterReturnsTable.id));
   res.json(await withJeNumbers(rows));
 });
@@ -473,6 +479,7 @@ router.post("/returns", async (req, res) => {
 
   const [ret] = await db.insert(sisterReturnsTable).values({
     companyId: cid,
+    branchId: b.branchId != null ? Number(b.branchId) : (orig.branchId ?? null),
     returnNumber: num,
     returnDate: b.returnDate,
     transferId: orig.id,
@@ -548,7 +555,7 @@ router.post("/returns/:id/post", async (req, res) => {
   const desc = `مرتجع تحويل شركة شقيقة ${ret.returnNumber} - ${sister.nameAr}`;
   const jeStatus = await resolvePostingStatus(cid, "stockMovement");
   const [entry] = await db.insert(journalEntriesTable).values({
-    companyId: cid, docNumber: ret.returnNumber, entryDate: ret.returnDate as any,
+    companyId: cid, branchId: ret.branchId ?? null, docNumber: ret.returnNumber, entryDate: ret.returnDate as any,
     currency: "SAR", exchangeRate: "1",
     description: desc, entryType: "sister_transfer_return",
     status: jeStatus, periodId: writability.period?.id ?? null,
@@ -586,7 +593,10 @@ router.delete("/returns/:id", async (req, res) => {
 router.get("/settlements", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const rows = await db.select().from(sisterSettlementsTable)
-    .where(eq(sisterSettlementsTable.companyId, cid))
+    .where(and(
+      eq(sisterSettlementsTable.companyId, cid),
+      ...branchScopeSpread(req, sisterSettlementsTable.branchId, req.query.branchId),
+    ))
     .orderBy(desc(sisterSettlementsTable.id));
   res.json(await withJeNumbers(rows));
 });
@@ -624,7 +634,7 @@ router.post("/settlements", async (req, res) => {
   }
 
   const [row] = await db.insert(sisterSettlementsTable).values({
-    companyId: cid, code: num, date: b.date,
+    companyId: cid, branchId: b.branchId != null ? Number(b.branchId) : null, code: num, date: b.date,
     sisterCompanyId: Number(b.sisterCompanyId),
     direction: b.direction,
     paymentType: b.paymentType,
@@ -673,7 +683,7 @@ router.post("/settlements/:id/post", async (req, res) => {
   const desc = `${isReceive ? "تحصيل من" : "سداد إلى"} ${sister.nameAr} - ${v.code}`;
   const jeStatus = await resolvePostingStatus(cid, "receipt");
   const [entry] = await db.insert(journalEntriesTable).values({
-    companyId: cid, docNumber: v.code, entryDate: v.date as any,
+    companyId: cid, branchId: v.branchId ?? null, docNumber: v.code, entryDate: v.date as any,
     currency: "SAR", exchangeRate: "1",
     description: desc, entryType: "sister_settlement",
     status: jeStatus, periodId: writability.period?.id ?? null,
@@ -716,17 +726,24 @@ router.get("/:id/statement", async (req, res) => {
   const from = (req.query.from as string) || null;
   const to   = (req.query.to   as string) || null;
 
-  const trWhere = [eq(sisterTransfersTable.companyId, cid), eq(sisterTransfersTable.sisterCompanyId, sid), eq(sisterTransfersTable.status, "posted")];
+  // Optional branch filter. Combines the explicit ?branchId with the caller's
+  // own branch scope (NULL-branch shared docs always included) — same spread
+  // helper used by the list endpoints.
+  const trBranch = branchScopeSpread(req, sisterTransfersTable.branchId, req.query.branchId);
+  const reBranch = branchScopeSpread(req, sisterReturnsTable.branchId, req.query.branchId);
+  const seBranch = branchScopeSpread(req, sisterSettlementsTable.branchId, req.query.branchId);
+
+  const trWhere = [eq(sisterTransfersTable.companyId, cid), eq(sisterTransfersTable.sisterCompanyId, sid), eq(sisterTransfersTable.status, "posted"), ...trBranch];
   if (from) trWhere.push(gte(sisterTransfersTable.transferDate, from));
   if (to)   trWhere.push(lte(sisterTransfersTable.transferDate, to));
   const transfers = await db.select().from(sisterTransfersTable).where(and(...trWhere));
 
-  const reWhere = [eq(sisterReturnsTable.companyId, cid), eq(sisterReturnsTable.sisterCompanyId, sid), eq(sisterReturnsTable.status, "posted")];
+  const reWhere = [eq(sisterReturnsTable.companyId, cid), eq(sisterReturnsTable.sisterCompanyId, sid), eq(sisterReturnsTable.status, "posted"), ...reBranch];
   if (from) reWhere.push(gte(sisterReturnsTable.returnDate, from));
   if (to)   reWhere.push(lte(sisterReturnsTable.returnDate, to));
   const returns_ = await db.select().from(sisterReturnsTable).where(and(...reWhere));
 
-  const seWhere = [eq(sisterSettlementsTable.companyId, cid), eq(sisterSettlementsTable.sisterCompanyId, sid), eq(sisterSettlementsTable.status, "posted")];
+  const seWhere = [eq(sisterSettlementsTable.companyId, cid), eq(sisterSettlementsTable.sisterCompanyId, sid), eq(sisterSettlementsTable.status, "posted"), ...seBranch];
   if (from) seWhere.push(gte(sisterSettlementsTable.date, from));
   if (to)   seWhere.push(lte(sisterSettlementsTable.date, to));
   const settlements = await db.select().from(sisterSettlementsTable).where(and(...seWhere));
@@ -735,11 +752,11 @@ router.get("/:id/statement", async (req, res) => {
   let opening = 0;
   if (from) {
     const prevTr = await db.select({ amt: sisterTransfersTable.totalSupply }).from(sisterTransfersTable)
-      .where(and(eq(sisterTransfersTable.companyId, cid), eq(sisterTransfersTable.sisterCompanyId, sid), eq(sisterTransfersTable.status, "posted"), lt(sisterTransfersTable.transferDate, from)));
+      .where(and(eq(sisterTransfersTable.companyId, cid), eq(sisterTransfersTable.sisterCompanyId, sid), eq(sisterTransfersTable.status, "posted"), lt(sisterTransfersTable.transferDate, from), ...trBranch));
     const prevRe = await db.select({ amt: sisterReturnsTable.totalSupply }).from(sisterReturnsTable)
-      .where(and(eq(sisterReturnsTable.companyId, cid), eq(sisterReturnsTable.sisterCompanyId, sid), eq(sisterReturnsTable.status, "posted"), lt(sisterReturnsTable.returnDate, from)));
+      .where(and(eq(sisterReturnsTable.companyId, cid), eq(sisterReturnsTable.sisterCompanyId, sid), eq(sisterReturnsTable.status, "posted"), lt(sisterReturnsTable.returnDate, from), ...reBranch));
     const prevSe = await db.select({ amt: sisterSettlementsTable.amount, dir: sisterSettlementsTable.direction }).from(sisterSettlementsTable)
-      .where(and(eq(sisterSettlementsTable.companyId, cid), eq(sisterSettlementsTable.sisterCompanyId, sid), eq(sisterSettlementsTable.status, "posted"), lt(sisterSettlementsTable.date, from)));
+      .where(and(eq(sisterSettlementsTable.companyId, cid), eq(sisterSettlementsTable.sisterCompanyId, sid), eq(sisterSettlementsTable.status, "posted"), lt(sisterSettlementsTable.date, from), ...seBranch));
     for (const t of prevTr) opening += Number(t.amt);
     for (const r of prevRe) opening -= Number(r.amt);
     for (const s of prevSe) opening += s.dir === "pay" ? Number(s.amt) : -Number(s.amt);

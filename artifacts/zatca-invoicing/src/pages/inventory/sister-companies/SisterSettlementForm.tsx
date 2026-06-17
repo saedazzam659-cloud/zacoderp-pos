@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Wallet, Save } from "lucide-react";
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
+import { branchesApi } from "@/lib/branchesApi";
 import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL ?? "";
@@ -29,6 +30,7 @@ export default function SisterSettlementForm() {
 
   const [form, setForm] = useState<any>({
     sisterCompanyId: presetSisterId,
+    branchId: "",
     date: new Date().toISOString().slice(0, 10),
     direction: "receive",
     paymentType: "cash",
@@ -39,8 +41,19 @@ export default function SisterSettlementForm() {
   });
 
   const { data: sisters = [] } = useQuery({ queryKey: ["sister-companies"], queryFn: () => sisterCompaniesApi.list() });
+  const { data: branches = [] } = useQuery({ queryKey: ["branches"], queryFn: () => branchesApi.getBranches() });
   const { data: cashBoxes = [] } = useQuery({ queryKey: ["cash-boxes"], queryFn: () => fetchJson("/api/cash-boxes") });
   const { data: banks     = [] } = useQuery({ queryKey: ["bank-accounts"], queryFn: () => fetchJson("/api/bank-accounts") });
+
+  // Auto-pick the main branch ONCE for a new doc; user may clear it (NULL = shared).
+  const branchDefaultedRef = useRef(false);
+  useEffect(() => {
+    if (branchDefaultedRef.current || form.branchId) return;
+    const def = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
+    if (!def) return;
+    setForm((p: any) => ({ ...p, branchId: String(def.id) }));
+    branchDefaultedRef.current = true;
+  }, [branches, form.branchId]);
 
   const createMut = useMutation({
     mutationFn: async (body: any) => {
@@ -69,6 +82,7 @@ export default function SisterSettlementForm() {
     }
     createMut.mutate({
       sisterCompanyId: Number(form.sisterCompanyId),
+      branchId: form.branchId ? Number(form.branchId) : null,
       date: form.date,
       direction: form.direction,
       paymentType: form.paymentType,
@@ -89,6 +103,12 @@ export default function SisterSettlementForm() {
             <option value="">اختر…</option>
             {(sisters as any[]).filter((s: any) => s.isActive).map((s: any) =>
               <option key={s.id} value={s.id}>{s.nameAr}</option>)}
+          </select></label>
+        <label><span className="text-sm">الفرع</span>
+          <select className="w-full border rounded h-9 px-2" value={form.branchId}
+            onChange={e => setForm({ ...form, branchId: e.target.value })} data-testid="select-branch">
+            <option value="">— بدون فرع —</option>
+            {(branches as any[]).map((b: any) => <option key={b.id} value={b.id}>{b.nameAr}</option>)}
           </select></label>
         <label><span className="text-sm">التاريخ</span>
           <DateField value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></label>

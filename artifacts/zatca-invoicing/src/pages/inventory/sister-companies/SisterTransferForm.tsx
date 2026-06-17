@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { ArrowRightLeft, Plus, Trash2, Save } from "lucide-react";
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
+import { branchesApi } from "@/lib/branchesApi";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { DateField } from "@/components/ui/date-field";
@@ -24,6 +25,7 @@ export default function SisterTransferForm() {
 
   const [form, setForm] = useState<any>({
     sisterCompanyId: presetSisterId,
+    branchId: "",
     fromWarehouseId: "",
     transferDate: new Date().toISOString().slice(0, 10),
     arAccountId: null, cogsAccountId: null, revenueAccountId: null, inventoryAccountId: null,
@@ -32,9 +34,21 @@ export default function SisterTransferForm() {
   const [lines, setLines] = useState<any[]>([newLine()]);
 
   const { data: sisters = [] } = useQuery({ queryKey: ["sister-companies"], queryFn: () => sisterCompaniesApi.list() });
+  const { data: branches = [] } = useQuery({ queryKey: ["branches"], queryFn: () => branchesApi.getBranches() });
   const { data: warehouses = [] } = useQuery({ queryKey: ["warehouses"], queryFn: () => inventoryApi.getWarehouses() });
   const { data: items = [] } = useQuery({ queryKey: ["items"], queryFn: () => inventoryApi.getItems() });
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: () => inventoryApi.getUnits() });
+
+  // Auto-pick the main branch ONCE for a new doc; the user may then clear it
+  // (NULL branch = shared/company-wide) without it snapping back.
+  const branchDefaultedRef = useRef(false);
+  useEffect(() => {
+    if (branchDefaultedRef.current || form.branchId) return;
+    const def = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
+    if (!def) return;
+    setForm((p: any) => ({ ...p, branchId: String(def.id) }));
+    branchDefaultedRef.current = true;
+  }, [branches, form.branchId]);
 
   // When sister picked: prefill default accounts from sister card
   useEffect(() => {
@@ -89,6 +103,7 @@ export default function SisterTransferForm() {
     if (!valid.length) { toast({ title: "أضف صنفاً واحداً على الأقل", variant: "destructive" }); return; }
     createMut.mutate({
       sisterCompanyId: Number(form.sisterCompanyId),
+      branchId: form.branchId ? Number(form.branchId) : null,
       fromWarehouseId: Number(form.fromWarehouseId),
       transferDate: form.transferDate,
       arAccountId: form.arAccountId, cogsAccountId: form.cogsAccountId,
@@ -122,6 +137,12 @@ export default function SisterTransferForm() {
               <option value="">اختر…</option>
               {(sisters as any[]).filter((s: any) => s.isActive).map((s: any) =>
                 <option key={s.id} value={s.id}>{s.nameAr}</option>)}
+            </select></label>
+          <label><span className="text-sm">الفرع</span>
+            <select className="w-full border rounded h-9 px-2" value={form.branchId}
+              onChange={e => setForm({ ...form, branchId: e.target.value })} data-testid="select-branch">
+              <option value="">— بدون فرع —</option>
+              {(branches as any[]).map((b: any) => <option key={b.id} value={b.id}>{b.nameAr}</option>)}
             </select></label>
           <label><span className="text-sm">المخزن المصدر *</span>
             <select className="w-full border rounded h-9 px-2" value={form.fromWarehouseId}

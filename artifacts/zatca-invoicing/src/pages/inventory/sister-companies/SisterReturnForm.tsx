@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
+import { branchesApi } from "@/lib/branchesApi";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { DateField } from "@/components/ui/date-field";
 
@@ -21,12 +22,14 @@ export default function SisterReturnForm() {
   const [transferId, setTransferId] = useState<string>(initialTransferId);
   const [form, setForm] = useState<any>({
     returnDate: new Date().toISOString().slice(0, 10),
+    branchId: "",
     toWarehouseId: "",
     notes: "",
   });
   // returnLines: itemId-keyed qty editor, but we POST per transfer-item-id
   const [qtys, setQtys] = useState<Record<number, string>>({});
 
+  const { data: branches = [] } = useQuery({ queryKey: ["branches"], queryFn: () => branchesApi.getBranches() });
   const { data: warehouses = [] } = useQuery({ queryKey: ["warehouses"], queryFn: () => inventoryApi.getWarehouses() });
   const { data: postedTransfers = [] } = useQuery({
     queryKey: ["sister-transfers"], queryFn: () => sisterCompaniesApi.listTransfers(),
@@ -40,8 +43,13 @@ export default function SisterReturnForm() {
   const itemMap = Object.fromEntries((items as any[]).map((i: any) => [i.id, i.nameAr]));
 
   // When transfer changes, default toWarehouse = transfer's source warehouse (restores to same)
+  // and default the branch from the original transfer's branch.
   useEffect(() => {
-    if (tDetail) setForm((p: any) => ({ ...p, toWarehouseId: p.toWarehouseId || String((tDetail as any).fromWarehouseId) }));
+    if (tDetail) setForm((p: any) => ({
+      ...p,
+      toWarehouseId: p.toWarehouseId || String((tDetail as any).fromWarehouseId),
+      branchId: p.branchId || ((tDetail as any).branchId != null ? String((tDetail as any).branchId) : ""),
+    }));
   }, [tDetail]);
 
   const createMut = useMutation({
@@ -71,6 +79,7 @@ export default function SisterReturnForm() {
     if (!items_.length) { toast({ title: "أدخل كمية واحدة على الأقل", variant: "destructive" }); return; }
     createMut.mutate({
       transferId: Number(transferId),
+      branchId: form.branchId ? Number(form.branchId) : null,
       returnDate: form.returnDate,
       toWarehouseId: Number(form.toWarehouseId),
       notes: form.notes || null,
@@ -91,6 +100,12 @@ export default function SisterReturnForm() {
             <option value="">اختر…</option>
             {postedOnly.map((t: any) =>
               <option key={t.id} value={t.id}>{t.transferNumber} - {t.transferDate}</option>)}
+          </select></label>
+        <label><span className="text-sm">الفرع</span>
+          <select className="w-full border rounded h-9 px-2" value={form.branchId}
+            onChange={e => setForm({ ...form, branchId: e.target.value })} data-testid="select-branch">
+            <option value="">— بدون فرع —</option>
+            {(branches as any[]).map((b: any) => <option key={b.id} value={b.id}>{b.nameAr}</option>)}
           </select></label>
         <label><span className="text-sm">المخزن الذي يستلم *</span>
           <select className="w-full border rounded h-9 px-2" value={form.toWarehouseId}

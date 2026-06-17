@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
+import { branchesApi } from "@/lib/branchesApi";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { DateField } from "@/components/ui/date-field";
 
@@ -15,15 +16,17 @@ export default function SisterCompanyStatement() {
   const sid = Number(params?.id);
   const [from, setFrom] = useState<string>("");
   const [to,   setTo]   = useState<string>("");
+  const [branchId, setBranchId] = useState<string>("");
 
   const { data: sister } = useQuery({
     queryKey: ["sister-company", sid],
     queryFn: () => sisterCompaniesApi.get(sid),
     enabled: !!sid,
   });
+  const { data: branches = [] } = useQuery({ queryKey: ["branches"], queryFn: () => branchesApi.getBranches() });
   const { data: stmt, isLoading } = useQuery({
-    queryKey: ["sister-statement", sid, from, to],
-    queryFn: () => sisterCompaniesApi.statement(sid, from || undefined, to || undefined),
+    queryKey: ["sister-statement", sid, from, to, branchId],
+    queryFn: () => sisterCompaniesApi.statement(sid, from || undefined, to || undefined, branchId ? Number(branchId) : undefined),
     enabled: !!sid,
   });
 
@@ -92,7 +95,13 @@ export default function SisterCompanyStatement() {
           <DateField value={from} onChange={e => setFrom(e.target.value)} /></label>
         <label><span className="text-sm">إلى تاريخ</span>
           <DateField value={to} onChange={e => setTo(e.target.value)} /></label>
-        <Button variant="outline" onClick={() => { setFrom(""); setTo(""); }}>إعادة تعيين</Button>
+        <label><span className="text-sm">الفرع</span>
+          <select className="w-full border rounded h-9 px-2 min-w-[10rem]" value={branchId}
+            onChange={e => setBranchId(e.target.value)} data-testid="select-branch">
+            <option value="">كل الفروع</option>
+            {(branches as any[]).map((b: any) => <option key={b.id} value={b.id}>{b.nameAr}</option>)}
+          </select></label>
+        <Button variant="outline" onClick={() => { setFrom(""); setTo(""); setBranchId(""); }}>إعادة تعيين</Button>
       </CardContent></Card>
 
       <Card><CardContent className="p-0 overflow-x-auto">
