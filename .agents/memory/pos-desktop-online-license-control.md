@@ -12,13 +12,34 @@ Standalone POS-Desktop now has TWO license sources, and they must never cross:
   centrally from the existing `/admin/offline-licenses` screen.
 
 **The public endpoints (`/api/public/offline/register` + `/revalidate`, NO auth) MUST
-gate every mutation to `source='self_register'`.** Revalidate of an admin (or unknown)
-license returns `404/not_found` BEFORE any fingerprint binding or row update — an admin
-license must be indistinguishable from an unknown key so the endpoint can never mutate
-or leak admin-license state. Forgetting this gate silently drags file-licenses into the
-cloud-controlled/lockable path and breaks the offline guarantee.
+gate every MUTATION to `source='self_register'`.** Only self_register may bind a
+fingerprint, re-sign, or touch `last_seen_at`/`updated_at`. Forgetting this gate silently
+drags file-licenses into the cloud-controlled/lockable path and breaks the offline guarantee.
 **Why:** unauthenticated endpoint; the only trust anchor is the Ed25519 signature, so
 the source gate is the only thing protecting admin licenses from remote tampering.
+
+**Admin licenses now answer `/revalidate` READ-ONLY (changed — was `404/not_found`).** An
+admin (`source!=='self_register'`) revalidate returns the current `effectiveStatus` plus the
+stored `signedFileJson` WITHOUT any DB write (no bind, no re-sign, no last-seen). This lets a
+SuperAdmin's remote expiry edit / revoke take effect WHEN THE DEVICE IS ONLINE — the PATCH on
+`/admin/offline-licenses` already re-signs the stored file with the new expiry, so revalidate
+just hands back that authoritative file. The fingerprint-mismatch guard (`lic.fingerprintHash
+&& !== fpHash → 409`) runs BEFORE the source branch. This path can only ever TIGHTEN (surface
+an expired/revoked status), never grant or extend offline trust.
+**Why:** admin file-licenses must stay 100% offline-capable (run forever with no internet),
+but the product now also wants central revoke/expiry to land when the box happens to be online.
+**How to apply:** the desktop side makes this safe — `revalidateStandalone` marks admin
+licenses `offlineTolerant` so unreachable/not_found/fingerprint_mismatch do NOT lock (only an
+explicit `revoked`/`expired` from the server locks); self_register keeps strict grace-lock.
+Unknown key still returns `404/not_found` for everyone (the lookup precedes the source branch).
+**Accepted tradeoff:** the admin branch DOES disclose status + the signed file to any caller
+that knows the `licenseKey` (previously admin keys were indistinguishable from unknown via
+404). This is intentional and required — remote *renew* means the device must pull the
+re-signed file with the new expiry, and the `licenseKey` is the bearer capability (same model
+as self_register, which also returns its signed file to key-holders). The signed file is
+already in the customer's possession (the `.zacolic.json` the admin gave them), it is
+Ed25519-signed (tamper-evident), and admin rows carry NO fingerprint binding by design, so we
+cannot gate on fingerprint. Do NOT "fix" this by hiding status/file — that breaks the feature.
 
 **Offline grace-lock must fail closed.** `isGraceExpired(lastCheck, graceDays, fallbackTs)`
 locks a self_register device that hasn't reached the cloud within its window (default 7d).

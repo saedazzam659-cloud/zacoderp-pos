@@ -215,11 +215,14 @@ export default function App() {
         return;
       }
     }
-    // Layer 1c: remote revalidation (Task #236) — ONLY for online self-
-    // registered licenses. Admin-issued file licenses (source !== 'self_register')
-    // stay 100% offline (Task #233) and skip this entirely.
+    // Layer 1c: remote revalidation. Self-registered (online) licenses must
+    // phone home within their grace window. Admin-issued file licenses also
+    // revalidate WHEN ONLINE so the SuperAdmin's remote expiry/revoke takes
+    // effect — but they tolerate being offline indefinitely (no grace lock),
+    // preserving their 100%-offline design (Task #233). revalidateStandalone
+    // branches on license.source for that difference.
     let license = r.payload;
-    if (license.source === "self_register") {
+    {
       const verdict = await revalidateStandalone(license);
       if (verdict.lock) { setState({ phase: "standalone-revalidation-needed", reason: verdict.reason }); return; }
       if (verdict.license) license = verdict.license;
@@ -238,13 +241,22 @@ export default function App() {
     | { lock: true; reason: RevalidationReason }
     | { lock: false; license?: OfflineLicensePayload }
   > {
+    // Admin-issued FILE licenses (source !== 'self_register') are designed to run
+    // 100% offline forever (Task #233). They still honour a SuperAdmin's remote
+    // expiry/revoke WHEN ONLINE, but an unreachable server (or a server that no
+    // longer knows the key) must NEVER lock them — only an explicit revoked /
+    // expired verdict does. Self-registered (online) licenses keep the strict
+    // grace-window behaviour: offline beyond grace, or unknown/mismatched, locks.
+    const offlineTolerant = license.source !== "self_register";
     let fp = "";
     try { fp = await getFingerprint(); } catch { /* fingerprint backend down */ }
     const out = await revalidateLicense(license.licenseKey, fp);
     if (out.reachable) {
       if (out.status === "revoked") return { lock: true, reason: "revoked" };
-      if (out.status === "not_found") return { lock: true, reason: "revoked" };
-      if (out.status === "fingerprint_mismatch") return { lock: true, reason: "revoked" };
+      if (!offlineTolerant) {
+        if (out.status === "not_found") return { lock: true, reason: "revoked" };
+        if (out.status === "fingerprint_mismatch") return { lock: true, reason: "revoked" };
+      }
       // active OR expired: persist the freshly-signed file (carries the SA's
       // latest expiry) and re-verify it locally.
       if (out.signedFile) {
@@ -264,10 +276,12 @@ export default function App() {
       await setLastLicenseCheck(Date.now());
       return { lock: false };
     }
-    // Offline: tolerate until the grace window elapses. If we have never
-    // recorded a successful check (lastCheck null), anchor the window to the
-    // license's signed issuedAt so an imported self-register file cannot run
-    // forever offline.
+    // Offline. Admin file licenses tolerate this indefinitely (never phone-home
+    // required); self-registered licenses tolerate it only until the grace window
+    // elapses. If we have never recorded a successful check (lastCheck null), the
+    // window anchors to the license's signed issuedAt so an imported self-register
+    // file cannot run forever offline.
+    if (offlineTolerant) return { lock: false };
     const lastCheck = await getLastLicenseCheck();
     const issuedTs = license.issuedAt ? new Date(license.issuedAt).getTime() : null;
     if (isGraceExpired(lastCheck, license.graceDays, issuedTs)) {

@@ -198,20 +198,28 @@ router.post("/revalidate", async (req, res) => {
     .where(eq(offlineLicensesTable.licenseKey, licenseKey));
   if (!lic) { res.status(404).json({ error: "license not found", status: "not_found" }); return; }
 
-  // INVARIANT (Task #233 preserved): admin-issued FILE licenses are 100% offline
-  // and must NEVER participate in cloud revalidation/binding. Only devices that
-  // self-registered online (source='self_register') are managed remotely. We
-  // report 404/not_found (not 403) so an admin license is indistinguishable from
-  // an unknown key — this endpoint must not mutate or leak admin-license state.
-  if (lic.source !== "self_register") {
-    res.status(404).json({ error: "license not found", status: "not_found" });
-    return;
-  }
-
   const fpHash = hashFingerprint(fingerprint);
   // Hardware binding: a bound license may only revalidate from its own machine.
   if (lic.fingerprintHash && lic.fingerprintHash !== fpHash) {
     res.status(409).json({ error: "fingerprint mismatch", status: "fingerprint_mismatch" });
+    return;
+  }
+
+  // Admin-issued FILE licenses (Task #233) are created/managed by hand and run
+  // fully offline. They MAY now answer revalidate calls so a SuperAdmin's remote
+  // expiry edit / revoke takes effect WHEN THE DEVICE IS ONLINE — but strictly
+  // READ-ONLY: we never bind a fingerprint, re-sign, mutate, or touch lastSeen
+  // here. The PATCH on /admin/offline-licenses already re-signs the stored file
+  // with the new expiry, so we just hand back the current authoritative status +
+  // that stored file. The desktop tolerates an unreachable server (and even a
+  // not_found) for admin licenses — it keeps running — so this path can only ever
+  // TIGHTEN (lock an expired / revoked one), never grant or extend offline trust.
+  if (lic.source !== "self_register") {
+    const adminStatus = effectiveStatus(lic);
+    if (adminStatus === "revoked") { res.json({ status: "revoked" }); return; }
+    if (adminStatus === "pending") { res.json({ status: "pending" }); return; }
+    const adminSigned = lic.signedFileJson ? JSON.parse(lic.signedFileJson) : undefined;
+    res.json({ status: adminStatus, signedFile: adminSigned });
     return;
   }
 
