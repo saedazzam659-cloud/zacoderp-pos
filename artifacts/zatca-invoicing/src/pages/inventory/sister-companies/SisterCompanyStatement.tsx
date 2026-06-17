@@ -63,7 +63,9 @@ export default function SisterCompanyStatement() {
             const disabled = !stmt || data.length === 0;
             return (
               <>
-                <Button variant="outline" size="sm" onClick={() => window.print()} data-testid="btn-print">
+                <Button variant="outline" size="sm" disabled={disabled}
+                  onClick={() => exportToPDF(data, cols, `sister-statement-${sid}`, title, subtitle, true, totals)}
+                  data-testid="btn-print">
                   <Printer className="h-4 w-4 ml-1" /> طباعة
                 </Button>
                 <Button variant="outline" size="sm" disabled={disabled}
@@ -72,7 +74,7 @@ export default function SisterCompanyStatement() {
                   <FileSpreadsheet className="h-4 w-4 ml-1" /> Excel
                 </Button>
                 <Button variant="outline" size="sm" disabled={disabled}
-                  onClick={() => exportToPDF(data, cols, `sister-statement-${sid}`, title, subtitle, true, totals)}
+                  onClick={() => exportToPDF(data, cols, `sister-statement-${sid}`, title, subtitle, false, totals)}
                   data-testid="btn-export-pdf">
                   <FileDown className="h-4 w-4 ml-1" /> PDF
                 </Button>
