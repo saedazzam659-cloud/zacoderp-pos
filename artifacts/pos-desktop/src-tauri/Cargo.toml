@@ -1,6 +1,6 @@
 [package]
 name = "pos-desktop"
-version = "0.8.39"
+version = "0.8.40"
 description = "ZACOD POS Desktop (Windows offline)"
 edition = "2021"
 # MSRV floor used for dependency resolution. CI pins the toolchain to this exact
