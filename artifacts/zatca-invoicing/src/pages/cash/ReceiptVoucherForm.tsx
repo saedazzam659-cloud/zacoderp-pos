@@ -555,6 +555,9 @@ export default function ReceiptVoucherForm() {
         || (cust ? (isRtl ? cust.nameAr : (cust.nameEn || cust.nameAr)) : "")
         || (acct ? (isRtl ? acct.nameAr : (acct.nameEn || acct.nameAr)) : ""),
     };
+    const linkedInv = existing.salesInvoiceId
+      ? (salesInvoices as any[]).find((x: any) => String(x.id) === String(existing.salesInvoiceId))
+      : null;
     printCashVoucher({
       kind: "receipt",
       doc: {
@@ -563,6 +566,7 @@ export default function ReceiptVoucherForm() {
         amount: existing.amount,
         currency: existing.currency,
         description: existing.description,
+        invoiceNumber: linkedInv?.docNumber ?? (existing.salesInvoiceId ? `SI-${existing.salesInvoiceId}` : null),
       },
       treasury,
       account,

@@ -90,6 +90,8 @@ export interface CashVoucherDoc {
   amount?: number | string | null;
   currency?: string | null;
   description?: string | null;
+  /** رقم الفاتورة المرتبطة (سداد فاتورة مبيعات/مشتريات) — يظهر فقط عند الربط. */
+  invoiceNumber?: string | null;
 }
 
 export interface CashVoucherArgs {
@@ -120,6 +122,7 @@ export function buildCashVoucherHtml(args: CashVoucherArgs): string {
   const code = doc.code || "—";
   const date = doc.date || "—";
   const desc = doc.description || "";
+  const invoiceNumber = doc.invoiceNumber || "";
   const tafqeet = numberToArabicWords(amount);
   const safeLogo = safeLogoSrc(company?.logo);
   const addr = companyAddress(company);
@@ -161,7 +164,7 @@ export function buildCashVoucherHtml(args: CashVoucherArgs): string {
 <style>
 @page { size: A4; margin: 12mm 12mm 16mm 12mm; }
 * { box-sizing: border-box; }
-body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; font-size:12px; }
+body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; font-size:12px; padding-bottom:18mm; }
 .header { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; border:1px solid #cbd5e1; padding:10px 12px; }
 .co-block { flex:1; }
 .co-block.en { text-align:left; }
@@ -185,7 +188,7 @@ table.lines tfoot td { font-weight:800; background:#f1f5f9; }
 .tafqeet { text-align:center; font-size:13px; font-weight:700; padding:8px; margin-bottom:24px; }
 .sigs { display:grid; grid-template-columns:repeat(3,1fr); gap:30px; margin-top:48px; font-size:12px; text-align:center; }
 .sigs .box { border-top:1px solid #111; padding-top:6px; min-height:40px; }
-.footer { display:flex; justify-content:space-between; font-size:10px; color:#64748b; margin-top:28px; border-top:1px solid #e2e8f0; padding-top:6px; }
+.footer { position:fixed; bottom:6mm; left:12mm; right:12mm; display:flex; justify-content:space-between; font-size:10px; color:#64748b; border-top:1px solid #e2e8f0; padding-top:6px; }
 .print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
 @media print { .print-btn { display:none; } body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
 </style></head><body>
@@ -201,6 +204,9 @@ table.lines tfoot td { font-weight:800; background:#f1f5f9; }
   <div class="row"><span class="k">تاريخ السند</span><span class="v">: ${esc(date)}</span></div>
   <div class="row"><span class="k">رمز النقدية</span><span class="v">: ${esc(treasury?.code ?? "")}</span></div>
   <div class="row"><span class="k">اسم النقدية</span><span class="v">: ${esc(treasury?.name ?? "—")}</span></div>
+  <div class="row"><span class="k">رمز الحساب</span><span class="v">: ${esc(account?.code ?? "—")}</span></div>
+  <div class="row"><span class="k">اسم الحساب</span><span class="v">: ${esc(account?.name ?? "—")}</span></div>
+  ${invoiceNumber ? `<div class="row"><span class="k">رقم الفاتورة</span><span class="v">: ${esc(invoiceNumber)}</span></div>` : ""}
   <div class="row" style="grid-column:1 / -1;"><span class="k">بيان السند</span><span class="v">: ${esc(desc || "—")}</span></div>
 </div>
 <table class="lines">

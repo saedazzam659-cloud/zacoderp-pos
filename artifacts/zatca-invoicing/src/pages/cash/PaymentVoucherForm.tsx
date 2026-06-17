@@ -551,6 +551,9 @@ export default function PaymentVoucherForm() {
         || (supp ? (isRtl ? supp.nameAr : (supp.nameEn || supp.nameAr)) : "")
         || (acct ? (isRtl ? acct.nameAr : (acct.nameEn || acct.nameAr)) : ""),
     };
+    const linkedInv = existing.purchaseInvoiceId
+      ? (purchaseInvoices as any[]).find((x: any) => String(x.id) === String(existing.purchaseInvoiceId))
+      : null;
     printCashVoucher({
       kind: "payment",
       doc: {
@@ -559,6 +562,7 @@ export default function PaymentVoucherForm() {
         amount: existing.amount,
         currency: existing.currency,
         description: existing.description,
+        invoiceNumber: linkedInv?.docNumber ?? (existing.purchaseInvoiceId ? `PI-${existing.purchaseInvoiceId}` : null),
       },
       treasury,
       account,
