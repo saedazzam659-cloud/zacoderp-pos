@@ -123,25 +123,35 @@ export const SmartDateInput = React.forwardRef<
     placeholder = "يوم/شهر/سنة",
     "aria-label": ariaLabel,
     onBlur: userOnBlur,
+    onFocus: userOnFocus,
     ...rest
   },
   ref,
 ) {
   const [draft, setDraft] = React.useState(() => isoToDisplay(value));
   const [open, setOpen] = React.useState(false);
+  // While the field is focused the user owns the draft — we must NOT reformat
+  // it on every keystroke or the caret jumps to the end (typing one digit in
+  // the "day" slot would otherwise push the next digit into the "year",
+  // producing values like "02/06/20262"). Reformatting happens only on blur or
+  // on an external value change while the field is unfocused.
+  const focusedRef = React.useRef(false);
 
   // Mirror external value changes (reset, edit-load, programmatic set) into the
-  // displayed draft without fighting the user mid-keystroke.
+  // displayed draft — but only when the user is NOT actively editing, so we
+  // never fight their keystrokes mid-edit.
   React.useEffect(() => {
-    setDraft(isoToDisplay(value));
+    if (!focusedRef.current) setDraft(isoToDisplay(value));
   }, [value]);
 
   const commitFromDisplay = React.useCallback(
-    (text: string) => {
+    (text: string, reformat: boolean) => {
       const iso = displayToIso(text);
       if (iso) {
         const bounded = clampToBounds(iso, min, max);
-        setDraft(isoToDisplay(bounded));
+        // Only canonicalise the visible text when explicitly asked (on blur).
+        // Doing it during typing resets the caret to the end of the input.
+        if (reformat) setDraft(isoToDisplay(bounded));
         onChange(bounded);
       }
     },
@@ -158,18 +168,26 @@ export const SmartDateInput = React.forwardRef<
       return;
     }
     // Commit only once a complete DD/MM/YYYY is typed, so partial input isn't
-    // clamped prematurely.
-    if (DISPLAY_RE.test(norm)) commitFromDisplay(raw);
+    // clamped prematurely. Don't reformat the draft here — keep the user's raw
+    // text (and caret position) intact until they blur.
+    if (DISPLAY_RE.test(norm)) commitFromDisplay(raw, false);
+  };
+
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    focusedRef.current = true;
+    userOnFocus?.(e);
   };
 
   const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    focusedRef.current = false;
     if (!readOnly && !disabled) {
       const raw = draft.trim();
       const norm = normalizeDigits(raw);
       if (norm === "") {
         onChange("");
       } else if (DISPLAY_RE.test(norm)) {
-        commitFromDisplay(raw);
+        // Now safe to canonicalise (e.g. "2/6/2026" → "02/06/2026").
+        commitFromDisplay(raw, true);
       } else {
         // Unparseable on blur → restore the last committed value so the field
         // never displays a half-typed date.
@@ -196,6 +214,7 @@ export const SmartDateInput = React.forwardRef<
         autoComplete="off"
         value={draft}
         onChange={handleTextChange}
+        onFocus={handleFocus}
         onBlur={handleBlur}
         readOnly={readOnly}
         disabled={disabled}

@@ -32,3 +32,15 @@ math drifts a day for positive-offset timezones.
 **Rollout:** Only the journal-entry form is migrated. Many other native
 `type="date"` inputs share trap #1 — migrate them over time, prioritising any whose
 date feeds a sequence number, fiscal period, or peeked/derived value.
+
+3. **Controlled DD/MM/YYYY field must NOT reformat the draft while focused.**
+   Canonicalising the visible text on every complete-looking keystroke
+   (`setDraft(isoToDisplay(...))` inside the typing handler) re-renders the
+   controlled input and snaps the caret to the END. Mid-string edits then break:
+   editing the day of `02/06/2026` to `22` appends the second digit to the year →
+   `02/06/20262`. **Fix:** keep the user's RAW draft (and caret) while typing —
+   only emit `onChange(iso)`, never `setDraft` — and canonicalise on blur only.
+   Also gate the external `value`→`draft` mirror effect behind a `focusedRef` so a
+   parent re-render mid-edit can't repaint over the user's keystrokes.
+   **Why:** any controlled text input that rewrites its own value on change loses
+   the caret; date masks are the classic victim.

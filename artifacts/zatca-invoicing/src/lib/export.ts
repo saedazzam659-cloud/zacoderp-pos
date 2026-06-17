@@ -331,6 +331,43 @@ export function safeLogoSrc(raw: unknown): string | null {
   return null;
 }
 
+// Pre-rasterise a logo into a clean, decoded PNG data-URI at a fixed display
+// size.  WHY: the PDF *download* path renders the report HTML with html2canvas,
+// which frequently fails to paint an <img> sized purely with
+// `max-width/max-height + object-fit` (it computes a zero box and the logo
+// comes out as a blank white card).  By drawing the image onto a canvas
+// ourselves we hand html2canvas an already-decoded bitmap WITH explicit pixel
+// dimensions, so it always renders.  Data-URI logos (the format companies are
+// stored in) convert cleanly; a cross-origin http logo that taints the canvas
+// makes `toDataURL` throw → we return null and the caller keeps the raw src as
+// a best-effort fallback.  Returns null on any failure (no logo / load error).
+export async function rasterizeLogo(
+  src: string,
+  maxW = 170,
+  maxH = 54,
+): Promise<{ src: string; w: number; h: number } | null> {
+  try {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = src;
+    await img.decode();
+    const natW = img.naturalWidth || maxW;
+    const natH = img.naturalHeight || maxH;
+    const scale = Math.min(maxW / natW, maxH / natH, 1);
+    const w = Math.max(1, Math.round(natW * scale));
+    const h = Math.max(1, Math.round(natH * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, w, h);
+    return { src: canvas.toDataURL("image/png"), w, h };
+  } catch {
+    return null;
+  }
+}
+
 // ─── PDF Export (HTML Print) ──────────────────────────────────────────────────
 // Uses the browser's native print-to-PDF which fully supports Arabic/RTL text.
 
@@ -418,9 +455,17 @@ export async function exportToPDF(
   // when the company has no logo configured.  The src is run through
   // `safeLogoSrc` to defang attribute-injection / XSS via crafted values.
   const safeLogo = safeLogoSrc(logo ?? company?.logo);
-  const logoHtml = safeLogo
+  // Pre-rasterise so the logo survives the html2canvas (.pdf download) path,
+  // which otherwise renders a max-width/object-fit <img> as a blank white card.
+  const rasterLogo = safeLogo ? await rasterizeLogo(safeLogo) : null;
+  const logoImgTag = rasterLogo
+    ? `<img src="${rasterLogo.src}" alt="" width="${rasterLogo.w}" height="${rasterLogo.h}" style="display:block;width:${rasterLogo.w}px;height:${rasterLogo.h}px;" />`
+    : safeLogo
+      ? `<img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;" />`
+      : "";
+  const logoHtml = logoImgTag
     ? `<div style="background:#fff;border-radius:8px;padding:5px 8px;display:inline-block;margin-bottom:8px;">
-         <img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;" />
+         ${logoImgTag}
        </div>`
     : "";
 
@@ -743,11 +788,18 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
       let remaining = imgs.length;
       const done = () => { if (--remaining <= 0) resolve(); };
       imgs.forEach((img) => {
-        if (img.complete) done();
+        if (img.complete && img.naturalWidth > 0) done();
         else { img.addEventListener("load", done); img.addEventListener("error", done); }
       });
       setTimeout(resolve, 2500);
     });
+    // Force-decode every image so html2canvas captures painted pixels rather
+    // than a blank box (a "loaded" data-URI image can still be undecoded).
+    await Promise.all(
+      Array.from(doc.images).map((img) =>
+        typeof img.decode === "function" ? img.decode().catch(() => {}) : Promise.resolve(),
+      ),
+    );
     await new Promise((r) => setTimeout(r, 250));
 
     // Dynamic imports keep the heavy rendering libs out of the initial
