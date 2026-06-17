@@ -201,6 +201,8 @@ export const employeeLoansTable = pgTable("employee_loans", {
   amount:         decimal("amount", { precision: 12, scale: 2 }).notNull().default("0"),
   installments:   integer("installments").notNull().default(1),
   installmentAmt: decimal("installment_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  installmentStartDate: date("installment_start_date"),
+  installmentEndDate:   date("installment_end_date"),
   paidAmount:     decimal("paid_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   status:         text("status").notNull().default("active"),
   reason:         text("reason"),

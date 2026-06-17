@@ -11,12 +11,34 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Wallet, Plus, Trash2, X, Loader2, CheckCircle2, Banknote } from "lucide-react";
+import { Wallet, Plus, Trash2, X, Loader2, CheckCircle2, Banknote, Pencil, Printer, FileDown, FileSpreadsheet } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { DateField } from "@/components/ui/date-field";
+import { useAuth } from "@/contexts/AuthContext";
+import { printLoanVoucher, downloadLoanVoucherPdf, type LoanVoucherDoc } from "@/lib/loanVoucherPrint";
+import { exportToExcel, type ExportColumn } from "@/lib/export";
 
 const today = () => new Date().toISOString().slice(0, 10);
-const EMPTY: any = { employeeId: "", loanDate: today(), loanType: "loan", amount: 0, installments: 1, installmentAmt: 0, reason: "", notes: "" };
+const EMPTY: any = { employeeId: "", loanDate: today(), loanType: "loan", amount: 0, installments: 1, installmentAmt: 0, installmentStartDate: "", reason: "", notes: "" };
+
+// Add `months` whole months to an ISO date (YYYY-MM-DD), clamping the day to
+// the target month's last day (e.g. Jan-31 + 1 month → Feb-28/29).
+function addMonths(iso: string, months: number): string {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return "";
+  const base = new Date(Date.UTC(y, m - 1 + months, 1));
+  const lastDay = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 0)).getUTCDate();
+  base.setUTCDate(Math.min(d, lastDay));
+  return base.toISOString().slice(0, 10);
+}
+
+// ISO (YYYY-MM-DD) → DD/MM/YYYY for read-only display, matching SmartDateInput.
+function fmtDmy(iso?: string | null): string {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-");
+  return y && m && d ? `${d}/${m}/${y}` : iso;
+}
 
 export default function EmployeeLoans() {
   const qc = useQueryClient();
@@ -38,7 +60,11 @@ export default function EmployeeLoans() {
     cancelled: { label: tr("statusCancelled"), cls: "bg-slate-50 text-slate-600 border-slate-200" },
   };
 
+  const { user } = useAuth();
+  const company = (user as any)?.company ?? null;
+
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<any>(EMPTY);
   const [filter, setFilter] = useState<string>("all");
   const [disburseFor, setDisburseFor] = useState<any | null>(null);
@@ -116,6 +142,122 @@ export default function EmployeeLoans() {
     if (amt > 0 && n > 0) setForm((f: any) => ({ ...f, installmentAmt: +(amt / n).toFixed(2) }));
   }
 
+  // Which loan is currently open in the edit form, and what is frozen.
+  // Mirrors the backend integrity guard in PUT /loans/:id: disbursed loans lock
+  // their JE-relevant fields (amount/employee/date/type); closed loans lock the
+  // whole schedule too.
+  const editingLoan = editingId ? loans.find((l: any) => l.id === editingId) : null;
+  const isClosedLoan = !!editingLoan && (editingLoan.status === "cancelled" || editingLoan.status === "completed");
+  const lockPrincipal = !!editingLoan && ((editingLoan.notes || "").includes("JE#") || isClosedLoan);
+  const lockSchedule = isClosedLoan;
+
+  // Auto-derived end date = start date + (number of installments) months.
+  const installmentEndDate = useMemo(
+    () => (form.installmentStartDate ? addMonths(form.installmentStartDate, Math.max(1, Number(form.installments) || 1)) : ""),
+    [form.installmentStartDate, form.installments],
+  );
+
+  function resetForm() { setForm(EMPTY); setEditingId(null); setShowForm(false); }
+
+  function openNew() { setForm(EMPTY); setEditingId(null); setShowForm(true); }
+
+  function openEdit(l: any) {
+    setEditingId(l.id);
+    setForm({
+      employeeId: String(l.employeeId ?? ""),
+      loanDate: l.loanDate || today(),
+      loanType: l.loanType || "loan",
+      amount: l.amount ?? 0,
+      installments: l.installments ?? 1,
+      installmentAmt: l.installmentAmt ?? 0,
+      installmentStartDate: l.installmentStartDate || "",
+      reason: l.reason || "",
+      notes: l.notes || "",
+    });
+    setShowForm(true);
+  }
+
+  async function handleSave() {
+    const payload = {
+      ...form,
+      installmentStartDate: form.installmentStartDate || null,
+      installmentEndDate: installmentEndDate || null,
+    };
+    if (editingId) {
+      await upd.mutateAsync({ id: editingId, data: payload });
+      resetForm();
+    } else {
+      save.mutate(payload);
+    }
+  }
+
+  function loanToVoucherDoc(l: any): LoanVoucherDoc {
+    const st = STATUS[l.status] || STATUS.active;
+    return {
+      typeLabel: TYPES[l.loanType] || l.loanType,
+      employeeName: pickName(l.empNameAr, l.empNameEn),
+      employeeCode: l.empCode,
+      loanDate: fmtDmy(l.loanDate),
+      amount: l.amount,
+      installments: l.installments,
+      installmentAmt: l.installmentAmt,
+      installmentStartDate: fmtDmy(l.installmentStartDate),
+      installmentEndDate: fmtDmy(l.installmentEndDate),
+      reason: l.reason,
+      statusLabel: st.label,
+      paidAmount: l.paidAmount,
+    };
+  }
+
+  function printLoan(l: any) {
+    printLoanVoucher({
+      doc: loanToVoucherDoc(l),
+      company,
+      onError: (m) => toast({ variant: "destructive", title: tr("toastErrorTitle"), description: m }),
+    });
+  }
+
+  async function pdfLoan(l: any) {
+    try {
+      await downloadLoanVoucherPdf({ doc: loanToVoucherDoc(l), company }, `سلفة-${l.empCode || l.id}`);
+    } catch (e) {
+      toast({ variant: "destructive", title: tr("toastErrorTitle"), description: parseError(e) });
+    }
+  }
+
+  function exportExcel() {
+    const num = "#,##0.00";
+    const cols: ExportColumn[] = [
+      { key: "employee", header: tr("colEmployee") },
+      { key: "code", header: tr("colCode") },
+      { key: "type", header: tr("colType") },
+      { key: "date", header: tr("colDate") },
+      { key: "amount", header: tr("colAmount"), numFmt: num },
+      { key: "installments", header: tr("colInstallments") },
+      { key: "monthly", header: tr("colMonthlyInstallment"), numFmt: num },
+      { key: "start", header: tr("fieldInstallmentStartDate") },
+      { key: "end", header: tr("fieldInstallmentEndDate") },
+      { key: "paid", header: tr("colPaid"), numFmt: num },
+      { key: "remaining", header: tr("colRemaining"), numFmt: num },
+      { key: "status", header: tr("colStatus") },
+    ];
+    const rows = loans.map((l: any) => ({
+      employee: pickName(l.empNameAr, l.empNameEn),
+      code: l.empCode || "",
+      type: TYPES[l.loanType] || l.loanType,
+      date: fmtDmy(l.loanDate),
+      amount: Number(l.amount || 0),
+      installments: l.installments,
+      monthly: Number(l.installmentAmt || 0),
+      start: fmtDmy(l.installmentStartDate),
+      end: fmtDmy(l.installmentEndDate),
+      paid: Number(l.paidAmount || 0),
+      remaining: +(Number(l.amount) - Number(l.paidAmount)).toFixed(2),
+      status: (STATUS[l.status] || STATUS.active).label,
+    }));
+    exportToExcel(rows, cols, tr("title"), tr("title"));
+  }
+
   const FILTERS: Array<[string, string]> = [
     ["all", tr("filterAll")],
     ["active", tr("filterActive")],
@@ -130,9 +272,14 @@ export default function EmployeeLoans() {
           <Wallet className="size-6 text-primary" />
           <h1 className="text-xl font-semibold">{tr("title")}</h1>
         </div>
-        <Button onClick={() => { setForm(EMPTY); setShowForm(true); }} data-testid="btn-new-loan">
-          <Plus className="size-4 me-1" /> {tr("newLoan")}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={exportExcel} disabled={loans.length === 0} data-testid="btn-export-loans">
+            <FileSpreadsheet className="size-4 me-1" /> {tr("exportExcel")}
+          </Button>
+          <Button onClick={openNew} data-testid="btn-new-loan">
+            <Plus className="size-4 me-1" /> {tr("newLoan")}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -159,11 +306,11 @@ export default function EmployeeLoans() {
 
       {showForm && (
         <FormPanel
-          title={tr("formTitle")}
-          onClose={() => { setShowForm(false); setForm(EMPTY); }}
-          onSave={() => save.mutate(form)}
+          title={editingId ? tr("editTitle") : tr("formTitle")}
+          onClose={resetForm}
+          onSave={handleSave}
           saveLabel={tr("save")}
-          saving={save.isPending}
+          saving={save.isPending || upd.isPending}
         >
           <FormGrid>
             <Field label={tr("fieldEmployee")}>
@@ -177,6 +324,7 @@ export default function EmployeeLoans() {
                 placeholder={tr("chooseEmployee")}
                 searchPlaceholder={tr("searchEmployeePlaceholder")}
                 className="w-full"
+                disabled={lockPrincipal}
               />
             </Field>
             <Field label={tr("fieldType")}>
@@ -185,21 +333,28 @@ export default function EmployeeLoans() {
                 value={form.loanType}
                 onValueChange={(v) => setForm({ ...form, loanType: v })}
                 placeholder={tr("chooseType")}
+                disabled={lockPrincipal}
               />
             </Field>
             <Field label={tr("fieldDate")}>
-              <DateField value={form.loanDate} onChange={e => setForm({ ...form, loanDate: e.target.value })} data-testid="loan-date" />
+              <DateField value={form.loanDate} onChange={e => setForm({ ...form, loanDate: e.target.value })} disabled={lockPrincipal} data-testid="loan-date" />
             </Field>
             <Field label={tr("fieldAmount")}>
               <Input type="number" step="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })}
-                onBlur={autoCalcInstallment} data-testid="loan-amount" />
+                onBlur={autoCalcInstallment} disabled={lockPrincipal} data-testid="loan-amount" />
             </Field>
             <Field label={tr("fieldInstallments")}>
               <Input type="number" min={1} value={form.installments} onChange={e => setForm({ ...form, installments: e.target.value })}
-                onBlur={autoCalcInstallment} data-testid="loan-installments" />
+                onBlur={autoCalcInstallment} disabled={lockSchedule} data-testid="loan-installments" />
             </Field>
             <Field label={tr("fieldMonthlyInstallment")}>
-              <Input type="number" step="0.01" value={form.installmentAmt} onChange={e => setForm({ ...form, installmentAmt: e.target.value })} data-testid="loan-installment-amt" />
+              <Input type="number" step="0.01" value={form.installmentAmt} onChange={e => setForm({ ...form, installmentAmt: e.target.value })} disabled={lockSchedule} data-testid="loan-installment-amt" />
+            </Field>
+            <Field label={tr("fieldInstallmentStartDate")}>
+              <DateField value={form.installmentStartDate} onChange={e => setForm({ ...form, installmentStartDate: e.target.value })} disabled={lockSchedule} data-testid="loan-installment-start" />
+            </Field>
+            <Field label={tr("fieldInstallmentEndDate")}>
+              <Input value={fmtDmy(installmentEndDate)} readOnly disabled placeholder="—" data-testid="loan-installment-end" />
             </Field>
             <Field label={tr("fieldReason")} className="md:col-span-3">
               <Input value={form.reason} onChange={e => setForm({ ...form, reason: e.target.value })} placeholder={tr("reasonPlaceholder")} />
@@ -208,6 +363,11 @@ export default function EmployeeLoans() {
               <Textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2} />
             </Field>
           </FormGrid>
+          {lockPrincipal && (
+            <div className="text-xs text-amber-700 bg-amber-50/60 border border-amber-200 rounded p-2 mt-2">
+              {isClosedLoan ? tr("lockNoteClosed") : tr("lockNoteDisbursed")}
+            </div>
+          )}
           <div className="text-xs text-muted-foreground bg-blue-50/50 border border-blue-200 rounded p-2 mt-2"
             dangerouslySetInnerHTML={{ __html: tr("formNote", { amount: Number(form.installmentAmt || 0).toFixed(2) }) }}
           />
@@ -261,6 +421,15 @@ export default function EmployeeLoans() {
                     {l.status === "active" && (l.notes || "").includes("JE#") && (
                       <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]">{tr("disbursedBadge")}</Badge>
                     )}
+                    <Button size="sm" variant="ghost" onClick={() => openEdit(l)} title={tr("editTooltip")} data-testid={`btn-edit-loan-${l.id}`}>
+                      <Pencil className="size-3.5 text-sky-600" />
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => printLoan(l)} title={tr("printTooltip")} data-testid={`btn-print-loan-${l.id}`}>
+                      <Printer className="size-3.5" />
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => pdfLoan(l)} title={tr("pdfTooltip")} data-testid={`btn-pdf-loan-${l.id}`}>
+                      <FileDown className="size-3.5 text-rose-600" />
+                    </Button>
                     {l.status === "active" && (
                       <Button size="sm" variant="ghost" onClick={() => upd.mutate({ id: l.id, data: { status: "cancelled" } })} title={tr("cancelTooltip")}
                         data-testid={`btn-cancel-${l.id}`}>

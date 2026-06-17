@@ -7251,7 +7251,17 @@
       "toastDeleted": "تم الحذف",
       "toastErrorTitle": "خطأ",
       "toastDisbursed": "تم صرف السلفة وإنشاء القيد المحاسبي",
-      "errNoSelectedLoan": "لا توجد سلفة محددة"
+      "errNoSelectedLoan": "لا توجد سلفة محددة",
+      "editTitle": "تعديل السلفة",
+      "exportExcel": "تصدير إكسل",
+      "editTooltip": "تعديل",
+      "printTooltip": "طباعة",
+      "pdfTooltip": "تنزيل PDF",
+      "colCode": "الكود",
+      "fieldInstallmentStartDate": "تاريخ بداية القسط",
+      "fieldInstallmentEndDate": "تاريخ نهاية القسط (تلقائي)",
+      "lockNoteDisbursed": "تم صرف هذه السلفة وارتباطها بقيد محاسبي، لذا لا يمكن تعديل المبلغ أو الموظف أو نوع/تاريخ السلفة. يمكنك تعديل جدول الأقساط والسبب والملاحظات.",
+      "lockNoteClosed": "هذه السلفة مُلغاة أو منتهية، لذا لا يمكن تعديل بياناتها — يمكن تعديل الملاحظات فقط."
     },
     "payroll": {
       "title": "مسيرات الرواتب",

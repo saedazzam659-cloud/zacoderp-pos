@@ -1,0 +1,267 @@
+// A4 print for employee loan / advance vouchers — سند سلفة / عُهدة.
+//
+// Layout (per user spec):
+//   - top: company NAME only, with the logo centered alongside it (parallel)
+//   - middle: loan data block (بيانات السلفة) styled acceptably, vertically
+//     centered in the page
+//   - bottom: signatures — مسؤول الأجور والرواتب (right), مدير الموارد البشرية
+//     (center), الإدارة المالية (left); plus a recipient + الضامن (guarantor)
+//     signature row.
+//
+// Self-contained (its own escape/tafqeet helpers) so it never drifts with the
+// other print builders.
+import { safeLogoSrc } from "@/lib/export";
+
+function esc(s: any): string {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+}
+
+const fmtMoney = (n: any): string =>
+  Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// ── Arabic number-to-words (tafqeet) → "فقط … ريال سعودي لا غير".
+function numberToArabicWords(n: number): string {
+  if (!isFinite(n) || n < 0 || n > 999999999.99) return String(n);
+  const ones = ["", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة",
+    "عشرة", "أحد عشر", "اثنا عشر", "ثلاثة عشر", "أربعة عشر",
+    "خمسة عشر", "ستة عشر", "سبعة عشر", "ثمانية عشر", "تسعة عشر"];
+  const tens = ["", "", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"];
+  const hundreds = ["", "مائة", "مائتان", "ثلاثمائة", "أربعمائة", "خمسمائة",
+    "ستمائة", "سبعمائة", "ثمانمائة", "تسعمائة"];
+  const under1000 = (x: number): string => {
+    if (x === 0) return "";
+    const h = Math.floor(x / 100); const r = x % 100; const parts: string[] = [];
+    if (h) parts.push(hundreds[h]!);
+    if (r < 20) { if (r) parts.push(ones[r]!); }
+    else {
+      const t = Math.floor(r / 10); const o = r % 10;
+      if (o) parts.push(`${ones[o]} و${tens[t]}`); else parts.push(tens[t]!);
+    }
+    return parts.join(" و");
+  };
+  const intPart = Math.floor(n);
+  const fracPart = Math.round((n - intPart) * 100);
+  const millions = Math.floor(intPart / 1000000);
+  const thousands = Math.floor((intPart % 1000000) / 1000);
+  const rest = intPart % 1000;
+  const segments: string[] = [];
+  if (millions) {
+    if (millions === 1) segments.push("مليون");
+    else if (millions === 2) segments.push("مليونان");
+    else if (millions <= 10) segments.push(`${under1000(millions)} ملايين`);
+    else segments.push(`${under1000(millions)} مليون`);
+  }
+  if (thousands) {
+    if (thousands === 1) segments.push("ألف");
+    else if (thousands === 2) segments.push("ألفان");
+    else if (thousands <= 10) segments.push(`${under1000(thousands)} آلاف`);
+    else segments.push(`${under1000(thousands)} ألف`);
+  }
+  if (rest) segments.push(under1000(rest));
+  let out = segments.join(" و") || "صفر";
+  if (fracPart > 0) out += ` و${under1000(fracPart)} هللة`;
+  return `فقط ${out} ريال سعودي لا غير`;
+}
+
+export interface LoanVoucherCompany {
+  nameAr?: string | null;
+  nameEn?: string | null;
+  logo?: string | null;
+}
+
+export interface LoanVoucherDoc {
+  typeLabel: string;
+  employeeName: string;
+  employeeCode?: string | null;
+  loanDate?: string | null;
+  amount?: number | string | null;
+  installments?: number | null;
+  installmentAmt?: number | string | null;
+  installmentStartDate?: string | null;
+  installmentEndDate?: string | null;
+  reason?: string | null;
+  statusLabel?: string | null;
+  paidAmount?: number | string | null;
+}
+
+export interface LoanVoucherArgs {
+  doc: LoanVoucherDoc;
+  company?: LoanVoucherCompany | null;
+  onError?: (msg: string) => void;
+}
+
+export function buildLoanVoucherHtml(args: LoanVoucherArgs): string {
+  const { doc, company } = args;
+  const amount = Number(doc.amount || 0);
+  const paid = Number(doc.paidAmount || 0);
+  const remaining = +(amount - paid).toFixed(2);
+  const tafqeet = numberToArabicWords(amount);
+  const safeLogo = safeLogoSrc(company?.logo);
+  const coName = company?.nameAr || company?.nameEn || "اسم الشركة";
+  const printedAt = new Date().toLocaleString("en-GB", {
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit",
+  });
+
+  const dataRows: Array<[string, string]> = [
+    ["الموظف", `${esc(doc.employeeName)}${doc.employeeCode ? ` (${esc(doc.employeeCode)})` : ""}`],
+    ["نوع السلفة", esc(doc.typeLabel)],
+    ["تاريخ السلفة", esc(doc.loanDate || "—")],
+    ["المبلغ", `${fmtMoney(amount)} ر.س`],
+    ["عدد الأقساط", esc(String(doc.installments ?? "—"))],
+    ["قيمة القسط الشهري", `${fmtMoney(doc.installmentAmt)} ر.س`],
+    ["تاريخ بداية القسط", esc(doc.installmentStartDate || "—")],
+    ["تاريخ نهاية القسط", esc(doc.installmentEndDate || "—")],
+    ["المسدّد", `${fmtMoney(paid)} ر.س`],
+    ["المتبقي", `${fmtMoney(remaining)} ر.س`],
+    ["الحالة", esc(doc.statusLabel || "—")],
+  ];
+  if (doc.reason) dataRows.push(["السبب", esc(doc.reason)]);
+
+  const dataHtml = dataRows
+    .map(([k, v]) => `<tr><td class="k">${k}</td><td class="v">${v}</td></tr>`)
+    .join("");
+
+  return `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"/>
+<title>سند سلفة — ${esc(doc.employeeName)}</title>
+<style>
+@page { size: A4; margin: 14mm 14mm 16mm 14mm; }
+* { box-sizing: border-box; }
+body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; font-size:13px; }
+.sheet { min-height: 255mm; display:flex; flex-direction:column; }
+.header { display:flex; align-items:center; justify-content:center; gap:18px; border-bottom:3px solid #166534; padding:6px 0 16px; }
+.header .logo img { max-height:80px; max-width:140px; object-fit:contain; }
+.header .co-name { font-size:24px; font-weight:800; color:#14532d; text-align:center; }
+.title-bar { background:#166534; color:#fff; font-size:17px; font-weight:800; text-align:center; padding:8px 12px; margin:18px auto 0; border-radius:6px; width:60%; }
+.data-wrap { flex:1; display:flex; flex-direction:column; justify-content:center; padding:10px 0; }
+.section-label { font-size:14px; font-weight:700; color:#166534; margin:0 0 10px; text-align:center; }
+table.data { width:80%; margin:0 auto; border-collapse:collapse; font-size:13.5px; }
+table.data td { border:1px solid #cbd5e1; padding:9px 14px; }
+table.data td.k { background:#f0fdf4; color:#166534; font-weight:700; width:40%; }
+table.data td.v { font-weight:600; }
+.tafqeet { text-align:center; font-size:14px; font-weight:700; color:#14532d; margin:18px auto 0; padding:8px; width:80%; border-top:1px dashed #a7f3d0; }
+.recipient { display:grid; grid-template-columns:repeat(2,1fr); gap:40px; margin:32px auto 0; width:80%; font-size:12.5px; text-align:center; }
+.sigs { display:grid; grid-template-columns:repeat(3,1fr); gap:24px; margin-top:34px; font-size:13px; text-align:center; }
+.sig .role { font-weight:700; margin-bottom:34px; }
+.sig .line { border-top:1px solid #111; padding-top:6px; color:#475569; font-size:11px; }
+.footer { display:flex; justify-content:space-between; font-size:10px; color:#64748b; border-top:1px solid #e2e8f0; padding-top:6px; margin-top:18px; }
+.print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#166534; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+@media print { .print-btn { display:none; } body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+</style></head><body>
+<button class="print-btn" onclick="window.print()">طباعة</button>
+<div class="sheet">
+  <div class="header">
+    ${safeLogo ? `<div class="logo"><img src="${safeLogo}" alt="" /></div>` : ""}
+    <div class="co-name">${esc(coName)}</div>
+  </div>
+  <div class="title-bar">سند ${esc(doc.typeLabel)}</div>
+  <div class="data-wrap">
+    <div class="section-label">بيانات السلفة</div>
+    <table class="data">${dataHtml}</table>
+    <div class="tafqeet">${esc(tafqeet)}</div>
+  </div>
+  <div class="recipient">
+    <div class="sig">
+      <div class="role">توقيع الموظف (المستلم)</div>
+      <div class="line">${esc(doc.employeeName)}</div>
+    </div>
+    <div class="sig">
+      <div class="role">الضامن</div>
+      <div class="line">الاسم والتوقيع</div>
+    </div>
+  </div>
+  <div class="sigs">
+    <div class="sig">
+      <div class="role">مسؤول الأجور والرواتب</div>
+      <div class="line">الاسم والتوقيع</div>
+    </div>
+    <div class="sig">
+      <div class="role">مدير الموارد البشرية</div>
+      <div class="line">الاسم والتوقيع</div>
+    </div>
+    <div class="sig">
+      <div class="role">الإدارة المالية</div>
+      <div class="line">الاسم والتوقيع</div>
+    </div>
+  </div>
+  <div class="footer">
+    <span>تاريخ الطباعة : ${esc(printedAt)}</span>
+    <span>الصفحة 1 من 1</span>
+  </div>
+</div>
+<script>setTimeout(function(){window.print()},300);</script>
+</body></html>`;
+}
+
+/** Opens a print window (synchronously, popup-blocker safe) and writes the
+ *  loan voucher HTML. */
+export function printLoanVoucher(args: LoanVoucherArgs): void {
+  const w = window.open("", "_blank", "width=900,height=900");
+  if (!w) {
+    args.onError?.("تم منع النوافذ المنبثقة — اسمح بفتح النوافذ المنبثقة من هذا الموقع لإجراء الطباعة.");
+    return;
+  }
+  const html = buildLoanVoucherHtml(args);
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
+
+/** Renders the loan voucher to a downloadable A4-portrait PDF file via
+ *  html2canvas + jsPDF (dynamic-imported so they stay out of the page bundle). */
+export async function downloadLoanVoucherPdf(args: LoanVoucherArgs, filename: string): Promise<void> {
+  // Strip the floating print button + auto-print script for the offscreen render.
+  const html = buildLoanVoucherHtml(args)
+    .replace(/<button class="print-btn"[\s\S]*?<\/button>/, "")
+    .replace(/<script>[\s\S]*?<\/script>/, "");
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.cssText = "position:fixed;left:-99999px;top:0;width:794px;height:1123px;border:0;visibility:hidden;";
+  document.body.appendChild(iframe);
+  try {
+    const doc = iframe.contentDocument;
+    if (!doc) throw new Error("iframe contentDocument unavailable");
+    doc.open(); doc.write(html); doc.close();
+    await new Promise<void>((resolve) => {
+      const imgs = Array.from(doc.images);
+      if (imgs.length === 0) return resolve();
+      let remaining = imgs.length;
+      const done = () => { if (--remaining <= 0) resolve(); };
+      imgs.forEach((img) => { if (img.complete) done(); else { img.addEventListener("load", done); img.addEventListener("error", done); } });
+      setTimeout(resolve, 2500);
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+      import("html2canvas"),
+      import("jspdf"),
+    ]);
+    const body = doc.body;
+    const fullHeight = Math.max(body.scrollHeight, doc.documentElement.scrollHeight, body.offsetHeight);
+    iframe.style.height = `${fullHeight + 50}px`;
+    await new Promise((r) => setTimeout(r, 80));
+    const canvas = await html2canvas(body, {
+      scale: 2, useCORS: true, backgroundColor: "#ffffff",
+      windowWidth: 794, windowHeight: fullHeight + 50, scrollX: 0, scrollY: 0, logging: false,
+    });
+    const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const imgH = (canvas.height * pageW) / canvas.width;
+    const img = canvas.toDataURL("image/jpeg", 0.95);
+    if (imgH <= pageH) {
+      pdf.addImage(img, "JPEG", 0, 0, pageW, imgH);
+    } else {
+      // Multi-page fallback: slice vertically.
+      let remaining = imgH; let position = 0;
+      while (remaining > 0) {
+        pdf.addImage(img, "JPEG", 0, position, pageW, imgH);
+        remaining -= pageH;
+        if (remaining > 0) { pdf.addPage(); position -= pageH; }
+      }
+    }
+    pdf.save(`${filename}.pdf`);
+  } finally {
+    document.body.removeChild(iframe);
+  }
+}

@@ -7173,7 +7173,17 @@
       "toastDeleted": "Deleted",
       "toastErrorTitle": "Error",
       "toastDisbursed": "Loan disbursed and journal entry created",
-      "errNoSelectedLoan": "No loan selected"
+      "errNoSelectedLoan": "No loan selected",
+      "editTitle": "Edit loan",
+      "exportExcel": "Export Excel",
+      "editTooltip": "Edit",
+      "printTooltip": "Print",
+      "pdfTooltip": "Download PDF",
+      "colCode": "Code",
+      "fieldInstallmentStartDate": "Installment start date",
+      "fieldInstallmentEndDate": "Installment end date (auto)",
+      "lockNoteDisbursed": "This loan has been disbursed and is linked to a journal entry, so the amount, employee, and loan type/date cannot be changed. You can still edit the installment schedule, reason, and notes.",
+      "lockNoteClosed": "This loan is cancelled or completed, so its data cannot be edited — only notes can be changed."
     },
     "payroll": {
       "title": "Payroll runs",

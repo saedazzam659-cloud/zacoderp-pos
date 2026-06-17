@@ -612,12 +612,15 @@ router.get("/loans/list", async (req, res) => {
       amount: employeeLoansTable.amount,
       installments: employeeLoansTable.installments,
       installmentAmt: employeeLoansTable.installmentAmt,
+      installmentStartDate: employeeLoansTable.installmentStartDate,
+      installmentEndDate: employeeLoansTable.installmentEndDate,
       paidAmount: employeeLoansTable.paidAmount,
       status: employeeLoansTable.status,
       reason: employeeLoansTable.reason,
       notes: employeeLoansTable.notes,
       empCode: employeesTable.code,
       empNameAr: employeesTable.nameAr,
+      empNameEn: employeesTable.nameEn,
     }).from(employeeLoansTable)
       .leftJoin(employeesTable, eq(employeesTable.id, employeeLoansTable.employeeId))
       .where(and(...conds))
@@ -642,6 +645,8 @@ router.post("/loans", async (req, res) => {
       amount: String(amt),
       installments,
       installmentAmt: String(inst),
+      installmentStartDate: N(b.installmentStartDate),
+      installmentEndDate: N(b.installmentEndDate),
       paidAmount: "0",
       status: "active",
       reason: N(b.reason),
@@ -704,14 +709,75 @@ router.post("/:id/eos-pay", async (req, res) => {
 router.put("/loans/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
     const b = req.body || {};
+    const [existing] = await db.select().from(employeeLoansTable)
+      .where(and(eq(employeeLoansTable.id, id), eq(employeeLoansTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "السلفة غير موجودة" }); return; }
+
+    // ── Integrity guard ──────────────────────────────────────────────
+    // Once a loan is disbursed (notes carry the JE# marker) its posted
+    // disbursement journal entry debited loans-receivable for the original
+    // principal/employee — changing those would desync the GL. A closed
+    // (cancelled/completed) loan is terminal: its whole schedule is frozen.
+    // We only reject fields that ACTUALLY change vs. the stored value, so the
+    // form can still resend unchanged values while editing the allowed ones.
+    const isDisbursed = (existing.notes || "").includes("JE#");
+    const isClosed = existing.status === "cancelled" || existing.status === "completed";
+    const numChanged = (key: keyof typeof existing, v: any) =>
+      v != null && Number(v) !== Number((existing as any)[key] ?? 0);
+    const strChanged = (key: keyof typeof existing, v: any) =>
+      v !== undefined && (v == null ? "" : String(v)) !== ((existing as any)[key] ?? "");
+    const violations: string[] = [];
+    if (isDisbursed || isClosed) {
+      if (numChanged("amount", b.amount)) violations.push("amount");
+      if (numChanged("employeeId", b.employeeId)) violations.push("employeeId");
+      if (strChanged("loanDate", b.loanDate)) violations.push("loanDate");
+      if (strChanged("loanType", b.loanType)) violations.push("loanType");
+    }
+    if (isClosed) {
+      if (numChanged("installments", b.installments)) violations.push("installments");
+      if (numChanged("installmentAmt", b.installmentAmt)) violations.push("installmentAmt");
+      if (strChanged("installmentStartDate", b.installmentStartDate)) violations.push("installmentStartDate");
+      if (strChanged("installmentEndDate", b.installmentEndDate)) violations.push("installmentEndDate");
+    }
+    if (violations.length) {
+      res.status(409).json({
+        error: isClosed
+          ? "لا يمكن تعديل سلفة مُلغاة أو منتهية."
+          : "لا يمكن تعديل المبلغ أو الموظف أو التاريخ بعد صرف السلفة (لارتباطها بقيد محاسبي). يمكنك تعديل جدول الأقساط والملاحظات فقط.",
+        code: "LOAN_EDIT_LOCKED",
+        fields: violations,
+      });
+      return;
+    }
+
     const upd: any = { updatedAt: new Date() };
+    // Quick status/payment patches (used by cancel + payroll deduction).
     if (b.status) upd.status = b.status;
     if (b.paidAmount != null) upd.paidAmount = String(b.paidAmount);
+    // Full edit-form fields.
+    if (b.employeeId != null) upd.employeeId = Number(b.employeeId);
+    if (b.loanDate != null) upd.loanDate = b.loanDate;
+    if (b.loanType != null) upd.loanType = b.loanType;
+    if (b.amount != null) upd.amount = String(Number(b.amount));
+    if (b.installments != null) upd.installments = Math.max(1, Number(b.installments));
     if (b.installmentAmt != null) upd.installmentAmt = String(b.installmentAmt);
-    if (b.notes != null) upd.notes = N(b.notes);
+    if (b.installmentStartDate !== undefined) upd.installmentStartDate = N(b.installmentStartDate);
+    if (b.installmentEndDate !== undefined) upd.installmentEndDate = N(b.installmentEndDate);
+    if (b.reason !== undefined) upd.reason = N(b.reason);
+    // Preserve the disbursement marker (JE#…) so editing the loan from the
+    // form never strips the link to its disbursement journal entry.
+    if (b.notes !== undefined) {
+      let notes = b.notes == null ? null : String(b.notes);
+      const jeMatch = (existing.notes || "").match(/JE#\d+/);
+      if (jeMatch && !(notes || "").includes(jeMatch[0])) {
+        notes = notes ? `${jeMatch[0]} — ${notes}` : jeMatch[0];
+      }
+      upd.notes = notes;
+    }
     const [row] = await db.update(employeeLoansTable).set(upd)
-      .where(and(eq(employeeLoansTable.id, Number(req.params.id)), eq(employeeLoansTable.companyId, cid)))
+      .where(and(eq(employeeLoansTable.id, id), eq(employeeLoansTable.companyId, cid)))
       .returning();
     res.json(row);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
