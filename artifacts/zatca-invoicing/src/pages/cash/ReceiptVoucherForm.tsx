@@ -939,6 +939,7 @@ export default function ReceiptVoucherForm() {
                       type="number" step="0.01" placeholder="0.00"
                       value={form.amount}
                       onChange={e => setForm(p => ({ ...p, amount: e.target.value }))}
+                      onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
                       dir="ltr"
                       data-testid="rv-amount"
                       className={cn("h-12 text-xl font-mono font-bold text-left", isRtl ? "pr-11" : "pl-11")}

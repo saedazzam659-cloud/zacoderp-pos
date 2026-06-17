@@ -11,8 +11,9 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { TablePagination, usePagination } from "@/components/TablePagination";
-import { ArrowDownCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2, Copy } from "lucide-react";
+import { ArrowDownCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2, Copy, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { printCashVoucher } from "@/lib/cashVoucherPrint";
 import {
   rowToneFor, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
@@ -66,6 +67,28 @@ export default function ReceiptVouchers() {
     enabled: !!cid,
   });
 
+  // Lookups needed to resolve treasury / counterparty names for row printing.
+  const { data: cashBoxes = [] } = useQuery<any[]>({
+    queryKey: ["cash-boxes", cid],
+    queryFn: () => fetch(`${API}/api/cash-boxes?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    enabled: !!cid,
+  });
+  const { data: bankAccounts = [] } = useQuery<any[]>({
+    queryKey: ["bank-accounts", cid],
+    queryFn: () => fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    enabled: !!cid,
+  });
+  const { data: customers = [] } = useQuery<any[]>({
+    queryKey: ["customers", cid],
+    queryFn: () => fetch(`${API}/api/customers?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    enabled: !!cid,
+  });
+  const { data: accounts = [] } = useQuery<any[]>({
+    queryKey: ["accounts", cid],
+    queryFn: () => fetch(`${API}/api/accounts?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    enabled: !!cid,
+  });
+
   const filtered = (vouchers as any[]).filter((v: any) =>
     v.code?.includes(search) || v.description?.includes(search) || v.entityName?.includes(search)
   );
@@ -76,6 +99,43 @@ export default function ReceiptVouchers() {
 
   function openAdd()  { navigate("/cash/receipt-vouchers/new"); }
   function openEdit(r: any) { navigate(`/cash/receipt-vouchers/${r.id}`); }
+
+  // ── Print a single voucher straight from the list (RAGM layout) ──
+  function printRow(row: any) {
+    const cb = (cashBoxes as any[]).find((c: any) => String(c.id) === String(row.cashBoxId));
+    const ba = (bankAccounts as any[]).find((b: any) => String(b.id) === String(row.bankAccountId));
+    const treasury = row.paymentType === "bank"
+      ? (ba ? { code: ba.code, name: (isRtl ? ba.nameAr : (ba.nameEn || ba.nameAr)) } : null)
+      : (cb ? { code: cb.code, name: (isRtl ? cb.nameAr : (cb.nameEn || cb.nameAr)) } : null);
+    const cust = row.entityId
+      ? (customers as any[]).find((c: any) => String(c.id) === String(row.entityId))
+      : null;
+    const acct = row.accountId
+      ? (accounts as any[]).find((a: any) => String(a.id) === String(row.accountId))
+      : null;
+    const account = {
+      code: cust?.code ?? acct?.code ?? "",
+      name: row.entityName
+        || (cust ? (isRtl ? cust.nameAr : (cust.nameEn || cust.nameAr)) : "")
+        || (acct ? (isRtl ? acct.nameAr : (acct.nameEn || acct.nameAr)) : ""),
+    };
+    printCashVoucher({
+      kind: "receipt",
+      doc: {
+        code: row.code,
+        date: row.date,
+        amount: row.amount,
+        currency: row.currency,
+        description: row.description,
+      },
+      treasury,
+      account,
+      company: (user as any)?.company ?? null,
+      preparedBy: user?.username ?? null,
+      onError: (msg) =>
+        toast({ title: "تم منع النوافذ المنبثقة", description: msg, variant: "destructive" }),
+    });
+  }
 
   const postMut = useMutation({
     mutationFn: async (id: number) => {
@@ -206,11 +266,13 @@ export default function ReceiptVouchers() {
                   <td className="px-4 py-3 text-center">
                     <div className="flex justify-center gap-1">
                       {row.status === "draft" ? <>
+                        <button onClick={() => printRow(row)} className="p-1.5 rounded hover:bg-slate-100 text-muted-foreground hover:text-slate-700 transition-colors" title={t("cashCommon.print", { defaultValue: "طباعة" })}><Printer className="h-3.5 w-3.5" /></button>
                         <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors" title={t("cashCommon.edit", { defaultValue: "تعديل (خصائص)" })}><Pencil className="h-3.5 w-3.5" /></button>
                         <button onClick={() => navigate(`/cash/receipt-vouchers/new?from=${row.id}`)} className="p-1.5 rounded hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition-colors" title="نسخة مماثلة"><Copy className="h-3.5 w-3.5" /></button>
                         <button onClick={() => setPostRow(row)} className="p-1.5 rounded hover:bg-green-50 text-muted-foreground hover:text-green-600 transition-colors" title={t(`${NS}.postBtn`)}><Send className="h-3.5 w-3.5" /></button>
                         <button onClick={() => setDelRow(row)} className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors" title={t("cashCommon.delete")}><Trash2 className="h-3.5 w-3.5" /></button>
                       </> : <>
+                        <button onClick={() => printRow(row)} className="p-1.5 rounded hover:bg-slate-100 text-muted-foreground hover:text-slate-700 transition-colors" title={t("cashCommon.print", { defaultValue: "طباعة" })}><Printer className="h-3.5 w-3.5" /></button>
                         <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors" title="عرض / خصائص"><Pencil className="h-3.5 w-3.5" /></button>
                         <button onClick={() => navigate(`/cash/receipt-vouchers/new?from=${row.id}`)} className="p-1.5 rounded hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition-colors" title="نسخة مماثلة"><Copy className="h-3.5 w-3.5" /></button>
                         <button onClick={() => setUnpostRow(row)} className="p-1.5 rounded hover:bg-amber-50 text-muted-foreground hover:text-amber-600 transition-colors" title={t(`${NS}.unpostBtn`)}><Undo2 className="h-3.5 w-3.5" /></button>
