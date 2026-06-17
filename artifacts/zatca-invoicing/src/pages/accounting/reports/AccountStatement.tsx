@@ -329,7 +329,7 @@ export default function AccountStatement() {
     description: t("accountStatement.previousBalance"),
     debit:       previousDebit  || "",
     credit:      previousCredit || "",
-    balance:     `${fmt(Math.abs(previousBalance))} ${previousBalance >= 0 ? t("accountingReports.debit") : t("accountingReports.credit")}`,
+    balance:     `${fmt(Math.abs(previousBalance))} ${previousBalance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}`,
   };
   const exportRows = [
     ...(withOpening ? [previousBalanceRow] : []),
@@ -359,7 +359,7 @@ export default function AccountStatement() {
         description: t("accountingReports.total"),
         debit:       totalDebit,
         credit:      totalCredit,
-        balance:     `${fmt(Math.abs(finalBalance))} ${finalBalance >= 0 ? t("accountingReports.debit") : t("accountingReports.credit")}`,
+        balance:     `${fmt(Math.abs(finalBalance))} ${finalBalance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}`,
       }
     : null;
 
@@ -368,7 +368,7 @@ export default function AccountStatement() {
     ? [
         { label: t("accountingReports.debit"),   value: fmt(totalDebit),  tone: "debit"   as const },
         { label: t("accountingReports.credit"),  value: fmt(totalCredit), tone: "credit"  as const },
-        { label: t("accountStatement.closingBalance"), value: `${fmt(Math.abs(finalBalance))} ${finalBalance >= 0 ? t("accountingReports.debit") : t("accountingReports.credit")}`, tone: "primary" as const },
+        { label: t("accountStatement.closingBalance"), value: `${fmt(Math.abs(finalBalance))} ${finalBalance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}`, tone: "primary" as const },
       ]
     : null;
 
@@ -487,7 +487,7 @@ export default function AccountStatement() {
             <div className={isRtl ? "mr-auto" : "ml-auto"}>
               <span className="text-xs text-muted-foreground block">{t("accountStatement.closingBalance")}</span>
               <span className={cn("font-bold text-lg", finalBalance >= 0 ? "text-primary" : "text-destructive")}>
-                {fmt(Math.abs(finalBalance))} {finalBalance >= 0 ? t("accountingReports.debit") : t("accountingReports.credit")}
+                {fmt(Math.abs(finalBalance))} {finalBalance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}
               </span>
             </div>
           </div>
@@ -770,7 +770,7 @@ export default function AccountStatement() {
                     <td className={cn("px-4 py-3 text-end font-mono",
                       finalBalance >= 0 ? "text-primary" : "text-destructive"
                     )}>
-                      {fmt(Math.abs(finalBalance))} {finalBalance >= 0 ? t("accountingReports.debit") : t("accountingReports.credit")}
+                      {fmt(Math.abs(finalBalance))} {finalBalance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}
                     </td>
                   </tr>
                 </tfoot>

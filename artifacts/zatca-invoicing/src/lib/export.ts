@@ -75,6 +75,235 @@ export function exportToExcel(
   XLSX.writeFile(wb, `${filename}.xlsx`);
 }
 
+// ─── Company branding shared across PDF + branded Excel ───────────────────────
+// Mirrors the fields the dedicated statement PDF reads off `user.company`.
+// All optional — a missing field is simply skipped in the header.
+export interface ExportCompanyInfo {
+  nameAr?: string | null;
+  nameEn?: string | null;
+  crNumber?: string | null;
+  vatNumber?: string | null;
+  phone?: string | null;
+  buildingNumber?: string | null;
+  street?: string | null;
+  district?: string | null;
+  city?: string | null;
+  postalCode?: string | null;
+  logo?: string | null;
+}
+
+/** Compose the single-line address from the granular ZATCA address parts. */
+export function buildCompanyAddressLine(c?: ExportCompanyInfo | null): string {
+  if (!c) return "";
+  return [c.buildingNumber, c.street, c.district, c.city, c.postalCode]
+    .filter(Boolean)
+    .join(" - ");
+}
+
+// ─── Branded Excel Export (ExcelJS) ───────────────────────────────────────────
+// Adds an attractive company header (logo image + name + CR/VAT/phone +
+// address + report title) above a styled data grid. Used by ExportButtons so
+// EVERY report's Excel file carries the company brand. The legacy
+// `exportToExcel` (SheetJS) stays untouched for direct callers that don't pass
+// branding. Falls back to `exportToExcel` if ExcelJS fails to load.
+export async function exportToExcelBranded(
+  rows: Record<string, unknown>[],
+  columns: ExportColumn[],
+  filename: string,
+  opts: {
+    sheetName?: string;
+    totalsRow?: Record<string, unknown> | null;
+    company?: ExportCompanyInfo | null;
+    title?: string;
+    subtitle?: string;
+  } = {},
+): Promise<void> {
+  const { sheetName = "Sheet1", totalsRow, company, title, subtitle } = opts;
+  try {
+    const ExcelJS = (await import("exceljs")).default;
+    const norm = (val: unknown): string | number => {
+      if (val === null || val === undefined) return "";
+      if (typeof val === "number") return Number.isFinite(val) ? val : "";
+      return String(val);
+    };
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet(sheetName, { views: [{ rightToLeft: true }] });
+    const nCols = columns.length;
+
+    // Green palette matching the on-screen / PDF brand.
+    const GREEN = "FF166534";
+    const GREEN_DARK = "FF14532D";
+    const GREEN_SOFT = "FFDCFCE7";
+    const mergeAcross = (rowIdx: number) => {
+      if (nCols > 1) ws.mergeCells(rowIdx, 1, rowIdx, nCols);
+    };
+
+    let r = 1;
+    // Company name (Arabic) — headline.
+    const nameAr = company?.nameAr || company?.nameEn || "";
+    if (nameAr) {
+      const row = ws.getRow(r);
+      row.getCell(1).value = nameAr;
+      row.getCell(1).font = { bold: true, size: 16, color: { argb: GREEN } };
+      row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+      mergeAcross(r);
+      row.height = 24;
+      r++;
+    }
+    if (company?.nameEn && company.nameEn !== company.nameAr) {
+      const row = ws.getRow(r);
+      row.getCell(1).value = company.nameEn;
+      row.getCell(1).font = { size: 11, color: { argb: "FF475569" } };
+      row.getCell(1).alignment = { horizontal: "center" };
+      mergeAcross(r);
+      r++;
+    }
+    const metaParts = [
+      company?.crNumber ? `س.ت: ${company.crNumber}` : "",
+      company?.vatNumber ? `الرقم الضريبي: ${company.vatNumber}` : "",
+      company?.phone ? `جوال: ${company.phone}` : "",
+    ].filter(Boolean);
+    if (metaParts.length) {
+      const row = ws.getRow(r);
+      row.getCell(1).value = metaParts.join("   |   ");
+      row.getCell(1).font = { size: 10, color: { argb: "FF334155" } };
+      row.getCell(1).alignment = { horizontal: "center" };
+      mergeAcross(r);
+      r++;
+    }
+    const addressLine = buildCompanyAddressLine(company);
+    if (addressLine) {
+      const row = ws.getRow(r);
+      row.getCell(1).value = addressLine;
+      row.getCell(1).font = { size: 10, color: { argb: "FF64748B" } };
+      row.getCell(1).alignment = { horizontal: "center" };
+      mergeAcross(r);
+      r++;
+    }
+    // Report title.
+    if (title) {
+      const row = ws.getRow(r);
+      row.getCell(1).value = title;
+      row.getCell(1).font = { bold: true, size: 13, color: { argb: GREEN_DARK } };
+      row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+      row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
+      mergeAcross(r);
+      row.height = 20;
+      r++;
+    }
+    if (subtitle) {
+      const row = ws.getRow(r);
+      row.getCell(1).value = subtitle;
+      row.getCell(1).font = { size: 10, italic: true, color: { argb: "FF64748B" } };
+      row.getCell(1).alignment = { horizontal: "center" };
+      mergeAcross(r);
+      r++;
+    }
+    // Meta line: print date + record count.
+    {
+      const today = new Date().toLocaleDateString("ar-SA-u-nu-latn", {
+        year: "numeric", month: "long", day: "numeric",
+      });
+      const row = ws.getRow(r);
+      row.getCell(1).value = `تاريخ الطباعة: ${today}   |   عدد السجلات: ${rows.length}`;
+      row.getCell(1).font = { size: 9, color: { argb: "FF94A3B8" } };
+      row.getCell(1).alignment = { horizontal: "center" };
+      mergeAcross(r);
+      r++;
+    }
+
+    // Embed the logo image (data-URI only; http logos can't be embedded).
+    const safeLogo = safeLogoSrc(company?.logo);
+    if (safeLogo && safeLogo.startsWith("data:")) {
+      const m = /^data:image\/([a-zA-Z+]+);base64,(.+)$/.exec(safeLogo);
+      if (m) {
+        const ext = m[1].includes("png")
+          ? "png"
+          : m[1].includes("gif")
+          ? "gif"
+          : "jpeg";
+        try {
+          const imgId = wb.addImage({ base64: safeLogo, extension: ext as "png" | "jpeg" | "gif" });
+          // Float the logo in the top band (rows 0-3), anchored to the
+          // first column edge. RTL view places col A on the right, so the
+          // logo sits in the top-right corner alongside the centered name.
+          ws.addImage(imgId, { tl: { col: 0, row: 0 }, ext: { width: 150, height: 58 } });
+        } catch { /* non-fatal — header text still renders */ }
+      }
+    }
+
+    const headerRowIdx = r;
+    const headerRow = ws.getRow(r);
+    columns.forEach((c, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = c.header;
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GREEN } };
+      cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      cell.border = {
+        top: { style: "thin", color: { argb: GREEN_DARK } },
+        bottom: { style: "thin", color: { argb: GREEN_DARK } },
+        left: { style: "thin", color: { argb: GREEN_DARK } },
+        right: { style: "thin", color: { argb: GREEN_DARK } },
+      };
+    });
+    headerRow.height = 22;
+    r++;
+
+    const thin = { style: "thin" as const, color: { argb: "FFE2E8F0" } };
+    const writeDataRow = (src: Record<string, unknown>, isTotals: boolean) => {
+      const row = ws.getRow(r);
+      columns.forEach((c, i) => {
+        const cell = row.getCell(i + 1);
+        const v = norm(src[c.key]);
+        cell.value = v;
+        if (c.numFmt && typeof v === "number") cell.numFmt = c.numFmt;
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = { top: thin, bottom: thin, left: thin, right: thin };
+        if (isTotals) {
+          cell.font = { bold: true, color: { argb: GREEN_DARK } };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GREEN_SOFT } };
+        }
+      });
+      r++;
+    };
+    rows.forEach(row => writeDataRow(row, false));
+    if (totalsRow) writeDataRow(totalsRow, true);
+
+    // Column widths (chars → exceljs width units roughly 1:1).
+    columns.forEach((c, i) => {
+      const auto = Math.max(
+        c.header.length + 2,
+        ...rows.map(row => String(norm(row[c.key]) ?? "").length + 2),
+        totalsRow ? String(norm(totalsRow[c.key]) ?? "").length + 2 : 0,
+      );
+      ws.getColumn(i + 1).width = c.width ?? Math.min(Math.max(auto, 10), 50);
+    });
+
+    // Freeze everything above the data so the header band + column titles stay
+    // visible while scrolling.
+    ws.views = [{ rightToLeft: true, state: "frozen", ySplit: headerRowIdx }];
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${filename}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch {
+    // ExcelJS unavailable / failed — degrade to the plain SheetJS export so
+    // the user still gets their data.
+    exportToExcel(rows, columns, filename, sheetName, totalsRow);
+  }
+}
+
 // ─── Safe Logo Source ────────────────────────────────────────────────────────
 // All print surfaces stitch their HTML by string interpolation into
 // `document.write()`, so any company-supplied `logo` value reaches the
@@ -150,6 +379,9 @@ export async function exportToPDF(
   // Used by the cost-centres report to print the per-account aggregate
   // alongside the per-transaction detail.
   extraSections?: ExportExtraSection[] | null,
+  // Optional company info rendered as an attractive branded block (name,
+  // CR, VAT, phone, address) in the green header beneath the logo.
+  company?: ExportCompanyInfo | null,
 ) {
   const escape = (s: unknown) =>
     String(s ?? "")
@@ -185,11 +417,29 @@ export async function exportToPDF(
   // having transparency or its own padding.  Falls back to an empty string
   // when the company has no logo configured.  The src is run through
   // `safeLogoSrc` to defang attribute-injection / XSS via crafted values.
-  const safeLogo = safeLogoSrc(logo);
+  const safeLogo = safeLogoSrc(logo ?? company?.logo);
   const logoHtml = safeLogo
     ? `<div style="background:#fff;border-radius:8px;padding:5px 8px;display:inline-block;margin-bottom:8px;">
          <img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;" />
        </div>`
+    : "";
+
+  // Branded company block (name + CR/VAT/phone + address) shown in the green
+  // header beneath the logo. Each value is escaped before interpolation.
+  const companyMetaLine = [
+    company?.crNumber ? `س.ت: ${escape(company.crNumber)}` : "",
+    company?.vatNumber ? `الرقم الضريبي: ${escape(company.vatNumber)}` : "",
+    company?.phone ? `جوال: ${escape(company.phone)}` : "",
+  ]
+    .filter(Boolean)
+    .join("&nbsp;&nbsp;|&nbsp;&nbsp;");
+  const companyAddressLine = buildCompanyAddressLine(company);
+  const companyHtml = company
+    ? `${company.nameAr ? `<div class="company-name">${escape(company.nameAr)}</div>` : ""}
+       ${company.nameEn && company.nameEn !== company.nameAr ? `<div class="company-name-en">${escape(company.nameEn)}</div>` : ""}
+       ${companyMetaLine ? `<div class="company-meta">${companyMetaLine}</div>` : ""}
+       ${companyAddressLine ? `<div class="company-meta">${escape(companyAddressLine)}</div>` : ""}
+       <div class="title-sep"></div>`
     : "";
 
   const theadCells = columns
@@ -247,6 +497,15 @@ export async function exportToPDF(
     }
     .header h1 { font-size: 17pt; font-weight: 700; margin-bottom: 4px; }
     .header p  { font-size: 10pt; opacity: .85; }
+    .header .company-name    { font-size: 15pt; font-weight: 800; margin-bottom: 2px; letter-spacing: .2px; }
+    .header .company-name-en { font-size: 10pt; font-weight: 500; opacity: .9; margin-bottom: 4px; }
+    .header .company-meta    { font-size: 8.5pt; opacity: .92; margin-bottom: 2px; }
+    .header .title-sep {
+      height: 1px;
+      background: rgba(255,255,255,.35);
+      margin: 9px auto 8px;
+      width: 70%;
+    }
     .meta {
       background: #f0fdf4;
       border-bottom: 1px solid #bbf7d0;
@@ -383,6 +642,7 @@ export async function exportToPDF(
 <body>
   <div class="header">
     ${logoHtml}
+    ${companyHtml}
     <h1>${escape(title)}</h1>
     ${subtitle ? `<p>${escape(subtitle)}</p>` : ""}
   </div>

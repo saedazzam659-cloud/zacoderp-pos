@@ -6,7 +6,7 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Download, FileSpreadsheet, FileText, ChevronDown, Loader2, Printer } from "lucide-react";
-import { exportToExcel, exportToPDF, type ExportColumn, type ExportExtraSection } from "@/lib/export";
+import { exportToExcelBranded, exportToPDF, type ExportColumn, type ExportExtraSection, type ExportCompanyInfo } from "@/lib/export";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface ExportButtonsProps {
@@ -36,11 +36,29 @@ export default function ExportButtons({
   rows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow, summaryFooter, extraSections,
 }: ExportButtonsProps) {
   const [busy, setBusy] = useState(false);
-  // The company logo is stored on the user's `company` object as a base64
-  // data URL.  We forward it to every PDF/print invocation so the print
-  // header carries the company brand consistently across all reports.
+  // The company brand (logo + name + CR/VAT/phone/address) is stored on the
+  // user's `company` object. We forward the whole record to every Excel and
+  // PDF/print invocation so each report file carries the company brand
+  // consistently. The logo alone is also passed to keep the old positional
+  // arg working.
   const { user } = useAuth() as any;
   const companyLogo: string | null = user?.company?.logo ?? null;
+  const c = user?.company;
+  const company: ExportCompanyInfo | null = c
+    ? {
+        nameAr: c.nameAr ?? c.name ?? null,
+        nameEn: c.nameEn ?? null,
+        crNumber: c.crNumber ?? null,
+        vatNumber: c.vatNumber ?? null,
+        phone: c.phone ?? null,
+        buildingNumber: c.buildingNumber ?? null,
+        street: c.street ?? null,
+        district: c.district ?? null,
+        city: c.city ?? null,
+        postalCode: c.postalCode ?? null,
+        logo: c.logo ?? null,
+      }
+    : null;
 
   async function handleExport(type: "excel" | "pdf" | "print") {
     setBusy(true);
@@ -48,7 +66,21 @@ export default function ExportButtons({
       if (type === "excel") {
         // Excel can't render the summary cards — instead append the
         // same numbers as extra rows so they're not lost from the file.
-        const extra = (summaryFooter ?? []).map(c => ({ [columns[0]?.key ?? "label"]: c.label, [columns[columns.length - 1]?.key ?? "value"]: c.value }));
+        // Place each card's VALUE under the matching column by tone:
+        //   debit  → "debit" column, credit → "credit" column, otherwise
+        //   the last (balance) column. So "إجمالي المدين" lands under the
+        //   debit column and "إجمالي الدائن" under the credit column rather
+        //   than all piling into the balance column.
+        const hasKey = (k: string) => columns.some(col => col.key === k);
+        const valueKeyForTone = (tone?: string): string => {
+          if (tone === "debit" && hasKey("debit")) return "debit";
+          if (tone === "credit" && hasKey("credit")) return "credit";
+          return columns[columns.length - 1]?.key ?? "value";
+        };
+        const extra = (summaryFooter ?? []).map(card => ({
+          [columns[0]?.key ?? "label"]: card.label,
+          [valueKeyForTone(card.tone)]: card.value,
+        }));
         // Append each extra section below the main rows in the same
         // sheet. Each section is preceded by a blank separator row and
         // a "title" row placed in the first column, followed by its
@@ -76,16 +108,22 @@ export default function ExportButtons({
             sectionRows.push(mappedT);
           }
         });
-        exportToExcel([...rows, ...extra, ...sectionRows], columns, filename, "Sheet1", totalsRow);
+        await exportToExcelBranded([...rows, ...extra, ...sectionRows], columns, filename, {
+          sheetName: "Sheet1",
+          totalsRow,
+          company,
+          title,
+          subtitle,
+        });
       } else if (type === "pdf") {
         // Real .pdf download — html2pdf.js renders the same HTML report
         // offscreen, rasterises it (so Arabic/RTL renders correctly) and
         // saves as `${filename}.pdf`. Must await so the busy spinner
         // stays visible until the file dialog appears.
-        await exportToPDF(rows, columns, filename, title, subtitle, false, totalsRow, summaryFooter, companyLogo, extraSections);
+        await exportToPDF(rows, columns, filename, title, subtitle, false, totalsRow, summaryFooter, companyLogo, extraSections, company);
       } else {
         // Print: open the formatted HTML and trigger window.print() automatically
-        await exportToPDF(rows, columns, filename, title, subtitle, true, totalsRow, summaryFooter, companyLogo, extraSections);
+        await exportToPDF(rows, columns, filename, title, subtitle, true, totalsRow, summaryFooter, companyLogo, extraSections, company);
       }
     } finally {
       setBusy(false);
