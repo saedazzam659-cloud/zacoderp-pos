@@ -363,15 +363,6 @@ export default function AccountStatement() {
       }
     : null;
 
-  // Summary footer cards under the printed table (debit / credit / closing).
-  const exportSummaryFooter = (!isLoading && rows.length > 0)
-    ? [
-        { label: t("accountingReports.debit"),   value: fmt(totalDebit),  tone: "debit"   as const },
-        { label: t("accountingReports.credit"),  value: fmt(totalCredit), tone: "credit"  as const },
-        { label: t("accountStatement.closingBalance"), value: `${fmt(Math.abs(finalBalance))} ${finalBalance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}`, tone: "primary" as const },
-      ]
-    : null;
-
   function handleSearch() {
     if (!accountId) { toast({ title: t("accountStatement.selectAccountFirst"), variant: "destructive" }); return; }
     setSearched(true);
@@ -398,7 +389,6 @@ export default function AccountStatement() {
                 filename={`${t("accountStatement.filename_prefix")}-${selectedAccount?.code ?? ""}-${fromDate}`}
                 title={t("accountStatement.title_with", { name: accountDisplayName, from: fromDate, to: toDate })}
                 totalsRow={exportTotalsRow}
-                summaryFooter={exportSummaryFooter}
               />
               <Button variant="outline" size="sm" className="gap-2 print:hidden" onClick={() => window.print()}>
                 <Printer className="h-4 w-4" />{t("accountingReports.print")}
