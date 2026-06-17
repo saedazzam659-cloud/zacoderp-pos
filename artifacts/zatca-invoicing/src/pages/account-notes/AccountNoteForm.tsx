@@ -316,7 +316,7 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
             data-testid="input-amount" />
         </label>
 
-        <label className="flex flex-col gap-1"><span className="text-sm font-medium">رقم المرجع</span>
+        <label className="flex flex-col gap-1"><span className="text-sm font-medium">{partyType === "customer" ? "رقم فاتورة المبيعات" : "رقم فاتورة المشتريات"}</span>
           <Input value={form.referenceNumber}
             onChange={e => setForm({ ...form, referenceNumber: e.target.value })}
             data-testid="input-reference-number" />
