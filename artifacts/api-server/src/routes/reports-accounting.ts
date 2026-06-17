@@ -15,6 +15,7 @@ import {
   purchaseOrdersTable,
   maintenanceOrdersTable,
   bankAccountsTable, cashBoxesTable,
+  fiscalYearsTable,
 } from "@workspace/db";
 import { eq, and, sql, gte, lte, asc, desc, ne, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
@@ -290,6 +291,52 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
           debit:  cur.debit  + v.debit,
           credit: cur.credit + v.credit,
         });
+      }
+    }
+
+    // Source 4: Nominal (P&L) account fiscal-year RESET.
+    // Revenue & expense accounts are TEMPORARY accounts — they must start each
+    // fiscal year at ZERO (their prior-year balance is closed to retained
+    // earnings at year-end). Sources 1-3 above bring forward EVERY prior
+    // posted movement, which would (wrongly) carry the previous fiscal year's
+    // revenue/expense balances into the new year's opening column whenever the
+    // user has not posted year-end closing JEs. To make the trial balance
+    // fiscal-year-aware regardless of whether closing entries exist, we OVERRIDE
+    // the opening of every P&L account so it reflects ONLY this fiscal year's
+    // movements up to (but excluding) fromDate. When the report starts on the
+    // fiscal year's first day, this yields exactly zero — the correct opening.
+    if (fromDate) {
+      const plAccountIds = new Set(
+        accounts
+          .filter(a => a.accountType === "revenue" || a.accountType === "expense")
+          .map(a => a.id),
+      );
+      if (plAccountIds.size > 0) {
+        // Resolve the fiscal year that CONTAINS fromDate (per-company calendar).
+        // Fallback to Jan 1 of fromDate's year if no fiscal year row matches.
+        const [fy] = await db.select({ startDate: fiscalYearsTable.startDate })
+          .from(fiscalYearsTable)
+          .where(and(
+            eq(fiscalYearsTable.companyId, cid),
+            lte(fiscalYearsTable.startDate, fromDate),
+            gte(fiscalYearsTable.endDate, fromDate),
+          ))
+          .limit(1);
+        const fyStart = fy?.startDate ?? `${fromDate.slice(0, 4)}-01-01`;
+        // Movements of P&L accounts from the fiscal-year start up to fromDate.
+        // Excludes opening / trial_balance_adjustment to mirror Source 3.
+        const plPriorMap = (fyStart < fromDate)
+          ? await aggregate([
+              ...baseFilters,
+              gte(journalEntriesTable.entryDate, fyStart),
+              sql`${journalEntriesTable.entryDate} < ${fromDate}`,
+              ne(journalEntriesTable.entryType, "opening"),
+              ne(journalEntriesTable.entryType, "trial_balance_adjustment"),
+            ])
+          : new Map<number, { debit: number; credit: number }>();
+        for (const id of plAccountIds) {
+          openingMap.set(id, plPriorMap.get(id) ?? { debit: 0, credit: 0 });
+        }
       }
     }
   } else if (fromDate) {
