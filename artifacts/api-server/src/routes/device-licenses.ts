@@ -154,12 +154,40 @@ router.post("/validate", deviceAuth, async (req: DeviceAuthedRequest, res) => {
   const lic = req.device!.licenseId
     ? (await db.select().from(deviceLicensesTable).where(eq(deviceLicensesTable.id, req.device!.licenseId!)))[0]
     : null;
+
+  const expiresAt = lic?.expiresAt ?? null;
+
+  // Authoritative expiry / revocation enforcement — must mirror /activate.
+  // Without this, a device whose license was revoked or whose expiry date
+  // has passed would keep booting: /validate would always return 200
+  // {valid:true}, leaving expiry enforcement entirely up to the desktop
+  // client (which can be tampered with or run an outdated build). The
+  // desktop's boot 403 handler turns these responses into the
+  // license-expired / re-activation screen.
+  //
+  // Fail closed: an active device must always be bound to a valid license.
+  // The activation flow always sets licenseId, and deactivation flips the
+  // device to a non-active status (rejected earlier by deviceAuth), so a
+  // null/missing license here means the binding was lost — never open.
+  if (!lic) {
+    res.status(403).json({ error: "license missing", expiresAt: null });
+    return;
+  }
+  if (lic.status === "revoked" || lic.status === "expired") {
+    res.status(403).json({ error: `license ${lic.status}`, expiresAt });
+    return;
+  }
+  if (expiresAt && expiresAt.getTime() < Date.now()) {
+    res.status(403).json({ error: "license expired", expiresAt });
+    return;
+  }
+
   res.json({
     valid: true,
     deviceId: req.device!.id,
     companyId: req.device!.companyId,
     licenseStatus: lic?.status ?? null,
-    expiresAt: lic?.expiresAt ?? null,
+    expiresAt,
     serverTime: new Date().toISOString(),
   });
 });
