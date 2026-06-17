@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { DateField } from "@/components/ui/date-field";
+import { branchesApi } from "@/lib/branchesApi";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -38,6 +39,7 @@ export default function LcExpenseEntry() {
   const authH   = { Authorization: `Bearer ${token}` };
 
   const [lcId, setLcId] = useState<string>("");
+  const [branchId, setBranchId] = useState<string>("");
   const [form, setForm] = useState({
     expenseType: "", accountId: "", amount: "", currencyCode: "SAR", exchangeRate: "1",
     notes: "", date: today(),
@@ -89,6 +91,11 @@ export default function LcExpenseEntry() {
       const res = await fetch(url, { headers: authH }); return res.json();
     }, enabled: !!user,
   });
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey: ["branches", cid],
+    queryFn: () => branchesApi.getBranches(cid),
+    enabled: !!user,
+  });
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
   const baseCode = defaultCurrency?.code ?? "SAR";
 
@@ -126,6 +133,13 @@ export default function LcExpenseEntry() {
     setForm(p => ({ ...p, currencyCode: baseCode, exchangeRate: "1" }));
   }, [selectedLc?.id, baseCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Branch auto-fills from the LC's own branch on LC change; the user can
+  // override it and the override persists until a different LC is selected.
+  useEffect(() => {
+    if (!selectedLc) return;
+    setBranchId(selectedLc.branchId ? String(selectedLc.branchId) : "");
+  }, [selectedLc?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // When expense currency changes, auto-fetch rate
   useEffect(() => {
     if (!form.currencyCode || form.currencyCode === baseCode) {
@@ -155,6 +169,10 @@ export default function LcExpenseEntry() {
   const sourceItems = [
     { value: "", label: tr("pickSource") },
     ...sourceList.map((s: any) => ({ value: String(s.id), label: pickName(s.nameAr, s.nameEn) })),
+  ];
+  const branchItems = [
+    { value: "", label: isRtl ? "— بدون فرع —" : "— No branch —" },
+    ...branches.map((b: any) => ({ value: String(b.id), label: pickName(b.nameAr, b.nameEn) })),
   ];
 
   // Totals preview
@@ -199,6 +217,7 @@ export default function LcExpenseEntry() {
         const desc = `${trLc("transferDefaultDescExp", { lc: selectedLc.lcNumber, exp: form.expenseType.trim() })} ${tag}`;
         const body = {
           companyId: cid,
+          branchId: branchId ? Number(branchId) : null,
           entryDate: form.date,
           currency:  form.currencyCode,
           exchangeRate: String(rate),
@@ -349,6 +368,11 @@ export default function LcExpenseEntry() {
             <DateField value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
+            <Label className="text-xs">{isRtl ? "الفرع" : "Branch"}</Label>
+            <SearchCombobox items={branchItems} value={branchId}
+              onValueChange={setBranchId} placeholder={isRtl ? "اختر الفرع" : "Select branch"} />
+          </div>
+          <div className="space-y-1.5">
             <Label className="text-xs">{trLc("expenseCurrency")}</Label>
             <SearchCombobox items={currencyItems} value={form.currencyCode}
               onValueChange={v => setForm(p => ({ ...p, currencyCode: v }))} placeholder={trLc("fCurrencyPh")} />
@@ -424,6 +448,7 @@ export default function LcExpenseEntry() {
           <Button type="button" variant="outline" onClick={() => {
             setForm({ expenseType: "", accountId: "", amount: "", currencyCode: baseCode, exchangeRate: "1", notes: "", date: today() });
             setPaySource(p => ({ ...p, id: "" }));
+            setBranchId(selectedLc?.branchId ? String(selectedLc.branchId) : "");
           }}>{tr("clear")}</Button>
           <Button type="button" onClick={() => submitMut.mutate()} disabled={submitMut.isPending} className="gap-2">
             {submitMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
