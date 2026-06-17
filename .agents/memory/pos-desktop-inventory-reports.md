@@ -17,3 +17,18 @@ The ledger's `balance_after` is per (item, warehouse); summing it across warehou
 **`stock_movements_list` caps at 5000 rows (`limit.min(5000)`, ORDER BY id DESC).**
 **Why:** for an item with >5000 movements the OLDEST rows are dropped, so the TS-computed opening/running/closing silently understate by the dropped deltas — a real correctness bug for very active items.
 **How to apply:** Kardex surfaces an explicit truncation warning when `rows.length >= 5000` rather than showing a silently-wrong balance. A true fix needs a NEW Rust command returning (opening-balance-as-of-date + in-range movements) so the full history never has to be shipped to TS.
+
+# Phase 2 — Slow-Moving Items (الأصناف بطيئة الحركة)
+
+`SlowMovingItems.tsx` reuses ONLY existing commands: `stock_on_hand_list` (qty+value per item, aggregated across warehouses in TS), `stock_movements_list` (last-move date per item), `list_items` (+ `itemGroupName`). No new Rust. Service-nature items excluded.
+
+**5000-cap correctness for "no movement in sample":** do NOT force idle=9999. Derive `coverageDays` from the OLDEST sampled `entry_date` (only when truncated; Infinity = full ledger). An unsampled item is:
+- genuinely never-moved (definitely slow) when the ledger was NOT truncated, OR
+- definitely slow when `coverageDays >= threshold` (idle proven ≥ coverage), OR
+- UNDETERMINED when `coverageDays < threshold` → excluded from the list, counted in a banner note.
+**Why:** under a short 5000-row window an item moved recently-but-just-outside the window would be falsely flagged as maximally slow.
+
+# Portability of the remaining web inventory-hub reports
+
+- **FreeQuantitiesReport** — NOT portable. Needs free/bonus-qty line semantics the local SQLite/Rust doesn't track. Needs new Rust.
+- **ItemSalesValuationReport** — only partly portable. `reportSalesInvoiceLines` gives per-item SOLD qty/value, but `reportSalesReturns` is HEADER-ONLY (subtotal/vat/grand, no per-item lines). So per-item RETURNED qty/value is impossible without a new `report_sales_return_lines` Rust command. A sold-only version would just duplicate the existing `SalesByItemReport`.

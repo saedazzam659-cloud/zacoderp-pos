@@ -83,6 +83,7 @@ import StockAdjustmentsAdmin from "./StockAdjustmentsAdmin";
 import StockMovementsReport from "./StockMovementsReport";
 import ItemCard from "./ItemCard";
 import StockValuation from "./StockValuation";
+import SlowMovingItems from "./SlowMovingItems";
 import StockTransfersAdmin from "./StockTransfersAdmin";
 import PurchaseReturnsAdmin from "./PurchaseReturnsAdmin";
 import PurchaseOrdersAdmin from "./PurchaseOrdersAdmin";
@@ -217,7 +218,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     members: [
       "items", "item_groups", "uom", "warehouses", "stock_transfers",
       "stocktakes", "stock_adjustments", "stock_movements", "low_stock",
-      "stock_import", "item_card", "stock_valuation",
+      "stock_import", "item_card", "stock_valuation", "slow_moving",
     ],
   },
   {
@@ -655,6 +656,7 @@ export default function PosShell({
     { id: "stock_transfers",   icon: "🔄", label: "التحويل بين المخازن", perm: "stock_transfers" },
     { id: "item_card",         icon: "🗃️", label: "كارت الصنف", perm: "item_card" },
     { id: "stock_valuation",   icon: "💰", label: "تقييم المخزون", perm: "stock_valuation" },
+    { id: "slow_moving",       icon: "🐌", label: "الأصناف بطيئة الحركة", perm: "slow_moving" },
     { id: "scale",            icon: "⚖️", label: "الميزان", perm: "scale" },
     ...(isAdmin ? [{ id: "network" as View, icon: "🌐", label: "مشاركة الشبكة", adminOnly: true }] : []),
     ...(isPharmacy ? [{ id: "expiry" as View, icon: "⏳", label: "تقرير الصلاحية", perm: "expiry" as ScreenKey }] : []),
@@ -945,6 +947,9 @@ export default function PosShell({
           {standalone && v === "stock_valuation" && (isAdmin || can("stock_valuation")) && (
             <div style={S.pagePad}><StockValuation /></div>
           )}
+          {standalone && v === "slow_moving" && (isAdmin || can("slow_moving")) && (
+            <div style={S.pagePad}><SlowMovingItems /></div>
+          )}
           {standalone && v === "currencies" && (isAdmin || can("currencies")) && (
             <div style={S.pagePad}><CurrenciesAdmin /></div>
           )}
@@ -1226,6 +1231,7 @@ function labelFor(v: View): string {
     stock_transfers: "التحويل بين المخازن",
     item_card: "كارت الصنف",
     stock_valuation: "تقييم المخزون",
+    slow_moving: "الأصناف بطيئة الحركة",
     currencies: "العملات",
     exchange_rates: "أسعار الصرف",
     treasury_transfers: "تحويل الخزن",

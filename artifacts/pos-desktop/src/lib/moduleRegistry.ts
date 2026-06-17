@@ -45,7 +45,7 @@ export type WindowsView =
   | "report_account_statement" | "report_customer_statement" | "report_income_statement"
   | "report_balance_sheet" | "report_trial_balance"
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
-  | "item_card" | "stock_valuation"
+  | "item_card" | "stock_valuation" | "slow_moving"
   | "number_series" | "settings_guide" | "zatca" | "pos_accounts";
 
 export type WindowsModuleKey =
@@ -108,6 +108,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   stock_transfers:   { module: "inventory", profile: "erp" },
   item_card:         { module: "inventory", profile: "erp" },
   stock_valuation:   { module: "inventory", profile: "erp" },
+  slow_moving:       { module: "inventory", profile: "erp" },
   suppliers:         { module: "purchasing", profile: "erp" },
   supplier_groups:   { module: "purchasing", profile: "erp" },
   supplier_settlement:{ module: "purchasing", profile: "erp" },
