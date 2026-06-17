@@ -989,6 +989,10 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE sales_return_lines_local ADD COLUMN uom_id INTEGER",
         "ALTER TABLE sales_return_lines_local ADD COLUMN uom_name TEXT",
         "ALTER TABLE sales_return_lines_local ADD COLUMN conversion_factor REAL NOT NULL DEFAULT 1",
+        // Free (bonus) qty on a return line — mirrors the invoice-line column so
+        // the Free-Quantities report can net returned free qty against sold free
+        // qty. Nullable→0; no return UI sets it yet, so existing rows stay 0.
+        "ALTER TABLE sales_return_lines_local ADD COLUMN free_qty REAL NOT NULL DEFAULT 0",
         // ── Accounting dimensions (branch + cost center) ──
         // Optional analytic tags on the JE header (and the documents that
         // generate it) so the financial reports can be filtered by branch

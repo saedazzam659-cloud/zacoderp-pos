@@ -573,6 +573,7 @@ fn main() {
             accounting::report_sales_invoices,
             accounting::report_sales_invoice_lines,
             accounting::report_sales_returns,
+            accounting::report_sales_return_lines,
             accounting::report_purchase_invoices,
             accounting::report_purchase_invoice_lines,
             accounting::report_purchase_returns,

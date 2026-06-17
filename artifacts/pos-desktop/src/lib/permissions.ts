@@ -36,7 +36,7 @@ export type ScreenKey =
   | "report_account_statement" | "report_customer_statement" | "report_income_statement"
   | "report_balance_sheet" | "report_trial_balance"
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
-  | "item_card" | "stock_valuation" | "slow_moving"
+  | "item_card" | "stock_valuation" | "slow_moving" | "free_quantities" | "item_sales_valuation"
   | "number_series" | "branches"
   | "user_permissions" | "dashboard" | "updates" | "users" | "settings_guide" | "zatca"
   | "pos_accounts";
@@ -121,6 +121,8 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "item_card", label: "كارت الصنف", icon: "🗃️", group: "المخازن" },
   { key: "stock_valuation", label: "تقييم المخزون", icon: "💰", group: "المخازن" },
   { key: "slow_moving", label: "الأصناف بطيئة الحركة", icon: "🐌", group: "المخازن" },
+  { key: "free_quantities", label: "تقرير الكميات الحرة", icon: "🎁", group: "المخازن" },
+  { key: "item_sales_valuation", label: "تقييم مبيعات الأصناف", icon: "📊", group: "المخازن" },
 
   { key: "scale", label: "الميزان", icon: "⚖️", group: "الإعدادات" },
   { key: "branches", label: "الفروع", icon: "🏢", group: "الإعدادات" },

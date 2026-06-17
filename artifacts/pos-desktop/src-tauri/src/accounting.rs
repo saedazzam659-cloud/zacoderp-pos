@@ -5441,12 +5441,16 @@ pub struct SalesLineReportRow {
     pub item_name: String,
     pub qty: f64,
     pub unit_price: f64,
+    pub unit_cost: f64,
     pub line_total: f64,
     pub vat_rate: f64,
+    pub free_qty: f64,
 }
 
 /// Line-level sales rows in a date range (one row per invoice line), joined to
-/// item + customer master data. Powers the Sales-by-Item screen.
+/// item + customer master data. Powers the Sales-by-Item, Item-Sales-Valuation
+/// and Free-Quantities screens (unit_cost feeds the cost-basis valuation;
+/// free_qty feeds the free-quantities report).
 #[tauri::command]
 pub fn report_sales_invoice_lines(
     from_date: Option<String>,
@@ -5456,7 +5460,7 @@ pub fn report_sales_invoice_lines(
     let conn = db::open().map_err(|e| e.to_string())?;
     let mut sql = String::from(
         "SELECT l.invoice_id, s.invoice_no, s.invoice_date, s.customer_id, c.name_ar, \
-         l.item_id, i.code, i.name_ar, l.qty, l.unit_price, l.line_total, l.vat_rate \
+         l.item_id, i.code, i.name_ar, l.qty, l.unit_price, l.unit_cost, l.line_total, l.vat_rate, l.free_qty \
          FROM sales_invoice_lines_local l \
          JOIN sales_invoices_local s ON s.id = l.invoice_id \
          LEFT JOIN customers_local c ON c.id = s.customer_id \
@@ -5472,7 +5476,65 @@ pub fn report_sales_invoice_lines(
     let rows = stmt.query_map(rusqlite::params_from_iter(params_ref), |r| Ok(SalesLineReportRow {
         invoice_id: r.get(0)?, invoice_no: r.get(1)?, invoice_date: r.get(2)?, customer_id: r.get(3)?,
         customer_name: r.get(4)?, item_id: r.get(5)?, item_code: r.get(6)?, item_name: r.get(7)?,
-        qty: r.get(8)?, unit_price: r.get(9)?, line_total: r.get(10)?, vat_rate: r.get(11)?,
+        qty: r.get(8)?, unit_price: r.get(9)?, unit_cost: r.get(10)?, line_total: r.get(11)?,
+        vat_rate: r.get(12)?, free_qty: r.get(13)?,
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SalesReturnLineReportRow {
+    pub return_id: i64,
+    pub return_no: String,
+    pub return_date: String,
+    pub customer_id: Option<i64>,
+    pub customer_name: Option<String>,
+    pub item_id: i64,
+    pub item_code: Option<String>,
+    pub item_name: String,
+    pub qty: f64,
+    pub unit_price: f64,
+    pub unit_cost: f64,
+    pub line_total: f64,
+    pub vat_rate: f64,
+    pub free_qty: f64,
+}
+
+/// Line-level sales-return rows in a date range (one row per return line),
+/// joined to item + customer master data. The header-only `report_sales_returns`
+/// can't expose per-item returned qty/value, so this powers the returned columns
+/// of the Item-Sales-Valuation and Free-Quantities screens. Local rows have no
+/// status column — every saved return line counts.
+#[tauri::command]
+pub fn report_sales_return_lines(
+    from_date: Option<String>,
+    to_date: Option<String>,
+    branch_id: Option<i64>,
+) -> Result<Vec<SalesReturnLineReportRow>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut sql = String::from(
+        "SELECT l.return_id, r.return_no, r.return_date, r.customer_id, c.name_ar, \
+         l.item_id, i.code, i.name_ar, l.qty, l.unit_price, l.unit_cost, l.line_total, l.vat_rate, l.free_qty \
+         FROM sales_return_lines_local l \
+         JOIN sales_returns_local r ON r.id = l.return_id \
+         LEFT JOIN customers_local c ON c.id = r.customer_id \
+         LEFT JOIN items_local i ON i.id = l.item_id WHERE 1=1"
+    );
+    let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(d) = &from_date { sql.push_str(" AND r.return_date >= ?"); args.push(Box::new(d.clone())); }
+    if let Some(d) = &to_date { sql.push_str(" AND r.return_date <= ?"); args.push(Box::new(d.clone())); }
+    if let Some(b) = branch_id { sql.push_str(" AND r.branch_id = ?"); args.push(Box::new(b)); }
+    sql.push_str(" ORDER BY r.return_date, l.id");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(rusqlite::params_from_iter(params_ref), |r| Ok(SalesReturnLineReportRow {
+        return_id: r.get(0)?, return_no: r.get(1)?, return_date: r.get(2)?, customer_id: r.get(3)?,
+        customer_name: r.get(4)?, item_id: r.get(5)?, item_code: r.get(6)?, item_name: r.get(7)?,
+        qty: r.get(8)?, unit_price: r.get(9)?, unit_cost: r.get(10)?, line_total: r.get(11)?,
+        vat_rate: r.get(12)?, free_qty: r.get(13)?,
     })).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows { out.push(r.map_err(|e| e.to_string())?); }

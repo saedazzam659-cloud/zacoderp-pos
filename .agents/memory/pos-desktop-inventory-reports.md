@@ -28,7 +28,12 @@ The ledger's `balance_after` is per (item, warehouse); summing it across warehou
 - UNDETERMINED when `coverageDays < threshold` → excluded from the list, counted in a banner note.
 **Why:** under a short 5000-row window an item moved recently-but-just-outside the window would be falsely flagged as maximally slow.
 
-# Portability of the remaining web inventory-hub reports
+# Phase 3 — Free Quantities + Item Sales Valuation (IMPLEMENTED)
 
-- **FreeQuantitiesReport** — NOT portable. Needs free/bonus-qty line semantics the local SQLite/Rust doesn't track. Needs new Rust.
-- **ItemSalesValuationReport** — only partly portable. `reportSalesInvoiceLines` gives per-item SOLD qty/value, but `reportSalesReturns` is HEADER-ONLY (subtotal/vat/grand, no per-item lines). So per-item RETURNED qty/value is impossible without a new `report_sales_return_lines` Rust command. A sold-only version would just duplicate the existing `SalesByItemReport`.
+Both now exist (`FreeQuantitiesReport.tsx`, `ItemSalesValuationReport.tsx`). They required the FIRST new Rust in this report wave:
+
+- `SalesLineReportRow` (built by ONE closure — `report_sales_invoice_lines`) gained `unit_cost` + `free_qty`. Sold free qty comes from `sales_invoice_lines_local.free_qty` (already existed); cost basis = `qty × unit_cost`.
+- NEW `report_sales_return_lines` command + `SalesReturnLineReportRow` — `report_sales_returns` is HEADER-ONLY so per-item returned qty/value/free needs the line-level reader.
+- `sales_return_lines_local` got an additive `free_qty REAL NOT NULL DEFAULT 0` migration. **No return-form UI sets it yet**, so `returnedFreeQty` is always 0 until that input is built — the column + netting are wired ahead of the data.
+- Valuation bases: `cost=qty*unit_cost`, `excl_vat=line_total`, `incl_vat=line_total*(1+vat/100)`; every column nets sold − returned.
+- Filters intentionally from/to + branch + TS item-search (matches sibling `SalesByItemReport`); web's warehouse/customer filters dropped — return lines carry no warehouse_id and the line readers don't take a customer param.

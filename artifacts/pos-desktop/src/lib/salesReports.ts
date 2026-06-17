@@ -35,8 +35,27 @@ export type SalesLineReportRow = {
   itemName: string;
   qty: number;
   unitPrice: number;
+  unitCost: number;
   lineTotal: number;
   vatRate: number;
+  freeQty: number;
+};
+
+export type SalesReturnLineReportRow = {
+  returnId: number;
+  returnNo: string;
+  returnDate: string;
+  customerId: number | null;
+  customerName: string | null;
+  itemId: number;
+  itemCode: string | null;
+  itemName: string;
+  qty: number;
+  unitPrice: number;
+  unitCost: number;
+  lineTotal: number;
+  vatRate: number;
+  freeQty: number;
 };
 
 export type SalesReturnReportRow = {
@@ -85,5 +104,16 @@ export async function reportSalesReturns(filter: SalesReportFilter = {}): Promis
     toDate: filter.toDate ?? null,
     branchId: filter.branchId ?? null,
     customerId: filter.customerId ?? null,
+  });
+}
+
+export async function reportSalesReturnLines(
+  filter: Omit<SalesReportFilter, "customerId"> = {},
+): Promise<SalesReturnLineReportRow[]> {
+  if (!hasTauri()) return [];
+  return await invoke<SalesReturnLineReportRow[]>("report_sales_return_lines", {
+    fromDate: filter.fromDate ?? null,
+    toDate: filter.toDate ?? null,
+    branchId: filter.branchId ?? null,
   });
 }
