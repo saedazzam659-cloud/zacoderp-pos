@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { useFormatters } from "@/lib/format";
+import { useFmt } from "@/hooks/use-fmt";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -63,6 +64,8 @@ export default function TrialBalance() {
   const { user, token } = useAuth() as any;
   const { t } = useTranslation();
   const { fmt: fmtRaw, isRtl } = useFormatters();
+  const { dp } = useFmt();
+  const moneyFmt = dp > 0 ? `#,##0.${"0".repeat(dp)}` : "#,##0";
   const { toast } = useToast();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const headers = { Authorization: `Bearer ${token}` };
@@ -111,19 +114,19 @@ export default function TrialBalance() {
   // Export columns mirror the on-screen visibility so Excel/PDF reflect
   // exactly what the user sees.
   const ALL_EXPORT_COLS = [
-    { key: "code",        header: t("accountingReports.code"),       width: 12, colKey: null as ColKey | null },
-    { key: "nameAr",      header: t("accountingReports.accountName"), width: 36, colKey: null },
-    { key: "accountType", header: t("accountingReports.type"),        width: 14, colKey: "type" as ColKey },
-    { key: "openDebit",   header: `${t("trialBalance.openingBalance")} - ${t("accountingReports.debit")}`, width: 16, colKey: "openDr" as ColKey },
-    { key: "openCredit",  header: `${t("trialBalance.openingBalance")} - ${t("accountingReports.credit")}`, width: 16, colKey: "openCr" as ColKey },
-    { key: "totalDebit",  header: `${t("trialBalance.periodBalance")} - ${t("accountingReports.debit")}`, width: 16, colKey: "periodDr" as ColKey },
-    { key: "totalCredit", header: `${t("trialBalance.periodBalance")} - ${t("accountingReports.credit")}`, width: 16, colKey: "periodCr" as ColKey },
-    { key: "closeDebit",  header: `${t("trialBalance.closingBalance")} - ${t("accountingReports.debit")}`, width: 16, colKey: "closeDr" as ColKey },
-    { key: "closeCredit", header: `${t("trialBalance.closingBalance")} - ${t("accountingReports.credit")}`, width: 16, colKey: "closeCr" as ColKey },
+    { key: "code",        header: t("accountingReports.code"),       width: 12, colKey: null as ColKey | null, numFmt: undefined as string | undefined },
+    { key: "nameAr",      header: t("accountingReports.accountName"), width: 36, colKey: null, numFmt: undefined },
+    { key: "accountType", header: t("accountingReports.type"),        width: 14, colKey: "type" as ColKey, numFmt: undefined },
+    { key: "openDebit",   header: `${t("trialBalance.openingBalance")} - ${t("accountingReports.debit")}`, width: 16, colKey: "openDr" as ColKey, numFmt: moneyFmt },
+    { key: "openCredit",  header: `${t("trialBalance.openingBalance")} - ${t("accountingReports.credit")}`, width: 16, colKey: "openCr" as ColKey, numFmt: moneyFmt },
+    { key: "totalDebit",  header: `${t("trialBalance.periodBalance")} - ${t("accountingReports.debit")}`, width: 16, colKey: "periodDr" as ColKey, numFmt: moneyFmt },
+    { key: "totalCredit", header: `${t("trialBalance.periodBalance")} - ${t("accountingReports.credit")}`, width: 16, colKey: "periodCr" as ColKey, numFmt: moneyFmt },
+    { key: "closeDebit",  header: `${t("trialBalance.closingBalance")} - ${t("accountingReports.debit")}`, width: 16, colKey: "closeDr" as ColKey, numFmt: moneyFmt },
+    { key: "closeCredit", header: `${t("trialBalance.closingBalance")} - ${t("accountingReports.credit")}`, width: 16, colKey: "closeCr" as ColKey, numFmt: moneyFmt },
   ];
   const EXPORT_COLS = ALL_EXPORT_COLS
     .filter(c => c.colKey === null || visibleCols[c.colKey])
-    .map(({ key, header, width }) => ({ key, header, width }));
+    .map(({ key, header, width, numFmt }) => ({ key, header, width, numFmt }));
 
   // Labels for the column popover + double-click toast
   const COL_LABELS: Record<ColKey, string> = {
@@ -181,17 +184,35 @@ export default function TrialBalance() {
   const closeDrTot = rows.reduce((s, r) => s + Math.max(0,  r.closingBalance ?? 0), 0);
   const closeCrTot = rows.reduce((s, r) => s + Math.max(0, -(r.closingBalance ?? 0)), 0);
 
+  // Export rows carry RAW numbers (not pre-formatted strings) so Excel
+  // stores them as numeric cells — SUM / formulas work and the per-column
+  // `numFmt` controls the display. Zero sides stay blank ("") to mirror
+  // the on-screen "—" placeholder.
   const exportRows = rows.map((r: any) => ({
     code:        r.code,
     nameAr:      isRtl ? r.nameAr : (r.nameEn || r.nameAr),
     accountType: TYPE_LABELS[r.accountType] ?? r.accountType,
-    openDebit:   (r.openingBalance ?? 0) > 0 ? fmtAbs(r.openingBalance) : "",
-    openCredit:  (r.openingBalance ?? 0) < 0 ? fmtAbs(r.openingBalance) : "",
-    totalDebit:  r.totalDebit  > 0 ? fmtAbs(r.totalDebit)  : "",
-    totalCredit: r.totalCredit > 0 ? fmtAbs(r.totalCredit) : "",
-    closeDebit:  (r.closingBalance ?? 0) > 0 ? fmtAbs(r.closingBalance) : "",
-    closeCredit: (r.closingBalance ?? 0) < 0 ? fmtAbs(r.closingBalance) : "",
+    openDebit:   (r.openingBalance ?? 0) > 0 ? Math.abs(r.openingBalance) : "",
+    openCredit:  (r.openingBalance ?? 0) < 0 ? Math.abs(r.openingBalance) : "",
+    totalDebit:  r.totalDebit  > 0 ? Math.abs(r.totalDebit)  : "",
+    totalCredit: r.totalCredit > 0 ? Math.abs(r.totalCredit) : "",
+    closeDebit:  (r.closingBalance ?? 0) > 0 ? Math.abs(r.closingBalance) : "",
+    closeCredit: (r.closingBalance ?? 0) < 0 ? Math.abs(r.closingBalance) : "",
   }));
+
+  // Grand-totals row mirrored into the Excel/PDF export so the file ships
+  // a ready "الإجمالي" line (raw numbers → real Excel sums).
+  const exportTotalsRow = rows.length > 0 ? {
+    code:        "",
+    nameAr:      t("accountingReports.total"),
+    accountType: "",
+    openDebit:   openDrTot  > 0 ? openDrTot  : "",
+    openCredit:  openCrTot  > 0 ? openCrTot  : "",
+    totalDebit:  totalDr    > 0 ? totalDr    : "",
+    totalCredit: totalCr    > 0 ? totalCr    : "",
+    closeDebit:  closeDrTot > 0 ? closeDrTot : "",
+    closeCredit: closeCrTot > 0 ? closeCrTot : "",
+  } : null;
 
   // ── Flat columns for the advanced grid (on-screen view) ───────────────
   // The grid carries the same feature set as the Account Statement: a
@@ -346,6 +367,7 @@ export default function TrialBalance() {
                 </PopoverContent>
               </Popover>
               <ExportButtons rows={exportRows} columns={EXPORT_COLS}
+                totalsRow={exportTotalsRow}
                 filename={`${t("trialBalance.filename_prefix")}-${fromDate}-${toDate}`}
                 title={t("trialBalance.title_with", { from: fromDate, to: toDate })} />
               <Button variant="outline" size="sm" className="gap-2" onClick={() => window.print()}>
