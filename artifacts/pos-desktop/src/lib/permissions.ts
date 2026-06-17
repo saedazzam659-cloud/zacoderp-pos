@@ -36,6 +36,7 @@ export type ScreenKey =
   | "report_account_statement" | "report_customer_statement" | "report_income_statement"
   | "report_balance_sheet" | "report_trial_balance"
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
+  | "item_card" | "stock_valuation"
   | "number_series" | "branches"
   | "user_permissions" | "dashboard" | "updates" | "users" | "settings_guide" | "zatca"
   | "pos_accounts";
@@ -117,6 +118,8 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "stock_adjustments", label: "تسوية المخزون", icon: "⚖️", group: "المخازن" },
   { key: "stock_movements", label: "حركة المخزون", icon: "📈", group: "المخازن" },
   { key: "stock_transfers", label: "التحويل بين المخازن", icon: "🔄", group: "المخازن" },
+  { key: "item_card", label: "كارت الصنف", icon: "🗃️", group: "المخازن" },
+  { key: "stock_valuation", label: "تقييم المخزون", icon: "💰", group: "المخازن" },
 
   { key: "scale", label: "الميزان", icon: "⚖️", group: "الإعدادات" },
   { key: "branches", label: "الفروع", icon: "🏢", group: "الإعدادات" },

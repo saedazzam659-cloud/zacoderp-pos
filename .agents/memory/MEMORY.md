@@ -91,3 +91,4 @@
 - [POS Desktop purchase edit + return warehouse](pos-desktop-purchase-edit-return.md) — purchase edit works base-currency-only (no FX/discount reconstruct, clear+rewrite overlay); return prefill must default to SOURCE purchase warehouse, never null.
 - [POS Desktop purchase AP gating](pos-desktop-purchase-ap-gating.md) — supplier statements: gate purchases to payment_method='credit', but NEVER gate returns (no payment_method col; purchase_return_create always debits AP).
 - [POS Desktop new-company seed](pos-desktop-new-company-seed.md) — COA enrichment must be additive (engine codes hardcoded); currency_for_country must mirror currency.ts; rebase no-ops once ledger has any JE/invoice.
+- [POS Desktop inventory reports](pos-desktop-inventory-reports.md) — Kardex/valuation reuse existing Rust cmds; compute running balance in TS (not balance_after); closing cost as-of dateTo; 5000-row ledger cap → explicit warning, not silent-wrong.
