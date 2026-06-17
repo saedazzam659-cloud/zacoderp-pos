@@ -37,6 +37,7 @@ export type ScreenKey =
   | "report_balance_sheet" | "report_trial_balance"
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
   | "item_card" | "stock_valuation" | "slow_moving" | "free_quantities" | "item_sales_valuation"
+  | "warehouse_groups" | "inventory_dashboard" | "smart_alerts" | "units" | "offers" | "goods_deliveries"
   | "number_series" | "branches"
   | "user_permissions" | "dashboard" | "updates" | "users" | "settings_guide" | "zatca"
   | "pos_accounts";
@@ -123,6 +124,12 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "slow_moving", label: "الأصناف بطيئة الحركة", icon: "🐌", group: "المخازن" },
   { key: "free_quantities", label: "تقرير الكميات الحرة", icon: "🎁", group: "المخازن" },
   { key: "item_sales_valuation", label: "تقييم مبيعات الأصناف", icon: "📊", group: "المخازن" },
+  { key: "warehouse_groups", label: "مجموعات المخازن", icon: "🗂️", group: "المخازن" },
+  { key: "inventory_dashboard", label: "لوحة المخزون", icon: "📊", group: "المخازن" },
+  { key: "smart_alerts", label: "التنبيهات الذكية", icon: "🔔", group: "المخازن" },
+  { key: "units", label: "الوحدات", icon: "📐", group: "الملفات" },
+  { key: "offers", label: "العروض الترويجية", icon: "🎁", group: "المبيعات" },
+  { key: "goods_deliveries", label: "أذونات الصرف", icon: "📤", group: "المبيعات" },
 
   { key: "scale", label: "الميزان", icon: "⚖️", group: "الإعدادات" },
   { key: "branches", label: "الفروع", icon: "🏢", group: "الإعدادات" },

@@ -630,6 +630,52 @@ export async function convertGoodsReceiptToInvoice(id: number, input: GoodsRecei
   return await invoke<number>("goods_receipt_convert_to_invoice", { id, input });
 }
 
+// ─── Goods deliveries (سندات تسليم البضاعة) ──────────────────────────
+// Mirrors goods receipts but moves stock OUT. Posting emits a JE
+// DR delivery-clearing(11092) / CR inventory(1300) at moving cost; delete reverses.
+// Convert-to-invoice is deferred (not implemented yet).
+export type GoodsDeliveryStatus = "draft" | "posted";
+export type DeliveryLine = {
+  id?: number; itemId: number; itemName?: string | null;
+  qty: number; unitPrice: number; unitCost: number; vatRate: number; lineTotal: number;
+  uomId?: number | null; uomName?: string | null; conversionFactor?: number;
+  warehouseId?: number | null;
+};
+export type GoodsDelivery = {
+  id: number; deliveryNo: string; customerId: number; customerName: string | null;
+  deliveryDate: string; status: GoodsDeliveryStatus; jeId: number | null;
+  subtotal: number; vatTotal: number; grandTotal: number;
+  notes: string | null; warehouseId: number | null;
+  lines: DeliveryLine[];
+};
+export type GoodsDeliveryInput = {
+  customerId: number; deliveryDate: string;
+  notes?: string | null; warehouseId?: number | null;
+  branchId?: number | null; costCenterId?: number | null;
+  lines: DeliveryLine[];
+};
+
+export async function listGoodsDeliveries(limit = 200): Promise<GoodsDelivery[]> {
+  if (!hasTauri()) return [];
+  return await invoke<GoodsDelivery[]>("goods_deliveries_list", { limit });
+}
+export async function getGoodsDelivery(id: number): Promise<GoodsDelivery> {
+  if (!hasTauri()) notImpl();
+  return await invoke<GoodsDelivery>("goods_delivery_get", { id });
+}
+export async function createGoodsDelivery(input: GoodsDeliveryInput): Promise<number> {
+  if (!hasTauri()) notImpl();
+  return await invoke<number>("goods_delivery_create", { input });
+}
+export async function postGoodsDelivery(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("goods_delivery_post", { id });
+}
+export async function deleteGoodsDelivery(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("goods_delivery_delete", { id });
+}
+
 // ─── Sales invoices ──────────────────────────────────────────────────
 export async function listSalesInvoices(limit = 200): Promise<SalesInvoice[]> {
   if (!hasTauri()) return [];

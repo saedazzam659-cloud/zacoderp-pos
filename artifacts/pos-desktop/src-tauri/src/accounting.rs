@@ -6034,6 +6034,605 @@ pub fn supplier_group_delete(id: i64) -> Result<(), String> {
     Ok(())
 }
 
+// ───────────────── Units of measure (وحدات القياس) ───────────────────
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnitRow {
+    pub id: i64,
+    pub code: String,
+    pub name_ar: String,
+    pub name_en: Option<String>,
+    pub conversion_factor: f64,
+    pub is_active: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnitInput {
+    pub code: String,
+    pub name_ar: String,
+    #[serde(default)] pub name_en: Option<String>,
+    #[serde(default = "default_conversion_factor")] pub conversion_factor: f64,
+    #[serde(default = "default_true")] pub is_active: bool,
+}
+
+fn row_to_unit(r: &rusqlite::Row<'_>) -> rusqlite::Result<UnitRow> {
+    Ok(UnitRow {
+        id: r.get(0)?, code: r.get(1)?, name_ar: r.get(2)?, name_en: r.get(3)?,
+        conversion_factor: r.get(4)?, is_active: r.get::<_, i64>(5)? != 0,
+    })
+}
+
+#[tauri::command]
+pub fn units_list() -> Result<Vec<UnitRow>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id,code,name_ar,name_en,conversion_factor,is_active FROM units_local ORDER BY code"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], row_to_unit).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn unit_create(input: UnitInput) -> Result<i64, String> {
+    if input.code.trim().is_empty() || input.name_ar.trim().is_empty() {
+        return Err("الكود والاسم مطلوبان".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO units_local(code,name_ar,name_en,conversion_factor,is_active) VALUES(?1,?2,?3,?4,?5)",
+        params![input.code.trim(), input.name_ar.trim(), input.name_en, input.conversion_factor, if input.is_active {1} else {0}],
+    ).map_err(|e| if e.to_string().contains("UNIQUE") { "كود الوحدة مستخدم من قبل".to_string() } else { e.to_string() })?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[tauri::command]
+pub fn unit_update(id: i64, input: UnitInput) -> Result<(), String> {
+    if input.code.trim().is_empty() || input.name_ar.trim().is_empty() {
+        return Err("الكود والاسم مطلوبان".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let n = conn.execute(
+        "UPDATE units_local SET code=?1,name_ar=?2,name_en=?3,conversion_factor=?4,is_active=?5 WHERE id=?6",
+        params![input.code.trim(), input.name_ar.trim(), input.name_en, input.conversion_factor, if input.is_active {1} else {0}, id],
+    ).map_err(|e| if e.to_string().contains("UNIQUE") { "كود الوحدة مستخدم من قبل".to_string() } else { e.to_string() })?;
+    if n == 0 { return Err("الوحدة غير موجودة".into()); }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn unit_delete(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM units_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ───────────────── Warehouse groups (مجموعات المستودعات) ─────────────
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WarehouseGroup {
+    pub id: i64,
+    pub code: String,
+    pub name_ar: String,
+    pub name_en: Option<String>,
+    pub is_active: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WarehouseGroupInput {
+    pub code: String,
+    pub name_ar: String,
+    #[serde(default)] pub name_en: Option<String>,
+    #[serde(default = "default_true")] pub is_active: bool,
+}
+
+fn row_to_warehouse_group(r: &rusqlite::Row<'_>) -> rusqlite::Result<WarehouseGroup> {
+    Ok(WarehouseGroup {
+        id: r.get(0)?, code: r.get(1)?, name_ar: r.get(2)?, name_en: r.get(3)?,
+        is_active: r.get::<_, i64>(4)? != 0,
+    })
+}
+
+#[tauri::command]
+pub fn warehouse_groups_list() -> Result<Vec<WarehouseGroup>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id,code,name_ar,name_en,is_active FROM warehouse_groups_local ORDER BY code"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], row_to_warehouse_group).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn warehouse_group_create(input: WarehouseGroupInput) -> Result<i64, String> {
+    if input.code.trim().is_empty() || input.name_ar.trim().is_empty() {
+        return Err("الكود والاسم مطلوبان".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO warehouse_groups_local(code,name_ar,name_en,is_active) VALUES(?1,?2,?3,?4)",
+        params![input.code.trim(), input.name_ar.trim(), input.name_en, if input.is_active {1} else {0}],
+    ).map_err(|e| if e.to_string().contains("UNIQUE") { "كود المجموعة مستخدم من قبل".to_string() } else { e.to_string() })?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[tauri::command]
+pub fn warehouse_group_update(id: i64, input: WarehouseGroupInput) -> Result<(), String> {
+    if input.code.trim().is_empty() || input.name_ar.trim().is_empty() {
+        return Err("الكود والاسم مطلوبان".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let n = conn.execute(
+        "UPDATE warehouse_groups_local SET code=?1,name_ar=?2,name_en=?3,is_active=?4 WHERE id=?5",
+        params![input.code.trim(), input.name_ar.trim(), input.name_en, if input.is_active {1} else {0}, id],
+    ).map_err(|e| if e.to_string().contains("UNIQUE") { "كود المجموعة مستخدم من قبل".to_string() } else { e.to_string() })?;
+    if n == 0 { return Err("المجموعة غير موجودة".into()); }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn warehouse_group_delete(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM warehouse_groups_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ───────────────── Offers / promotions (العروض) ──────────────────────
+// Management-only CRUD. No sale-time matching engine in the register yet.
+
+fn default_offer_discount_type() -> String { "percentage_total".into() }
+fn default_get_discount_percent() -> f64 { 100.0 }
+fn default_offer_priority() -> i64 { 5 }
+fn default_offer_scope() -> String { "all".into() }
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferItemRow {
+    pub item_id: i64,
+    #[serde(default)] pub item_name: Option<String>,
+    #[serde(default)] pub price: Option<f64>,
+    #[serde(default)] pub discount: Option<f64>,
+    #[serde(default)] pub qty: Option<f64>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferRow {
+    pub id: i64,
+    pub offer_number: String,
+    pub name_ar: String,
+    pub description: Option<String>,
+    pub discount_type: String,
+    pub discount_value: f64,
+    pub buy_qty: f64,
+    pub get_qty: f64,
+    pub get_discount_percent: f64,
+    pub priority: i64,
+    pub status: String,
+    pub start_date: Option<String>,
+    pub expiry_date: Option<String>,
+    pub min_purchase: f64,
+    pub max_uses: Option<i64>,
+    pub max_uses_per_customer: Option<i64>,
+    pub times_used: i64,
+    pub stackable: bool,
+    pub coupon_code: Option<String>,
+    pub apply_to: String,
+    pub customer_scope: String,
+    pub items_scope: String,
+    pub sales_rep_scope: String,
+    #[serde(default)] pub customer_ids: Vec<i64>,
+    #[serde(default)] pub sales_rep_ids: Vec<i64>,
+    #[serde(default)] pub items: Vec<OfferItemRow>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferInput {
+    pub name_ar: String,
+    #[serde(default)] pub description: Option<String>,
+    #[serde(default = "default_offer_discount_type")] pub discount_type: String,
+    #[serde(default)] pub discount_value: f64,
+    #[serde(default)] pub buy_qty: f64,
+    #[serde(default)] pub get_qty: f64,
+    #[serde(default = "default_get_discount_percent")] pub get_discount_percent: f64,
+    #[serde(default = "default_offer_priority")] pub priority: i64,
+    #[serde(default)] pub start_date: Option<String>,
+    #[serde(default)] pub expiry_date: Option<String>,
+    #[serde(default)] pub min_purchase: f64,
+    #[serde(default)] pub max_uses: Option<i64>,
+    #[serde(default)] pub max_uses_per_customer: Option<i64>,
+    #[serde(default)] pub stackable: bool,
+    #[serde(default)] pub coupon_code: Option<String>,
+    #[serde(default = "default_offer_scope")] pub apply_to: String,
+    #[serde(default = "default_offer_scope")] pub customer_scope: String,
+    #[serde(default = "default_offer_scope")] pub items_scope: String,
+    #[serde(default = "default_offer_scope")] pub sales_rep_scope: String,
+    #[serde(default)] pub customer_ids: Vec<i64>,
+    #[serde(default)] pub sales_rep_ids: Vec<i64>,
+    #[serde(default)] pub items: Vec<OfferItemRow>,
+}
+
+fn row_to_offer(r: &rusqlite::Row<'_>) -> rusqlite::Result<OfferRow> {
+    Ok(OfferRow {
+        id: r.get(0)?, offer_number: r.get(1)?, name_ar: r.get(2)?, description: r.get(3)?,
+        discount_type: r.get(4)?, discount_value: r.get(5)?, buy_qty: r.get(6)?, get_qty: r.get(7)?,
+        get_discount_percent: r.get(8)?, priority: r.get(9)?, status: r.get(10)?, start_date: r.get(11)?,
+        expiry_date: r.get(12)?, min_purchase: r.get(13)?, max_uses: r.get(14)?, max_uses_per_customer: r.get(15)?,
+        times_used: r.get(16)?, stackable: r.get::<_, i64>(17)? != 0, coupon_code: r.get(18)?, apply_to: r.get(19)?,
+        customer_scope: r.get(20)?, items_scope: r.get(21)?, sales_rep_scope: r.get(22)?,
+        customer_ids: Vec::new(), sales_rep_ids: Vec::new(), items: Vec::new(),
+    })
+}
+
+const OFFER_SELECT: &str = "SELECT id,offer_number,name_ar,description,discount_type,discount_value,buy_qty,get_qty,get_discount_percent,priority,status,start_date,expiry_date,min_purchase,max_uses,max_uses_per_customer,times_used,stackable,coupon_code,apply_to,customer_scope,items_scope,sales_rep_scope FROM offers_local";
+
+#[tauri::command]
+pub fn offers_list() -> Result<Vec<OfferRow>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let sql = format!("{OFFER_SELECT} ORDER BY priority DESC, id DESC");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], row_to_offer).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn offer_get(id: i64) -> Result<OfferRow, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let sql = format!("{OFFER_SELECT} WHERE id=?1");
+    let mut o = conn.query_row(&sql, params![id], row_to_offer).map_err(|_| "العرض غير موجود".to_string())?;
+    {
+        let mut stmt = conn.prepare("SELECT customer_id FROM offer_customers_local WHERE offer_id=?1").map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(params![id], |r| r.get::<_, i64>(0)).map_err(|e| e.to_string())?;
+        for r in rows { o.customer_ids.push(r.map_err(|e| e.to_string())?); }
+    }
+    {
+        let mut stmt = conn.prepare("SELECT sales_rep_id FROM offer_sales_reps_local WHERE offer_id=?1").map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(params![id], |r| r.get::<_, i64>(0)).map_err(|e| e.to_string())?;
+        for r in rows { o.sales_rep_ids.push(r.map_err(|e| e.to_string())?); }
+    }
+    {
+        let mut stmt = conn.prepare(
+            "SELECT oi.item_id,i.name_ar,oi.price,oi.discount,oi.qty FROM offer_items_local oi JOIN items_local i ON i.id=oi.item_id WHERE oi.offer_id=?1"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(params![id], |r| Ok(OfferItemRow {
+            item_id: r.get(0)?, item_name: r.get(1)?, price: r.get(2)?, discount: r.get(3)?, qty: r.get(4)?,
+        })).map_err(|e| e.to_string())?;
+        for r in rows { o.items.push(r.map_err(|e| e.to_string())?); }
+    }
+    Ok(o)
+}
+
+fn write_offer_scopes(tx: &Transaction, offer_id: i64, input: &OfferInput) -> Result<(), String> {
+    tx.execute("DELETE FROM offer_customers_local WHERE offer_id=?1", params![offer_id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM offer_sales_reps_local WHERE offer_id=?1", params![offer_id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM offer_items_local WHERE offer_id=?1", params![offer_id]).map_err(|e| e.to_string())?;
+    if input.customer_scope == "specific" {
+        for cid in &input.customer_ids {
+            tx.execute("INSERT INTO offer_customers_local(offer_id,customer_id) VALUES(?1,?2)", params![offer_id, cid]).map_err(|e| e.to_string())?;
+        }
+    }
+    if input.sales_rep_scope == "specific" {
+        for sid in &input.sales_rep_ids {
+            tx.execute("INSERT INTO offer_sales_reps_local(offer_id,sales_rep_id) VALUES(?1,?2)", params![offer_id, sid]).map_err(|e| e.to_string())?;
+        }
+    }
+    if input.items_scope == "specific" {
+        for it in &input.items {
+            tx.execute("INSERT INTO offer_items_local(offer_id,item_id,price,discount,qty) VALUES(?1,?2,?3,?4,?5)", params![offer_id, it.item_id, it.price, it.discount, it.qty]).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn offer_create(input: OfferInput) -> Result<i64, String> {
+    if input.name_ar.trim().is_empty() { return Err("اسم العرض مطلوب".into()); }
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let offer_number = next_doc_no(&tx, "offer").map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO offers_local(offer_number,name_ar,description,discount_type,discount_value,buy_qty,get_qty,get_discount_percent,priority,status,start_date,expiry_date,min_purchase,max_uses,max_uses_per_customer,stackable,coupon_code,apply_to,customer_scope,items_scope,sales_rep_scope)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'draft',?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+        params![offer_number, input.name_ar.trim(), input.description, input.discount_type, input.discount_value,
+                input.buy_qty, input.get_qty, input.get_discount_percent, input.priority, input.start_date,
+                input.expiry_date, input.min_purchase, input.max_uses, input.max_uses_per_customer,
+                if input.stackable {1} else {0}, input.coupon_code, input.apply_to, input.customer_scope,
+                input.items_scope, input.sales_rep_scope],
+    ).map_err(|e| e.to_string())?;
+    let oid = tx.last_insert_rowid();
+    write_offer_scopes(&tx, oid, &input)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(oid)
+}
+
+#[tauri::command]
+pub fn offer_update(id: i64, input: OfferInput) -> Result<(), String> {
+    if input.name_ar.trim().is_empty() { return Err("اسم العرض مطلوب".into()); }
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let n = tx.execute(
+        "UPDATE offers_local SET name_ar=?1,description=?2,discount_type=?3,discount_value=?4,buy_qty=?5,get_qty=?6,get_discount_percent=?7,priority=?8,start_date=?9,expiry_date=?10,min_purchase=?11,max_uses=?12,max_uses_per_customer=?13,stackable=?14,coupon_code=?15,apply_to=?16,customer_scope=?17,items_scope=?18,sales_rep_scope=?19 WHERE id=?20",
+        params![input.name_ar.trim(), input.description, input.discount_type, input.discount_value, input.buy_qty,
+                input.get_qty, input.get_discount_percent, input.priority, input.start_date, input.expiry_date,
+                input.min_purchase, input.max_uses, input.max_uses_per_customer, if input.stackable {1} else {0},
+                input.coupon_code, input.apply_to, input.customer_scope, input.items_scope, input.sales_rep_scope, id],
+    ).map_err(|e| e.to_string())?;
+    if n == 0 { return Err("العرض غير موجود".into()); }
+    write_offer_scopes(&tx, id, &input)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn offer_set_status(id: i64, status: String) -> Result<(), String> {
+    if !["draft", "active", "expired"].contains(&status.as_str()) {
+        return Err("حالة غير صالحة".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let n = conn.execute("UPDATE offers_local SET status=?1 WHERE id=?2", params![status, id]).map_err(|e| e.to_string())?;
+    if n == 0 { return Err("العرض غير موجود".into()); }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn offer_delete(id: i64) -> Result<(), String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let st: String = conn.query_row("SELECT status FROM offers_local WHERE id=?1", params![id], |r| r.get(0))
+        .map_err(|_| "العرض غير موجود".to_string())?;
+    if st == "active" { return Err("لا يمكن حذف عرض نشط — أوقفه أولاً".into()); }
+    conn.execute("DELETE FROM offer_customers_local WHERE offer_id=?1", params![id]).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM offer_sales_reps_local WHERE offer_id=?1", params![id]).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM offer_items_local WHERE offer_id=?1", params![id]).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM offers_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ───────────────── Goods deliveries (أذونات الصرف) ───────────────────
+// Stock-OUT document mirroring goods_receipts in reverse. Posting consumes
+// stock at moving cost: DR delivery-clearing(11092) / CR Inventory(1300).
+
+fn ensure_delivery_clearing_account(tx: &Transaction) -> Result<i64, String> {
+    if let Ok(id) = account_id_by_code(tx, "11092") { return Ok(id); }
+    let parent_id: Option<i64> = tx
+        .query_row("SELECT id FROM accounts_local WHERE code='1000'", [], |r| r.get(0))
+        .optional().map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO accounts_local(code,name_ar,type,parent_id,is_leaf) VALUES('11092','وسيط تسليم البضاعة','asset',?1,1)",
+        params![parent_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(tx.last_insert_rowid())
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DeliveryLine {
+    pub id: Option<i64>,
+    pub item_id: i64,
+    #[serde(default)] pub item_name: Option<String>,
+    pub qty: f64,
+    pub unit_price: f64,
+    #[serde(default)] pub unit_cost: f64,
+    pub vat_rate: f64,
+    #[serde(default)] pub line_total: f64,
+    #[serde(default)] pub uom_id: Option<i64>,
+    #[serde(default)] pub uom_name: Option<String>,
+    #[serde(default = "default_conversion_factor")] pub conversion_factor: f64,
+    #[serde(default)] pub warehouse_id: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoodsDelivery {
+    pub id: i64,
+    pub delivery_no: String,
+    pub customer_id: i64,
+    pub customer_name: Option<String>,
+    pub delivery_date: String,
+    pub status: String,
+    pub je_id: Option<i64>,
+    pub subtotal: f64,
+    pub vat_total: f64,
+    pub grand_total: f64,
+    pub notes: Option<String>,
+    pub warehouse_id: Option<i64>,
+    pub lines: Vec<DeliveryLine>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoodsDeliveryInput {
+    pub customer_id: i64,
+    pub delivery_date: String,
+    #[serde(default)] pub notes: Option<String>,
+    #[serde(default)] pub warehouse_id: Option<i64>,
+    #[serde(default)] pub branch_id: Option<i64>,
+    #[serde(default)] pub cost_center_id: Option<i64>,
+    pub lines: Vec<DeliveryLine>,
+}
+
+const GOODS_DELIVERY_SELECT: &str = "SELECT g.id,g.delivery_no,g.customer_id,c.name_ar,g.delivery_date,g.status,g.je_id,g.subtotal,g.vat_total,g.grand_total,g.notes,g.warehouse_id FROM goods_deliveries_local g JOIN customers_local c ON c.id=g.customer_id";
+
+fn row_to_goods_delivery(r: &rusqlite::Row<'_>) -> rusqlite::Result<GoodsDelivery> {
+    Ok(GoodsDelivery {
+        id: r.get(0)?, delivery_no: r.get(1)?, customer_id: r.get(2)?, customer_name: r.get(3)?,
+        delivery_date: r.get(4)?, status: r.get(5)?, je_id: r.get(6)?, subtotal: r.get(7)?,
+        vat_total: r.get(8)?, grand_total: r.get(9)?, notes: r.get(10)?, warehouse_id: r.get(11)?,
+        lines: Vec::new(),
+    })
+}
+
+fn gd_lines_load(conn: &Connection, delivery_id: i64) -> Result<Vec<DeliveryLine>, String> {
+    let mut stmt = conn.prepare(
+        "SELECT dl.id,dl.item_id,i.name_ar,dl.qty,dl.unit_price,dl.unit_cost,dl.vat_rate,dl.line_total,dl.uom_id,dl.uom_name,dl.conversion_factor,dl.warehouse_id
+         FROM goods_delivery_lines_local dl JOIN items_local i ON i.id=dl.item_id
+         WHERE dl.delivery_id=?1 ORDER BY dl.id"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([delivery_id], |r| Ok(DeliveryLine {
+        id: r.get(0)?, item_id: r.get(1)?, item_name: r.get(2)?, qty: r.get(3)?,
+        unit_price: r.get(4)?, unit_cost: r.get(5)?, vat_rate: r.get(6)?, line_total: r.get(7)?,
+        uom_id: r.get(8)?, uom_name: r.get(9)?, conversion_factor: r.get(10)?, warehouse_id: r.get(11)?,
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn goods_deliveries_list(limit: Option<i64>) -> Result<Vec<GoodsDelivery>, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let lim = limit.unwrap_or(200);
+    let sql = format!("{GOODS_DELIVERY_SELECT} ORDER BY g.id DESC LIMIT ?1");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([lim], row_to_goods_delivery).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn goods_delivery_get(id: i64) -> Result<GoodsDelivery, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let sql = format!("{GOODS_DELIVERY_SELECT} WHERE g.id=?1");
+    let mut g = conn.query_row(&sql, params![id], row_to_goods_delivery).map_err(|e| e.to_string())?;
+    g.lines = gd_lines_load(&conn, id)?;
+    Ok(g)
+}
+
+/// Insert a goods delivery as a DRAFT (no stock, no GL). Posting is explicit.
+#[tauri::command]
+pub fn goods_delivery_create(input: GoodsDeliveryInput) -> Result<i64, String> {
+    if input.lines.is_empty() { return Err("لا يمكن حفظ إذن صرف بدون أصناف".into()); }
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    guard_period_open_for_date(&tx, &input.delivery_date)?;
+    let mut subtotal = 0.0_f64;
+    let mut vat_total = 0.0_f64;
+    for l in &input.lines {
+        let line_sub = l.qty * l.unit_price;
+        subtotal += line_sub;
+        vat_total += line_sub * l.vat_rate / 100.0;
+    }
+    let grand_total = subtotal + vat_total;
+    let delivery_no = next_doc_no(&tx, "goods_delivery").map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO goods_deliveries_local(delivery_no,customer_id,delivery_date,status,subtotal,vat_total,grand_total,notes,branch_id,cost_center_id,warehouse_id)
+         VALUES(?1,?2,?3,'draft',?4,?5,?6,?7,?8,?9,?10)",
+        params![delivery_no, input.customer_id, input.delivery_date, subtotal, vat_total, grand_total,
+                input.notes, input.branch_id, input.cost_center_id, input.warehouse_id],
+    ).map_err(|e| e.to_string())?;
+    let did = tx.last_insert_rowid();
+    for l in &input.lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+        let line_sub = l.qty * l.unit_price;
+        let lt = line_sub + line_sub * l.vat_rate / 100.0;
+        tx.execute(
+            "INSERT INTO goods_delivery_lines_local(delivery_id,item_id,qty,unit_price,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor,warehouse_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            params![did, l.item_id, l.qty, l.unit_price, 0.0_f64, l.vat_rate, lt, l.uom_id, l.uom_name, factor, l.warehouse_id],
+        ).map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(did)
+}
+
+/// Post a draft delivery: stock OUT at moving cost + DR delivery-clearing(11092)
+/// / CR Inventory(1300). No revenue/VAT booked (that happens on invoicing).
+#[tauri::command]
+pub fn goods_delivery_post(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (status, date, branch_id, cost_center_id, wh): (String, String, Option<i64>, Option<i64>, Option<i64>) = tx.query_row(
+        "SELECT status,delivery_date,branch_id,cost_center_id,warehouse_id FROM goods_deliveries_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    ).map_err(|e| e.to_string())?;
+    if status != "draft" { return Err("إذن الصرف ليس في حالة مسودة".into()); }
+    guard_period_open_for_date(&tx, &date)?;
+    let delivery_no: String = tx.query_row("SELECT delivery_no FROM goods_deliveries_local WHERE id=?1", params![id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let lines = gd_lines_load(&tx, id)?;
+    if lines.is_empty() { return Err("إذن الصرف لا يحتوي أصناف".into()); }
+    let default_wh = match wh { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
+
+    let mut cogs_total = 0.0_f64;
+    for l in &lines {
+        let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+        let line_wh = match l.warehouse_id { Some(w) if w > 0 => w, _ => default_wh };
+        let total_base_qty = l.qty * factor;
+        let unit_cost = item_cost_in_tx(&tx, l.item_id, line_wh);
+        cogs_total += unit_cost * total_base_qty;
+        tx.execute("UPDATE goods_delivery_lines_local SET unit_cost=?1 WHERE id=?2", params![unit_cost, l.id]).map_err(|e| e.to_string())?;
+        crate::inventory::ledger_push_in_tx(
+            &tx, l.item_id, line_wh, -total_base_qty, unit_cost,
+            "goods_delivery", Some(id), &date,
+        )?;
+    }
+
+    let je_id: Option<i64> = if cogs_total > 0.0 {
+        let clearing_acc = ensure_delivery_clearing_account(&tx)?;
+        let inv_acc = account_id_by_code(&tx, "1300").map_err(|e| e.to_string())?;
+        let je_lines = vec![
+            je_line(clearing_acc, cogs_total, 0.0, Some(format!("تسليم بضاعة {delivery_no}"))),
+            je_line(inv_acc, 0.0, cogs_total, None),
+        ];
+        Some(insert_journal_entry(&tx, &date, Some(&format!("إذن صرف {delivery_no}")), Some("goods_delivery"), Some(id), branch_id, cost_center_id, &je_lines, resolve_auto_post(&tx, "goods_delivery"))
+            .map_err(|e| e.to_string())?)
+    } else { None };
+    tx.execute("UPDATE goods_deliveries_local SET status='posted', je_id=?1 WHERE id=?2", params![je_id, id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Delete a delivery. A draft drops directly. A posted delivery first reverses
+/// its JE + pushes the delivered stock back IN at the same per-base cost.
+#[tauri::command]
+pub fn goods_delivery_delete(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (status, date, wh): (String, String, Option<i64>) = tx.query_row(
+        "SELECT status,delivery_date,warehouse_id FROM goods_deliveries_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).map_err(|e| e.to_string())?;
+    if status == "posted" {
+        guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
+        let je_rows: Vec<(i64, String)> = {
+            let mut stmt = tx.prepare("SELECT id,status FROM journal_entries_local WHERE source_id=?1 AND source_type='goods_delivery'")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt.query_map(params![id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+                .map_err(|e| e.to_string())?;
+            let mut v = Vec::new();
+            for r in rows { v.push(r.map_err(|e| e.to_string())?); }
+            v
+        };
+        for (je_id, st) in &je_rows {
+            if st == "posted" { reverse_je_balance(&tx, *je_id).map_err(|e| e.to_string())?; }
+            tx.execute("DELETE FROM journal_entry_lines_local WHERE entry_id=?1", params![je_id]).map_err(|e| e.to_string())?;
+            tx.execute("DELETE FROM journal_entries_local WHERE id=?1", params![je_id]).map_err(|e| e.to_string())?;
+        }
+        let default_wh = match wh { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(&tx)? };
+        let lines = gd_lines_load(&tx, id)?;
+        for l in &lines {
+            let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
+            let line_wh = match l.warehouse_id { Some(w) if w > 0 => w, _ => default_wh };
+            crate::inventory::ledger_push_in_tx(
+                &tx, l.item_id, line_wh, l.qty * factor, l.unit_cost,
+                "goods_delivery_void", Some(id), &date,
+            )?;
+        }
+    }
+    tx.execute("DELETE FROM goods_deliveries_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ───────────────── Shared cash/bank settlement helpers ───────────────
 
 /// AP control account for a supplier (its own ap_account_id, else default 2100).

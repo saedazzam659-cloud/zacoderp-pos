@@ -95,6 +95,12 @@ import CustomerCollectionAdmin from "./CustomerCollectionAdmin";
 import SupplierPaymentAdmin from "./SupplierPaymentAdmin";
 import UserPermissionsAdmin from "./UserPermissionsAdmin";
 import NumberSeriesAdmin from "./NumberSeriesAdmin";
+import UnitsAdmin from "./UnitsAdmin";
+import WarehouseGroupsAdmin from "./WarehouseGroupsAdmin";
+import InventoryDashboardAdmin from "./InventoryDashboardAdmin";
+import SmartAlertsAdmin from "./SmartAlertsAdmin";
+import OffersAdmin from "./OffersAdmin";
+import GoodsDeliveriesAdmin from "./GoodsDeliveriesAdmin";
 import SettingsGuide from "./SettingsGuide";
 import ZatcaOnboarding from "./ZatcaOnboarding";
 import { isZatcaCountry } from "../lib/zatcaBridge";
@@ -218,16 +224,17 @@ const NAV_GROUPS: NavGroupDef[] = [
     icon: "🏬",
     label: "المخازن",
     members: [
-      "items", "item_groups", "uom", "warehouses", "stock_transfers",
+      "items", "item_groups", "uom", "units", "warehouses", "warehouse_groups", "stock_transfers",
       "stocktakes", "stock_adjustments", "stock_movements", "low_stock",
       "stock_import", "item_card", "stock_valuation", "slow_moving", "free_quantities", "item_sales_valuation",
+      "inventory_dashboard", "smart_alerts", "goods_deliveries",
     ],
   },
   {
     key: "selling",
     icon: "🧾",
     label: "المبيعات والعملاء",
-    members: ["customers", "salespersons", "quotations", "sales_orders", "sales_invoices", "sales_returns", "customer_collection", "invoice_import", "report_customer_statement", "report_sales_daily", "report_sales_by_period", "report_sales_by_item", "report_sales_by_customer", "report_sales_daily_detailed", "report_sales_payment_mix", "report_sales_returns", "report_sales_top_customers"],
+    members: ["customers", "salespersons", "quotations", "sales_orders", "sales_invoices", "sales_returns", "customer_collection", "offers", "invoice_import", "report_customer_statement", "report_sales_daily", "report_sales_by_period", "report_sales_by_item", "report_sales_by_customer", "report_sales_daily_detailed", "report_sales_payment_mix", "report_sales_returns", "report_sales_top_customers"],
   },
   {
     key: "purchasing",
@@ -661,6 +668,12 @@ export default function PosShell({
     { id: "slow_moving",       icon: "🐌", label: "الأصناف بطيئة الحركة", perm: "slow_moving" },
     { id: "free_quantities",   icon: "🎁", label: "تقرير الكميات الحرة", perm: "free_quantities" },
     { id: "item_sales_valuation", icon: "📊", label: "تقييم مبيعات الأصناف", perm: "item_sales_valuation" },
+    { id: "units",             icon: "📐", label: "الوحدات", perm: "units" },
+    { id: "warehouse_groups",  icon: "🗂️", label: "مجموعات المخازن", perm: "warehouse_groups" },
+    { id: "inventory_dashboard", icon: "📊", label: "لوحة المخزون", perm: "inventory_dashboard" },
+    { id: "smart_alerts",      icon: "🔔", label: "التنبيهات الذكية", perm: "smart_alerts" },
+    { id: "goods_deliveries",  icon: "📤", label: "أذونات الصرف", perm: "goods_deliveries" },
+    { id: "offers",            icon: "🎁", label: "العروض الترويجية", perm: "offers" },
     { id: "scale",            icon: "⚖️", label: "الميزان", perm: "scale" },
     ...(isAdmin ? [{ id: "network" as View, icon: "🌐", label: "مشاركة الشبكة", adminOnly: true }] : []),
     ...(isPharmacy ? [{ id: "expiry" as View, icon: "⏳", label: "تقرير الصلاحية", perm: "expiry" as ScreenKey }] : []),
@@ -960,6 +973,24 @@ export default function PosShell({
           {standalone && v === "item_sales_valuation" && (isAdmin || can("item_sales_valuation")) && (
             <div style={S.pagePad}><ItemSalesValuationReport /></div>
           )}
+          {standalone && v === "units" && (isAdmin || can("units")) && (
+            <div style={S.pagePad}><UnitsAdmin /></div>
+          )}
+          {standalone && v === "warehouse_groups" && (isAdmin || can("warehouse_groups")) && (
+            <div style={S.pagePad}><WarehouseGroupsAdmin /></div>
+          )}
+          {standalone && v === "inventory_dashboard" && (isAdmin || can("inventory_dashboard")) && (
+            <div style={S.pagePad}><InventoryDashboardAdmin /></div>
+          )}
+          {standalone && v === "smart_alerts" && (isAdmin || can("smart_alerts")) && (
+            <div style={S.pagePad}><SmartAlertsAdmin /></div>
+          )}
+          {standalone && v === "goods_deliveries" && (isAdmin || can("goods_deliveries")) && (
+            <div style={S.pagePad}><GoodsDeliveriesAdmin /></div>
+          )}
+          {standalone && v === "offers" && (isAdmin || can("offers")) && (
+            <div style={S.pagePad}><OffersAdmin /></div>
+          )}
           {standalone && v === "currencies" && (isAdmin || can("currencies")) && (
             <div style={S.pagePad}><CurrenciesAdmin /></div>
           )}
@@ -1244,6 +1275,12 @@ function labelFor(v: View): string {
     slow_moving: "الأصناف بطيئة الحركة",
     free_quantities: "تقرير الكميات الحرة",
     item_sales_valuation: "تقييم مبيعات الأصناف",
+    units: "الوحدات",
+    warehouse_groups: "مجموعات المخازن",
+    inventory_dashboard: "لوحة المخزون",
+    smart_alerts: "التنبيهات الذكية",
+    goods_deliveries: "أذونات الصرف",
+    offers: "العروض الترويجية",
     currencies: "العملات",
     exchange_rates: "أسعار الصرف",
     treasury_transfers: "تحويل الخزن",

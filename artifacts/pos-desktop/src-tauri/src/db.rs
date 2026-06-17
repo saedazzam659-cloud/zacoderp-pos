@@ -1135,6 +1135,119 @@ pub fn initialize() -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_fiscal_periods_year ON fiscal_periods_local(fiscal_year_id);
         CREATE INDEX IF NOT EXISTS idx_fiscal_periods_dates ON fiscal_periods_local(start_date, end_date);
+
+        -- ── Units of measure master (وحدات القياس) ──────────────────
+        -- Master list of UOMs. conversion_factor is to the base unit. Items &
+        -- document lines reference units by id/name (uom_id/uom_name columns).
+        CREATE TABLE IF NOT EXISTS units_local (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            code              TEXT NOT NULL,
+            name_ar           TEXT NOT NULL,
+            name_en           TEXT,
+            conversion_factor REAL NOT NULL DEFAULT 1,
+            is_active         INTEGER NOT NULL DEFAULT 1,
+            created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_units_code ON units_local(code);
+
+        -- ── Warehouse groups (مجموعات المستودعات) ────────────────────
+        -- Classification buckets for warehouses (reporting/organisation only).
+        CREATE TABLE IF NOT EXISTS warehouse_groups_local (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            code        TEXT NOT NULL,
+            name_ar     TEXT NOT NULL,
+            name_en     TEXT,
+            is_active   INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouse_groups_code ON warehouse_groups_local(code);
+
+        -- ── Offers / promotions (العروض) ─────────────────────────────
+        -- Management-only catalogue of offers. NOTE: there is no sale-time
+        -- matching engine in the register yet, so these rows are stored &
+        -- maintained but NOT auto-applied to carts.
+        CREATE TABLE IF NOT EXISTS offers_local (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            offer_number          TEXT NOT NULL UNIQUE,
+            name_ar               TEXT NOT NULL,
+            description           TEXT,
+            discount_type         TEXT NOT NULL DEFAULT 'percentage_total'
+                                  CHECK (discount_type IN ('percentage_total','fixed_total','buy_x_get_y','line_pricing')),
+            discount_value        REAL NOT NULL DEFAULT 0,
+            buy_qty               REAL NOT NULL DEFAULT 0,
+            get_qty               REAL NOT NULL DEFAULT 0,
+            get_discount_percent  REAL NOT NULL DEFAULT 100,
+            priority              INTEGER NOT NULL DEFAULT 5,
+            status                TEXT NOT NULL DEFAULT 'draft'
+                                  CHECK (status IN ('draft','active','expired')),
+            start_date            TEXT,
+            expiry_date           TEXT,
+            min_purchase          REAL NOT NULL DEFAULT 0,
+            max_uses              INTEGER,
+            max_uses_per_customer INTEGER,
+            times_used            INTEGER NOT NULL DEFAULT 0,
+            stackable             INTEGER NOT NULL DEFAULT 0,
+            coupon_code           TEXT,
+            apply_to              TEXT NOT NULL DEFAULT 'all',
+            customer_scope        TEXT NOT NULL DEFAULT 'all',
+            items_scope           TEXT NOT NULL DEFAULT 'all',
+            sales_rep_scope       TEXT NOT NULL DEFAULT 'all',
+            created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS offer_customers_local (
+            offer_id    INTEGER NOT NULL REFERENCES offers_local(id) ON DELETE CASCADE,
+            customer_id INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS offer_sales_reps_local (
+            offer_id     INTEGER NOT NULL REFERENCES offers_local(id) ON DELETE CASCADE,
+            sales_rep_id INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS offer_items_local (
+            offer_id INTEGER NOT NULL REFERENCES offers_local(id) ON DELETE CASCADE,
+            item_id  INTEGER NOT NULL,
+            price    REAL,
+            discount REAL,
+            qty      REAL
+        );
+
+        -- ── Goods deliveries (أذونات الصرف / تسليم البضاعة) ──────────
+        -- Stock-OUT counterpart of goods_receipts. Posting credits Inventory
+        -- (1300) at moving cost and debits a delivery-clearing account (11092);
+        -- stock leaves at cost. Lifecycle draft → posted. Convert-to-invoice is
+        -- not yet implemented (handled manually for now).
+        CREATE TABLE IF NOT EXISTS goods_deliveries_local (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            delivery_no    TEXT NOT NULL UNIQUE,
+            customer_id    INTEGER NOT NULL REFERENCES customers_local(id),
+            delivery_date  TEXT NOT NULL,
+            status         TEXT NOT NULL DEFAULT 'draft'
+                           CHECK (status IN ('draft','posted')),
+            je_id          INTEGER REFERENCES journal_entries_local(id),
+            subtotal       REAL NOT NULL DEFAULT 0,
+            vat_total      REAL NOT NULL DEFAULT 0,
+            grand_total    REAL NOT NULL DEFAULT 0,
+            notes          TEXT,
+            branch_id      INTEGER,
+            cost_center_id INTEGER,
+            warehouse_id   INTEGER,
+            created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_gdn_customer ON goods_deliveries_local(customer_id);
+        CREATE INDEX IF NOT EXISTS idx_gdn_date ON goods_deliveries_local(delivery_date DESC);
+        CREATE TABLE IF NOT EXISTS goods_delivery_lines_local (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            delivery_id       INTEGER NOT NULL REFERENCES goods_deliveries_local(id) ON DELETE CASCADE,
+            item_id           INTEGER NOT NULL REFERENCES items_local(id),
+            qty               REAL NOT NULL,
+            unit_price        REAL NOT NULL DEFAULT 0,
+            unit_cost         REAL NOT NULL DEFAULT 0,
+            vat_rate          REAL NOT NULL DEFAULT 15,
+            line_total        REAL NOT NULL,
+            uom_id            INTEGER,
+            uom_name          TEXT,
+            conversion_factor REAL NOT NULL DEFAULT 1,
+            warehouse_id      INTEGER
+        );
         "#,
     )?;
     let seeds: &[(&str, &str, &str)] = &[
@@ -1149,6 +1262,8 @@ pub fn initialize() -> Result<()> {
         ("sales_order",     "SO-",   "sales_orders_local"),
         ("supplier_settlement", "SETL-", "supplier_settlements_local"),
         ("letter_of_credit",    "LC-",   "letters_of_credit_local"),
+        ("goods_delivery",      "GDN-",  "goods_deliveries_local"),
+        ("offer",               "OFR-",  "offers_local"),
     ];
     for (doc_type, prefix, table) in seeds {
         let sql = format!(

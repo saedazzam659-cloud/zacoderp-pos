@@ -473,6 +473,12 @@ fn main() {
             accounting::goods_receipt_post,
             accounting::goods_receipt_delete,
             accounting::goods_receipt_convert_to_invoice,
+            // Goods deliveries (أذونات الصرف) — stock-OUT counterpart.
+            accounting::goods_deliveries_list,
+            accounting::goods_delivery_get,
+            accounting::goods_delivery_create,
+            accounting::goods_delivery_post,
+            accounting::goods_delivery_delete,
             accounting::sales_invoices_list,
             accounting::sales_invoice_get,
             accounting::sales_invoice_create,
@@ -603,6 +609,23 @@ fn main() {
             accounting::lc_expense_create,
             accounting::lc_expense_update,
             accounting::lc_expense_delete,
+            // Units of measure (وحدات القياس).
+            accounting::units_list,
+            accounting::unit_create,
+            accounting::unit_update,
+            accounting::unit_delete,
+            // Warehouse groups (مجموعات المستودعات).
+            accounting::warehouse_groups_list,
+            accounting::warehouse_group_create,
+            accounting::warehouse_group_update,
+            accounting::warehouse_group_delete,
+            // Offers / promotions (العروض) — management only.
+            accounting::offers_list,
+            accounting::offer_get,
+            accounting::offer_create,
+            accounting::offer_update,
+            accounting::offer_set_status,
+            accounting::offer_delete,
             // LAN shared database (Task #207).
             lan::lan_stock_get_all,
             lan::lan_stock_set,
