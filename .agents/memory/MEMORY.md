@@ -98,3 +98,4 @@
 - [Sister-co draft edit invariants](sister-co-draft-edit.md) — draft source-doc PUT must require FULL child set (no header-only update), re-validate every mutable FK, and post-handler must re-assert line↔header parent before stock/JE.
 - [Block-on-child unpost guard atomicity](unpost-guard-atomicity.md) — "block unpost if child references parent" must be re-checked INSIDE the claim tx (not out-of-tx pre-check); child /post must require parent posted, or the guard races.
 - [PDF export Arabic + logo](pdf-export-arabic-and-logo.md) — html2canvas PDFs: letter-spacing garbles ONLY the Arabic element that carries it; await doc.fonts before capture; inline http logos to data-URI or CORS taint blanks them.
+- [Aggregate view composite key](aggregate-view-composite-key.md) — multi-table "show all" grids must key selection/bulk/busy/testid by module:id, not numeric id; id collides across tables → bulk hits wrong doc.

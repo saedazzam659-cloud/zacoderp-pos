@@ -134,12 +134,52 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 // associated with `module`. Mirrors companyAllowsModule() in Layout.tsx —
 // missing keys, missing JSON, and unparseable JSON all default to "allowed"
 // to avoid breaking legacy companies that never had menuPermissions set.
-function companyAllowsModule(authUser: any, module: string): boolean {
+export function companyAllowsModule(authUser: any, module: string): boolean {
   const gateKey = COMPANY_MODULE_GATE[module];
   if (!gateKey) return true;
   const mp = authUser?.companyMenuPermissions;
   if (!mp || typeof mp !== "object") return true;
   return mp[gateKey] !== false;
+}
+
+// Pure predicate for the per-action permission decision (NO company gate,
+// NO superadmin bypass — those are handled by the callers). Mirrors the
+// per-action map check + the POS / sales-rep read bypasses used by
+// requirePermission so both stay in lockstep. Company admins always pass.
+function userActionAllowed(u: any, module: string, action: PermAction): boolean {
+  if (u.role === "admin") return true;
+  const map = (u as any).permissions ?? {};
+  if (map[module]?.[action]) return true;
+  // POS bypass — see requirePermission for the rationale.
+  if (
+    (module === "sales_invoices" || module === "customers") &&
+    map["pos"]?.create &&
+    (action === "create" || action === "post" || action === "view" || action === "edit")
+  ) {
+    return true;
+  }
+  // Sales-rep lookup bypass — read-only items/warehouses for invoice creators.
+  if (
+    (module === "items" || module === "warehouses") &&
+    action === "view" &&
+    (map["sales_invoices"]?.create || map["sales_quotations"]?.create)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+// Non-middleware boolean form of requirePermission: returns true when the
+// user may perform `action` on `module`, applying the same superadmin
+// bypass + company module gate + per-action map (with bypasses). Used where
+// we must evaluate several modules in one request (e.g. Posting Center
+// "عرض الكل" iterates every postable module and keeps only the allowed ones)
+// without short-circuiting the whole request the way the middleware does.
+export function canAccessModule(authUser: any, module: string, action: PermAction): boolean {
+  if (!authUser) return false;
+  if (authUser.role === "superadmin") return true;
+  if (!companyAllowsModule(authUser, module)) return false;
+  return userActionAllowed(authUser, module, action);
 }
 
 export function requirePermission(module: string, action: PermAction) {
@@ -162,39 +202,8 @@ export function requirePermission(module: string, action: PermAction) {
       res.status(403).json({ error: `هذا الموديل غير مفعّل لشركتك — يرجى مراجعة المسؤول` });
       return;
     }
-    // Company admin bypasses the per-action map (still bounded by the company gate above).
-    if (u.role === "admin") { next(); return; }
-    const map = (u as any).permissions ?? {};
-    const ok = !!map[module]?.[action];
-    if (ok) { next(); return; }
-    // POS bypass: cashiers acting through the POS app naturally need to
-    // create, post, view, and edit sales invoices/returns (and look up
-    // customers). If the user holds the `pos` module with `create`, treat
-    // that as sufficient for the full sales_invoices/customers action set
-    // a cashier needs (create, post, view, edit). `delete` still requires
-    // explicit sales_invoices permission.
-    if (
-      (module === "sales_invoices" || module === "customers") &&
-      map["pos"]?.create &&
-      (action === "create" || action === "post" || action === "view" || action === "edit")
-    ) {
-      next(); return;
-    }
-    // Sales-rep lookup bypass: any user who can CREATE a sales invoice or
-    // quotation needs to read items + warehouses to populate the line-item
-    // picker and warehouse dropdown. Granting them the full `items.view` /
-    // `warehouses.view` permission would also expose the inventory
-    // dashboard, item-groups, units, goods-receipt screens, etc — none of
-    // which a sales rep should see (they expose cost data + non-rep ops).
-    // So we allow only READ here and only for these two modules. Mutating
-    // inventory still requires the explicit module permission.
-    if (
-      (module === "items" || module === "warehouses") &&
-      action === "view" &&
-      (map["sales_invoices"]?.create || map["sales_quotations"]?.create)
-    ) {
-      next(); return;
-    }
+    // Per-action map + admin / POS / sales-rep bypasses.
+    if (userActionAllowed(u, module, action)) { next(); return; }
     // Fire-and-forget denial audit (don't block the response)
     void writeAudit({
       userId: u.id, username: u.username, role: u.role, companyId: u.companyId,

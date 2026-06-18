@@ -39,7 +39,7 @@ import {
 } from "@workspace/db";
 import { eq, and, desc, gte, lte, inArray, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
-import { requirePermission } from "../middleware/permissions.js";
+import { requirePermission, canAccessModule } from "../middleware/permissions.js";
 import type { Request } from "express";
 
 const router = Router();
@@ -154,12 +154,51 @@ type PostingRow = {
 function gateByModule(req: any, res: any, next: any) {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
   const moduleParam = (req.query.module as string) || "sales_invoices";
+  // "all" (عرض الكل) aggregates every postable module. We cannot gate it on a
+  // single permission key — the /list handler instead filters the module set
+  // down to the ones the caller is actually allowed to view (canAccessModule).
+  if (moduleParam === "all") { next(); return; }
   if (!MODULES.includes(moduleParam as ModuleKey)) {
     res.status(400).json({ error: "نوع حركة غير صالح" });
     return;
   }
   const permKey = MODULE_PERM_KEY[moduleParam] || "journal_entries";
   return requirePermission(permKey, "view")(req, res, next);
+}
+
+// Dispatch a single module to its list builder. Extracted so both the
+// single-module path and the "all" aggregation path share one switch and can
+// never drift apart. Stock modules have no req/branch params (warehouse-scoped).
+async function listForModule(
+  req: Request,
+  mod: ModuleKey,
+  cid: number,
+  dateFrom: string | undefined,
+  dateTo: string | undefined,
+  branchIdRaw: string | undefined,
+): Promise<PostingRow[]> {
+  switch (mod) {
+    case "sales_invoices":    return listSalesInvoices(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "pos_sales":         return listPosSales(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "sales_returns":     return listSalesReturns(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "purchase_invoices": return listPurchaseInvoices(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "purchase_returns":  return listPurchaseReturns(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "receipt_vouchers":  return listReceiptVouchers(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "payment_vouchers":  return listPaymentVouchers(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "journal_entries":   return listJournalEntries(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "goods_receipts":    return listGoodsReceipts(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "goods_deliveries":  return listGoodsDeliveries(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "cash_transfers":    return listCashTransfers(req, cid, dateFrom, dateTo, branchIdRaw);
+    // stock_transfers / stock_adjustments / stock_counts have no branch_id
+    // column on the header — they're scoped by warehouse, not branch.
+    case "stock_transfers":   return listStockTransfers(cid, dateFrom, dateTo);
+    case "stock_adjustments": return listStockAdjustments(cid, dateFrom, dateTo);
+    case "stock_counts":      return listStockCounts(cid, dateFrom, dateTo);
+    case "sister_transfers":   return listSisterTransfers(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "sister_returns":     return listSisterReturns(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "sister_settlements": return listSisterSettlements(req, cid, dateFrom, dateTo, branchIdRaw);
+    default:                   return [];
+  }
 }
 
 // ─── List endpoint ──────────────────────────────────────────────────────────
@@ -173,8 +212,10 @@ router.get("/list", gateByModule, async (req, res) => {
     return;
   }
 
-  // gateByModule already validated the module; safe to cast.
-  const mod = ((req.query.module as string) || "sales_invoices") as ModuleKey;
+  // gateByModule already validated the module; "all" is the aggregate view.
+  const modParam = (req.query.module as string) || "sales_invoices";
+  const isAll = modParam === "all";
+  const mod = (isAll ? "sales_invoices" : modParam) as ModuleKey;
 
   // posted | unposted | all  (default: unposted — matches "غير مرحل" in the UI)
   const statusFilter = (req.query.status as string) || "unposted";
@@ -190,26 +231,21 @@ router.get("/list", gateByModule, async (req, res) => {
   try {
     let rows: PostingRow[] = [];
 
-    switch (mod) {
-      case "sales_invoices":    rows = await listSalesInvoices(req, cid, dateFrom, dateTo, branchIdRaw); break;
-      case "pos_sales":         rows = await listPosSales(req, cid, dateFrom, dateTo, branchIdRaw);      break;
-      case "sales_returns":     rows = await listSalesReturns(req, cid, dateFrom, dateTo, branchIdRaw); break;
-      case "purchase_invoices": rows = await listPurchaseInvoices(req, cid, dateFrom, dateTo, branchIdRaw); break;
-      case "purchase_returns":  rows = await listPurchaseReturns(req, cid, dateFrom, dateTo, branchIdRaw); break;
-      case "receipt_vouchers":  rows = await listReceiptVouchers(req, cid, dateFrom, dateTo, branchIdRaw); break;
-      case "payment_vouchers":  rows = await listPaymentVouchers(req, cid, dateFrom, dateTo, branchIdRaw); break;
-      case "journal_entries":   rows = await listJournalEntries(req, cid, dateFrom, dateTo, branchIdRaw); break;
-      case "goods_receipts":    rows = await listGoodsReceipts(req, cid, dateFrom, dateTo, branchIdRaw); break;
-      case "goods_deliveries":  rows = await listGoodsDeliveries(req, cid, dateFrom, dateTo, branchIdRaw); break;
-      case "cash_transfers":    rows = await listCashTransfers(req, cid, dateFrom, dateTo, branchIdRaw); break;
-      // stock_transfers / stock_adjustments / stock_counts have no branch_id
-      // column on the header — they're scoped by warehouse, not branch.
-      case "stock_transfers":   rows = await listStockTransfers(cid, dateFrom, dateTo); break;
-      case "stock_adjustments": rows = await listStockAdjustments(cid, dateFrom, dateTo); break;
-      case "stock_counts":      rows = await listStockCounts(cid, dateFrom, dateTo); break;
-      case "sister_transfers":   rows = await listSisterTransfers(req, cid, dateFrom, dateTo, branchIdRaw); break;
-      case "sister_returns":     rows = await listSisterReturns(req, cid, dateFrom, dateTo, branchIdRaw); break;
-      case "sister_settlements": rows = await listSisterSettlements(req, cid, dateFrom, dateTo, branchIdRaw); break;
+    if (isAll) {
+      // "عرض الكل" — aggregate every postable module the caller is actually
+      // allowed to view. Modules disabled for the company OR not granted to
+      // the user are silently skipped (no 403) so the combined list only ever
+      // shows rows the user could open anyway. Each row keeps its own `module`
+      // so the client resolves the right post/unpost endpoint + source link.
+      const allowedModules = MODULES.filter(m =>
+        canAccessModule(req.authUser, MODULE_PERM_KEY[m] || "journal_entries", "view"),
+      );
+      const perModule = await Promise.all(
+        allowedModules.map(m => listForModule(req, m, cid, dateFrom, dateTo, branchIdRaw)),
+      );
+      rows = perModule.flat();
+    } else {
+      rows = await listForModule(req, mod, cid, dateFrom, dateTo, branchIdRaw);
     }
 
     // Resolve journal-entry doc numbers in one extra round-trip when any
@@ -267,8 +303,8 @@ router.get("/list", gateByModule, async (req, res) => {
     const items = truncated ? filtered.slice(0, LIST_LIMIT) : filtered;
 
     res.json({
-      module: mod,
-      moduleLabel: MODULE_LABELS_AR[mod],
+      module: isAll ? "all" : mod,
+      moduleLabel: isAll ? "عرض الكل" : MODULE_LABELS_AR[mod],
       total: items.length,
       totalMatched,
       truncated,
@@ -296,8 +332,14 @@ router.get("/ai-summary", gateByModule, async (req, res) => {
     return;
   }
 
-  // gateByModule already validated the module; safe to cast.
-  const mod = ((req.query.module as string) || "sales_invoices") as ModuleKey;
+  // gateByModule lets "all" through for the /list aggregate, but ai-summary is
+  // inherently per-module — reject the aggregate value with a clear 400.
+  const modParam = (req.query.module as string) || "sales_invoices";
+  if (modParam === "all" || !MODULES.includes(modParam as ModuleKey)) {
+    res.status(400).json({ error: "التحليل الذكي متاح لموديول واحد فقط" });
+    return;
+  }
+  const mod = modParam as ModuleKey;
   const branchIdRaw = req.query.branchId as string | undefined;
 
   try {

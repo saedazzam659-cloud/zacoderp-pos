@@ -15,6 +15,7 @@
  * progress to the user.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -119,7 +120,73 @@ const MODULE_COMBOBOX_ITEMS: ComboboxItem[] = MODULES.map(m => ({
   group: m.group,
 }));
 
+// "عرض الكل" aggregate option — prepended to the combobox so the accountant
+// can see every postable document across all enabled+permitted modules in one
+// list. Carries the sentinel value "all", handled specially on both ends.
+const ALL_MODULES_KEY = "all" as const;
+type SelectableModule = ModuleKey | typeof ALL_MODULES_KEY;
+const MODULE_COMBOBOX_ITEMS_WITH_ALL: ComboboxItem[] = [
+  { value: ALL_MODULES_KEY, label: "عرض الكل", group: "عام" },
+  ...MODULE_COMBOBOX_ITEMS,
+];
+
+// Map each module to the in-app route of its source document. Modules that
+// have a per-document edit page get the row id appended (`…/:id`); modules
+// that only expose a list page navigate there (the user finds the row in the
+// list). Verified against App.tsx route→component wiring.
+const SOURCE_ROUTE: Record<ModuleKey, (id: number) => string> = {
+  sales_invoices:     (id) => `/sales/invoices/${id}`,
+  pos_sales:          (id) => `/sales/invoices/${id}`,
+  sales_returns:      ()   => `/sales/returns`,
+  purchase_invoices:  (id) => `/purchasing/invoices/${id}`,
+  purchase_returns:   ()   => `/purchasing/returns`,
+  receipt_vouchers:   (id) => `/cash/receipt-vouchers/${id}`,
+  payment_vouchers:   (id) => `/cash/payment-vouchers/${id}`,
+  journal_entries:    (id) => `/accounting/journals/${id}`,
+  goods_receipts:     ()   => `/inventory/goods-receipts`,
+  goods_deliveries:   ()   => `/inventory/goods-deliveries`,
+  cash_transfers:     ()   => `/cash/transfers`,
+  stock_transfers:    ()   => `/inventory/transfers`,
+  stock_adjustments:  ()   => `/inventory/adjustments`,
+  stock_counts:       ()   => `/inventory/counts`,
+  sister_transfers:   (id) => `/inventory/sister-transfers/${id}`,
+  sister_returns:     (id) => `/inventory/sister-returns/${id}`,
+  sister_settlements: (id) => `/inventory/sister-settlements/${id}`,
+};
+
 type StatusFilter = "all" | "posted" | "unposted";
+
+// ─── Back-navigation state persistence ─────────────────────────────────────
+// When the accountant clicks a document number we navigate away to the source
+// document. Pressing browser Back unmounts+remounts this page (wouter), so we
+// stash the full filter/page/scroll state in sessionStorage and restore it on
+// mount — the user lands back exactly where they were.
+const STATE_KEY = "posting-center-state";
+type PersistedState = {
+  selectedModule: SelectableModule;
+  statusFilter: StatusFilter;
+  search: string;
+  dateFrom: string;
+  dateTo: string;
+  branchId: string;
+  currentPage: number;
+  scrollY: number;
+};
+function readStoredState(): Partial<PersistedState> {
+  try {
+    const raw = sessionStorage.getItem(STATE_KEY);
+    return raw ? (JSON.parse(raw) as Partial<PersistedState>) : {};
+  } catch {
+    return {};
+  }
+}
+const VALID_MODULE = new Set<string>([ALL_MODULES_KEY, ...MODULES.map(m => m.key)]);
+
+// Composite selection key. In "عرض الكل" mode rows come from different tables
+// that can share the same numeric id (e.g. a sales invoice #5 and a journal
+// entry #5), so selection / bulk actions MUST key on module+id, never id alone,
+// or one click could act on the wrong document.
+const rowKey = (r: { module: string; id: number }) => `${r.module}:${r.id}`;
 
 // Unified row shape returned by /api/posting-center/list
 type PostingRow = {
@@ -173,17 +240,28 @@ export default function PostingCenter() {
   const qc = useQueryClient();
   const fmt = useFormatters();
 
-  const [selectedModule, setSelectedModule] = useState<ModuleKey>("sales_invoices");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("unposted");
-  const [search, setSearch] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [, setLocation] = useLocation();
+
+  // Restore any saved filter/page/scroll snapshot once on mount so pressing
+  // browser Back from a source document lands the user exactly where they were.
+  const restored = useRef<Partial<PersistedState>>(readStoredState());
+
+  const [selectedModule, setSelectedModule] = useState<SelectableModule>(() => {
+    const m = restored.current.selectedModule;
+    return m && VALID_MODULE.has(m) ? m : "sales_invoices";
+  });
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
+    () => restored.current.statusFilter ?? "unposted",
+  );
+  const [search, setSearch] = useState(() => restored.current.search ?? "");
+  const [dateFrom, setDateFrom] = useState(() => restored.current.dateFrom ?? "");
+  const [dateTo, setDateTo] = useState(() => restored.current.dateTo ?? "");
   // Branch filter — "all" means no explicit branchId is sent, so the server
   // returns every branch the user is allowed to see (admin/superadmin → all
   // branches; restricted user → their assigned branches only). Picking a
   // specific branch sends ?branchId=N which the server combines with the
   // user's branch policy via branchScopeSpread().
-  const [branchId, setBranchId] = useState<string>("all");
+  const [branchId, setBranchId] = useState<string>(() => restored.current.branchId ?? "all");
   const branchesQuery = useBranches();
 
   // Pagination state — pageSize persists in localStorage so the user's
@@ -194,11 +272,13 @@ export default function PostingCenter() {
       ? (stored as PageSize)
       : DEFAULT_PAGE_SIZE;
   });
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(
+    () => restored.current.currentPage ?? 1,
+  );
 
   // Selection state — persists across re-renders so the user can scroll, page
   // through filters, and still keep their original selection.
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   // Bulk action progress UI
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -218,8 +298,14 @@ export default function PostingCenter() {
 
   // Reset to first page whenever the filter set or page size changes so the
   // user is never stranded on (e.g.) page 7 of a result set that just shrank
-  // to one page.
+  // to one page. The first run is skipped so a page restored from Back-nav
+  // isn't clobbered back to 1 on mount.
+  const skipFirstPageReset = useRef(true);
   useEffect(() => {
+    if (skipFirstPageReset.current) {
+      skipFirstPageReset.current = false;
+      return;
+    }
     setCurrentPage(1);
   }, [selectedModule, statusFilter, dateFrom, dateTo, search, pageSize, branchId]);
 
@@ -227,6 +313,17 @@ export default function PostingCenter() {
   useEffect(() => {
     localStorage.setItem("posting-center-page-size", String(pageSize));
   }, [pageSize]);
+
+  // Persist the full filter/page snapshot to sessionStorage on every change so
+  // a click into a source document can be reversed with browser Back. Scroll
+  // position is written separately at click time (it's not React state).
+  useEffect(() => {
+    const prevScroll = readStoredState().scrollY ?? 0;
+    sessionStorage.setItem(STATE_KEY, JSON.stringify({
+      selectedModule, statusFilter, search, dateFrom, dateTo, branchId,
+      currentPage, scrollY: prevScroll,
+    } satisfies PersistedState));
+  }, [selectedModule, statusFilter, search, dateFrom, dateTo, branchId, currentPage]);
 
   const { data, isLoading, isFetching, refetch, error } = useQuery({
     queryKey: ["posting-center-list", cid, selectedModule, statusFilter, dateFrom, dateTo, branchId],
@@ -258,6 +355,34 @@ export default function PostingCenter() {
   const totalMatched = data?.totalMatched ?? allRows.length;
   const serverLimit = data?.limit ?? 5000;
 
+  // Restore scroll position exactly once after the first data load following a
+  // Back navigation, then clear it so a normal refresh doesn't keep jumping.
+  const scrollRestored = useRef(false);
+  useEffect(() => {
+    if (scrollRestored.current) return;
+    if (isLoading) return;
+    const y = restored.current.scrollY ?? 0;
+    scrollRestored.current = true;
+    if (y > 0) {
+      requestAnimationFrame(() => window.scrollTo({ top: y }));
+    }
+  }, [isLoading]);
+
+  // Navigate to a row's source document, first stashing the current scroll
+  // position so browser Back restores the exact viewport.
+  function navigateToSource(row: PostingRow) {
+    const route = SOURCE_ROUTE[row.module]?.(row.id);
+    if (!route) return;
+    try {
+      const snap = readStoredState();
+      sessionStorage.setItem(STATE_KEY, JSON.stringify({
+        ...snap,
+        scrollY: window.scrollY,
+      }));
+    } catch { /* ignore quota errors — navigation still works */ }
+    setLocation(route);
+  }
+
   // Apply per-grid quick-search on top of server-side status/date filters so
   // the user can type to narrow without re-fetching.
   const filtered = useMemo(() => {
@@ -271,9 +396,9 @@ export default function PostingCenter() {
     );
   }, [allRows, search]);
 
-  const allFilteredIds = useMemo(() => filtered.map(r => r.id), [filtered]);
-  const allSelected = allFilteredIds.length > 0 && allFilteredIds.every(id => selected.has(id));
-  const someSelected = !allSelected && allFilteredIds.some(id => selected.has(id));
+  const allFilteredKeys = useMemo(() => filtered.map(r => rowKey(r)), [filtered]);
+  const allSelected = allFilteredKeys.length > 0 && allFilteredKeys.every(k => selected.has(k));
+  const someSelected = !allSelected && allFilteredKeys.some(k => selected.has(k));
 
   // ─── Pagination derivations ──────────────────────────────────────────────
   // Slice the filtered set into the current page. The page-size dropdown
@@ -289,17 +414,17 @@ export default function PostingCenter() {
     [filtered, pageStartIdx, pageEndIdx],
   );
 
-  function toggleRow(id: number) {
+  function toggleRow(key: string) {
     setSelected(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
   function toggleAll() {
     if (allSelected) setSelected(new Set());
-    else setSelected(new Set(allFilteredIds));
+    else setSelected(new Set(allFilteredKeys));
   }
   function clearSelection() {
     setSelected(new Set());
@@ -307,8 +432,8 @@ export default function PostingCenter() {
   function selectAllPostable() {
     // اظهار الكل button — selects every row that can still be posted
     // (i.e. unposted + not cancelled). Uses the server-side filtered set.
-    const ids = filtered.filter(r => !r.posted && r.status !== "cancelled").map(r => r.id);
-    setSelected(new Set(ids));
+    const keys = filtered.filter(r => !r.posted && r.status !== "cancelled").map(r => rowKey(r));
+    setSelected(new Set(keys));
   }
 
   // ─── Bulk post / unpost with chunked concurrency ─────────────────────────
@@ -316,31 +441,60 @@ export default function PostingCenter() {
   // Aborts as soon as `cancelRef.current` becomes true (the user clicks the
   // floating Cancel button mid-run).
   async function runBulk(action: "post" | "unpost") {
-    const def = MODULES.find(m => m.key === selectedModule)!;
+    // In "عرض الكل" mode rows span multiple modules, so the post/unpost
+    // endpoint is resolved PER ROW (from row.module) rather than from a single
+    // selected module. `singleDef` is only set when a specific module is chosen.
+    const isAll = selectedModule === ALL_MODULES_KEY;
+    const singleDef = isAll ? null : MODULES.find(m => m.key === selectedModule)!;
 
-    // Some modules (cash transfers, stock transfers/adjustments/counts) only
-    // expose a "post" endpoint server-side. Block unpost early with a clear
-    // message so the user isn't left with a wall of failed-row toasts.
-    if (action === "unpost" && def.supportsUnpost === false) {
+    // Single-module unpost on a module that only exposes "post" (cash transfers,
+    // stock transfers/adjustments/counts) — block early with a clear message so
+    // the user isn't left with a wall of failed-row toasts.
+    if (!isAll && action === "unpost" && singleDef!.supportsUnpost === false) {
       toast({
         title: "فك الترحيل غير مدعوم لهذا الموديول",
-        description: `${def.label} لا تدعم فك الترحيل من مركز الترحيل — قم بإلغاء أو حذف المستند الأصلي بدلاً من ذلك.`,
+        description: `${singleDef!.label} لا تدعم فك الترحيل من مركز الترحيل — قم بإلغاء أو حذف المستند الأصلي بدلاً من ذلك.`,
         variant: "destructive",
       });
       return;
     }
 
-    const ids = Array.from(selected);
-    const eligible = ids.filter(id => {
-      const row = allRows.find(r => r.id === id);
+    // Resolve every selected composite key (module:id) to its row up-front.
+    // Keying by composite is essential in "عرض الكل" mode — two modules can hold
+    // the same numeric id, so a plain id lookup could act on the wrong document.
+    const rowByKey = new Map(allRows.map(r => [rowKey(r), r]));
+    const keys = Array.from(selected);
+    // Track rows skipped because their module can't be unposted — only relevant
+    // in "عرض الكل" mode (single-module unpost already returned above).
+    let skippedUnsupported = 0;
+    const eligible = keys.filter(k => {
+      const row = rowByKey.get(k);
       if (!row) return false;
       // Only post unposted rows; only unpost posted rows.
-      return action === "post" ? !row.posted : row.posted;
+      if (action === "post" ? row.posted : !row.posted) return false;
+      // On unpost, drop rows whose module has no unpost endpoint.
+      if (action === "unpost") {
+        const d = MODULES.find(m => m.key === row.module);
+        if (d?.supportsUnpost === false) { skippedUnsupported++; return false; }
+      }
+      return true;
     });
 
     if (eligible.length === 0) {
-      toast({ title: "لا توجد عناصر مؤهلة لهذه العملية", variant: "destructive" });
+      toast({
+        title: skippedUnsupported > 0
+          ? "العناصر المحددة لا تدعم فك الترحيل"
+          : "لا توجد عناصر مؤهلة لهذه العملية",
+        variant: "destructive",
+      });
       return;
+    }
+
+    if (skippedUnsupported > 0) {
+      toast({
+        title: `سيتم تخطّي ${skippedUnsupported} عنصر لا يدعم فك الترحيل`,
+        description: "هذه الأنواع (تحويلات نقدية / مخزون) تُلغى من مستندها الأصلي.",
+      });
     }
 
     if (!confirm(
@@ -362,10 +516,20 @@ export default function PostingCenter() {
       while (cursor < eligible.length) {
         if (cancelRef.current) break;
         const idx = cursor++;
-        const id = eligible[idx];
+        const key = eligible[idx];
+        // Resolve the endpoint per row so "عرض الكل" can post/unpost a mixed
+        // list of modules in one run.
+        const row = rowByKey.get(key);
+        const d = row ? MODULES.find(m => m.key === row.module) : undefined;
+        if (!d || !row) {
+          failed++;
+          failures.push({ id: row?.id ?? -1, error: "موديول غير معروف", status: 0 });
+          setBulkProgress(p => ({ ...p, done: p.done + 1, failed }));
+          continue;
+        }
         try {
-          const r = await fetch(def.endpoint(id, action), {
-            method: def.method,
+          const r = await fetch(d.endpoint(row.id, action), {
+            method: d.method,
             headers: authHeaders(),
           });
           if (!r.ok) {
@@ -376,7 +540,7 @@ export default function PostingCenter() {
           }
         } catch (e: any) {
           failed++;
-          failures.push({ id, error: e?.message || "خطأ", status: e?.status ?? 0 });
+          failures.push({ id: row.id, error: e?.message || "خطأ", status: e?.status ?? 0 });
         }
         setBulkProgress(p => ({ ...p, done: p.done + 1, failed }));
       }
@@ -437,12 +601,12 @@ export default function PostingCenter() {
   // selection. Reuses the exact same per-module endpoint as the bulk runner so
   // there's no duplicated posting logic. `rowBusyId` tracks the in-flight row
   // so we can show a spinner and disable just that one button.
-  const [rowBusyId, setRowBusyId] = useState<number | null>(null);
+  const [rowBusyId, setRowBusyId] = useState<string | null>(null);
   async function runSingleUnpost(row: PostingRow) {
     const def = MODULES.find(m => m.key === row.module)!;
     if (def.supportsUnpost === false) return;
     if (!confirm(`سيتم فك ترحيل المستند ${row.docNumber || `#${row.id}`}. هل تريد المتابعة؟`)) return;
-    setRowBusyId(row.id);
+    setRowBusyId(rowKey(row));
     try {
       const r = await fetch(def.endpoint(row.id, "unpost"), {
         method: def.method,
@@ -530,7 +694,7 @@ export default function PostingCenter() {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;
     }
-    const moduleLabel = MODULES.find(m => m.key === selectedModule)?.label ?? "";
+    const moduleLabel = selectedModule === ALL_MODULES_KEY ? "عرض الكل" : (MODULES.find(m => m.key === selectedModule)?.label ?? "");
     exportToExcel(
       buildExportRows(),
       exportColumns,
@@ -545,7 +709,7 @@ export default function PostingCenter() {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;
     }
-    const moduleLabel = MODULES.find(m => m.key === selectedModule)?.label ?? "";
+    const moduleLabel = selectedModule === ALL_MODULES_KEY ? "عرض الكل" : (MODULES.find(m => m.key === selectedModule)?.label ?? "");
     exportToPDF(
       buildExportRows(),
       exportColumns,
@@ -558,10 +722,10 @@ export default function PostingCenter() {
   }
 
   // ─── Render ──────────────────────────────────────────────────────────────
-  const moduleLabel = MODULES.find(m => m.key === selectedModule)?.label ?? "";
+  const moduleLabel = selectedModule === ALL_MODULES_KEY ? "عرض الكل" : (MODULES.find(m => m.key === selectedModule)?.label ?? "");
   const totalAmount = filtered.reduce((s, r) => s + r.amount, 0);
   const selectedAmount = filtered
-    .filter(r => selected.has(r.id))
+    .filter(r => selected.has(rowKey(r)))
     .reduce((s, r) => s + r.amount, 0);
 
   return (
@@ -581,6 +745,8 @@ export default function PostingCenter() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button variant="outline" size="sm" onClick={openAi}
+                  disabled={selectedModule === ALL_MODULES_KEY}
+                  title={selectedModule === ALL_MODULES_KEY ? "اختر نوع حركة محدد لعرض التحليل الذكي" : undefined}
                   className="border-violet-300 text-violet-700 hover:bg-violet-50"
                   data-testid="button-ai-summary">
             <Sparkles className="size-4 me-1.5" /> تحليل ذكي
@@ -617,9 +783,9 @@ export default function PostingCenter() {
                 مخازن) and Enter selects the highlighted row. */}
             <div data-testid="select-module">
               <SearchCombobox
-                items={MODULE_COMBOBOX_ITEMS}
+                items={MODULE_COMBOBOX_ITEMS_WITH_ALL}
                 value={selectedModule}
-                onValueChange={(v) => { if (v) setSelectedModule(v as ModuleKey); }}
+                onValueChange={(v) => { if (v) setSelectedModule(v as SelectableModule); }}
                 placeholder="اختر نوع الحركة"
                 searchPlaceholder="ابحث عن نوع الحركة..."
                 emptyText="لا يوجد نوع حركة بهذا الاسم"
@@ -855,13 +1021,13 @@ export default function PostingCenter() {
                 </tr>
               )}
               {pagedRows.map((r, idx) => {
-                const isSel = selected.has(r.id);
+                const isSel = selected.has(rowKey(r));
                 return (
                   <tr key={`${r.module}-${r.id}`}
                       onClick={(e) => {
                         const target = e.target as HTMLElement;
                         if (target.closest("button,a,input")) return;
-                        toggleRow(r.id);
+                        toggleRow(rowKey(r));
                       }}
                       className={cn(
                         "border-t border-slate-100 cursor-pointer transition-colors",
@@ -870,14 +1036,27 @@ export default function PostingCenter() {
                       data-testid={`row-${r.module}-${r.id}`}>
                     <td className="px-2 py-1.5 text-center">
                       <input type="checkbox" checked={isSel}
-                             onChange={() => toggleRow(r.id)}
+                             onChange={() => toggleRow(rowKey(r))}
                              className="size-4 cursor-pointer accent-teal-600"
-                             data-testid={`checkbox-${r.id}`} />
+                             data-testid={`checkbox-${r.module}-${r.id}`} />
                     </td>
                     {/* Show absolute index across the full filtered set so
                         the user can tell what page they're on at a glance. */}
                     <td className="px-2 py-1.5 text-center text-xs text-slate-500">{pageStartIdx + idx + 1}</td>
-                    <td className="px-2 py-1.5 font-mono text-xs">{r.docNumber || "—"}</td>
+                    <td className="px-2 py-1.5 font-mono text-xs">
+                      {SOURCE_ROUTE[r.module] ? (
+                        <button
+                          type="button"
+                          onClick={() => navigateToSource(r)}
+                          className="text-teal-700 hover:text-teal-900 hover:underline font-mono"
+                          title="فتح المستند الأصلي"
+                          data-testid={`link-doc-${r.module}-${r.id}`}>
+                          {r.docNumber || `#${r.id}`}
+                        </button>
+                      ) : (
+                        r.docNumber || "—"
+                      )}
+                    </td>
                     <td className="px-2 py-1.5 text-xs">{r.date}</td>
                     <td className="px-2 py-1.5 text-xs text-slate-600">{r.type}</td>
                     <td className="px-2 py-1.5 text-xs text-slate-600 max-w-[260px] truncate" title={r.description || ""}>
@@ -911,10 +1090,10 @@ export default function PostingCenter() {
                           size="sm"
                           variant="outline"
                           className="h-7 px-2 text-[11px] text-rose-700 border-rose-200 hover:bg-rose-50"
-                          disabled={rowBusyId === r.id || bulkBusy}
+                          disabled={rowBusyId === rowKey(r) || bulkBusy}
                           onClick={() => runSingleUnpost(r)}
-                          data-testid={`button-unpost-${r.id}`}>
-                          {rowBusyId === r.id ? (
+                          data-testid={`button-unpost-${r.module}-${r.id}`}>
+                          {rowBusyId === rowKey(r) ? (
                             <Loader2 className="size-3 animate-spin" />
                           ) : (
                             <><Undo2 className="size-3 me-1" /> فك الترحيل</>
