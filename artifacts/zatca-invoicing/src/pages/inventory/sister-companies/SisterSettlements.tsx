@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
-import { Plus, Send, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, FileText, Pencil, Printer, FileSpreadsheet, FileDown } from "lucide-react";
+import { Plus, Send, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, FileText, Pencil, RotateCcw, Printer, FileSpreadsheet, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +25,12 @@ export default function SisterSettlements() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["sister-settlements"] });
       toast({ title: "تم ترحيل السند" }); },
     onError: (e: any) => toast({ title: "تعذّر الترحيل", description: String(e?.message || e), variant: "destructive" }),
+  });
+  const unpostMut = useMutation({
+    mutationFn: (id: number) => sisterCompaniesApi.unpostSettlement(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["sister-settlements"] });
+      toast({ title: "تم فك ترحيل السند وعكس القيد" }); },
+    onError: (e: any) => toast({ title: "تعذّر فك الترحيل", description: String(e?.message || e), variant: "destructive" }),
   });
   const delMut = useMutation({
     mutationFn: (id: number) => sisterCompaniesApi.deleteSettlement(id),
@@ -137,11 +143,18 @@ export default function SisterSettlements() {
                             <Pencil className="h-3 w-3" /> تعديل
                           </Button>
                         </Link>
-                        <Button size="sm" variant="outline" onClick={() => postMut.mutate(r.id)}><Send className="h-3 w-3" /></Button>
+                        <Button size="sm" variant="outline" onClick={() => postMut.mutate(r.id)} title="ترحيل" disabled={postMut.isPending} data-testid="btn-post-settlement"><Send className="h-3 w-3" /> ترحيل</Button>
                         <Button size="sm" variant="ghost" onClick={() => { if (confirm("حذف؟")) delMut.mutate(r.id); }}>
                           <Trash2 className="h-3 w-3 text-red-600" />
                         </Button>
                       </>
+                    )}
+                    {r.status === "posted" && (
+                      <Button size="sm" variant="outline"
+                        onClick={() => { if (confirm("فك ترحيل هذا السند سيعكس القيد. متابعة؟")) unpostMut.mutate(r.id); }}
+                        title="فك الترحيل" disabled={unpostMut.isPending} data-testid="btn-unpost-settlement">
+                        <RotateCcw className="h-3 w-3 text-amber-600" /> فك الترحيل
+                      </Button>
                     )}
                   </td>
                 </tr>

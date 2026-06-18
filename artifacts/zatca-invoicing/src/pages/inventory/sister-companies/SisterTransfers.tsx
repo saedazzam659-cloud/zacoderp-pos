@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
-import { Plus, ArrowRightLeft, Send, Trash2, CheckCircle2, Pencil, Printer, FileSpreadsheet, FileDown } from "lucide-react";
+import { Plus, ArrowRightLeft, Send, Trash2, CheckCircle2, Pencil, RotateCcw, Printer, FileSpreadsheet, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -31,6 +31,12 @@ export default function SisterTransfers() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["sister-transfers"] });
       toast({ title: "تم الترحيل وإنشاء القيد" }); },
     onError: (e: any) => toast({ title: "تعذّر الترحيل", description: String(e?.message || e), variant: "destructive" }),
+  });
+  const unpostMut = useMutation({
+    mutationFn: (id: number) => sisterCompaniesApi.unpostTransfer(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["sister-transfers"] });
+      toast({ title: "تم فك الترحيل وعكس القيد" }); },
+    onError: (e: any) => toast({ title: "تعذّر فك الترحيل", description: String(e?.message || e), variant: "destructive" }),
   });
   const delMut = useMutation({
     mutationFn: (id: number) => sisterCompaniesApi.deleteTransfer(id),
@@ -140,8 +146,8 @@ export default function SisterTransfers() {
                               <Pencil className="h-3 w-3" /> تعديل
                             </Button>
                           </Link>
-                          <Button size="sm" variant="outline" onClick={() => postMut.mutate(t.id)} title="ترحيل" disabled={postMut.isPending}>
-                            <Send className="h-3 w-3" />
+                          <Button size="sm" variant="outline" onClick={() => postMut.mutate(t.id)} title="ترحيل" disabled={postMut.isPending} data-testid="btn-post-transfer">
+                            <Send className="h-3 w-3" /> ترحيل
                           </Button>
                           <Button size="sm" variant="ghost" onClick={() => { if (confirm("حذف؟")) delMut.mutate(t.id); }} title="حذف">
                             <Trash2 className="h-3 w-3 text-red-600" />
@@ -149,11 +155,18 @@ export default function SisterTransfers() {
                         </>
                       )}
                       {t.status === "posted" && (
-                        <Link href={`/inventory/sister-returns/new?transferId=${t.id}`}>
-                          <Button size="sm" variant="ghost" title="إنشاء مرتجع">
-                            <CheckCircle2 className="h-3 w-3 text-blue-600" /> مرتجع
+                        <>
+                          <Button size="sm" variant="outline"
+                            onClick={() => { if (confirm("فك ترحيل هذا التحويل سيعكس القيد والمخزون. متابعة؟")) unpostMut.mutate(t.id); }}
+                            title="فك الترحيل" disabled={unpostMut.isPending} data-testid="btn-unpost-transfer">
+                            <RotateCcw className="h-3 w-3 text-amber-600" /> فك الترحيل
                           </Button>
-                        </Link>
+                          <Link href={`/inventory/sister-returns/new?transferId=${t.id}`}>
+                            <Button size="sm" variant="ghost" title="إنشاء مرتجع">
+                              <CheckCircle2 className="h-3 w-3 text-blue-600" /> مرتجع
+                            </Button>
+                          </Link>
+                        </>
                       )}
                     </td>
                   </tr>

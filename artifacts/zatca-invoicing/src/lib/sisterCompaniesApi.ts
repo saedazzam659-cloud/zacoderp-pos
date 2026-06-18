@@ -104,6 +104,7 @@ export const sisterCompaniesApi = {
   createTransfer:  (body: any)                => req<SisterTransfer>("POST", "/transfers", body),
   updateTransfer:  (id: number, body: any)    => req<{ ok: true }>("PUT", `/transfers/${id}`, body),
   postTransfer:    (id: number)               => req<{ ok: true; journalEntryId: number }>("POST", `/transfers/${id}/post`),
+  unpostTransfer:  (id: number)               => req<{ ok: true }>("POST", `/transfers/${id}/unpost`),
   deleteTransfer:  (id: number)               => req<{ ok: true }>("DELETE", `/transfers/${id}`),
 
   // ── Returns
@@ -112,6 +113,7 @@ export const sisterCompaniesApi = {
   createReturn:  (body: any)    => req<SisterReturn>("POST", "/returns", body),
   updateReturn:  (id: number, body: any) => req<{ ok: true }>("PUT", `/returns/${id}`, body),
   postReturn:    (id: number)   => req<{ ok: true; journalEntryId: number }>("POST", `/returns/${id}/post`),
+  unpostReturn:  (id: number)   => req<{ ok: true }>("POST", `/returns/${id}/unpost`),
   deleteReturn:  (id: number)   => req<{ ok: true }>("DELETE", `/returns/${id}`),
 
   // ── Settlements
@@ -120,6 +122,7 @@ export const sisterCompaniesApi = {
   createSettlement:  (body: any)    => req<SisterSettlement>("POST", "/settlements", body),
   updateSettlement:  (id: number, body: any) => req<{ ok: true }>("PUT", `/settlements/${id}`, body),
   postSettlement:    (id: number)   => req<{ ok: true; journalEntryId: number }>("POST", `/settlements/${id}/post`),
+  unpostSettlement:  (id: number)   => req<{ ok: true }>("POST", `/settlements/${id}/unpost`),
   deleteSettlement:  (id: number)   => req<{ ok: true }>("DELETE", `/settlements/${id}`),
 
   // ── Statement
