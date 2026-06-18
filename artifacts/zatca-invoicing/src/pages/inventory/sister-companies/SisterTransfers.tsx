@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "wouter";
-import { Plus, ArrowRightLeft, Send, Trash2, CheckCircle2, Printer, FileSpreadsheet, FileDown } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { Plus, ArrowRightLeft, Send, Trash2, CheckCircle2, Pencil, Printer, FileSpreadsheet, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,6 +17,7 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
 export default function SisterTransfers() {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const { data: transfers = [], isLoading } = useQuery({
     queryKey: ["sister-transfers"], queryFn: () => sisterCompaniesApi.listTransfers(),
   });
@@ -115,7 +116,8 @@ export default function SisterTransfers() {
               {(transfers as any[]).map((t: any) => {
                 const st = STATUS_LABEL[t.status] ?? { label: t.status, color: "" };
                 return (
-                  <tr key={t.id} className="border-t hover:bg-muted/30">
+                  <tr key={t.id} className="border-t hover:bg-muted/30"
+                    onDoubleClick={() => { if (t.status === "draft") setLocation(`/inventory/sister-transfers/${t.id}`); }}>
                     <td className="p-2 font-mono">{t.transferNumber}</td>
                     <td className="p-2 font-mono">
                       {t.journalEntryId ? (
@@ -133,6 +135,11 @@ export default function SisterTransfers() {
                     <td className="p-2 flex gap-1">
                       {t.status === "draft" && (
                         <>
+                          <Link href={`/inventory/sister-transfers/${t.id}`}>
+                            <Button size="sm" variant="outline" title="تعديل" data-testid="btn-edit-transfer">
+                              <Pencil className="h-3 w-3" /> تعديل
+                            </Button>
+                          </Link>
                           <Button size="sm" variant="outline" onClick={() => postMut.mutate(t.id)} title="ترحيل" disabled={postMut.isPending}>
                             <Send className="h-3 w-3" />
                           </Button>

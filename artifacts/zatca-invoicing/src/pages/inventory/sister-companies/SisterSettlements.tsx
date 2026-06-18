@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "wouter";
-import { Plus, Send, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, FileText, Printer, FileSpreadsheet, FileDown } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { Plus, Send, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, FileText, Pencil, Printer, FileSpreadsheet, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,6 +11,7 @@ import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 export default function SisterSettlements() {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["sister-settlements"], queryFn: () => sisterCompaniesApi.listSettlements(),
   });
@@ -106,7 +107,8 @@ export default function SisterSettlements() {
                 <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">لا توجد سندات</td></tr>
               )}
               {(rows as any[]).map((r: any) => (
-                <tr key={r.id} className="border-t hover:bg-muted/30">
+                <tr key={r.id} className="border-t hover:bg-muted/30"
+                  onDoubleClick={() => { if (r.status === "draft") setLocation(`/inventory/sister-settlements/${r.id}`); }}>
                   <td className="p-2 font-mono">{r.code}</td>
                   <td className="p-2 font-mono">
                     {r.journalEntryId ? (
@@ -130,6 +132,11 @@ export default function SisterSettlements() {
                   <td className="p-2 flex gap-1">
                     {r.status === "draft" && (
                       <>
+                        <Link href={`/inventory/sister-settlements/${r.id}`}>
+                          <Button size="sm" variant="outline" title="تعديل" data-testid="btn-edit-settlement">
+                            <Pencil className="h-3 w-3" /> تعديل
+                          </Button>
+                        </Link>
                         <Button size="sm" variant="outline" onClick={() => postMut.mutate(r.id)}><Send className="h-3 w-3" /></Button>
                         <Button size="sm" variant="ghost" onClick={() => { if (confirm("حذف؟")) delMut.mutate(r.id); }}>
                           <Trash2 className="h-3 w-3 text-red-600" />

@@ -581,6 +581,86 @@ router.post("/returns", async (req, res) => {
   res.status(201).json(ret);
 });
 
+// PUT /returns/:id — draft-only edit. A draft return has NOT yet bumped
+// returnedQty on the transfer (that happens only on /post), so editing a draft
+// is a safe header + items replacement, mirroring PUT /transfers/:id.
+router.put("/returns/:id", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const b = req.body ?? {};
+  const [existing] = await db.select().from(sisterReturnsTable)
+    .where(and(eq(sisterReturnsTable.id, id), eq(sisterReturnsTable.companyId, cid)));
+  if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (existing.status !== "draft") { res.status(400).json({ error: "لا يمكن التعديل بعد الترحيل" }); return; }
+
+  // Resolve the parent transfer (defaults to the existing one). It must be
+  // owned by this tenant and POSTED (a return only makes sense against one).
+  const transferId = b.transferId != null ? Number(b.transferId) : existing.transferId;
+  const [orig] = await db.select().from(sisterTransfersTable)
+    .where(and(eq(sisterTransfersTable.id, transferId), eq(sisterTransfersTable.companyId, cid)));
+  if (!orig || orig.status !== "posted") { res.status(400).json({ error: "التحويل الأصلي غير صالح" }); return; }
+
+  if (b.toWarehouseId != null && Number(b.toWarehouseId) !== existing.toWarehouseId) {
+    const [retWh] = await db.select({ id: warehousesTable.id }).from(warehousesTable)
+      .where(and(eq(warehousesTable.id, Number(b.toWarehouseId)), eq(warehousesTable.companyId, cid)));
+    if (!retWh) { res.status(400).json({ error: "مخزن الاسترجاع غير صالح" }); return; }
+  }
+
+  // Require a full item set on every edit (mirror create semantics). Allowing a
+  // partial header-only update could leave stale lines pointing at a different
+  // parent transfer than the header, desyncing returnedQty / stock / JE on post.
+  if (!Array.isArray(b.items) || !b.items.length) {
+    res.status(400).json({ error: "يجب إرسال بنود المرتجع" }); return;
+  }
+  const items = b.items;
+  const origLines = await db.select().from(sisterTransferItemsTable)
+    .where(eq(sisterTransferItemsTable.transferId, orig.id));
+  const origMap = new Map(origLines.map(l => [l.id, l]));
+  for (const it of items) {
+    const tl = origMap.get(Number(it.transferItemId));
+    if (!tl) { res.status(400).json({ error: "بند مرتجع غير مرتبط بالتحويل الأصلي" }); return; }
+    const remaining = Number(tl.qty) - Number(tl.returnedQty);
+    if (Number(it.qty) <= 0 || Number(it.qty) > remaining + 1e-6) {
+      res.status(400).json({ error: `الكمية المرتجعة تتجاوز المتاح للصنف (${remaining})` });
+      return;
+    }
+  }
+
+  const totals = items.reduce((acc: any, it: any) => {
+    const tl = origMap.get(Number(it.transferItemId))!;
+    acc.cost   += Number(it.qty) * Number(tl.costPrice);
+    acc.supply += Number(it.qty) * Number(tl.supplyPrice);
+    return acc;
+  }, { cost: 0, supply: 0 });
+
+  await db.update(sisterReturnsTable).set({
+    ...(b.branchId !== undefined ? { branchId: b.branchId != null ? Number(b.branchId) : null } : {}),
+    returnDate: b.returnDate ?? existing.returnDate,
+    transferId: orig.id,
+    sisterCompanyId: orig.sisterCompanyId,
+    toWarehouseId: b.toWarehouseId != null ? Number(b.toWarehouseId) : existing.toWarehouseId,
+    totalCost:   totals.cost.toFixed(4),
+    totalSupply: totals.supply.toFixed(4),
+    notes: b.notes ?? existing.notes,
+    updatedAt: new Date(),
+  }).where(eq(sisterReturnsTable.id, id));
+
+  await db.delete(sisterReturnItemsTable).where(eq(sisterReturnItemsTable.returnId, id));
+  await db.insert(sisterReturnItemsTable).values(items.map((it: any) => {
+    const tl = origMap.get(Number(it.transferItemId))!;
+    return {
+      returnId: id,
+      transferItemId: tl.id,
+      itemId: tl.itemId,
+      unitId: tl.unitId,
+      qty: String(it.qty),
+      costPrice:   tl.costPrice,
+      supplyPrice: tl.supplyPrice,
+    };
+  }));
+  res.json({ ok: true });
+});
+
 router.post("/returns/:id/post", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
@@ -599,6 +679,16 @@ router.post("/returns/:id/post", async (req, res) => {
   // transfer's stock-out + JE must already exist). Requiring it here also keeps
   // the transfer-unpost block-on-return guard consistent under concurrency.
   if (orig.status !== "posted") { res.status(400).json({ error: "لا يمكن ترحيل مرتجع لتحويل غير مُرحَّل" }); return; }
+  // Defensive: every return line MUST belong to the header transfer. A draft
+  // edit that swaps the header transfer should already keep lines in lockstep,
+  // but assert here before any stock/JE mutation so a desynced doc can never post.
+  const origLineIds = new Set(
+    (await db.select({ id: sisterTransferItemsTable.id }).from(sisterTransferItemsTable)
+      .where(eq(sisterTransferItemsTable.transferId, orig.id))).map(l => l.id),
+  );
+  if (lines.some(l => !origLineIds.has(l.transferItemId))) {
+    res.status(400).json({ error: "بنود المرتجع غير متطابقة مع التحويل الأصلي" }); return;
+  }
   const [sister] = await db.select().from(sisterCompaniesTable)
     .where(and(eq(sisterCompaniesTable.id, ret.sisterCompanyId), eq(sisterCompaniesTable.companyId, cid)));
   if (!sister) { res.status(400).json({ error: "الشركة الشقيقة غير موجودة" }); return; }
@@ -785,6 +875,63 @@ router.post("/settlements", async (req, res) => {
     status: "draft",
   }).returning();
   res.status(201).json(row);
+});
+
+// PUT /settlements/:id — draft-only edit. A draft settlement has no JE yet, so
+// editing it is a plain header update; validation mirrors POST /settlements.
+router.put("/settlements/:id", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const b = req.body ?? {};
+  const [existing] = await db.select().from(sisterSettlementsTable)
+    .where(and(eq(sisterSettlementsTable.id, id), eq(sisterSettlementsTable.companyId, cid)));
+  if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (existing.status !== "draft") { res.status(400).json({ error: "لا يمكن التعديل بعد الترحيل" }); return; }
+
+  // Effective values (incoming overrides existing) for cross-field validation.
+  const direction   = b.direction   ?? existing.direction;
+  const paymentType = b.paymentType ?? existing.paymentType;
+  const cashBoxId     = b.cashBoxId     !== undefined ? (b.cashBoxId     != null ? Number(b.cashBoxId)     : null) : existing.cashBoxId;
+  const bankAccountId = b.bankAccountId !== undefined ? (b.bankAccountId != null ? Number(b.bankAccountId) : null) : existing.bankAccountId;
+  const amount = b.amount !== undefined ? b.amount : existing.amount;
+
+  if (paymentType === "cash" && !cashBoxId) { res.status(400).json({ error: "اختر الخزينة" }); return; }
+  if (paymentType === "bank" && !bankAccountId) { res.status(400).json({ error: "اختر الحساب البنكي" }); return; }
+  if (Number(amount) <= 0) { res.status(400).json({ error: "المبلغ يجب أن يكون موجباً" }); return; }
+
+  if (b.sisterCompanyId != null && Number(b.sisterCompanyId) !== existing.sisterCompanyId) {
+    const [sister] = await db.select({ id: sisterCompaniesTable.id }).from(sisterCompaniesTable)
+      .where(and(eq(sisterCompaniesTable.id, Number(b.sisterCompanyId)), eq(sisterCompaniesTable.companyId, cid)));
+    if (!sister) { res.status(400).json({ error: "الشركة الشقيقة غير صالحة" }); return; }
+  }
+
+  // Re-validate tenant ownership of the (effective) treasury account so a draft
+  // can never persist a cross-tenant/invalid cash-box or bank-account id.
+  if (paymentType === "cash" && cashBoxId) {
+    const [cb] = await db.select({ id: cashBoxesTable.id }).from(cashBoxesTable)
+      .where(and(eq(cashBoxesTable.id, cashBoxId), eq(cashBoxesTable.companyId, cid)));
+    if (!cb) { res.status(400).json({ error: "الخزينة غير صالحة" }); return; }
+  }
+  if (paymentType === "bank" && bankAccountId) {
+    const [bk] = await db.select({ id: bankAccountsTable.id }).from(bankAccountsTable)
+      .where(and(eq(bankAccountsTable.id, bankAccountId), eq(bankAccountsTable.companyId, cid)));
+    if (!bk) { res.status(400).json({ error: "الحساب البنكي غير صالح" }); return; }
+  }
+
+  await db.update(sisterSettlementsTable).set({
+    ...(b.branchId !== undefined ? { branchId: b.branchId != null ? Number(b.branchId) : null } : {}),
+    date: b.date ?? existing.date,
+    sisterCompanyId: b.sisterCompanyId != null ? Number(b.sisterCompanyId) : existing.sisterCompanyId,
+    direction,
+    paymentType,
+    // Keep only the account matching the (possibly updated) payment type.
+    cashBoxId:     paymentType === "cash" ? cashBoxId     : null,
+    bankAccountId: paymentType === "bank" ? bankAccountId : null,
+    amount: String(amount),
+    description: b.description ?? existing.description,
+    updatedAt: new Date(),
+  }).where(eq(sisterSettlementsTable.id, id));
+  res.json({ ok: true });
 });
 
 router.post("/settlements/:id/post", async (req, res) => {

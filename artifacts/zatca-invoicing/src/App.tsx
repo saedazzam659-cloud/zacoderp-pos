@@ -834,10 +834,13 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/sister-companies/:id/statement" module="sister_companies" component={SisterCompanyStatement} />}
             {!isSuperAdmin && <PermRoute path="/inventory/sister-transfers"               module="sister_companies" component={SisterTransfers} />}
             {!isSuperAdmin && <PermRoute path="/inventory/sister-transfers/new"           module="sister_companies" action="create" component={SisterTransferForm} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/sister-transfers/:id"           module="sister_companies" action="edit" component={SisterTransferForm} />}
             {!isSuperAdmin && <PermRoute path="/inventory/sister-returns"                 module="sister_companies" component={SisterReturns} />}
             {!isSuperAdmin && <PermRoute path="/inventory/sister-returns/new"             module="sister_companies" action="create" component={SisterReturnForm} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/sister-returns/:id"             module="sister_companies" action="edit" component={SisterReturnForm} />}
             {!isSuperAdmin && <PermRoute path="/inventory/sister-settlements"             module="sister_companies" component={SisterSettlements} />}
             {!isSuperAdmin && <PermRoute path="/inventory/sister-settlements/new"         module="sister_companies" action="create" component={SisterSettlementForm} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/sister-settlements/:id"         module="sister_companies" action="edit" component={SisterSettlementForm} />}
             {!isSuperAdmin && <PermRoute path="/inventory/sister-statements"              module="sister_companies" component={SisterStatementsHub} />}
             {!isSuperAdmin && <PermRoute path="/inventory/adjustments"      module="stock_adjustments" component={StockAdjustment} />}
             {!isSuperAdmin && <PermRoute path="/inventory/adjustments/new"  module="stock_adjustments" action="create" component={StockAdjustment} />}

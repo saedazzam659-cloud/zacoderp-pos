@@ -110,6 +110,7 @@ export const sisterCompaniesApi = {
   listReturns:   ()             => req<SisterReturn[]>("GET", "/returns"),
   getReturn:     (id: number)   => req<SisterReturn>("GET", `/returns/${id}`),
   createReturn:  (body: any)    => req<SisterReturn>("POST", "/returns", body),
+  updateReturn:  (id: number, body: any) => req<{ ok: true }>("PUT", `/returns/${id}`, body),
   postReturn:    (id: number)   => req<{ ok: true; journalEntryId: number }>("POST", `/returns/${id}/post`),
   deleteReturn:  (id: number)   => req<{ ok: true }>("DELETE", `/returns/${id}`),
 
@@ -117,6 +118,7 @@ export const sisterCompaniesApi = {
   listSettlements:   ()             => req<SisterSettlement[]>("GET", "/settlements"),
   getSettlement:     (id: number)   => req<SisterSettlement>("GET", `/settlements/${id}`),
   createSettlement:  (body: any)    => req<SisterSettlement>("POST", "/settlements", body),
+  updateSettlement:  (id: number, body: any) => req<{ ok: true }>("PUT", `/settlements/${id}`, body),
   postSettlement:    (id: number)   => req<{ ok: true; journalEntryId: number }>("POST", `/settlements/${id}/post`),
   deleteSettlement:  (id: number)   => req<{ ok: true }>("DELETE", `/settlements/${id}`),
 

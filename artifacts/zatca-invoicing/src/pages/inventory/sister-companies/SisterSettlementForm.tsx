@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLocation } from "wouter";
+import { useLocation, useRoute } from "wouter";
 import { Wallet, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,11 @@ export default function SisterSettlementForm() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const qc = useQueryClient();
+
+  // Edit mode: /inventory/sister-settlements/:id (draft-only).
+  const [matchEdit, editParams] = useRoute("/inventory/sister-settlements/:id");
+  const editId = matchEdit ? Number(editParams?.id) : null;
+
   const url = new URL(window.location.href);
   const presetSisterId = url.searchParams.get("sisterId") ?? "";
 
@@ -45,21 +50,48 @@ export default function SisterSettlementForm() {
   const { data: cashBoxes = [] } = useQuery({ queryKey: ["cash-boxes"], queryFn: () => fetchJson("/api/cash-boxes") });
   const { data: banks     = [] } = useQuery({ queryKey: ["bank-accounts"], queryFn: () => fetchJson("/api/bank-accounts") });
 
+  // Edit mode: load the existing (draft) settlement.
+  const { data: existing } = useQuery({
+    queryKey: ["sister-settlement-detail", editId],
+    queryFn: () => sisterCompaniesApi.getSettlement(editId!),
+    enabled: !!editId,
+  });
+  const loadedRef = useRef(false);
+  useEffect(() => {
+    if (!existing || loadedRef.current) return;
+    const e: any = existing;
+    setForm({
+      sisterCompanyId: String(e.sisterCompanyId),
+      branchId: e.branchId != null ? String(e.branchId) : "",
+      date: e.date,
+      direction: e.direction,
+      paymentType: e.paymentType,
+      cashBoxId: e.cashBoxId != null ? String(e.cashBoxId) : "",
+      bankAccountId: e.bankAccountId != null ? String(e.bankAccountId) : "",
+      amount: String(e.amount),
+      description: e.description ?? "",
+    });
+    loadedRef.current = true;
+  }, [existing]);
+
   // Auto-pick the main branch ONCE for a new doc; user may clear it (NULL = shared).
+  // Skipped in edit mode (the loaded record already carries its branch).
   const branchDefaultedRef = useRef(false);
   useEffect(() => {
-    if (branchDefaultedRef.current || form.branchId) return;
+    if (editId || branchDefaultedRef.current || form.branchId) return;
     const def = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
     if (!def) return;
     setForm((p: any) => ({ ...p, branchId: String(def.id) }));
     branchDefaultedRef.current = true;
-  }, [branches, form.branchId]);
+  }, [branches, form.branchId, editId]);
 
   const createMut = useMutation({
     mutationFn: async (body: any) => {
-      const v = await sisterCompaniesApi.createSettlement(body);
-      await sisterCompaniesApi.postSettlement(v.id);
-      return v;
+      const id = editId
+        ? (await sisterCompaniesApi.updateSettlement(editId, body), editId)
+        : (await sisterCompaniesApi.createSettlement(body)).id;
+      await sisterCompaniesApi.postSettlement(id);
+      return id;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["sister-settlements"] });
@@ -95,7 +127,7 @@ export default function SisterSettlementForm() {
 
   return (
     <form onSubmit={submit} className="p-6 space-y-4">
-      <h1 className="text-xl font-bold flex items-center gap-2"><Wallet className="h-5 w-5" /> سند تسوية شركة شقيقة</h1>
+      <h1 className="text-xl font-bold flex items-center gap-2"><Wallet className="h-5 w-5" /> {editId ? "تعديل سند تسوية شركة شقيقة" : "سند تسوية شركة شقيقة"}</h1>
       <Card><CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-6">
         <label><span className="text-sm">الشركة الشقيقة *</span>
           <select className="w-full border rounded h-9 px-2" value={form.sisterCompanyId}

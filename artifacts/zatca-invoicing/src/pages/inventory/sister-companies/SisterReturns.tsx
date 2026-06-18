@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "wouter";
-import { Plus, Send, Trash2, Undo2, Printer, FileSpreadsheet, FileDown } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { Plus, Send, Trash2, Undo2, Pencil, Printer, FileSpreadsheet, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,6 +16,7 @@ const STATUS: Record<string, { label: string; color: string }> = {
 export default function SisterReturns() {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const { data: returns = [], isLoading } = useQuery({
     queryKey: ["sister-returns"], queryFn: () => sisterCompaniesApi.listReturns(),
   });
@@ -108,7 +109,8 @@ export default function SisterReturns() {
               {(returns as any[]).map((r: any) => {
                 const st = STATUS[r.status] ?? { label: r.status, color: "" };
                 return (
-                  <tr key={r.id} className="border-t hover:bg-muted/30">
+                  <tr key={r.id} className="border-t hover:bg-muted/30"
+                    onDoubleClick={() => { if (r.status === "draft") setLocation(`/inventory/sister-returns/${r.id}`); }}>
                     <td className="p-2 font-mono">{r.returnNumber}</td>
                     <td className="p-2 font-mono">
                       {r.journalEntryId ? (
@@ -126,6 +128,11 @@ export default function SisterReturns() {
                     <td className="p-2 flex gap-1">
                       {r.status === "draft" && (
                         <>
+                          <Link href={`/inventory/sister-returns/${r.id}`}>
+                            <Button size="sm" variant="outline" title="تعديل" data-testid="btn-edit-return">
+                              <Pencil className="h-3 w-3" /> تعديل
+                            </Button>
+                          </Link>
                           <Button size="sm" variant="outline" onClick={() => postMut.mutate(r.id)}><Send className="h-3 w-3" /></Button>
                           <Button size="sm" variant="ghost" onClick={() => { if (confirm("حذف؟")) delMut.mutate(r.id); }}>
                             <Trash2 className="h-3 w-3 text-red-600" />

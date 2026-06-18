@@ -176,7 +176,8 @@ export default function SisterCompanies() {
                   <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">لا توجد شركات شقيقة بعد</td></tr>
                 )}
                 {rows.map((r: any, i: number) => (
-                  <tr key={r.id} className="border-t hover:bg-muted/30">
+                  <tr key={r.id} className="border-t hover:bg-muted/30"
+                    onDoubleClick={() => { setEditing(r); setShowForm(true); }}>
                     <td className="p-2">{i + 1}</td>
                     <td className="p-2 font-medium">{r.nameAr} {r.nameEn && <span className="text-muted-foreground text-xs">({r.nameEn})</span>}</td>
                     <td className="p-2">{r.vatNumber ?? "—"}</td>

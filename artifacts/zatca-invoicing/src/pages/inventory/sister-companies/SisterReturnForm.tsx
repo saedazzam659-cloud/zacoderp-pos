@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLocation } from "wouter";
+import { useLocation, useRoute } from "wouter";
 import { Undo2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,10 @@ export default function SisterReturnForm() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const qc = useQueryClient();
+
+  // Edit mode: /inventory/sister-returns/:id (draft-only).
+  const [matchEdit, editParams] = useRoute("/inventory/sister-returns/:id");
+  const editId = matchEdit ? Number(editParams?.id) : null;
 
   const url = new URL(window.location.href);
   const initialTransferId = url.searchParams.get("transferId") ?? "";
@@ -42,6 +46,32 @@ export default function SisterReturnForm() {
   const { data: items = [] } = useQuery({ queryKey: ["items"], queryFn: () => inventoryApi.getItems() });
   const itemMap = Object.fromEntries((items as any[]).map((i: any) => [i.id, i.nameAr]));
 
+  // Edit mode: load the existing (draft) return + seed its return quantities.
+  const { data: existing } = useQuery({
+    queryKey: ["sister-return-detail", editId],
+    queryFn: () => sisterCompaniesApi.getReturn(editId!),
+    enabled: !!editId,
+  });
+  const loadedRef = useRef(false);
+  useEffect(() => {
+    if (!existing || loadedRef.current) return;
+    const e: any = existing;
+    setTransferId(String(e.transferId));
+    setForm({
+      returnDate: e.returnDate,
+      branchId: e.branchId != null ? String(e.branchId) : "",
+      toWarehouseId: String(e.toWarehouseId),
+      notes: e.notes ?? "",
+    });
+    // qtys editor is keyed by the parent transfer-item id.
+    if (Array.isArray(e.items)) {
+      const seeded: Record<number, string> = {};
+      for (const it of e.items) seeded[Number(it.transferItemId)] = String(it.qty);
+      setQtys(seeded);
+    }
+    loadedRef.current = true;
+  }, [existing]);
+
   // When transfer changes, default toWarehouse = transfer's source warehouse (restores to same)
   // and default the branch from the original transfer's branch.
   useEffect(() => {
@@ -54,9 +84,11 @@ export default function SisterReturnForm() {
 
   const createMut = useMutation({
     mutationFn: async (body: any) => {
-      const ret = await sisterCompaniesApi.createReturn(body);
-      await sisterCompaniesApi.postReturn(ret.id);
-      return ret;
+      const id = editId
+        ? (await sisterCompaniesApi.updateReturn(editId, body), editId)
+        : (await sisterCompaniesApi.createReturn(body)).id;
+      await sisterCompaniesApi.postReturn(id);
+      return id;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["sister-returns"] });
@@ -91,7 +123,7 @@ export default function SisterReturnForm() {
 
   return (
     <form onSubmit={submit} className="p-6 space-y-4">
-      <h1 className="text-xl font-bold flex items-center gap-2"><Undo2 className="h-5 w-5" /> مرتجع تحويل</h1>
+      <h1 className="text-xl font-bold flex items-center gap-2"><Undo2 className="h-5 w-5" /> {editId ? "تعديل مرتجع تحويل" : "مرتجع تحويل"}</h1>
 
       <Card><CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-6">
         <label><span className="text-sm">التحويل الأصلي *</span>

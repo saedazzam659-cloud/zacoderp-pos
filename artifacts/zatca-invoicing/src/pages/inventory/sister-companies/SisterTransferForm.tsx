@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLocation } from "wouter";
+import { useLocation, useRoute } from "wouter";
 import { ArrowRightLeft, Plus, Trash2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,10 @@ export default function SisterTransferForm() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const qc = useQueryClient();
+
+  // Edit mode: /inventory/sister-transfers/:id (draft-only).
+  const [matchEdit, editParams] = useRoute("/inventory/sister-transfers/:id");
+  const editId = matchEdit ? Number(editParams?.id) : null;
 
   // Read ?sisterId=N from URL (deep-link from sister card)
   const url = new URL(window.location.href);
@@ -39,16 +43,50 @@ export default function SisterTransferForm() {
   const { data: items = [] } = useQuery({ queryKey: ["items"], queryFn: () => inventoryApi.getItems() });
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: () => inventoryApi.getUnits() });
 
+  // Edit mode: load the existing (draft) transfer with its items.
+  const { data: existing } = useQuery({
+    queryKey: ["sister-transfer-detail", editId],
+    queryFn: () => sisterCompaniesApi.getTransfer(editId!),
+    enabled: !!editId,
+  });
+  const loadedRef = useRef(false);
+  useEffect(() => {
+    if (!existing || loadedRef.current) return;
+    const e: any = existing;
+    setForm({
+      sisterCompanyId: String(e.sisterCompanyId),
+      branchId: e.branchId != null ? String(e.branchId) : "",
+      fromWarehouseId: String(e.fromWarehouseId),
+      transferDate: e.transferDate,
+      arAccountId: e.arAccountId ?? null,
+      cogsAccountId: e.cogsAccountId ?? null,
+      revenueAccountId: e.revenueAccountId ?? null,
+      inventoryAccountId: e.inventoryAccountId ?? null,
+      notes: e.notes ?? "",
+    });
+    if (Array.isArray(e.items) && e.items.length) {
+      setLines(e.items.map((it: any) => ({
+        itemId: String(it.itemId),
+        unitId: it.unitId != null ? String(it.unitId) : "",
+        qty: String(it.qty),
+        costPrice: String(it.costPrice),
+        supplyPrice: String(it.supplyPrice),
+      })));
+    }
+    loadedRef.current = true;
+  }, [existing]);
+
   // Auto-pick the main branch ONCE for a new doc; the user may then clear it
-  // (NULL branch = shared/company-wide) without it snapping back.
+  // (NULL branch = shared/company-wide) without it snapping back. Skipped in
+  // edit mode (the loaded record already carries its branch).
   const branchDefaultedRef = useRef(false);
   useEffect(() => {
-    if (branchDefaultedRef.current || form.branchId) return;
+    if (editId || branchDefaultedRef.current || form.branchId) return;
     const def = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
     if (!def) return;
     setForm((p: any) => ({ ...p, branchId: String(def.id) }));
     branchDefaultedRef.current = true;
-  }, [branches, form.branchId]);
+  }, [branches, form.branchId, editId]);
 
   // When sister picked: prefill default accounts from sister card
   useEffect(() => {
@@ -66,10 +104,13 @@ export default function SisterTransferForm() {
 
   const createMut = useMutation({
     mutationFn: async (body: any) => {
-      const tr = await sisterCompaniesApi.createTransfer(body);
+      // Edit mode updates the existing draft, then posts; create makes a new one.
+      const id = editId
+        ? (await sisterCompaniesApi.updateTransfer(editId, body), editId)
+        : (await sisterCompaniesApi.createTransfer(body)).id;
       // Auto-post on save (matches StockTransfer.tsx UX).
-      await sisterCompaniesApi.postTransfer(tr.id);
-      return tr;
+      await sisterCompaniesApi.postTransfer(id);
+      return id;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["sister-transfers"] });
@@ -127,7 +168,7 @@ export default function SisterTransferForm() {
 
   return (
     <form onSubmit={submit} className="p-6 space-y-4">
-      <h1 className="text-xl font-bold flex items-center gap-2"><ArrowRightLeft className="h-5 w-5" /> تحويل جديد إلى شركة شقيقة</h1>
+      <h1 className="text-xl font-bold flex items-center gap-2"><ArrowRightLeft className="h-5 w-5" /> {editId ? "تعديل تحويل إلى شركة شقيقة" : "تحويل جديد إلى شركة شقيقة"}</h1>
 
       <Card><CardHeader><CardTitle className="text-base">بيانات التحويل</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3">
