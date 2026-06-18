@@ -34,6 +34,8 @@ import {
   cashTransfersTable,
   stockTransfersTable, stockAdjustmentsTable, stockCountsTable,
   warehousesTable, cashBoxesTable, bankAccountsTable,
+  sisterTransfersTable, sisterReturnsTable, sisterSettlementsTable,
+  sisterCompaniesTable,
 } from "@workspace/db";
 import { eq, and, desc, gte, lte, inArray, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
@@ -70,6 +72,9 @@ const MODULE_PERM_KEY: Record<string, string> = {
   stock_transfers:   "stock_transfers",
   stock_adjustments: "stock_adjustments",
   stock_counts:      "stock_counts",
+  sister_transfers:   "sister_companies",
+  sister_returns:     "sister_companies",
+  sister_settlements: "sister_companies",
 };
 
 // Hard server-side cap on the number of rows returned per list call. The
@@ -97,6 +102,9 @@ const MODULES = [
   "stock_transfers",
   "stock_adjustments",
   "stock_counts",
+  "sister_transfers",
+  "sister_returns",
+  "sister_settlements",
 ] as const;
 type ModuleKey = typeof MODULES[number];
 
@@ -115,6 +123,9 @@ const MODULE_LABELS_AR: Record<ModuleKey, string> = {
   stock_transfers:   "تحويلات المخزون",
   stock_adjustments: "تسويات المخزون",
   stock_counts:      "جرد المخزون",
+  sister_transfers:   "تحويلات الشركات الشقيقة",
+  sister_returns:     "مرتجعات الشركات الشقيقة",
+  sister_settlements: "تسويات الشركات الشقيقة",
 };
 
 // Unified row shape returned to the client. Every module is mapped onto this
@@ -196,6 +207,9 @@ router.get("/list", gateByModule, async (req, res) => {
       case "stock_transfers":   rows = await listStockTransfers(cid, dateFrom, dateTo); break;
       case "stock_adjustments": rows = await listStockAdjustments(cid, dateFrom, dateTo); break;
       case "stock_counts":      rows = await listStockCounts(cid, dateFrom, dateTo); break;
+      case "sister_transfers":   rows = await listSisterTransfers(req, cid, dateFrom, dateTo, branchIdRaw); break;
+      case "sister_returns":     rows = await listSisterReturns(req, cid, dateFrom, dateTo, branchIdRaw); break;
+      case "sister_settlements": rows = await listSisterSettlements(req, cid, dateFrom, dateTo, branchIdRaw); break;
     }
 
     // Resolve journal-entry doc numbers in one extra round-trip when any
@@ -303,6 +317,9 @@ router.get("/ai-summary", gateByModule, async (req, res) => {
       case "stock_transfers":   rows = await listStockTransfers(cid);   break;
       case "stock_adjustments": rows = await listStockAdjustments(cid); break;
       case "stock_counts":      rows = await listStockCounts(cid);      break;
+      case "sister_transfers":   rows = await listSisterTransfers(req, cid, undefined, undefined, branchIdRaw);   break;
+      case "sister_returns":     rows = await listSisterReturns(req, cid, undefined, undefined, branchIdRaw);     break;
+      case "sister_settlements": rows = await listSisterSettlements(req, cid, undefined, undefined, branchIdRaw); break;
     }
 
     const unposted = rows.filter(r => !r.posted && r.status !== "cancelled");
@@ -815,6 +832,107 @@ async function listCashTransfers(
     status: d.status,
     posted: d.status === "posted",
     journalEntryId: null,
+    journalEntryDocNumber: null,
+  }));
+}
+
+// ─── Sister Companies (الشركات الشقيقة) ──────────────────────────────────────
+// transfers / returns / settlements — gated under the single "sister_companies"
+// module permission. The "party" column shows the sister-company name. Amounts
+// use the supply value (= the AR side of the JE) for transfers/returns and the
+// settlement amount for settlements.
+async function loadSisterMap(cid: number, ids: number[]): Promise<Map<number, string>> {
+  const uniq = Array.from(new Set(ids.filter((x): x is number => !!x)));
+  if (uniq.length === 0) return new Map();
+  const rows = await db.select({ id: sisterCompaniesTable.id, nameAr: sisterCompaniesTable.nameAr, nameEn: sisterCompaniesTable.nameEn })
+    .from(sisterCompaniesTable)
+    .where(and(eq(sisterCompaniesTable.companyId, cid), inArray(sisterCompaniesTable.id, uniq)));
+  return new Map(rows.map(r => [r.id, r.nameAr || r.nameEn || `#${r.id}`] as const));
+}
+
+async function listSisterTransfers(
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
+): Promise<PostingRow[]> {
+  const conds = [
+    eq(sisterTransfersTable.companyId, cid),
+    ...branchScopeSpread(req, sisterTransfersTable.branchId, branchIdRaw),
+  ];
+  if (dateFrom) conds.push(gte(sisterTransfersTable.transferDate, dateFrom));
+  if (dateTo)   conds.push(lte(sisterTransfersTable.transferDate, dateTo));
+  const docs = await db.select().from(sisterTransfersTable)
+    .where(and(...conds))
+    .orderBy(desc(sisterTransfersTable.transferDate));
+  const sisMap = await loadSisterMap(cid, docs.map(d => d.sisterCompanyId));
+  return docs.map(d => ({
+    id: d.id,
+    module: "sister_transfers",
+    docNumber: d.transferNumber,
+    date: d.transferDate,
+    type: MODULE_LABELS_AR.sister_transfers,
+    description: d.notes,
+    party: sisMap.get(d.sisterCompanyId) ?? null,
+    amount: parseFloat(d.totalSupply || "0"),
+    status: d.status,
+    posted: d.status === "posted",
+    journalEntryId: d.journalEntryId,
+    journalEntryDocNumber: null,
+  }));
+}
+
+async function listSisterReturns(
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
+): Promise<PostingRow[]> {
+  const conds = [
+    eq(sisterReturnsTable.companyId, cid),
+    ...branchScopeSpread(req, sisterReturnsTable.branchId, branchIdRaw),
+  ];
+  if (dateFrom) conds.push(gte(sisterReturnsTable.returnDate, dateFrom));
+  if (dateTo)   conds.push(lte(sisterReturnsTable.returnDate, dateTo));
+  const docs = await db.select().from(sisterReturnsTable)
+    .where(and(...conds))
+    .orderBy(desc(sisterReturnsTable.returnDate));
+  const sisMap = await loadSisterMap(cid, docs.map(d => d.sisterCompanyId));
+  return docs.map(d => ({
+    id: d.id,
+    module: "sister_returns",
+    docNumber: d.returnNumber,
+    date: d.returnDate,
+    type: MODULE_LABELS_AR.sister_returns,
+    description: d.notes,
+    party: sisMap.get(d.sisterCompanyId) ?? null,
+    amount: parseFloat(d.totalSupply || "0"),
+    status: d.status,
+    posted: d.status === "posted",
+    journalEntryId: d.journalEntryId,
+    journalEntryDocNumber: null,
+  }));
+}
+
+async function listSisterSettlements(
+  req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
+): Promise<PostingRow[]> {
+  const conds = [
+    eq(sisterSettlementsTable.companyId, cid),
+    ...branchScopeSpread(req, sisterSettlementsTable.branchId, branchIdRaw),
+  ];
+  if (dateFrom) conds.push(gte(sisterSettlementsTable.date, dateFrom));
+  if (dateTo)   conds.push(lte(sisterSettlementsTable.date, dateTo));
+  const docs = await db.select().from(sisterSettlementsTable)
+    .where(and(...conds))
+    .orderBy(desc(sisterSettlementsTable.date));
+  const sisMap = await loadSisterMap(cid, docs.map(d => d.sisterCompanyId));
+  return docs.map(d => ({
+    id: d.id,
+    module: "sister_settlements",
+    docNumber: d.code,
+    date: d.date,
+    type: MODULE_LABELS_AR.sister_settlements,
+    description: d.description ?? (d.direction === "receive" ? "تحصيل" : "سداد"),
+    party: sisMap.get(d.sisterCompanyId) ?? null,
+    amount: parseFloat(d.amount || "0"),
+    status: d.status,
+    posted: d.status === "posted",
+    journalEntryId: d.journalEntryId,
     journalEntryDocNumber: null,
   }));
 }

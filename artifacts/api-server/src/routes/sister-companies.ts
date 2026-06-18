@@ -393,6 +393,80 @@ router.post("/transfers/:id/post", async (req, res) => {
   res.json({ ok: true, journalEntryId: entry.id });
 });
 
+// POST /transfers/:id/unpost — reverse stock-out + JE, flip posted→draft.
+// BLOCKED when any return references this transfer (draft OR posted): returns
+// are the sanctioned reversal path, so unposting a transfer that already has a
+// return would corrupt the sister-company AR balance and the stock ledger.
+router.post("/transfers/:id/unpost", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const [tr] = await db.select().from(sisterTransfersTable)
+    .where(and(eq(sisterTransfersTable.id, id), eq(sisterTransfersTable.companyId, cid)));
+  if (!tr) { res.status(404).json({ error: "التحويل غير موجود" }); return; }
+  if (tr.status !== "posted") { res.status(400).json({ error: "التحويل ليس مُرحَّلاً" }); return; }
+
+  const writability = await assertWritableForDate(cid, tr.transferDate as any);
+  if (!writability.ok) { res.status(423).json({ error: writability.reason }); return; }
+
+  try {
+    await db.transaction(async (tx) => {
+      // Race-safe claim: only one concurrent /unpost can flip posted→draft.
+      // Claiming first (and re-checking referencing returns INSIDE the same
+      // transaction afterwards) closes the TOCTOU window where a return could
+      // be created between an out-of-transaction pre-check and the claim.
+      const claimed = await tx.update(sisterTransfersTable)
+        .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+        .where(and(
+          eq(sisterTransfersTable.id, id),
+          eq(sisterTransfersTable.companyId, cid),
+          eq(sisterTransfersTable.status, "posted"),
+        ))
+        .returning();
+      if (!claimed.length) throw new Error("تم تغيير حالة التحويل بواسطة عملية أخرى");
+
+      // Guard (atomic): block when any return (draft or posted) references this
+      // transfer. Returns are the sanctioned reversal path, so unposting a
+      // transfer that already has a return would corrupt the sister-company AR
+      // balance and the stock ledger. Throwing rolls back the claim above.
+      const [refRet] = await tx.select({ id: sisterReturnsTable.id }).from(sisterReturnsTable)
+        .where(and(eq(sisterReturnsTable.companyId, cid), eq(sisterReturnsTable.transferId, id)))
+        .limit(1);
+      if (refRet) {
+        const err: any = new Error("لا يمكن فك ترحيل تحويل له مرتجعات مرتبطة — احذف المرتجع (أو افكّ ترحيله ثم احذفه) أولاً");
+        err.httpStatus = 400;
+        throw err;
+      }
+
+      // Reverse stock: post inserted qty=-q rows; subtract the ledger qty to
+      // add the stock back (balance - (-q) = balance + q).
+      const ledger = await tx.select().from(stockLedgerTable)
+        .where(and(eq(stockLedgerTable.companyId, cid), eq(stockLedgerTable.refType, "sister_transfer"), eq(stockLedgerTable.refId, id)));
+      for (const row of ledger) {
+        const qty = Number(row.qty);
+        const [bal] = await tx.select().from(stockBalanceTable)
+          .where(and(eq(stockBalanceTable.companyId, cid), eq(stockBalanceTable.itemId, row.itemId), eq(stockBalanceTable.warehouseId, row.warehouseId)));
+        if (bal) {
+          await tx.update(stockBalanceTable)
+            .set({ qty: String(Number(bal.qty) - qty), updatedAt: new Date() })
+            .where(eq(stockBalanceTable.id, bal.id));
+        }
+      }
+      await tx.delete(stockLedgerTable)
+        .where(and(eq(stockLedgerTable.companyId, cid), eq(stockLedgerTable.refType, "sister_transfer"), eq(stockLedgerTable.refId, id)));
+
+      // Reverse JE.
+      if (tr.journalEntryId) {
+        await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, tr.journalEntryId));
+        await tx.delete(journalEntriesTable).where(and(eq(journalEntriesTable.id, tr.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+      }
+    });
+    res.json({ ok: true });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "sister-transfers: unpost failed");
+    res.status(e?.httpStatus ?? 500).json({ error: e.message });
+  }
+});
+
 router.delete("/transfers/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
@@ -521,6 +595,10 @@ router.post("/returns/:id/post", async (req, res) => {
   const [orig] = await db.select().from(sisterTransfersTable)
     .where(and(eq(sisterTransfersTable.id, ret.transferId), eq(sisterTransfersTable.companyId, cid)));
   if (!orig) { res.status(400).json({ error: "التحويل الأصلي غير موجود" }); return; }
+  // A return only makes accounting/stock sense against a POSTED transfer (the
+  // transfer's stock-out + JE must already exist). Requiring it here also keeps
+  // the transfer-unpost block-on-return guard consistent under concurrency.
+  if (orig.status !== "posted") { res.status(400).json({ error: "لا يمكن ترحيل مرتجع لتحويل غير مُرحَّل" }); return; }
   const [sister] = await db.select().from(sisterCompaniesTable)
     .where(and(eq(sisterCompaniesTable.id, ret.sisterCompanyId), eq(sisterCompaniesTable.companyId, cid)));
   if (!sister) { res.status(400).json({ error: "الشركة الشقيقة غير موجودة" }); return; }
@@ -574,6 +652,68 @@ router.post("/returns/:id/post", async (req, res) => {
     updatedAt: new Date(),
   }).where(eq(sisterReturnsTable.id, id));
   res.json({ ok: true, journalEntryId: entry.id });
+});
+
+// POST /returns/:id/unpost — reverse stock-in + JE + returnedQty, posted→draft.
+router.post("/returns/:id/unpost", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const [ret] = await db.select().from(sisterReturnsTable)
+    .where(and(eq(sisterReturnsTable.id, id), eq(sisterReturnsTable.companyId, cid)));
+  if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
+  if (ret.status !== "posted") { res.status(400).json({ error: "المرتجع ليس مُرحَّلاً" }); return; }
+
+  const writability = await assertWritableForDate(cid, ret.returnDate as any);
+  if (!writability.ok) { res.status(423).json({ error: writability.reason }); return; }
+
+  try {
+    await db.transaction(async (tx) => {
+      const claimed = await tx.update(sisterReturnsTable)
+        .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+        .where(and(
+          eq(sisterReturnsTable.id, id),
+          eq(sisterReturnsTable.companyId, cid),
+          eq(sisterReturnsTable.status, "posted"),
+        ))
+        .returning();
+      if (!claimed.length) throw new Error("تم تغيير حالة المرتجع بواسطة عملية أخرى");
+
+      const lines = await tx.select().from(sisterReturnItemsTable).where(eq(sisterReturnItemsTable.returnId, id));
+
+      // Reverse stock: post inserted qty=+q rows; subtract to remove the
+      // restored stock (balance - q).
+      const ledger = await tx.select().from(stockLedgerTable)
+        .where(and(eq(stockLedgerTable.companyId, cid), eq(stockLedgerTable.refType, "sister_return"), eq(stockLedgerTable.refId, id)));
+      for (const row of ledger) {
+        const qty = Number(row.qty);
+        const [bal] = await tx.select().from(stockBalanceTable)
+          .where(and(eq(stockBalanceTable.companyId, cid), eq(stockBalanceTable.itemId, row.itemId), eq(stockBalanceTable.warehouseId, row.warehouseId)));
+        if (bal) {
+          await tx.update(stockBalanceTable)
+            .set({ qty: String(Number(bal.qty) - qty), updatedAt: new Date() })
+            .where(eq(stockBalanceTable.id, bal.id));
+        }
+      }
+      await tx.delete(stockLedgerTable)
+        .where(and(eq(stockLedgerTable.companyId, cid), eq(stockLedgerTable.refType, "sister_return"), eq(stockLedgerTable.refId, id)));
+
+      // Restore returnedQty on the original transfer items (post bumped it +q).
+      for (const line of lines) {
+        await tx.update(sisterTransferItemsTable).set({
+          returnedQty: sql`${sisterTransferItemsTable.returnedQty} - ${Number(line.qty)}`,
+        }).where(eq(sisterTransferItemsTable.id, line.transferItemId));
+      }
+
+      if (ret.journalEntryId) {
+        await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
+        await tx.delete(journalEntriesTable).where(and(eq(journalEntriesTable.id, ret.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+      }
+    });
+    res.json({ ok: true });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "sister-returns: unpost failed");
+    res.status(500).json({ error: e.message });
+  }
 });
 
 router.delete("/returns/:id", async (req, res) => {
@@ -704,6 +844,42 @@ router.post("/settlements/:id/post", async (req, res) => {
     status: "posted", journalEntryId: entry.id, updatedAt: new Date(),
   }).where(eq(sisterSettlementsTable.id, id));
   res.json({ ok: true, journalEntryId: entry.id });
+});
+
+// POST /settlements/:id/unpost — reverse the cash/bank↔AR JE, posted→draft.
+router.post("/settlements/:id/unpost", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const [v] = await db.select().from(sisterSettlementsTable)
+    .where(and(eq(sisterSettlementsTable.id, id), eq(sisterSettlementsTable.companyId, cid)));
+  if (!v) { res.status(404).json({ error: "السند غير موجود" }); return; }
+  if (v.status !== "posted") { res.status(400).json({ error: "السند ليس مُرحَّلاً" }); return; }
+
+  const writability = await assertWritableForDate(cid, v.date as any);
+  if (!writability.ok) { res.status(423).json({ error: writability.reason }); return; }
+
+  try {
+    await db.transaction(async (tx) => {
+      const claimed = await tx.update(sisterSettlementsTable)
+        .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+        .where(and(
+          eq(sisterSettlementsTable.id, id),
+          eq(sisterSettlementsTable.companyId, cid),
+          eq(sisterSettlementsTable.status, "posted"),
+        ))
+        .returning();
+      if (!claimed.length) throw new Error("تم تغيير حالة السند بواسطة عملية أخرى");
+
+      if (v.journalEntryId) {
+        await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, v.journalEntryId));
+        await tx.delete(journalEntriesTable).where(and(eq(journalEntriesTable.id, v.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+      }
+    });
+    res.json({ ok: true });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "sister-settlements: unpost failed");
+    res.status(500).json({ error: e.message });
+  }
 });
 
 router.delete("/settlements/:id", async (req, res) => {

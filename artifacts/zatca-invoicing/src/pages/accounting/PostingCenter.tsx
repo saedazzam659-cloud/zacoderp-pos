@@ -62,7 +62,8 @@ type ModuleKey =
   | "journal_entries"
   | "goods_receipts"    | "goods_deliveries"
   | "cash_transfers"
-  | "stock_transfers"   | "stock_adjustments" | "stock_counts";
+  | "stock_transfers"   | "stock_adjustments" | "stock_counts"
+  | "sister_transfers"  | "sister_returns"    | "sister_settlements";
 
 type ModuleDef = {
   key: ModuleKey;
@@ -102,6 +103,10 @@ const MODULES: ModuleDef[] = [
   { key: "stock_transfers",   label: "تحويلات المخزون",    group: "المخازن",   endpoint: (id, a) => `/api/inventory/stock-transfers/${id}/${a}`,  method: "POST",  supportsUnpost: false },
   { key: "stock_adjustments", label: "تسويات المخزون",     group: "المخازن",   endpoint: (id, a) => `/api/inventory/stock-adjustments/${id}/${a}`, method: "POST",  supportsUnpost: false },
   { key: "stock_counts",      label: "جرد المخزون",        group: "المخازن",   endpoint: (id, a) => `/api/inventory/stock-counts/${id}/${a}`,     method: "POST",  supportsUnpost: false },
+  // ── Sister Companies (الشركات الشقيقة) ──
+  { key: "sister_transfers",   label: "تحويلات الشركات الشقيقة", group: "الشركات الشقيقة", endpoint: (id, a) => `/api/sister-companies/transfers/${id}/${a}`,   method: "POST", supportsUnpost: true },
+  { key: "sister_returns",     label: "مرتجعات الشركات الشقيقة", group: "الشركات الشقيقة", endpoint: (id, a) => `/api/sister-companies/returns/${id}/${a}`,     method: "POST", supportsUnpost: true },
+  { key: "sister_settlements", label: "تسويات الشركات الشقيقة",  group: "الشركات الشقيقة", endpoint: (id, a) => `/api/sister-companies/settlements/${id}/${a}`, method: "POST", supportsUnpost: true },
 ];
 
 // Memoization-friendly conversion of MODULES into the SearchCombobox's
@@ -425,6 +430,39 @@ export default function PostingCenter() {
 
     clearSelection();
     qc.invalidateQueries({ queryKey: ["posting-center-list"] });
+  }
+
+  // ─── Per-row single unpost ─────────────────────────────────────────────────
+  // Standalone "فك الترحيل" button on each posted row, independent of the bulk
+  // selection. Reuses the exact same per-module endpoint as the bulk runner so
+  // there's no duplicated posting logic. `rowBusyId` tracks the in-flight row
+  // so we can show a spinner and disable just that one button.
+  const [rowBusyId, setRowBusyId] = useState<number | null>(null);
+  async function runSingleUnpost(row: PostingRow) {
+    const def = MODULES.find(m => m.key === row.module)!;
+    if (def.supportsUnpost === false) return;
+    if (!confirm(`سيتم فك ترحيل المستند ${row.docNumber || `#${row.id}`}. هل تريد المتابعة؟`)) return;
+    setRowBusyId(row.id);
+    try {
+      const r = await fetch(def.endpoint(row.id, "unpost"), {
+        method: def.method,
+        headers: authHeaders(),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body?.error || `HTTP ${r.status}`);
+      }
+      toast({ title: "تم فك الترحيل بنجاح" });
+      qc.invalidateQueries({ queryKey: ["posting-center-list"] });
+    } catch (e: any) {
+      toast({
+        title: "تعذّر فك الترحيل",
+        description: e?.message || "حدث خطأ غير متوقع",
+        variant: "destructive",
+      });
+    } finally {
+      setRowBusyId(null);
+    }
   }
 
   // ─── AI summary ──────────────────────────────────────────────────────────
@@ -788,12 +826,13 @@ export default function PostingCenter() {
                 <th className="px-2 py-2 text-end text-xs font-semibold">القيمة</th>
                 <th className="px-2 py-2 text-center text-xs font-semibold">الحالة</th>
                 <th className="px-2 py-2 text-start text-xs font-semibold">رقم القيد</th>
+                <th className="px-2 py-2 text-center text-xs font-semibold">الإجراءات</th>
               </tr>
             </thead>
             <tbody>
               {isLoading && (
                 <tr>
-                  <td colSpan={10} className="text-center py-8 text-slate-500">
+                  <td colSpan={11} className="text-center py-8 text-slate-500">
                     <Loader2 className="size-5 animate-spin inline-block me-2" />
                     جاري التحميل...
                   </td>
@@ -801,7 +840,7 @@ export default function PostingCenter() {
               )}
               {!!error && (
                 <tr>
-                  <td colSpan={10} className="text-center py-8 text-rose-600">
+                  <td colSpan={11} className="text-center py-8 text-rose-600">
                     <AlertTriangle className="size-5 inline-block me-2" />
                     خطأ في تحميل البيانات
                   </td>
@@ -809,7 +848,7 @@ export default function PostingCenter() {
               )}
               {!isLoading && !error && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="text-center py-12 text-slate-500">
+                  <td colSpan={11} className="text-center py-12 text-slate-500">
                     <Info className="size-6 inline-block mb-2 text-slate-400" />
                     <div>لا توجد عمليات{statusFilter === "unposted" ? " غير مرحّلة" : statusFilter === "posted" ? " مرحّلة" : ""} في {moduleLabel}</div>
                   </td>
@@ -866,6 +905,25 @@ export default function PostingCenter() {
                     <td className="px-2 py-1.5 font-mono text-xs text-violet-700">
                       {r.journalEntryDocNumber || (r.journalEntryId ? `#${r.journalEntryId}` : "—")}
                     </td>
+                    <td className="px-2 py-1.5 text-center">
+                      {r.posted && (MODULES.find(m => m.key === r.module)?.supportsUnpost !== false) ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2 text-[11px] text-rose-700 border-rose-200 hover:bg-rose-50"
+                          disabled={rowBusyId === r.id || bulkBusy}
+                          onClick={() => runSingleUnpost(r)}
+                          data-testid={`button-unpost-${r.id}`}>
+                          {rowBusyId === r.id ? (
+                            <Loader2 className="size-3 animate-spin" />
+                          ) : (
+                            <><Undo2 className="size-3 me-1" /> فك الترحيل</>
+                          )}
+                        </Button>
+                      ) : (
+                        <span className="text-slate-300 text-xs">—</span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -879,7 +937,7 @@ export default function PostingCenter() {
                   <td className="px-2 py-2 text-end font-mono text-sm text-teal-800">
                     {fmt.fmtMoney(totalAmount)}
                   </td>
-                  <td colSpan={2}></td>
+                  <td colSpan={3}></td>
                 </tr>
               </tfoot>
             )}
