@@ -126,19 +126,28 @@ export async function ensureEntitySubAccount(args: {
   fallbackCodePrefixes: string[];
   nameLikes: string[];
   accountType: AccountType;
+  /**
+   * When true, ALWAYS mint a brand-new sub-account even if a same-name sibling
+   * already exists — skips the idempotent reuse below. Used by the
+   * allow-duplicates party import so that two establishments sharing one name
+   * each get their OWN AR/AP ledger (their statements must not commingle).
+   */
+  forceNew?: boolean;
 }): Promise<number | null> {
-  const { companyId, roleKey, name, fallbackCodePrefixes, nameLikes, accountType } = args;
+  const { companyId, roleKey, name, fallbackCodePrefixes, nameLikes, accountType, forceNew = false } = args;
   const parent = await resolveEntityParent(companyId, roleKey, fallbackCodePrefixes, nameLikes, accountType);
   if (!parent) return null;
 
-  // Idempotency: same-name sibling under this parent
-  const siblings = await db.select().from(accountsTable).where(and(
-    eq(accountsTable.companyId, companyId),
-    eq(accountsTable.parentId, parent.id),
-  ));
-  const trimmed = name.trim().toLowerCase();
-  const dup = siblings.find(s => (s.nameAr ?? "").trim().toLowerCase() === trimmed);
-  if (dup) return dup.id;
+  // Idempotency: same-name sibling under this parent (bypassed when forceNew)
+  if (!forceNew) {
+    const siblings = await db.select().from(accountsTable).where(and(
+      eq(accountsTable.companyId, companyId),
+      eq(accountsTable.parentId, parent.id),
+    ));
+    const trimmed = name.trim().toLowerCase();
+    const dup = siblings.find(s => (s.nameAr ?? "").trim().toLowerCase() === trimmed);
+    if (dup) return dup.id;
+  }
 
   // Retry loop guards against the inherent race in nextChildCode: two
   // concurrent POSTs can read the same sibling list and try to insert
@@ -194,12 +203,13 @@ export const ensureBankAccountLedger = (companyId: number, name: string) =>
     accountType: "asset",
   });
 
-export const ensureCustomerLedger = (companyId: number, name: string) =>
+export const ensureCustomerLedger = (companyId: number, name: string, forceNew = false) =>
   ensureEntitySubAccount({
     companyId, roleKey: "customer_account_parent", name,
     fallbackCodePrefixes: ["1103", "1130", "121"],
     nameLikes: ["عملاء", "ذمم مدين", "مدين", "customer", "receiv"],
     accountType: "asset",
+    forceNew,
   });
 
 export const ensureSupplierLedger = (companyId: number, name: string) =>

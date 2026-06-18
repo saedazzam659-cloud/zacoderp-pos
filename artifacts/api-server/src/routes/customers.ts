@@ -311,7 +311,8 @@ router.post("/import", async (req, res) => {
     const body = req.body || {};
     const rows = Array.isArray(body.rows) ? body.rows : Array.isArray(body.customers) ? body.customers : [];
     if (!rows.length) { res.status(400).json({ error: "لا توجد بيانات" }); return; }
-    const result = await importPartyMasterData({ req, cid, party: "customer", rows });
+    const allowDuplicates = body?.allowDuplicates === true;
+    const result = await importPartyMasterData({ req, cid, party: "customer", rows, allowDuplicates });
     res.json(result);
   } catch (e: any) {
     res.status(e?.status ?? 500).json({ error: e?.message ?? "فشل استيراد بيانات العملاء" });

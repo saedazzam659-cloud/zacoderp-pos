@@ -47,8 +47,15 @@ export async function importPartyMasterData(opts: {
   cid: number;
   party: Party;
   rows: any[];
+  /**
+   * When true, EVERY row is inserted as a brand-new party — the
+   * vatNumber/code/nameAr match lookup is skipped entirely, so no upsert/merge
+   * happens. Used to import multiple establishments that legitimately share one
+   * group VAT number (each becomes its own customer with its own AR ledger).
+   */
+  allowDuplicates?: boolean;
 }): Promise<MasterImportResult> {
-  const { cid, party, rows } = opts;
+  const { cid, party, rows, allowDuplicates = false } = opts;
   const isCustomer = party === "customer";
 
   if (!Array.isArray(rows) || rows.length === 0) {
@@ -246,9 +253,11 @@ export async function importPartyMasterData(opts: {
       const vat  = patch.vatNumber as string | undefined;
       const code = (patch.code as string | undefined)?.toLowerCase();
       let match: any = null;
-      if (!isCustomer && code && byCode.has(code)) match = byCode.get(code);
-      if (!match && vat && byVat.has(vat)) match = byVat.get(vat);
-      if (!match && byName.has(nameAr.toLowerCase())) match = byName.get(nameAr.toLowerCase());
+      if (!allowDuplicates) {
+        if (!isCustomer && code && byCode.has(code)) match = byCode.get(code);
+        if (!match && vat && byVat.has(vat)) match = byVat.get(vat);
+        if (!match && byName.has(nameAr.toLowerCase())) match = byName.get(nameAr.toLowerCase());
+      }
 
       // ── Branch + chart-of-accounts linkage (new master-data columns) ──────
       // Customers: `branch` sets branchId AND (via the `accountNumber` override
@@ -297,7 +306,10 @@ export async function importPartyMasterData(opts: {
           accountId = await createPartySubAccount(customerParent, nameAr);
           if (match) patch.accountId = accountId; // persist on the update path
         } else if (!match) {
-          accountId = await ensureCustomerLedger(cid, nameAr);
+          // allowDuplicates → forceNew so same-named establishments each get
+          // their own AR ledger instead of sharing one (statements must not
+          // commingle); ensureCustomerLedger is idempotent-by-name otherwise.
+          accountId = await ensureCustomerLedger(cid, nameAr, allowDuplicates);
         }
       } else {
         if (patch.accountId != null) {

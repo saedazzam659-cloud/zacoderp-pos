@@ -386,6 +386,7 @@ export default function GeneralSettings() {
   const custDataFileRef = useRef<HTMLInputElement>(null);
   const suppDataFileRef = useRef<HTMLInputElement>(null);
   const [custDataImporting, setCustDataImporting] = useState(false);
+  const [custAllowDuplicates, setCustAllowDuplicates] = useState(false);
   const [suppDataImporting, setSuppDataImporting] = useState(false);
   type DataReport = { created: number; updated: number; total: number; errors: { row: number; error: string }[] } | null;
   const [custDataReport, setCustDataReport] = useState<DataReport>(null);
@@ -429,7 +430,7 @@ export default function GeneralSettings() {
       const url = party === "customer"
         ? `${API}/api/customers/import?companyId=${cid}`
         : `${API}/api/suppliers/import?companyId=${cid}`;
-      const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ rows }) });
+      const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ rows, allowDuplicates: party === "customer" ? custAllowDuplicates : false }) });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || t("pages.generalSettings.importFailed"));
       setReport(j);
@@ -1159,6 +1160,33 @@ export default function GeneralSettings() {
               </p>
               <p className="text-[11px] text-muted-foreground mt-1">{t("pages.generalSettings.partyDataNote")}</p>
               <p className="text-[11px] text-muted-foreground mt-1">{t("pages.generalSettings.customerAccountNote")}</p>
+            </div>
+          </div>
+          <div className="rounded-lg border p-3 space-y-2 bg-muted/30">
+            <p className="text-xs font-medium">{t("pages.generalSettings.dupModeTitle")}</p>
+            <div className="grid sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setCustAllowDuplicates(false)}
+                className={cn("text-start p-2.5 border rounded-lg transition-all", !custAllowDuplicates ? "ring-2 ring-indigo-500 border-indigo-500 bg-indigo-50" : "hover:bg-muted/40")}
+              >
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-xs font-medium">{t("pages.generalSettings.dupModePreventTitle")}</span>
+                  {!custAllowDuplicates && <CheckCircle2 className="h-3.5 w-3.5 text-indigo-600 shrink-0" />}
+                </div>
+                <p className="text-[11px] text-muted-foreground">{t("pages.generalSettings.dupModePreventDesc")}</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCustAllowDuplicates(true)}
+                className={cn("text-start p-2.5 border rounded-lg transition-all", custAllowDuplicates ? "ring-2 ring-indigo-500 border-indigo-500 bg-indigo-50" : "hover:bg-muted/40")}
+              >
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-xs font-medium">{t("pages.generalSettings.dupModeAllowTitle")}</span>
+                  {custAllowDuplicates && <CheckCircle2 className="h-3.5 w-3.5 text-indigo-600 shrink-0" />}
+                </div>
+                <p className="text-[11px] text-muted-foreground">{t("pages.generalSettings.dupModeAllowDesc")}</p>
+              </button>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
