@@ -17,7 +17,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export type FieldMode = "editable" | "readonly" | "hidden" | "required";
 export type DateConstraint = "none" | "today_only";
-export type PolicyScope = "sales" | "purchase" | "pos" | "customers" | "journal_entry" | "sales_audit";
+export type PolicyScope = "sales" | "purchase" | "pos" | "customers" | "journal_entry" | "sales_audit" | "receipt_voucher";
 
 export interface FieldRule {
   mode: FieldMode;
@@ -40,7 +40,7 @@ function todayIso(): string {
 }
 
 function emptyBundle(): PolicyBundle {
-  return { sales: {}, purchase: {}, pos: {}, customers: {}, journal_entry: {}, sales_audit: {} };
+  return { sales: {}, purchase: {}, pos: {}, customers: {}, journal_entry: {}, sales_audit: {}, receipt_voucher: {} };
 }
 
 function fetchBundle(): Promise<BundleResponse> {

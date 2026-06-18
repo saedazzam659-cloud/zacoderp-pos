@@ -22,6 +22,7 @@ import {
   Wallet, Building2, User2, Layers, Printer, Link2, X, Settings2,
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
+import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { printCashVoucher } from "@/lib/cashVoucherPrint";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -121,6 +122,32 @@ export default function ReceiptVoucherForm() {
   // "party"   → settle against a customer (default, legacy behaviour)
   // "account" → settle against a general GL account picked from the tree
   const [entityMode, setEntityMode] = useState<"party" | "account">("party");
+
+  // ── Field-level governance (شاشة «سياسات حقول الفواتير» → tab «سند قبض») ──
+  // Mirrors the sales/JE forms: hide/lock/require header + creditor-side fields
+  // per the company's active policy profile. Fail-open (missing key = editable).
+  const fp = useFieldPolicy("receipt_voucher");
+
+  // When the "حساب عام" creditor option is hidden, the toggle can only offer
+  // "عميل" → force party mode. Symmetrically, if "العميل" is hidden but the
+  // general-account option is allowed, force account mode. This keeps a NEW
+  // voucher from starting in a mode whose picker the admin has hidden.
+  //
+  // IMPORTANT — non-destructive on edit: we only coerce the mode for new
+  // vouchers. switchEntityMode() clears the opposite side (accountId/entityId),
+  // so running it on an EXISTING voucher whose persisted side is now hidden
+  // would silently rewrite the saved counterparty. For existing vouchers we
+  // leave the loaded mode + data untouched (the hidden picker just doesn't
+  // render, and the preserved id is sent back on save).
+  useEffect(() => {
+    if (!isNew) return;
+    if (!fp.isVisible("generalAccount") && entityMode === "account") {
+      switchEntityMode("party");
+    } else if (!fp.isVisible("customer") && fp.isVisible("generalAccount") && entityMode === "party") {
+      switchEntityMode("account");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fp, entityMode, isNew]);
 
   // ── Sequence preview for new vouchers ───────────────────────────
   const seqPeek = useNextSequenceNumber("receipt_voucher", isNew);
@@ -388,18 +415,39 @@ export default function ReceiptVoucherForm() {
       const cleanAmt = String(form.amount).replace(/[^\d.\-]/g, "");
       const amtNum = Number(cleanAmt);
       if (!isFinite(amtNum) || amtNum <= 0) throw new Error(t(`${NS}.invalidAmount`));
-      if (!form.date) throw new Error(t(`${NS}.dateRequired`, "التاريخ مطلوب"));
-      if (!form.branchId) throw new Error(t(`${NS}.branchRequired`, "الرجاء اختيار الفرع"));
-      if (form.paymentType === "cash" && !form.cashBoxId)
-        throw new Error(t(`${NS}.cashBoxRequired`, "الخزنة مطلوبة عند الدفع نقداً"));
-      if (form.paymentType === "bank" && !form.bankAccountId)
-        throw new Error(t(`${NS}.bankRequired`, "الحساب البنكي مطلوب عند الدفع بنكاً"));
+      if (fp.isVisible("date") && !form.date) throw new Error(t(`${NS}.dateRequired`, "التاريخ مطلوب"));
+      if (fp.isVisible("branch") && !form.branchId) throw new Error(t(`${NS}.branchRequired`, "الرجاء اختيار الفرع"));
+      if (fp.isVisible("treasury")) {
+        if (form.paymentType === "cash" && !form.cashBoxId)
+          throw new Error(t(`${NS}.cashBoxRequired`, "الخزنة مطلوبة عند الدفع نقداً"));
+        if (form.paymentType === "bank" && !form.bankAccountId)
+          throw new Error(t(`${NS}.bankRequired`, "الحساب البنكي مطلوب عند الدفع بنكاً"));
+      }
       if (entityMode === "party") {
-        if (!form.entityId)
+        if (fp.isVisible("customer") && !form.entityId)
           throw new Error(t(`${NS}.customerRequired`, "اختيار العميل مطلوب"));
-      } else if (!form.accountId) {
+      } else if (fp.isVisible("generalAccount") && !form.accountId) {
         throw new Error(t(`${NS}.accountRequired`, "اختيار الحساب مطلوب"));
       }
+      // Safety net for a both-hidden creditor-side misconfiguration: if the
+      // admin has hidden BOTH "العميل" and "حساب عام", neither check above can
+      // fire — refuse to save a voucher with no creditor counterparty rather
+      // than silently letting the backend fall back to a default receivable.
+      if (!form.entityId && !form.accountId)
+        throw new Error(t(`${NS}.counterpartyRequired`, "يجب تحديد العميل أو الحساب الدائن"));
+      // Policy-driven required checks for the optional textual fields.
+      const reqMsg = (label: string) =>
+        t(`${NS}.fieldRequired`, "هذا الحقل مطلوب") + ": " + label;
+      if (fp.isVisible("refType") && fp.isRequired("refType") && !form.refType.trim())
+        throw new Error(reqMsg(t(`${NS}.refType`)));
+      if (fp.isVisible("refNumber") && fp.isRequired("refNumber") && !form.refNumber.trim())
+        throw new Error(reqMsg(t(`${NS}.refNumber`)));
+      if (fp.isVisible("description") && fp.isRequired("description") && !form.description.trim())
+        throw new Error(reqMsg(t(`${NS}.description`)));
+      if (fp.isVisible("costCenter") && fp.isRequired("costCenter") && !form.costCenter)
+        throw new Error(reqMsg("مركز التكلفة"));
+      if (fp.isVisible("notes") && fp.isRequired("notes") && !form.notes.trim())
+        throw new Error(reqMsg(t("cashCommon.notes")));
 
       const isAccountMode = entityMode === "account";
       const body = {
@@ -709,12 +757,22 @@ export default function ReceiptVoucherForm() {
                     <Label className="text-xs font-medium">{t(`${NS}.code`)}</Label>
                     <Input value={docLabel} readOnly disabled className="h-9 font-mono text-sm bg-muted/30" />
                   </div>
+                  {fp.isVisible("date") && (
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">
-                      {t(`${NS}.date`)} <span className="text-destructive">*</span>
+                      {t(`${NS}.date`)}{fp.isRequired("date") && <span className="text-destructive"> *</span>}
                     </Label>
-                    <DateField value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} className="h-9 text-sm" data-testid="rv-date" />
+                    <DateField
+                      value={form.date}
+                      onChange={e => { if (!fp.isReadOnly("date")) setForm(p => ({ ...p, date: e.target.value })); }}
+                      className={cn("h-9 text-sm", fp.isReadOnly("date") && "bg-muted/40 cursor-not-allowed")}
+                      readOnly={fp.isReadOnly("date")}
+                      {...(fp.dateBounds("date") ?? {})}
+                      data-testid="rv-date"
+                    />
                   </div>
+                  )}
+                  {fp.isVisible("branch") && (
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">
                       {t(`${NS}.branch`, "الفرع")} <span className="text-destructive">*</span>
@@ -722,8 +780,9 @@ export default function ReceiptVoucherForm() {
                     <select
                       value={form.branchId}
                       onChange={e => setForm(p => ({ ...p, branchId: e.target.value }))}
+                      disabled={fp.isReadOnly("branch")}
                       data-testid="rv-branch"
-                      className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                      className={cn("w-full h-9 border border-input rounded-md px-3 text-sm bg-background", fp.isReadOnly("branch") && "bg-muted/40 cursor-not-allowed")}
                     >
                       <option value="">{t(`${NS}.selectBranch`, "اختر الفرع")}</option>
                       {(branches as any[]).map((b: any) => (
@@ -733,13 +792,16 @@ export default function ReceiptVoucherForm() {
                       ))}
                     </select>
                   </div>
+                  )}
+                  {fp.isVisible("currency") && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">{t(`${NS}.currency`, "العملة")}</Label>
+                    <Label className="text-xs font-medium">{t(`${NS}.currency`, "العملة")}{fp.isRequired("currency") && <span className="text-destructive"> *</span>}</Label>
                     <select
                       value={form.currencyId || (defaultCurrencyId ? String(defaultCurrencyId) : "")}
                       onChange={e => setForm(p => ({ ...p, currencyId: e.target.value }))}
+                      disabled={fp.isReadOnly("currency")}
                       data-testid="rv-currency"
-                      className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                      className={cn("w-full h-9 border border-input rounded-md px-3 text-sm bg-background", fp.isReadOnly("currency") && "bg-muted/40 cursor-not-allowed")}
                     >
                       <option value="">{t(`${NS}.selectCurrency`, "اختر العملة")}</option>
                       {(currencies as any[]).map((c: any) => (
@@ -749,9 +811,11 @@ export default function ReceiptVoucherForm() {
                       ))}
                     </select>
                   </div>
+                  )}
+                  {fp.isVisible("exchangeRate") && (
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium flex items-center justify-between gap-2">
-                      <span>{t(`${NS}.exchangeRate`)}</span>
+                      <span>{t(`${NS}.exchangeRate`)}{fp.isRequired("exchangeRate") && <span className="text-destructive"> *</span>}</span>
                       {(() => {
                         const sel = (currencies as any[]).find((c: any) => String(c.id) === String(form.currencyId));
                         const base = (currencies as any[]).find((c: any) => c.isDefault) ?? (currencies as any[])[0];
@@ -764,7 +828,7 @@ export default function ReceiptVoucherForm() {
                         );
                       })()}
                     </Label>
-                    <Input type="number" step="0.000001" value={form.exchangeRate} onChange={e => setForm(p => ({ ...p, exchangeRate: e.target.value }))} placeholder="1" dir="ltr" className="h-9 text-sm text-left font-mono" />
+                    <Input type="number" step="0.000001" value={form.exchangeRate} onChange={e => { if (!fp.isReadOnly("exchangeRate")) setForm(p => ({ ...p, exchangeRate: e.target.value })); }} readOnly={fp.isReadOnly("exchangeRate")} placeholder="1" dir="ltr" className={cn("h-9 text-sm text-left font-mono", fp.isReadOnly("exchangeRate") && "bg-muted/40 cursor-not-allowed")} />
                     {(() => {
                       const sel = (currencies as any[]).find((c: any) => String(c.id) === String(form.currencyId));
                       const base = (currencies as any[]).find((c: any) => c.isDefault) ?? (currencies as any[])[0];
@@ -778,9 +842,11 @@ export default function ReceiptVoucherForm() {
                       );
                     })()}
                   </div>
+                  )}
                 </div>
 
                 {/* Payment method as visual segmented buttons (cash | bank) */}
+                {fp.isVisible("paymentType") && (
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">{t(`${NS}.paymentMethod`)} <span className="text-destructive">*</span></Label>
                   <div className="inline-flex rounded-lg border bg-muted/20 p-0.5">
@@ -811,9 +877,10 @@ export default function ReceiptVoucherForm() {
                     {t(`${NS}.jeHintDr`, "هذا الجانب سيكون مديناً في القيد المحاسبي")}
                   </p>
                 </div>
+                )}
 
                 {/* Cash box / bank account — searchable comboboxes */}
-                {form.paymentType === "cash" ? (
+                {fp.isVisible("treasury") && (form.paymentType === "cash" ? (
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">
                       {t(`${NS}.cashBox`)} <span className="text-destructive">*</span>
@@ -822,6 +889,7 @@ export default function ReceiptVoucherForm() {
                       items={cashBoxItems}
                       value={form.cashBoxId}
                       onValueChange={v => setForm(p => ({ ...p, cashBoxId: v }))}
+                      disabled={fp.isReadOnly("treasury")}
                       placeholder={t(`${NS}.selectCashBox`)}
                       searchPlaceholder={t(`${NS}.searchCashBox`, "ابحث عن خزنة...")}
                       emptyText={t(`${NS}.noResults`, "لا توجد نتائج")}
@@ -836,12 +904,13 @@ export default function ReceiptVoucherForm() {
                       items={bankAccountItems}
                       value={form.bankAccountId}
                       onValueChange={v => setForm(p => ({ ...p, bankAccountId: v }))}
+                      disabled={fp.isReadOnly("treasury")}
                       placeholder={t(`${NS}.selectBank`)}
                       searchPlaceholder={t(`${NS}.searchBank`, "ابحث عن حساب...")}
                       emptyText={t(`${NS}.noResults`, "لا توجد نتائج")}
                     />
                   </div>
-                )}
+                ))}
               </CardContent>
             </Card>
 
@@ -854,10 +923,15 @@ export default function ReceiptVoucherForm() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 pb-4 space-y-4">
-                {/* Credit-side mode: customer vs general GL account */}
+                {/* Credit-side mode: customer vs general GL account.
+                    Each option is gated by its own policy key — when the admin
+                    hides "حساب عام" (generalAccount) the toggle drops that button
+                    (and a forced-mode effect keeps the form in party mode). */}
+                {(fp.isVisible("customer") || fp.isVisible("generalAccount")) && (
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">{t(`${NS}.creditSide`, "الطرف الدائن")}</Label>
                   <div className="inline-flex rounded-lg border bg-muted/20 p-0.5">
+                    {fp.isVisible("customer") && (
                     <button type="button"
                       onClick={() => switchEntityMode("party")}
                       data-testid="rv-entitymode-party"
@@ -869,6 +943,8 @@ export default function ReceiptVoucherForm() {
                       )}>
                       <User2 className="h-3.5 w-3.5" /> {t(`${NS}.modeCustomer`, "عميل")}
                     </button>
+                    )}
+                    {fp.isVisible("generalAccount") && (
                     <button type="button"
                       onClick={() => switchEntityMode("account")}
                       data-testid="rv-entitymode-account"
@@ -880,11 +956,14 @@ export default function ReceiptVoucherForm() {
                       )}>
                       <Layers className="h-3.5 w-3.5" /> {t(`${NS}.modeAccount`, "حساب عام")}
                     </button>
+                    )}
                   </div>
                 </div>
+                )}
 
                 {entityMode === "party" ? (
                   /* Customer */
+                  fp.isVisible("customer") && (
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">
                       {t(`${NS}.customer`)} <span className="text-destructive">*</span>
@@ -892,6 +971,7 @@ export default function ReceiptVoucherForm() {
                     <SearchCombobox
                       items={customerItems}
                       value={form.entityId}
+                      disabled={fp.isReadOnly("customer")}
                       onValueChange={v => {
                         const found = (customers as any[]).find((x: any) => String(x.id) === v);
                         setForm(p => ({
@@ -910,13 +990,16 @@ export default function ReceiptVoucherForm() {
                       {t(`${NS}.jeHintCr`, "العميل سيكون دائناً في القيد المحاسبي")}
                     </p>
                   </div>
+                  )
                 ) : (
                   /* General GL account (main → sub cascade) */
+                  fp.isVisible("generalAccount") && (
                   <div className="space-y-1.5">
                     <AccountCascadePicker
                       accounts={accounts as any[]}
                       value={form.accountId}
                       isRtl={isRtl}
+                      disabled={fp.isReadOnly("generalAccount")}
                       onValueChange={(aid) => {
                         const a = (accounts as any[]).find((x: any) => String(x.id) === aid);
                         setForm(p => ({
@@ -930,9 +1013,11 @@ export default function ReceiptVoucherForm() {
                       {t(`${NS}.jeHintCrAccount`, "الحساب المختار سيكون دائناً في القيد المحاسبي")}
                     </p>
                   </div>
+                  )
                 )}
 
                 {/* Amount — large prominent input */}
+                {fp.isVisible("amount") && (
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">
                     {t(`${NS}.amount`)} <span className="text-destructive">*</span>
@@ -942,17 +1027,19 @@ export default function ReceiptVoucherForm() {
                     <Input
                       type="number" step="0.01" placeholder="0.00"
                       value={form.amount}
-                      onChange={e => setForm(p => ({ ...p, amount: e.target.value }))}
+                      onChange={e => { if (!fp.isReadOnly("amount")) setForm(p => ({ ...p, amount: e.target.value })); }}
+                      readOnly={fp.isReadOnly("amount")}
                       onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
                       dir="ltr"
                       data-testid="rv-amount"
-                      className={cn("h-12 text-xl font-mono font-bold text-left", isRtl ? "pr-11" : "pl-11")}
+                      className={cn("h-12 text-xl font-mono font-bold text-left", isRtl ? "pr-11" : "pl-11", fp.isReadOnly("amount") && "bg-muted/40 cursor-not-allowed")}
                     />
                   </div>
                 </div>
+                )}
 
                 {/* Optional: link to a sales invoice (party mode only) */}
-                {entityMode === "party" && (
+                {fp.isVisible("settleSalesInvoice") && entityMode === "party" && (
                 <div className="rounded-lg border border-dashed border-blue-200 bg-blue-50/30 p-3 space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
@@ -1021,27 +1108,37 @@ export default function ReceiptVoucherForm() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 pb-4 space-y-3">
+                {(fp.isVisible("refType") || fp.isVisible("refNumber")) && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {fp.isVisible("refType") && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">{t(`${NS}.refType`)}</Label>
-                    <Input value={form.refType} onChange={e => setForm(p => ({ ...p, refType: e.target.value }))} placeholder={t(`${NS}.refTypePh`)} className="h-9 text-sm" />
+                    <Label className="text-xs font-medium">{t(`${NS}.refType`)}{fp.isRequired("refType") && <span className="text-destructive"> *</span>}</Label>
+                    <Input value={form.refType} onChange={e => { if (!fp.isReadOnly("refType")) setForm(p => ({ ...p, refType: e.target.value })); }} readOnly={fp.isReadOnly("refType")} placeholder={t(`${NS}.refTypePh`)} className={cn("h-9 text-sm", fp.isReadOnly("refType") && "bg-muted/40 cursor-not-allowed")} />
                   </div>
+                  )}
+                  {fp.isVisible("refNumber") && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">{t(`${NS}.refNumber`)}</Label>
-                    <Input value={form.refNumber} onChange={e => setForm(p => ({ ...p, refNumber: e.target.value }))} placeholder="INV-0001" dir="ltr" className="h-9 text-sm text-left font-mono" />
+                    <Label className="text-xs font-medium">{t(`${NS}.refNumber`)}{fp.isRequired("refNumber") && <span className="text-destructive"> *</span>}</Label>
+                    <Input value={form.refNumber} onChange={e => { if (!fp.isReadOnly("refNumber")) setForm(p => ({ ...p, refNumber: e.target.value })); }} readOnly={fp.isReadOnly("refNumber")} placeholder="INV-0001" dir="ltr" className={cn("h-9 text-sm text-left font-mono", fp.isReadOnly("refNumber") && "bg-muted/40 cursor-not-allowed")} />
                   </div>
+                  )}
                 </div>
+                )}
+                {fp.isVisible("description") && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">{t(`${NS}.description`)}</Label>
-                  <Input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} placeholder={t(`${NS}.descriptionPh`)} className="h-9 text-sm" />
+                  <Label className="text-xs font-medium">{t(`${NS}.description`)}{fp.isRequired("description") && <span className="text-destructive"> *</span>}</Label>
+                  <Input value={form.description} onChange={e => { if (!fp.isReadOnly("description")) setForm(p => ({ ...p, description: e.target.value })); }} readOnly={fp.isReadOnly("description")} placeholder={t(`${NS}.descriptionPh`)} className={cn("h-9 text-sm", fp.isReadOnly("description") && "bg-muted/40 cursor-not-allowed")} />
                 </div>
+                )}
+                {fp.isVisible("costCenter") && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">مركز التكلفة</Label>
+                  <Label className="text-xs font-medium">مركز التكلفة{fp.isRequired("costCenter") && <span className="text-destructive"> *</span>}</Label>
                   <select
                     value={form.costCenter}
                     onChange={e => setForm(p => ({ ...p, costCenter: e.target.value }))}
+                    disabled={fp.isReadOnly("costCenter")}
                     data-testid="rv-cost-center"
-                    className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                    className={cn("w-full h-9 border border-input rounded-md px-3 text-sm bg-background", fp.isReadOnly("costCenter") && "bg-muted/40 cursor-not-allowed")}
                   >
                     <option value="">— بدون مركز تكلفة —</option>
                     {(costCentersList as any[])
@@ -1056,10 +1153,13 @@ export default function ReceiptVoucherForm() {
                     سيُسند هذا المركز إلى كل سطور القيد عند الترحيل ليظهر في تقارير مراكز التكلفة.
                   </p>
                 </div>
+                )}
+                {fp.isVisible("notes") && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">{t("cashCommon.notes")}</Label>
-                  <Textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder={t("cashCommon.notesPlaceholder")} className="text-sm resize-none" rows={2} />
+                  <Label className="text-xs font-medium">{t("cashCommon.notes")}{fp.isRequired("notes") && <span className="text-destructive"> *</span>}</Label>
+                  <Textarea value={form.notes} onChange={e => { if (!fp.isReadOnly("notes")) setForm(p => ({ ...p, notes: e.target.value })); }} readOnly={fp.isReadOnly("notes")} placeholder={t("cashCommon.notesPlaceholder")} className={cn("text-sm resize-none", fp.isReadOnly("notes") && "bg-muted/40 cursor-not-allowed")} rows={2} />
                 </div>
+                )}
               </CardContent>
             </Card>
           </div>

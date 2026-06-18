@@ -65,7 +65,7 @@ export interface FieldRule {
 /** A complete policy for one scope: { fieldName: rule } */
 export type PolicyMap = Record<string, FieldRule>;
 
-export type PolicyScope = "sales" | "purchase" | "pos" | "customers" | "journal_entry" | "sales_audit";
+export type PolicyScope = "sales" | "purchase" | "pos" | "customers" | "journal_entry" | "sales_audit" | "receipt_voucher";
 
 /** A complete bundle covering all scopes — the shape stored in `bundle`. */
 export type PolicyBundle = Record<PolicyScope, PolicyMap>;
@@ -206,9 +206,31 @@ export const FIELD_CATALOGUE: Record<PolicyScope, FieldDef[]> = {
     { key: "legend_zatca_ok",     labelAr: "شارة: مؤكَّدة زاتكا",       labelEn: "Legend chip: ZATCA approved" },
     { key: "legend_zatca_bad",    labelAr: "شارة: مرفوضة زاتكا",        labelEn: "Legend chip: ZATCA rejected" },
   ],
+  // ── شاشة سند القبض (/cash/receipt-vouchers/new → ReceiptVoucherForm) ──
+  // Governs the header + creditor-side fields on the Receipt Voucher form.
+  // The `generalAccount` key governs the "حساب عام" creditor-side option in
+  // the الطرف الدائن toggle: when hidden, the toggle only offers "عميل" and
+  // the form is forced into customer (party) mode. Mirror of the sales scope.
+  receipt_voucher: [
+    { key: "date",               labelAr: "تاريخ السند",            labelEn: "Voucher date", isDate: true },
+    { key: "branch",             labelAr: "الفرع",                  labelEn: "Branch" },
+    { key: "currency",           labelAr: "العملة",                 labelEn: "Currency" },
+    { key: "exchangeRate",       labelAr: "سعر الصرف",              labelEn: "Exchange rate" },
+    { key: "paymentType",        labelAr: "طريقة الدفع (نقدي/بنك)",  labelEn: "Payment method (cash/bank)" },
+    { key: "treasury",           labelAr: "الخزنة / الحساب البنكي",  labelEn: "Cash box / Bank account" },
+    { key: "customer",           labelAr: "العميل (طرف دائن)",       labelEn: "Customer (credit side)" },
+    { key: "generalAccount",     labelAr: "حساب عام (طرف دائن)",     labelEn: "General account (credit side)" },
+    { key: "amount",             labelAr: "المبلغ",                 labelEn: "Amount" },
+    { key: "settleSalesInvoice", labelAr: "سداد مقابل فاتورة مبيعات", labelEn: "Settle against sales invoice" },
+    { key: "costCenter",         labelAr: "مركز التكلفة",           labelEn: "Cost center" },
+    { key: "refType",            labelAr: "نوع المرجع",             labelEn: "Reference type" },
+    { key: "refNumber",          labelAr: "رقم المرجع",             labelEn: "Reference number" },
+    { key: "description",        labelAr: "البيان",                 labelEn: "Description" },
+    { key: "notes",              labelAr: "ملاحظات",                labelEn: "Notes" },
+  ],
 };
 
-export const POLICY_SCOPES: PolicyScope[] = ["sales", "purchase", "pos", "customers", "journal_entry", "sales_audit"];
+export const POLICY_SCOPES: PolicyScope[] = ["sales", "purchase", "pos", "customers", "journal_entry", "sales_audit", "receipt_voucher"];
 
 export function defaultPolicy(scope: PolicyScope): PolicyMap {
   const out: PolicyMap = {};
@@ -226,5 +248,6 @@ export function defaultBundle(): PolicyBundle {
     customers:     defaultPolicy("customers"),
     journal_entry: defaultPolicy("journal_entry"),
     sales_audit:   defaultPolicy("sales_audit"),
+    receipt_voucher: defaultPolicy("receipt_voucher"),
   };
 }
