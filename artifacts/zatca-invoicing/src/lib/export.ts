@@ -331,25 +331,59 @@ export function safeLogoSrc(raw: unknown): string | null {
   return null;
 }
 
+// Fetch a (usually same-origin) resource and convert it to a base64 data-URI.
+// WHY: company logos are commonly stored as object-storage URLs served from the
+// app's own domain. Loading them straight into an <img crossOrigin="anonymous">
+// fails whenever the storage host does NOT echo CORS headers — the image loads
+// "tainted" and `canvas.toDataURL()` throws, so the logo silently renders as a
+// blank white card in the rasterised PDF. Fetching the bytes first (same-origin
+// requests need no CORS, and a CORS-enabled host still works) and inlining them
+// as a data-URI sidesteps the taint entirely. Returns null on any failure so
+// the caller can fall back to the raw <img> best-effort path.
+async function fetchAsDataUri(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (!blob.type.startsWith("image/")) return null;
+    return await new Promise<string | null>((resolve) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(typeof fr.result === "string" ? fr.result : null);
+      fr.onerror = () => resolve(null);
+      fr.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
 // Pre-rasterise a logo into a clean, decoded PNG data-URI at a fixed display
 // size.  WHY: the PDF *download* path renders the report HTML with html2canvas,
 // which frequently fails to paint an <img> sized purely with
 // `max-width/max-height + object-fit` (it computes a zero box and the logo
 // comes out as a blank white card).  By drawing the image onto a canvas
 // ourselves we hand html2canvas an already-decoded bitmap WITH explicit pixel
-// dimensions, so it always renders.  Data-URI logos (the format companies are
-// stored in) convert cleanly; a cross-origin http logo that taints the canvas
-// makes `toDataURL` throw → we return null and the caller keeps the raw src as
-// a best-effort fallback.  Returns null on any failure (no logo / load error).
+// dimensions, so it always renders.  HTTP(S) logos are first inlined to a
+// data-URI (see fetchAsDataUri) so a non-CORS object-storage host can't taint
+// the canvas; data-URI logos are used as-is.  Returns null on any failure
+// (no logo / load error) so the caller can fall back to the raw <img> path.
 export async function rasterizeLogo(
   src: string,
   maxW = 170,
   maxH = 54,
 ): Promise<{ src: string; w: number; h: number } | null> {
   try {
+    // For http(s) logos, inline the bytes as a data-URI first so a non-CORS
+    // object-storage host can't taint the canvas (which would make the logo
+    // come out blank). Data-URI sources are used as-is.
+    let imgSrc = src;
+    if (/^https?:\/\//i.test(src)) {
+      const dataUri = await fetchAsDataUri(src);
+      if (dataUri) imgSrc = dataUri;
+    }
     const img = new Image();
     img.crossOrigin = "anonymous";
-    img.src = src;
+    img.src = imgSrc;
     await img.decode();
     const natW = img.naturalWidth || maxW;
     const natH = img.naturalHeight || maxH;
@@ -524,7 +558,7 @@ export async function exportToPDF(
   <meta charset="UTF-8"/>
   <title>${escape(filename)}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
@@ -542,7 +576,7 @@ export async function exportToPDF(
     }
     .header h1 { font-size: 17pt; font-weight: 700; margin-bottom: 4px; }
     .header p  { font-size: 10pt; opacity: .85; }
-    .header .company-name    { font-size: 15pt; font-weight: 800; margin-bottom: 2px; letter-spacing: .2px; }
+    .header .company-name    { font-size: 15pt; font-weight: 800; margin-bottom: 2px; }
     .header .company-name-en { font-size: 10pt; font-weight: 500; opacity: .9; margin-bottom: 4px; }
     .header .company-meta    { font-size: 8.5pt; opacity: .92; margin-bottom: 2px; }
     .header .title-sep {
@@ -793,6 +827,29 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
       });
       setTimeout(resolve, 2500);
     });
+    // Wait for the Arabic web font (Tajawal) to actually finish loading inside
+    // the iframe BEFORE html2canvas rasterises. If the font isn't ready the
+    // browser paints a fallback that mis-shapes Arabic — letters render
+    // disconnected/garbled in the captured canvas. `document.fonts.ready`
+    // resolves once all @font-face faces referenced by the doc are loaded;
+    // we also explicitly request the weights we use and cap the wait so a
+    // slow/offline font CDN can never hang the export.
+    try {
+      const fonts = (doc as any).fonts;
+      if (fonts) {
+        await Promise.race([
+          (async () => {
+            await Promise.all([
+              fonts.load("400 12pt Tajawal").catch(() => {}),
+              fonts.load("700 12pt Tajawal").catch(() => {}),
+              fonts.load("800 15pt Tajawal").catch(() => {}),
+            ]);
+            await fonts.ready;
+          })(),
+          new Promise((r) => setTimeout(r, 3000)),
+        ]);
+      }
+    } catch { /* fonts API unavailable — fall through with system fallback */ }
     // Force-decode every image so html2canvas captures painted pixels rather
     // than a blank box (a "loaded" data-URI image can still be undecoded).
     await Promise.all(
@@ -1143,7 +1200,7 @@ export function printChartOfAccountsExternal(opts: {
       box-shadow: 0 2px 6px rgba(0,0,0,0.15);
     }
     .logo-card img { max-height: 56px; max-width: 180px; object-fit: contain; display: block; }
-    .header h1 { font-size: 20pt; font-weight: 800; margin-bottom: 4px; letter-spacing: 0.3px; }
+    .header h1 { font-size: 20pt; font-weight: 800; margin-bottom: 4px; }
     .header .company { font-size: 12pt; font-weight: 600; opacity: 0.95; margin-bottom: 2px; }
     .header .subtitle { font-size: 10pt; opacity: 0.85; }
     .meta-bar {
@@ -1713,7 +1770,6 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     }
     .title-bar .doc-title {
       font-size: 13pt; font-weight: 800; color: #000;
-      letter-spacing: .5px;
       margin-bottom: 3mm;
     }
     /* Period (من تاريخ / إلى تاريخ) rendered directly under the title in
