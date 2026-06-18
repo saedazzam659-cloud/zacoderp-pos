@@ -20,6 +20,10 @@ author = "agent"
 task = "workflow.run"
 args = "admin-reports-tests"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "tmp-full-build"
+
 [[workflows.workflow]]
 name = "admin-reports-tests"
 author = "agent"
@@ -30,6 +34,17 @@ args = "pnpm --filter @workspace/api-server test"
 
 [workflows.workflow.metadata]
 isValidation = true
+
+[[workflows.workflow]]
+name = "tmp-full-build"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd /home/runner/workspace && (time pnpm -r --workspace-concurrency=1 --if-present run build) > /home/runner/workspace/.local/fullbuild.log 2>&1; echo EXIT=$? >> /home/runner/workspace/.local/fullbuild.log"
+
+[workflows.workflow.metadata]
+outputType = "console"
 
 [agent]
 stack = "PNPM_WORKSPACE"
