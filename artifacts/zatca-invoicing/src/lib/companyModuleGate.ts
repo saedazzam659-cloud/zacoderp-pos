@@ -128,3 +128,32 @@ export function companyAllowsModule(user: any, permKey?: string): boolean {
   if (!parsed || typeof parsed !== "object") return true;
   return parsed[gateKey] !== false;
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Per-SCREEN visibility overlay
+//
+// Independent of the coarse module gate above. A SuperAdmin can hide an
+// individual sidebar link for a tenant by setting `nav:<path>` = false in
+// companies.menuPermissions. ABSENT ⇒ visible (default-on), so existing
+// tenants — who have no `nav:*` keys at all — are completely unaffected.
+//
+// This ONLY controls sidebar visibility; the backend API gate stays at the
+// module level (see COMPANY_MODULE_GATE), so a merely-hidden screen never
+// produces a 403. Superadmins bypass this in Layout.tsx (they must still be
+// able to manage every screen).
+// ─────────────────────────────────────────────────────────────────────────
+export const navScreenKey = (path: string): string => `nav:${path}`;
+
+export function companyAllowsScreen(user: any, href?: string): boolean {
+  if (!href) return true;
+  const raw = user?.company?.menuPermissions;
+  if (raw == null) return true;
+  let parsed: Record<string, boolean>;
+  try {
+    parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    return true;
+  }
+  if (!parsed || typeof parsed !== "object") return true;
+  return parsed[`nav:${href}`] !== false;
+}

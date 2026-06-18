@@ -24,6 +24,8 @@ import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { COUNTRIES } from "@/lib/countries";
 import { DateField } from "@/components/ui/date-field";
+import { deriveModulesFromMenuKeys } from "@/lib/menuItems";
+import ModuleScreenPicker, { type ModulePickerValue } from "@/components/ModuleScreenPicker";
 
 const INVOICE_TYPE_OPTIONS: ComboboxItem[] = [
   { value: "standard",   code: "B2B",     label: "فاتورة ضريبية (B2B)",         description: "للشركات والجهات التجارية — تُرسل إلى ZATCA للتخليص" },
@@ -157,6 +159,11 @@ export default function CompanyNew() {
   // company's menuPermissions (otherwise the schema default leaves
   // every other module visible — see issue raised by the user).
   const [selectedIndustries, setSelectedIndustries] = useState<string[]>([]);
+  // ── "مخصص" (Custom) mode ── same picker as the public Register page.
+  // When ON, we send `selectedMenuKeys` (granular grant, covers null-parent
+  // modules) + `selectedNavOff` (per-screen visibility) to /api/auth/register.
+  const [customMode, setCustomMode] = useState(false);
+  const [customPicker, setCustomPicker] = useState<ModulePickerValue>({ moduleKeys: [], navOff: [] });
 
   // Live industry catalog from the SuperAdmin-managed table.
   // Falls back to an empty list on error so the rest of the page
@@ -249,6 +256,12 @@ export default function CompanyNew() {
           industryName,
           serialNumber: combinedSerial,
           selectedIndustries,
+          // مخصص mode only: granular menu grants + per-screen visibility off.
+          ...(customMode ? {
+            selectedModules: deriveModulesFromMenuKeys(customPicker.moduleKeys),
+            selectedMenuKeys: customPicker.moduleKeys,
+            selectedNavOff: customPicker.navOff,
+          } : {}),
         }),
       });
       const data = await res.json();
@@ -452,11 +465,12 @@ export default function CompanyNew() {
                           <button
                             key={ind.code}
                             type="button"
-                            onClick={() =>
+                            onClick={() => {
+                              setCustomMode(false);
                               setSelectedIndustries(prev =>
                                 active ? prev.filter(c => c !== ind.code) : [...prev, ind.code]
-                              )
-                            }
+                              );
+                            }}
                             className={
                               "flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-all " +
                               (active
@@ -470,9 +484,25 @@ export default function CompanyNew() {
                           </button>
                         );
                       })}
+                      {/* "مخصص" — switch to the per-screen custom picker. */}
+                      <button
+                        type="button"
+                        data-testid="industry-chip-custom"
+                        onClick={() => { setCustomMode(true); setSelectedIndustries([]); }}
+                        className={
+                          "flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 text-sm transition-all " +
+                          (customMode
+                            ? "bg-primary/10 text-primary border-primary font-medium shadow-sm"
+                            : "bg-background hover:bg-primary/5 border-dashed border-primary/50 text-primary")
+                        }
+                      >
+                        <span>🎚️</span>
+                        <span>مخصص</span>
+                        {customMode && <CheckCircle2 className="h-3.5 w-3.5" />}
+                      </button>
                     </div>
 
-                    {selectedIndustries.length === 0 && (
+                    {!customMode && selectedIndustries.length === 0 && (
                       <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 flex items-start gap-2">
                         <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                         <span>
@@ -482,7 +512,23 @@ export default function CompanyNew() {
                       </div>
                     )}
 
-                    {selectedIndustries.length > 0 && (
+                    {customMode && (
+                      <div className="space-y-3">
+                        <div className="text-xs text-primary bg-primary/5 border border-primary/20 rounded p-2 flex items-start gap-2">
+                          <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                          <span>
+                            وضع التخصيص: اختر باقة جاهزة (صغيرة / متوسطة / كبيرة) أو فعّل الوحدات والشاشات يدوياً.
+                            الشاشات المُلغاة تُخفى من القائمة الجانبية للشركة الجديدة.
+                          </span>
+                        </div>
+                        <ModuleScreenPicker
+                          value={customPicker}
+                          onChange={setCustomPicker}
+                        />
+                      </div>
+                    )}
+
+                    {!customMode && selectedIndustries.length > 0 && (
                       <div className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-2">
                         <strong>سيتم تفعيل الموديولات التالية:</strong>{" "}
                         {Array.from(new Set(

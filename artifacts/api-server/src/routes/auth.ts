@@ -704,6 +704,14 @@ router.post("/register", async (req, res) => {
     // registration wizard Step 1. Both are optional; legacy clients that
     // only send `industryName` / `plan` continue to work.
     selectedIndustries, selectedModules,
+    // New: granular per-screen customization from the "مخصص" picker.
+    //  • selectedMenuKeys — high-level menuPermission keys (canonical-filtered
+    //    server-side) so null-parent modules (sister_companies, online_store,
+    //    user_tracking…) that have no billable parent can still be granted.
+    //  • selectedNavOff — list of route paths the tenant should NOT see; each
+    //    becomes `nav:<path>=false`. Visibility-only (never affects the
+    //    module API gate), so it can never grant/deny billable access.
+    selectedMenuKeys, selectedNavOff,
     // Subscription
     plan, billingCycle, startDate, endDate,
     // Optional override of the subscription price coming from the new
@@ -987,6 +995,48 @@ router.post("/register", async (req, res) => {
     // never block a registration. Worst case: the user lands without
     // the auto-granted menus and an admin enables them later.
     req.log?.warn?.({ err: e }, "industry → menuPermissions merge failed");
+  }
+
+  // ── CUSTOM PICKER: granular menu keys + per-screen visibility ─────────
+  // The "مخصص" registration picker (and the SuperAdmin add-company picker)
+  // can ship two extra fields:
+  //   • selectedMenuKeys — high-level keys for modules WITHOUT a billable
+  //     parent (sister_companies, online_store, user_tracking…). Filtered
+  //     through the canonical whitelist so a tampered request can never
+  //     grant arbitrary permissions.
+  //   • selectedNavOff   — route paths to hide as `nav:<path>=false`.
+  //     Visibility-only; the module API gate is untouched (no 403 risk).
+  // When `selectedMenuKeys` is present (the user actually chose a module
+  // set via the مخصص picker) we run the explicit-deny fill so a custom
+  // selection means ONLY what was picked is visible (legacy "missing =
+  // allowed" would otherwise leak unselected modules into the sidebar).
+  // A navOff-only payload (no module set) intentionally does NOT deny-fill
+  // — it just hides individual screens on top of the default/industry
+  // module grants. Module access itself stays subscription-gated, so this
+  // public endpoint can never escalate a tenant's actual permissions.
+  try {
+    const hasMenuKeys = Array.isArray(selectedMenuKeys) && selectedMenuKeys.length > 0;
+    const navOff = (Array.isArray(selectedNavOff) ? selectedNavOff : [])
+      .filter((p: unknown): p is string => typeof p === "string" && p.startsWith("/"));
+    if (hasMenuKeys || navOff.length > 0) {
+      const { filterCanonicalKeys, CANONICAL_MENU_PERMISSION_KEYS } =
+        await import("../lib/menuPermissionCatalog.js");
+      const granted: Record<string, boolean> = resolvedMenuPermissions
+        ? JSON.parse(resolvedMenuPermissions)
+        : { dashboard: true, invoices: true, customers: true };
+      if (hasMenuKeys) {
+        for (const k of filterCanonicalKeys(selectedMenuKeys as unknown[])) granted[k] = true;
+        // Explicit-deny fill: any canonical key not granted is denied so the
+        // sidebar gate (`parsed[k] !== false`) hides unselected modules.
+        for (const k of CANONICAL_MENU_PERMISSION_KEYS) {
+          if (granted[k] !== true) granted[k] = false;
+        }
+      }
+      for (const p of navOff) granted[`nav:${p}`] = false;
+      resolvedMenuPermissions = JSON.stringify(granted);
+    }
+  } catch (e) {
+    req.log?.warn?.({ err: e }, "custom picker → menuPermissions merge failed");
   }
 
   // Create company

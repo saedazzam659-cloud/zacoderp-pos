@@ -8,89 +8,36 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  Loader2, LayoutDashboard, FileText, Users, Truck, Link2, Search, Building2,
-  ShieldCheck, BarChart3, Warehouse, ShoppingCart, ShoppingBag, Wallet, BookOpen,
-  PieChart, Smartphone, CheckCircle2, XCircle, Save, Copy, RotateCcw, Sparkles,
-  ChevronDown, ChevronUp, UserCog, HardHat, Factory, ShieldAlert, TrendingUp,
-  Wrench, Hotel, Stethoscope, MapPin, Mic, Briefcase, MessageSquare, Database,
+  Loader2, Search, Building2, ShieldCheck, CheckCircle2, XCircle, Save, RotateCcw,
+  Sparkles, ChevronDown, ChevronLeft, FileBarChart, LayoutGrid, Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MENU_ITEMS as MENU_ITEMS_BASE, SECTIONS } from "@/lib/menuItems";
+import {
+  MENU_ITEMS, MENU_ITEM_BY_KEY, MODULE_GROUPS, screenKey,
+} from "@/lib/menuItems";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-// ─── Menu definitions ──────────────────────────────────────────────────
-// Source of truth for the key/label/section trio is `lib/menuItems.ts`
-// (shared with /admin/industries and /register so the three pages stay
-// perfectly in sync). Icons live here because they're a presentation
-// concern owned by this page only — adding a new sidebar entry means
-// editing the lib AND adding a row in MENU_ICONS.
-interface MenuItem { key: string; label: string; icon: React.ElementType; section: string; }
+// ─────────────────────────────────────────────────────────────────────
+// Per-company menu permissions editor (SuperAdmin)
+//
+// TWO layers, both persisted into companies.menuPermissions JSON:
+//   1. Module-level coarse keys (sales_module, pos, …) — the on/off master
+//      switch for an entire module. These already existed.
+//   2. Per-SCREEN keys `nav:<path>` — refine which individual screens show
+//      inside an enabled module. ABSENT ⇒ visible (default-on); we only
+//      persist the OFF ones (pruneForSave) so the JSON stays lean and
+//      existing tenants keep all screens.
+//
+// The module catalog + screen lists come from MODULE_GROUPS in
+// lib/menuItems.ts — the SAME source that drives /register and the
+// SuperAdmin add-company picker.
+// ─────────────────────────────────────────────────────────────────────
 
-const MENU_ICONS: Record<string, React.ElementType> = {
-  dashboard:          LayoutDashboard,
-  invoices:           FileText,
-  customers:          Users,
-  suppliers:          Truck,
-  reports:            BarChart3,
-  inventory_mobile:   Smartphone,
-  inventory_reports:  Warehouse,
-  sales_module:       ShoppingCart,
-  sales_reports:      PieChart,
-  purchases_module:   ShoppingBag,
-  purchases_reports:  PieChart,
-  pos:                ShoppingCart,
-  cash_module:        Wallet,
-  cash_reports:       PieChart,
-  accounts:           BookOpen,
-  accounting_reports: PieChart,
-  accounting_maintenance: Wrench,
-  hr_module:          UserCog,
-  contracting:        HardHat,
-  production:         Factory,
-  safety:             ShieldAlert,
-  maintenance:        Wrench,
-  hotel:              Hotel,
-  hospital:           Stethoscope,
-  security_events:    ShieldAlert,
-  seo_dashboard:      TrendingUp,
-  ai_tools:           Sparkles,
-  voice_assistant:    Mic,
-  sessions:           Briefcase,
-  chat:               MessageSquare,
-  company_maintenance: Database,
-  field_service:      MapPin,
-  zatca:              Link2,
-  multi_link:         Link2,
-};
-
-const MENU_ITEMS: MenuItem[] = MENU_ITEMS_BASE.map(m => ({
-  ...m,
-  icon: MENU_ICONS[m.key] ?? LayoutDashboard,
-}));
-
-const SECTION_THEME: Record<string, { bg: string; text: string; border: string; ring: string }> = {
-  "رئيسي":     { bg: "bg-blue-50",    text: "text-blue-700",    border: "border-blue-200",    ring: "from-blue-500/10" },
-  "الأعمال":    { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200", ring: "from-emerald-500/10" },
-  "المخازن":    { bg: "bg-amber-50",   text: "text-amber-700",   border: "border-amber-200",   ring: "from-amber-500/10" },
-  "المبيعات":   { bg: "bg-cyan-50",    text: "text-cyan-700",    border: "border-cyan-200",    ring: "from-cyan-500/10" },
-  "المشتريات":  { bg: "bg-orange-50",  text: "text-orange-700",  border: "border-orange-200",  ring: "from-orange-500/10" },
-  "نقاط البيع": { bg: "bg-teal-50",    text: "text-teal-700",    border: "border-teal-200",    ring: "from-teal-500/10" },
-  "الحسابات العامة": { bg: "bg-indigo-50", text: "text-indigo-700", border: "border-indigo-200", ring: "from-indigo-500/10" },
-  "صيانة الحسابات":  { bg: "bg-violet-50", text: "text-violet-700", border: "border-violet-200", ring: "from-violet-500/10" },
-  "شؤون الموظفين": { bg: "bg-rose-50",   text: "text-rose-700",    border: "border-rose-200",    ring: "from-rose-500/10" },
-  "إدارة المقاولات": { bg: "bg-orange-50", text: "text-orange-700", border: "border-orange-200", ring: "from-orange-500/10" },
-  "الإنتاج والتصنيع": { bg: "bg-slate-50", text: "text-slate-700",  border: "border-slate-200",  ring: "from-slate-500/10" },
-  "إدارة الصيانة": { bg: "bg-yellow-50", text: "text-yellow-700",  border: "border-yellow-200", ring: "from-yellow-500/10" },
-  "إدارة الفنادق": { bg: "bg-teal-50",   text: "text-teal-700",    border: "border-teal-200",   ring: "from-teal-500/10" },
-  "إدارة المستشفيات": { bg: "bg-sky-50",  text: "text-sky-700",     border: "border-sky-200",    ring: "from-sky-500/10" },
-  "الأمن والمراقبة": { bg: "bg-red-50",   text: "text-red-700",     border: "border-red-200",    ring: "from-red-500/10" },
-  "تحليلات SEO": { bg: "bg-fuchsia-50", text: "text-fuchsia-700", border: "border-fuchsia-200", ring: "from-fuchsia-500/10" },
-  "أدوات الذكاء الاصطناعي": { bg: "bg-violet-50", text: "text-violet-700", border: "border-violet-200", ring: "from-violet-500/10" },
-  "النظام":     { bg: "bg-purple-50",  text: "text-purple-700",  border: "border-purple-200",  ring: "from-purple-500/10" },
-  "الخدمة الميدانية": { bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200", ring: "from-blue-500/10" },
-  "ربط متعدد": { bg: "bg-cyan-50",   text: "text-cyan-700",    border: "border-cyan-200",   ring: "from-cyan-500/10" },
-};
+// Coarse module keys NOT represented by a MODULE_GROUP card. Kept as a
+// simple toggle list ("وحدات أخرى") so nothing regresses.
+const GROUPED_MODULE_KEYS = new Set(MODULE_GROUPS.flatMap(g => g.moduleKeys));
+const EXTRA_KEYS = MENU_ITEMS.map(m => m.key).filter(k => !GROUPED_MODULE_KEYS.has(k));
 
 const DEFAULT_PERMISSIONS: Record<string, boolean> = MENU_ITEMS.reduce(
   (acc, m) => { acc[m.key] = true; return acc; },
@@ -102,6 +49,20 @@ function parsePerms(raw: string | null | undefined): Record<string, boolean> {
   catch { return { ...DEFAULT_PERMISSIONS }; }
 }
 
+// Drop default-on nav:* keys (true) — only persist explicit OFFs. Coarse
+// module keys are kept verbatim.
+function pruneForSave(perms: Record<string, boolean>): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(perms)) {
+    if (k.startsWith("nav:")) { if (v === false) out[k] = false; }
+    else out[k] = v;
+  }
+  return out;
+}
+function canon(perms: Record<string, boolean>): string {
+  return JSON.stringify(Object.fromEntries(Object.entries(pruneForSave(perms)).sort()));
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────
 export default function MenuPermissions() {
   const { token } = useAuth();
@@ -110,7 +71,7 @@ export default function MenuPermissions() {
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [draft, setDraft] = useState<Record<string, boolean> | null>(null);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token ?? ""}`,
@@ -126,7 +87,6 @@ export default function MenuPermissions() {
     },
   });
 
-  // Auto-select first company
   useEffect(() => {
     if (selectedId == null && companies.length > 0) setSelectedId(companies[0].id);
   }, [companies, selectedId]);
@@ -141,14 +101,13 @@ export default function MenuPermissions() {
     [selected],
   );
 
-  // Load draft when selection changes
   useEffect(() => {
     setDraft(selected ? parsePerms(selected.menuPermissions) : null);
   }, [selectedId, selected?.menuPermissions]);
 
   const isDirty = useMemo(() => {
     if (!draft) return false;
-    return MENU_ITEMS.some(m => Boolean(draft[m.key]) !== Boolean(savedPerms[m.key]));
+    return canon(draft) !== canon(savedPerms);
   }, [draft, savedPerms]);
 
   const saveMutation = useMutation({
@@ -156,7 +115,7 @@ export default function MenuPermissions() {
       const res = await fetch(`${API}/api/companies/${companyId}/menu-permissions`, {
         method: "PATCH",
         headers,
-        body: JSON.stringify({ menuPermissions: JSON.stringify(perms) }),
+        body: JSON.stringify({ menuPermissions: JSON.stringify(pruneForSave(perms)) }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "فشل الحفظ");
@@ -179,20 +138,37 @@ export default function MenuPermissions() {
     );
   }, [companies, search]);
 
-  // ─── Helpers ─────────────────────────────────────────────────────
-  const toggle = (key: string) =>
-    setDraft(d => (d ? { ...d, [key]: !d[key] } : d));
-
-  const setSection = (section: string, val: boolean) =>
+  // ─── Mutators ────────────────────────────────────────────────────
+  const setModule = (moduleKeys: string[], val: boolean) =>
     setDraft(d => {
       if (!d) return d;
       const next = { ...d };
-      MENU_ITEMS.filter(m => m.section === section).forEach(m => { next[m.key] = val; });
+      moduleKeys.forEach(k => { next[k] = val; });
       return next;
     });
 
+  const setGroupScreens = (paths: string[], val: boolean) =>
+    setDraft(d => {
+      if (!d) return d;
+      const next = { ...d };
+      paths.forEach(p => { next[screenKey(p)] = val; });
+      return next;
+    });
+
+  const toggleScreen = (path: string, cur: boolean) =>
+    setDraft(d => (d ? { ...d, [screenKey(path)]: !cur } : d));
+
+  const toggleExtra = (key: string) =>
+    setDraft(d => (d ? { ...d, [key]: !d[key] } : d));
+
   const setAll = (val: boolean) =>
-    setDraft(d => (d ? Object.fromEntries(MENU_ITEMS.map(m => [m.key, val])) : d));
+    setDraft(d => {
+      if (!d) return d;
+      const next = { ...d };
+      MENU_ITEMS.forEach(m => { next[m.key] = val; });
+      MODULE_GROUPS.forEach(g => g.screens.forEach(s => { next[screenKey(s.path)] = val; }));
+      return next;
+    });
 
   const reset = () => setDraft(savedPerms);
 
@@ -206,6 +182,10 @@ export default function MenuPermissions() {
     saveMutation.mutate({ companyId: selected.id, perms: draft });
   };
 
+  // Helpers reading current draft state
+  const screenOn = (d: Record<string, boolean>, path: string) => d[screenKey(path)] !== false;
+  const moduleOn = (d: Record<string, boolean>, moduleKeys: string[]) => moduleKeys.every(k => d[k] !== false);
+
   return (
     <div className="space-y-5" dir="rtl">
 
@@ -216,9 +196,9 @@ export default function MenuPermissions() {
             <ShieldCheck className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-xl font-bold">صلاحيات القوائم</h1>
+            <h1 className="text-xl font-bold">صلاحيات القوائم والشاشات</h1>
             <p className="text-sm text-muted-foreground">
-              اختر شركة من القائمة، ثم فعّل أو عطّل القوائم بسهولة. التغييرات تُحفظ بضغطة واحدة.
+              فعّل أو عطّل الوحدات، ثم وسّع أي وحدة للتحكم في عرض كل شاشة وتقرير على حدة. التغييرات تُحفظ بضغطة واحدة.
             </p>
           </div>
         </div>
@@ -370,73 +350,114 @@ export default function MenuPermissions() {
                 </CardContent>
               </Card>
 
-              {/* Sections grid */}
+              {/* Module cards with expandable per-screen toggles */}
               {draft && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {SECTIONS.map(section => {
-                    const items = MENU_ITEMS.filter(m => m.section === section);
-                    const enabledIn = items.filter(m => draft[m.key]).length;
-                    const allOn  = enabledIn === items.length;
-                    const allOff = enabledIn === 0;
-                    const theme = SECTION_THEME[section] ?? SECTION_THEME["رئيسي"];
-                    const isCollapsed = collapsed[section];
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+                  {MODULE_GROUPS.map(group => {
+                    const modOn = moduleOn(draft, group.moduleKeys);
+                    const screens = group.screens;
+                    const screensOn = screens.filter(s => screenOn(draft, s.path)).length;
+                    const isOpen = !!expanded[group.key];
+                    const normalScreens = screens.filter(s => !s.report);
+                    const reportScreens = screens.filter(s => s.report);
 
                     return (
-                      <Card key={section} className={cn("overflow-hidden border", theme.border)}>
-                        {/* Section header */}
-                        <div className={cn("px-4 py-3 border-b flex items-center justify-between", theme.bg)}>
+                      <Card key={group.key} className={cn("overflow-hidden border", modOn ? "border-indigo-200 dark:border-indigo-900" : "border-muted")}>
+                        {/* Module header */}
+                        <div className={cn(
+                          "px-4 py-3 border-b flex items-center justify-between gap-2",
+                          modOn ? "bg-gradient-to-l from-indigo-50 to-purple-50 dark:from-indigo-950/30 dark:to-purple-950/30" : "bg-muted/40",
+                        )}>
                           <button
-                            onClick={() => setCollapsed(c => ({ ...c, [section]: !c[section] }))}
-                            className="flex items-center gap-2"
+                            onClick={() => setExpanded(e => ({ ...e, [group.key]: !e[group.key] }))}
+                            className="flex items-center gap-2 min-w-0"
                           >
-                            {isCollapsed ? (
-                              <ChevronDown className={cn("h-4 w-4", theme.text)} />
-                            ) : (
-                              <ChevronUp className={cn("h-4 w-4", theme.text)} />
-                            )}
-                            <span className={cn("font-bold text-sm", theme.text)}>{section}</span>
-                            <Badge variant="outline" className={cn("text-[10px] h-5", theme.text, theme.border, "bg-white/60")}>
-                              {enabledIn}/{items.length}
+                            {isOpen
+                              ? <ChevronDown className="h-4 w-4 text-indigo-600 shrink-0" />
+                              : <ChevronLeft className="h-4 w-4 text-muted-foreground shrink-0" />}
+                            <span className="text-lg leading-none">{group.emoji}</span>
+                            <span className={cn("font-bold text-sm truncate", !modOn && "text-muted-foreground")}>
+                              {group.label}
+                            </span>
+                            <Badge variant="outline" className="shrink-0 text-[10px] h-5 bg-white/70 dark:bg-black/20">
+                              {screensOn}/{screens.length}
                             </Badge>
                           </button>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-muted-foreground">تفعيل القسم</span>
-                            <Switch
-                              checked={allOn}
-                              onCheckedChange={(v) => setSection(section, v)}
-                              className={cn(allOff ? "" : "")}
-                            />
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-xs text-muted-foreground hidden sm:inline">تفعيل الوحدة</span>
+                            <Switch checked={modOn} onCheckedChange={(v) => setModule(group.moduleKeys, v)} />
                           </div>
                         </div>
 
-                        {/* Items */}
-                        {!isCollapsed && (
-                          <div className="divide-y">
-                            {items.map(m => {
-                              const on = !!draft[m.key];
-                              return (
-                                <label
-                                  key={m.key}
-                                  className={cn(
-                                    "flex items-center justify-between gap-3 px-4 py-2.5 cursor-pointer transition",
-                                    on ? "bg-card hover:bg-muted/30" : "bg-muted/20 hover:bg-muted/40",
-                                  )}
-                                >
-                                  <div className="flex items-center gap-3 min-w-0">
-                                    <div className={cn(
-                                      "p-1.5 rounded-md transition",
-                                      on ? cn(theme.bg, theme.text) : "bg-muted text-muted-foreground",
-                                    )}>
-                                      <m.icon className="h-4 w-4" />
-                                    </div>
-                                    <span className={cn("text-sm font-medium truncate", !on && "text-muted-foreground")}>
-                                      {m.label}
-                                    </span>
-                                  </div>
-                                  <Switch checked={on} onCheckedChange={() => toggle(m.key)} />
-                                </label>
-                              );
-                            })}
+                        {/* Expandable per-screen body */}
+                        {isOpen && (
+                          <div className={cn("p-3 space-y-3", !modOn && "opacity-60")}>
+                            {!modOn && (
+                              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                                الوحدة معطّلة — لن تظهر شاشاتها حتى تُفعّلها. يمكنك ضبط الشاشات مسبقاً.
+                              </p>
+                            )}
+
+                            {/* per-module quick actions */}
+                            <div className="flex items-center justify-between gap-2 text-xs">
+                              <span className="text-muted-foreground flex items-center gap-1">
+                                <LayoutGrid className="h-3.5 w-3.5" /> {screens.length} شاشة
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]"
+                                  onClick={() => setGroupScreens(screens.map(s => s.path), true)}>
+                                  تحديد الكل
+                                </Button>
+                                <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]"
+                                  onClick={() => setGroupScreens(screens.map(s => s.path), false)}>
+                                  إلغاء الكل
+                                </Button>
+                              </div>
+                            </div>
+
+                            {/* Screens */}
+                            <div>
+                              <p className="text-[11px] font-semibold text-muted-foreground mb-1 flex items-center gap-1">
+                                <Layers className="h-3.5 w-3.5" /> الشاشات
+                              </p>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+                                {normalScreens.map(s => {
+                                  const on = screenOn(draft, s.path);
+                                  return (
+                                    <label key={s.path}
+                                      className="flex items-center justify-between gap-2 py-1.5 cursor-pointer border-b border-dashed border-muted/60">
+                                      <span className={cn("text-xs truncate", !on && "text-muted-foreground line-through")}>
+                                        {s.label}
+                                      </span>
+                                      <Switch checked={on} onCheckedChange={() => toggleScreen(s.path, on)} />
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {/* Reports */}
+                            {reportScreens.length > 0 && (
+                              <div>
+                                <p className="text-[11px] font-semibold text-muted-foreground mb-1 flex items-center gap-1">
+                                  <FileBarChart className="h-3.5 w-3.5" /> التقارير
+                                </p>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+                                  {reportScreens.map(s => {
+                                    const on = screenOn(draft, s.path);
+                                    return (
+                                      <label key={s.path}
+                                        className="flex items-center justify-between gap-2 py-1.5 cursor-pointer border-b border-dashed border-muted/60">
+                                        <span className={cn("text-xs truncate", !on && "text-muted-foreground line-through")}>
+                                          {s.label}
+                                        </span>
+                                        <Switch checked={on} onCheckedChange={() => toggleScreen(s.path, on)} />
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </Card>
@@ -445,10 +466,34 @@ export default function MenuPermissions() {
                 </div>
               )}
 
+              {/* Other coarse-only modules */}
+              {draft && EXTRA_KEYS.length > 0 && (
+                <Card className="overflow-hidden border">
+                  <div className="px-4 py-3 border-b bg-muted/40 flex items-center gap-2">
+                    <Layers className="h-4 w-4 text-muted-foreground" />
+                    <span className="font-bold text-sm">وحدات أخرى</span>
+                    <span className="text-xs text-muted-foreground">(تفعيل/تعطيل عام)</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4">
+                    {EXTRA_KEYS.map(k => {
+                      const on = !!draft[k];
+                      const label = MENU_ITEM_BY_KEY[k]?.label ?? k;
+                      return (
+                        <label key={k}
+                          className="flex items-center justify-between gap-2 px-4 py-2.5 cursor-pointer border-b border-dashed border-muted/60">
+                          <span className={cn("text-sm truncate", !on && "text-muted-foreground")}>{label}</span>
+                          <Switch checked={on} onCheckedChange={() => toggleExtra(k)} />
+                        </label>
+                      );
+                    })}
+                  </div>
+                </Card>
+              )}
+
               {/* Footer note */}
               <p className="text-xs text-muted-foreground text-center py-2">
                 <Sparkles className="h-3 w-3 inline ml-1" />
-                نصيحة: استخدم "نسخ من شركة" لتطبيق نفس الإعدادات على شركة جديدة بسرعة
+                نصيحة: وسّع أي وحدة للتحكم في عرض شاشة أو تقرير بعينه — الشاشات المفعّلة افتراضياً تظهر دائماً ما لم تُعطّلها.
               </p>
             </div>
           )}

@@ -36,7 +36,7 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { companyAllowsModule } from "@/lib/companyModuleGate";
+import { companyAllowsModule, companyAllowsScreen } from "@/lib/companyModuleGate";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
 import CheckInWidget from "@/components/CheckInWidget";
@@ -82,6 +82,11 @@ function navItemAllowed(item: NavDef, user: any): boolean {
   if (item.requireAdmin && user.role !== "admin") return false;
   // Company-level gate — applies to admin AND regular users (not superadmin).
   if (!companyAllowsModule(user, item.permKey)) return false;
+  // Per-SCREEN visibility overlay (nav:<path>) — also applies to admin AND
+  // regular users (not superadmin). Default-on when absent, so existing
+  // tenants are unaffected; a SuperAdmin hiding a single screen sets
+  // nav:<href>=false in companies.menuPermissions.
+  if (!companyAllowsScreen(user, item.href)) return false;
   if (user.role === "admin") return true;
   if (!item.permKey) return true;
   const perm = (user.permissions ?? {})[item.permKey];
@@ -3178,7 +3183,7 @@ function TopBar({
   // Update browser tab title to current page name (so opening in a new tab shows the screen name)
   useEffect(() => {
     const last = crumbs[crumbs.length - 1]?.label;
-    const appName = t("app.name", "ZATCA e-Invoicing");
+    const appName = t("auth.appName", "زاكود المحاسبي العالمي");
     document.title = last && last !== t("topbar.page") ? `${last} — ${appName}` : appName;
   }, [crumbs, t]);
 

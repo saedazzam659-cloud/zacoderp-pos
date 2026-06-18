@@ -172,6 +172,420 @@ export const deriveModulesFromMenuKeys = (menuKeys: string[]): string[] => {
   return Array.from(out);
 };
 
+// ─────────────────────────────────────────────────────────────────────
+// PER-SCREEN VISIBILITY REGISTRY (MODULE_GROUPS)
+//
+// One source of truth describing, for every high-level module, the exact
+// list of individual sidebar screens (and their reports) that live under
+// it. Drives THREE surfaces identically:
+//   • /admin/menu-permissions  — expandable per-screen toggles
+//   • /register                — the "مخصص" custom picker + size tiers
+//   • SuperAdmin add-company    — the same reusable picker
+//
+// VISIBILITY MODEL
+//   Each screen is gated by a dedicated key `nav:<path>` stored in
+//   companies.menuPermissions. ABSENT ⇒ visible (default-on, so existing
+//   tenants are never affected). Setting it to `false` hides ONLY that
+//   sidebar link — the module-level API gate is untouched (no 403 risk).
+//   See companyAllowsScreen() in lib/companyModuleGate.ts and the check in
+//   Layout.tsx navItemAllowed.
+//
+//   `moduleKeys` = the high-level menuPermissions keys that turn the whole
+//   module on/off (the coarse toggles already shown on menu-permissions).
+//   Enabling a module = setting those keys true; the per-screen nav:* keys
+//   then refine which screens appear inside the enabled module.
+// ─────────────────────────────────────────────────────────────────────
+export interface ModuleScreen {
+  path:  string;   // route (matches NavItem `href`) — visibility key is `nav:<path>`
+  label: string;   // Arabic screen label
+  report?: boolean; // true → grouped under the module's "التقارير" subsection in pickers
+}
+export interface ModuleGroupDef {
+  key:        string;        // group key (mirrors GROUP_PERMISSION_KEYS in Layout.tsx)
+  label:      string;        // Arabic module label
+  emoji:      string;        // cosmetic chip glyph
+  moduleKeys: string[];      // high-level menuPermissions keys gating the whole module
+  screens:    ModuleScreen[];
+}
+
+// Helper to build the `nav:<path>` visibility key from a route.
+export const screenKey = (path: string): string => `nav:${path}`;
+
+export const MODULE_GROUPS: ModuleGroupDef[] = [
+  {
+    key: "dashboard", label: "لوحة التحكم والإعدادات", emoji: "🏠", moduleKeys: ["dashboard"],
+    screens: [
+      { path: "/org/regions", label: "المناطق الجغرافية" },
+      { path: "/org/branches", label: "الفروع" },
+      { path: "/general-settings", label: "الإعدادات العامة" },
+      { path: "/users", label: "المستخدمون" },
+      { path: "/settings/currencies", label: "العملات والتحويل" },
+      { path: "/settings/accounting-mappings", label: "ربط القيود المحاسبية" },
+      { path: "/settings/sequences", label: "مسلسل الحركات" },
+      { path: "/vat-declaration", label: "الإقرار الضريبي" },
+      { path: "/seo", label: "إدارة SEO" },
+      { path: "/admin/audit-log", label: "سجل النشاط" },
+    ],
+  },
+  {
+    key: "zatca", label: "ربط ZATCA", emoji: "🧾", moduleKeys: ["zatca"],
+    screens: [
+      { path: "/zatca", label: "ربط ZATCA" },
+      { path: "/invoices", label: "الفواتير" },
+      { path: "/zatca-bridge", label: "جسر ZATCA" },
+      { path: "/zatca-report", label: "تقرير فواتير ZATCA", report: true },
+    ],
+  },
+  {
+    key: "sales", label: "العملاء والمبيعات", emoji: "🛒", moduleKeys: ["sales_module", "sales_reports"],
+    screens: [
+      { path: "/customers", label: "العملاء" },
+      { path: "/sales/customer-groups", label: "مجموعات العملاء" },
+      { path: "/sales/reps", label: "مناديب المبيعات" },
+      { path: "/sales/reps/commissions", label: "عمولات المناديب" },
+      { path: "/sales/quotations", label: "عروض الأسعار" },
+      { path: "/sales/orders", label: "أوامر البيع" },
+      { path: "/sales/invoices", label: "فواتير المبيعات" },
+      { path: "/sales/returns", label: "مرتجعات المبيعات" },
+      { path: "/sales/customer-credit-notes", label: "إشعارات دائنة - عملاء" },
+      { path: "/sales/customer-debit-notes", label: "إشعارات مدينة - عملاء" },
+      { path: "/sales/settlements", label: "تحصيل العملاء" },
+      { path: "/sales/reports", label: "كل التقارير", report: true },
+      { path: "/sales/reports/customer-statement", label: "كشف حساب عميل", report: true },
+      { path: "/sales/reports/customer-statement-detailed", label: "كشف حساب عميل تفصيلي", report: true },
+      { path: "/sales/reports/customer-balances", label: "أرصدة العملاء", report: true },
+      { path: "/sales/reports/aging", label: "تحليل أعمار الديون", report: true },
+      { path: "/sales/reports/sales-by-customer", label: "المبيعات حسب العميل", report: true },
+      { path: "/sales/reports/sales-by-item", label: "المبيعات حسب الصنف", report: true },
+      { path: "/sales/reports/sales-by-period", label: "المبيعات اليومية / الشهرية", report: true },
+      { path: "/sales/reports/top-customers", label: "أفضل العملاء", report: true },
+      { path: "/sales/reports/returns", label: "مرتجعات المبيعات", report: true },
+      { path: "/sales/reports/payment-mix", label: "تقرير طرق الدفع (AI)", report: true },
+      { path: "/sales/reports/daily-detailed", label: "تقرير مبيعات تفصيلي يومي", report: true },
+      { path: "/sales/reports/profitability", label: "تقرير الربحية", report: true },
+    ],
+  },
+  {
+    key: "purchasing", label: "الموردون والمشتريات", emoji: "🚚", moduleKeys: ["purchases_module", "purchases_reports"],
+    screens: [
+      { path: "/suppliers", label: "الموردون" },
+      { path: "/purchasing/supplier-groups", label: "مجموعات الموردين" },
+      { path: "/purchasing/lc", label: "الاعتمادات المستندية" },
+      { path: "/purchasing/lc-expense-entry", label: "إدخال مصروف اعتماد" },
+      { path: "/purchasing/orders", label: "أوامر الشراء" },
+      { path: "/purchasing/invoices", label: "فواتير المشتريات" },
+      { path: "/purchasing/returns", label: "مرتجعات المشتريات" },
+      { path: "/purchasing/supplier-credit-notes", label: "إشعارات دائنة - موردين" },
+      { path: "/purchasing/supplier-debit-notes", label: "إشعارات مدينة - موردين" },
+      { path: "/purchasing/settlements", label: "تسوية الموردين" },
+      { path: "/purchasing/reports", label: "كل التقارير", report: true },
+      { path: "/purchasing/reports/supplier-statement", label: "كشف حساب مورد", report: true },
+      { path: "/purchasing/reports/supplier-statement-detailed", label: "كشف حساب مورد تفصيلي", report: true },
+      { path: "/purchasing/reports/supplier-balances", label: "أرصدة الموردين", report: true },
+      { path: "/purchasing/reports/aging", label: "أعمار الذمم الدائنة", report: true },
+      { path: "/purchasing/reports/purchases-by-supplier", label: "المشتريات حسب المورد", report: true },
+      { path: "/purchasing/reports/purchases-by-item", label: "المشتريات حسب الصنف", report: true },
+      { path: "/purchasing/reports/purchases-by-period", label: "المشتريات اليومية / الشهرية", report: true },
+      { path: "/purchasing/reports/top-suppliers", label: "أكبر الموردين", report: true },
+      { path: "/purchasing/reports/returns", label: "مرتجعات المشتريات", report: true },
+      { path: "/purchasing/reports/lc-statement", label: "كشف حساب الاعتمادات", report: true },
+    ],
+  },
+  {
+    key: "inventory", label: "المخازن", emoji: "📦", moduleKeys: ["inventory_mobile", "inventory_reports"],
+    screens: [
+      { path: "/inventory", label: "لوحة المخازن" },
+      { path: "/inventory/items", label: "الأصناف" },
+      { path: "/inventory/item-groups", label: "مجموعات الأصناف" },
+      { path: "/inventory/units", label: "وحدات القياس" },
+      { path: "/inventory/warehouses", label: "المخازن" },
+      { path: "/inventory/warehouse-groups", label: "مجموعات المخازن" },
+      { path: "/inventory/goods-receipts", label: "إذن استلام البضاعة" },
+      { path: "/inventory/goods-deliveries", label: "إذن تسليم البضاعة" },
+      { path: "/inventory/transfers", label: "التحويل بين المخازن" },
+      { path: "/inventory/adjustments", label: "التسوية المخزنية" },
+      { path: "/inventory/counts", label: "الجرد المخزني" },
+      { path: "/inventory/offers", label: "العروض" },
+      { path: "/inventory/reports", label: "كل التقارير", report: true },
+      { path: "/inventory/reports/stock-balance", label: "رصيد المخزون", report: true },
+      { path: "/inventory/reports/stock-ledger", label: "دفتر حركة المخزون", report: true },
+      { path: "/inventory/reports/item-card", label: "كارت الصنف", report: true },
+      { path: "/inventory/reports/low-stock", label: "الأصناف منخفضة المخزون", report: true },
+      { path: "/inventory/reports/valuation", label: "تقييم المخزون حسب المخزن", report: true },
+      { path: "/inventory/reports/slow-moving", label: "الأصناف الراكدة", report: true },
+      { path: "/inventory/reports/free-quantities", label: "الكميات المجانية", report: true },
+      { path: "/inventory/reports/item-sales-valuation", label: "مبيعات الأصناف (بالتكلفة/البيع)", report: true },
+      { path: "/inventory/reports/stocktake", label: "جرد المخازن", report: true },
+    ],
+  },
+  {
+    key: "sister", label: "معاملات الشركات الشقيقة", emoji: "🤝", moduleKeys: ["sister_companies"],
+    screens: [
+      { path: "/inventory/sister-companies", label: "الشركات الشقيقة" },
+      { path: "/inventory/sister-transfers", label: "تحويلات الشركات الشقيقة" },
+      { path: "/inventory/sister-returns", label: "مرتجعات الشركات الشقيقة" },
+      { path: "/inventory/sister-settlements", label: "تسويات الشركات الشقيقة" },
+      { path: "/inventory/sister-statements", label: "كشف حساب الشركات الشقيقة", report: true },
+    ],
+  },
+  {
+    key: "cash", label: "النقد والبنوك", emoji: "💵", moduleKeys: ["cash_module", "cash_reports"],
+    screens: [
+      { path: "/cash/boxes", label: "الخزن" },
+      { path: "/cash/banks", label: "البنوك" },
+      { path: "/cash/receipt-vouchers", label: "سندات القبض" },
+      { path: "/cash/payment-vouchers", label: "سندات الصرف" },
+      { path: "/cash/transfers", label: "التحويلات" },
+      { path: "/cash/financial-transactions", label: "المعاملات المالية" },
+      { path: "/cash/reports", label: "كل التقارير", report: true },
+      { path: "/cash/reports/cash-balances", label: "أرصدة الخزائن", report: true },
+      { path: "/cash/reports/bank-balances", label: "أرصدة البنوك", report: true },
+      { path: "/cash/reports/cash-box-statement", label: "كشف حساب خزينة", report: true },
+      { path: "/cash/reports/bank-statement", label: "كشف حساب بنكي", report: true },
+      { path: "/cash/reports/daily-summary", label: "الحركة اليومية للنقدية", report: true },
+      { path: "/cash/reports/receipts", label: "تقرير سندات القبض", report: true },
+      { path: "/cash/reports/payments", label: "تقرير سندات الصرف", report: true },
+      { path: "/cash/reports/transfers", label: "تقرير التحويلات", report: true },
+    ],
+  },
+  {
+    key: "accounting", label: "الحسابات العامة", emoji: "📒", moduleKeys: ["accounts", "accounting_reports", "accounting_maintenance"],
+    screens: [
+      { path: "/accounting/accounts", label: "شجرة الحسابات" },
+      { path: "/accounting/cost-centers", label: "مراكز التكلفة" },
+      { path: "/accounting/taxes", label: "إدارة الضرائب" },
+      { path: "/accounting/fiscal-periods", label: "الفترات المالية" },
+      { path: "/accounting/journals", label: "القيود المحاسبية" },
+      { path: "/accounting/posting-center", label: "مركز الترحيل" },
+      { path: "/accounting/maintenance", label: "الصيانة المحاسبية وميزان المراجعة" },
+      { path: "/accounting/standards", label: "المعايير المحاسبية" },
+      { path: "/accounting/reports/account-statement", label: "كشف حساب", report: true },
+      { path: "/accounting/reports/trial-balance", label: "ميزان المراجعة بالمجاميع", report: true },
+      { path: "/accounting/reports/balance-sheet", label: "المركز المالي", report: true },
+      { path: "/accounting/reports/income-statement", label: "قائمة الدخل", report: true },
+      { path: "/accounting/reports/bank-cash-flow", label: "تحليل حركة البنك (دفترياً)", report: true },
+      { path: "/accounting/reports/forecast-income-statement", label: "قائمة دخل تقديرية (AI)", report: true },
+      { path: "/accounting/reports/tax-declaration", label: "الإقرار الضريبي", report: true },
+    ],
+  },
+  {
+    key: "pos", label: "نقاط البيع", emoji: "🧮", moduleKeys: ["pos"],
+    screens: [
+      { path: "/pos-monitoring", label: "مراقبة نقاط البيع" },
+      { path: "/pos-operations", label: "عمليات نقاط البيع" },
+      { path: "/pos-terminals", label: "محطات البيع" },
+      { path: "/pos-settings", label: "إعدادات نقاط البيع" },
+    ],
+  },
+  {
+    key: "hr", label: "شؤون الموظفين", emoji: "👥", moduleKeys: ["hr_module"],
+    screens: [
+      { path: "/hr/employees", label: "الموظفون" },
+      { path: "/hr/contracts", label: "العقود" },
+      { path: "/hr/attendance", label: "الحضور والانصراف" },
+      { path: "/hr/face", label: "الحضور بالذكاء الاصطناعي" },
+      { path: "/hr/loans", label: "السلف والعُهد" },
+      { path: "/hr/payroll", label: "مسيرات الرواتب" },
+      { path: "/hr/end-of-service", label: "مكافأة نهاية الخدمة" },
+      { path: "/hr/calculators", label: "حاسبات الموارد البشرية" },
+      { path: "/hr/reports", label: "التقارير", report: true },
+      { path: "/hr/settings", label: "إعدادات حسابات الموارد البشرية" },
+    ],
+  },
+  {
+    key: "field_service", label: "الخدمة الميدانية (FSM)", emoji: "📲", moduleKeys: ["field_service"],
+    screens: [
+      { path: "/hr/field", label: "لوحة الخدمة الميدانية" },
+      { path: "/hr/field/check-in", label: "تسجيل زيارة من الجوال" },
+      { path: "/hr/field/locations", label: "سجل المواقع الميدانية" },
+      { path: "/hr/field/plans", label: "خطط الزيارات اليومية" },
+      { path: "/hr/field/tickets", label: "تذاكر الخدمة" },
+      { path: "/hr/field/tracking", label: "التتبع المباشر" },
+      { path: "/hr/field/reports", label: "التقارير ومؤشرات الأداء", report: true },
+    ],
+  },
+  {
+    key: "production", label: "الإنتاج والتصنيع", emoji: "🏭", moduleKeys: ["production"],
+    screens: [
+      { path: "/production/guide", label: "دليل تشغيل التصنيع" },
+      { path: "/production", label: "لوحة الإنتاج" },
+      { path: "/production/settings", label: "إعدادات التصنيع" },
+      { path: "/production/work-centers", label: "مراكز العمل" },
+      { path: "/production/resources", label: "الماكينات والموارد" },
+      { path: "/production/shifts", label: "تقويم الورديات" },
+      { path: "/production/quality-templates", label: "قوالب فحص الجودة" },
+      { path: "/production/routings", label: "قوالب مراحل الإنتاج" },
+      { path: "/production/bom-templates", label: "قوالب المكوّنات (BOM)" },
+      { path: "/production/mrp", label: "تخطيط احتياجات المواد (MRP)" },
+      { path: "/production/orders", label: "أوامر الإنتاج" },
+      { path: "/production/approvals", label: "اعتماد أوامر الإنتاج" },
+      { path: "/production/board", label: "خط الإنتاج المرئي" },
+      { path: "/production/quality", label: "مراقبة الجودة" },
+      { path: "/production/downtime", label: "التوقّفات وكفاءة المعدات (OEE)" },
+      { path: "/production/kpis", label: "لوحة مؤشرات التصنيع" },
+      { path: "/production/cost-rollup", label: "تكلفة المنتج المعيارية" },
+      { path: "/production/quality-report", label: "تقرير مراقبة الجودة", report: true },
+      { path: "/production/waste-report", label: "تقرير الهالك والتالف", report: true },
+      { path: "/production/operator-performance", label: "أداء المشغّلين", report: true },
+      { path: "/production/my-performance", label: "أدائي", report: true },
+      { path: "/production/traceability", label: "تتبّع التشغيلات" },
+    ],
+  },
+  {
+    key: "safety", label: "السلامة والصحة المهنية", emoji: "🦺", moduleKeys: ["safety"],
+    screens: [
+      { path: "/safety", label: "لوحة السلامة" },
+      { path: "/safety/risk-assessments", label: "سجل المخاطر" },
+      { path: "/safety/incidents", label: "الحوادث والإصابات" },
+    ],
+  },
+  {
+    key: "contracting", label: "إدارة المقاولات", emoji: "🏗️", moduleKeys: ["contracting"],
+    screens: [
+      { path: "/contracting", label: "لوحة المقاولات" },
+      { path: "/contracting/projects", label: "المشاريع" },
+      { path: "/contracting/contractors", label: "المقاولون والموردون" },
+      { path: "/contracting/bills", label: "المستخلصات" },
+    ],
+  },
+  {
+    key: "maintenance", label: "إدارة الصيانة", emoji: "🔧", moduleKeys: ["maintenance"],
+    screens: [
+      { path: "/maintenance", label: "لوحة الصيانة" },
+      { path: "/maintenance/assets", label: "الأصول والمعدات" },
+      { path: "/maintenance/technicians", label: "الفنيون" },
+      { path: "/maintenance/orders", label: "أوامر الصيانة" },
+    ],
+  },
+  {
+    key: "installments", label: "البيع بالتقسيط الذكي", emoji: "💳", moduleKeys: ["installments"],
+    screens: [
+      { path: "/installments", label: "لوحة التقسيط" },
+      { path: "/installments/contracts", label: "عقود التقسيط" },
+      { path: "/installments/collection", label: "شاشة التحصيل" },
+      { path: "/installments/reports", label: "تقارير التقسيط", report: true },
+      { path: "/installments/settings", label: "إعدادات التقسيط" },
+    ],
+  },
+  {
+    key: "hotel", label: "إدارة الفنادق الذكية", emoji: "🏨", moduleKeys: ["hotel"],
+    screens: [
+      { path: "/hotel", label: "لوحة الفنادق" },
+      { path: "/hotel/hotels", label: "الفنادق" },
+      { path: "/hotel/rooms", label: "الغرف" },
+      { path: "/hotel/guests", label: "النزلاء" },
+      { path: "/hotel/bookings", label: "الحجوزات" },
+      { path: "/hotel/housekeeping", label: "خدمة الغرف" },
+      { path: "/hotel/ai", label: "الذكاء الاصطناعي للفنادق" },
+    ],
+  },
+  {
+    key: "hospital", label: "إدارة المستشفيات والمستوصفات", emoji: "🏥", moduleKeys: ["hospital"],
+    screens: [
+      { path: "/hospital", label: "لوحة المستشفيات" },
+      { path: "/hospital/hospitals", label: "المنشآت الطبية" },
+      { path: "/hospital/doctors", label: "الأطباء" },
+      { path: "/hospital/patients", label: "المرضى" },
+      { path: "/hospital/appointments", label: "المواعيد والكشوفات" },
+      { path: "/hospital/invoices", label: "الفواتير الطبية" },
+      { path: "/hospital/ai", label: "الذكاء الاصطناعي و NPHIES" },
+    ],
+  },
+  {
+    key: "crm", label: "إدارة علاقات العملاء (CRM)", emoji: "📇", moduleKeys: ["crm"],
+    screens: [
+      { path: "/crm", label: "لوحة CRM" },
+      { path: "/crm/leads", label: "العملاء المحتملون" },
+      { path: "/crm/opportunities", label: "الفرص" },
+      { path: "/crm/activities", label: "الأنشطة" },
+      { path: "/crm/campaigns", label: "الحملات" },
+      { path: "/crm/pipeline", label: "خط الأنابيب" },
+      { path: "/crm/ai", label: "الذكاء الاصطناعي للـ CRM" },
+    ],
+  },
+  {
+    key: "fixedAssets", label: "الأصول الثابتة", emoji: "🏢", moduleKeys: ["fixed_assets"],
+    screens: [
+      { path: "/fixed-assets", label: "لوحة الأصول الثابتة" },
+      { path: "/fixed-assets/assets", label: "سجل الأصول" },
+      { path: "/fixed-assets/categories", label: "فئات الأصول" },
+      { path: "/fixed-assets/maintenance", label: "صيانة الأصول" },
+      { path: "/fixed-assets/transfers", label: "نقل الأصول" },
+      { path: "/fixed-assets/depreciation", label: "الإهلاك" },
+      { path: "/fixed-assets/disposals", label: "التخلص (بيع/تخريد)" },
+      { path: "/fixed-assets/reports", label: "تقارير الأصول", report: true },
+      { path: "/fixed-assets/ai", label: "الذكاء الاصطناعي للأصول" },
+    ],
+  },
+  {
+    key: "onlineStore", label: "المتجر الإلكتروني", emoji: "🛍️", moduleKeys: ["online_store"],
+    screens: [
+      { path: "/online-store", label: "المتجر الإلكتروني" },
+    ],
+  },
+  {
+    key: "security", label: "الأمن والمراقبة", emoji: "🛡️", moduleKeys: ["security_events"],
+    screens: [
+      { path: "/security/events", label: "الأحداث الأمنية" },
+      { path: "/security/devices", label: "أجهزة التسجيل" },
+      { path: "/security/cameras", label: "الكاميرات" },
+      { path: "/security/live", label: "العرض المباشر" },
+      { path: "/security/ai", label: "الذكاء الأمني" },
+      { path: "/security/reports", label: "تقارير الأمن", report: true },
+    ],
+  },
+  {
+    key: "liveMonitoring", label: "المراقبة المباشرة (تتبع المواقع)", emoji: "📍", moduleKeys: ["user_tracking"],
+    screens: [
+      { path: "/user-tracking", label: "تتبع المواقع" },
+      { path: "/user-tracking/live", label: "التتبع المباشر" },
+      { path: "/user-tracking/attendance", label: "تقرير الحضور والانصراف", report: true },
+      { path: "/user-tracking/movement-report", label: "تقرير تحركات المستخدمين", report: true },
+    ],
+  },
+];
+
+export const MODULE_GROUP_BY_KEY: Record<string, ModuleGroupDef> = Object.fromEntries(
+  MODULE_GROUPS.map(g => [g.key, g]),
+);
+
+// ─── Size presets (باقات جاهزة) — صغيرة / متوسطة / كبيرة ─────────────────
+// Each tier is a set of high-level module keys. صغيرة/متوسطة are explicit;
+// كبيرة = every module key found in MODULE_GROUPS (the full suite).
+const TIER_SMALL_MODULES = [
+  "dashboard", "sales_module", "sales_reports",
+  "inventory_mobile", "inventory_reports", "pos",
+  "accounts", "accounting_reports", "cash_module", "cash_reports",
+  "reports", "zatca",
+];
+const TIER_MEDIUM_MODULES = [
+  ...TIER_SMALL_MODULES,
+  "purchases_module", "purchases_reports",
+  "fixed_assets", "accounting_maintenance", "hr_module",
+];
+const TIER_LARGE_MODULES = Array.from(
+  new Set([
+    ...TIER_MEDIUM_MODULES,
+    ...MODULE_GROUPS.flatMap(g => g.moduleKeys),
+    "production", "contracting", "sister_companies",
+    "crm", "maintenance", "online_store", "installments",
+    "hotel", "hospital", "security_events", "safety", "user_tracking",
+  ]),
+);
+
+export interface SizeTier {
+  key: "small" | "medium" | "large";
+  label: string;
+  desc: string;
+  emoji: string;
+  moduleKeys: string[];
+}
+export const SIZE_TIERS: SizeTier[] = [
+  { key: "small",  label: "شركة صغيرة",  emoji: "🌱", desc: "مبيعات + مخازن أساسي + نقاط بيع + حسابات أساسية + الإقرار الضريبي وزاتكا", moduleKeys: TIER_SMALL_MODULES },
+  { key: "medium", label: "شركة متوسطة", emoji: "🌿", desc: "كل ما سبق + المشتريات الكاملة + التقارير + الأصول الثابتة + الصيانة المحاسبية + شؤون الموظفين", moduleKeys: TIER_MEDIUM_MODULES },
+  { key: "large",  label: "شركة كبيرة",  emoji: "🌳", desc: "كل الوحدات: إنتاج + مقاولات + شركات شقيقة + موارد بشرية + متجر إلكتروني + CRM والمزيد", moduleKeys: TIER_LARGE_MODULES },
+];
+
 // Theme tokens reused by both /admin/menu-permissions and
 // /admin/industries so the section chips look identical across pages.
 export const SECTION_THEME: Record<string, { bg: string; text: string; border: string }> = {

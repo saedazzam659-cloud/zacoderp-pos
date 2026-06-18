@@ -71,14 +71,14 @@ export default function PosLanding() {
     {
       "@context": "https://schema.org",
       "@type":    "SoftwareApplication",
-      "name":     "نقاط البيع - زاكود المحاسبي",
+      "name":     "نقاط البيع - زاكود المحاسبي العالمي",
       "alternateName": ["Zacoderp POS", "زاكود POS", "نظام نقاط البيع السعودي"],
       "applicationCategory": "BusinessApplication",
       "applicationSubCategory": "PointOfSale",
       "operatingSystem":     "Web, Windows, Android, iOS",
       "url":      canonical,
       "image":    `${origin}${BASE}/opengraph.jpg`,
-      "description": "نظام نقاط بيع سعودي من زاكود المحاسبي معتمد من ZATCA يدعم العمل دون إنترنت، الطابعات الحرارية، تكامل المخزون والمحاسبة، ومتعدد الفروع.",
+      "description": "نظام نقاط بيع سعودي من زاكود المحاسبي العالمي معتمد من ZATCA يدعم العمل دون إنترنت، الطابعات الحرارية، تكامل المخزون والمحاسبة، ومتعدد الفروع.",
       "offers":   { "@type": "Offer", "priceCurrency": "SAR", "availability": "https://schema.org/InStock", "price": "0", "description": "تجربة مجانية بدون بطاقة دفع" },
       "inLanguage": "ar-SA",
     },
@@ -119,7 +119,7 @@ export default function PosLanding() {
 
   useEffect(() => {
     const prev = document.title;
-    document.title = "نقاط البيع POS | زاكود المحاسبي — معتمد ZATCA يعمل دون إنترنت";
+    document.title = "نقاط البيع POS | زاكود المحاسبي العالمي — معتمد ZATCA يعمل دون إنترنت";
     return () => { document.title = prev; };
   }, []);
 
@@ -136,25 +136,25 @@ export default function PosLanding() {
     <div dir="rtl" className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-muted">
       <Helmet>
         <html lang="ar" dir="rtl" />
-        <title>نقاط البيع POS | زاكود المحاسبي — معتمد ZATCA يعمل دون إنترنت</title>
-        <meta name="description" content="نظام نقاط بيع (POS) من زاكود المحاسبي معتمد من ZATCA: يعمل دون إنترنت، يصدر فواتير مبسطة موقّعة رقمياً، يتكامل مع المخزون والمحاسبة، ويدعم عدة فروع. شاهد الفيديو التعريفي وابدأ تجربتك المجانية." />
+        <title>نقاط البيع POS | زاكود المحاسبي العالمي — معتمد ZATCA يعمل دون إنترنت</title>
+        <meta name="description" content="نظام نقاط بيع (POS) من زاكود المحاسبي العالمي معتمد من ZATCA: يعمل دون إنترنت، يصدر فواتير مبسطة موقّعة رقمياً، يتكامل مع المخزون والمحاسبة، ويدعم عدة فروع. شاهد الفيديو التعريفي وابدأ تجربتك المجانية." />
         <link rel="canonical" href={canonical} />
         <meta name="keywords" content="زاكود POS, نقاط بيع زاكود, Zacoderp POS, نقاط بيع, نظام نقاط بيع سعودي, POS سعودي, ZATCA POS, كاشير, فاتورة مبسطة, نقاط بيع تعمل بدون إنترنت, طابعات حرارية" />
-        <meta name="author" content="زاكود المحاسبي" />
+        <meta name="author" content="زاكود المحاسبي العالمي" />
         <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
         <meta name="theme-color" content="#0d9488" />
         <meta property="og:type" content="website" />
-        <meta property="og:site_name" content="زاكود المحاسبي" />
-        <meta property="og:title" content="نقاط البيع POS من زاكود المحاسبي - معتمد ZATCA" />
+        <meta property="og:site_name" content="زاكود المحاسبي العالمي" />
+        <meta property="og:title" content="نقاط البيع POS من زاكود المحاسبي العالمي - معتمد ZATCA" />
         <meta property="og:description" content="POS سعودي يعمل دون إنترنت، متكامل مع المخزون والمحاسبة، ومعتمد من ZATCA." />
         <meta property="og:url" content={canonical} />
         <meta property="og:image" content={`${origin}${BASE}/opengraph.jpg`} />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta property="og:image:alt" content="نقاط البيع - زاكود المحاسبي" />
+        <meta property="og:image:alt" content="نقاط البيع - زاكود المحاسبي العالمي" />
         <meta property="og:locale" content="ar_SA" />
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="نقاط البيع POS من زاكود المحاسبي - معتمد ZATCA" />
+        <meta name="twitter:title" content="نقاط البيع POS من زاكود المحاسبي العالمي - معتمد ZATCA" />
         <meta name="twitter:description" content="POS سعودي يعمل دون إنترنت ومعتمد من ZATCA." />
         <meta name="twitter:image" content={`${origin}${BASE}/opengraph.jpg`} />
         <link rel="alternate" hrefLang="ar-SA" href={canonical} />
@@ -274,7 +274,7 @@ export default function PosLanding() {
       <SaudiContactCta />
 
       <footer className="text-center text-xs text-muted-foreground pb-8 px-4">
-        © 2026 زاكود المحاسبي — نقاط بيع سعودية معتمدة من ZATCA. جميع الحقوق محفوظة.
+        © 2026 زاكود المحاسبي العالمي — نقاط بيع سعودية معتمدة من ZATCA. جميع الحقوق محفوظة.
       </footer>
     </div>
   );
@@ -290,7 +290,7 @@ function PublicHeader({ setLocation }: { setLocation: (p: string) => void }) {
           data-testid="pos-home-link"
         >
           <div className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold shadow">Z</div>
-          <span className="hidden sm:inline truncate">زاكود المحاسبي</span>
+          <span className="hidden sm:inline truncate">زاكود المحاسبي العالمي</span>
         </button>
         <nav className="flex items-center gap-1 sm:gap-1.5 shrink-0">
           <Button variant="ghost" size="sm" onClick={() => setLocation("/pricing")} className="px-2 sm:px-3" data-testid="pos-nav-pricing">

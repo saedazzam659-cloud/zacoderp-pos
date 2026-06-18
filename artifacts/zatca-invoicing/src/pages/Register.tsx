@@ -18,6 +18,7 @@ import {
 import { INDUSTRIES as INDUSTRIES_FALLBACK } from "@/lib/industries";
 import { MENU_ITEM_BY_KEY, deriveModulesFromMenuKeys } from "@/lib/menuItems";
 import { DateField } from "@/components/ui/date-field";
+import ModuleScreenPicker, { type ModulePickerValue } from "@/components/ModuleScreenPicker";
 
 // Live row from /api/admin/industries/public — derived from the
 // `industries` table (SuperAdmin-managed in /admin/industries). Falls
@@ -199,6 +200,27 @@ export default function Register() {
   // filter and see the full system catalog if they need to add an
   // unrelated module manually.
   const [showAllModules, setShowAllModules] = useState(false);
+  // ── "مخصص" (Custom) mode ─────────────────────────────────────────────
+  // When the user picks the مخصص chip we hide the industry-driven module
+  // catalog and show the ModuleScreenPicker (size tiers + per-screen
+  // toggles). Its value drives `selectedModules` (billable, for pricing)
+  // plus two extra submit fields: `selectedMenuKeys` (granular grant for
+  // null-parent modules) and `selectedNavOff` (per-screen visibility).
+  const [customMode, setCustomMode] = useState(false);
+  const [customPicker, setCustomPicker] = useState<ModulePickerValue>({ moduleKeys: [], navOff: [] });
+  // Sync the billable selection (drives pricing) whenever the custom
+  // picker changes. Granular → billable via deriveModulesFromMenuKeys.
+  const onCustomPickerChange = (next: ModulePickerValue) => {
+    setCustomPicker(next);
+    setSelectedModules(deriveModulesFromMenuKeys(next.moduleKeys));
+  };
+  // Activate custom mode: clear industry selection so the two paths don't
+  // fight over selectedModules. Seed nothing — user picks a tier or modules.
+  const enableCustomMode = () => {
+    setCustomMode(true);
+    setSelectedIndustries([]);
+    setSelectedModules(deriveModulesFromMenuKeys(customPicker.moduleKeys));
+  };
 
   const [form, setForm] = useState<Partial<RegisterData>>(() => {
     const cycle = initialQuery.cycle ?? "monthly";
@@ -426,6 +448,7 @@ export default function Register() {
   //    deselect manually). Avoids the surprise of recommendations being
   //    silently revoked.
   const toggleIndustry = (code: string) => {
+    setCustomMode(false);
     setSelectedIndustries(prev => {
       const isActivating = !prev.includes(code);
       const next = isActivating ? [...prev, code] : prev.filter(c => c !== code);
@@ -445,6 +468,7 @@ export default function Register() {
   // "اختيار الكل" merges every industry's recommendations into the
   // current selection (additive). It never removes user picks.
   const selectAllIndustries = () => {
+    setCustomMode(false);
     const all = INDUSTRIES_LIVE.map(i => i.code);
     setSelectedIndustries(all);
     setSelectedModules(curr => Array.from(
@@ -554,6 +578,12 @@ export default function Register() {
           // New: industry classification + per-module selection from Step 1.
           selectedIndustries,
           selectedModules,
+          // مخصص mode only: granular menu grants + per-screen visibility off.
+          // Both optional/backward-compatible on the server.
+          ...(customMode ? {
+            selectedMenuKeys: customPicker.moduleKeys,
+            selectedNavOff: customPicker.navOff,
+          } : {}),
           // Send the dynamically-computed price (base + module add-ons) so
           // the subscription record matches what the user actually saw.
           price: String(billingCycle === "annual" ? priceCalc.annualTotal : priceCalc.total),
@@ -843,6 +873,20 @@ export default function Register() {
                         </button>
                       );
                     })}
+                    {/* "مخصص" — switch to the per-screen custom picker. */}
+                    <button type="button"
+                      data-testid="industry-chip-custom"
+                      onClick={enableCustomMode}
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 text-sm transition-all",
+                        customMode
+                          ? "border-primary bg-primary/10 text-primary font-medium shadow-sm"
+                          : "border-dashed border-primary/50 bg-card text-primary hover:bg-primary/5"
+                      )}>
+                      <span className="text-base leading-none">🎚️</span>
+                      مخصص
+                      {customMode && <Check className="h-3.5 w-3.5" />}
+                    </button>
                   </div>
                   {selectedIndustries.length === 0 && (
                     <p className="text-xs text-muted-foreground">
@@ -982,6 +1026,20 @@ export default function Register() {
                   </div>
                 )}
 
+                {/* ── 4a. Custom per-screen picker (مخصص mode) ── */}
+                {customMode && (
+                  <div className="space-y-3 pt-3 border-t">
+                    <h4 className="text-sm font-semibold flex items-center gap-2">
+                      <Package className="h-4 w-4" />
+                      تخصيص الوحدات والشاشات
+                      <span className="text-xs font-normal text-muted-foreground">
+                        (اختر باقة جاهزة أو فعّل الوحدات والشاشات يدوياً)
+                      </span>
+                    </h4>
+                    <ModuleScreenPicker value={customPicker} onChange={onCustomPickerChange} />
+                  </div>
+                )}
+
                 {/* ── 4. Module catalog (grouped by category) ── */}
                 {/*
                   Sourced live from /api/admin/modules/public. Categories
@@ -989,7 +1047,7 @@ export default function Register() {
                   a module in /admin/modules makes it appear here on the
                   next page-open without a code change.
                 */}
-                <div className="space-y-3 pt-3 border-t">
+                <div className={cn("space-y-3 pt-3 border-t", customMode && "hidden")}>
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <h4 className="text-sm font-semibold flex items-center gap-2">
                       <Package className="h-4 w-4" />
