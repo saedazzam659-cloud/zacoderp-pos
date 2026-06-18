@@ -100,7 +100,7 @@ export async function processImport(token: string | null, body: { companyId?: nu
   return r.json();
 }
 
-export async function commitImport(token: string | null, body: { companyId?: number; entity: string; rows: any[]; options?: { skipErrors?: boolean } }): Promise<CommitResult> {
+export async function commitImport(token: string | null, body: { companyId?: number; entity: string; rows: any[]; options?: { skipErrors?: boolean; allowDuplicates?: boolean } }): Promise<CommitResult> {
   const r = await fetch(`${API}/api/data-io/import/commit`, {
     method: "POST", headers: authHeaders(token), body: JSON.stringify(body),
   });

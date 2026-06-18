@@ -1351,6 +1351,10 @@ router.post("/import/commit", async (req, res) => {
     const ent = ENTITIES[entityKey];
     if (!ent) { res.status(400).json({ error: "نوع البيانات غير معروف" }); return; }
     const skipErrors = req.body?.options?.skipErrors !== false; // default true
+    // When true, every row is inserted as a NEW record — business-key (e.g. VAT)
+    // matches are ignored, so no upsert/merge happens. Used to import multiple
+    // establishments that legitimately share one group VAT number.
+    const allowDuplicates = req.body?.options?.allowDuplicates === true;
 
     // ── Composite entities have a totally different commit shape (group rows by
     // groupKey, then insert header + lines transactionally). Branch out early.
@@ -1494,11 +1498,13 @@ router.post("/import/commit", async (req, res) => {
             // *not* from row.__existingId (which the client could spoof to point at
             // another tenant's row).
             let serverExistingId: number | null = null;
-            for (const k of ent.businessKeys) {
-              const v = cleaned[k];
-              if (v != null && String(v).trim() !== "") {
-                const id = existingByKey.get(`${k}:${String(v).trim()}`);
-                if (id != null) { serverExistingId = id; break; }
+            if (!allowDuplicates) {
+              for (const k of ent.businessKeys) {
+                const v = cleaned[k];
+                if (v != null && String(v).trim() !== "") {
+                  const id = existingByKey.get(`${k}:${String(v).trim()}`);
+                  if (id != null) { serverExistingId = id; break; }
+                }
               }
             }
 

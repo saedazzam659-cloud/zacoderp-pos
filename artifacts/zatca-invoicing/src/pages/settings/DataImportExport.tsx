@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HistoricalMigration } from "./HistoricalMigration";
 import {
   Database, Upload, Download, FileSpreadsheet, FileJson, Sparkles, AlertTriangle,
-  CheckCircle2, X, Eye, ArrowLeft, ArrowRight, Loader2, FileDown,
+  CheckCircle2, X, Eye, ArrowLeft, ArrowRight, Loader2, FileDown, Copy,
 } from "lucide-react";
 import {
   fetchEntities, exportData, analyzeImport, processImport, commitImport, downloadBlob,
@@ -569,6 +569,7 @@ function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
   const [mapping, setMapping] = useState<Record<string, string | null>>({});
   const [processed, setProcessed] = useState<ProcessResult | null>(null);
   const [commitResult, setCommitResult] = useState<CommitResult | null>(null);
+  const [allowDuplicates, setAllowDuplicates] = useState(false);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -577,6 +578,7 @@ function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
   function reset() {
     setStep("upload"); setFileName(""); setHeaders([]); setRows([]);
     setAnalysis(null); setMapping({}); setProcessed(null); setCommitResult(null);
+    setAllowDuplicates(false);
     if (fileRef.current) fileRef.current.value = "";
   }
 
@@ -663,7 +665,7 @@ function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
     if (!processed) return;
     setBusy(true);
     try {
-      const result = await commitImport(token, { companyId: cid, entity: entityKey, rows: processed.processed, options: { skipErrors: true } });
+      const result = await commitImport(token, { companyId: cid, entity: entityKey, rows: processed.processed, options: { skipErrors: true, allowDuplicates: entityKey === "customers" ? allowDuplicates : false } });
       setCommitResult(result);
       setStep("result");
       toast({ title: t("dataIO.commitSuccess", { inserted: result.summary.inserted, updated: result.summary.updated, skipped: result.summary.skipped }) });
@@ -747,7 +749,7 @@ function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
               {entities.map((e) => (
                 <button
                   key={e.key}
-                  onClick={() => setEntityKey(e.key)}
+                  onClick={() => { setEntityKey(e.key); setAllowDuplicates(false); }}
                   className={`p-3 border rounded-lg ${isAr ? "text-right" : "text-left"} transition-colors ${
                     entityKey === e.key ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted/40"
                   }`}
@@ -869,7 +871,7 @@ function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
       )}
 
       {step === "review" && processed && (
-        <ReviewPanel processed={processed} entity={entity} setProcessed={setProcessed} onCommit={onCommit} onBack={() => setStep("analyze")} busy={busy} isAr={isAr} ArrowIcon={ArrowIcon} />
+        <ReviewPanel processed={processed} entity={entity} entityKey={entityKey} setProcessed={setProcessed} onCommit={onCommit} onBack={() => setStep("analyze")} busy={busy} isAr={isAr} ArrowIcon={ArrowIcon} allowDuplicates={allowDuplicates} setAllowDuplicates={setAllowDuplicates} />
       )}
 
       {step === "result" && commitResult && (
@@ -883,9 +885,10 @@ function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
 // REVIEW PANEL
 // ════════════════════════════════════════════════════════════════════════════
 
-function ReviewPanel({ processed, entity, setProcessed, onCommit, onBack, busy, isAr, ArrowIcon }: {
-  processed: ProcessResult; entity: EntityCatalogItem | undefined; setProcessed: (r: ProcessResult) => void;
+function ReviewPanel({ processed, entity, entityKey, setProcessed, onCommit, onBack, busy, isAr, ArrowIcon, allowDuplicates, setAllowDuplicates }: {
+  processed: ProcessResult; entity: EntityCatalogItem | undefined; entityKey: string; setProcessed: (r: ProcessResult) => void;
   onCommit: () => void; onBack: () => void; busy: boolean; isAr: boolean; ArrowIcon: typeof ArrowLeft;
+  allowDuplicates: boolean; setAllowDuplicates: (v: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [filter, setFilter] = useState<"all" | "errors" | "warnings" | "info" | "duplicates">("all");
@@ -1027,6 +1030,40 @@ function ReviewPanel({ processed, entity, setProcessed, onCommit, onBack, busy, 
                 ))}
               </tbody>
             </table>
+          </div>
+        </Card>
+      )}
+
+      {entityKey === "customers" && (
+        <Card className="p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Copy className="w-4 h-4 text-primary" />
+            <h3 className="font-semibold">{t("dataIO.dupModeTitle")}</h3>
+          </div>
+          <p className="text-sm text-muted-foreground mb-3">{t("dataIO.dupModeHint")}</p>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setAllowDuplicates(false)}
+              className={`text-start p-3 border rounded-lg transition-all ${!allowDuplicates ? "ring-2 ring-primary border-primary bg-primary/5" : "hover:bg-muted/40"}`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-medium">{t("dataIO.dupModePreventTitle")}</span>
+                {!allowDuplicates && <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />}
+              </div>
+              <p className="text-xs text-muted-foreground">{t("dataIO.dupModePreventDesc")}</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setAllowDuplicates(true)}
+              className={`text-start p-3 border rounded-lg transition-all ${allowDuplicates ? "ring-2 ring-primary border-primary bg-primary/5" : "hover:bg-muted/40"}`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-medium">{t("dataIO.dupModeAllowTitle")}</span>
+                {allowDuplicates && <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />}
+              </div>
+              <p className="text-xs text-muted-foreground">{t("dataIO.dupModeAllowDesc")}</p>
+            </button>
           </div>
         </Card>
       )}
