@@ -20,5 +20,15 @@ A persisted high-water-mark compared only to the wall clock can be **frozen**: r
 
 **How to apply:** anchor `performance.now()` (monotonic, immune to system-clock changes) once per session against `max(now, hwm)`, then each tick derive `monoNow = anchorWall + (performance.now() - anchorPerf)` and fold it into both HWM advancement and the backward-jump lock trigger. Even a held wall clock then advances `effectiveNow`, and a sustained freeze trips the lock after ~TOLERANCE (1h). Reset the in-memory anchor on every unlock so the cleared lock rebases. Anchor is in-memory (resets each launch); the persisted HWM covers the cross-restart case.
 
+## Standalone dual-unlock parity (SuperAdmin /admin/offline-licenses)
+Both unlocks also live on the Standalone licenses screen (`OfflineLicenses.tsx`), not just `PosDevices.tsx`:
+- **OFFLINE generator works for ALL standalone licenses** because `generate-clock-unlock` signs from the pasted `deviceCode` (`fp+nonce`), NOT from a cloud device row — so reuse the SAME pos-devices endpoint; do not build a second one.
+- **ONLINE "فك الحظر" is meaningful ONLY for `source='self_register'`** (those revalidate online). Admin file licenses never phone home → online stamp is a silent no-op. Gate the row button to `self_register` AND reject non-self_register server-side (`POST /api/admin/offline-licenses/:id/clock-unblock` → 409) so the UI gate isn't the only guard.
+- Device side: self_register clears via the PUBLIC revalidate endpoint (carries `clockUnblockAt`+`serverTime`), NOT `/validate` (that's cloud-device-token only). `ClockTamperLocked` takes an optional `standalone?:{licenseKey}` prop and polls `revalidateLicense → clockGuardClearOnline → clockGuardCheck`.
+
+**Why:** standalone has no device token, so the cloud online-pickup path can't reach it; its only online channel is the license revalidate call.
+
+**How to apply:** in App.tsx build the `standalone` context for `clock-locked` at boot (`loadClockLockStandalone()` = verify license file, only if `source==='self_register'`) AND in the periodic tick from EVERY standalone phase that holds a loaded license (`standalone-signed-in` AND `needs-standalone-login`) — missing a phase means a mid-session lock loses the online path.
+
 ## Rust caveat
 Rust compiles ONLY in CI — tsc + architect miss Rust errors. Hand-check: `dirs` crate dep, base dir matches `db.rs` (`com.zacoderp.pos`), `pub(crate)` visibility of reused helpers, and that every new command is in `main.rs` `invoke_handler`.

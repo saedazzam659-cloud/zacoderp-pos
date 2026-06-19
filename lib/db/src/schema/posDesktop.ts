@@ -141,6 +141,11 @@ export const offlineLicensesTable = pgTable("offline_licenses", {
   source: text("source").notNull().default("admin"),        // admin | self_register
   graceDays: integer("grace_days").notNull().default(7),     // offline days before lock
   lastSeenAt: timestamp("last_seen_at"),                     // last successful revalidate
+  // Online clock-rollback unblock signal (Task #237). A SuperAdmin stamp here is
+  // picked up by a self-register device on its next revalidate to clear a
+  // tamper-lock. Admin file licenses never revalidate online → they ignore it
+  // and must use the offline signed unlock code instead.
+  clockUnblockAt: timestamp("clock_unblock_at"),
   appVersion: text("app_version"),                           // last reported desktop build
   // The Ed25519-signed JSON payload last issued for this license (base64).
   // We store it so SuperAdmin can re-download without re-signing.

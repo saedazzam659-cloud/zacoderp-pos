@@ -32,6 +32,7 @@ type OfflineLicense = {
   country: string | null; companyTaxNumber: string | null; companyCrNumber: string | null;
   companyAddress: string | null; companyPhone: string | null; companyEmail: string | null;
   source: string; graceDays: number; lastSeenAt: string | null; appVersion: string | null;
+  clockUnblockAt: string | null;
 };
 
 type PublicKeyInfo = { publicKeyB64: string; publicKeyFingerprint: string; source: "env" | "dev-cache" };
@@ -237,6 +238,40 @@ export default function OfflineLicenses() {
     },
   });
 
+  // ── Clock-rollback unlock tooling (Task #237) ──────────────────────
+  // OFFLINE: paste the device code from the locked screen → mint a signed
+  // unlock code (works for ALL standalone licenses, zero internet). Reuses the
+  // pos-devices endpoint — the signed code is keyed by fingerprint+nonce, not
+  // by a cloud device row, so it is valid for offline file licenses too.
+  const [showOfflineUnlock, setShowOfflineUnlock] = useState(false);
+  const [deviceCodeInput, setDeviceCodeInput] = useState("");
+  const [unlockResult, setUnlockResult] = useState<{ unlockCode: string; fingerprint: string; nonce: string } | null>(null);
+  const genUnlockMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API}/api/admin/pos-devices/generate-clock-unlock`, {
+        method: "POST", headers, body: JSON.stringify({ deviceCode: deviceCodeInput.trim() }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "تعذّر توليد رمز فكّ الحظر");
+      return r.json() as Promise<{ ok: true; unlockCode: string; fingerprint: string; nonce: string }>;
+    },
+    onSuccess: (d) => setUnlockResult({ unlockCode: d.unlockCode, fingerprint: d.fingerprint, nonce: d.nonce }),
+    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+  });
+
+  // ONLINE: one click stamps clock_unblock_at; a self_register device clears its
+  // lock on the next online revalidate. Meaningless for admin file licenses
+  // (they never phone home) so the row button only shows for self_register.
+  const onlineUnblockMut = useMutation({
+    mutationFn: async (id: number) => {
+      if (!confirm("فكّ حظر الساعة لهذا الترخيص عبر الإنترنت؟ سيُلغى القفل تلقائياً عند أول تحقّق أونلاين من الجهاز.")) throw new Error("cancelled");
+      const r = await fetch(`${API}/api/admin/offline-licenses/${id}/clock-unblock`, { method: "POST", headers });
+      if (!r.ok) throw new Error((await r.json()).error || "فشل فكّ الحظر");
+    },
+    onSuccess: () => { toast({ title: "تم إرسال فكّ الحظر", description: "سيُلغى قفل الساعة على الجهاز عند أول تحقّق أونلاين." }); qc.invalidateQueries({ queryKey: ["offline-licenses"] }); },
+    onError: (e: any) => { if (e.message !== "cancelled") toast({ title: "خطأ", description: e.message, variant: "destructive" }); },
+  });
+  function copyText(s: string) { navigator.clipboard.writeText(s); toast({ title: "تم النسخ" }); }
+
   function downloadSignedFile(file: any, key: string) {
     const blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -268,6 +303,9 @@ export default function OfflineLicenses() {
           </Button>
           <Button onClick={() => setShowCreate(true)}>
             <Plus className="ml-2 h-4 w-4" /> ترخيص جديد
+          </Button>
+          <Button variant="outline" onClick={() => { setShowOfflineUnlock(true); setDeviceCodeInput(""); setUnlockResult(null); }}>
+            <Clock className="ml-2 h-4 w-4" /> فكّ حظر الساعة (دون اتصال)
           </Button>
           <div className="relative flex-1 min-w-[12rem] md:flex-none">
             <Search className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
@@ -401,6 +439,15 @@ export default function OfflineLicenses() {
                               disabled={lic.status === "revoked"} title="تنزيل ملف الترخيص الموقّع">
                         <Download className="h-4 w-4" />
                       </Button>
+                      {lic.source === "self_register" && (
+                        <Button size="sm" variant="outline"
+                                className="bg-emerald-50 hover:bg-emerald-100 border-emerald-300 text-emerald-800"
+                                onClick={() => onlineUnblockMut.mutate(lic.id)}
+                                disabled={onlineUnblockMut.isPending}
+                                title="فكّ حظر الساعة (أونلاين)">
+                          <Clock className="h-4 w-4" />
+                        </Button>
+                      )}
                       <Button size="sm" variant="outline" onClick={() => {
                         if (confirm(`تأكيد إلغاء الترخيص ${lic.licenseKey}؟ لن يعمل التطبيق على الأجهزة التي تستخدمه (لكن لن نعرف بذلك لأنها لا تتصل بنا).`)) revoke.mutate(lic.id);
                       }} disabled={lic.status !== "active"} title="إلغاء">
@@ -421,6 +468,50 @@ export default function OfflineLicenses() {
           })()}
         </CardContent>
       </Card>
+
+      {/* Offline clock-unlock dialog — works for ALL standalone licenses */}
+      <Dialog open={showOfflineUnlock} onOpenChange={(o) => { setShowOfflineUnlock(o); if (!o) { setDeviceCodeInput(""); setUnlockResult(null); } }}>
+        <DialogContent dir="rtl">
+          <DialogHeader>
+            <DialogTitle>فكّ حظر الساعة دون اتصال</DialogTitle>
+            <DialogDescription>
+              ألصق «رمز الجهاز» الذي يعرضه التطبيق على شاشة قفل الساعة، وسيتم توليد رمز فكّ حظر
+              موقّع يُسلّم للعميل ليُدخله في الجهاز. يعمل بدون إنترنت ويصلح لجميع تراخيص Standalone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>رمز الجهاز</Label>
+              <Textarea
+                value={deviceCodeInput}
+                onChange={(e) => setDeviceCodeInput(e.target.value)}
+                placeholder="ألصق رمز الجهاز هنا…"
+                rows={3} dir="ltr" className="font-mono text-xs"
+              />
+            </div>
+            {unlockResult && (
+              <div className="space-y-2 rounded-md border border-emerald-200 bg-emerald-50 p-3">
+                <Label className="text-emerald-800">رمز فكّ الحظر (سلّمه للعميل):</Label>
+                <div className="flex items-start gap-2">
+                  <code className="flex-1 break-all bg-white rounded p-2 text-xs font-mono text-left" dir="ltr">{unlockResult.unlockCode}</code>
+                  <Button size="sm" variant="outline" onClick={() => copyText(unlockResult.unlockCode)}>
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  البصمة: <span className="font-mono">{unlockResult.fingerprint.slice(0, 16)}…</span>
+                </p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowOfflineUnlock(false); setDeviceCodeInput(""); setUnlockResult(null); }}>إغلاق</Button>
+            <Button onClick={() => genUnlockMut.mutate()} disabled={!deviceCodeInput.trim() || genUnlockMut.isPending}>
+              {genUnlockMut.isPending ? "جارٍ التوليد…" : "توليد رمز فكّ الحظر"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Create dialog */}
       <Dialog open={showCreate} onOpenChange={setShowCreate}>

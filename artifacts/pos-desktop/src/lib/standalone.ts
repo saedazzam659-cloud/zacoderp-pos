@@ -589,7 +589,15 @@ export async function clearPendingLicenseKey(): Promise<void> {
 }
 
 export type RevalidateOutcome =
-  | { reachable: true; status: "active" | "expired" | "revoked" | "not_found" | "fingerprint_mismatch" | "pending"; signedFile?: SignedLicenseFile }
+  | {
+      reachable: true;
+      status: "active" | "expired" | "revoked" | "not_found" | "fingerprint_mismatch" | "pending";
+      signedFile?: SignedLicenseFile;
+      // Clock-rollback online unblock (Task #237). Present on active/expired
+      // responses for self-register licenses; used to clear a local tamper-lock.
+      clockUnblockAt?: string | null;
+      serverTime?: string;
+    }
   | { reachable: false };
 
 /**
@@ -623,7 +631,13 @@ export async function revalidateLicense(licenseKey: string, fingerprint: string)
       return { reachable: true, status: "pending" };
     }
     if (status === "active" || status === "expired" || status === "revoked") {
-      return { reachable: true, status, signedFile: data?.signedFile as SignedLicenseFile | undefined };
+      return {
+        reachable: true,
+        status,
+        signedFile: data?.signedFile as SignedLicenseFile | undefined,
+        clockUnblockAt: (typeof data?.clockUnblockAt === "string" ? data.clockUnblockAt : null),
+        serverTime: (typeof data?.serverTime === "string" ? data.serverTime : undefined),
+      };
     }
     return { reachable: false };
   } catch {

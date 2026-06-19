@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { clockGuardUnlockOffline, clockGuardClearOnline, clockGuardCheck } from "../lib/clockGuard";
 import { createApi } from "../lib/api";
+import { revalidateLicense } from "../lib/standalone";
+import { getFingerprint } from "../lib/tauri-shim";
 
 // Clock-rollback HARD-LOCK screen (Task #237).
 //
@@ -14,10 +16,15 @@ import { createApi } from "../lib/api";
 export default function ClockTamperLocked({
   deviceCode,
   cloud,
+  standalone,
   onUnlocked,
 }: {
   deviceCode: string;
   cloud?: { baseUrl: string; deviceToken: string };
+  // Self-register standalone licenses revalidate online, so they too can be
+  // unblocked online — by polling the public revalidate endpoint for the
+  // SuperAdmin's clockUnblockAt stamp. Admin file licenses never get this.
+  standalone?: { licenseKey: string };
   onUnlocked: () => void;
 }) {
   const [code, setCode] = useState("");
@@ -48,6 +55,30 @@ export default function ClockTamperLocked({
     return () => { cancelled = true; window.clearInterval(id); };
   }, [cloud]);
 
+  // ── Online auto-pickup for STANDALONE self-register licenses ───────────
+  // They have no device token; instead we hit the public revalidate endpoint,
+  // which now returns the SuperAdmin's clockUnblockAt + authoritative serverTime.
+  useEffect(() => {
+    if (!standalone) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const fp = await getFingerprint();
+        const out = await revalidateLicense(standalone.licenseKey, fp);
+        if (!out.reachable || cancelled) return;
+        const cleared = await clockGuardClearOnline(out.clockUnblockAt, out.serverTime);
+        if (cleared && !cancelled) {
+          const st = out.serverTime ? new Date(out.serverTime).getTime() : NaN;
+          const g = await clockGuardCheck({ trustedNowMs: Number.isFinite(st) ? st : undefined });
+          if (!g.locked && !cancelled) onUnlockedRef.current();
+        }
+      } catch { /* offline — offline unlock code still works */ }
+    };
+    const id = window.setInterval(() => { void poll(); }, 20_000);
+    void poll();
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [standalone]);
+
   async function copyCode() {
     try { await navigator.clipboard.writeText(deviceCode); setCopied(true); window.setTimeout(() => setCopied(false), 2000); }
     catch { /* clipboard blocked — user can select manually */ }
@@ -63,14 +94,25 @@ export default function ClockTamperLocked({
   }
 
   async function checkOnlineNow() {
-    if (!cloud) return;
+    if (!cloud && !standalone) return;
     setPolling(true); setError(null);
     try {
-      const api = createApi({ baseUrl: cloud.baseUrl, deviceToken: cloud.deviceToken });
-      const v = await api.validate();
-      const cleared = await clockGuardClearOnline(v.clockUnblockAt, v.serverTime);
+      let clockUnblockAt: string | null | undefined;
+      let serverTime: string | undefined;
+      if (cloud) {
+        const api = createApi({ baseUrl: cloud.baseUrl, deviceToken: cloud.deviceToken });
+        const v = await api.validate();
+        clockUnblockAt = v.clockUnblockAt; serverTime = v.serverTime;
+      } else if (standalone) {
+        const fp = await getFingerprint();
+        const out = await revalidateLicense(standalone.licenseKey, fp);
+        if (!out.reachable) throw new Error("unreachable");
+        clockUnblockAt = out.clockUnblockAt; serverTime = out.serverTime;
+      }
+      const cleared = await clockGuardClearOnline(clockUnblockAt, serverTime);
       if (cleared) {
-        const g = await clockGuardCheck({ trustedNowMs: new Date(v.serverTime).getTime() });
+        const st = serverTime ? new Date(serverTime).getTime() : NaN;
+        const g = await clockGuardCheck({ trustedNowMs: Number.isFinite(st) ? st : undefined });
         if (!g.locked) { onUnlockedRef.current(); return; }
       }
       setError("لم يتم رصد فكّ حظر من المسؤول بعد. تأكد من الضغط على «فك الحظر» في لوحة التحكم ثم أعد المحاولة.");
@@ -112,7 +154,7 @@ export default function ClockTamperLocked({
           </button>
         </div>
 
-        {cloud ? (
+        {cloud || standalone ? (
           <div style={section}>
             <div style={sectionTitle}>② فكّ الحظر عبر الإنترنت (Online)</div>
             <p style={hint}>

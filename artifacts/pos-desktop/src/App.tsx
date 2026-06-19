@@ -63,7 +63,7 @@ type BootState =
   // Clock-rollback guard tripped — device HARD-LOCKED until a SuperAdmin unlock
   // (offline signed code or online one-click). `cloud` is present when a cloud
   // device token exists so the lock screen can poll for the online unblock.
-  | { phase: "clock-locked"; deviceCode: string; cloud?: { baseUrl: string; deviceToken: string } }
+  | { phase: "clock-locked"; deviceCode: string; cloud?: { baseUrl: string; deviceToken: string }; standalone?: { licenseKey: string } }
   | { phase: "needs-mode" }
   | { phase: "needs-vertical" }
   | { phase: "needs-country" }
@@ -108,11 +108,21 @@ export default function App() {
     const cloud = (state.phase === "signed-in" || state.phase === "needs-cashier" || state.phase === "license-expired")
       ? { baseUrl: state.baseUrl, deviceToken: state.deviceToken }
       : undefined;
+    // Any standalone phase that has a loaded license (signed-in OR sitting on the
+    // login screen) can be online-unblocked, so carry its key into the lock too.
+    const standaloneKey =
+      (state.phase === "standalone-signed-in" || state.phase === "needs-standalone-login")
+      && state.license.source === "self_register"
+        ? state.license.licenseKey
+        : undefined;
     const tick = async () => {
       const g = await clockGuardCheck();
       if (cancelled) return;
       effectiveNowRef.current = g.effectiveNow;
-      if (g.locked) setState({ phase: "clock-locked", deviceCode: g.deviceCode ?? "", cloud });
+      if (g.locked) setState({
+        phase: "clock-locked", deviceCode: g.deviceCode ?? "", cloud,
+        standalone: standaloneKey ? { licenseKey: standaloneKey } : undefined,
+      });
     };
     const id = window.setInterval(() => { void tick(); }, 60_000);
     return () => { cancelled = true; window.clearInterval(id); };
@@ -198,7 +208,11 @@ export default function App() {
           const dt = await loadDeviceToken();
           if (dt) cloud = { baseUrl: localStorage.getItem("pos_desktop_server_url") ?? DEFAULT_BASE, deviceToken: dt };
         } catch { /* no cloud token — offline unlock only */ }
-        setState({ phase: "clock-locked", deviceCode: g.deviceCode ?? "", cloud });
+        // Standalone self-register licenses revalidate online, so the lock screen
+        // can poll for a SuperAdmin's online unblock too. Admin file licenses
+        // never phone home → no standalone context → offline code only.
+        const standalone = await loadClockLockStandalone();
+        setState({ phase: "clock-locked", deviceCode: g.deviceCode ?? "", cloud, standalone });
         return;
       }
     }
@@ -336,6 +350,21 @@ export default function App() {
       return { lock: true, reason: "grace-expired" };
     }
     return { lock: false };
+  }
+
+  // Build the standalone context for the clock-lock screen: only self-register
+  // licenses revalidate online, so only they can be unblocked online. Returns
+  // undefined for admin file licenses (offline-only) or when no/invalid license
+  // file exists — in those cases the lock screen offers the offline code only.
+  async function loadClockLockStandalone(): Promise<{ licenseKey: string } | undefined> {
+    try {
+      const file = await loadLicense();
+      if (!file) return undefined;
+      const r = await verifyLicenseFile(file, effectiveNowRef.current);
+      if (!r.ok) return undefined;
+      if (r.payload.source !== "self_register") return undefined;
+      return { licenseKey: r.payload.licenseKey };
+    } catch { return undefined; }
   }
 
   async function bootCloud() {
@@ -542,6 +571,7 @@ export default function App() {
       <ClockTamperLocked
         deviceCode={state.deviceCode}
         cloud={state.cloud}
+        standalone={state.standalone}
         onUnlocked={handleRetryLicense}
       />
     );

@@ -331,6 +331,30 @@ router.post("/:id/revoke", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── POST /api/admin/offline-licenses/:id/clock-unblock ─────────────
+// Online clock-rollback unblock (Task #237). Stamps clockUnblockAt = now();
+// a SELF-REGISTER device picks it up on its next online revalidate and clears
+// its local tamper-lock. Admin file licenses never revalidate online, so this
+// is a no-op for them — they must use the offline signed unlock code instead.
+router.post("/:id/clock-unblock", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "bad id" }); return; }
+  const [existing] = await db.select().from(offlineLicensesTable).where(eq(offlineLicensesTable.id, id));
+  if (!existing) { res.status(404).json({ error: "license not found" }); return; }
+  // Online unblock only reaches devices that revalidate online (self_register).
+  // Admin file licenses never phone home → stamping would be a silent no-op, so
+  // reject it and steer the operator to the offline signed unlock code.
+  if (existing.source !== "self_register") {
+    res.status(409).json({ error: "هذا ترخيص ملف لا يتصل بالإنترنت — استخدم رمز فكّ الحظر دون اتصال." });
+    return;
+  }
+  await db.update(offlineLicensesTable).set({
+    clockUnblockAt: new Date(),
+    updatedAt: new Date(),
+  }).where(eq(offlineLicensesTable.id, id));
+  res.json({ ok: true, source: existing.source });
+});
+
 // ─── DELETE /api/admin/offline-licenses/:id ─────────────────────────
 router.delete("/:id", async (req, res) => {
   const id = Number(req.params.id);

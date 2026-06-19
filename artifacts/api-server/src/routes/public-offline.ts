@@ -271,8 +271,16 @@ router.post("/revalidate", async (req, res) => {
     updatedAt: new Date(),
   }).where(eq(offlineLicensesTable.id, lic.id));
 
-  if (status === "expired") { res.json({ status: "expired", signedFile: signed ?? undefined }); return; }
-  res.json({ status: "active", signedFile: signed ?? undefined });
+  // Clock-rollback online unblock (Task #237): a self-register device clears its
+  // local tamper-lock when it sees a clockUnblockAt newer than the lock, anchored
+  // to authoritative serverTime. Both fields ride along on the active/expired
+  // revalidate response so a polling locked device picks them up.
+  const clock = {
+    serverTime: new Date().toISOString(),
+    clockUnblockAt: lic.clockUnblockAt ? lic.clockUnblockAt.toISOString() : null,
+  };
+  if (status === "expired") { res.json({ status: "expired", signedFile: signed ?? undefined, ...clock }); return; }
+  res.json({ status: "active", signedFile: signed ?? undefined, ...clock });
 });
 
 export default router;
