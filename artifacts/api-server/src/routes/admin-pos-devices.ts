@@ -11,6 +11,7 @@ import { eq, and, desc, sql, isNull } from "drizzle-orm";
 import { z } from "zod/v4";
 import { extractAuth } from "../middleware/auth.js";
 import { generateLicenseKey } from "../lib/posDesktopGuards.js";
+import { signClockUnlockFromDeviceCode } from "../lib/offlineLicenseSigner.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -170,6 +171,41 @@ router.post("/devices/:id/unbind", async (req, res) => {
       status: "assigned", deviceId: null, updatedAt: new Date(),
     }).where(eq(deviceLicensesTable.id, dev.licenseId));
   }
+  res.json({ ok: true });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// CLOCK-ROLLBACK GUARD UNLOCK (Task #237)
+// ═════════════════════════════════════════════════════════════════════
+
+// OFFLINE path: cashier reads a self-contained "device code" off the locked
+// screen and sends it (WhatsApp/phone). SuperAdmin pastes it here; we mint an
+// Ed25519-signed unlock code bound to that device's fingerprint + lock nonce.
+// Works for ANY device (cloud or pure-offline standalone) with zero internet
+// on the device side.
+const clockUnlockSchema = z.object({ deviceCode: z.string().min(8).max(4096) });
+router.post("/generate-clock-unlock", async (req, res) => {
+  const parsed = clockUnlockSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "bad payload", details: parsed.error.issues }); return; }
+  try {
+    const { unlockCode, fp, nonce } = signClockUnlockFromDeviceCode(parsed.data.deviceCode);
+    res.json({ ok: true, unlockCode, fingerprint: fp, nonce });
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message ?? "could not generate unlock code" });
+  }
+});
+
+// ONLINE path: one-click unblock for a known (cloud-connected) device. Stamps
+// pos_devices.clock_unblock_at = now(); the device picks it up on its next
+// /validate or /sync/pull and clears its lock + rebases to server time.
+router.post("/devices/:id/clock-unblock", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "bad id" }); return; }
+  const [dev] = await db.select().from(posDevicesTable).where(eq(posDevicesTable.id, id));
+  if (!dev) { res.status(404).json({ error: "device not found" }); return; }
+  await db.update(posDevicesTable).set({
+    clockUnblockAt: new Date(), updatedAt: new Date(),
+  }).where(eq(posDevicesTable.id, id));
   res.json({ ok: true });
 });
 

@@ -145,3 +145,67 @@ export function getPublicKeyInfo() {
     source: process.env.OFFLINE_LICENSE_PRIVATE_KEY_PEM ? "env" : "dev-cache",
   };
 }
+
+// ─── Clock-rollback unlock codes (Task #237) ─────────────────────────
+// The desktop hard-locks itself when it detects the Windows clock rolled
+// backward (anti clock-rollback guard). A SuperAdmin can mint an OFFLINE
+// unlock code that the device verifies with the SAME pinned Ed25519 key it
+// uses for offline license files — so it works with zero internet.
+//
+// The locked device shows a self-contained "device code" = base64url(JSON{
+//   fp,            ← this machine's hardware fingerprint
+//   n,             ← the random lock nonce (rotates on every new lock)
+//   v: 1
+// }). The SuperAdmin pastes it here; we sign a matching unlock payload bound
+// to BOTH the fingerprint and the nonce so a code minted for one device /
+// one lock cannot unlock another device or a later lock.
+
+function b64ToB64url(b64: string): string {
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function b64urlToB64(s: string): string {
+  const t = s.replace(/-/g, "+").replace(/_/g, "/");
+  return t + "=".repeat((4 - (t.length % 4)) % 4);
+}
+
+export type ClockUnlockPayload = {
+  fp: string;
+  nonce: string;
+  purpose: "clock_unlock";
+  iat: string; // ISO
+};
+
+/**
+ * Decodes a device code, signs a fingerprint+nonce-bound unlock payload, and
+ * returns a compact base64url unlock code the cashier pastes back into the
+ * locked desktop. The unlock code = base64url(JSON{ p: payloadB64, s: sigB64 }),
+ * mirroring the offline-license file's "sign the payloadB64 bytes" convention
+ * so the desktop reuses its existing Ed25519 verify path with the pinned key.
+ */
+export function signClockUnlockFromDeviceCode(deviceCode: string): {
+  unlockCode: string;
+  fp: string;
+  nonce: string;
+} {
+  let decoded: { fp?: string; n?: string; v?: number };
+  try {
+    decoded = JSON.parse(Buffer.from(b64urlToB64(deviceCode.trim()), "base64").toString("utf8"));
+  } catch {
+    throw new Error("invalid device code (not decodable)");
+  }
+  if (!decoded?.fp || !decoded?.n) throw new Error("invalid device code (missing fp/nonce)");
+
+  const kp = loadKeypair();
+  const payload: ClockUnlockPayload = {
+    fp: decoded.fp,
+    nonce: decoded.n,
+    purpose: "clock_unlock",
+    iat: new Date().toISOString(),
+  };
+  const payloadB64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
+  const sig = cryptoSign(null, Buffer.from(payloadB64, "utf8"), kp.privateKey).toString("base64");
+  const unlockCode = b64ToB64url(
+    Buffer.from(JSON.stringify({ p: payloadB64, s: sig }), "utf8").toString("base64"),
+  );
+  return { unlockCode, fp: decoded.fp, nonce: decoded.n };
+}

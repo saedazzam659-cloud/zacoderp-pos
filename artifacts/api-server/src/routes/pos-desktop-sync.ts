@@ -215,11 +215,18 @@ router.post("/pull", async (req: DeviceAuthedRequest, res) => {
       .from(systemSettingsTable)
       .where(eq(systemSettingsTable.key, "subscription_contact_info"))
       .limit(1);
+    // Clock-rollback guard: surface the SuperAdmin online-unblock signal so a
+    // locked device clears its tamper lock + rebases to server time on pull.
+    const [devRow] = await db.select({ clockUnblockAt: posDevicesTable.clockUnblockAt })
+      .from(posDevicesTable)
+      .where(eq(posDevicesTable.id, req.device!.id))
+      .limit(1);
     out.settings = [{
       enableOfflinePos: true,
       serverTime: new Date().toISOString(),
       windowsModules,
       renewalMessage: contactRow?.value ?? "",
+      clockUnblockAt: devRow?.clockUnblockAt ? devRow.clockUnblockAt.toISOString() : null,
     }];
   }
 

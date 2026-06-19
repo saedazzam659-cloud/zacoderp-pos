@@ -509,6 +509,10 @@ function LicensesTab({ headers }: { headers: Record<string, string> }) {
 function DevicesTab({ headers }: { headers: Record<string, string> }) {
   const { toast } = useToast();
   const qc = useQueryClient();
+  // ── Clock-rollback unlock tooling (Task #237) ──────────────────────
+  const [showOfflineUnlock, setShowOfflineUnlock] = useState(false);
+  const [deviceCodeInput, setDeviceCodeInput] = useState("");
+  const [unlockResult, setUnlockResult] = useState<{ unlockCode: string; fingerprint: string; nonce: string } | null>(null);
   const devicesQ = useQuery<Device[]>({
     queryKey: ["pos-devices"],
     queryFn: async () => {
@@ -529,13 +533,50 @@ function DevicesTab({ headers }: { headers: Record<string, string> }) {
     onError: (e: any) => { if (e.message !== "cancelled") toast({ title: "خطأ", description: e.message, variant: "destructive" }); },
   });
 
+  // OFFLINE unlock: paste the device code shown on the locked screen → mint a
+  // signed unlock code the cashier types back in. Zero internet on the device.
+  const genUnlockMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API}/api/admin/pos-devices/generate-clock-unlock`, {
+        method: "POST", headers, body: JSON.stringify({ deviceCode: deviceCodeInput.trim() }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "تعذّر توليد رمز فكّ الحظر");
+      return r.json() as Promise<{ ok: true; unlockCode: string; fingerprint: string; nonce: string }>;
+    },
+    onSuccess: (d) => setUnlockResult({ unlockCode: d.unlockCode, fingerprint: d.fingerprint, nonce: d.nonce }),
+    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+  });
+
+  // ONLINE unblock: one click stamps clock_unblock_at; the cloud device clears
+  // its lock on the next /validate or /sync/pull.
+  const onlineUnblockMut = useMutation({
+    mutationFn: async (id: number) => {
+      if (!confirm("فكّ حظر الساعة لهذا الجهاز عبر الإنترنت؟ سيُلغى القفل تلقائياً عند أول اتصال.")) throw new Error("cancelled");
+      const r = await fetch(`${API}/api/admin/pos-devices/devices/${id}/clock-unblock`, { method: "POST", headers });
+      if (!r.ok) throw new Error((await r.json()).error || "فشل فكّ الحظر");
+    },
+    onSuccess: () => { toast({ title: "تم إرسال فكّ الحظر", description: "سيُلغى قفل الساعة على الجهاز عند أول اتصال بالخادم." }); },
+    onError: (e: any) => { if (e.message !== "cancelled") toast({ title: "خطأ", description: e.message, variant: "destructive" }); },
+  });
+
+  function copyText(s: string) { navigator.clipboard.writeText(s); toast({ title: "تم النسخ" }); }
+
   function isOnline(d: Device): boolean {
     if (!d.lastHeartbeatAt) return false;
     return Date.now() - new Date(d.lastHeartbeatAt).getTime() < 5 * 60 * 1000;
   }
 
   return (
-    <Card><CardContent className="p-4">
+    <Card><CardContent className="p-4 space-y-3">
+      <div className="flex justify-between items-center gap-2">
+        <p className="text-sm text-muted-foreground">
+          إدارة الأجهزة المفعّلة. لفكّ حظر ساعة جهاز معطّل: استخدم «فكّ حظر الساعة (دون اتصال)»
+          برمز الجهاز، أو زر «فكّ الحظر (أونلاين)» بجانب الجهاز المتصل.
+        </p>
+        <Button variant="outline" onClick={() => { setShowOfflineUnlock(true); setDeviceCodeInput(""); setUnlockResult(null); }}>
+          <Clock className="ml-2 h-4 w-4" /> فكّ حظر الساعة (دون اتصال)
+        </Button>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-muted/40">
@@ -566,11 +607,22 @@ function DevicesTab({ headers }: { headers: Record<string, string> }) {
                 <td className="p-2 text-xs">{d.lastSyncAt ? new Date(d.lastSyncAt).toLocaleString("ar-SA") : "—"}</td>
                 <td className="p-2"><Badge variant={d.status === "active" ? "default" : "secondary"}>{d.status}</Badge></td>
                 <td className="p-2">
-                  {d.status === "active" && (
-                    <Button size="sm" variant="destructive" onClick={() => unbindMut.mutate(d.id)}>
-                      <Trash2 className="h-3.5 w-3.5" />
+                  <div className="flex gap-1 justify-end">
+                    <Button
+                      size="sm" variant="outline"
+                      className="bg-emerald-50 hover:bg-emerald-100 border-emerald-300 text-emerald-800"
+                      onClick={() => onlineUnblockMut.mutate(d.id)}
+                      disabled={onlineUnblockMut.isPending}
+                      title="فكّ حظر الساعة (أونلاين)"
+                    >
+                      <Clock className="h-3.5 w-3.5" />
                     </Button>
-                  )}
+                    {d.status === "active" && (
+                      <Button size="sm" variant="destructive" onClick={() => unbindMut.mutate(d.id)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -580,6 +632,50 @@ function DevicesTab({ headers }: { headers: Record<string, string> }) {
           </tbody>
         </table>
       </div>
+
+      {/* Offline clock-unlock dialog */}
+      <Dialog open={showOfflineUnlock} onOpenChange={(o) => { setShowOfflineUnlock(o); if (!o) { setDeviceCodeInput(""); setUnlockResult(null); } }}>
+        <DialogContent dir="rtl">
+          <DialogHeader>
+            <DialogTitle>فكّ حظر الساعة دون اتصال</DialogTitle>
+            <DialogDescription>
+              ألصق «رمز الجهاز» الذي يعرضه التطبيق على شاشة القفل، وسيتم توليد رمز فكّ حظر
+              موقّع يُسلّم للكاشير ليُدخله في الجهاز. يعمل بدون إنترنت على الجهاز.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>رمز الجهاز</Label>
+              <Textarea
+                value={deviceCodeInput}
+                onChange={(e) => setDeviceCodeInput(e.target.value)}
+                placeholder="ألصق رمز الجهاز هنا…"
+                rows={3} dir="ltr" className="font-mono text-xs"
+              />
+            </div>
+            {unlockResult && (
+              <div className="space-y-2 rounded-md border border-emerald-200 bg-emerald-50 p-3">
+                <Label className="text-emerald-800">رمز فكّ الحظر (سلّمه للكاشير):</Label>
+                <div className="flex items-start gap-2">
+                  <code className="flex-1 break-all bg-white rounded p-2 text-xs font-mono text-left" dir="ltr">{unlockResult.unlockCode}</code>
+                  <Button size="sm" variant="outline" onClick={() => copyText(unlockResult.unlockCode)}>
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  البصمة: <span className="font-mono">{unlockResult.fingerprint.slice(0, 16)}…</span>
+                </p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowOfflineUnlock(false); setDeviceCodeInput(""); setUnlockResult(null); }}>إغلاق</Button>
+            <Button onClick={() => genUnlockMut.mutate()} disabled={!deviceCodeInput.trim() || genUnlockMut.isPending}>
+              {genUnlockMut.isPending ? "جارٍ التوليد…" : "توليد رمز فكّ الحظر"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </CardContent></Card>
   );
 }

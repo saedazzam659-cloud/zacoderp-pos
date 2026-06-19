@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod accounting;
+mod clock_guard;
 mod customers;
 mod db;
 mod fiscal;
@@ -365,6 +366,9 @@ fn main() {
             parked_carts_upsert,
             parked_carts_delete,
             parked_carts_clear_session,
+            // Clock-rollback guard (Task #237) — machine-bound encrypted store.
+            clock_guard::clock_guard_file_read,
+            clock_guard::clock_guard_file_write,
             zatca::generate_qr,
             zatca::decode_qr,
             // Standalone direct-to-ZATCA (Task #233).

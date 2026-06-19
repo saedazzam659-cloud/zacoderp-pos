@@ -182,6 +182,13 @@ router.post("/validate", deviceAuth, async (req: DeviceAuthedRequest, res) => {
     return;
   }
 
+  // Clock-rollback guard: surface the SuperAdmin online-unblock signal so a
+  // locked device clears its tamper lock + rebases to server time on validate.
+  const [devRow] = await db
+    .select({ clockUnblockAt: posDevicesTable.clockUnblockAt })
+    .from(posDevicesTable)
+    .where(eq(posDevicesTable.id, req.device!.id));
+
   res.json({
     valid: true,
     deviceId: req.device!.id,
@@ -189,6 +196,7 @@ router.post("/validate", deviceAuth, async (req: DeviceAuthedRequest, res) => {
     licenseStatus: lic?.status ?? null,
     expiresAt,
     serverTime: new Date().toISOString(),
+    clockUnblockAt: devRow?.clockUnblockAt ? devRow.clockUnblockAt.toISOString() : null,
   });
 });
 

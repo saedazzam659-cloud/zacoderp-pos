@@ -85,7 +85,9 @@ export type LocalSession = {
 // lives only in the server's OFFLINE_LICENSE_PRIVATE_KEY_PEM secret.
 // Env var still wins so we can rotate without a code change.
 const HARDCODED_PUBKEY_B64 = "DiK15tbTP9t837JvtXwx/cFDzPVjKl45ds8FHb/gC+A=";
-const PINNED_PUBKEY_B64: string =
+// Exported so the clock-rollback guard (`lib/clockGuard.ts`) verifies offline
+// unlock codes against the SAME pinned key used for offline license files.
+export const PINNED_PUBKEY_B64: string =
   ((import.meta.env.VITE_OFFLINE_LICENSE_PUBLIC_KEY_B64 ?? "") as string).trim()
   || HARDCODED_PUBKEY_B64;
 export const DEV_PUBKEY_UNPINNED = !PINNED_PUBKEY_B64;
@@ -150,7 +152,7 @@ function strToBytes(s: string): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
-export async function verifyLicenseFile(file: SignedLicenseFile): Promise<{ ok: true; payload: OfflineLicensePayload } | { ok: false; error: string }> {
+export async function verifyLicenseFile(file: SignedLicenseFile, nowMs: number = Date.now()): Promise<{ ok: true; payload: OfflineLicensePayload } | { ok: false; error: string }> {
   if (file?.alg !== "ed25519" || !file?.payloadB64 || !file?.signature || !file?.publicKey) {
     return { ok: false, error: "ملف ترخيص غير صالح (تنسيق غير مدعوم)" };
   }
@@ -206,7 +208,9 @@ export async function verifyLicenseFile(file: SignedLicenseFile): Promise<{ ok: 
   if (JSON.stringify(payload) !== JSON.stringify(file.payload)) {
     return { ok: false, error: "العرض غير مطابق للمحتوى الموقّع — الملف معدّل" };
   }
-  if (payload.expiresAt && new Date(payload.expiresAt).getTime() < Date.now()) {
+  // `nowMs` is the clock-guard's effectiveNow = max(systemNow, high-water-mark)
+  // so a rolled-back Windows clock can never make an expired license re-pass.
+  if (payload.expiresAt && new Date(payload.expiresAt).getTime() < nowMs) {
     return {
       ok: false,
       error:
@@ -486,11 +490,16 @@ export function isGraceExpired(
   lastCheck: number | null,
   graceDays = STANDALONE_GRACE_DAYS,
   fallbackTs?: number | null,
+  // Pass the clock-guard's effectiveNow (= max(systemNow, monotonic HWM)) so a
+  // rolled-back Windows clock cannot stretch the offline grace window. Defaults
+  // to Date.now() only for callers outside the guarded boot tree.
+  effectiveNowMs?: number,
 ): boolean {
   const baseline = lastCheck ?? (Number.isFinite(fallbackTs) && (fallbackTs as number) > 0 ? (fallbackTs as number) : null);
   if (!baseline) return true;
   const days = Number.isFinite(graceDays) && graceDays > 0 ? graceDays : STANDALONE_GRACE_DAYS;
-  return Date.now() - baseline > days * 24 * 60 * 60 * 1000;
+  const nowMs = Number.isFinite(effectiveNowMs) && (effectiveNowMs as number) > 0 ? (effectiveNowMs as number) : Date.now();
+  return nowMs - baseline > days * 24 * 60 * 60 * 1000;
 }
 
 export type StandaloneCompanyInfo = {

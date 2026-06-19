@@ -40,6 +40,7 @@ export type ValidateResponse = {
   licenseStatus: string | null;
   expiresAt: string | null;
   serverTime: string;
+  clockUnblockAt?: string | null;
 };
 
 export type HeartbeatRequest = {
@@ -58,7 +59,7 @@ export type PullResponse = {
   entities: {
     customers?: Array<{ id: number; nameAr: string; nameEn: string | null; phone: string | null; vatNumber: string | null; createdAt: string }>;
     items?: Array<{ id: number; code: string; nameAr: string; nameEn: string | null; barcode: string | null; salePrice: string; vatRate: string; updatedAt: string }>;
-    settings?: Array<{ enableOfflinePos: boolean; serverTime: string; windowsModules?: Record<string, boolean>; renewalMessage?: string }>;
+    settings?: Array<{ enableOfflinePos: boolean; serverTime: string; windowsModules?: Record<string, boolean>; renewalMessage?: string; clockUnblockAt?: string | null }>;
   };
 };
 

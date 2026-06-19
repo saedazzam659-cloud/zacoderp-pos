@@ -44,6 +44,11 @@ export const posDevicesTable = pgTable("pos_devices", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   deactivatedAt: timestamp("deactivated_at"),
+  // SuperAdmin online "unblock" signal for the desktop clock-rollback guard.
+  // When set (to a timestamp newer than the device's last-consumed value), the
+  // device clears its tamper lock and rebases its time high-water-mark to the
+  // server clock on the next /validate or /sync/pull. Null = no pending unblock.
+  clockUnblockAt: timestamp("clock_unblock_at"),
 }, (t) => ({
   tokenUniq: uniqueIndex("pos_devices_token_uniq").on(t.deviceToken),
   companyIdx: index("pos_devices_company_idx").on(t.companyId),

@@ -51,6 +51,8 @@ import {
 } from "./lib/standalone";
 import { getFingerprint } from "./lib/tauri-shim";
 import { initBridge } from "./lib/bridge";
+import { clockGuardCheck, clockGuardClearOnline } from "./lib/clockGuard";
+import ClockTamperLocked from "./pages/ClockTamperLocked";
 
 type BootState =
   | { phase: "checking" }
@@ -58,6 +60,10 @@ type BootState =
   // INSTEAD of an endless "checking…" / blank white screen so the user always
   // gets a visible, recoverable screen with the real error + a retry.
   | { phase: "boot-error"; message: string }
+  // Clock-rollback guard tripped — device HARD-LOCKED until a SuperAdmin unlock
+  // (offline signed code or online one-click). `cloud` is present when a cloud
+  // device token exists so the lock screen can poll for the online unblock.
+  | { phase: "clock-locked"; deviceCode: string; cloud?: { baseUrl: string; deviceToken: string } }
   | { phase: "needs-mode" }
   | { phase: "needs-vertical" }
   | { phase: "needs-country" }
@@ -84,8 +90,34 @@ export default function App() {
   // starts a new attempt; if a STALE attempt later rejects/resolves it must not
   // clobber the newer one's state. Every terminal setState checks this id.
   const bootRunId = useRef(0);
+  // Clock-rollback guard's effectiveNow = max(systemNow, high-water-mark). ALL
+  // expiry comparisons read this (never bare Date.now()) so a rolled-back clock
+  // can never extend validity. Refreshed on boot AND by the periodic tick.
+  const effectiveNowRef = useRef<number>(Date.now());
 
   useEffect(() => { void boot(); }, []);
+
+  // ── Clock-rollback guard tick ─────────────────────────────────────────
+  // Re-checks the monotonic time guard once a minute while the app is in any
+  // active phase, so rolling the Windows clock back DURING a session locks the
+  // device too (not just at boot). On lock we carry the cloud context (if any)
+  // so the lock screen can poll for the online unblock.
+  useEffect(() => {
+    if (state.phase === "checking" || state.phase === "boot-error" || state.phase === "clock-locked") return;
+    let cancelled = false;
+    const cloud = (state.phase === "signed-in" || state.phase === "needs-cashier" || state.phase === "license-expired")
+      ? { baseUrl: state.baseUrl, deviceToken: state.deviceToken }
+      : undefined;
+    const tick = async () => {
+      const g = await clockGuardCheck();
+      if (cancelled) return;
+      effectiveNowRef.current = g.effectiveNow;
+      if (g.locked) setState({ phase: "clock-locked", deviceCode: g.deviceCode ?? "", cloud });
+    };
+    const id = window.setInterval(() => { void tick(); }, 60_000);
+    return () => { cancelled = true; window.clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.phase]);
 
   // ── Boot watchdog ─────────────────────────────────────────────────────
   // A startup step could HANG (e.g. a native invoke that never resolves) — a
@@ -154,6 +186,22 @@ export default function App() {
     // Must run before any shared-data load so a `client` device routes its
     // reads/writes to the host. No-op for single/host (local Tauri invoke).
     await initBridge();
+    // ── Clock-rollback guard (Task #237) ──────────────────────────────
+    // Runs FIRST so a tampered clock locks the device regardless of mode or
+    // onboarding state. effectiveNow feeds every downstream expiry check.
+    {
+      const g = await clockGuardCheck();
+      effectiveNowRef.current = g.effectiveNow;
+      if (g.locked) {
+        let cloud: { baseUrl: string; deviceToken: string } | undefined;
+        try {
+          const dt = await loadDeviceToken();
+          if (dt) cloud = { baseUrl: localStorage.getItem("pos_desktop_server_url") ?? DEFAULT_BASE, deviceToken: dt };
+        } catch { /* no cloud token — offline unlock only */ }
+        setState({ phase: "clock-locked", deviceCode: g.deviceCode ?? "", cloud });
+        return;
+      }
+    }
     // ── First-run mode selection ──────────────────────────────────────
     const mode = await getAppMode();
     if (!mode) { setState({ phase: "needs-mode" }); return; }
@@ -185,7 +233,7 @@ export default function App() {
       setState({ phase: "needs-standalone-license" });
       return;
     }
-    const r = await verifyLicenseFile(file);
+    const r = await verifyLicenseFile(file, effectiveNowRef.current);
     if (!r.ok) {
       // Tampered or expired — force re-activation but keep mode = standalone.
       console.warn("standalone license invalid:", r.error);
@@ -260,11 +308,11 @@ export default function App() {
       // active OR expired: persist the freshly-signed file (carries the SA's
       // latest expiry) and re-verify it locally.
       if (out.signedFile) {
-        const v = await verifyLicenseFile(out.signedFile);
+        const v = await verifyLicenseFile(out.signedFile, effectiveNowRef.current);
         if (v.ok) {
           await saveLicense(out.signedFile);
           await setLastLicenseCheck(Date.now());
-          if (v.payload.expiresAt && new Date(v.payload.expiresAt).getTime() < Date.now()) {
+          if (v.payload.expiresAt && new Date(v.payload.expiresAt).getTime() < effectiveNowRef.current) {
             return { lock: true, reason: "expired" };
           }
           return { lock: false, license: v.payload };
@@ -284,7 +332,7 @@ export default function App() {
     if (offlineTolerant) return { lock: false };
     const lastCheck = await getLastLicenseCheck();
     const issuedTs = license.issuedAt ? new Date(license.issuedAt).getTime() : null;
-    if (isGraceExpired(lastCheck, license.graceDays, issuedTs)) {
+    if (isGraceExpired(lastCheck, license.graceDays, issuedTs, effectiveNowRef.current)) {
       return { lock: true, reason: "grace-expired" };
     }
     return { lock: false };
@@ -310,6 +358,18 @@ export default function App() {
       expiresAt = v.expiresAt;
       if (v.expiresAt) localStorage.setItem(EXPIRES_AT_KEY, v.expiresAt);
       else localStorage.removeItem(EXPIRES_AT_KEY);
+      // Online clock-guard sync: a SuperAdmin "فك الحظر" stamps clockUnblockAt;
+      // anchor the HWM to authoritative server time and clear any standing lock.
+      try {
+        await clockGuardClearOnline(v.clockUnblockAt, v.serverTime);
+        const st = new Date(v.serverTime).getTime();
+        const g = await clockGuardCheck({ trustedNowMs: Number.isFinite(st) ? st : undefined });
+        effectiveNowRef.current = g.effectiveNow;
+        if (g.locked) {
+          setState({ phase: "clock-locked", deviceCode: g.deviceCode ?? "", cloud: { baseUrl, deviceToken: dToken } });
+          return;
+        }
+      } catch (ge) { console.warn("clock-guard online sync failed", ge); }
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
         await clearDeviceToken();
@@ -329,7 +389,7 @@ export default function App() {
       console.warn("Boot validate failed (offline?), continuing with cached context", e);
     }
 
-    if (expiresAt && new Date(expiresAt).getTime() < Date.now()) {
+    if (expiresAt && new Date(expiresAt).getTime() < effectiveNowRef.current) {
       setState({ phase: "license-expired", baseUrl, deviceToken: dToken, expiresAt, companyName });
       return;
     }
@@ -474,6 +534,16 @@ export default function App() {
           </pre>
         ) : null}
       </div>
+    );
+  }
+
+  if (state.phase === "clock-locked") {
+    return (
+      <ClockTamperLocked
+        deviceCode={state.deviceCode}
+        cloud={state.cloud}
+        onUnlocked={handleRetryLicense}
+      />
     );
   }
 

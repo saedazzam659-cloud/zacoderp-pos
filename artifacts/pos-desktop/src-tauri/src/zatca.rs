@@ -299,7 +299,7 @@ fn zatca_file_key() -> Result<[u8; 32], String> {
 }
 
 /// AES-256-GCM encrypt → "zenc1:" + base64(nonce[12] || ciphertext+tag).
-fn zatca_encrypt(plain: &str) -> Result<String, String> {
+pub(crate) fn zatca_encrypt(plain: &str) -> Result<String, String> {
     let key = zatca_file_key()?;
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
     let mut nonce_bytes = [0u8; 12];
@@ -319,7 +319,7 @@ fn zatca_encrypt(plain: &str) -> Result<String, String> {
 
 /// Inverse of `zatca_encrypt`. A value lacking the version prefix is returned
 /// verbatim (legacy plaintext) so already-onboarded devices keep working.
-fn zatca_decrypt(stored: &str) -> Result<String, String> {
+pub(crate) fn zatca_decrypt(stored: &str) -> Result<String, String> {
     let Some(b64) = stored.strip_prefix(ZATCA_ENC_PREFIX) else {
         return Ok(stored.to_string());
     };
