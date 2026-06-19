@@ -41,6 +41,8 @@ export interface LocalCustomer {
   includeInStatements?: boolean;
   /** Default home branch (FK to branches_local.id). */
   branchId?: number | null;
+  /** Dedicated GL receivable account (FK to accounts_local.id). null = default POS AR. */
+  accountId?: number | null;
   createdAt?: string;
   updatedAt?: string;
   /** Soft-delete tombstone (overlay). When true, listCustomers filters this row out. */
@@ -74,6 +76,7 @@ interface RustCustomer {
   location_link?: string | null;
   include_in_statements?: boolean;
   branch_id?: number | null;
+  account_id?: number | null;
 }
 
 function fromRust(r: RustCustomer): LocalCustomer {
@@ -103,6 +106,7 @@ function fromRust(r: RustCustomer): LocalCustomer {
     locationLink: r.location_link ?? null,
     includeInStatements: r.include_in_statements ?? true,
     branchId: r.branch_id ?? null,
+    accountId: r.account_id ?? null,
     updatedAt: r.updated_at ?? undefined,
   };
 }
@@ -243,6 +247,7 @@ export interface CreateCustomerInput {
   locationLink?: string | null;
   includeInStatements?: boolean;
   branchId?: number | null;
+  accountId?: number | null;
 }
 
 /** Build the Rust `profile` struct arg from a customer input (camelCase keys). */
@@ -265,6 +270,9 @@ function toProfile(input: CreateCustomerInput) {
     // COALESCE), explicit null ("— بدون —") → 0 sentinel (clear to NULL),
     // a real id → that id. SQLite branch ids start at 1, so 0 is never valid.
     branchId: input.branchId === null ? 0 : (input.branchId ?? null),
+    // Same tri-state as branchId: undefined → null (preserve via COALESCE/CASE),
+    // explicit null ("— بدون —") → 0 sentinel (clear to NULL), real id → that id.
+    accountId: input.accountId === null ? 0 : (input.accountId ?? null),
   };
 }
 
@@ -339,6 +347,7 @@ function createInLocalStorage(input: CreateCustomerInput, now: string): LocalCus
     locationLink: input.locationLink ?? null,
     includeInStatements: input.includeInStatements ?? true,
     branchId: input.branchId ?? null,
+    accountId: input.accountId ?? null,
     createdAt: now,
     updatedAt: now,
   };

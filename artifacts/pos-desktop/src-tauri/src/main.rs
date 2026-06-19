@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod accounting;
+mod backup;
 mod clock_guard;
 mod customers;
 mod db;
@@ -347,10 +348,32 @@ fn main() {
                     Err(e) => log::warn!("[cleanup] startup cleanup error: {}", e),
                 }
             });
+            // Best-effort daily auto-backup while the app is open. It can only
+            // run when ZACOD POS is actually running — a closed app never backs
+            // up (documented in the Backup screen). First check 20s after launch
+            // (avoids racing DB init), then every 5 minutes.
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(20));
+                loop {
+                    match backup::maybe_auto_backup() {
+                        Ok(Some(p)) => log::info!("[backup] auto backup written to {}", p),
+                        Ok(None) => {}
+                        Err(e) => log::warn!("[backup] auto backup error: {}", e),
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(300));
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             activate_device,
+            backup::backup_get_settings,
+            backup::backup_set_settings,
+            backup::backup_run_now,
+            backup::backup_export,
+            backup::backup_import,
+            backup::pick_folder,
+            backup::data_dir_set,
             sync_now,
             save_text_file,
             get_hardware_fingerprint,

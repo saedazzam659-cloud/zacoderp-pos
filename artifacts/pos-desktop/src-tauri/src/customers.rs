@@ -42,6 +42,7 @@ pub struct LocalCustomer {
     pub location_link: Option<String>,
     pub include_in_statements: bool,
     pub branch_id: Option<i64>,
+    pub account_id: Option<i64>,
 }
 
 const MAX_ROWS: i64 = 500;
@@ -50,7 +51,7 @@ const MAX_ROWS: i64 = 500;
 const SELECT_COLS: &str = "id, cloud_id, name_ar, name_en, phone, vat_number, updated_at, currency_code, balance, \
      credit_limit, enforce_credit_limit, payment_terms_days, \
      cr_number, email, city, district, street, building_number, postal_code, country, \
-     national_address_short, location_lat, location_lng, location_link, include_in_statements, branch_id";
+     national_address_short, location_lat, location_lng, location_link, include_in_statements, branch_id, account_id";
 
 fn row_to_customer(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalCustomer> {
     Ok(LocalCustomer {
@@ -80,6 +81,7 @@ fn row_to_customer(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalCustomer> {
         location_link: row.get(23)?,
         include_in_statements: row.get::<_, Option<i64>>(24)?.unwrap_or(1) != 0,
         branch_id: row.get(25)?,
+        account_id: row.get(26)?,
     })
 }
 
@@ -168,6 +170,7 @@ pub struct CustomerProfile {
     pub location_link: Option<String>,
     pub include_in_statements: Option<bool>,
     pub branch_id: Option<i64>,
+    pub account_id: Option<i64>,
 }
 
 #[tauri::command]
@@ -219,23 +222,29 @@ fn create(
         Some(0) => None,
         other => other,
     };
+    // 0 is the JS "clear" sentinel for account_id too (see toProfile); real
+    // account ids start at 1, so collapse 0 → NULL on insert.
+    let account_id = match profile.account_id {
+        Some(0) => None,
+        other => other,
+    };
     let tx = conn.transaction()?;
     tx.execute(
         "INSERT INTO customers_local (cloud_id, name_ar, name_en, phone, vat_number, currency_code,
                                       credit_limit, enforce_credit_limit, payment_terms_days,
                                       cr_number, email, city, district, street, building_number, postal_code,
                                       country, national_address_short, location_lat, location_lng, location_link,
-                                      include_in_statements, branch_id, updated_at)
+                                      include_in_statements, branch_id, account_id, updated_at)
          VALUES (NULL, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
                  ?9, ?10, ?11, ?12, ?13, ?14, ?15,
                  ?16, ?17, ?18, ?19, ?20,
-                 ?21, ?22, CURRENT_TIMESTAMP)",
+                 ?21, ?22, ?23, CURRENT_TIMESTAMP)",
         rusqlite::params![
             name_ar, name_en, phone, vat_number, cur, cl, enforce as i64, terms,
             profile.cr_number, profile.email, profile.city, profile.district, profile.street,
             profile.building_number, profile.postal_code, country, profile.national_address_short,
             profile.location_lat, profile.location_lng, profile.location_link,
-            include as i64, branch_id,
+            include as i64, branch_id, account_id,
         ],
     )?;
     let id = tx.last_insert_rowid();
@@ -277,6 +286,7 @@ fn create(
         location_link: profile.location_link,
         include_in_statements: include,
         branch_id,
+        account_id,
     })
 }
 
@@ -345,6 +355,9 @@ fn update(
            branch_id              = CASE WHEN ?23 IS NULL THEN branch_id
                                          WHEN ?23 = 0 THEN NULL
                                          ELSE ?23 END,
+           account_id             = CASE WHEN ?24 IS NULL THEN account_id
+                                         WHEN ?24 = 0 THEN NULL
+                                         ELSE ?24 END,
            updated_at           = CURRENT_TIMESTAMP
          WHERE id = ?1",
         rusqlite::params![
@@ -353,7 +366,7 @@ fn update(
             profile.cr_number, profile.email, profile.city, profile.district, profile.street,
             profile.building_number, profile.postal_code, profile.country, profile.national_address_short,
             profile.location_lat, profile.location_lng, profile.location_link,
-            include_int, profile.branch_id,
+            include_int, profile.branch_id, profile.account_id,
         ],
     )?;
     let sql = format!("SELECT {SELECT_COLS} FROM customers_local WHERE id = ?1");

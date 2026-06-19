@@ -44,6 +44,7 @@ import PostingCenter from "./PostingCenter";
 import FiscalPeriods from "./FiscalPeriods";
 import PostingControl from "./PostingControl";
 import PosAccountsSettings from "./PosAccountsSettings";
+import DataBackup from "./DataBackup";
 import PosInvoices from "./PosInvoices";
 import CostCentersAdmin from "./CostCentersAdmin";
 import BranchesAdmin from "./BranchesAdmin";
@@ -217,7 +218,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     key: "pos",
     icon: "🛒",
     label: "نقاط بيع",
-    members: ["sales", "returns", "pos_invoices", "parked", "daily"],
+    members: ["sales", "returns", "pos_invoices", "parked", "daily", "pos_accounts"],
   },
   {
     key: "inventory",
@@ -266,7 +267,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     label: "التحكم العام",
     members: [
       "scale", "branches", "currencies", "exchange_rates", "dashboard",
-      "users", "user_permissions", "posting_control", "network", "number_series", "settings_guide", "zatca", "updates",
+      "users", "user_permissions", "posting_control", "network", "number_series", "settings_guide", "zatca", "backup", "updates",
     ],
   },
 ];
@@ -683,6 +684,7 @@ export default function PosShell({
           { id: "number_series" as View,    icon: "🔢", label: "أرقام المسلسلات", adminOnly: true },
           { id: "posting_control" as View,  icon: "🔀", label: "التحكم في الترحيل", adminOnly: true },
           { id: "pos_accounts" as View,     icon: "💳", label: "إعدادات حسابات نقاط البيع", adminOnly: true },
+          { id: "backup" as View,           icon: "💾", label: "النسخ الاحتياطي", adminOnly: true },
           { id: "user_permissions" as View, icon: "🛡️", label: "صلاحيات المستخدمين", adminOnly: true },
         ]
       : []),
@@ -911,6 +913,9 @@ export default function PosShell({
           )}
           {standalone && v === "pos_accounts" && isAdmin && (
             <div style={S.pagePad}><PosAccountsSettings /></div>
+          )}
+          {standalone && v === "backup" && isAdmin && (
+            <div style={S.pagePad}><DataBackup /></div>
           )}
           {standalone && v === "cost_centers" && (isAdmin || can("cost_centers")) && (
             <div style={S.pagePad}><CostCentersAdmin /></div>
@@ -1256,6 +1261,7 @@ function labelFor(v: View): string {
     fiscal_periods: "الفترات المحاسبية",
     posting_control: "التحكم في الترحيل",
     pos_accounts: "إعدادات حسابات نقاط البيع",
+    backup: "النسخ الاحتياطي",
     pos_invoices: "فواتير نقطة البيع",
     cost_centers: "مراكز التكلفة",
     branches: "الفروع",

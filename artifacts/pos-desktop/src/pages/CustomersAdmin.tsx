@@ -6,8 +6,9 @@ import {
   listCustomers, createCustomer, updateCustomer, deleteCustomer,
   type LocalCustomer, type CreateCustomerInput,
 } from "../lib/customers";
-import { listCurrencies, type Currency } from "../lib/accounting";
+import { listCurrencies, listAccounts, type Currency, type Account } from "../lib/accounting";
 import { listBranches, type Branch } from "../lib/branches";
+import { SearchCombobox } from "./_adminUi";
 
 const emptyInput: CreateCustomerInput = {
   nameAr: "", nameEn: "", phone: "", vatNumber: "",
@@ -17,7 +18,7 @@ const emptyInput: CreateCustomerInput = {
   city: "", district: "", street: "", buildingNumber: "", postalCode: "",
   country: "SA", nationalAddressShort: "",
   locationLat: "", locationLng: "", locationLink: "",
-  includeInStatements: true, branchId: null,
+  includeInStatements: true, branchId: null, accountId: null,
 };
 
 // Customer balance follows AR convention: positive = owes us (مدين).
@@ -38,6 +39,7 @@ export default function CustomersAdmin() {
   const [rows, setRows] = useState<LocalCustomer[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [edit, setEdit] = useState<EditState>(null);
@@ -48,10 +50,11 @@ export default function CustomersAdmin() {
   async function refresh() {
     setLoading(true);
     try {
-      const [cs, cur, br] = await Promise.all([
+      const [cs, cur, br, accs] = await Promise.all([
         listCustomers(search || undefined), listCurrencies(true), listBranches().catch(() => []),
+        listAccounts().catch(() => []),
       ]);
-      setRows(cs); setCurrencies(cur); setBranches(br);
+      setRows(cs); setCurrencies(cur); setBranches(br); setAccounts(accs);
     } finally { setLoading(false); }
   }
   useEffect(() => { void refresh(); /* eslint-disable-next-line */ }, [search]);
@@ -72,6 +75,7 @@ export default function CustomersAdmin() {
       locationLat: c.locationLat ?? "", locationLng: c.locationLng ?? "", locationLink: c.locationLink ?? "",
       includeInStatements: c.includeInStatements ?? true,
       branchId: c.branchId ?? null,
+      accountId: c.accountId ?? null,
     } });
   }
   function cancel() { setEdit(null); setErr(null); }
@@ -105,6 +109,7 @@ export default function CustomersAdmin() {
           locationLat: f.locationLat, locationLng: f.locationLng, locationLink: f.locationLink,
           includeInStatements: f.includeInStatements,
           branchId: f.branchId,
+          accountId: f.accountId,
         });
         setToast({ kind: "ok", text: "تم تحديث العميل" });
       }
@@ -145,6 +150,7 @@ export default function CustomersAdmin() {
           err={err}
           currencyOpts={currencyOpts}
           branches={branches}
+          accounts={accounts}
         />
       )}
 
@@ -207,7 +213,7 @@ export default function CustomersAdmin() {
   );
 }
 
-function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, currencyOpts, branches }: {
+function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, currencyOpts, branches, accounts }: {
   mode: "new" | "edit";
   data: CreateCustomerInput;
   setField: <K extends keyof CreateCustomerInput>(k: K, v: CreateCustomerInput[K]) => void;
@@ -215,8 +221,11 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
   busy: boolean; err: string | null;
   currencyOpts: string[];
   branches: Branch[];
+  accounts: Account[];
 }) {
-  const [tab, setTab] = useState<"basic" | "address" | "credit">("basic");
+  const [tab, setTab] = useState<"basic" | "address" | "credit" | "accounting">("basic");
+  // Only postable (leaf) accounts can be assigned — mirrors the JE account picker.
+  const leafAccounts = accounts.filter((a) => a.isLeaf);
   const handleSave = () => {
     if (!data.nameAr.trim()) setTab("basic");
     onSave();
@@ -229,6 +238,7 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
         <button type="button" onClick={() => setTab("basic")} style={tab === "basic" ? S.tabActive : S.tab}>المعلومات الأساسية</button>
         <button type="button" onClick={() => setTab("address")} style={tab === "address" ? S.tabActive : S.tab}>العنوان الوطني</button>
         <button type="button" onClick={() => setTab("credit")} style={tab === "credit" ? S.tabActive : S.tab}>الائتمان والاستحقاق</button>
+        <button type="button" onClick={() => setTab("accounting")} style={tab === "accounting" ? S.tabActive : S.tab}>إعدادات المحاسبة</button>
       </div>
 
       {tab === "basic" && (
@@ -358,6 +368,29 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
         </>
       )}
       </>
+      )}
+
+      {tab === "accounting" && (
+        <>
+          <div style={S.section}>الربط المحاسبي</div>
+          <div style={S.grid}>
+            <Field label="حساب العميل في دليل الحسابات">
+              <SearchCombobox
+                value={data.accountId ?? ""}
+                onChange={(v) => setField("accountId", v === "" ? null : Number(v))}
+                options={[
+                  { value: "", label: "— بدون (حساب العملاء الافتراضي) —" },
+                  ...leafAccounts.map((a) => ({ value: a.id, label: `${a.code} - ${a.nameAr}` })),
+                ]}
+                style={S.bigInput}
+              />
+            </Field>
+          </div>
+          <div style={S.muted}>
+            عند اختيار حساب، تُرحَّل ذمم هذا العميل إلى هذا الحساب بدلاً من حساب العملاء الافتراضي.
+            تظهر الحسابات الفرعية (القابلة للترحيل) فقط.
+          </div>
+        </>
       )}
 
       {err && <div style={S.formErr}>⚠️ {err}</div>}

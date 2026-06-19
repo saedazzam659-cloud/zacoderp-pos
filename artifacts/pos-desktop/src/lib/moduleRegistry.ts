@@ -47,7 +47,7 @@ export type WindowsView =
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
   | "item_card" | "stock_valuation" | "slow_moving" | "free_quantities" | "item_sales_valuation"
   | "warehouse_groups" | "inventory_dashboard" | "smart_alerts" | "units" | "offers" | "goods_deliveries"
-  | "number_series" | "settings_guide" | "zatca" | "pos_accounts";
+  | "number_series" | "settings_guide" | "zatca" | "pos_accounts" | "backup";
 
 export type WindowsModuleKey =
   | "pos"          // cash-register core: sales, returns, parked, daily, pending
@@ -101,6 +101,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   zatca: { module: "control", profile: "pos" },
   // POS GL account + payment-method config — needed wherever the register runs.
   pos_accounts: { module: "control", profile: "pos" },
+  backup: { module: "control", profile: "pos" },
   // ── ERP-only screens (hidden in the "POS only" profile) ─────────────
   warehouses:        { module: "inventory", profile: "erp" },
   stocktakes:        { module: "inventory", profile: "erp" },

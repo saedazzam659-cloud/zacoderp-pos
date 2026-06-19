@@ -7,15 +7,83 @@
 // future task once a stable Windows OpenSSL toolchain is in place.
 
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::path::PathBuf;
 
-pub fn db_path() -> PathBuf {
+// The DEFAULT data root: %APPDATA%\com.zacoderp.pos (Windows).
+pub fn default_data_root() -> PathBuf {
     let mut p = dirs::data_dir().expect("no data dir");
     p.push("com.zacoderp.pos");
+    p
+}
+
+// A FIXED config dir that NEVER moves, even when the data root is relocated.
+// It holds the tiny pointer file that records a custom data-folder choice so
+// db_path() can find the (possibly relocated) database on the next launch.
+// On Windows config_dir() == data_dir() == %APPDATA%, but using config_dir()
+// keeps the intent explicit and survives a future split.
+pub fn config_root() -> PathBuf {
+    let mut p = dirs::config_dir().expect("no config dir");
+    p.push("com.zacoderp.pos");
+    std::fs::create_dir_all(&p).ok();
+    p
+}
+
+fn data_dir_pointer_file() -> PathBuf {
+    let mut p = config_root();
+    p.push("datadir.cfg");
+    p
+}
+
+// The EFFECTIVE data root: the user-chosen folder if one was set (and still
+// exists), otherwise the default. The pointer file lives in the fixed config
+// dir, so relocating the data folder does not lose track of itself.
+pub fn data_root() -> PathBuf {
+    if let Ok(s) = std::fs::read_to_string(data_dir_pointer_file()) {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            let p = PathBuf::from(trimmed);
+            if p.is_dir() {
+                return p;
+            }
+        }
+    }
+    default_data_root()
+}
+
+// Write (or clear, with None) the data-folder override pointer. Passing None or
+// an empty string reverts to the default data root.
+pub fn set_data_dir_override(dir: Option<&str>) -> std::io::Result<()> {
+    let f = data_dir_pointer_file();
+    match dir {
+        Some(d) if !d.trim().is_empty() => std::fs::write(&f, d.trim()),
+        _ => {
+            let _ = std::fs::remove_file(&f);
+            Ok(())
+        }
+    }
+}
+
+pub fn db_path() -> PathBuf {
+    let mut p = data_root();
     std::fs::create_dir_all(&p).ok();
     p.push("pos.db");
     p
+}
+
+// ── app_config key/value helpers ─────────────────────────────────────────
+pub fn get_config(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row("SELECT value FROM app_config WHERE key = ?1", [key], |r| r.get(0))
+        .optional()
+}
+
+pub fn set_config(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO app_config(key, value) VALUES(?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![key, value],
+    )?;
+    Ok(())
 }
 
 pub fn open() -> Result<Connection> {
@@ -950,6 +1018,10 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE customers_local ADD COLUMN location_link TEXT",
         "ALTER TABLE customers_local ADD COLUMN include_in_statements INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE customers_local ADD COLUMN branch_id INTEGER",
+        // Dedicated GL receivable account for this customer (chosen from the
+        // chart of accounts in the "إعدادات المحاسبة" tab). NULL = use the
+        // default POS AR account. Locally-set; cloud Pull never overwrites it.
+        "ALTER TABLE customers_local ADD COLUMN account_id INTEGER",
         // ── Supplier profile parity with web (Phase W2) ──
         // CR number, email, full national address, and statement-participation
         // flag mirroring the customer columns. ap_account_id already exists.
