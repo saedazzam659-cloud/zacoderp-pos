@@ -111,20 +111,44 @@ pub fn default_warehouse_id_in_tx(tx: &Transaction) -> Result<i64, String> {
 // ─── Warehouses CRUD ────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Warehouse {
     pub id: i64,
     pub code: String,
     pub name: String,
+    pub name_en: Option<String>,
     pub address: Option<String>,
+    pub group_id: Option<i64>,
+    pub branch_id: Option<i64>,
+    pub city: Option<String>,
+    pub region: Option<String>,
+    pub allow_negative: bool,
+    pub negative_limit: Option<f64>,
+    pub account_id: Option<i64>,
+    // Kept snake_case on the wire (TS reads w.is_default / w.is_active across
+    // ~13 screens) even though the rest of the struct is camelCase.
+    #[serde(rename = "is_default")]
     pub is_default: bool,
+    #[serde(rename = "is_active")]
     pub is_active: bool,
 }
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WarehouseInput {
     pub code: String,
     pub name: String,
+    pub name_en: Option<String>,
     pub address: Option<String>,
+    pub group_id: Option<i64>,
+    pub branch_id: Option<i64>,
+    pub city: Option<String>,
+    pub region: Option<String>,
+    pub allow_negative: Option<bool>,
+    pub negative_limit: Option<f64>,
+    pub account_id: Option<i64>,
+    #[serde(rename = "is_default")]
     pub is_default: Option<bool>,
+    #[serde(rename = "is_active")]
     pub is_active: Option<bool>,
 }
 
@@ -132,14 +156,24 @@ pub struct WarehouseInput {
 pub fn warehouses_list() -> Result<Vec<Warehouse>, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT id,code,name,address,is_default,is_active FROM warehouses_local ORDER BY is_default DESC, name",
+        "SELECT id,code,name,name_en,address,group_id,branch_id,city,region,\
+                allow_negative,negative_limit,account_id,is_default,is_active \
+         FROM warehouses_local ORDER BY is_default DESC, name",
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], |r| Ok(Warehouse {
-        id: r.get(0)?, code: r.get(1)?, name: r.get(2)?, address: r.get(3)?,
-        is_default: r.get::<_, i64>(4)? != 0, is_active: r.get::<_, i64>(5)? != 0,
+        id: r.get(0)?, code: r.get(1)?, name: r.get(2)?, name_en: r.get(3)?, address: r.get(4)?,
+        group_id: r.get(5)?, branch_id: r.get(6)?, city: r.get(7)?, region: r.get(8)?,
+        allow_negative: r.get::<_, i64>(9)? != 0, negative_limit: r.get(10)?, account_id: r.get(11)?,
+        is_default: r.get::<_, i64>(12)? != 0, is_active: r.get::<_, i64>(13)? != 0,
     })).map_err(|e| e.to_string())?;
     let mut out = vec![]; for r in rows { out.push(r.map_err(|e| e.to_string())?); }
     Ok(out)
+}
+
+// Empty strings from the UI are normalised to NULL so optional text columns
+// stay clean (no stray "" rows) and the edit form's "بدون" state round-trips.
+fn norm_opt(s: Option<String>) -> Option<String> {
+    s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
 #[tauri::command]
@@ -154,8 +188,12 @@ pub fn warehouses_create(input: WarehouseInput) -> Result<i64, String> {
         tx.execute("UPDATE warehouses_local SET is_default=0", []).map_err(|e| e.to_string())?;
     }
     tx.execute(
-        "INSERT INTO warehouses_local(code,name,address,is_default,is_active) VALUES(?1,?2,?3,?4,?5)",
-        params![input.code.trim(), input.name.trim(), input.address,
+        "INSERT INTO warehouses_local\
+         (code,name,name_en,address,group_id,branch_id,city,region,allow_negative,negative_limit,account_id,is_default,is_active) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+        params![input.code.trim(), input.name.trim(), norm_opt(input.name_en), norm_opt(input.address),
+            input.group_id, input.branch_id, norm_opt(input.city), norm_opt(input.region),
+            if input.allow_negative.unwrap_or(false) { 1 } else { 0 }, input.negative_limit, input.account_id,
             if is_default { 1 } else { 0 },
             if input.is_active.unwrap_or(true) { 1 } else { 0 }],
     ).map_err(|e| e.to_string())?;
@@ -173,8 +211,12 @@ pub fn warehouses_update(id: i64, input: WarehouseInput) -> Result<(), String> {
         tx.execute("UPDATE warehouses_local SET is_default=0 WHERE id!=?1", params![id]).map_err(|e| e.to_string())?;
     }
     tx.execute(
-        "UPDATE warehouses_local SET code=?1, name=?2, address=?3, is_default=?4, is_active=?5 WHERE id=?6",
-        params![input.code.trim(), input.name.trim(), input.address,
+        "UPDATE warehouses_local SET code=?1, name=?2, name_en=?3, address=?4, group_id=?5, branch_id=?6, \
+                city=?7, region=?8, allow_negative=?9, negative_limit=?10, account_id=?11, is_default=?12, is_active=?13 \
+         WHERE id=?14",
+        params![input.code.trim(), input.name.trim(), norm_opt(input.name_en), norm_opt(input.address),
+            input.group_id, input.branch_id, norm_opt(input.city), norm_opt(input.region),
+            if input.allow_negative.unwrap_or(false) { 1 } else { 0 }, input.negative_limit, input.account_id,
             if is_default { 1 } else { 0 },
             if input.is_active.unwrap_or(true) { 1 } else { 0 },
             id],

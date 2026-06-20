@@ -105,3 +105,4 @@
 - [POS Desktop clock-rollback guard](pos-desktop-clock-guard.md) — wall-clock-vs-HWM alone is freezable; fold a monotonic performance.now() anchor into effectiveNow=max(now,HWM); guard both boot trees; TS owns logic, Rust only the encrypted file.
 - [Party import allow-duplicates](party-import-allow-duplicates.md) — insert-every-row mode must pass forceNew to ensure*Ledger (idempotent-by-name) or same-named parties share one AR acct; customer upload UI is GeneralSettings.tsx, NOT the DataImportExport wizard.
 - [Aggregate view composite key](aggregate-view-composite-key.md) — multi-table "show all" grids must key selection/bulk/busy/testid by module:id, not numeric id; id collides across tables → bulk hits wrong doc.
+- [POS Desktop warehouse serde contract](pos-desktop-warehouse-serde-contract.md) — Warehouse struct is rename_all camelCase BUT is_default/is_active pinned snake (explicit rename) — ~13 screens read w.is_default; never auto-convert a 3rd bool.

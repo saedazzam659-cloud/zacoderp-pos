@@ -537,13 +537,21 @@ pub fn initialize() -> Result<()> {
         -- the on-hand row inside the same transaction.
 
         CREATE TABLE IF NOT EXISTS warehouses_local (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            code        TEXT NOT NULL UNIQUE,
-            name        TEXT NOT NULL,
-            address     TEXT,
-            is_default  INTEGER NOT NULL DEFAULT 0,
-            is_active   INTEGER NOT NULL DEFAULT 1,
-            created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            code           TEXT NOT NULL UNIQUE,
+            name           TEXT NOT NULL,
+            name_en        TEXT,
+            address        TEXT,
+            group_id       INTEGER,
+            branch_id      INTEGER,
+            city           TEXT,
+            region         TEXT,
+            allow_negative INTEGER NOT NULL DEFAULT 0,
+            negative_limit REAL,
+            account_id     INTEGER,
+            is_default     INTEGER NOT NULL DEFAULT 0,
+            is_active      INTEGER NOT NULL DEFAULT 1,
+            created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS stock_on_hand_local (
@@ -1073,6 +1081,20 @@ pub fn initialize() -> Result<()> {
         // filter without a header join. All nullable — old rows = untagged.
         "ALTER TABLE journal_entries_local ADD COLUMN branch_id INTEGER",
         "ALTER TABLE journal_entries_local ADD COLUMN cost_center_id INTEGER",
+        // ── Warehouse master parity with web (Phase W3) ──
+        // English name, classification group, home branch, city/region,
+        // negative-stock policy (+ optional limit) and a dedicated inventory
+        // GL account — mirroring the web Warehouses screen. All nullable /
+        // defaulted so existing rows keep their meaning post-upgrade. The
+        // single base `name` column doubles as the Arabic name (nameAr).
+        "ALTER TABLE warehouses_local ADD COLUMN name_en TEXT",
+        "ALTER TABLE warehouses_local ADD COLUMN group_id INTEGER",
+        "ALTER TABLE warehouses_local ADD COLUMN branch_id INTEGER",
+        "ALTER TABLE warehouses_local ADD COLUMN city TEXT",
+        "ALTER TABLE warehouses_local ADD COLUMN region TEXT",
+        "ALTER TABLE warehouses_local ADD COLUMN allow_negative INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE warehouses_local ADD COLUMN negative_limit REAL",
+        "ALTER TABLE warehouses_local ADD COLUMN account_id INTEGER",
         "ALTER TABLE journal_entry_lines_local ADD COLUMN cost_center_id INTEGER",
         "ALTER TABLE sales_invoices_local ADD COLUMN branch_id INTEGER",
         "ALTER TABLE sales_invoices_local ADD COLUMN cost_center_id INTEGER",

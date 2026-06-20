@@ -16,15 +16,32 @@ function hasTauri(): boolean {
 export interface Warehouse {
   id: number;
   code: string;
+  /** Arabic name (the single base `name` column doubles as nameAr). */
   name: string;
+  nameEn: string | null;
   address: string | null;
+  groupId: number | null;
+  branchId: number | null;
+  city: string | null;
+  region: string | null;
+  allowNegative: boolean;
+  negativeLimit: number | null;
+  accountId: number | null;
   is_default: boolean;
   is_active: boolean;
 }
 export interface WarehouseInput {
   code: string;
   name: string;
+  nameEn?: string | null;
   address?: string | null;
+  groupId?: number | null;
+  branchId?: number | null;
+  city?: string | null;
+  region?: string | null;
+  allowNegative?: boolean;
+  negativeLimit?: number | null;
+  accountId?: number | null;
   is_default?: boolean;
   is_active?: boolean;
 }
