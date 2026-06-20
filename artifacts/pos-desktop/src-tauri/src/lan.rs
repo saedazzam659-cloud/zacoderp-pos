@@ -365,7 +365,7 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
         "find_item_by_plu" => crate::items::find_item_by_plu(s_req("plu")?)
             .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "list_expiring_items" => {
-            crate::items::list_expiring_items(i_req("within_days")?)
+            crate::items::list_expiring_items(i_req("withinDays")?)
                 .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
         }
         "seed_demo_items" => crate::items::seed_demo_items()
@@ -378,54 +378,54 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
         }
         "insert_local_item" => crate::items::insert_local_item(
             s_opt("code"),
-            s_req("name_ar")?,
-            s_opt("name_en"),
+            s_req("nameAr")?,
+            s_opt("nameEn"),
             s_opt("barcode"),
-            f_req("sale_price")?,
-            f_req("vat_rate")?,
-            i_opt("uom_id"),
-            s_opt("active_ingredient"),
-            s_opt("dosage_form"),
+            f_req("salePrice")?,
+            f_req("vatRate")?,
+            i_opt("uomId"),
+            s_opt("activeIngredient"),
+            s_opt("dosageForm"),
             s_opt("strength"),
             s_opt("manufacturer"),
-            b_opt("requires_prescription"),
+            b_opt("requiresPrescription"),
             b_opt("controlled"),
-            s_opt("expiry_date"),
-            s_opt("batch_no"),
-            b_opt("is_weighed"),
-            f_opt("price_per_kg"),
+            s_opt("expiryDate"),
+            s_opt("batchNo"),
+            b_opt("isWeighed"),
+            f_opt("pricePerKg"),
             s_opt("plu"),
         )
         .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "update_local_item" => crate::items::update_local_item(
             i_req("id")?,
             s_opt("code"),
-            s_req("name_ar")?,
-            s_opt("name_en"),
+            s_req("nameAr")?,
+            s_opt("nameEn"),
             s_opt("barcode"),
-            f_req("sale_price")?,
-            f_req("vat_rate")?,
-            i_opt("uom_id"),
+            f_req("salePrice")?,
+            f_req("vatRate")?,
+            i_opt("uomId"),
         )
         .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "delete_local_item" => crate::items::delete_local_item(i_req("id")?)
             .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "update_local_item_extended" => crate::items::update_local_item_extended(
             i_req("id")?,
-            s_opt("active_ingredient"),
-            s_opt("dosage_form"),
+            s_opt("activeIngredient"),
+            s_opt("dosageForm"),
             s_opt("strength"),
             s_opt("manufacturer"),
-            b_opt("requires_prescription"),
+            b_opt("requiresPrescription"),
             b_opt("controlled"),
-            s_opt("expiry_date"),
-            s_opt("batch_no"),
+            s_opt("expiryDate"),
+            s_opt("batchNo"),
         )
         .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "update_local_item_weighed" => crate::items::update_local_item_weighed(
             i_req("id")?,
-            b_opt("is_weighed"),
-            f_opt("price_per_kg"),
+            b_opt("isWeighed"),
+            f_opt("pricePerKg"),
             s_opt("plu"),
         )
         .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),

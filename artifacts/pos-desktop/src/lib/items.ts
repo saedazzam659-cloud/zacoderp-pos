@@ -96,14 +96,14 @@ async function migrateLegacyItems(): Promise<void> {
     if (!r.nameAr) continue;                           // malformed — discard
     try {
       const id = await tauriInvoke<number>("insert_local_item", {
-        code: r.code ?? null, name_ar: r.nameAr, name_en: r.nameEn ?? null,
-        barcode: r.barcode ?? null, sale_price: r.salePrice, vat_rate: r.vatRate,
-        uom_id: r.uomId ?? null,
-        active_ingredient: r.activeIngredient ?? null, dosage_form: r.dosageForm ?? null,
+        code: r.code ?? null, nameAr: r.nameAr, nameEn: r.nameEn ?? null,
+        barcode: r.barcode ?? null, salePrice: r.salePrice, vatRate: r.vatRate,
+        uomId: r.uomId ?? null,
+        activeIngredient: r.activeIngredient ?? null, dosageForm: r.dosageForm ?? null,
         strength: r.strength ?? null, manufacturer: r.manufacturer ?? null,
-        requires_prescription: r.requiresPrescription ?? null, controlled: r.controlled ?? null,
-        expiry_date: r.expiryDate ?? null, batch_no: r.batchNo ?? null,
-        is_weighed: r.isWeighed ?? null, price_per_kg: r.pricePerKg ?? null, plu: r.plu ?? null,
+        requiresPrescription: r.requiresPrescription ?? null, controlled: r.controlled ?? null,
+        expiryDate: r.expiryDate ?? null, batchNo: r.batchNo ?? null,
+        isWeighed: r.isWeighed ?? null, pricePerKg: r.pricePerKg ?? null, plu: r.plu ?? null,
       });
       writeMetaFor(id, metaFrom(r));
     } catch { keep.push(r); failed++; /* keep so a later run can retry */ }
@@ -480,14 +480,14 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
   // classification) go to the meta overlay. No push queue (there is no cloud).
   if (shouldUseBridge() && await isStandalone()) {
     const id = await tauriInvoke<number>("insert_local_item", {
-      code: input.code ?? null, name_ar: input.nameAr, name_en: input.nameEn ?? null,
-      barcode: input.barcode ?? null, sale_price: input.salePrice, vat_rate: input.vatRate,
-      uom_id: input.uomId ?? null,
-      active_ingredient: input.activeIngredient ?? null, dosage_form: input.dosageForm ?? null,
+      code: input.code ?? null, nameAr: input.nameAr, nameEn: input.nameEn ?? null,
+      barcode: input.barcode ?? null, salePrice: input.salePrice, vatRate: input.vatRate,
+      uomId: input.uomId ?? null,
+      activeIngredient: input.activeIngredient ?? null, dosageForm: input.dosageForm ?? null,
       strength: input.strength ?? null, manufacturer: input.manufacturer ?? null,
-      requires_prescription: input.requiresPrescription ?? null, controlled: input.controlled ?? null,
-      expiry_date: input.expiryDate ?? null, batch_no: input.batchNo ?? null,
-      is_weighed: input.isWeighed ?? null, price_per_kg: input.pricePerKg ?? null, plu: input.plu ?? null,
+      requiresPrescription: input.requiresPrescription ?? null, controlled: input.controlled ?? null,
+      expiryDate: input.expiryDate ?? null, batchNo: input.batchNo ?? null,
+      isWeighed: input.isWeighed ?? null, pricePerKg: input.pricePerKg ?? null, plu: input.plu ?? null,
     });
     writeMetaFor(id, metaFrom(input));
     return {
@@ -573,21 +573,21 @@ export async function bulkImportLocalItems(
       try {
         await tauriInvoke<number>("insert_local_item", {
           code: r.code ?? null,
-          name_ar: r.nameAr,
-          name_en: r.nameEn ?? null,
+          nameAr: r.nameAr,
+          nameEn: r.nameEn ?? null,
           barcode: r.barcode ?? null,
-          sale_price: r.salePrice,
-          vat_rate: r.vatRate,
-          active_ingredient: r.activeIngredient ?? null,
-          dosage_form: r.dosageForm ?? null,
+          salePrice: r.salePrice,
+          vatRate: r.vatRate,
+          activeIngredient: r.activeIngredient ?? null,
+          dosageForm: r.dosageForm ?? null,
           strength: r.strength ?? null,
           manufacturer: r.manufacturer ?? null,
-          requires_prescription: r.requiresPrescription ?? null,
+          requiresPrescription: r.requiresPrescription ?? null,
           controlled: r.controlled ?? null,
-          expiry_date: r.expiryDate ?? null,
-          batch_no: r.batchNo ?? null,
-          is_weighed: r.isWeighed ?? null,
-          price_per_kg: r.pricePerKg ?? null,
+          expiryDate: r.expiryDate ?? null,
+          batchNo: r.batchNo ?? null,
+          isWeighed: r.isWeighed ?? null,
+          pricePerKg: r.pricePerKg ?? null,
           plu: r.plu ?? null,
         });
         inserted++;
@@ -619,7 +619,7 @@ export async function bulkImportLocalItems(
 export async function listExpiringItems(withinDays = 90): Promise<LocalItem[]> {
   if (shouldUseBridge()) {
     try {
-      const rows = await tauriInvoke<RustItem[]>("list_expiring_items", { within_days: withinDays });
+      const rows = await tauriInvoke<RustItem[]>("list_expiring_items", { withinDays });
       return rows.map(fromRust);
     } catch { /* fall through */ }
   }
@@ -670,14 +670,14 @@ export async function updateItemExtended(
   try {
     await tauriInvoke("update_local_item_extended", {
       id,
-      active_ingredient: fields.activeIngredient ?? null,
-      dosage_form: fields.dosageForm ?? null,
+      activeIngredient: fields.activeIngredient ?? null,
+      dosageForm: fields.dosageForm ?? null,
       strength: fields.strength ?? null,
       manufacturer: fields.manufacturer ?? null,
-      requires_prescription: fields.requiresPrescription ?? null,
+      requiresPrescription: fields.requiresPrescription ?? null,
       controlled: fields.controlled ?? null,
-      expiry_date: fields.expiryDate ?? null,
-      batch_no: fields.batchNo ?? null,
+      expiryDate: fields.expiryDate ?? null,
+      batchNo: fields.batchNo ?? null,
     });
   } catch (e) {
     // Surface as a thrown error so the form can show it; pharma fields are
@@ -707,8 +707,8 @@ export async function updateItemWeighed(
   try {
     await tauriInvoke("update_local_item_weighed", {
       id,
-      is_weighed: fields.isWeighed ?? null,
-      price_per_kg: fields.pricePerKg ?? null,
+      isWeighed: fields.isWeighed ?? null,
+      pricePerKg: fields.pricePerKg ?? null,
       plu: fields.plu ?? null,
     });
   } catch (e: any) {
@@ -760,9 +760,9 @@ export async function updateItem(id: number, patch: Partial<CreateItemInput>): P
     const merged: LocalItem = { ...current, ...patch, updatedAt: new Date().toISOString() };
     await tauriInvoke("update_local_item", {
       id,
-      code: merged.code ?? null, name_ar: merged.nameAr, name_en: merged.nameEn ?? null,
-      barcode: merged.barcode ?? null, sale_price: merged.salePrice, vat_rate: merged.vatRate,
-      uom_id: merged.uomId ?? null,
+      code: merged.code ?? null, nameAr: merged.nameAr, nameEn: merged.nameEn ?? null,
+      barcode: merged.barcode ?? null, salePrice: merged.salePrice, vatRate: merged.vatRate,
+      uomId: merged.uomId ?? null,
     });
     writeMetaFor(id, metaFrom(merged));
     return merged;
