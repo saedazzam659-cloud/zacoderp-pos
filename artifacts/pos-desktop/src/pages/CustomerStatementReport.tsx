@@ -113,14 +113,29 @@ export default function CustomerStatementReport() {
       // Opening = net movement of every document dated BEFORE the period start.
       // The period is INCLUSIVE on both ends; movements after toDate are excluded
       // entirely (they belong to a later statement, not this one).
-      let opening = 0;
-      // Seed the opening balance from the create-time overlay (the GL opening
-      // JE is invisible to a document-based statement). Only counts when it
-      // predates the period start; debit (مدين) raises AR, credit lowers it.
+      //
+      // Seed the create-time opening overlay (the GL opening JE is invisible to a
+      // document-based statement) as a normal movement dated on openingDate: if it
+      // predates the period it folds into the opening balance below; if it falls
+      // INSIDE the period it shows as a visible "رصيد افتتاحي" row. It used to be
+      // dropped entirely whenever it was dated on/after the period start, so an
+      // opening entered on the same day you create the customer never appeared.
+      // debit (مدين) raises AR, credit lowers it.
       const ov = getCustomerOpening(customerId);
-      if (ov && ov.openingDate < fromDate) {
-        opening += ov.openingNature === "debit" ? ov.openingBalance : -ov.openingBalance;
+      if (ov && ov.openingBalance) {
+        all.push({
+          date: ov.openingDate,
+          docType: "رصيد افتتاحي",
+          docNo: "—",
+          description: "رصيد افتتاحي للعميل",
+          debit: ov.openingNature === "debit" ? ov.openingBalance : 0,
+          credit: ov.openingNature === "credit" ? ov.openingBalance : 0,
+        });
+        all.sort((a, b) =>
+          a.date < b.date ? -1 : a.date > b.date ? 1
+            : a.docNo.localeCompare(b.docNo, undefined, { numeric: true }));
       }
+      let opening = 0;
       const inRange: StmtLine[] = [];
       for (const l of all) {
         if (l.date < fromDate) opening += l.debit - l.credit;

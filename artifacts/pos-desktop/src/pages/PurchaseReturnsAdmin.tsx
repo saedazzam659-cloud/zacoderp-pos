@@ -278,7 +278,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
         currencyCode: currency, exchangeRate: effRate,
       });
       onDone();
-    } catch (e: any) { setErr(e?.message ?? "فشل"); }
+    } catch (e: any) { setErr(typeof e === "string" ? e : (e?.message ?? "فشل")); }
     finally { setBusy(false); }
   }
 

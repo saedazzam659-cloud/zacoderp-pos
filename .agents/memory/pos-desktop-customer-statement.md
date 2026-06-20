@@ -21,3 +21,15 @@ double-count.
 **How to apply:** any new doc type that affects customer AR (e.g. opening-balance
 JE, debit notes) must be folded into the same TS aggregation, with the same
 credit-only gate and the same inclusive date window.
+
+**Opening overlay must be a dated movement, not a strict-`<fromDate` seed.** The
+create-time opening overlay (`getCustomerOpening`) must be injected into the doc
+list as a synthetic StmtLine dated on `openingDate`, then run through the SAME
+date-window loop. Seeding it only when `openingDate < fromDate` (strict) silently
+DROPPED any opening dated inside the period — the classic case being: add a
+customer today with an opening balance, then open the default this-year statement
+(`fromDate = firstOfYear`). The opening (dated today) was neither `< fromDate`
+(so not in opening) nor a document (so not a line) → it vanished entirely and the
+statement looked empty. As a dated line it folds into opening when before the
+period and shows as a visible "رصيد افتتاحي" row when inside it. No double-count
+risk: this screen reads documents, never the GL opening JE.

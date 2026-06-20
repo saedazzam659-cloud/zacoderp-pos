@@ -563,7 +563,7 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
         currencyCode: currency, exchangeRate: effRate,
       });
       onDone();
-    } catch (e: any) { setErr(e?.message ?? "فشل"); }
+    } catch (e: any) { setErr(typeof e === "string" ? e : (e?.message ?? "فشل")); }
     finally { setBusy(false); }
   }
 
