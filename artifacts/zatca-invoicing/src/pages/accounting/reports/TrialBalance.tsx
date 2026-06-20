@@ -19,6 +19,10 @@ import {
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
 import CostCenterFilter from "@/components/CostCenterFilter";
+import AccountParentFilter from "@/components/AccountParentFilter";
+import AccountLevelFilter from "@/components/AccountLevelFilter";
+import { useAccountTree } from "@/hooks/useAccountTree";
+import { descendantIds, matchesAccountFilters, type AccountLevelMode } from "@/lib/accountTree";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 import {
   Scale, Search, Printer, Eye, ExternalLink, Loader2, AlertCircle, FileText,
@@ -148,13 +152,21 @@ export default function TrialBalance() {
   const [costCenterIds, setCostCenterIds] = useState<number[]>([]);
   const [searched, setSearched] = useState(false);
   const [drillRow, setDrillRow] = useState<any | null>(null);
+  // General-accounts filters (client-side, no API change):
+  //   • showZero        → reveal pure-zero accounts (hidden by default)
+  //   • accountParentIds → keep only descendants of the chosen parents
+  //   • levelMode        → first-level / last-level (leaf) restriction
+  const [showZero, setShowZero] = useState(false);
+  const [accountParentIds, setAccountParentIds] = useState<number[]>([]);
+  const [levelMode, setLevelMode] = useState<AccountLevelMode>("all");
+  const { tree } = useAccountTree();
 
   // Stable serialised key (sorted) so identical multi-selections in any
   // order reuse the same React-Query cache entry. Mirrors the Income
   // Statement / Account Statement convention.
   const ccCsv = costCenterIds.length ? [...costCenterIds].sort((a, b) => a - b).join(",") : "";
 
-  const { data: rows = [], isLoading, refetch } = useQuery<any[]>({
+  const { data: rawRows = [], isLoading, refetch } = useQuery<any[]>({
     queryKey: ["trial-balance", cid, fromDate, toDate, branchId, ccCsv],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -167,13 +179,25 @@ export default function TrialBalance() {
       return res.json();
     },
     enabled: searched,
-    // Show any account that had movement OR carried an opening/closing
-    // balance — pure-zero rows are hidden so the report stays compact.
-    select: (data) => data.filter((r: any) =>
-      r.totalDebit > 0 || r.totalCredit > 0 ||
-      (r.openingBalance ?? 0) !== 0 || (r.closingBalance ?? 0) !== 0
-    ),
   });
+
+  // Client-side filtering: zero-balance gate + parent/level filters. The
+  // grid AND the print table both derive from `rows`, so they stay in sync.
+  const parentDescendants = useMemo(
+    () => descendantIds(tree, accountParentIds),
+    [tree, accountParentIds],
+  );
+  const rows = useMemo(() => {
+    return rawRows.filter((r: any) => {
+      // Pure-zero rows (no movement, no opening/closing) are hidden unless
+      // the user ticks «عرض الحسابات الصفرية».
+      const nonZero =
+        r.totalDebit > 0 || r.totalCredit > 0 ||
+        (r.openingBalance ?? 0) !== 0 || (r.closingBalance ?? 0) !== 0;
+      if (!showZero && !nonZero) return false;
+      return matchesAccountFilters(Number(r.id), tree, { parentDescendants, levelMode });
+    });
+  }, [rawRows, showZero, parentDescendants, levelMode, tree]);
 
   // Period movement totals (must match: ΣDr === ΣCr for a balanced book)
   const totalDr  = rows.reduce((s, r) => s + (r.totalDebit  || 0), 0);
@@ -379,8 +403,8 @@ export default function TrialBalance() {
       </div>
 
       {/* Filters */}
-      <div className="rounded-xl border bg-card p-4 shadow-sm">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
+      <div className="rounded-xl border bg-card p-4 shadow-sm space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-end">
           <div className="space-y-1.5">
             <Label>{t("accountingReports.fromDate")}</Label>
             <DateField value={fromDate} onChange={e => setFromDate(e.target.value)} />
@@ -391,6 +415,14 @@ export default function TrialBalance() {
           </div>
           <BranchFilter value={branchId} onChange={setBranchId} />
           <CostCenterFilter value={costCenterIds} onChange={setCostCenterIds} />
+          <AccountParentFilter value={accountParentIds} onChange={setAccountParentIds} />
+          <AccountLevelFilter value={levelMode} onChange={setLevelMode} />
+        </div>
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+            <Checkbox checked={showZero} onCheckedChange={(c) => setShowZero(c === true)} />
+            {t("accountingReports.showZeroAccounts", "عرض الحسابات الصفرية")}
+          </label>
           <Button className="gap-2" onClick={() => { setSearched(true); refetch(); }} disabled={isLoading}>
             <Search className="h-4 w-4" />
             {isLoading ? t("accountingReports.loading") : t("accountingReports.show_trial_balance")}

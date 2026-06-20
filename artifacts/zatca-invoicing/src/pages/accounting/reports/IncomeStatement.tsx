@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
@@ -7,9 +7,14 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
 import CostCenterFilter from "@/components/CostCenterFilter";
+import AccountParentFilter from "@/components/AccountParentFilter";
+import AccountLevelFilter from "@/components/AccountLevelFilter";
+import { useAccountTree } from "@/hooks/useAccountTree";
+import { descendantIds, matchesAccountFilters, type AccountLevelMode } from "@/lib/accountTree";
 import { TrendingUp, Search, Printer, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
@@ -30,6 +35,10 @@ export default function IncomeStatement() {
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
   const [costCenterIds, setCostCenterIds] = useState<number[]>([]);
   const [searched, setSearched] = useState(false);
+  const [showZero, setShowZero] = useState(false);
+  const [accountParentIds, setAccountParentIds] = useState<number[]>([]);
+  const [levelMode, setLevelMode] = useState<AccountLevelMode>("all");
+  const { tree } = useAccountTree();
 
   // Stable serialised key for React-Query so identical selections (in
   // any order) reuse the same cache entry. Sort numerically before
@@ -51,7 +60,22 @@ export default function IncomeStatement() {
     enabled: searched,
   });
 
-  const netIncome = data?.netIncome ?? 0;
+  // Client-side filtering (zero gate + parent/level). Totals are
+  // RECOMPUTED from the filtered rows so the displayed totals + net income
+  // always match the visible lines. With no parent/level filter and zeros
+  // hidden, these sums equal the backend totals (zero-net rows add 0).
+  const parentDescendants = useMemo(() => descendantIds(tree, accountParentIds), [tree, accountParentIds]);
+  const filterGroup = (arr: any[] | undefined) =>
+    (arr ?? []).filter((r: any) => {
+      if (!showZero && r.totalCredit === r.totalDebit) return false;
+      return matchesAccountFilters(Number(r.id), tree, { parentDescendants, levelMode });
+    });
+  const shownRevenues = useMemo(() => filterGroup(data?.revenues), [data, showZero, parentDescendants, levelMode, tree]);
+  const shownExpenses = useMemo(() => filterGroup(data?.expenses), [data, showZero, parentDescendants, levelMode, tree]);
+
+  const totalRevenue  = shownRevenues.reduce((s, r) => s + (r.totalCredit - r.totalDebit), 0);
+  const totalExpenses = shownExpenses.reduce((s, r) => s + (r.totalDebit - r.totalCredit), 0);
+  const netIncome = totalRevenue - totalExpenses;
   const isProfit  = netIncome >= 0;
 
   // Build the deep-link href to the Account Statement (ledger) page,
@@ -69,12 +93,12 @@ export default function IncomeStatement() {
   };
 
   const exportRows = data ? [
-    ...(data.revenues ?? []).filter((r: any) => r.totalCredit !== r.totalDebit).map((r: any) =>
+    ...shownRevenues.map((r: any) =>
       ({ section: t("incomeStatement.revenues"), code: r.code, name: isRtl ? r.nameAr : (r.nameEn || r.nameAr), amount: fmt(r.totalCredit - r.totalDebit) })),
-    { section: "", code: "", name: t("incomeStatement.totalRevenues"), amount: fmt(data.totalRevenue) },
-    ...(data.expenses ?? []).filter((r: any) => r.totalDebit !== r.totalCredit).map((r: any) =>
+    { section: "", code: "", name: t("incomeStatement.totalRevenues"), amount: fmt(totalRevenue) },
+    ...shownExpenses.map((r: any) =>
       ({ section: t("incomeStatement.expenses"), code: r.code, name: isRtl ? r.nameAr : (r.nameEn || r.nameAr), amount: fmt(r.totalDebit - r.totalCredit) })),
-    { section: "", code: "", name: t("incomeStatement.totalExpenses"), amount: fmt(data.totalExpenses) },
+    { section: "", code: "", name: t("incomeStatement.totalExpenses"), amount: fmt(totalExpenses) },
     { section: "", code: "", name: isProfit ? t("incomeStatement.netProfit") : t("incomeStatement.netLoss"), amount: fmt(Math.abs(netIncome)) },
   ] : [];
 
@@ -112,8 +136,8 @@ export default function IncomeStatement() {
       {/* Filters — 5-col grid on lg so date range + branch + cost-center
           + the action button all line up cleanly. Cost-center filter is
           a visual twin of the branch filter (same Select/Label idiom). */}
-      <div className="rounded-xl border bg-card p-4 shadow-sm">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
+      <div className="rounded-xl border bg-card p-4 shadow-sm space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-end">
           <div className="space-y-1.5">
             <Label>{t("accountingReports.fromDate")}</Label>
             <DateField value={fromDate} onChange={e => setFromDate(e.target.value)} />
@@ -124,6 +148,14 @@ export default function IncomeStatement() {
           </div>
           <BranchFilter value={branchId} onChange={setBranchId} />
           <CostCenterFilter value={costCenterIds} onChange={setCostCenterIds} />
+          <AccountParentFilter value={accountParentIds} onChange={setAccountParentIds} />
+          <AccountLevelFilter value={levelMode} onChange={setLevelMode} />
+        </div>
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+            <Checkbox checked={showZero} onCheckedChange={(c) => setShowZero(c === true)} />
+            {t("accountingReports.showZeroAccounts", "عرض الحسابات الصفرية")}
+          </label>
           <Button className="gap-2" onClick={() => { setSearched(true); refetch(); }} disabled={isLoading}>
             <Search className="h-4 w-4" />
             {isLoading ? t("accountingReports.loading") : t("accountingReports.show_income_statement")}
@@ -138,10 +170,10 @@ export default function IncomeStatement() {
             <div className="bg-green-50 text-green-800 px-5 py-3 font-bold text-base border-b">
               {t("incomeStatement.revenues")}
             </div>
-            {(data.revenues ?? []).filter((r: any) => r.totalCredit !== r.totalDebit).length === 0 && (
+            {shownRevenues.length === 0 && (
               <div className="px-5 py-4 text-center text-muted-foreground text-sm">{t("incomeStatement.noRevenues")}</div>
             )}
-            {(data.revenues ?? []).filter((r: any) => r.totalCredit !== r.totalDebit).map((r: any) => (
+            {shownRevenues.map((r: any) => (
               <Link
                 key={r.id}
                 href={drillHref(r.id)}
@@ -162,7 +194,7 @@ export default function IncomeStatement() {
             ))}
             <div className="bg-green-50 flex items-center justify-between px-5 py-3 font-bold text-green-800">
               <span>{t("incomeStatement.totalRevenues")}</span>
-              <span className="font-mono">{fmt(data.totalRevenue)}</span>
+              <span className="font-mono">{fmt(totalRevenue)}</span>
             </div>
           </div>
 
@@ -171,10 +203,10 @@ export default function IncomeStatement() {
             <div className="bg-rose-50 text-rose-800 px-5 py-3 font-bold text-base border-b">
               {t("incomeStatement.expenses")}
             </div>
-            {(data.expenses ?? []).filter((r: any) => r.totalDebit !== r.totalCredit).length === 0 && (
+            {shownExpenses.length === 0 && (
               <div className="px-5 py-4 text-center text-muted-foreground text-sm">{t("incomeStatement.noExpenses")}</div>
             )}
-            {(data.expenses ?? []).filter((r: any) => r.totalDebit !== r.totalCredit).map((r: any) => (
+            {shownExpenses.map((r: any) => (
               <Link
                 key={r.id}
                 href={drillHref(r.id)}
@@ -195,7 +227,7 @@ export default function IncomeStatement() {
             ))}
             <div className="bg-rose-50 flex items-center justify-between px-5 py-3 font-bold text-rose-800">
               <span>{t("incomeStatement.totalExpenses")}</span>
-              <span className="font-mono">{fmt(data.totalExpenses)}</span>
+              <span className="font-mono">{fmt(totalExpenses)}</span>
             </div>
           </div>
 
