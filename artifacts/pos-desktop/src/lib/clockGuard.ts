@@ -28,9 +28,8 @@
 //   • ONLINE  — one click stamps pos_devices.clock_unblock_at; the device picks
 //     it up via /validate or /sync/pull → `clockGuardClearOnline`.
 
-import * as ed from "@noble/ed25519";
 import { invoke, getFingerprint } from "./tauri-shim";
-import { PINNED_PUBKEY_B64 } from "./standalone";
+import { verifyWithAcceptedPubkeys } from "./standalone";
 
 const TOLERANCE_MS = 60 * 60 * 1000; // 1h — absorbs DST / NTP nudges / timezone fixes.
 const SQLITE_KEY = "clock_guard_state";
@@ -241,11 +240,15 @@ export async function clockGuardUnlockOffline(code: string): Promise<{ ok: true 
   try { outer = JSON.parse(b64urlToStr(trimmed)); }
   catch { return { ok: false, error: "رمز غير صالح" }; }
   if (!outer?.p || !outer?.s) return { ok: false, error: "رمز غير صالح" };
-  if (!PINNED_PUBKEY_B64) return { ok: false, error: "مفتاح التحقق غير مهيأ في هذا الإصدار" };
 
+  // Verify against the SAME accepted-key set used for offline license files
+  // (build-pinned key + any TOFU-trusted key + on-demand server key), NOT only
+  // the build-pinned key. Otherwise an MSI shipped with a stale hardcoded pinned
+  // key rejects every unlock code the (key-rotated) server signs, even though
+  // the device already trusts the real key from license activation.
   let verified = false;
   try {
-    verified = await ed.verifyAsync(b64ToBytes(outer.s), strToBytes(outer.p), b64ToBytes(PINNED_PUBKEY_B64));
+    verified = await verifyWithAcceptedPubkeys(strToBytes(outer.p), b64ToBytes(outer.s));
   } catch { return { ok: false, error: "فشل التحقق من التوقيع" }; }
   if (!verified) return { ok: false, error: "توقيع غير صحيح — الرمز غير صادر من الجهة المصرّح لها" };
 

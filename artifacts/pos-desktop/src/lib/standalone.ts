@@ -152,6 +152,39 @@ function strToBytes(s: string): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
+// Verify an Ed25519 signature (raw bytes) against the SAME accepted-key set
+// used for offline license files: the build-pinned key, any TOFU-trusted key
+// persisted in localStorage, and — only if neither matches and the machine is
+// online — the server's CURRENT public key (persisted on success). This lets
+// the clock-rollback offline-unlock code verify even when the MSI shipped with
+// a stale hardcoded pinned key but the server has since rotated its signing key
+// (the device already TOFU-trusted the real key during license activation).
+export async function verifyWithAcceptedPubkeys(
+  message: Uint8Array,
+  signature: Uint8Array,
+): Promise<boolean> {
+  const candidates: string[] = [];
+  if (PINNED_PUBKEY_B64) candidates.push(PINNED_PUBKEY_B64);
+  const trusted = getTrustedPubkey();
+  if (trusted && !candidates.includes(trusted)) candidates.push(trusted);
+  for (const k of candidates) {
+    try { if (await ed.verifyAsync(signature, message, b64ToBytes(k))) return true; }
+    catch { /* malformed key — try next */ }
+  }
+  // None of the cached keys verified — fetch the server's current key on demand
+  // (same recovery path as license activation) and persist it if it verifies.
+  const serverKey = await fetchServerPubkey();
+  if (serverKey && !candidates.includes(serverKey)) {
+    try {
+      if (await ed.verifyAsync(signature, message, b64ToBytes(serverKey))) {
+        setTrustedPubkey(serverKey);
+        return true;
+      }
+    } catch { /* fall through to false */ }
+  }
+  return false;
+}
+
 export async function verifyLicenseFile(file: SignedLicenseFile, nowMs: number = Date.now()): Promise<{ ok: true; payload: OfflineLicensePayload } | { ok: false; error: string }> {
   if (file?.alg !== "ed25519" || !file?.payloadB64 || !file?.signature || !file?.publicKey) {
     return { ok: false, error: "ملف ترخيص غير صالح (تنسيق غير مدعوم)" };
