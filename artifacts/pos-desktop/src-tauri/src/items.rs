@@ -168,14 +168,35 @@ pub fn list_expiring(within_days: i64) -> Result<Vec<LocalItem>> {
 pub fn seed_demo_if_empty() -> Result<u64> {
     let mut conn = db::open()?;
     // BEGIN IMMEDIATE acquires the RESERVED lock straight away so two
-    // concurrent callers cannot both pass the COUNT(*)=0 check (architect-
-    // flagged: previous version was racy under parallel invocations).
-    // INSERT OR IGNORE on the unique `code` is a second-line defence in
-    // case the table is ever pre-seeded by a partial run.
+    // concurrent callers cannot both pass the checks below (architect-flagged:
+    // a previous version was racy under parallel invocations).
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    // Seed the demo catalog only ONCE per install. After the first run the
+    // `demo_seeded` flag is set, so a deliberate "delete all items" by the
+    // operator is respected — the demo rows must NOT resurrect on the next
+    // Sales/Register screen mount. (The previous version reseeded whenever the
+    // table was empty, which is exactly the delete-all case the user hit.)
+    let seeded: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM app_settings WHERE key = 'demo_seeded'",
+        [],
+        |r| r.get(0),
+    )?;
+    if seeded > 0 {
+        tx.rollback().ok();
+        return Ok(0);
+    }
+    // Claim the one-and-only seeding opportunity up-front, inside the same
+    // IMMEDIATE tx, regardless of which branch we take below.
+    tx.execute(
+        "INSERT INTO app_settings(key, value) VALUES('demo_seeded', '1')
+         ON CONFLICT(key) DO UPDATE SET value = '1'",
+        [],
+    )?;
     let existing: i64 = tx.query_row("SELECT COUNT(*) FROM items_local", [], |r| r.get(0))?;
     if existing > 0 {
-        tx.rollback().ok();
+        // Upgrade path: the operator already has a catalog — just record that
+        // seeding is done and never touch their data.
+        tx.commit()?;
         return Ok(0);
     }
 
@@ -210,6 +231,15 @@ pub fn seed_demo_if_empty() -> Result<u64> {
     }
     tx.commit()?;
     Ok(inserted)
+}
+
+/// Trim an optional text field and treat the empty string as NULL. Critical for
+/// `code`, which carries the partial UNIQUE index `uniq_items_local_code` — an
+/// empty string "" is a real, collidable value there, so a blank code field
+/// (the common case) MUST persist as NULL or the SECOND blank-code item would
+/// fail with `UNIQUE constraint failed`.
+fn norm_opt(s: Option<String>) -> Option<String> {
+    s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
 // ─── Tauri commands ──────────────────────────────────────────────────
@@ -262,6 +292,10 @@ pub fn insert_local_item(
 ) -> Result<i64, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     ensure_schema(&conn).map_err(|e| e.to_string())?;
+    // Blank code/barcode → NULL so the partial UNIQUE index on `code` never
+    // treats an empty string as a collidable value.
+    let code = norm_opt(code);
+    let barcode = norm_opt(barcode);
     conn.execute(
         "INSERT INTO items_local
            (code, name_ar, name_en, barcode, sale_price, vat_rate, uom_id,
@@ -301,6 +335,10 @@ pub fn update_local_item(
 ) -> Result<u64, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     ensure_schema(&conn).map_err(|e| e.to_string())?;
+    // Blank code/barcode → NULL so re-saving a row with an empty code can't
+    // collide on the partial UNIQUE index on `code`.
+    let code = norm_opt(code);
+    let barcode = norm_opt(barcode);
     let n = conn.execute(
         "UPDATE items_local SET
            code = ?1, name_ar = ?2, name_en = ?3, barcode = ?4,

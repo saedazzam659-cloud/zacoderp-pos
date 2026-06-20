@@ -466,6 +466,14 @@ export interface CreateItemInput {
 }
 
 export async function createItem(input: CreateItemInput): Promise<LocalItem> {
+  // Blank code/barcode → null (mirrors the Rust normalisation): the SQLite
+  // partial UNIQUE index on `code` treats "" as a real, collidable value, so a
+  // blank code field — the common case — must persist as NULL.
+  input = {
+    ...input,
+    code: (input.code ?? "").trim() || null,
+    barcode: (input.barcode ?? "").trim() || null,
+  };
   // Standalone: SQLite is authoritative. Core + pharmacy + scale columns go in
   // via insert_local_item (returns the real rowid the form needs for the
   // follow-up updateItemWeighed/Extended calls); local-only fields (units /
@@ -738,6 +746,10 @@ export function daysUntilExpiry(it: { expiryDate?: string | null }): number | nu
 }
 
 export async function updateItem(id: number, patch: Partial<CreateItemInput>): Promise<LocalItem | null> {
+  // Blank code/barcode → null (mirrors createItem + the Rust normalisation) so
+  // re-saving a row with an empty code can't collide on the partial UNIQUE index.
+  if (patch.code !== undefined) patch = { ...patch, code: (patch.code ?? "").trim() || null };
+  if (patch.barcode !== undefined) patch = { ...patch, barcode: (patch.barcode ?? "").trim() || null };
   // Standalone: core columns are written straight to SQLite (a FULL-row update,
   // so we merge the patch over the current row first); local-only fields go to
   // the meta overlay. Pharmacy/scale columns are owned by updateItemExtended/
