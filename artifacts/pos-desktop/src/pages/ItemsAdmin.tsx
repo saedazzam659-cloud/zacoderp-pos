@@ -1123,7 +1123,11 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
         });
       }
       onSaved(initial ? "تم تحديث الصنف" : "تم إضافة الصنف");
-    } catch (e: any) { setErr(e?.message ?? "فشل الحفظ"); }
+    } catch (e: any) {
+      // Tauri commands reject with a bare STRING; collapsing it into a generic
+      // "فشل الحفظ" hid the real cause. Show the string (or Error.message) as-is.
+      setErr(typeof e === "string" ? e : (e?.message ?? "فشل الحفظ"));
+    }
     finally { setSaving(false); }
   }
 

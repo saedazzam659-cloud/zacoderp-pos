@@ -39,3 +39,23 @@ NULLs; `""` defeats it. Normalizing at the choke point fixes every caller.
 
 **How to apply:** Any column under a `WHERE col IS NOT NULL` partial unique
 index must store NULL (never `""`) for "no value", or blanks collide.
+
+# Never collapse a Tauri reject into a generic message
+
+Tauri commands reject with a bare **String** (the Rust `Err(String)`), which has
+no `.message`. A form catch like `setErr(e?.message ?? "فشل الحفظ")` therefore
+throws away the real cause and always shows the generic fallback — this masked
+the standalone item-save failure for multiple debugging rounds.
+
+**Rule:** (1) In the catch, handle string rejects: `typeof e === "string" ? e :
+(e?.message ?? fallback)`. (2) At the Rust write boundary map KNOWN constraints
+(`uniq_items_local_code`, `items_local_plu_unique`) to clear Arabic, and pass any
+OTHER error through verbatim (e.g. `format!("…: {raw}")`) — never swallow it.
+
+**Why:** A generic UI message turns a 5-second "duplicate code"/"no such column"
+diagnosis into a multi-round guessing game; the raw SQLite text is the fastest
+route to the real fix, especially since Rust only compiles in CI (no local repro).
+
+**How to apply:** Every Tauri-backed save/catch pair must surface string rejects;
+shared write errors should go through one `map_item_write_err`-style mapper so all
+callers (insert/update/weighed) stay consistent.

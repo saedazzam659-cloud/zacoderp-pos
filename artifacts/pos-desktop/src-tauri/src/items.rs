@@ -242,6 +242,26 @@ fn norm_opt(s: Option<String>) -> Option<String> {
     s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
+/// Map a rusqlite write error on `items_local` to a clear Arabic message for the
+/// KNOWN constraints (duplicate code / duplicate PLU). Any other error is passed
+/// through verbatim so it is NEVER masked as a generic "فشل الحفظ" in the UI —
+/// an opaque generic message is exactly what made the standalone save bug so
+/// hard to diagnose.
+fn map_item_write_err(e: rusqlite::Error) -> String {
+    let s = e.to_string();
+    if s.contains("uniq_items_local_code") {
+        "الكود الداخلي مستخدم مسبقاً في صنف آخر — يجب أن يكون فريداً أو اتركه فارغاً".to_string()
+    } else if s.contains("items_local_plu_unique") {
+        "رقم PLU مستخدم في صنف آخر — يجب أن يكون فريداً".to_string()
+    } else if s.contains("UNIQUE constraint failed") {
+        format!("قيمة مكررة تخالف قيداً فريداً: {s}")
+    } else {
+        // Surface the raw SQLite error (e.g. "no such column", "NOT NULL …")
+        // so it is visible instead of being collapsed into a generic message.
+        format!("تعذّر حفظ الصنف: {s}")
+    }
+}
+
 // ─── Tauri commands ──────────────────────────────────────────────────
 #[tauri::command]
 pub fn list_items(search: Option<String>) -> Result<Vec<LocalItem>, String> {
@@ -312,7 +332,7 @@ pub fn insert_local_item(
             is_weighed.map(|b| if b { 1_i64 } else { 0_i64 }),
             price_per_kg, plu,
         ],
-    ).map_err(|e| e.to_string())?;
+    ).map_err(map_item_write_err)?;
     Ok(conn.last_insert_rowid())
 }
 
@@ -346,7 +366,7 @@ pub fn update_local_item(
            updated_at = CURRENT_TIMESTAMP
          WHERE id = ?8",
         rusqlite::params![code, name_ar, name_en, barcode, sale_price, vat_rate, uom_id, id],
-    ).map_err(|e| e.to_string())?;
+    ).map_err(map_item_write_err)?;
     Ok(n as u64)
 }
 
@@ -386,13 +406,7 @@ pub fn update_local_item_weighed(
             is_weighed.map(|b| if b { 1_i64 } else { 0_i64 }),
             price_per_kg, plu, id,
         ],
-    ).map_err(|e| {
-        // Surface duplicate PLU as a clear Arabic error the form can show.
-        let s = e.to_string();
-        if s.contains("items_local_plu_unique") || s.contains("UNIQUE constraint failed") {
-            "رقم PLU مستخدم في صنف آخر — يجب أن يكون فريداً".to_string()
-        } else { s }
-    })?;
+    ).map_err(map_item_write_err)?;
     Ok(n as u64)
 }
 
