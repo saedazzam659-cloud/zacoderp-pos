@@ -276,10 +276,37 @@ function toProfile(input: CreateCustomerInput) {
   };
 }
 
+/** Opening-balance overlay for the customer statement. Keyed by customer id.
+ * The statement is built from documents (invoices/returns/vouchers), NOT the
+ * GL, so even a successfully-posted opening JE never appears there — this is
+ * the only thing that seeds the statement's opening row. */
+export interface CustomerOpening {
+  openingBalance: number;
+  openingNature: "debit" | "credit";
+  openingDate: string;
+}
+function readOpenings(): Record<number, CustomerOpening> {
+  return lsRead<Record<number, CustomerOpening>>(LS_KEYS.customerOpening, {});
+}
+function setCustomerOpening(id: number, o: CustomerOpening): void {
+  const all = readOpenings();
+  all[id] = o;
+  lsWrite(LS_KEYS.customerOpening, all);
+}
+export function getCustomerOpening(id: number): CustomerOpening | null {
+  return readOpenings()[id] ?? null;
+}
+
 export async function createCustomer(input: CreateCustomerInput): Promise<LocalCustomer> {
   const now = new Date().toISOString();
+  const hasOpening = (input.openingBalance ?? 0) > 0;
   let created: LocalCustomer;
   if (shouldUseBridge()) {
+    const openingArgs = {
+      openingBalance: input.openingBalance ?? null,
+      openingNature: input.openingNature ?? null,
+      openingDate: input.openingDate ?? null,
+    };
     try {
       const r = await tauriInvoke<RustCustomer>("create_customer_local", {
         nameAr: input.nameAr,
@@ -287,9 +314,7 @@ export async function createCustomer(input: CreateCustomerInput): Promise<LocalC
         phone: input.phone ?? null,
         vatNumber: input.vatNumber ?? null,
         currencyCode: input.currencyCode ?? "SAR",
-        openingBalance: input.openingBalance ?? null,
-        openingNature: input.openingNature ?? null,
-        openingDate: input.openingDate ?? null,
+        ...openingArgs,
         creditLimit: input.creditLimit ?? null,
         enforceCreditLimit: input.enforceCreditLimit ?? null,
         paymentTermsDays: input.paymentTermsDays ?? null,
@@ -297,10 +322,43 @@ export async function createCustomer(input: CreateCustomerInput): Promise<LocalC
       });
       created = fromRust(r);
     } catch {
-      created = createInLocalStorage(input, now);
+      // The most common standalone failure is the opening-balance JE (e.g. no
+      // open fiscal period / missing AR account) which rolls back the WHOLE
+      // insert, so the customer never persists and never shows in pickers.
+      // Retry WITHOUT the opening so the customer at least persists; the
+      // opening is preserved in the LS overlay below (and shown in the
+      // statement). Only if THAT also fails do we drop to localStorage.
+      try {
+        const r = await tauriInvoke<RustCustomer>("create_customer_local", {
+          nameAr: input.nameAr,
+          nameEn: input.nameEn ?? null,
+          phone: input.phone ?? null,
+          vatNumber: input.vatNumber ?? null,
+          currencyCode: input.currencyCode ?? "SAR",
+          openingBalance: null,
+          openingNature: null,
+          openingDate: null,
+          creditLimit: input.creditLimit ?? null,
+          enforceCreditLimit: input.enforceCreditLimit ?? null,
+          paymentTermsDays: input.paymentTermsDays ?? null,
+          profile: toProfile(input),
+        });
+        created = fromRust(r);
+      } catch {
+        created = createInLocalStorage(input, now);
+      }
     }
   } else {
     created = createInLocalStorage(input, now);
+  }
+  // Seed the statement's opening overlay regardless of whether the JE posted —
+  // the statement reads documents, not the GL, so it never double-counts.
+  if (hasOpening) {
+    setCustomerOpening(created.id, {
+      openingBalance: input.openingBalance!,
+      openingNature: input.openingNature ?? "debit",
+      openingDate: input.openingDate ?? now.slice(0, 10),
+    });
   }
   // Queue for cloud push (idempotent via clientId).
   enqueuePush({

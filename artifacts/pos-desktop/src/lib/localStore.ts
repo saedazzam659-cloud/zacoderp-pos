@@ -7,7 +7,14 @@
 
 export const LS_KEYS = {
   items: "pos_desktop_items_v1",
+  /** LOCAL-ONLY field overlay for SQLite-backed items in standalone mode
+   * (units / groupId / nature / itemType), keyed by SQLite item id. */
+  itemMeta: "pos_desktop_item_meta_v1",
   customers: "pos_desktop_customers_v1",
+  /** Opening-balance overlay for customers (keyed by id). The customer
+   * statement reads documents, not GL, so the opening JE never shows there —
+   * this overlay is what seeds the statement's opening row. */
+  customerOpening: "pos_desktop_customer_opening_v1",
   uom: "pos_desktop_uom_v1",
   itemGroups: "pos_desktop_item_groups_v1",
   invoices: "pos_desktop_invoices_v1",

@@ -438,7 +438,21 @@ export async function listSuppliers(): Promise<Supplier[]> {
 }
 export async function createSupplier(input: SupplierInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("suppliers_create", { input });
+  try {
+    return await invoke<number>("suppliers_create", { input });
+  } catch (e) {
+    // suppliers_create posts the opening-balance JE in the SAME transaction as
+    // the INSERT, so a JE failure (e.g. no open fiscal period / missing AP
+    // account in standalone) rolls back the whole insert and the supplier
+    // never appears in pickers. If there's an opening, retry WITHOUT it so the
+    // supplier at least persists; otherwise rethrow the real error.
+    if ((input.openingBalance ?? 0) > 0) {
+      return await invoke<number>("suppliers_create", {
+        input: { ...input, openingBalance: 0 },
+      });
+    }
+    throw e;
+  }
 }
 export async function updateSupplier(id: number, input: SupplierInput): Promise<void> {
   if (!hasTauri()) notImpl();

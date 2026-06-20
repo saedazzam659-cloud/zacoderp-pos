@@ -383,6 +383,7 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
             s_opt("barcode"),
             f_req("sale_price")?,
             f_req("vat_rate")?,
+            i_opt("uom_id"),
             s_opt("active_ingredient"),
             s_opt("dosage_form"),
             s_opt("strength"),
@@ -396,6 +397,19 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
             s_opt("plu"),
         )
         .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+        "update_local_item" => crate::items::update_local_item(
+            i_req("id")?,
+            s_opt("code"),
+            s_req("name_ar")?,
+            s_opt("name_en"),
+            s_opt("barcode"),
+            f_req("sale_price")?,
+            f_req("vat_rate")?,
+            i_opt("uom_id"),
+        )
+        .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+        "delete_local_item" => crate::items::delete_local_item(i_req("id")?)
+            .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "update_local_item_extended" => crate::items::update_local_item_extended(
             i_req("id")?,
             s_opt("active_ingredient"),

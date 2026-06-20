@@ -246,6 +246,7 @@ pub fn insert_local_item(
     barcode: Option<String>,
     sale_price: f64,
     vat_rate: f64,
+    uom_id: Option<i64>,
     active_ingredient: Option<String>,
     dosage_form: Option<String>,
     strength: Option<String>,
@@ -263,13 +264,13 @@ pub fn insert_local_item(
     ensure_schema(&conn).map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO items_local
-           (code, name_ar, name_en, barcode, sale_price, vat_rate,
+           (code, name_ar, name_en, barcode, sale_price, vat_rate, uom_id,
             active_ingredient, dosage_form, strength, manufacturer,
             requires_prescription, controlled, expiry_date, batch_no,
             is_weighed, price_per_kg, plu, updated_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,CURRENT_TIMESTAMP)",
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,CURRENT_TIMESTAMP)",
         rusqlite::params![
-            code, name_ar, name_en, barcode, sale_price, vat_rate,
+            code, name_ar, name_en, barcode, sale_price, vat_rate, uom_id,
             active_ingredient, dosage_form, strength, manufacturer,
             requires_prescription.map(|b| if b { 1_i64 } else { 0_i64 }),
             controlled.map(|b| if b { 1_i64 } else { 0_i64 }),
@@ -279,6 +280,50 @@ pub fn insert_local_item(
         ],
     ).map_err(|e| e.to_string())?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Update the CORE columns of a locally-created item (standalone mode).
+/// Pharmacy + scale fields keep their dedicated commands
+/// (`update_local_item_extended` / `_weighed`); this one owns the columns the
+/// regular items form edits: code/name/barcode/price/vat/uom. Returns the
+/// number of rows touched (0 means no such id).
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub fn update_local_item(
+    id: i64,
+    code: Option<String>,
+    name_ar: String,
+    name_en: Option<String>,
+    barcode: Option<String>,
+    sale_price: f64,
+    vat_rate: f64,
+    uom_id: Option<i64>,
+) -> Result<u64, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    ensure_schema(&conn).map_err(|e| e.to_string())?;
+    let n = conn.execute(
+        "UPDATE items_local SET
+           code = ?1, name_ar = ?2, name_en = ?3, barcode = ?4,
+           sale_price = ?5, vat_rate = ?6, uom_id = ?7,
+           updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?8",
+        rusqlite::params![code, name_ar, name_en, barcode, sale_price, vat_rate, uom_id, id],
+    ).map_err(|e| e.to_string())?;
+    Ok(n as u64)
+}
+
+/// Hard-delete a locally-created item (standalone mode). In cloud mode the JS
+/// layer keeps using the tombstone overlay so a later pull can't resurrect a
+/// row that still exists on the server; standalone has no cloud, so a plain
+/// DELETE is correct and keeps the table from accumulating tombstones.
+#[tauri::command]
+pub fn delete_local_item(id: i64) -> Result<u64, String> {
+    let conn = db::open().map_err(|e| e.to_string())?;
+    ensure_schema(&conn).map_err(|e| e.to_string())?;
+    let n = conn
+        .execute("DELETE FROM items_local WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(n as u64)
 }
 
 /// Update the Task-#201 weighed fields on an existing row. Mirrors

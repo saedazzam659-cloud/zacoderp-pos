@@ -3,7 +3,7 @@ import {
   listSalesInvoices, listSalesReturns, listFinancialTx,
   type SalesInvoice, type SalesReturn, type FinancialTx,
 } from "../lib/accounting";
-import { listCustomers, type LocalCustomer } from "../lib/customers";
+import { listCustomers, getCustomerOpening, type LocalCustomer } from "../lib/customers";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, SearchCombobox, input } from "./_adminUi";
 import { DateField, FilterField } from "./_reportFilters";
 
@@ -114,6 +114,13 @@ export default function CustomerStatementReport() {
       // The period is INCLUSIVE on both ends; movements after toDate are excluded
       // entirely (they belong to a later statement, not this one).
       let opening = 0;
+      // Seed the opening balance from the create-time overlay (the GL opening
+      // JE is invisible to a document-based statement). Only counts when it
+      // predates the period start; debit (مدين) raises AR, credit lowers it.
+      const ov = getCustomerOpening(customerId);
+      if (ov && ov.openingDate < fromDate) {
+        opening += ov.openingNature === "debit" ? ov.openingBalance : -ov.openingBalance;
+      }
       const inRange: StmtLine[] = [];
       for (const l of all) {
         if (l.date < fromDate) opening += l.debit - l.credit;

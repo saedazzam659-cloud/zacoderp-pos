@@ -9,12 +9,112 @@
 // actually populate the sales grid — previously Pull only set a counter
 // on screen; the items themselves were dropped on the floor.
 
-import { LS_KEYS, lsRead, lsWrite } from "./localStore";
+import { LS_KEYS, lsRead, lsWrite, IS_TAURI } from "./localStore";
 // Task #207: shared-data Rust commands route through the bridge so a LAN
 // client forwards them to the host. In single/host mode `bridgeInvoke`
 // calls the LOCAL Tauri command — identical to the previous `tauriInvoke`.
 import { bridgeInvoke as tauriInvoke, shouldUseBridge } from "./bridge";
 import { enqueuePush } from "./pushQueue";
+import { getAppMode } from "./standalone";
+
+// ─── Standalone mode (offline) ───────────────────────────────────────
+// In standalone mode there is NO cloud: items must live authoritatively in
+// SQLite (create/update/delete go straight to Rust) and the push queue is a
+// no-op. Cloud mode keeps its existing LS-overlay + push behaviour untouched.
+// Cached because the mode only changes on an app reload (the mode-switch wipe
+// reloads the window), so a module-level memo is always fresh.
+let _standalone: boolean | null = null;
+async function isStandalone(): Promise<boolean> {
+  if (_standalone === null) {
+    try { _standalone = (await getAppMode()) === "standalone"; }
+    catch { _standalone = false; }
+  }
+  return _standalone;
+}
+
+// LOCAL-ONLY field overlay for SQLite-backed items (units / classification).
+// Keyed by SQLite item id. Mirrors the LS-overlay reasoning in
+// memory pos-desktop-overlay-pattern, but scoped to the columns SQLite has no
+// home for instead of superseding the whole row.
+interface ItemMeta {
+  units?: ItemUnit[] | null;
+  groupId?: number | null;
+  nature?: "service" | "stock" | null;
+  itemType?: "finished" | "semi" | "raw" | "other" | null;
+}
+function readMeta(): Record<number, ItemMeta> {
+  return lsRead<Record<number, ItemMeta>>(LS_KEYS.itemMeta, {});
+}
+function writeMetaFor(id: number, m: ItemMeta): void {
+  const all = readMeta();
+  all[id] = { ...all[id], ...m };
+  lsWrite(LS_KEYS.itemMeta, all);
+}
+function dropMeta(id: number): void {
+  const all = readMeta();
+  if (id in all) { delete all[id]; lsWrite(LS_KEYS.itemMeta, all); }
+}
+function metaFrom(input: { units?: ItemUnit[] | null; groupId?: number | null;
+  nature?: ItemMeta["nature"]; itemType?: ItemMeta["itemType"]; }): ItemMeta {
+  return {
+    units: input.units ?? null,
+    groupId: input.groupId ?? null,
+    nature: input.nature ?? null,
+    itemType: input.itemType ?? null,
+  };
+}
+
+const MIGRATED_FLAG = "pos_desktop_items_migrated_v1";
+
+/**
+ * One-time migration of legacy localStorage-only items (created by the old
+ * LS-only `createItem`) into SQLite, so standalone create/update/delete — which
+ * key off the SQLite rowid — can actually find and mutate them. Idempotent via
+ * a flag. Pure-LS rows are inserted; rows that are overlays of an existing
+ * SQLite row (same id) are folded into the meta overlay; cloud-linked rows are
+ * left alone. Best-effort: a row that fails to insert is skipped, not fatal.
+ */
+async function migrateLegacyItems(): Promise<void> {
+  if (lsRead<boolean>(MIGRATED_FLAG, false)) return;
+  const ls = readLocal();
+  if (ls.length === 0) { lsWrite(MIGRATED_FLAG, true); return; }
+  let sqliteIds = new Set<number>();
+  try {
+    const rows = await tauriInvoke<RustItem[]>("list_items", { search: null });
+    sqliteIds = new Set(rows.map((r) => r.id));
+  } catch { return; /* SQLite unavailable — retry next list */ }
+
+  const keep: LocalItem[] = [];
+  let failed = 0;
+  for (const r of ls) {
+    if (r.cloudId) { keep.push(r); continue; }       // cloud-linked: leave as-is
+    if (r.deleted) continue;                           // drop stale tombstones
+    if (sqliteIds.has(r.id)) {                         // overlay of a SQLite row
+      writeMetaFor(r.id, metaFrom(r));
+      continue;
+    }
+    if (!r.nameAr) continue;                           // malformed — discard
+    try {
+      const id = await tauriInvoke<number>("insert_local_item", {
+        code: r.code ?? null, name_ar: r.nameAr, name_en: r.nameEn ?? null,
+        barcode: r.barcode ?? null, sale_price: r.salePrice, vat_rate: r.vatRate,
+        uom_id: r.uomId ?? null,
+        active_ingredient: r.activeIngredient ?? null, dosage_form: r.dosageForm ?? null,
+        strength: r.strength ?? null, manufacturer: r.manufacturer ?? null,
+        requires_prescription: r.requiresPrescription ?? null, controlled: r.controlled ?? null,
+        expiry_date: r.expiryDate ?? null, batch_no: r.batchNo ?? null,
+        is_weighed: r.isWeighed ?? null, price_per_kg: r.pricePerKg ?? null, plu: r.plu ?? null,
+      });
+      writeMetaFor(id, metaFrom(r));
+    } catch { keep.push(r); failed++; /* keep so a later run can retry */ }
+  }
+  lsWrite(LS_KEYS.items, keep);
+  // Only mark migration done when EVERY pure-LS row landed in SQLite. If any
+  // insert failed those rows stay in LS and the flag stays unset so the next
+  // listItems retries them (an LS row whose id isn't in SQLite can't be edited,
+  // since standalone update writes to SQLite by id).
+  if (failed === 0) lsWrite(MIGRATED_FLAG, true);
+}
 
 /**
  * A non-base sale unit (e.g. كرتونة, نص كرتونة). Multi-unit pricing is
@@ -150,6 +250,12 @@ export async function listItems(search?: string): Promise<LocalItem[]> {
   //   • Tauri rows are keyed by `id` (SQLite rowid)
   //   • LocalStorage rows that have a cloudId match a Tauri row via cloud_id
   //   • LocalStorage rows without cloudId are always-additive (locally-created)
+  // Standalone: one-time pull legacy LS-only items into SQLite so they become
+  // editable/deletable (those paths key off the SQLite rowid).
+  if (shouldUseBridge() && await isStandalone()) {
+    try { await migrateLegacyItems(); } catch { /* best-effort */ }
+  }
+
   const fromTauri: LocalItem[] = [];
   if (shouldUseBridge()) {
     try {
@@ -186,12 +292,20 @@ export async function listItems(search?: string): Promise<LocalItem[]> {
     merged.push(r);
   }
 
-  // Hide tombstones (deleted overlays).
-  const visible = merged.filter((i) => !i.deleted);
+  // Apply the LOCAL-ONLY field overlay (units / classification) onto
+  // SQLite-backed rows. The map is keyed by SQLite id and is only populated in
+  // standalone mode, so this is a no-op in cloud/browser mode.
+  const meta = readMeta();
+  const withMeta = merged.map((i) => (meta[i.id] ? { ...i, ...meta[i.id] } : i));
 
-  // If still empty AND no search, fall back to demo so the screen isn't blank
+  // Hide tombstones (deleted overlays).
+  const visible = withMeta.filter((i) => !i.deleted);
+
+  // If still empty AND no search, fall back to demo so the screen isn't blank.
+  // Gated to NON-Tauri (browser preview) only — a real install (cloud or
+  // standalone) must never show fake demo rows that can't be sold or synced.
   let all = visible;
-  if (all.length === 0 && !search) all = DEV_DEMO;
+  if (all.length === 0 && !search && !IS_TAURI) all = DEV_DEMO;
   if (!search) return all;
   const q = search.toLowerCase();
   return all.filter((i) =>
@@ -352,6 +466,38 @@ export interface CreateItemInput {
 }
 
 export async function createItem(input: CreateItemInput): Promise<LocalItem> {
+  // Standalone: SQLite is authoritative. Core + pharmacy + scale columns go in
+  // via insert_local_item (returns the real rowid the form needs for the
+  // follow-up updateItemWeighed/Extended calls); local-only fields (units /
+  // classification) go to the meta overlay. No push queue (there is no cloud).
+  if (shouldUseBridge() && await isStandalone()) {
+    const id = await tauriInvoke<number>("insert_local_item", {
+      code: input.code ?? null, name_ar: input.nameAr, name_en: input.nameEn ?? null,
+      barcode: input.barcode ?? null, sale_price: input.salePrice, vat_rate: input.vatRate,
+      uom_id: input.uomId ?? null,
+      active_ingredient: input.activeIngredient ?? null, dosage_form: input.dosageForm ?? null,
+      strength: input.strength ?? null, manufacturer: input.manufacturer ?? null,
+      requires_prescription: input.requiresPrescription ?? null, controlled: input.controlled ?? null,
+      expiry_date: input.expiryDate ?? null, batch_no: input.batchNo ?? null,
+      is_weighed: input.isWeighed ?? null, price_per_kg: input.pricePerKg ?? null, plu: input.plu ?? null,
+    });
+    writeMetaFor(id, metaFrom(input));
+    return {
+      id, cloudId: null,
+      code: input.code ?? null, nameAr: input.nameAr, nameEn: input.nameEn ?? null,
+      barcode: input.barcode ?? null, salePrice: input.salePrice, vatRate: input.vatRate,
+      uomId: input.uomId ?? null,
+      activeIngredient: input.activeIngredient ?? null, dosageForm: input.dosageForm ?? null,
+      strength: input.strength ?? null, manufacturer: input.manufacturer ?? null,
+      requiresPrescription: input.requiresPrescription ?? null, controlled: input.controlled ?? null,
+      expiryDate: input.expiryDate ?? null, batchNo: input.batchNo ?? null,
+      isWeighed: input.isWeighed ?? null, pricePerKg: input.pricePerKg ?? null, plu: input.plu ?? null,
+      units: input.units ?? null, groupId: input.groupId ?? null,
+      nature: input.nature ?? null, itemType: input.itemType ?? null,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   const all = readLocal();
   const id = all.reduce((m, i) => Math.max(m, i.id), 0) + 1;
   const row: LocalItem = {
@@ -592,6 +738,24 @@ export function daysUntilExpiry(it: { expiryDate?: string | null }): number | nu
 }
 
 export async function updateItem(id: number, patch: Partial<CreateItemInput>): Promise<LocalItem | null> {
+  // Standalone: core columns are written straight to SQLite (a FULL-row update,
+  // so we merge the patch over the current row first); local-only fields go to
+  // the meta overlay. Pharmacy/scale columns are owned by updateItemExtended/
+  // _weighed and are intentionally untouched here. No push queue.
+  if (shouldUseBridge() && await isStandalone()) {
+    const current = (await listItems()).find((i) => i.id === id);
+    if (!current) return null;
+    const merged: LocalItem = { ...current, ...patch, updatedAt: new Date().toISOString() };
+    await tauriInvoke("update_local_item", {
+      id,
+      code: merged.code ?? null, name_ar: merged.nameAr, name_en: merged.nameEn ?? null,
+      barcode: merged.barcode ?? null, sale_price: merged.salePrice, vat_rate: merged.vatRate,
+      uom_id: merged.uomId ?? null,
+    });
+    writeMetaFor(id, metaFrom(merged));
+    return merged;
+  }
+
   const all = readLocal();
   const idx = all.findIndex((i) => i.id === id);
   let updated: LocalItem;
@@ -619,6 +783,17 @@ export async function updateItem(id: number, patch: Partial<CreateItemInput>): P
 }
 
 export async function deleteItem(id: number): Promise<void> {
+  // Standalone: hard-delete from SQLite (no cloud to resurrect it), drop the
+  // meta overlay, and clear any stray legacy LS row for this id. No push queue.
+  if (shouldUseBridge() && await isStandalone()) {
+    await tauriInvoke("delete_local_item", { id });
+    dropMeta(id);
+    const ls = readLocal();
+    const idx = ls.findIndex((i) => i.id === id);
+    if (idx >= 0) { ls.splice(idx, 1); lsWrite(LS_KEYS.items, ls); }
+    return;
+  }
+
   // Tombstone strategy: write a soft-deleted overlay row so the merged
   // listItems hides it even when SQLite still has the original. The
   // overlay carries `deleted:true` and listItems filters it out.

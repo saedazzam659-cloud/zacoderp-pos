@@ -418,6 +418,8 @@ fn main() {
             items::upsert_items_from_cloud,
             items::list_expiring_items,
             items::insert_local_item,
+            items::update_local_item,
+            items::delete_local_item,
             items::update_local_item_extended,
             items::update_local_item_weighed,
             items::find_item_by_plu,
