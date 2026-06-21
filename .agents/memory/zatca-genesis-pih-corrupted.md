@@ -36,3 +36,26 @@ FIRST clearance; subsequent invoices chain off the persisted prior hash.
 message, verify the embedded PIH equals base64(hex(sha256("0"))) before chasing
 totals/party/signature. Keep all genesis constants in lockstep (ideally one
 exported source).
+
+**IMPORTANT — genesis was NOT the cause of the GENERAL error (confirmed after
+prod redeploy):** company ZTC-26 (id 26) invoice 160 (standard/clearance,
+158,700 SAR) was re-signed in production with the *corrected* genesis embedded
+(verified: embedded PIH decoded to `...786c6d696c79...`) and ZATCA returned the
+**identical** `GENERAL / "Unable to execute Business Rules validation ->"` (HTTP
+400, NOT_CLEARED). So the corrupted genesis was a real but **independent** bug;
+this opaque GENERAL exception has a different root cause that is still
+**unconfirmed**. Ruled out so far: XSD passes; totals reconcile; both parties +
+Delivery + PaymentMeans present; ProfileID=reporting:1.0 with InvoiceTypeCode
+0100000 (correct for standard); cert is a genuine **production PCSID** (issuer
+PRZEINVOICESCA4-CA, subject EGS serial `1-ACTITECINTERNATIONAL|2-LIC-000026|3-…`,
+authenticates with no 401); internal hash chain self-consistent (Reference#1
+DigestValue == QR tag6; SignedProperties/CertDigest use the base64(hex) ZATCA
+convention; SignatureValue ECDSA-SHA256 / ieee-p1363 over C14N11 SignedInfo).
+**Systemic, not per-invoice:** across ALL companies, ZERO invoices have ever been
+cleared/reported and ZERO have a persisted `invoice_hash` — production clearance
+has never once succeeded end-to-end. Leading remaining suspect: a
+canonicalization mismatch between our `canonicalizeFragment`/hash pipeline and
+ZATCA's gateway (which recomputes independently), making the gateway's
+signature/hash verification throw. Next debugger should verify the ECDSA
+signature against ZATCA's own C14N of SignedInfo, and confirm the invoice-hash
+recomputation matches the gateway's, rather than re-checking visible XML content.
