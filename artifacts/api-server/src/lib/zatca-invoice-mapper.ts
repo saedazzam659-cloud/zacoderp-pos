@@ -15,6 +15,31 @@ import type {
   customersTable,
 } from "@workspace/db";
 import type { InvoiceData } from "./zatca-xml.js";
+import { createHash } from "node:crypto";
+
+/**
+ * ZATCA requires the submission `uuid` (and the matching <cbc:UUID> embedded in
+ * the signed XML) to be a valid GUID. The human invoice number ("160") is NOT a
+ * valid UUID, so the live clearance gateway rejects it with
+ * "UUID format in the API body is not valid".
+ *
+ * The UUID is part of the hashed/signed XML, and the PIH chain links each
+ * invoice to the PERSISTED hash of the previous one. Issue-time hashing and
+ * live-submit hashing therefore MUST agree on the UUID, and retries must reuse
+ * the same value — so this is DETERMINISTIC (derived from the immutable
+ * company + invoice-number identity), never random. It yields a format-valid
+ * RFC-4122 v5-style GUID with no schema change.
+ */
+export function zatcaDocumentUuid(companyId: number, invoiceNumber: string): string {
+  const digest = createHash("sha256")
+    .update(`zatca:${companyId}:${invoiceNumber}`)
+    .digest();
+  const b = Buffer.from(digest.subarray(0, 16));
+  b[6] = (b[6] & 0x0f) | 0x50; // version 5
+  b[8] = (b[8] & 0x3f) | 0x80; // RFC-4122 variant
+  const h = b.toString("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
 
 type InvoiceRow = typeof invoicesTable.$inferSelect;
 type LineRow = typeof invoiceLineItemsTable.$inferSelect;

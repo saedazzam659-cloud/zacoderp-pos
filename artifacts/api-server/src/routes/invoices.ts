@@ -7,7 +7,7 @@ import { CreateInvoiceBody, UpdateInvoiceBody, ListInvoicesQueryParams } from "@
 import { generateZatcaQr } from "../lib/zatca-tlv.js";
 import { generateZatcaXml, hashXml } from "../lib/zatca-xml.js";
 import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
-import { invoiceRowToZatcaData } from "../lib/zatca-invoice-mapper.js";
+import { invoiceRowToZatcaData, zatcaDocumentUuid } from "../lib/zatca-invoice-mapper.js";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
@@ -371,13 +371,20 @@ router.post("/:id/issue", async (req, res) => {
   let xmlContent: string;
   let invoiceHash: string;
 
+  // Deterministic, format-valid GUID for <cbc:UUID> — MUST match what the live
+  // submit path (routes/zatca.ts) sends, so the persisted hash and the PIH chain
+  // stay consistent across issuance, submission, and retries.
+  const documentUuid = zatcaDocumentUuid(existing.companyId!, existing.invoiceNumber);
+
   if (company && canSign) {
+    const issuanceData = invoiceRowToZatcaData(existing, lineItems, company, customer ?? null, {
+      invoiceCounterValue: nextCounter,
+      previousInvoiceHash,
+      issueTime,
+    });
+    issuanceData.uuid = documentUuid;
     const built = buildSignedZatcaInvoice({
-      invoiceData: invoiceRowToZatcaData(existing, lineItems, company, customer ?? null, {
-        invoiceCounterValue: nextCounter,
-        previousInvoiceHash,
-        issueTime,
-      }),
+      invoiceData: issuanceData,
       certificatePem: signingCert!,
       privateKeyPem: company.zatcaPrivateKey!,
       seller: { nameAr: company.nameAr ?? "", vatNumber: company.vatNumber ?? "" },
@@ -405,6 +412,7 @@ router.post("/:id/issue", async (req, res) => {
         previousInvoiceHash,
         issueTime,
       }),
+      uuid: documentUuid,
       qrCode,
     });
     invoiceHash = hashXml(xmlContent);

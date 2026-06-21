@@ -13,7 +13,7 @@ import { generateCsr } from "../lib/zatca-csr.js";
 import { generateZatcaQr } from "../lib/zatca-tlv.js";
 import { generateZatcaXml, hashXml } from "../lib/zatca-xml.js";
 import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
-import { invoiceRowToZatcaData } from "../lib/zatca-invoice-mapper.js";
+import { invoiceRowToZatcaData, zatcaDocumentUuid } from "../lib/zatca-invoice-mapper.js";
 import { runAutoComplianceCheck } from "../lib/zatca-compliance.js";
 import { getZatcaBaseUrl, resolveZatcaEnv, envArabic, GENESIS_HASH, csidEnvMismatchMessage, type ZatcaEnv } from "../lib/zatca-env.js";
 import { createHash } from "crypto";
@@ -359,12 +359,19 @@ router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", 
 
     const now = new Date();
     const issueTime = now.toTimeString().split(" ")[0];
+    // ZATCA requires a real GUID for the API-body `uuid` AND the matching XML
+    // <cbc:UUID>. invoiceNumber is the human doc number, not a valid UUID, and
+    // the clearance gateway rejects it ("UUID format in the API body is not
+    // valid"). Generate a GUID and use the SAME value for the XML and the body.
+    const documentUuid = zatcaDocumentUuid(invoice.companyId!, invoice.invoiceNumber);
+    const invoiceData = invoiceRowToZatcaData(invoice, lineItems, company, customer ?? null, {
+      invoiceCounterValue: invoice.invoiceCounterValue ?? 1,
+      previousInvoiceHash: invoice.previousInvoiceHash ?? GENESIS_HASH,
+      issueTime,
+    });
+    invoiceData.uuid = documentUuid;
     const built = buildSignedZatcaInvoice({
-      invoiceData: invoiceRowToZatcaData(invoice, lineItems, company, customer ?? null, {
-        invoiceCounterValue: invoice.invoiceCounterValue ?? 1,
-        previousInvoiceHash: invoice.previousInvoiceHash ?? GENESIS_HASH,
-        issueTime,
-      }),
+      invoiceData,
       certificatePem: company.zatcaCsidToken,
       privateKeyPem: company.zatcaPrivateKey,
       seller: { nameAr: company.nameAr ?? "", vatNumber: company.vatNumber ?? "" },
@@ -395,7 +402,7 @@ router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", 
       },
       body: JSON.stringify({
         invoiceHash: hashBase64,
-        uuid: invoice.invoiceNumber,
+        uuid: documentUuid,
         invoice: xmlBase64,
       }),
     });
@@ -596,12 +603,19 @@ router.post("/invoices/:id/submit", requirePermission("zatca_bridge", "create"),
 
     const now = new Date();
     const issueTime = now.toTimeString().split(" ")[0];
+    // ZATCA requires a real GUID for the API-body `uuid` AND the matching XML
+    // <cbc:UUID>. invoiceNumber is the human doc number, not a valid UUID, and
+    // the clearance gateway rejects it ("UUID format in the API body is not
+    // valid"). Generate a GUID and use the SAME value for the XML and the body.
+    const documentUuid = zatcaDocumentUuid(invoice.companyId!, invoice.invoiceNumber);
+    const invoiceData = invoiceRowToZatcaData(invoice, lineItems, company, customer ?? null, {
+      invoiceCounterValue: invoice.invoiceCounterValue ?? 1,
+      previousInvoiceHash: invoice.previousInvoiceHash ?? GENESIS_HASH,
+      issueTime,
+    });
+    invoiceData.uuid = documentUuid;
     const built = buildSignedZatcaInvoice({
-      invoiceData: invoiceRowToZatcaData(invoice, lineItems, company, customer ?? null, {
-        invoiceCounterValue: invoice.invoiceCounterValue ?? 1,
-        previousInvoiceHash: invoice.previousInvoiceHash ?? GENESIS_HASH,
-        issueTime,
-      }),
+      invoiceData,
       certificatePem: authToken,
       privateKeyPem: company.zatcaPrivateKey,
       seller: { nameAr: company.nameAr ?? "", vatNumber: company.vatNumber ?? "" },
@@ -629,7 +643,7 @@ router.post("/invoices/:id/submit", requirePermission("zatca_bridge", "create"),
       },
       body: JSON.stringify({
         invoiceHash: hashBase64,
-        uuid: invoice.invoiceNumber,
+        uuid: documentUuid,
         invoice: xmlBase64,
       }),
     });
@@ -662,6 +676,15 @@ router.post("/invoices/:id/submit", requirePermission("zatca_bridge", "create"),
       zatcaWarningMessages: data.warningMessages ? JSON.stringify(data.warningMessages) : null,
       zatcaErrorMessages: data.errorMessages ? JSON.stringify(data.errorMessages) : null,
       zatcaClearanceStatus: data.clearanceStatus ?? data.reportingStatus ?? null,
+      // Re-persist the hash of the document we actually built+submitted ONLY when
+      // ZATCA accepted it (CLEARED/REPORTED). This is the deterministic-UUID hash;
+      // for invoices issued BEFORE the deterministic-UUID change (stored hash was
+      // invoiceNumber-based) this self-heals the forward PIH link so the NEXT
+      // invoice's previousInvoiceHash matches what ZATCA recorded. For invoices
+      // issued after the change it is a no-op (same value). We never mutate chain
+      // state on rejection/gateway failure (ZATCA did not record the document),
+      // and previousInvoiceHash (the backward link) is always left untouched.
+      ...(succeeded ? { invoiceHash: built.invoiceHash } : {}),
       updatedAt: new Date(),
     }).where(eq(invoicesTable.id, id));
 
