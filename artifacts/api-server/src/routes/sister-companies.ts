@@ -111,6 +111,7 @@ router.get("/balances", async (req, res) => {
   // Customer-Balances report applies one [from, to] to both sources.
   const from = req.query.from ? String(req.query.from) : undefined;
   const to   = req.query.to   ? String(req.query.to)   : undefined;
+  const bid  = req.query.branchId ? Number(req.query.branchId) : undefined;
   const transfers = await db.select({
     sid: sisterTransfersTable.sisterCompanyId,
     total: sql<string>`COALESCE(SUM(${sisterTransfersTable.totalSupply}), 0)`,
@@ -140,7 +141,22 @@ router.get("/balances", async (req, res) => {
   for (const t of transfers)   if (t.sid != null) map[t.sid] = (map[t.sid] ?? 0) + Number(t.total);
   for (const r of returns_)    if (r.sid != null) map[r.sid] = (map[r.sid] ?? 0) - Number(r.total);
   for (const s of settlements) if (s.sid != null) map[s.sid] = (map[s.sid] ?? 0) + (s.dir === "pay" ? Number(s.total) : -Number(s.total));
-  res.json(Object.entries(map).map(([sisterCompanyId, balance]) => ({ sisterCompanyId: Number(sisterCompanyId), balance })));
+  // Branch scope: a sister company is linked to a branch (sister_companies.
+  // branch_id). When filtering by a branch (explicit ?branchId or a restricted
+  // user's allowed scope) only sisters in that branch must appear — a sister
+  // tied to branch 1 must NOT show under branch 2. NULL-branch sisters are
+  // shared/company-wide and stay visible from any branch (same convention as
+  // /api/customers/balances visibleRows).
+  const visibleSisters = await db.select({ id: sisterCompaniesTable.id })
+    .from(sisterCompaniesTable)
+    .where(and(
+      eq(sisterCompaniesTable.companyId, cid),
+      ...branchScopeSpread(req, sisterCompaniesTable.branchId, bid),
+    ));
+  const visibleSet = new Set(visibleSisters.map(s => s.id));
+  res.json(Object.entries(map)
+    .filter(([sid]) => visibleSet.has(Number(sid)))
+    .map(([sisterCompanyId, balance]) => ({ sisterCompanyId: Number(sisterCompanyId), balance })));
 });
 
 router.post("/", async (req, res) => {

@@ -79,10 +79,10 @@ export default function CustomerBalances() {
     },
   });
   const { data: sisterBalances = [] } = useQuery({
-    queryKey: ["sister-balances", cid, from, to],
+    queryKey: ["sister-balances", cid, branchId, from, to],
     queryFn: async () => {
       const base = cid ? `${API}/api/sister-companies/balances?companyId=${cid}` : `${API}/api/sister-companies/balances`;
-      const r = await fetch(withParams(base, { from, to }), { headers: authHeaders() });
+      const r = await fetch(withParams(base, { branchId, from, to }), { headers: authHeaders() });
       if (!r.ok) return [];
       const d = await r.json();
       return Array.isArray(d) ? d : [];
