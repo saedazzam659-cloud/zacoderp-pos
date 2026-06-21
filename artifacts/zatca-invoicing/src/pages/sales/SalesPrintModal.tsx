@@ -1768,7 +1768,7 @@ interface PrintLabels {
   validUntil: string; reference: string;
   colItem: string; colQty: string; colFree: string; colUnit: string;
   colUnitPrice: string; colDiscount: string; colDiscountValue: string;
-  colVat: string; colVatValue: string; colTotal: string;
+  colAmount: string; colVat: string; colVatValue: string; colTotal: string;
   lineNotesLbl: string; notesLbl: string;
   createdAtLbl: string; byLbl: string; printedLbl: string;
   companyNameFallback: string; none: string;
@@ -1780,9 +1780,9 @@ function getPrintLabels(lang: PrintLang): PrintLabels {
       companyInfo: "Company", vatNumber: "VAT No.", crNumber: "CR No.", phone: "Phone",
       customerInfo: "Customer", accountCode: "Account Code", customerAddress: "Address",
       validUntil: "Valid until", reference: "Ref",
-      colItem: "Item / Service", colQty: "Qty", colFree: "Free", colUnit: "Unit",
-      colUnitPrice: "Unit Price", colDiscount: "Disc.", colDiscountValue: "Disc. Value",
-      colVat: "VAT", colVatValue: "VAT Value", colTotal: "Total",
+      colItem: "Item / Service", colQty: "Qty", colFree: "Free Qty", colUnit: "Unit",
+      colUnitPrice: "Unit Price", colDiscount: "Discount", colDiscountValue: "Disc. Value",
+      colAmount: "Amount", colVat: "VAT", colVatValue: "VAT Value", colTotal: "Total",
       lineNotesLbl: "Notes:", notesLbl: "Notes:",
       createdAtLbl: "Created", byLbl: "By", printedLbl: "Printed",
       companyNameFallback: "Company Name", none: "—",
@@ -1793,9 +1793,9 @@ function getPrintLabels(lang: PrintLang): PrintLabels {
     companyInfo: "بيانات الشركة", vatNumber: "الرقم الضريبي:", crNumber: "السجل التجاري:", phone: "الهاتف:",
     customerInfo: "بيانات العميل", accountCode: "كود الحساب:", customerAddress: "عنوان العميل:",
     validUntil: "صالح حتى", reference: "مرجع",
-    colItem: "الصنف / الخدمة", colQty: "الكمية", colFree: "مجاني", colUnit: "الوحدة",
+    colItem: "الصنف / الخدمة", colQty: "الكمية", colFree: "الكمية المجانية", colUnit: "الوحدة",
     colUnitPrice: "سعر الوحدة", colDiscount: "الخصم", colDiscountValue: "قيمة الخصم",
-    colVat: "الضريبة", colVatValue: "قيمة الضريبة", colTotal: "الإجمالي",
+    colAmount: "المبلغ", colVat: "الضريبة", colVatValue: "قيمة الضريبة", colTotal: "الإجمالي",
     lineNotesLbl: "ملاحظات:", notesLbl: "ملاحظات:",
     createdAtLbl: "تاريخ الإنشاء", byLbl: "بواسطة", printedLbl: "طُبع",
     companyNameFallback: "اسم الشركة", none: "—",
@@ -2167,26 +2167,24 @@ function template14(d: PrintData): string {
     </div>`;
 
   // ── Build the per-chunk line tables (max 10 rows each) ──────────────
-  // Column visibility mirrors the shared `linesTable()` so we don't show
-  // the discount / free columns when no line uses them.
-  const showDisc = lines.some(l =>
-    (Number(l.discount) || 0) > 0 || (Number(l.discountAmount) || 0) > 0
-  );
-  const showFree = lines.some(l => (Number(l.freeQty) || 0) > 0);
+  // Fixed column layout per user spec — always show every column in this
+  // exact order regardless of whether a line uses discount / free qty:
+  //   # / الصنف / الوحدة / سعر الوحدة / الكمية / الخصم / الكمية المجانية /
+  //   المبلغ / الضريبة / قيمة الضريبة / الإجمالي
   // Total visible column count — needed for the per-line notes colspan.
-  const colCount = 7 + (showFree ? 1 : 0) + (showDisc ? 2 : 0);
+  const colCount = 11;
 
   const linesHeadHtml = `
     <thead>
       <tr>
         <th style="width:30px">#</th>
         <th>${L.colItem}</th>
-        <th>${L.colQty}</th>
-        ${showFree ? `<th style="color:#b45309;">${L.colFree}</th>` : ""}
         <th>${L.colUnit}</th>
         <th>${L.colUnitPrice}</th>
-        ${showDisc ? `<th>${L.colDiscount}</th>` : ""}
-        ${showDisc ? `<th>${L.colDiscountValue}</th>` : ""}
+        <th>${L.colQty}</th>
+        <th>${L.colDiscount}</th>
+        <th style="color:#b45309;">${L.colFree}</th>
+        <th>${L.colAmount}</th>
         <th>${L.colVat}</th>
         <th>${L.colVatValue}</th>
         <th>${L.colTotal}</th>
@@ -2206,19 +2204,18 @@ function template14(d: PrintData): string {
       const vat  = sub * ((Number(l.vatRate) || 0) / 100);
       const tot  = sub + vat;
       const freeQ = Number(l.freeQty) || 0;
-      const discPctCell = discPct > 0 ? `${discPct}%` : "—";
       const discValCell = discAmtEff > 0 ? nf(discAmtEff) : "—";
       const noteText = (l.notes ?? l.description ?? "").toString().trim();
       const itemRow = `
         <tr class="item-row">
           <td>${idx + 1}</td>
           <td>${itemDisplayName(l)}</td>
-          <td class="mono">${Math.round(qty)}</td>
-          ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
           <td>${unitDisplay(l)}</td>
           <td class="mono">${nf(l.unitPrice)}</td>
-          ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discPctCell}</td>` : ""}
-          ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discValCell}</td>` : ""}
+          <td class="mono">${Math.round(qty)}</td>
+          <td class="mono" style="color:#b91c1c;">${discValCell}</td>
+          <td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>
+          <td class="mono">${nf(sub)}</td>
           <td class="mono">${l.vatRate ?? 15}%</td>
           <td class="mono">${nf(vat)}</td>
           <td class="mono" style="font-weight:600;">${nf(tot)}</td>
