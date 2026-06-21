@@ -1,57 +1,55 @@
 ---
-name: ZATCA SignedProperties Reference#2 digest is C14N, not verbatim
-description: Why the simplified (B2C) ZATCA sample fails signed-properties-hashing — the SignedProperties Reference#2 digest must be the C14N form, not a verbatim sha256 of the template; clearance is lenient and hides the bug.
+name: ZATCA SignedProperties Reference#2 digest = base64-of-hex of the C14N form
+description: Why the simplified (B2C) ZATCA sample fails signed-properties-hashing — the SignedProperties Reference#2 DigestValue must be base64(lower-hex(sha256(C14N))), the same base64-of-hex quirk as the cert digest, NOT raw-bytes base64. C14N alone does not fix it.
 ---
 
-# Simplified (B2C) `signed-properties-hashing`: digest must be C14N, not verbatim
+# Simplified (B2C) `signed-properties-hashing`: digest = base64-OF-HEX of C14N
 
 Simplified samples fail `signed-properties-hashing` ("Invalid signed properties
 hashing, SignedProperties with id='xadesSignedProperties'") while standard samples
-pass. The SignedProperties content is invoice-independent, so the difference is NOT
-the data — it is that the **reporting (simplified) validator strictly recomputes
-the Reference#2 digest, while the clearance (standard) validator is lenient and
-accepts a wrong one.** Standard CLEARED is therefore NOT proof the digest is right.
+"pass". The content is invoice-independent, so it is NOT the data. Two things must
+BOTH be right; getting only one still fails the strict reporting/simplified path:
 
-## The decisive rule (from XML-DSIG, confirmed by the live gateway)
-`SignedInfo`'s Reference#2 is `URI="#xadesSignedProperties"` and carries **NO
-`<ds:Transforms>`**. Per XML-DSIG, a same-document reference with no explicit
-transform is dereferenced to a node-set and **canonicalized with the default
-Canonical XML (C14N)** before hashing. So ZATCA computes
-`sha256( C14N(SignedProperties) )`, NOT `sha256(verbatim template)`.
+## 1. Content = C14N of the SignedProperties fragment (necessary, not sufficient)
+Reference#2 is `URI="#xadesSignedProperties"` with **NO `<ds:Transforms>`** → per
+XML-DSIG a same-document reference is dereferenced to a node-set and C14N'd before
+hashing. So the bytes hashed are `canonicalizeFragment(signedProps,
+"SignedProperties")` (xmlns sorts before Id; self-closing tags expand), parsed
+standalone so only its own xades/ds namespaces appear — NO phantom invoice-root
+namespaces. (In-context C14N gives the **identical** hash to standalone here, so
+inherited xmlns:ds is a non-issue.)
 
-C14N changes two things our template gets wrong:
-1. **Namespace decls sort before attributes** → apex becomes
-   `<xades:SignedProperties xmlns:xades="…" Id="xadesSignedProperties">` (our
-   template authored `Id` first).
-2. **Self-closing tags expand** → `<ds:DigestMethod …/>` becomes
-   `<ds:DigestMethod …></ds:DigestMethod>` (and `xmlns:ds` sorts before
-   `Algorithm`).
+## 2. Encoding = base64-OF-HEX (the decisive fix)
+**The DigestValue is `base64( lower-hex( sha256( C14N ) ) )` — base64 of the
+64-char hex STRING, ~88 chars — NOT `sha256(...).digest("base64")` (raw 32 bytes,
+44 chars).** This is the SAME ZATCA reference-impl quirk used for the **cert
+digest** (`zatca-binarysecuritytoken-double-base64.md`) and matches zatca-xml-js
+`getSignedPropertiesHash` (`createHash.update(xml).digest("hex")` →
+`Buffer.from(hex).toString("base64")`).
 
-Verbatim sha256 of the template differs from C14N at exactly these points →
-`signed-properties-hashing` on the strict path.
+**Why both verbatim AND C14N failed identically on production:** both used
+`.digest("base64")` (raw bytes). The canonicalization was a red herring — the real
+mismatch was the encoding. Switching to base64-of-hex (mirroring the cert-digest
+lines right above in the signer) is the actual fix.
 
-**Fix:** hash `canonicalizeFragment(signedProps, "SignedProperties")`. The helper
-parses the fragment standalone, so only its own xades/ds namespaces appear — NO
-phantom invoice-root (cac/cbc/ext/…) namespaces. (An older bug wrapped the
-fragment in the invoice's 9-ns root, injecting 8 phantom namespaces — that ALSO
-caused `signed-properties-hashing`. Standalone C14N avoids both failure modes.)
-Leave `SignedInfo`/SignatureValue alone — it already C14Ns via canonicalizeFragment
-and standard passes.
+**Asymmetry that confirms it:** the invoice digest (Reference#1) is accepted as
+plain raw-bytes base64 — only this XAdES Reference#2 uses base64-of-hex. So leave
+Reference#1 and SignedInfo/SignatureValue alone; only the SignedProperties digest
+encoding was wrong.
 
-**Why this is not a reasoning-only flip-flop:** the verbatim approach was live on
-production and FAILED simplified with signed-properties-hashing — that is gateway
-feedback, not a guess. The C14N isolation form is the one documented as
-live-verified passing (see `zatca-c14n-canonical-digests.md` #2).
+**Why this is gateway-confirmed, not a flip-flop:** verbatim+raw-base64 FAILED
+simplified live; C14N+raw-base64 FAILED simplified live with the byte-identical
+error. Both were real production feedback. base64-of-hex is the encoding the cert
+digest already uses successfully on the same gateway.
 
 ## QR tag 8 (separate concern — currently OK)
 When simplified ALSO fails `publicKey_QRCODE_INVALID`, QR tag 8 must be the CERT's
-SubjectPublicKeyInfo (use `certPublicKeySpkiDer`), not SPKI re-derived from the
-private key (Node can emit EXPLICIT EC params instead of the named secp256k1 OID →
-byte mismatch). In the company-26 production run there was NO publicKey error, so
-tag 8 was already correct — do not touch it to "fix" a hashing-only failure.
+SubjectPublicKeyInfo (`certPublicKeySpkiDer`), not SPKI re-derived from the private
+key. If the failing run shows ONLY a hashing error and no publicKey error, tag 8 is
+already correct — do not touch it to "fix" a hashing-only failure.
 
 ## Scope note
-`pos-desktop`'s signer (`src/lib/zatca/xades.ts`) is byte-identical to the web
-api-server signer and STILL hashes SignedProperties verbatim — same latent bug. It
-needs the same C14N fix before it can pass simplified, but that is a separate
-Windows-app release (version bump + tag) and out of scope for web onboarding.
+`pos-desktop`'s signer (`src/lib/zatca/xades.ts`) is byte-identical and has BOTH
+latent bugs (verbatim content + raw-base64 encoding). It needs the same two fixes
+before it can pass simplified, but that is a separate Windows-app release (version
+bump + tag) and out of scope for web onboarding.

@@ -119,9 +119,20 @@ export function signZatcaUbl(input: SignXadesInput): SignXadesResult {
   // fragment standalone, so only its own xades/ds namespaces appear (no phantom
   // invoice-root namespaces) — the live-gateway-verified scope.
   const canonicalSignedProps = canonicalizeFragment(signedProps, "SignedProperties");
-  const signedPropsHashB64 = createHash("sha256")
+  // ZATCA encodes the SignedProperties Reference#2 DigestValue with the SAME
+  // base64-OF-HEX convention as the cert digest above — base64( lower-hex(
+  // sha256( C14N(SignedProperties) ) ) ), NOT the standard raw-bytes base64 the
+  // rest of XML-DSIG uses. This is the ZATCA reference-impl quirk (zatca-xml-js
+  // getSignedPropertiesHash): hash → hex → base64 of the 64-char hex STRING.
+  // The C14N content was already correct, but `.digest("base64")` (raw 32 bytes)
+  // never matches what ZATCA recomputes → the strict simplified/reporting
+  // validator returns `signed-properties-hashing`. Lenient standard/clearance
+  // accepted the raw form, which masked the bug. The invoice digest (Reference#1)
+  // intentionally stays raw-base64 — only this XAdES reference uses base64-of-hex.
+  const signedPropsHashHex = createHash("sha256")
     .update(canonicalSignedProps, "utf8")
-    .digest("base64");
+    .digest("hex");
+  const signedPropsHashB64 = Buffer.from(signedPropsHashHex, "utf8").toString("base64");
 
   // 4. Build SignedInfo over (a) invoice digest + (b) signed-properties digest.
   const signedInfo = buildSignedInfo({ invoiceHashB64: invoiceHash, signedPropsHashB64 });
