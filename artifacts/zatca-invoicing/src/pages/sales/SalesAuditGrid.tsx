@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
+import { saveUiPrefs } from "@/lib/uiPrefsApi";
 import { useToast } from "@/hooks/use-toast";
 import { useFormatters } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -724,6 +725,9 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   const DATA_KEYS = COLUMNS.filter(c => !FIXED_LEAD.includes(c.key as any) && !FIXED_TAIL.includes(c.key as any)).map(c => c.key);
   // Scope per-company so a shared browser doesn't leak layouts across tenants.
   const LS_KEY = `salesAuditGrid.layout.v1.c${cid ?? "anon"}`;
+  // Stable screen slug for the durable server-side mirror (users.ui_preferences).
+  // localStorage is the fast local cache; the server copy survives a cache wipe.
+  const SCREEN_SLUG = "salesAuditGrid";
 
   // Helper — sanitize a stored dataOrder against the current column set
   // (drop unknown keys, dedupe, append missing). Forward-compatible.
@@ -756,6 +760,16 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     }
     return out;
   };
+  // Hidden columns — only DATA_KEYS may be hidden (fixed _sel/_idx/_act never).
+  // Deduped + filtered against the current column set so a stale/corrupt payload
+  // can never hide a column that no longer exists.
+  const sanitizeHidden = (input: unknown): string[] => {
+    if (!Array.isArray(input)) return [];
+    const seen = new Set<string>();
+    return (input as unknown[]).filter(
+      (k): k is string => typeof k === "string" && DATA_KEYS.includes(k) && !seen.has(k) && (seen.add(k), true)
+    );
+  };
 
   const [dataOrder, setDataOrder] = useState<string[]>(() => {
     try {
@@ -767,6 +781,19 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     } catch { /* ignore corrupt LS */ }
     return [...DATA_KEYS];
   });
+
+  // Hidden data columns (view-only — exports still include every column).
+  const [hiddenCols, setHiddenCols] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return sanitizeHidden(parsed?.hiddenCols);
+      }
+    } catch { /* ignore corrupt LS */ }
+    return [];
+  });
+  const hiddenSet = useMemo(() => new Set(hiddenCols), [hiddenCols]);
 
   const [headerColor, setHeaderColor] = useState<HeaderColor>(() => {
     try {
@@ -830,19 +857,20 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     if (pageSize !== DEFAULT_PAGE_SIZE) return true;
     if (dataOrder.length !== DATA_KEYS.length) return true;
     if (Object.keys(colWidths).length > 0) return true;
+    if (hiddenCols.length > 0) return true;
     return dataOrder.some((k, i) => k !== DATA_KEYS[i]);
-  }, [dataOrder, headerColor, footerColor, pageSize, colWidths]);
+  }, [dataOrder, hiddenCols, headerColor, footerColor, pageSize, colWidths]);
 
   // Persist layout on change.
   useEffect(() => {
     try {
       if (hasCustomLayout) {
-        localStorage.setItem(LS_KEY, JSON.stringify({ dataOrder, headerColor, footerColor, pageSize, colWidths }));
+        localStorage.setItem(LS_KEY, JSON.stringify({ dataOrder, hiddenCols, headerColor, footerColor, pageSize, colWidths }));
       } else {
         localStorage.removeItem(LS_KEY);
       }
     } catch { /* ignore quota errors */ }
-  }, [dataOrder, headerColor, footerColor, pageSize, colWidths, hasCustomLayout, LS_KEY]);
+  }, [dataOrder, hiddenCols, headerColor, footerColor, pageSize, colWidths, hasCustomLayout, LS_KEY]);
 
   // Re-hydrate layout + colors + pageSize + colWidths when the active company
   // changes (e.g. user logs into a different tenant in the same browser tab).
@@ -852,30 +880,103 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       if (raw) {
         const parsed = JSON.parse(raw);
         setDataOrder(sanitizeOrder(parsed?.dataOrder));
+        setHiddenCols(sanitizeHidden(parsed?.hiddenCols));
         setHeaderColor(sanitizeColor(parsed?.headerColor));
         setFooterColor(sanitizeFooterColor(parsed?.footerColor));
         setPageSize(sanitizePageSize(parsed?.pageSize));
         setColWidths(sanitizeColWidths(parsed?.colWidths));
         setPage(1);
-        return;
+        // Fall through (no early return): still re-arm the server-sync gate
+        // below so the durable copy can override this LS cache once /me lands.
+      } else {
+        setDataOrder([...DATA_KEYS]);
+        setHiddenCols([]);
+        setHeaderColor(DEFAULT_HEADER_COLOR);
+        setFooterColor(DEFAULT_FOOTER_COLOR);
+        setPageSize(DEFAULT_PAGE_SIZE);
+        setColWidths({});
+        setPage(1);
       }
-      setDataOrder([...DATA_KEYS]);
-      setHeaderColor(DEFAULT_HEADER_COLOR);
-      setFooterColor(DEFAULT_FOOTER_COLOR);
-      setPageSize(DEFAULT_PAGE_SIZE);
-      setColWidths({});
-      setPage(1);
+      // Re-arm server hydration for the (new) tenant: the durable server copy
+      // is the source of truth and must be allowed to override the LS cache
+      // above once the /me payload (user.uiPreferences) is available. Clearing
+      // hydratedKey also structurally disarms the save effect below — it only
+      // fires when hydratedKey === the CURRENT tenant key, so it can never PUT
+      // the previous tenant's stale layout during a context switch.
+      setHydratedKey(null);
     } catch { /* ignore corrupt LS */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cid]);
 
-  // Visible columns in render order: fixed lead + user-ordered data + fixed tail.
+  // ── Durable server-side layout (survives a browser cache/localStorage wipe) ──
+  // The LS cache above gives an instant first paint; this effect then lets the
+  // per-user server copy (users.ui_preferences, delivered on /api/auth/me) win.
+  // `hydratedKey` holds the tenant key we have already applied the server copy
+  // for; the save effect refuses to run until it equals the current tenant key,
+  // so a SuperAdmin acting-company switch can never echo stale state upstream.
+  const lastSavedRef = useRef<string | null>(null);
+  const [hydratedKey, setHydratedKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user) return;                 // wait for /me to resolve
+    const key = String(cid ?? "anon");
+    if (hydratedKey === key) return;   // already applied for this tenant
+    const blob = (user?.uiPreferences ?? {})[SCREEN_SLUG];
+    if (blob && typeof blob === "object" && !Array.isArray(blob)) {
+      const order   = sanitizeOrder((blob as any).dataOrder);
+      const hidden  = sanitizeHidden((blob as any).hiddenCols);
+      const hColor  = sanitizeColor((blob as any).headerColor);
+      const fColor  = sanitizeFooterColor((blob as any).footerColor);
+      const pSize   = sanitizePageSize((blob as any).pageSize);
+      const widths  = sanitizeColWidths((blob as any).colWidths);
+      setDataOrder(order);
+      setHiddenCols(hidden);
+      setHeaderColor(hColor);
+      setFooterColor(fColor);
+      setPageSize(pSize);
+      setColWidths(widths);
+      setPage(1);
+      // Seed "last saved" with what we just applied so we don't immediately
+      // echo the same blob straight back to the server.
+      lastSavedRef.current = JSON.stringify({ dataOrder: order, hiddenCols: hidden, headerColor: hColor, footerColor: fColor, pageSize: pSize, colWidths: widths });
+    } else {
+      // No durable copy yet. Seed "last saved" with the DEFAULT layout so an
+      // untouched grid never writes a row, but an existing LS-only custom
+      // layout (feature just shipped) still gets pushed up on first change.
+      lastSavedRef.current = JSON.stringify({ dataOrder: [...DATA_KEYS], hiddenCols: [], headerColor: DEFAULT_HEADER_COLOR, footerColor: DEFAULT_FOOTER_COLOR, pageSize: DEFAULT_PAGE_SIZE, colWidths: {} });
+    }
+    setHydratedKey(key);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, cid, hydratedKey]);
+
+  // Debounced durable save. Gated on `hydratedKey === current tenant key` so we
+  // never clobber the server copy with stale local state before hydration for
+  // THIS tenant has run (the gate is compared, not captured-then-flipped, so a
+  // pre-hydration render cannot slip a PUT through during a context switch).
+  useEffect(() => {
+    if (!user) return;
+    const key = String(cid ?? "anon");
+    if (hydratedKey !== key) return;   // not yet hydrated for the current tenant
+    const payload = { dataOrder, hiddenCols, headerColor, footerColor, pageSize, colWidths };
+    const serialized = JSON.stringify(payload);
+    if (serialized === lastSavedRef.current) return; // nothing changed
+    const h = setTimeout(() => {
+      void saveUiPrefs(SCREEN_SLUG, payload)
+        .then(() => { lastSavedRef.current = serialized; })
+        .catch(() => { /* best-effort — LS still holds the layout locally */ });
+    }, 800);
+    return () => clearTimeout(h);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydratedKey, user, cid, dataOrder, hiddenCols, headerColor, footerColor, pageSize, colWidths]);
+
+  // Visible columns in render order: fixed lead + user-ordered data (minus any
+  // hidden) + fixed tail. Fixed columns are never hideable.
   const visibleColumns = useMemo(() => {
     const byKey = Object.fromEntries(COLUMNS.map(c => [c.key, c]));
-    return [...FIXED_LEAD, ...dataOrder, ...FIXED_TAIL]
+    return [...FIXED_LEAD, ...dataOrder.filter(k => !hiddenSet.has(k)), ...FIXED_TAIL]
       .map(k => byKey[k])
       .filter(Boolean);
-  }, [dataOrder]);
+  }, [dataOrder, hiddenSet]);
 
   function moveCol(key: string, dir: -1 | 1) {
     setDataOrder(prev => {
@@ -888,8 +989,14 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       return next;
     });
   }
+  function toggleColVisibility(key: string) {
+    // Fixed columns are never hideable.
+    if (!DATA_KEYS.includes(key)) return;
+    setHiddenCols(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  }
   function resetLayout() {
     setDataOrder([...DATA_KEYS]);
+    setHiddenCols([]);
     setHeaderColor(DEFAULT_HEADER_COLOR);
     setFooterColor(DEFAULT_FOOTER_COLOR);
     setPageSize(DEFAULT_PAGE_SIZE);
@@ -2091,19 +2198,36 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                   )}
                 </div>
                 <div className="text-[10.5px] text-slate-500 mb-2 leading-relaxed">
-                  استخدم الأسهم لتغيير ترتيب الأعمدة. التعديلات تُحفظ تلقائياً.
+                  استخدم الأسهم لتغيير ترتيب الأعمدة، وأيقونة العين لإخفاء/إظهار العمود.
+                  {hiddenCols.length > 0 && (
+                    <span className="text-amber-700 font-medium"> — مخفي: {hiddenCols.length}</span>
+                  )}
+                  {" "}التعديلات تُحفظ تلقائياً.
                 </div>
                 <div className="max-h-72 overflow-y-auto space-y-0.5">
                   {dataOrder.map((key, i) => {
                     const col = COLUMNS.find(c => c.key === key);
                     if (!col) return null;
+                    const isHidden = hiddenSet.has(key);
                     return (
                       <div
                         key={key}
-                        className="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-slate-50 border border-transparent hover:border-slate-200"
+                        className={`flex items-center gap-1 px-1.5 py-1 rounded hover:bg-slate-50 border border-transparent hover:border-slate-200 ${isHidden ? "opacity-50" : ""}`}
                       >
                         <span className="text-[10px] text-slate-400 font-mono w-5 text-center">{i + 1}</span>
                         <span className="flex-1 text-xs text-slate-700 truncate">{col.label}</span>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className={`h-5 w-5 ${isHidden ? "text-amber-600" : "text-slate-500"}`}
+                          onClick={() => toggleColVisibility(key)}
+                          title={isHidden ? "إظهار العمود" : "إخفاء العمود"}
+                          aria-label={isHidden ? `إظهار العمود ${col.label}` : `إخفاء العمود ${col.label}`}
+                          aria-pressed={isHidden}
+                        >
+                          {isHidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                        </Button>
                         <Button
                           type="button"
                           size="icon"

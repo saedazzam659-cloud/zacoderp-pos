@@ -570,6 +570,10 @@ router.get("/me", async (req, res) => {
     nameAr: (user as any).nameAr ?? null,
     nameEn: (user as any).nameEn ?? null,
     permissions: (user as any).permissions ?? {},
+    // Durable per-user UI preferences (column order / hidden columns / colours
+    // / page size / widths per screen). Surfaced here so the client can restore
+    // a saved grid layout even after a browser cache wipe cleared localStorage.
+    uiPreferences: (user as any).uiPreferences ?? {},
     viewAllBranches: (user as any).viewAllBranches ?? true,
     // Per-SuperAdmin opt-out for the maintenance critical-digest email.
     // Surfaced here so the Settings page can render the toggle without an
@@ -664,6 +668,53 @@ router.put("/me/notifications", async (req, res) => {
     notifyMaintenanceSeverity: finalThreshold,
     message: messages.join(" — "),
   });
+});
+
+// PUT /api/auth/me/ui-prefs — persist a per-user UI layout blob for one screen.
+// Durable server-side mirror of what used to live only in localStorage, so a
+// saved grid layout (column order / hidden columns / colours / page size /
+// widths) survives a browser cache wipe. Body: { screen: string, layout: object }.
+// The blob is namespaced by `screen` and merged into users.ui_preferences so
+// different screens never clobber each other. This is a low-stakes preference
+// (no security or financial impact), so the active session token is sufficient.
+router.put("/me/ui-prefs", async (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith("Bearer ")) { res.status(401).json({ error: "غير مصرح" }); return; }
+  const token = auth.slice(7);
+  let [user] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
+  if (!user) {
+    const resolved = await resolveBearerToken(token);
+    if (resolved) {
+      const [full] = await db.select().from(usersTable).where(eq(usersTable.id, resolved.user.id));
+      if (full) user = full;
+    }
+  }
+  if (!user || !user.isActive) { res.status(401).json({ error: "الجلسة منتهية" }); return; }
+
+  const body = req.body ?? {};
+  const screen = typeof body.screen === "string" ? body.screen.trim() : "";
+  if (!screen || screen.length > 64) {
+    res.status(400).json({ error: "اسم الشاشة (screen) مطلوب" }); return;
+  }
+  // layout must be a plain JSON object (not array/primitive/null). We store it
+  // verbatim — the client owns the shape per screen.
+  const layout = body.layout;
+  if (layout === null || typeof layout !== "object" || Array.isArray(layout)) {
+    res.status(400).json({ error: "layout يجب أن يكون كائناً" }); return;
+  }
+  // Cap the serialized size so a malformed/huge blob can't bloat the row.
+  let serialized: string;
+  try { serialized = JSON.stringify(layout); } catch { serialized = ""; }
+  if (!serialized || serialized.length > 20000) {
+    res.status(400).json({ error: "حجم التفضيلات كبير جداً أو غير صالح" }); return;
+  }
+
+  const current = ((user as any).uiPreferences ?? {}) as Record<string, unknown>;
+  const merged = { ...current, [screen]: layout };
+  await db.update(usersTable)
+    .set({ uiPreferences: merged, updatedAt: new Date() })
+    .where(eq(usersTable.id, user.id));
+  res.json({ ok: true, uiPreferences: merged });
 });
 
 // Country → default-currency catalog. Mirrors

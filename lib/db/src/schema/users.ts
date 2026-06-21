@@ -27,6 +27,13 @@ export const usersTable = pgTable("users", {
   // Shape: { "<moduleKey>": { view, create, edit, delete, post, export, ... } }
   // For admin/superadmin, full access is granted regardless of this map.
   permissions: jsonb("permissions"),
+  // Per-user UI preferences (durable, server-side mirror of what used to live
+  // only in localStorage). Survives a browser cache/localStorage wipe. Shape:
+  //   { "<screenSlug>": { ...arbitrary layout blob } }
+  // Currently used by the sales audit grid (column order + hidden columns +
+  // colours + page size + widths). Additive/nullable so it is safe on every
+  // existing row; the client treats a missing key as "no saved layout".
+  uiPreferences: jsonb("ui_preferences"),
   // Branch-visibility scope. When true (default), the user can see data from
   // every branch of their company. When false, the user can only see data
   // belonging to the branches linked through `user_branches`. Admin and

@@ -89,6 +89,13 @@ export interface AuthUser {
   notifyMaintenanceSeverity?: "critical" | "warning" | "all";
   company?: any;
   subscription?: any;
+  /**
+   * Durable per-user UI preferences, namespaced by screen slug. Mirrors what
+   * used to live only in localStorage so a saved grid layout survives a browser
+   * cache wipe. Shape: { "<screenSlug>": { ...arbitrary layout blob } }.
+   * Written via PUT /api/auth/me/ui-prefs (see saveUiPrefs in lib/uiPrefsApi).
+   */
+  uiPreferences?: Record<string, any>;
 }
 
 /**
