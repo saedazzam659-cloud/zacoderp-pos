@@ -55,6 +55,8 @@ _Populate as you build_
 
 I prefer detailed explanations and a clear, concise communication style. I value iterative development and would like to be asked before any major architectural changes or significant code refactoring are implemented. Do not make changes to the `pnpm-workspace` skill.
 
+**After EVERY change to the POS Desktop Windows app (`artifacts/pos-desktop/`), always end by stating the new version number and the release commands** (i.e. push the `pos-desktop-v<version>` tag from the Git pane, then publish the GitHub Release to build the MSI). Do this automatically without being asked.
+
 **Always confirm the route → component mapping in `App.tsx` BEFORE editing any page.** A path like `/sales/invoices` does NOT necessarily map to `SalesInvoices.tsx`. For example `/sales/invoices` is wired to `SalesAuditGrid.tsx`, not `SalesInvoices.tsx`. Run `rg -n 'path="/the/path"' artifacts/zatca-invoicing/src/App.tsx` first, identify the actual component imported there, and edit THAT file. Do not assume by filename.
 
 ## Gotchas
