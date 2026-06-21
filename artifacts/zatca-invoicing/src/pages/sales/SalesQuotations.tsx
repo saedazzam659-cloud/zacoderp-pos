@@ -12,6 +12,7 @@ import {
   FileSpreadsheet, FileDown, X, Loader2, User,
 } from "lucide-react";
 import { BulkPrintMenu } from "@/lib/bulkPrint";
+import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import * as XLSX from "xlsx";
 import { cn } from "@/lib/utils";
 import {
@@ -76,19 +77,19 @@ export default function SalesQuotations() {
 
   const { data: quotations = [], isLoading } = useQuery<any[]>({
     queryKey: ["sales-quotations", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/sales/sales-quotations?companyId=${cid}` : `${API}/api/sales/sales-quotations`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/sales/sales-quotations?companyId=${cid}` : `${API}/api/sales/sales-quotations`, authH),
     enabled: !!user,
   });
 
   const { data: customers = [] } = useQuery<any[]>({
     queryKey: ["customers", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, authH),
     enabled: !!user,
   });
 
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["branches", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, { headers: authH }); return r.json(); },
+    queryFn: () => fetchJsonArray(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, authH),
     enabled: !!user,
   });
 

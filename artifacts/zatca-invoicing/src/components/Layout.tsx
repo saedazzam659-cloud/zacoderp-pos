@@ -3362,8 +3362,16 @@ function TopBar({
 
 // ─── Main Layout ───────────────────────────────────────────────────────────────
 export default function Layout({ children }: { children: React.ReactNode }) {
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const { user, logout, actingCompanyId } = useAuth() as any;
+
+  // Explicit sign-out should ALWAYS return the user to a clean login form so
+  // the next sign-in lands on the home dashboard. Without this, App.tsx's
+  // auth gate captures the current protected path into ?redirect=… and the
+  // re-login bounces straight back to wherever they logged out from.
+  const handleLogout = async () => {
+    try { await logout(); } finally { navigate("/login"); }
+  };
   // Auto-logout after a configurable idle period (set in General Settings).
   // No-op when the setting is 0/disabled or no user is signed in.
   useIdleLogout();
@@ -3711,7 +3719,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onLiveMonitoringToggle: handleLiveMonitoringToggle,
     onNavigate: closeMobile,
     onClose: closeMobile,
-    onLogout: logout,
+    onLogout: handleLogout,
   };
 
   // Company-wide menu placement. 'topnav' renders a horizontal top bar instead
@@ -3791,7 +3799,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           user={user}
           isSuperAdmin={isSuperAdmin}
           onMobileMenu={() => setMobileOpen(true)}
-          onLogout={logout}
+          onLogout={handleLogout}
         />
         {/* Horizontal top navigation — only when the company opted into the
             top-nav layout. Mobile keeps the drawer (hidden md:flex inside). */}

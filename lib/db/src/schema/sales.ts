@@ -186,6 +186,7 @@ export const salesQuotationStatusEnum = pgEnum("sales_quotation_status", [
 export const salesQuotationsTable = pgTable("sales_quotations", {
   id:             serial("id").primaryKey(),
   companyId:      integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId:       integer("branch_id"),
   docNumber:      text("doc_number"),
   quotationDate:  text("quotation_date").notNull(),
   validUntil:     text("valid_until"),

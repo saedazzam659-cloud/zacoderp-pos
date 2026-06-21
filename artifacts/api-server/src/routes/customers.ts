@@ -357,15 +357,23 @@ router.put("/:id", async (req, res) => {
   // the edit form as a "save anyway" confirmation when a 409 is hit.
   const allowDuplicates = (req.body as any)?.allowDuplicates === true;
   const others = await db.select().from(customersTable).where(eq(customersTable.companyId, existing.companyId));
-  if (!allowDuplicates && d.vatNumber && others.some(c => c.id !== id && c.vatNumber?.trim() === String(d.vatNumber).trim())) {
+  // Only enforce uniqueness when the value actually CHANGED from what is
+  // already stored — otherwise a customer that already shares a vat/cr/name
+  // with another row (pre-existing duplicate, e.g. from a bulk import) could
+  // never have its OTHER fields (phone, address…) edited and saved. Editing
+  // an unchanged identifier never introduces a NEW conflict.
+  const vatChanged  = d.vatNumber !== undefined && String(d.vatNumber).trim() !== (existing.vatNumber ?? "").trim();
+  const crChanged   = d.crNumber  !== undefined && String(d.crNumber).trim()  !== (existing.crNumber ?? "").trim();
+  const nameChanged = d.nameAr    !== undefined && String(d.nameAr).trim().toLowerCase() !== (existing.nameAr ?? "").trim().toLowerCase();
+  if (!allowDuplicates && vatChanged && d.vatNumber && others.some(c => c.id !== id && c.vatNumber?.trim() === String(d.vatNumber).trim())) {
     res.status(409).json({ error: `الرقم الضريبي "${d.vatNumber}" مستخدم لعميل آخر`, code: "duplicate_customer" });
     return;
   }
-  if (!allowDuplicates && d.crNumber && others.some(c => c.id !== id && c.crNumber?.trim() === String(d.crNumber).trim())) {
+  if (!allowDuplicates && crChanged && d.crNumber && others.some(c => c.id !== id && c.crNumber?.trim() === String(d.crNumber).trim())) {
     res.status(409).json({ error: `رقم السجل التجاري "${d.crNumber}" مستخدم لعميل آخر`, code: "duplicate_customer" });
     return;
   }
-  if (!allowDuplicates && d.nameAr && others.some(c => c.id !== id && c.nameAr?.trim().toLowerCase() === String(d.nameAr).trim().toLowerCase())) {
+  if (!allowDuplicates && nameChanged && d.nameAr && others.some(c => c.id !== id && c.nameAr?.trim().toLowerCase() === String(d.nameAr).trim().toLowerCase())) {
     res.status(409).json({ error: `الاسم "${d.nameAr}" مسجَّل بالفعل لعميل آخر`, code: "duplicate_customer" });
     return;
   }
