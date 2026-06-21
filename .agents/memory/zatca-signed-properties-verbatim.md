@@ -48,8 +48,27 @@ SubjectPublicKeyInfo (`certPublicKeySpkiDer`), not SPKI re-derived from the priv
 key. If the failing run shows ONLY a hashing error and no publicKey error, tag 8 is
 already correct — do not touch it to "fix" a hashing-only failure.
 
-## Scope note
-`pos-desktop`'s signer (`src/lib/zatca/xades.ts`) is byte-identical and has BOTH
-latent bugs (verbatim content + raw-base64 encoding). It needs the same two fixes
-before it can pass simplified, but that is a separate Windows-app release (version
-bump + tag) and out of scope for web onboarding.
+## pos-desktop (standalone Windows app) — now aligned, via fixed-point templates
+`pos-desktop`'s signer (`src/lib/zatca/xades.ts`) was a port that had drifted from
+the cloud on FOUR points (not just the one web fix): (1) SignedProperties content
+verbatim + raw-base64; (2) **SignedInfo signed verbatim** while it had self-closing
+tags C14N expands → signature would never verify on a strict gateway; (3) cert
+digest hashed hex-of-DER raw-base64 instead of base64-of-hex over the base64 cert
+body; (4) no double-base64 `binarySecurityToken` unwrap.
+
+**Key constraint:** pos-desktop is browser-safe (Tauri) and has **no C14N library**.
+So it cannot canonicalize at runtime like the cloud. The fix instead authors the
+SignedInfo / SignedProperties templates ALREADY in C14N (canonical) **fixed-point**
+form (xmlns decls before other attrs, self-closing tags expanded), embeds those
+exact bytes, and hashes/signs them **verbatim** — the zatca-xml-js approach. Because
+the embedded bytes are already canonical, ZATCA's canonicalization of the embedded
+node-set is a no-op, so the verbatim hash/signature matches. Proven locally:
+base64-of-hex of the pos-desktop template == base64-of-hex of
+`canonicalizeFragment(cloud template)`, byte-for-byte, for SignedProperties; both
+templates are C14N fixed points; cert-digest algorithm identical to the cloud.
+
+**Fragility:** any future whitespace/attr/tag-shape edit to those two builders
+silently breaks the digest/signature (no runtime C14N to absorb it) — keep them
+fixed points. Each pos-desktop signer change is a separate MSI release (version bump
++ `pos-desktop-v<version>` tag). Cannot be tested against the live gateway from here;
+verification requires building the MSI and running a real submission.

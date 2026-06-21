@@ -1,20 +1,30 @@
 // XAdES-BES signer for ZATCA UBL invoices — browser-safe port of the cloud's
-// `zatca-xades-signer.ts` (Task #233, Option B).
+// `zatca-xades-signer.ts`.
 //
-// Identical XML output to the cloud: same SignedInfo / SignedProperties /
-// UBLExtensions layout, the same quirky cert-digest rule (sha256 of the cert's
-// hex-ASCII), and the same IEEE-P1363 (r||s) ECDSA-SHA256 SignatureValue.
+// Produces ZATCA-valid signatures matching the cloud signer's PROVEN math
+// (cloud passed production simplified/B2C compliance):
+//   • cert digest      = base64( lower-hex( sha256( base64-cert-body ASCII ) ) )
+//   • SignedProperties = same base64-of-hex digest convention
+//   • SignatureValue   = IEEE-P1363 (r||s) ECDSA-SHA256 over the canonical SignedInfo
+//
+// The cloud canonicalizes (C14N) the SignedInfo / SignedProperties at runtime
+// before hashing/signing. This app has no C14N library, so instead the templates
+// are authored ALREADY in C14N (canonical) fixed-point form — xmlns decls before
+// other attributes, self-closing tags expanded — and the SAME bytes are embedded
+// AND hashed/signed verbatim. ZATCA's canonicalization of the embedded node-set is
+// then a no-op, so the recomputed digests/signature match (the zatca-xml-js
+// approach). NOTE: this makes the signer sensitive to template whitespace/tag-shape
+// edits — keep buildSignedInfo / buildSignedProperties as C14N fixed points.
 //
 // Two Node-only dependencies are replaced:
 //   • `crypto` (createHash/createSign/createPrivateKey) → ./crypto
 //   • `node-forge` (X.509 issuer/serial parse)          → ./der walker
 
 import {
-  sha256B64,
+  sha256Hex,
   signEcdsaP1363,
   bytesToB64,
   b64ToBytes,
-  bytesToHex,
   utf8ToBytes,
   bytesToUtf8,
 } from "./crypto";
@@ -39,34 +49,65 @@ export interface SignXadesResult {
   signedPropertiesHashB64: string;
 }
 
-export function signZatcaUbl(input: SignXadesInput): SignXadesResult {
-  const { ublXml, certificatePem, privateKey, invoiceHash } = input;
+// ZATCA's base64-OF-HEX encoding quirk (cert digest + SignedProperties digest):
+// base64( lower-hex( sha256( input ) ) ) — i.e. sha256 → 64-char hex STRING →
+// base64 of that ASCII hex, NOT the standard raw-32-byte base64 the rest of
+// XML-DSIG uses. The strict simplified (B2C) reporting validator recomputes the
+// SignedProperties digest this way; raw-bytes base64 yields `signed-properties-
+// hashing`. Mirrors the cloud signer (zatca-xades-signer.ts) and zatca-xml-js.
+function sha256B64OfHex(input: string): string {
+  return bytesToB64(utf8ToBytes(sha256Hex(input)));
+}
 
-  // 1. Strip PEM, get cert DER bytes.
-  const certBody = certificatePem
+// Recover the cert DER + its single-base64 body from a ZATCA cert input.
+// ZATCA's `binarySecurityToken` carries an EXTRA base64 layer over the DER:
+// decoding once yields the ASCII base64 cert body ("MII…"), NOT raw DER. Every
+// X.509 DER starts with 0x30 (SEQUENCE), so when the first decoded byte is not
+// 0x30 we unwrap the extra layer. Mirrors the cloud's certDerFromToken.
+function certDerFromToken(certInput: string): { der: Uint8Array; bodyB64: string } {
+  const stripped = certInput
     .replace(/-----BEGIN [^-]+-----/g, "")
     .replace(/-----END [^-]+-----/g, "")
     .replace(/\s+/g, "");
-  if (!certBody) throw new Error("certificate is empty after PEM strip");
-  const certBytes = b64ToBytes(certBody);
+  let der = b64ToBytes(stripped);
+  if (der[0] !== 0x30) {
+    // Unwrap ZATCA's extra base64 layer (binarySecurityToken → cert body).
+    der = b64ToBytes(bytesToUtf8(der).trim());
+  }
+  return { der, bodyB64: bytesToB64(der) };
+}
 
-  // ZATCA's quirky cert-digest rule: sha256 of the *hex of the cert bytes* as
-  // an ASCII string, then base64.
-  const certHexAscii = bytesToHex(certBytes);
-  const certDigestB64 = sha256B64(certHexAscii);
+export function signZatcaUbl(input: SignXadesInput): SignXadesResult {
+  const { ublXml, certificatePem, privateKey, invoiceHash } = input;
+
+  // 1. Recover the cert DER + canonical single-base64 body (unwraps ZATCA's
+  //    double-base64 binarySecurityToken so the digest + ASN.1 parse use real bytes).
+  const { der: certBytes, bodyB64: certBody } = certDerFromToken(certificatePem);
+  if (!certBody) throw new Error("certificate is empty after PEM strip");
+
+  // ZATCA cert-digest = base64( lower-hex( sha256( base64-cert-body ASCII ) ) ).
+  // The hash is over the base64 cert STRING (the exact <ds:X509Certificate> text),
+  // NOT the DER bytes — matches what ZATCA recomputes (cloud + zatca-xml-js).
+  const certDigestB64 = sha256B64OfHex(certBody);
 
   // 2. Issuer DN (RFC 4514) + serial (decimal) from the cert DER.
   const { issuerName, serialNumber } = parseCertIssuerSerial(certBytes);
 
-  // 3. SignedProperties → digest.
+  // 3. SignedProperties → digest. buildSignedProperties emits the C14N (canonical)
+  //    form directly — namespace decls first, self-closing tags expanded — so it is
+  //    a C14N fixed point. We embed THIS exact string, so ZATCA's canonicalization
+  //    of the embedded node-set is a no-op and a verbatim sha256 matches. The digest
+  //    uses the base64-OF-HEX quirk (Reference#2 carries no <ds:Transforms>).
   const signingTime = new Date().toISOString().replace(/\.\d+Z$/, "Z");
   const signedProps = buildSignedProperties({ signingTime, certDigestB64, issuerName, serialNumber });
-  const signedPropsHashB64 = sha256B64(signedProps);
+  const signedPropsHashB64 = sha256B64OfHex(signedProps);
 
-  // 4. SignedInfo over invoice digest + signed-properties digest.
+  // 4. SignedInfo over invoice digest + signed-properties digest. buildSignedInfo
+  //    also emits the C14N form so that signing it verbatim equals signing the
+  //    canonical form ZATCA verifies against (CanonicalizationMethod = c14n11).
   const signedInfo = buildSignedInfo({ invoiceHashB64: invoiceHash, signedPropsHashB64 });
 
-  // 5. ECDSA-SHA256 over SignedInfo, P1363 (r||s) form.
+  // 5. ECDSA-SHA256 over the (already-canonical) SignedInfo, P1363 (r||s) form.
   const sig = signEcdsaP1363(utf8ToBytes(signedInfo), privateKey);
   const signatureValueB64 = bytesToB64(sig);
 
@@ -87,9 +128,11 @@ export function signZatcaUbl(input: SignXadesInput): SignXadesResult {
 }
 
 function buildSignedInfo(opts: { invoiceHashB64: string; signedPropsHashB64: string }): string {
+  // Authored in C14N (canonical) form — self-closing tags expanded — so signing
+  // it verbatim equals signing the form ZATCA canonicalizes & verifies.
   return `<ds:SignedInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
-<ds:CanonicalizationMethod Algorithm="http://www.w3.org/2006/12/xml-c14n11"/>
-<ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256"/>
+<ds:CanonicalizationMethod Algorithm="http://www.w3.org/2006/12/xml-c14n11"></ds:CanonicalizationMethod>
+<ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256"></ds:SignatureMethod>
 <ds:Reference Id="invoiceSignedData" URI="">
 <ds:Transforms>
 <ds:Transform Algorithm="http://www.w3.org/TR/1999/REC-xpath-19991116">
@@ -101,13 +144,13 @@ function buildSignedInfo(opts: { invoiceHashB64: string; signedPropsHashB64: str
 <ds:Transform Algorithm="http://www.w3.org/TR/1999/REC-xpath-19991116">
 <ds:XPath>not(//ancestor-or-self::cac:AdditionalDocumentReference[cbc:ID='QR'])</ds:XPath>
 </ds:Transform>
-<ds:Transform Algorithm="http://www.w3.org/2006/12/xml-c14n11"/>
+<ds:Transform Algorithm="http://www.w3.org/2006/12/xml-c14n11"></ds:Transform>
 </ds:Transforms>
-<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
+<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"></ds:DigestMethod>
 <ds:DigestValue>${opts.invoiceHashB64}</ds:DigestValue>
 </ds:Reference>
 <ds:Reference Type="http://www.w3.org/2000/09/xmldsig#SignatureProperties" URI="#xadesSignedProperties">
-<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
+<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"></ds:DigestMethod>
 <ds:DigestValue>${opts.signedPropsHashB64}</ds:DigestValue>
 </ds:Reference>
 </ds:SignedInfo>`;
@@ -119,13 +162,17 @@ function buildSignedProperties(opts: {
   issuerName: string;
   serialNumber: string;
 }): string {
-  return `<xades:SignedProperties Id="xadesSignedProperties" xmlns:xades="http://uri.etsi.org/01903/v1.3.2#">
+  // Authored in C14N (canonical) form — xmlns decls before other attributes,
+  // self-closing <ds:DigestMethod> expanded — so it is a C14N fixed point. We embed
+  // this exact string and hash it verbatim (base64-of-hex); ZATCA's canonicalization
+  // of the embedded node-set is then a no-op and the recomputed digest matches.
+  return `<xades:SignedProperties xmlns:xades="http://uri.etsi.org/01903/v1.3.2#" Id="xadesSignedProperties">
 <xades:SignedSignatureProperties>
 <xades:SigningTime>${opts.signingTime}</xades:SigningTime>
 <xades:SigningCertificate>
 <xades:Cert>
 <xades:CertDigest>
-<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"/>
+<ds:DigestMethod xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"></ds:DigestMethod>
 <ds:DigestValue xmlns:ds="http://www.w3.org/2000/09/xmldsig#">${opts.certDigestB64}</ds:DigestValue>
 </xades:CertDigest>
 <xades:IssuerSerial>
