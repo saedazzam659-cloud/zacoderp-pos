@@ -123,6 +123,7 @@ const COLUMNS: ReadonlyArray<{ key: string; label: string; type: ColType; align?
   { key: "rep",        label: "المندوب",    type: "text",   align: "center" },
   { key: "payment",    label: "نوع الدفع",  type: "text",   align: "center" },
   { key: "currency",   label: "العملة",     type: "text",   align: "center" },
+  { key: "freeQty",    label: "الكمية المجانية", type: "num", align: "end"    },
   { key: "subtotal",   label: "المجموع",    type: "num",    align: "end"    },
   { key: "discount",   label: "الخصم",      type: "num",    align: "end"    },
   { key: "vatAmt",     label: "الضريبة",    type: "num",    align: "end"    },
@@ -1137,6 +1138,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           case "rep":        cellValue = repMap[inv.salesRepId] ?? ""; break;
           case "payment":    cellValue = PAY_AR[inv.paymentType] ?? inv.paymentType ?? ""; break;
           case "currency":   cellValue = inv.currencyCode ?? ""; break;
+          case "freeQty":    cellValue = Number(inv.totalFreeQty ?? 0); break;
           case "subtotal":   cellValue = invGrossSubtotal(inv); break;
           case "discount":   cellValue = invTotalDiscount(inv); break;
           case "vatAmt":     cellValue = inv.vatAmount; break;
@@ -1172,6 +1174,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       case "rep":        return { v: repMap[inv.salesRepId] ?? "",                   isNum: false };
       case "payment":    return { v: inv.paymentType ?? "",                          isNum: false };
       case "currency":   return { v: inv.currencyCode ?? "",                         isNum: false };
+      case "freeQty":    return { v: Number(inv.totalFreeQty ?? 0),                  isNum: true  };
       case "subtotal":   return { v: invGrossSubtotal(inv),                          isNum: true  };
       case "discount":   return { v: invTotalDiscount(inv),                          isNum: true  };
       case "vatAmt":     return { v: Number(inv.vatAmount ?? 0),                     isNum: true  };
@@ -1438,8 +1441,9 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       acc.vat      += Number(inv.vatAmount ?? 0);
       acc.total    += Number(inv.totalAmount ?? 0);
       acc.commission += Number(inv.commissionAmount ?? 0);
+      acc.freeQty  += Number(inv.totalFreeQty ?? 0);
       return acc;
-    }, { subtotal: 0, discount: 0, vat: 0, total: 0, commission: 0 });
+    }, { subtotal: 0, discount: 0, vat: 0, total: 0, commission: 0, freeQty: 0 });
   }, [filtered]);
 
   // ── AI audit trigger ──────────────────────────────────────────────────
@@ -1495,7 +1499,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     }
     const header = [
       "#","رقم الفاتورة","التاريخ","العميل","الرقم الضريبي","هاتف العميل","الفرع","المندوب",
-      "نوع الدفع","العملة","المجموع","الخصم","الضريبة","الإجمالي","العمولة",
+      "نوع الدفع","العملة","الكمية المجانية","المجموع","الخصم","الضريبة","الإجمالي","العمولة",
       "حالة السداد","القيد","ZATCA","الحالة","ملاحظات",
     ];
     const rows = filtered.map((inv: any, idx: number) => [
@@ -1509,6 +1513,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       repMap[inv.salesRepId] ?? "",
       inv.paymentType === "cash" ? "نقدي" : inv.paymentType === "bank" ? "بنكي" : "آجل",
       inv.currencyCode ?? "SAR",
+      Number(inv.totalFreeQty ?? 0).toString(),
       invGrossSubtotal(inv).toFixed(2),
       invTotalDiscount(inv).toFixed(2),
       Number(inv.vatAmount ?? 0).toFixed(2),
@@ -1726,6 +1731,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       { header: "المندوب",           key: "rep",          width: 14 },
       { header: "نوع الدفع",         key: "paymentLabel", width: 10 },
       { header: "العملة",            key: "currencyCode", width: 8  },
+      { header: "الكمية المجانية",   key: "freeQty",      width: 12 },
       { header: "المجموع",           key: "subtotal",     width: 12 },
       { header: "الخصم",             key: "discount",     width: 10 },
       { header: "الضريبة",           key: "vatAmount",    width: 12 },
@@ -1747,6 +1753,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       rep:          repMap[inv.salesRepId] ?? "",
       paymentLabel: inv.paymentType === "cash" ? "نقدي" : inv.paymentType === "bank" ? "بنكي" : "آجل",
       currencyCode: inv.currencyCode ?? "SAR",
+      freeQty:      Number(inv.totalFreeQty ?? 0),
       subtotal:     fmt(invGrossSubtotal(inv)),
       discount:     fmt(invTotalDiscount(inv)),
       vatAmount:    fmt(inv.vatAmount),
@@ -1761,6 +1768,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     const sumDis = filtered.reduce((s: number, i: any) => s + invTotalDiscount(i), 0);
     const sumVat = filtered.reduce((s: number, i: any) => s + Number(i.vatAmount      || 0), 0);
     const sumTot = filtered.reduce((s: number, i: any) => s + Number(i.totalAmount    || 0), 0);
+    const sumFreeQty = filtered.reduce((s: number, i: any) => s + Number(i.totalFreeQty || 0), 0);
     return {
       _idx:         "",
       docNumber:    "الإجمالي",
@@ -1772,6 +1780,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       rep:          "",
       paymentLabel: "",
       currencyCode: "",
+      freeQty:      sumFreeQty,
       subtotal:     fmt(sumSub),
       discount:     fmt(sumDis),
       vatAmount:    fmt(sumVat),
@@ -2679,6 +2688,10 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-600">{payLabel}</td>;
                       case "currency":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{inv.currencyCode}</td>;
+                      case "freeQty": {
+                        const fq = Number(inv.totalFreeQty ?? 0);
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-green-700">{fq ? fq.toLocaleString("en-US", { maximumFractionDigits: 3 }) : "—"}</td>;
+                      }
                       case "subtotal":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono">{fmt(invGrossSubtotal(inv))}</td>;
                       case "discount":
@@ -2848,6 +2861,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                   {visibleColumns.map((col, i) => {
                     // Numeric columns get their total; the very first cell holds the "الإجمالي:" label.
                     const totalByKey: Record<string, number | undefined> = {
+                      freeQty: totals.freeQty,
                       subtotal: totals.subtotal,
                       discount: totals.discount,
                       vatAmt: totals.vat,

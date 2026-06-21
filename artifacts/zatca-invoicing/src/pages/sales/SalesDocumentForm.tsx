@@ -313,7 +313,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // edit/quotation/order screens where the picker is hidden.
   const { data: allQuotationsForLink = [] } = useQuery<any[]>({
     queryKey: ["sales-quotations-source-link", cid],
-    queryFn: () => fetchJsonArray(`${API}/api/sales-quotations`, authH),
+    queryFn: () => fetchJsonArray(`${API}/api/sales/sales-quotations`, authH),
     enabled: !!user && isInvoice && isNew,
     staleTime: 0,
     refetchOnMount: "always",
@@ -337,7 +337,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   async function loadFromQuotation(qid: string) {
     if (!qid) { setSourceQuotationId(""); return; }
     try {
-      const r = await fetch(`${API}/api/sales-quotations/${qid}`, { headers: authH });
+      const r = await fetch(`${API}/api/sales/sales-quotations/${qid}`, { headers: authH });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
         toast({ title: j.error || t("salesDocForm.basedOnQuotationLoadError"), variant: "destructive" });

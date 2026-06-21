@@ -407,6 +407,7 @@ router.get("/sales-invoices", async (req, res) => {
       invoiceId:   salesInvoiceLinesTable.invoiceId,
       warehouseId: salesInvoiceLinesTable.warehouseId,
       qty:         salesInvoiceLinesTable.qty,
+      freeQty:     salesInvoiceLinesTable.freeQty,
       unitPrice:   salesInvoiceLinesTable.unitPrice,
       discount:    salesInvoiceLinesTable.discount,
       discountAmount: salesInvoiceLinesTable.discountAmount,
@@ -419,8 +420,11 @@ router.get("/sales-invoices", async (req, res) => {
     // reconstruct the GROSS subtotal. Mirrors `effectiveLineDiscount`:
     // amount wins when set (capped at gross), else derive from the percent.
     const lineDiscByInvoice = new Map<number, number>();
+    // Σ free quantity (الكمية المجانية) per invoice for the audit-grid column.
+    const freeQtyByInvoice = new Map<number, number>();
     for (const lw of lineWh) {
       if (!lw.invoiceId) continue;
+      freeQtyByInvoice.set(lw.invoiceId, (freeQtyByInvoice.get(lw.invoiceId) ?? 0) + (Number(lw.freeQty) || 0));
       if (lw.warehouseId != null) {
         const s = whByInvoice.get(lw.invoiceId) ?? new Set<number>();
         s.add(Number(lw.warehouseId));
@@ -445,6 +449,7 @@ router.get("/sales-invoices", async (req, res) => {
         ...r,
         warehouseIds: Array.from(whByInvoice.get(r.id) ?? []),
         lineDiscountTotal: (lineDiscByInvoice.get(r.id) ?? 0).toFixed(2),
+        totalFreeQty: (freeQtyByInvoice.get(r.id) ?? 0),
         paymentSettlement: top ? {
           voucherId:   top.voucherId,
           code:        top.code,
