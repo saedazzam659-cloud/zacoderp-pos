@@ -84,6 +84,7 @@ import StockAdjustmentsAdmin from "./StockAdjustmentsAdmin";
 import StockMovementsReport from "./StockMovementsReport";
 import ItemCard from "./ItemCard";
 import StockValuation from "./StockValuation";
+import WarehouseStockReport from "./WarehouseStockReport";
 import SlowMovingItems from "./SlowMovingItems";
 import FreeQuantitiesReport from "./FreeQuantitiesReport";
 import ItemSalesValuationReport from "./ItemSalesValuationReport";
@@ -227,7 +228,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     members: [
       "items", "item_groups", "uom", "units", "warehouses", "warehouse_groups", "stock_transfers",
       "stocktakes", "stock_adjustments", "stock_movements", "low_stock",
-      "stock_import", "item_card", "stock_valuation", "slow_moving", "free_quantities", "item_sales_valuation",
+      "stock_import", "item_card", "stock_valuation", "warehouse_stock", "slow_moving", "free_quantities", "item_sales_valuation",
       "inventory_dashboard", "smart_alerts", "goods_deliveries",
     ],
   },
@@ -666,6 +667,7 @@ export default function PosShell({
     { id: "stock_transfers",   icon: "🔄", label: "التحويل بين المخازن", perm: "stock_transfers" },
     { id: "item_card",         icon: "🗃️", label: "كارت الصنف", perm: "item_card" },
     { id: "stock_valuation",   icon: "💰", label: "تقييم المخزون", perm: "stock_valuation" },
+    { id: "warehouse_stock",   icon: "🏬", label: "الكميات حسب المخزن", perm: "stock_valuation" },
     { id: "slow_moving",       icon: "🐌", label: "الأصناف بطيئة الحركة", perm: "slow_moving" },
     { id: "free_quantities",   icon: "🎁", label: "تقرير الكميات الحرة", perm: "free_quantities" },
     { id: "item_sales_valuation", icon: "📊", label: "تقييم مبيعات الأصناف", perm: "item_sales_valuation" },
@@ -968,6 +970,9 @@ export default function PosShell({
           )}
           {standalone && v === "stock_valuation" && (isAdmin || can("stock_valuation")) && (
             <div style={S.pagePad}><StockValuation /></div>
+          )}
+          {standalone && v === "warehouse_stock" && (isAdmin || can("stock_valuation")) && (
+            <div style={S.pagePad}><WarehouseStockReport /></div>
           )}
           {standalone && v === "slow_moving" && (isAdmin || can("slow_moving")) && (
             <div style={S.pagePad}><SlowMovingItems /></div>
@@ -1278,6 +1283,7 @@ function labelFor(v: View): string {
     stock_transfers: "التحويل بين المخازن",
     item_card: "كارت الصنف",
     stock_valuation: "تقييم المخزون",
+    warehouse_stock: "الكميات حسب المخزن",
     slow_moving: "الأصناف بطيئة الحركة",
     free_quantities: "تقرير الكميات الحرة",
     item_sales_valuation: "تقييم مبيعات الأصناف",

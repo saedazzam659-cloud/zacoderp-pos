@@ -7,6 +7,7 @@ import { LS_KEYS, lsRead, lsWrite } from "./localStore";
 // client forwards them to the host; single/host call the local command).
 import { bridgeInvoke as tauriInvoke, shouldUseBridge } from "./bridge";
 import { enqueuePush } from "./pushQueue";
+import { emitData } from "./dataBus";
 
 export interface LocalCustomer {
   id: number;
@@ -373,6 +374,7 @@ export async function createCustomer(input: CreateCustomerInput): Promise<LocalC
       vatNumber: created.vatNumber,
     },
   });
+  emitData("customers");
   return created;
 }
 
@@ -456,6 +458,7 @@ export async function updateCustomer(id: number, patch: CreateCustomerInput): Pr
     operation: "update",
     payload: { localId: id, cloudId: updated.cloudId, ...patch },
   });
+  emitData("customers");
   return updated;
 }
 
@@ -487,6 +490,7 @@ export async function deleteCustomer(id: number): Promise<void> {
     operation: "delete",
     payload: { localId: id, cloudId },
   });
+  emitData("customers");
 }
 
 export async function countCustomers(): Promise<number> {

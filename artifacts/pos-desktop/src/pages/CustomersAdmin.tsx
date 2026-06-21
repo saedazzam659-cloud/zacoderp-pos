@@ -9,6 +9,7 @@ import {
 import { listCurrencies, listAccounts, type Currency, type Account } from "../lib/accounting";
 import { listBranches, type Branch } from "../lib/branches";
 import { SearchCombobox } from "./_adminUi";
+import { useDataRefresh } from "../lib/dataBus";
 
 const emptyInput: CreateCustomerInput = {
   nameAr: "", nameEn: "", phone: "", vatNumber: "",
@@ -58,6 +59,7 @@ export default function CustomersAdmin() {
     } finally { setLoading(false); }
   }
   useEffect(() => { void refresh(); /* eslint-disable-next-line */ }, [search]);
+  useDataRefresh(["customers"], refresh);
 
   function startNew() { setErr(null); setEdit({ mode: "new", data: { ...emptyInput } }); }
   function startEdit(c: LocalCustomer) {
@@ -180,7 +182,7 @@ export default function CustomersAdmin() {
           </tr></thead>
           <tbody>
             {rows.map((c) => (
-              <tr key={c.id} style={{ ...S.tr, opacity: edit ? 0.5 : 1 }}>
+              <tr key={c.id} style={{ ...S.tr, opacity: edit ? 0.5 : 1, cursor: edit ? "default" : "pointer" }} title={edit ? undefined : "نقر مزدوج للتعديل"} onDoubleClick={() => { if (!edit) startEdit(c); }}>
                 <td style={S.td}>
                   <div style={{ fontWeight: 600 }}>{c.nameAr}</div>
                   {c.nameEn && <div style={S.muted}>{c.nameEn}</div>}

@@ -6,6 +6,7 @@ import {
 import { listBranches, type Branch } from "../lib/branches";
 import { listWarehouseGroups, type WarehouseGroup } from "../lib/warehouseGroups";
 import { listAccounts, type Account } from "../lib/accounting";
+import { useDataRefresh } from "../lib/dataBus";
 import {
   Page, Card, Empty, SearchCombobox,
   input, btnPrimary, btnSecondary,
@@ -62,6 +63,7 @@ export default function WarehousesAdmin() {
   const [err, setErr] = useState<string | null>(null);
 
   async function refresh() { setRows(await listWarehouses()); }
+  useDataRefresh(["warehouses"], refresh);
   useEffect(() => {
     void refresh();
     void (async () => {
@@ -179,11 +181,14 @@ export default function WarehousesAdmin() {
               ) : (
                 <div
                   key={w.id}
+                  onDoubleClick={() => { if (!edit) startEdit(w); }}
+                  title={edit ? undefined : "نقر مزدوج للتعديل"}
                   style={{
                     display: "flex", alignItems: "center", gap: 14,
                     padding: "12px 14px", borderRadius: 10,
                     border: "1px solid #e2e8f0", background: "#fff",
                     opacity: edit ? 0.55 : 1,
+                    cursor: edit ? "default" : "pointer",
                     transition: "border-color .15s, box-shadow .15s",
                   }}
                 >

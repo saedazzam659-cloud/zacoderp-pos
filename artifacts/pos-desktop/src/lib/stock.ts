@@ -21,6 +21,7 @@ import { lsRead, lsWrite } from "./localStore";
 // the LAN-aware entry points; the original sync functions remain the
 // single-mode / LS implementation and are reused by them.
 import { bridgeInvoke, isHost, isClient } from "./bridge";
+import { emitData } from "./dataBus";
 
 const LS_KEY = "pos_desktop_stock_v1";
 
@@ -200,17 +201,21 @@ export async function setStockShared(
       qty,
       reorderPoint: reorderPoint ?? null,
     });
+    emitData("stock");
     return;
   }
   setStock(itemId, qty, reorderPoint);
+  emitData("stock");
 }
 
 export async function setReorderPointShared(itemId: number, n: number): Promise<void> {
   if (lanMode()) {
     await bridgeInvoke("lan_stock_set_reorder", { itemId, reorderPoint: n });
+    emitData("stock");
     return;
   }
   setReorderPoint(itemId, n);
+  emitData("stock");
 }
 
 /**
@@ -222,32 +227,42 @@ export async function setReorderPointShared(itemId: number, n: number): Promise<
  */
 export async function adjustStockShared(itemId: number, delta: number): Promise<number | null> {
   if (lanMode()) {
-    return await bridgeInvoke<number | null>("lan_stock_adjust", { itemId, delta });
+    const r = await bridgeInvoke<number | null>("lan_stock_adjust", { itemId, delta });
+    emitData("stock");
+    return r;
   }
-  return adjustStock(itemId, delta);
+  const r = adjustStock(itemId, delta);
+  emitData("stock");
+  return r;
 }
 
 export async function bulkSetStockShared(
   rows: Array<{ itemId: number; qty?: number | null; reorderPoint?: number | null }>,
 ): Promise<number> {
   if (lanMode()) {
-    return await bridgeInvoke<number>("lan_stock_bulk_set", {
+    const r = await bridgeInvoke<number>("lan_stock_bulk_set", {
       rows: rows.map((r) => ({
         itemId: r.itemId,
         qty: r.qty ?? null,
         reorderPoint: r.reorderPoint ?? null,
       })),
     });
+    emitData("stock");
+    return r;
   }
-  return bulkSetStock(rows);
+  const r = bulkSetStock(rows);
+  emitData("stock");
+  return r;
 }
 
 export async function clearStockShared(): Promise<void> {
   if (lanMode()) {
     await bridgeInvoke("lan_stock_clear", {});
+    emitData("stock");
     return;
   }
   clearStock();
+  emitData("stock");
 }
 
 /** Pure low-stock count over an already-fetched map (works for both modes). */

@@ -5,6 +5,7 @@
 // every helper a safe no-op in the web preview / cloud build.
 
 import { invoke } from "./tauri-shim";
+import { emitData } from "./dataBus";
 
 function hasTauri(): boolean {
   return typeof window !== "undefined" &&
@@ -51,13 +52,17 @@ export async function listWarehouses(): Promise<Warehouse[]> {
   return await invoke<Warehouse[]>("warehouses_list");
 }
 export async function createWarehouse(input: WarehouseInput): Promise<number> {
-  return await invoke<number>("warehouses_create", { input });
+  const id = await invoke<number>("warehouses_create", { input });
+  emitData("warehouses");
+  return id;
 }
 export async function updateWarehouse(id: number, input: WarehouseInput): Promise<void> {
   await invoke("warehouses_update", { id, input });
+  emitData("warehouses");
 }
 export async function deleteWarehouse(id: number): Promise<void> {
   await invoke("warehouses_delete", { id });
+  emitData("warehouses");
 }
 
 // ─── Stock on-hand ─────────────────────────────────────────────────

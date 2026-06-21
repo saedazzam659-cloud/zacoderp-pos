@@ -10,6 +10,7 @@
 // on screen; the items themselves were dropped on the floor.
 
 import { LS_KEYS, lsRead, lsWrite, IS_TAURI } from "./localStore";
+import { emitData } from "./dataBus";
 // Task #207: shared-data Rust commands route through the bridge so a LAN
 // client forwards them to the host. In single/host mode `bridgeInvoke`
 // calls the LOCAL Tauri command — identical to the previous `tauriInvoke`.
@@ -490,6 +491,7 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
       isWeighed: input.isWeighed ?? null, pricePerKg: input.pricePerKg ?? null, plu: input.plu ?? null,
     });
     writeMetaFor(id, metaFrom(input));
+    emitData("items");
     return {
       id, cloudId: null,
       code: input.code ?? null, nameAr: input.nameAr, nameEn: input.nameEn ?? null,
@@ -543,6 +545,7 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
     operation: "create",
     payload: { localId: id, ...input },
   });
+  emitData("items");
   return row;
 }
 
@@ -595,6 +598,7 @@ export async function bulkImportLocalItems(
         if (r.code) seenCode.add(r.code);
       } catch { /* skip on row-level failure (e.g. UNIQUE conflict) */ }
     }
+    if (inserted) emitData("items");
     return { inserted, skippedDup };
   }
   // Browser fallback — write via createItem (LS only).
@@ -608,6 +612,7 @@ export async function bulkImportLocalItems(
       if (r.code) seenCode.add(r.code);
     } catch { /* skip */ }
   }
+  if (inserted) emitData("items");
   return { inserted, skippedDup };
 }
 
@@ -765,6 +770,7 @@ export async function updateItem(id: number, patch: Partial<CreateItemInput>): P
       uomId: merged.uomId ?? null,
     });
     writeMetaFor(id, metaFrom(merged));
+    emitData("items");
     return merged;
   }
 
@@ -791,6 +797,7 @@ export async function updateItem(id: number, patch: Partial<CreateItemInput>): P
     operation: "update",
     payload: { localId: id, cloudId: updated.cloudId, ...patch },
   });
+  emitData("items");
   return updated;
 }
 
@@ -803,6 +810,7 @@ export async function deleteItem(id: number): Promise<void> {
     const ls = readLocal();
     const idx = ls.findIndex((i) => i.id === id);
     if (idx >= 0) { ls.splice(idx, 1); lsWrite(LS_KEYS.items, ls); }
+    emitData("items");
     return;
   }
 
@@ -836,6 +844,7 @@ export async function deleteItem(id: number): Promise<void> {
     operation: "delete",
     payload: { localId: id, cloudId },
   });
+  emitData("items");
 }
 
 export async function countItems(): Promise<number> {

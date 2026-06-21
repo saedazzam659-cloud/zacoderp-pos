@@ -8,6 +8,7 @@ import {
   Page, Card, Table, Th, Td, Empty, SearchCombobox,
   btnPrimary, btnLink, fmtCurrency,
 } from "./_adminUi";
+import { useDataRefresh } from "../lib/dataBus";
 
 const emptyInput: SupplierInput = {
   code: null, nameAr: "", nameEn: null, phone: null, vatNumber: null, notes: null,
@@ -42,6 +43,7 @@ export default function SuppliersAdmin() {
     setRows(s); setCurrencies(cur); setAccounts(acc); setGroups(grp);
   }
   useEffect(() => { void refresh(); }, []);
+  useDataRefresh(["suppliers"], refresh);
 
   function startNew() { setErr(null); setEdit({ mode: "new", data: { ...emptyInput } }); }
   function startEdit(s: Supplier) {
@@ -134,7 +136,7 @@ export default function SuppliersAdmin() {
             </tr></thead>
             <tbody>
               {rows.map((s) => (
-                <tr key={s.id} style={{ opacity: edit ? 0.5 : 1 }}>
+                <tr key={s.id} style={{ opacity: edit ? 0.5 : 1, cursor: edit ? "default" : "pointer" }} title={edit ? undefined : "نقر مزدوج للتعديل"} onDoubleClick={() => { if (!edit) startEdit(s); }}>
                   <Td mono>{s.code ?? "—"}</Td>
                   <Td>{s.nameAr}{s.nameEn && <span style={{ color: "#94a3b8", marginInlineStart: 8 }}>{s.nameEn}</span>}</Td>
                   <Td>{s.phone ?? "—"}</Td>

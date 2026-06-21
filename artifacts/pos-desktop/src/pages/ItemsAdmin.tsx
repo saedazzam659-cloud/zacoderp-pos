@@ -12,6 +12,7 @@ import { getAllStockShared, type StockMap } from "../lib/stock";
 import { getVertical, type Vertical } from "../lib/standalone";
 import { currencySymbol } from "../lib/currency";
 import { SearchCombobox, Pagination, pageSlice } from "./_adminUi";
+import { useDataRefresh } from "../lib/dataBus";
 
 // ─── Excel-like grid: column defs, filtering, sorting, export ───────
 type ColKey = "name" | "qty" | "barcode" | "code" | "price" | "vat" | "source";
@@ -272,6 +273,9 @@ export default function ItemsAdmin() {
     finally { setLoading(false); }
   }
   useEffect(() => { setPage(1); void refresh(); /* eslint-disable-next-line */ }, [search]);
+  // Live-refresh when items or stock change anywhere (a sale/purchase/return/
+  // adjustment on another keep-alive tab updates the on-hand qty column).
+  useDataRefresh(["items", "stock"], refresh);
 
   const processed = useMemo(() => {
     let list = rows.slice();

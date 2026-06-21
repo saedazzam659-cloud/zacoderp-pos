@@ -45,7 +45,7 @@ export type WindowsView =
   | "report_account_statement" | "report_customer_statement" | "report_income_statement"
   | "report_balance_sheet" | "report_trial_balance"
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
-  | "item_card" | "stock_valuation" | "slow_moving" | "free_quantities" | "item_sales_valuation"
+  | "item_card" | "stock_valuation" | "warehouse_stock" | "slow_moving" | "free_quantities" | "item_sales_valuation"
   | "warehouse_groups" | "inventory_dashboard" | "smart_alerts" | "units" | "offers" | "goods_deliveries"
   | "number_series" | "settings_guide" | "zatca" | "pos_accounts" | "backup";
 
@@ -110,6 +110,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   stock_transfers:   { module: "inventory", profile: "erp" },
   item_card:         { module: "inventory", profile: "erp" },
   stock_valuation:   { module: "inventory", profile: "erp" },
+  warehouse_stock:   { module: "inventory", profile: "erp" },
   slow_moving:       { module: "inventory", profile: "erp" },
   free_quantities:   { module: "inventory", profile: "erp" },
   item_sales_valuation: { module: "inventory", profile: "erp" },

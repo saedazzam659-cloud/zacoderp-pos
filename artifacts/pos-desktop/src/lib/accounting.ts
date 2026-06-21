@@ -3,6 +3,7 @@
 // returns empty arrays / throws clear errors.
 
 import { invoke } from "./tauri-shim";
+import { emitData } from "./dataBus";
 
 function hasTauri(): boolean {
   return typeof window !== "undefined" &&
@@ -439,7 +440,9 @@ export async function listSuppliers(): Promise<Supplier[]> {
 export async function createSupplier(input: SupplierInput): Promise<number> {
   if (!hasTauri()) notImpl();
   try {
-    return await invoke<number>("suppliers_create", { input });
+    const id = await invoke<number>("suppliers_create", { input });
+    emitData("suppliers");
+    return id;
   } catch (e) {
     // suppliers_create posts the opening-balance JE in the SAME transaction as
     // the INSERT, so a JE failure (e.g. no open fiscal period / missing AP
@@ -447,9 +450,11 @@ export async function createSupplier(input: SupplierInput): Promise<number> {
     // never appears in pickers. If there's an opening, retry WITHOUT it so the
     // supplier at least persists; otherwise rethrow the real error.
     if ((input.openingBalance ?? 0) > 0) {
-      return await invoke<number>("suppliers_create", {
+      const id = await invoke<number>("suppliers_create", {
         input: { ...input, openingBalance: 0 },
       });
+      emitData("suppliers");
+      return id;
     }
     throw e;
   }
@@ -457,10 +462,12 @@ export async function createSupplier(input: SupplierInput): Promise<number> {
 export async function updateSupplier(id: number, input: SupplierInput): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("suppliers_update", { id, input });
+  emitData("suppliers");
 }
 export async function deleteSupplier(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("suppliers_delete", { id });
+  emitData("suppliers");
 }
 
 // ─── Cash boxes ──────────────────────────────────────────────────────
