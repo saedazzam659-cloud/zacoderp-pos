@@ -19,7 +19,7 @@ import {
 } from "@workspace/db";
 import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
 import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte } from "drizzle-orm";
-import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter, multiBranchScopeSpread } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter, multiBranchScopeSpread, intersectBranchRequest } from "../middleware/auth.js";
 import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry, pickBatches, type BatchPick } from "../lib/stockHelpers.js";
@@ -2490,6 +2490,12 @@ router.post("/sales-quotations", async (req, res) => {
     // Quotations are now branch-owned (like invoices) — a new quotation MUST
     // carry a branch so it can be scoped. Don't rely on the UI alone.
     if (!branchId) { res.status(400).json({ error: "يجب اختيار الفرع" }); return; }
+    // Authorize the requested branch: a restricted user must not write into a
+    // branch they aren't linked to (presence alone isn't enough — they could
+    // submit another branch's id directly).
+    if (intersectBranchRequest(req, Number(branchId)) === "deny") {
+      res.status(403).json({ error: "غير مصرح لك بهذا الفرع", field: "branchId" }); return;
+    }
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     const [q] = await db.insert(salesQuotationsTable).values({
       companyId: cid, docNumber: docNumber || null, quotationDate,
@@ -2520,6 +2526,13 @@ router.put("/sales-quotations/:id", async (req, res) => {
     const id = Number(req.params.id);
     const { docNumber, quotationDate, validUntil, customerId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines, taxId, branchId } = req.body;
+    // Branch presence required on edit too (quotations are branch-owned).
+    if (!branchId) { res.status(400).json({ error: "يجب اختيار الفرع" }); return; }
+    // Authorize the target branch: a restricted user must not reassign a
+    // quotation into a branch they aren't linked to.
+    if (intersectBranchRequest(req, Number(branchId)) === "deny") {
+      res.status(403).json({ error: "غير مصرح لك بهذا الفرع", field: "branchId" }); return;
+    }
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     // Branch-scope guard: a restricted user can't edit another branch's
     // quotation (mirror of the by-id read guard).
