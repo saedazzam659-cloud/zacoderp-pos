@@ -28,7 +28,7 @@ import { nextSequenceNumber } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
 import { salesInvoiceRowToZatcaData } from "../lib/zatca-sales-mapper.js";
-import { getZatcaBaseUrl, resolveZatcaEnv, GENESIS_HASH } from "../lib/zatca-env.js";
+import { getZatcaBaseUrl, resolveZatcaEnv, GENESIS_HASH, csidEnvMismatchMessage } from "../lib/zatca-env.js";
 
 // ─── Journal entry helper (mirrors purchasing.ts) ────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null; costCenter?: string | null };
@@ -3236,6 +3236,21 @@ router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
 
     const env = resolveZatcaEnv(company);
     const baseUrl = getZatcaBaseUrl(env);
+
+    // Guard: a sandbox-issued CSID/PCSID cannot authenticate against the live
+    // simulation/production gateway — surface it clearly instead of an opaque 500.
+    const envMismatch = csidEnvMismatchMessage(authToken, env);
+    if (envMismatch) {
+      await db.update(salesInvoicesTable).set({
+        zatcaStatus: "rejected",
+        zatcaSubmittedAt: now,
+        zatcaResponseCode: "401",
+        zatcaErrorMessages: JSON.stringify([{ code: "ENV_CSID_MISMATCH", message: envMismatch }]),
+        updatedAt: now,
+      }).where(eq(salesInvoicesTable.id, id));
+      res.status(422).json({ status: "rejected", errors: [{ code: "ENV_CSID_MISMATCH", message: envMismatch }] });
+      return;
+    }
 
     const built = buildSignedZatcaInvoice({
       invoiceData: mapped.data,

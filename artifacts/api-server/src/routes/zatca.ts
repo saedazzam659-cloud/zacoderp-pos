@@ -15,7 +15,7 @@ import { generateZatcaXml, hashXml } from "../lib/zatca-xml.js";
 import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
 import { invoiceRowToZatcaData } from "../lib/zatca-invoice-mapper.js";
 import { runAutoComplianceCheck } from "../lib/zatca-compliance.js";
-import { getZatcaBaseUrl, resolveZatcaEnv, envArabic, GENESIS_HASH, type ZatcaEnv } from "../lib/zatca-env.js";
+import { getZatcaBaseUrl, resolveZatcaEnv, envArabic, GENESIS_HASH, csidEnvMismatchMessage, type ZatcaEnv } from "../lib/zatca-env.js";
 import { createHash } from "crypto";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission, audit } from "../middleware/permissions.js";
@@ -487,6 +487,23 @@ router.post("/companies/:id/auto-compliance-check", requirePermission("zatca_set
   }
 
   const env = resolveZatcaEnv(company);
+
+  // Guard: a sandbox-issued CSID cannot authenticate against simulation/production.
+  // Catch it here with a clear message instead of firing 6 samples into an opaque 401.
+  const ccMismatch = csidEnvMismatchMessage(company.zatcaCsidToken, env);
+  if (ccMismatch) {
+    res.status(422).json({
+      success: false,
+      environment: env,
+      allPassed: false,
+      results: [],
+      code: "ENV_CSID_MISMATCH",
+      error: ccMismatch,
+      message: ccMismatch,
+    });
+    return;
+  }
+
   // The compliance chain runs on ALL environments INCLUDING production — obtaining
   // a real Production CSID REQUIRES passing the compliance check on the production
   // gateway first. (This was previously blocked for production, which made it
@@ -562,6 +579,12 @@ router.post("/invoices/:id/submit", requirePermission("zatca_bridge", "create"),
   try {
     const env = resolveZatcaEnv(company);
     const baseUrl = getZatcaBaseUrl(env);
+
+    const subMismatch = csidEnvMismatchMessage(authToken, env);
+    if (subMismatch) {
+      res.status(422).json({ code: "ENV_CSID_MISMATCH", error: subMismatch, environment: env });
+      return;
+    }
 
     // REBUILD + SIGN from authoritative invoice data using the live certificate
     // (PCSID when available, else CSID). The signed finalXml + empty-QR hash are
