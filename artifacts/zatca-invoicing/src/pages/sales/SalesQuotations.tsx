@@ -86,6 +86,12 @@ export default function SalesQuotations() {
     enabled: !!user,
   });
 
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey: ["branches", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
   const autoPrintHandledRef = useRef(false);
   useEffect(() => {
     if (autoPrintHandledRef.current) return;
@@ -155,6 +161,11 @@ export default function SalesQuotations() {
     [customers],
   );
 
+  const branchMap: Record<number, string> = useMemo(
+    () => Object.fromEntries((branches as any[]).map((b: any) => [b.id, b.nameAr ?? b.nameEn ?? `#${b.id}`])),
+    [branches],
+  );
+
   /* ── Audit-grid column model ── */
   type ColType = "text" | "num" | "none";
   interface ColDef { key: string; label: string; type: ColType; valueOf: (r: any) => string | number; }
@@ -165,6 +176,7 @@ export default function SalesQuotations() {
     { key: "date",      label: t("salesQuotations.colDate"),       type: "text", valueOf: (r) => r.quotationDate ?? "" },
     { key: "validUntil",label: t("salesQuotations.colValidUntil"), type: "text", valueOf: (r) => r.validUntil ?? "" },
     { key: "customer",  label: t("salesQuotations.colCustomer"),   type: "text", valueOf: (r) => cusMap[r.customerId] ?? "" },
+    { key: "branch",    label: t("salesQuotations.colBranch", { defaultValue: "الفرع" }), type: "text", valueOf: (r) => (r.branchId ? (branchMap[r.branchId] ?? `#${r.branchId}`) : "—") },
     { key: "currency",  label: t("salesQuotations.colCurrency"),   type: "text", valueOf: (r) => r.currencyCode ?? "" },
     { key: "subtotal",  label: t("salesQuotations.colSubtotal"),   type: "num",  valueOf: (r) => Number(r.subtotal ?? 0) },
     { key: "vat",       label: t("salesQuotations.colVat"),        type: "num",  valueOf: (r) => Number(r.vatAmount ?? 0) },

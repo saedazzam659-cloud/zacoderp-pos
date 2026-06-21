@@ -155,6 +155,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // server-side — that finance-free contract is enforced in the route, not
   // here. Accounting account fields and offers stay invoice-only.
   const usesOps     = isInvoice || isOrder;
+  // Branch is now a first-class field on ALL sales documents (invoice / order
+  // / quotation) so quotations can be scoped per branch like invoices. The
+  // other operational fields (payment type, cash/bank, sales rep) remain
+  // invoice/order-only via `usesOps`.
+  const usesBranch  = isInvoice || isOrder || isQuotation;
   const basePath    = isInvoice ? "/sales/invoices"   : isOrder ? "/sales/orders"   : "/sales/quotations";
   const apiPath     = isInvoice ? "sales-invoices"    : isOrder ? "sales-orders"    : "sales-quotations";
   const queryKey    = isInvoice ? "sales-invoice"     : isOrder ? "sales-order"     : "sales-quotation";
@@ -652,7 +657,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     if (isQuotation) setValidUntil(existing.validUntil ?? "");
     if (isOrder)     setValidUntil(existing.expectedDeliveryDate ?? "");
     setCustomerId(existing.customerId ? String(existing.customerId) : "");
-    if (usesOps) setBranchId(existing.branchId ? String(existing.branchId) : "");
+    if (usesBranch) setBranchId(existing.branchId ? String(existing.branchId) : "");
     if (usesOps) setPaymentType(existing.paymentType ?? "credit");
     if (usesOps) setCashBoxId(existing.cashBoxId ? String(existing.cashBoxId) : "");
     if (usesOps) setBankAccountId(existing.bankAccountId ? String(existing.bankAccountId) : "");
@@ -735,7 +740,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         setDocDate(today());
         if (!isInvoice) setValidUntil("");
         setCustomerId(src.customerId ? String(src.customerId) : "");
-        if (usesOps) setBranchId(src.branchId ? String(src.branchId) : "");
+        if (usesBranch) setBranchId(src.branchId ? String(src.branchId) : "");
         if (usesOps) setPaymentType(src.paymentType ?? "credit");
         if (usesOps) setCashBoxId(src.cashBoxId ? String(src.cashBoxId) : "");
         if (usesOps) setBankAccountId(src.bankAccountId ? String(src.bankAccountId) : "");
@@ -1258,15 +1263,21 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           return;
         }
       }
-    } else if (!customerId) {
-      // Quotation mode: still require a customer (a quotation without
-      // an addressed party isn't a meaningful document).
-      toast({
-        title: "⚠️ بيانات ناقصة — لا يمكن حفظ المستند",
-        description: "يجب اختيار العميل قبل الحفظ",
-        variant: "destructive",
-      });
-      return;
+    } else {
+      // Quotation mode: require a customer (a quotation without an addressed
+      // party isn't meaningful) AND a branch (so it can be branch-scoped like
+      // invoices/orders).
+      const missing: string[] = [];
+      if (!customerId) missing.push(t("salesDocForm.customer", { defaultValue: "العميل" }));
+      if (!branchId)   missing.push(t("salesDocForm.branch",   { defaultValue: "الفرع" }));
+      if (missing.length) {
+        toast({
+          title: "⚠️ بيانات ناقصة — لا يمكن حفظ المستند",
+          description: `الحقول التالية مطلوبة: ${missing.join("، ")}`,
+          variant: "destructive",
+        });
+        return;
+      }
     }
     // Per-line gate: item name + unit + qty + sale price must be filled
     // on every populated row. Skips completely empty rows. Mirrors the
@@ -1334,6 +1345,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     } else {
       base.quotationDate = docDate;
       base.validUntil = validUntil || null;
+      base.branchId = branchId || null;
     }
     saveMut.mutate(base);
   }
@@ -2336,9 +2348,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     />
                   </div>
                 )}
-                {usesOps && fp.isVisible("branch") && (
+                {usesBranch && fp.isVisible("branch") && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">{t("salesDocForm.branch")}{fp.isRequired("branch") && <span className="text-destructive"> *</span>}</Label>
+                    <Label className="text-xs">{t("salesDocForm.branch")}<span className="text-destructive"> *</span></Label>
                     <Select value={branchId || undefined} onValueChange={setBranchId} disabled={fp.isReadOnly("branch")}>
                       <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesDocForm.branchPlaceholder")} /></SelectTrigger>
                       <SelectContent>

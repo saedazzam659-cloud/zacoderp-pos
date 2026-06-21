@@ -2415,7 +2415,10 @@ router.get("/sales-quotations", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
     const rows = await db.select().from(salesQuotationsTable)
-      .where(eq(salesQuotationsTable.companyId, cid))
+      .where(and(
+        eq(salesQuotationsTable.companyId, cid),
+        ...branchScopeSpread(req, salesQuotationsTable.branchId, req.query.branchId),
+      ))
       .orderBy(desc(salesQuotationsTable.quotationDate));
     // Resolve creator usernames in one pass so the grid can render the
     // "أنشأه" column without an extra round trip (mirrors the invoice grid).
@@ -2442,8 +2445,15 @@ router.get("/sales-quotations/:id", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
     const id = Number(req.params.id);
+    // Branch-level isolation (mirror of /sales-invoices/:id): a restricted
+    // user (viewAllBranches=false) must not fetch a quotation from a branch
+    // they aren't linked to, even via a guessed id. Shared rows (NULL) stay.
     const [q] = await db.select().from(salesQuotationsTable)
-      .where(and(eq(salesQuotationsTable.id, id), eq(salesQuotationsTable.companyId, cid)));
+      .where(and(
+        eq(salesQuotationsTable.id, id),
+        eq(salesQuotationsTable.companyId, cid),
+        ...branchScopeSpread(req, salesQuotationsTable.branchId, undefined),
+      ));
     if (!q) { res.status(404).json({ error: "العرض غير موجود" }); return; }
     const lines = await db.select().from(salesQuotationLinesTable)
       .where(eq(salesQuotationLinesTable.quotationId, id))
@@ -2475,11 +2485,15 @@ router.post("/sales-quotations", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, quotationDate, validUntil, customerId, currencyCode, exchangeRate,
-            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines, taxId } = req.body;
+            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines, taxId, branchId } = req.body;
     if (!quotationDate) { res.status(400).json({ error: "تاريخ العرض مطلوب" }); return; }
+    // Quotations are now branch-owned (like invoices) — a new quotation MUST
+    // carry a branch so it can be scoped. Don't rely on the UI alone.
+    if (!branchId) { res.status(400).json({ error: "يجب اختيار الفرع" }); return; }
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     const [q] = await db.insert(salesQuotationsTable).values({
       companyId: cid, docNumber: docNumber || null, quotationDate,
+      branchId: branchId ? Number(branchId) : null,
       validUntil: validUntil || null,
       customerId: customerId ? Number(customerId) : null,
       currencyCode: currencyCode || "SAR",
@@ -2505,10 +2519,20 @@ router.put("/sales-quotations/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const { docNumber, quotationDate, validUntil, customerId, currencyCode, exchangeRate,
-            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines, taxId } = req.body;
+            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines, taxId, branchId } = req.body;
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
+    // Branch-scope guard: a restricted user can't edit another branch's
+    // quotation (mirror of the by-id read guard).
+    const [scoped] = await db.select({ id: salesQuotationsTable.id }).from(salesQuotationsTable)
+      .where(and(
+        eq(salesQuotationsTable.id, id),
+        eq(salesQuotationsTable.companyId, cid),
+        ...branchScopeSpread(req, salesQuotationsTable.branchId, undefined),
+      ));
+    if (!scoped) { res.status(404).json({ error: "العرض غير موجود" }); return; }
     const [q] = await db.update(salesQuotationsTable).set({
       docNumber: docNumber || null, quotationDate,
+      branchId: branchId ? Number(branchId) : null,
       validUntil: validUntil || null,
       customerId: customerId ? Number(customerId) : null,
       currencyCode: currencyCode || "SAR",
@@ -2544,7 +2568,11 @@ router.patch("/sales-quotations/:id/status", async (req, res) => {
       res.status(400).json({ error: "استخدم مسار التحويل لإصدار الفاتورة" }); return;
     }
     const [current] = await db.select().from(salesQuotationsTable)
-      .where(and(eq(salesQuotationsTable.id, id), eq(salesQuotationsTable.companyId, cid)));
+      .where(and(
+        eq(salesQuotationsTable.id, id),
+        eq(salesQuotationsTable.companyId, cid),
+        ...branchScopeSpread(req, salesQuotationsTable.branchId, undefined),
+      ));
     if (!current) { res.status(404).json({ error: "العرض غير موجود" }); return; }
     const allowed: Record<string, string[]> = {
       draft:     ["sent", "accepted", "rejected"],
@@ -2571,7 +2599,11 @@ router.post("/sales-quotations/:id/convert", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const [q] = await db.select().from(salesQuotationsTable)
-      .where(and(eq(salesQuotationsTable.id, id), eq(salesQuotationsTable.companyId, cid)));
+      .where(and(
+        eq(salesQuotationsTable.id, id),
+        eq(salesQuotationsTable.companyId, cid),
+        ...branchScopeSpread(req, salesQuotationsTable.branchId, undefined),
+      ));
     if (!q) { res.status(404).json({ error: "العرض غير موجود" }); return; }
     if (q.convertedInvoiceId) { res.status(400).json({ error: "تم التحويل مسبقاً" }); return; }
     if (q.status !== "accepted") {
@@ -2583,6 +2615,7 @@ router.post("/sales-quotations/:id/convert", async (req, res) => {
 
     const [inv] = await db.insert(salesInvoicesTable).values({
       companyId: cid, docNumber: null, invoiceDate: new Date().toISOString().slice(0,10),
+      branchId: q.branchId ?? null,
       customerId: q.customerId, paymentType: "credit",
       currencyCode: q.currencyCode, exchangeRate: q.exchangeRate,
       subtotal: q.subtotal, vatAmount: q.vatAmount,
@@ -2616,6 +2649,15 @@ router.delete("/sales-quotations/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
+    // Branch-scope the delete so a restricted user can't remove another
+    // branch's quotation (mirror of the by-id read guard).
+    const [target] = await db.select({ id: salesQuotationsTable.id }).from(salesQuotationsTable)
+      .where(and(
+        eq(salesQuotationsTable.id, id),
+        eq(salesQuotationsTable.companyId, cid),
+        ...branchScopeSpread(req, salesQuotationsTable.branchId, undefined),
+      ));
+    if (!target) { res.status(404).json({ error: "العرض غير موجود" }); return; }
     await db.delete(salesQuotationsTable).where(and(eq(salesQuotationsTable.id, id), eq(salesQuotationsTable.companyId, cid)));
     res.json({ ok: true });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
