@@ -192,17 +192,20 @@ router.post("/", async (req, res) => {
   // Lock companyId to the authenticated user's company (non-superadmin)
   const effectiveCompanyId = resolveCompanyId(req, data.companyId) ?? data.companyId;
 
+  // `allowDuplicates` opt-in — mirrors the bulk master-data import and the
+  // edit form's "save anyway" confirmation. Bypasses the vat/cr/name guard.
+  const allowDuplicates = (req.body as any)?.allowDuplicates === true;
   const existing = await db.select().from(customersTable).where(eq(customersTable.companyId, effectiveCompanyId));
-  if (data.vatNumber && existing.some(c => c.vatNumber?.trim() === data.vatNumber!.trim())) {
-    res.status(409).json({ error: `الرقم الضريبي "${data.vatNumber}" مستخدم لعميل آخر` });
+  if (!allowDuplicates && data.vatNumber && existing.some(c => c.vatNumber?.trim() === data.vatNumber!.trim())) {
+    res.status(409).json({ error: `الرقم الضريبي "${data.vatNumber}" مستخدم لعميل آخر`, code: "duplicate_customer" });
     return;
   }
-  if (data.crNumber && existing.some(c => c.crNumber?.trim() === data.crNumber!.trim())) {
-    res.status(409).json({ error: `رقم السجل التجاري "${data.crNumber}" مستخدم لعميل آخر` });
+  if (!allowDuplicates && data.crNumber && existing.some(c => c.crNumber?.trim() === data.crNumber!.trim())) {
+    res.status(409).json({ error: `رقم السجل التجاري "${data.crNumber}" مستخدم لعميل آخر`, code: "duplicate_customer" });
     return;
   }
-  if (data.nameAr && existing.some(c => c.nameAr?.trim().toLowerCase() === data.nameAr.trim().toLowerCase())) {
-    res.status(409).json({ error: `الاسم "${data.nameAr}" مسجَّل بالفعل لعميل آخر` });
+  if (!allowDuplicates && data.nameAr && existing.some(c => c.nameAr?.trim().toLowerCase() === data.nameAr.trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${data.nameAr}" مسجَّل بالفعل لعميل آخر`, code: "duplicate_customer" });
     return;
   }
 
@@ -349,17 +352,21 @@ router.put("/:id", async (req, res) => {
   if (!parsed.success) { res.status(400).json({ error: "Invalid input", details: parsed.error.issues }); return; }
   const d = parsed.data as any;
 
+  // `allowDuplicates` lets the caller bypass the vat/cr/name uniqueness
+  // guard — same opt-in used by the bulk master-data import. Surfaced in
+  // the edit form as a "save anyway" confirmation when a 409 is hit.
+  const allowDuplicates = (req.body as any)?.allowDuplicates === true;
   const others = await db.select().from(customersTable).where(eq(customersTable.companyId, existing.companyId));
-  if (d.vatNumber && others.some(c => c.id !== id && c.vatNumber?.trim() === String(d.vatNumber).trim())) {
-    res.status(409).json({ error: `الرقم الضريبي "${d.vatNumber}" مستخدم لعميل آخر` });
+  if (!allowDuplicates && d.vatNumber && others.some(c => c.id !== id && c.vatNumber?.trim() === String(d.vatNumber).trim())) {
+    res.status(409).json({ error: `الرقم الضريبي "${d.vatNumber}" مستخدم لعميل آخر`, code: "duplicate_customer" });
     return;
   }
-  if (d.crNumber && others.some(c => c.id !== id && c.crNumber?.trim() === String(d.crNumber).trim())) {
-    res.status(409).json({ error: `رقم السجل التجاري "${d.crNumber}" مستخدم لعميل آخر` });
+  if (!allowDuplicates && d.crNumber && others.some(c => c.id !== id && c.crNumber?.trim() === String(d.crNumber).trim())) {
+    res.status(409).json({ error: `رقم السجل التجاري "${d.crNumber}" مستخدم لعميل آخر`, code: "duplicate_customer" });
     return;
   }
-  if (d.nameAr && others.some(c => c.id !== id && c.nameAr?.trim().toLowerCase() === String(d.nameAr).trim().toLowerCase())) {
-    res.status(409).json({ error: `الاسم "${d.nameAr}" مسجَّل بالفعل لعميل آخر` });
+  if (!allowDuplicates && d.nameAr && others.some(c => c.id !== id && c.nameAr?.trim().toLowerCase() === String(d.nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${d.nameAr}" مسجَّل بالفعل لعميل آخر`, code: "duplicate_customer" });
     return;
   }
 

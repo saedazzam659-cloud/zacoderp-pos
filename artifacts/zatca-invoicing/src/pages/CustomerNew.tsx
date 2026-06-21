@@ -12,6 +12,10 @@ import {
   Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowRight, Save, Users, Info, Building2, MapPin, Phone,
@@ -232,6 +236,60 @@ export default function CustomerNew() {
   const taxComplete   = isB2B ? vatOk : true;
   const addressComplete = isB2B ? !!(city) : true;
 
+  // When the server rejects a save because the vat/cr/name is already used
+  // by another customer (409 code "duplicate_customer"), we don't hard-block
+  // the user — we surface a confirmation and let them re-save with
+  // `allowDuplicates: true` (same opt-in as the bulk master-data import).
+  const [dupConfirm, setDupConfirm] = useState<{ payload: any; message: string } | null>(null);
+
+  const persist = (payload: any, allowDuplicates: boolean) => {
+    const finalPayload = allowDuplicates ? { ...payload, allowDuplicates: true } : payload;
+    const handleDuplicate = (e: any): boolean => {
+      if (allowDuplicates) return false;
+      if (e?.response?.data?.code === "duplicate_customer") {
+        setDupConfirm({ payload, message: e?.response?.data?.error || "هذا الرقم مستخدم لعميل آخر." });
+        return true;
+      }
+      return false;
+    };
+    if (isEditMode && editingId) {
+      updateCustomer.mutate({ id: editingId, data: finalPayload }, {
+        onSuccess: () => {
+          setDupConfirm(null);
+          toast({ title: "✓ تم حفظ التعديلات", description: "تم تحديث بيانات العميل." });
+          queryClient.invalidateQueries({ queryKey: ["customers"] });
+          queryClient.invalidateQueries({ queryKey: [`/api/customers/${editingId}`] });
+          setLocation("/customers");
+        },
+        onError: (e: any) => {
+          if (handleDuplicate(e)) return;
+          toast({
+            title: "تعذّر تحديث العميل",
+            description: e?.response?.data?.error || e?.message || "لم نتمكن من تحديث العميل.",
+            variant: "destructive",
+          });
+        },
+      });
+      return;
+    }
+    createCustomer.mutate({ data: finalPayload }, {
+      onSuccess: () => {
+        setDupConfirm(null);
+        toast({ title: "✓ تمت الإضافة بنجاح", description: "تمت إضافة العميل إلى النظام." });
+        queryClient.invalidateQueries({ queryKey: ["customers"] });
+        setLocation("/customers");
+      },
+      onError: (e: any) => {
+        if (handleDuplicate(e)) return;
+        toast({
+          title: "تعذّر إضافة العميل",
+          description: e?.response?.data?.error || e?.message || "لم نتمكن من إضافة العميل.",
+          variant: "destructive",
+        });
+      },
+    });
+  };
+
   const onSubmit = (values: FormValues) => {
     if (!isSuperAdmin && userCompanyId) values.companyId = userCompanyId;
     const { customerType: _ct, ...rest } = values;
@@ -244,34 +302,7 @@ export default function CustomerNew() {
       locationLng: location.lng,
       locationLink: location.link,
     } as any;
-    if (isEditMode && editingId) {
-      updateCustomer.mutate({ id: editingId, data: payload }, {
-        onSuccess: () => {
-          toast({ title: "✓ تم حفظ التعديلات", description: "تم تحديث بيانات العميل." });
-          queryClient.invalidateQueries({ queryKey: ["customers"] });
-          queryClient.invalidateQueries({ queryKey: [`/api/customers/${editingId}`] });
-          setLocation("/customers");
-        },
-        onError: (e: any) => toast({
-          title: "تعذّر تحديث العميل",
-          description: e?.response?.data?.error || e?.message || "لم نتمكن من تحديث العميل.",
-          variant: "destructive",
-        }),
-      });
-      return;
-    }
-    createCustomer.mutate({ data: payload }, {
-      onSuccess: () => {
-        toast({ title: "✓ تمت الإضافة بنجاح", description: "تمت إضافة العميل إلى النظام." });
-        queryClient.invalidateQueries({ queryKey: ["customers"] });
-        setLocation("/customers");
-      },
-      onError: (e: any) => toast({
-        title: "تعذّر إضافة العميل",
-        description: e?.response?.data?.error || e?.message || "لم نتمكن من إضافة العميل.",
-        variant: "destructive",
-      }),
-    });
+    persist(payload, false);
   };
 
   // Enter→Next navigation: pressing Enter in any input advances focus,
@@ -917,6 +948,34 @@ export default function CustomerNew() {
           </Tabs>
         </form>
       </Form>
+
+      <AlertDialog open={!!dupConfirm} onOpenChange={open => !open && setDupConfirm(null)}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-600">
+              <AlertTriangle className="h-5 w-5" /> رقم مُكرَّر
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-right leading-relaxed">
+              {dupConfirm?.message}
+              <br />
+              هل تريد حفظ التعديل على أي حال؟
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-row-reverse gap-2">
+            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-amber-600 hover:bg-amber-700"
+              disabled={createCustomer.isPending || updateCustomer.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (dupConfirm) persist(dupConfirm.payload, true);
+              }}
+            >
+              حفظ على أي حال
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
