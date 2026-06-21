@@ -2256,10 +2256,7 @@ fn resolve_payment_credit_account(
     bank_id: Option<i64>,
 ) -> Result<i64> {
     match method {
-        "credit" => {
-            let id: i64 = conn.query_row("SELECT ap_account_id FROM suppliers_local WHERE id=?1", params![supplier_id], |r| r.get(0))?;
-            Ok(id)
-        }
+        "credit" => supplier_ap_account(conn, supplier_id).map_err(|e| anyhow!(e)),
         "cash" => {
             let cb = cash_box_id.ok_or_else(|| anyhow!("اختر الخزينة"))?;
             let id: i64 = conn.query_row("SELECT account_id FROM cash_boxes_local WHERE id=?1", params![cb], |r| r.get(0))?;
@@ -2406,8 +2403,7 @@ pub fn purchase_return_create(input: PurchaseReturnInput) -> Result<i64, String>
     // JE reverse: DR Supplier(grand) / CR Inventory(subtotal) + CR VAT-In(vat)
     let inv_acc = account_id_by_code(&tx, "1300").map_err(|e| e.to_string())?;
     let vat_in_acc = account_id_by_code(&tx, "1400").map_err(|e| e.to_string())?;
-    let supp_acc: i64 = tx.query_row("SELECT ap_account_id FROM suppliers_local WHERE id=?1", params![input.supplier_id], |r| r.get(0))
-        .map_err(|e| e.to_string())?;
+    let supp_acc: i64 = supplier_ap_account(&tx, input.supplier_id)?;
 
     let mut lines = vec![
         JournalEntryLine { id: None, account_id: supp_acc, account_code: None, account_name: None, debit: grand_total, credit: 0.0, description: Some(format!("مرتجع شراء {return_no}")) },
@@ -4690,7 +4686,7 @@ pub fn financial_tx_create(input: FinancialTxInput) -> Result<i64, String> {
     let counter_acc: i64 = match input.party_type.as_deref() {
         Some("supplier") => {
             let pid = input.party_id.ok_or("اختر المورد")?;
-            tx.query_row("SELECT ap_account_id FROM suppliers_local WHERE id=?1", params![pid], |r| r.get(0)).map_err(|e| e.to_string())?
+            supplier_ap_account(&tx, pid)?
         }
         Some("customer") => {
             // Use AR account 1500 for all customers (kept simple in standalone)
