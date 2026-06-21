@@ -9,7 +9,7 @@ import { listAccounts, type Account } from "../lib/accounting";
 import { useDataRefresh } from "../lib/dataBus";
 import {
   Page, Card, Empty, SearchCombobox,
-  input, btnPrimary, btnSecondary,
+  input, btnPrimary, btnSecondary, ExportButtons,
 } from "./_adminUi";
 
 const emptyInput: WarehouseInput = {
@@ -146,11 +146,26 @@ export default function WarehousesAdmin() {
       title="المخازن"
       subtitle="إدارة مخازن المنشأة — الكود، الأسماء، المجموعة، الفرع، الموقع وسياسة الرصيد السالب والحساب المحاسبي."
       right={
-        <button
-          onClick={startNew}
-          disabled={!!edit}
-          style={{ ...btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}
-        >+ إضافة مخزن</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <ExportButtons<typeof rows[number]>
+            title="المخازن"
+            filenameBase="warehouses"
+            rows={rows}
+            columns={[
+              { header: "الكود", cell: (w) => w.code ?? "" },
+              { header: "الاسم", cell: (w) => w.name },
+              { header: "المجموعة", cell: (w) => groupName(w.groupId) ?? "" },
+              { header: "الفرع", cell: (w) => branchName(w.branchId) ?? "" },
+              { header: "الموقع", cell: (w) => [w.city, w.region].filter(Boolean).join(" — ") || (w.address ?? "") },
+              { header: "الحالة", cell: (w) => (w.is_active ? "نشط" : "موقوف") },
+            ]}
+          />
+          <button
+            onClick={startNew}
+            disabled={!!edit}
+            style={{ ...btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}
+          >+ إضافة مخزن</button>
+        </div>
       }
     >
       {/* Summary strip */}

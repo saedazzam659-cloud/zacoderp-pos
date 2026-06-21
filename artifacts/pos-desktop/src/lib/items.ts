@@ -475,6 +475,17 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
     code: (input.code ?? "").trim() || null,
     barcode: (input.barcode ?? "").trim() || null,
   };
+  // Auto-code: when the code field is left blank, mint a sequential "ITM-NNNN"
+  // from the existing rows so every item gets a stable code. This is decoupled
+  // from the transaction-numbering series — it is a master-data fallback only.
+  if (!input.code) {
+    let max = 0;
+    for (const it of await listItems()) {
+      const m = /(\d+)\s*$/.exec(it.code ?? "");
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+    input = { ...input, code: `ITM-${String(max + 1).padStart(4, "0")}` };
+  }
   // Standalone: SQLite is authoritative. Core + pharmacy + scale columns go in
   // via insert_local_item (returns the real rowid the form needs for the
   // follow-up updateItemWeighed/Extended calls); local-only fields (units /

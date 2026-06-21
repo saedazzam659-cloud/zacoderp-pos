@@ -7,6 +7,7 @@ import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
+  ExportButtons, gridToExportCols,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 
@@ -63,7 +64,7 @@ export default function SupplierPaymentAdmin() {
           </div>
         </Card>
       )}
-      {rows.length > 0 && <GridToolbar grid={grid} placeholder="🔍 بحث في سندات الصرف…" />}
+      {rows.length > 0 && <GridToolbar grid={grid} placeholder="🔍 بحث في سندات الصرف…" extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="سندات-الصرف" title="سندات الصرف للموردين" />} />}
       <Card>
         {rows.length === 0 && !creating ? <Empty text="لا توجد سندات صرف للموردين" /> : grid.view.length === 0 ? <Empty text="لا نتائج مطابقة للبحث" /> : (
           <Table>

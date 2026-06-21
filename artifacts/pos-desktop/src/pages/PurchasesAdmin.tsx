@@ -14,6 +14,7 @@ import {
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
+  ExportButtons, gridToExportCols,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -248,7 +249,7 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
           </div>
         </Card>
       )}
-      {rows.length > 0 && !creating && <GridToolbar grid={grid} placeholder="🔍 بحث في فواتير الشراء…" />}
+      {rows.length > 0 && !creating && <GridToolbar grid={grid} placeholder="🔍 بحث في فواتير الشراء…" extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="فواتير-الشراء" title="فواتير الشراء" />} />}
       <Card>
         {rows.length === 0 && !creating ? <Empty text="لا توجد فواتير شراء" /> : grid.view.length === 0 ? <Empty text="لا نتائج مطابقة للبحث" /> : (
           <Table>

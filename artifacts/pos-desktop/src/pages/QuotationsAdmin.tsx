@@ -9,6 +9,8 @@ import { listItems, type LocalItem } from "../lib/items";
 import { listUom, type Uom } from "../lib/uom";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
+import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
+import { getCompanyProfile } from "../lib/appSettings";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
@@ -211,6 +213,9 @@ function DocDetail({ p }: { p: Quotation }) {
           {p.notes && <tr style={{ background: "#fff", color: "#64748b" }}><Td colSpan={6 as any}>ملاحظات: {p.notes}</Td></tr>}
         </tbody>
       </Table>
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button onClick={() => openWhatsApp(buildDocWhatsAppText({ kind: "quotation", companyName: getCompanyProfile().name, docNo: p.docNo, date: p.quotationDate, grandTotal: p.grandTotal, customerName: p.buyerName ?? p.customerName }))} style={{ ...btnSecondary, color: "#075e54", borderColor: "#25d366" }}>💬 واتساب</button>
+      </div>
     </div>
   );
 }

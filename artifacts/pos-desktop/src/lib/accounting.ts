@@ -439,6 +439,16 @@ export async function listSuppliers(): Promise<Supplier[]> {
 }
 export async function createSupplier(input: SupplierInput): Promise<number> {
   if (!hasTauri()) notImpl();
+  // Auto-code: blank code → sequential "SUP-NNNN" from existing suppliers.
+  // Decoupled from transaction numbering — master-data fallback only.
+  if (!input.code || !input.code.trim()) {
+    let max = 0;
+    for (const s of await listSuppliers()) {
+      const m = /(\d+)\s*$/.exec(s.code ?? "");
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+    input = { ...input, code: `SUP-${String(max + 1).padStart(4, "0")}` };
+  }
   try {
     const id = await invoke<number>("suppliers_create", { input });
     emitData("suppliers");

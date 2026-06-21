@@ -6,7 +6,7 @@ import {
 } from "../lib/accounting";
 import {
   Page, Card, Table, Th, Td, Empty, SearchCombobox,
-  btnPrimary, btnLink, fmtCurrency,
+  btnPrimary, btnLink, fmtCurrency, ExportButtons,
 } from "./_adminUi";
 import { useDataRefresh } from "../lib/dataBus";
 
@@ -104,10 +104,25 @@ export default function SuppliersAdmin() {
       title="الموردون"
       subtitle={`${rows.length} مورد — يمكن تحديد العملة والرصيد الافتتاحي عند الإضافة`}
       right={
-        <button onClick={startNew} disabled={!!edit}
-          style={{ ...btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>
-          + إضافة مورد
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <ExportButtons<typeof rows[number]>
+            title="الموردون"
+            filenameBase="suppliers"
+            rows={rows}
+            columns={[
+              { header: "الكود", cell: (s) => s.code ?? "" },
+              { header: "الاسم", cell: (s) => s.nameAr },
+              { header: "هاتف", cell: (s) => s.phone ?? "" },
+              { header: "الرقم الضريبي", cell: (s) => s.vatNumber ?? "" },
+              { header: "العملة", cell: (s) => s.currencyCode || "SAR" },
+              { header: "الرصيد", cell: (s) => Math.abs(s.balance) },
+            ]}
+          />
+          <button onClick={startNew} disabled={!!edit}
+            style={{ ...btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>
+            + إضافة مورد
+          </button>
+        </div>
       }
     >
       {edit && (

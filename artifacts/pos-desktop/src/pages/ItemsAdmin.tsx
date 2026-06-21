@@ -12,6 +12,7 @@ import { getAllStockShared, type StockMap } from "../lib/stock";
 import { getVertical, type Vertical } from "../lib/standalone";
 import { currencySymbol } from "../lib/currency";
 import { SearchCombobox, Pagination, pageSlice } from "./_adminUi";
+import { exportToExcel, exportToPdf, type ExportColumn } from "../lib/exporters";
 import { useDataRefresh } from "../lib/dataBus";
 
 // ─── Excel-like grid: column defs, filtering, sorting, export ───────
@@ -386,6 +387,22 @@ export default function ItemsAdmin() {
     downloadCsv(csv, `items_${stamp}.csv`);
     setToast({ kind: "ok", text: `تم تصدير ${processed.length} صنف إلى ملف Excel/CSV` });
   }
+  const exportColumns: ExportColumn<LocalItem>[] = [
+    { header: "الاسم", cell: (it) => it.nameAr ?? "" },
+    { header: "الاسم بالإنجليزية", cell: (it) => it.nameEn ?? "" },
+    { header: "الكمية المتاحة", cell: (it) => stockMap[it.id]?.qty ?? 0 },
+    { header: "الباركود", cell: (it) => it.barcode ?? "" },
+    { header: "الكود", cell: (it) => it.code ?? "" },
+    { header: "السعر", cell: (it) => it.salePrice },
+    { header: "الضريبة %", cell: (it) => it.vatRate },
+    { header: "المصدر", cell: (it) => (it.cloudId ? "سحابي" : "محلي") },
+  ];
+  function exportExcel() {
+    exportToExcel("items", exportColumns, processed);
+  }
+  function exportPdf() {
+    exportToPdf("قائمة الأصناف", exportColumns, processed);
+  }
 
   async function handleDelete(it: LocalItem) {
     if (!confirm(`حذف الصنف «${it.nameAr}»؟`)) return;
@@ -430,8 +447,14 @@ export default function ItemsAdmin() {
         <button onClick={() => setShowAdvanced((v) => !v)} style={showAdvanced ? S.btnToolActive : S.btnTool} title="بحث متقدم بأكثر من شرط">
           🔍 بحث متقدم
         </button>
-        <button onClick={exportCsv} style={S.btnTool} title="تصدير القائمة المفلترة إلى Excel/CSV">
-          📊 تصدير Excel
+        <button onClick={exportCsv} style={S.btnTool} title="تصدير القائمة المفلترة إلى CSV">
+          📊 CSV
+        </button>
+        <button onClick={exportExcel} style={S.btnTool} title="تصدير القائمة المفلترة إلى ملف إكسل">
+          ⬇️ إكسل
+        </button>
+        <button onClick={exportPdf} style={S.btnTool} title="تصدير / طباعة PDF">
+          🖨️ PDF
         </button>
         {hasActiveView && (
           <button onClick={clearAllViews} style={S.btnClear} title="إلغاء كل الفلاتر والترتيب">

@@ -7,6 +7,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { currencySymbol, CURRENCIES, baseCurrencyCode } from "../lib/currency";
 import { getDecimals } from "../lib/appSettings";
 import type { DiscType, DiscountResult } from "../lib/discount";
+import { exportToExcel, exportToPdf, type ExportColumn } from "../lib/exporters";
 
 export function Page({ title, subtitle, right, children }: {
   title: string; subtitle?: string; right?: ReactNode; children: ReactNode;
@@ -760,6 +761,39 @@ export function GridToolbar<T>({ grid, placeholder, extra }: { grid: GridFilter<
       )}
       {extra}
     </div>
+  );
+}
+
+/** Adapt the screen's existing GridColumn[] into export columns (header + cell)
+ *  so list screens get Excel/PDF export with zero extra column definitions. */
+export function gridToExportCols<T>(cols: GridColumn<T>[]): ExportColumn<T>[] {
+  return cols.map((c) => ({
+    header: c.label,
+    cell: (r: T) => (c.text ? c.text(r) : c.value(r)),
+  }));
+}
+
+/** Excel + PDF export buttons. Drop into a GridToolbar `extra` slot (pass
+ *  `gridToExportCols(columns)` + `grid.view`) or any list/report screen with
+ *  explicit ExportColumn[]. Both exports are fully offline. */
+export function ExportButtons<T>({ columns, rows, filenameBase, title }: {
+  columns: ExportColumn<T>[];
+  rows: T[];
+  filenameBase: string;
+  title: string;
+}) {
+  const disabled = rows.length === 0;
+  return (
+    <>
+      <button type="button" disabled={disabled}
+        onClick={() => exportToExcel(filenameBase, columns, rows)}
+        style={{ ...btnSecondary, opacity: disabled ? 0.5 : 1, cursor: disabled ? "default" : "pointer" }}
+        title="تصدير إلى ملف إكسل (Excel)">⬇️ إكسل</button>
+      <button type="button" disabled={disabled}
+        onClick={() => exportToPdf(title, columns, rows)}
+        style={{ ...btnSecondary, opacity: disabled ? 0.5 : 1, cursor: disabled ? "default" : "pointer" }}
+        title="تصدير / طباعة PDF">🖨️ PDF</button>
+    </>
   );
 }
 

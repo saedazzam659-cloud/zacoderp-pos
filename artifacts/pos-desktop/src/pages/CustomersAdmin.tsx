@@ -8,7 +8,7 @@ import {
 } from "../lib/customers";
 import { listCurrencies, listAccounts, type Currency, type Account } from "../lib/accounting";
 import { listBranches, type Branch } from "../lib/branches";
-import { SearchCombobox } from "./_adminUi";
+import { SearchCombobox, ExportButtons } from "./_adminUi";
 import { useDataRefresh } from "../lib/dataBus";
 
 const emptyInput: CreateCustomerInput = {
@@ -135,10 +135,25 @@ export default function CustomersAdmin() {
           <h2 style={S.h2}>العملاء ({rows.length})</h2>
           <div style={S.sub}>إدارة قائمة العملاء — يُزامن تلقائيًا مع السحابة عند الاتصال</div>
         </div>
-        <button onClick={startNew} disabled={!!edit}
-          style={{ ...S.btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>
-          + عميل جديد
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <ExportButtons<typeof rows[number]>
+            title="العملاء"
+            filenameBase="customers"
+            rows={rows}
+            columns={[
+              { header: "الاسم", cell: (c) => c.nameAr },
+              { header: "الهاتف", cell: (c) => c.phone ?? "" },
+              { header: "الرقم الضريبي", cell: (c) => c.vatNumber ?? "" },
+              { header: "العملة", cell: (c) => c.currencyCode ?? "SAR" },
+              { header: "الرصيد", cell: (c) => Math.abs(c.balance ?? 0) },
+              { header: "حد الائتمان", cell: (c) => c.creditLimit ?? 0 },
+            ]}
+          />
+          <button onClick={startNew} disabled={!!edit}
+            style={{ ...S.btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>
+            + عميل جديد
+          </button>
+        </div>
       </div>
 
       {edit && (
