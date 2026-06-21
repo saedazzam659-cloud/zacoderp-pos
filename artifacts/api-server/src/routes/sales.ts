@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { db } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
@@ -3212,11 +3213,18 @@ router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
     const previousInvoiceHash = prevHashRow?.hash || GENESIS_HASH;
 
     const issueTime = now.toTimeString().split(" ")[0];
+    // ZATCA requires the API-body `uuid` (and the matching cbc:UUID embedded in
+    // the XML) to be a real GUID. The human doc number ("160") and the
+    // `SINV-<id>` fallback are NOT valid UUIDs — the clearance gateway rejects
+    // them with "UUID format in the API body is not valid". Generate a proper
+    // UUID and use the SAME value for both the embedded XML and the body.
+    const documentUuid = randomUUID();
     const mapped = salesInvoiceRowToZatcaData(inv, lines, company, customer, {
       invoiceCounterValue,
       previousInvoiceHash,
       issueTime,
     });
+    mapped.data.uuid = documentUuid;
 
     // Fail loud on any reconciliation drift between the per-line construction
     // and the stored header total — better than submitting a doc ZATCA rejects
@@ -3266,7 +3274,7 @@ router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
 
     const xmlBase64 = Buffer.from(built.finalXml).toString("base64");
     const hashBase64 = built.invoiceHash;
-    const uuid = inv.docNumber || `SINV-${inv.id}`;
+    const uuid = documentUuid;
 
     const endpoint = mapped.invoiceType === "simplified"
       ? `${baseUrl}/invoices/reporting/single`
