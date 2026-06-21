@@ -29,6 +29,7 @@ PartyTaxScheme/CompanyID; PartyIdentification is for CRN/etc. only. When you see
 the opaque GENERAL/BUSINESS_RULES crash with no validationResults on a B2B-only
 subset, suspect an invalid buyer (or seller) `schemeID` first.
 
-**Latent duplicate:** `artifacts/pos-desktop/src/lib/zatca/ubl.ts` has the SAME
-buyer `schemeID="TIN"` block — its B2B invoices will crash identically. Not yet
-fixed there because pos-desktop changes trigger an MSI release cycle.
+**Both builders fixed:** the api-server (`zatca-xml.ts`) and pos-desktop
+(`artifacts/pos-desktop/src/lib/zatca/ubl.ts`) both had the buyer
+`schemeID="TIN"` block; both now emit buyer VAT only in PartyTaxScheme/CompanyID.
+If a third UBL builder is ever added, apply the same rule.

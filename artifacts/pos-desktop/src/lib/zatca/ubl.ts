@@ -177,10 +177,6 @@ export function generateZatcaXml(data: ZatcaInvoiceData): string {
   const customerXml = data.customer ? `
   <cac:AccountingCustomerParty>
     <cac:Party>
-      ${data.customer.vatNumber ? `
-      <cac:PartyIdentification>
-        <cbc:ID schemeID="TIN">${xmlEscape(data.customer.vatNumber)}</cbc:ID>
-      </cac:PartyIdentification>` : ""}
       ${data.customer.crNumber ? `
       <cac:PartyIdentification>
         <cbc:ID schemeID="CRN">${xmlEscape(data.customer.crNumber)}</cbc:ID>
