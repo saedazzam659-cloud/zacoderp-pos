@@ -105,15 +105,22 @@ export function signZatcaUbl(input: SignXadesInput): SignXadesResult {
     issuerName,
     serialNumber,
   });
-  // Reference#2 ("xadesSignedProperties") DigestValue — hash the VERBATIM
-  // SignedProperties template, NOT a C14N form. ZATCA recomputes this digest over
-  // the literal SignedProperties serialization (the template is authored to match
-  // it byte-for-byte), so running it through xml-crypto C14N — which reorders
-  // attributes (xmlns before Id) and expands self-closing tags — yields different
-  // bytes and is exactly what produced `signed-properties-hashing` on simplified
-  // (B2C) samples. This mirrors the proven offline POS signer's sha256B64(signedProps).
+  // Reference#2 ("xadesSignedProperties") DigestValue — hash the C14N form of the
+  // SignedProperties fragment, NOT the verbatim template. Reference#2 carries NO
+  // <ds:Transforms>, so per XML-DSIG a same-document reference (URI="#…") is
+  // dereferenced to a node-set and canonicalized (default C14N) before hashing.
+  // ZATCA therefore recomputes this digest over C14N(SignedProperties): namespace
+  // declarations sorted first (xmlns:xades before Id) and self-closing tags
+  // expanded. Our template authors Id before xmlns and uses self-closing tags, so
+  // a VERBATIM sha256 of the template does NOT match what ZATCA recomputes — that
+  // mismatch is exactly the `signed-properties-hashing` rejection the strict
+  // simplified (B2C) reporting validator returns (lenient standard/clearance
+  // accepted verbatim, which masked the bug). canonicalizeFragment parses the
+  // fragment standalone, so only its own xades/ds namespaces appear (no phantom
+  // invoice-root namespaces) — the live-gateway-verified scope.
+  const canonicalSignedProps = canonicalizeFragment(signedProps, "SignedProperties");
   const signedPropsHashB64 = createHash("sha256")
-    .update(signedProps, "utf8")
+    .update(canonicalSignedProps, "utf8")
     .digest("base64");
 
   // 4. Build SignedInfo over (a) invoice digest + (b) signed-properties digest.
