@@ -1495,16 +1495,17 @@ fn seed_fiscal_year(conn: &Connection) -> Result<()> {
     if n > 0 {
         return Ok(());
     }
-    let year: i32 = chrono::Utc::now()
-        .format("%Y")
-        .to_string()
-        .parse()
-        .unwrap_or(2025);
+    // Use the machine's LOCAL date so a system installed mid-year starts its
+    // fiscal year from the install month (not 1 Jan, which would create empty
+    // already-past months). Year spans [1st of install month .. 31 Dec].
+    let now = chrono::Local::now();
+    let year: i32 = now.format("%Y").to_string().parse().unwrap_or(2025);
+    let start_month: i32 = now.format("%m").to_string().parse().unwrap_or(1);
     conn.execute(
         "INSERT INTO fiscal_years_local(name,start_date,end_date,status) VALUES(?1,?2,?3,'open')",
         params![
             format!("السنة المالية {year}"),
-            format!("{year}-01-01"),
+            format!("{year}-{start_month:02}-01"),
             format!("{year}-12-31")
         ],
     )?;
@@ -1514,8 +1515,9 @@ fn seed_fiscal_year(conn: &Connection) -> Result<()> {
         "أكتوبر", "نوفمبر", "ديسمبر",
     ];
     let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-    for (i, mname) in months.iter().enumerate() {
-        let m = (i + 1) as i32;
+    // Only generate periods from the install month through December.
+    for m in start_month..=12 {
+        let mname = months[(m - 1) as usize];
         let last_day = match m {
             1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
             4 | 6 | 9 | 11 => 30,
