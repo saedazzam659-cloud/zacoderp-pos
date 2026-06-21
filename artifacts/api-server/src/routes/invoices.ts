@@ -16,7 +16,7 @@ router.use(extractAuth);
 router.use(requireModulePermission("sales_invoices"));
 router.use(moduleAudit("sales_invoices"));
 
-const GENESIS_HASH = "NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZmNTI5OWIxNmI2ZjRiMmUyNjY5MDkwMzBiMzdhZGZiMzU3NGI0OTJiNA==";
+const GENESIS_HASH = "NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZjNmQ2OTZjNzljMmRiYzIzOWRkNGU5MWI0NjcyOWQ3M2EyN2ZiNTdlOQ==";
 
 function generateInvoiceNumber(companyId: number): string {
   const now = new Date();

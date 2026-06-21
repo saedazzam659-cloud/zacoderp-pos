@@ -43,7 +43,7 @@ export const envArabic: Record<ZatcaEnv, string> = {
 // ZATCA genesis PIH — base64 of the SHA-256 hex digest of "0", used as the
 // previous-invoice hash for the first document in a chain.
 export const GENESIS_HASH =
-  "NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZmNTI5OWIxNmI2ZjRiMmUyNjY5MDkwMzBiMzdhZGZiMzU3NGI0OTJiNA==";
+  "NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZjNmQ2OTZjNzljMmRiYzIzOWRkNGU5MWI0NjcyOWQ3M2EyN2ZiNTdlOQ==";
 
 // ─── CSID environment-mismatch detection ────────────────────────────────────
 // The stored CSID/PCSID binarySecurityToken is base64-over-base64 of the DER
