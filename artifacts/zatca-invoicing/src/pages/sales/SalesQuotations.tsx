@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Plus, FileSignature, Eye, Trash2, ArrowRightLeft, CheckCircle, XCircle, Send, Printer, Copy,
-  FileSpreadsheet, FileDown, X, Loader2,
+  FileSpreadsheet, FileDown, X, Loader2, User,
 } from "lucide-react";
 import { BulkPrintMenu } from "@/lib/bulkPrint";
 import * as XLSX from "xlsx";
@@ -170,6 +170,7 @@ export default function SalesQuotations() {
     { key: "vat",       label: t("salesQuotations.colVat"),        type: "num",  valueOf: (r) => Number(r.vatAmount ?? 0) },
     { key: "total",     label: t("salesQuotations.colTotal"),      type: "num",  valueOf: (r) => Number(r.totalAmount ?? 0) },
     { key: "status",    label: t("salesQuotations.colStatus"),     type: "text", valueOf: (r) => statusLabel(r.status) },
+    { key: "createdBy", label: t("salesQuotations.colCreatedBy", { defaultValue: "أنشأه" }), type: "text", valueOf: (r) => r.createdByName ?? "" },
     { key: "_act",      label: t("salesQuotations.colActions"),    type: "none", valueOf: () => "" },
   ];
   const DATA_KEYS = COLUMNS.filter(c => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map(c => c.key);
@@ -433,9 +434,10 @@ ${sections}
       "الضريبة": Number(r.vatAmount ?? 0).toFixed(2),
       "الإجمالي": Number(r.totalAmount ?? 0).toFixed(2),
       "الحالة": statusLabel(r.status),
+      "أنشأه": r.createdByName ?? "",
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 22 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }];
+    ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 22 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 14 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "عروض الأسعار");
     XLSX.writeFile(wb, `sales-quotations-${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -800,6 +802,14 @@ ${sections}
                         return (
                           <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
                             <span className={cn("inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border", stCls)}>{statusLabel(q.status)}</span>
+                          </td>
+                        );
+                      case "createdBy":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            {q.createdByName
+                              ? <span className="inline-flex items-center gap-1 text-[10px] rounded px-1.5 py-0.5 font-medium border bg-green-50 text-green-700 border-green-200"><User className="h-3 w-3" />{q.createdByName}</span>
+                              : <span className="text-muted-foreground">{t("common.none")}</span>}
                           </td>
                         );
                       case "_act":

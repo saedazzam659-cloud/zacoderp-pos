@@ -492,6 +492,7 @@
     "colVat": "VAT",
     "colTotal": "Total",
     "colStatus": "Status",
+    "colCreatedBy": "Created by",
     "colActions": "Actions",
     "statusDraft": "Draft",
     "statusSent": "Sent",

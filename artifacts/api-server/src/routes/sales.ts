@@ -2417,7 +2417,23 @@ router.get("/sales-quotations", async (req, res) => {
     const rows = await db.select().from(salesQuotationsTable)
       .where(eq(salesQuotationsTable.companyId, cid))
       .orderBy(desc(salesQuotationsTable.quotationDate));
-    res.json(rows);
+    // Resolve creator usernames in one pass so the grid can render the
+    // "أنشأه" column without an extra round trip (mirrors the invoice grid).
+    const { usersTable } = await import("@workspace/db");
+    const { inArray: _inArr } = await import("drizzle-orm");
+    const creatorIds = Array.from(new Set(
+      rows.map(r => r.createdById).filter((x): x is number => typeof x === "number")
+    ));
+    const creatorMap = new Map<number, string>();
+    if (creatorIds.length > 0) {
+      const us = await db.select({ id: usersTable.id, username: usersTable.username })
+        .from(usersTable).where(_inArr(usersTable.id, creatorIds));
+      for (const u of us) creatorMap.set(u.id, u.username);
+    }
+    res.json(rows.map(r => ({
+      ...r,
+      createdByName: r.createdById != null ? (creatorMap.get(r.createdById) ?? null) : null,
+    })));
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
@@ -2474,6 +2490,7 @@ router.post("/sales-quotations", async (req, res) => {
       priceIncludesVat: asBool(priceIncludesVat),
       status: "draft", notes: notes || null,
       taxId: taxId ? Number(taxId) : null,
+      createdById: req.authUser?.id ?? null,
     }).returning();
     if (lines?.length) {
       const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);

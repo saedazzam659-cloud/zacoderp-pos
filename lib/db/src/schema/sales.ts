@@ -201,6 +201,7 @@ export const salesQuotationsTable = pgTable("sales_quotations", {
   status:         salesQuotationStatusEnum("status").notNull().default("draft"),
   convertedInvoiceId: integer("converted_invoice_id").references(() => salesInvoicesTable.id),
   notes:          text("notes"),
+  createdById:    integer("created_by_id"),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),
 });

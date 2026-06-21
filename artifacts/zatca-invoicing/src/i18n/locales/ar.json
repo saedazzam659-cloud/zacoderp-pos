@@ -492,6 +492,7 @@
     "colVat": "الضريبة",
     "colTotal": "الإجمالي",
     "colStatus": "الحالة",
+    "colCreatedBy": "أنشأه",
     "colActions": "إجراءات",
     "statusDraft": "مسودة",
     "statusSent": "مُرسل",
