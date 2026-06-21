@@ -323,25 +323,13 @@ router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", 
     return;
   }
 
-  // Guard: a sandbox-issued CSID (issuer CN=eInvoicing) can never pass on the
-  // simulation/production gateway — it is rejected with an opaque ZATCA error
-  // ("Unable to execute Business Rules validation" / 401). Catch the mismatch
-  // locally and return the actionable Arabic message instead, exactly like the
-  // automated check does, so the operator knows to re-onboard on the correct
-  // environment rather than chasing a phantom invoice/OTP bug.
-  const env0 = resolveZatcaEnv(company);
-  const ccMismatch = csidEnvMismatchMessage(company.zatcaCsidToken, env0);
-  if (ccMismatch) {
-    res.status(422).json({
-      success: false,
-      environment: env0,
-      code: "ENV_CSID_MISMATCH",
-      error: ccMismatch,
-      message: ccMismatch,
-    });
-    return;
-  }
-
+  // NOTE: do NOT env-gate on the CSID issuer here. The ZATCA *compliance*
+  // certificate is issued by ZATCA's compliance CA (issuer CN=eInvoicing) in
+  // EVERY environment — sandbox, simulation AND production. Treating the
+  // eInvoicing issuer as "sandbox" wrongly blocks legitimate production
+  // onboarding (the production gateway accepts this cert and returns
+  // Missing-ComplianceSteps until samples are submitted). Let ZATCA itself be
+  // the authority on whether the cert/env pairing is valid.
   const { invoiceId } = req.body as { invoiceId?: number };
   if (!invoiceId) {
     res.status(400).json({ error: "invoiceId مطلوب — أدخل رقم فاتورة لاختبارها." });
@@ -507,21 +495,13 @@ router.post("/companies/:id/auto-compliance-check", requirePermission("zatca_set
 
   const env = resolveZatcaEnv(company);
 
-  // Guard: a sandbox-issued CSID cannot authenticate against simulation/production.
-  // Catch it here with a clear message instead of firing 6 samples into an opaque 401.
-  const ccMismatch = csidEnvMismatchMessage(company.zatcaCsidToken, env);
-  if (ccMismatch) {
-    res.status(422).json({
-      success: false,
-      environment: env,
-      allPassed: false,
-      results: [],
-      code: "ENV_CSID_MISMATCH",
-      error: ccMismatch,
-      message: ccMismatch,
-    });
-    return;
-  }
+  // NOTE: no issuer-based env guard here. The ZATCA *compliance* certificate is
+  // issued by ZATCA's compliance CA (issuer CN=eInvoicing) in EVERY environment
+  // (verified live on production: /compliance ISSUED an eInvoicing cert and
+  // /production/csids then accepted its auth, returning Missing-ComplianceSteps).
+  // A previous issuer===eInvoicing guard here was a false positive that made it
+  // impossible to submit the sample documents and thus impossible to obtain a
+  // Production CSID. ZATCA's own response is the source of truth on env validity.
 
   // The compliance chain runs on ALL environments INCLUDING production — obtaining
   // a real Production CSID REQUIRES passing the compliance check on the production
