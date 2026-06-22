@@ -49,7 +49,7 @@ export function DocNavigator({
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const fmt = (n: any) =>
-    Number(n || 0).toLocaleString(isRtl ? "ar-SA" : "en-US", { minimumFractionDigits: 2 });
+    Number(n || 0).toLocaleString(isRtl ? "ar-SA" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const [, navigate] = useLocation();
 
   const sorted = [...items].sort((a, b) => Number(b.id) - Number(a.id));

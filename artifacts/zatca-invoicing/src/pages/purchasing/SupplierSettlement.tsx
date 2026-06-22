@@ -35,7 +35,7 @@ const EMPTY = { docNumber: "", settlementDate: today(), supplierId: "", paymentM
 export default function SupplierSettlement() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const fmt = (n: any) => Number(n || 0).toLocaleString(isRtl ? "ar-SA" : "en-US", { minimumFractionDigits: 2 });
+  const fmt = (n: any) => Number(n || 0).toLocaleString(isRtl ? "ar-SA" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const supName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
   const accName = (a: any) => isRtl ? (a?.nameAr ?? a?.nameEn ?? "") : (a?.nameEn ?? a?.nameAr ?? "");
 

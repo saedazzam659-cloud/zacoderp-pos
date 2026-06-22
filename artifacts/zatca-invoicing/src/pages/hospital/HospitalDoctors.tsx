@@ -124,7 +124,7 @@ export default function HospitalDoctors() {
     onError: (e:any) => { toast({ title:"تعذّر الحذف", description: e?.message, variant:"destructive" }); setDel(null); },
   });
 
-  const fmtSAR = (v: any) => Number(v || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
+  const fmtSAR = (v: any) => Number(v || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const hospName = (id: number | null) => hospitals.find((h:any) => h.id === id)?.nameAr || "—";
 
   return (

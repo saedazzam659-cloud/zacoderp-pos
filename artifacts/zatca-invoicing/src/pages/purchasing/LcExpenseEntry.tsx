@@ -33,7 +33,7 @@ export default function LcExpenseEntry() {
   const trLc = (k: string, opts?: any) => t(`purchasingPages.lettersOfCredit.${k}`, opts) as string;
   const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
   const numLocale = isRtl ? "ar-SA" : "en-US";
-  const fmt = (n: any) => Number(n || 0).toLocaleString(numLocale, { minimumFractionDigits: 2 });
+  const fmt = (n: any) => Number(n || 0).toLocaleString(numLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   const authH   = { Authorization: `Bearer ${token}` };

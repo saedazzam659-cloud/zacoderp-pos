@@ -206,7 +206,7 @@ export default function HospitalInvoices() {
     onError: (e:any) => { toast({ title:"تعذّر الحذف", description: e?.message, variant:"destructive" }); setDel(null); },
   });
 
-  const fmtSAR = (v: any) => Number(v || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
+  const fmtSAR = (v: any) => Number(v || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const statusLabel = (s: string) => STATUSES.find(x => x[0] === s)?.[1] ?? s;
   const statusColor = (s: string) =>
     s === "paid"      ? "bg-emerald-100 text-emerald-800" :

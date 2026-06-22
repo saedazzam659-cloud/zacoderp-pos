@@ -2697,7 +2697,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
           <div className="flex gap-6">
             <span className="text-muted-foreground">الإجمالي:</span>
             <span className="font-bold text-primary">
-              {Number(data.doc.totalAmount || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 })} {data.doc.currencyCode ?? "SAR"}
+              {Number(data.doc.totalAmount || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {data.doc.currencyCode ?? "SAR"}
             </span>
             <span className="text-muted-foreground">الأصناف:</span>
             <span>{data.lines.length} صنف</span>
