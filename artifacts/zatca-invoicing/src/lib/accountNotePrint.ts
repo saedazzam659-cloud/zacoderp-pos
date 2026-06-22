@@ -145,6 +145,8 @@ export interface PrintAccountNoteOpts {
   company?: any | null;
   /** "العميل" | "المورد" — section heading for the party block. */
   partyLabel: string;
+  /** معد الإشعار — name of the user who prepared the note. */
+  preparedBy?: string | null;
   /** Called with an Arabic message when the popup can't be opened. */
   onError?: (msg: string) => void;
 }
@@ -153,7 +155,7 @@ export interface PrintAccountNoteOpts {
 // invoice (accent #2563eb). The window is opened SYNCHRONOUSLY (popup-blocker
 // safe) and filled once the async QR is ready.
 export async function printAccountNote(opts: PrintAccountNoteOpts): Promise<void> {
-  const { note, party, company, partyLabel, onError } = opts;
+  const { note, party, company, partyLabel, preparedBy, onError } = opts;
 
   const win = window.open("", "_blank", "width=900,height=1000");
   if (!win) {
@@ -184,10 +186,11 @@ export async function printAccountNote(opts: PrintAccountNoteOpts): Promise<void
   const docMetaRows = `
     <div class="row"><span class="k">رقم الإشعار</span><span class="v">${esc(note.noteNumber ?? String(note.id))}</span></div>
     <div class="row"><span class="k">تاريخ الإشعار</span><span class="v">${esc(note.noteDate ?? "—")}</span></div>
-    <div class="row"><span class="k">رقم فاتورة المبيعات</span><span class="v">${esc(note.referenceNumber ?? "—")}</span></div>
+    <div class="row"><span class="k">رقم فاتورة ${partyLabel === "المورد" ? "المشتريات" : "المبيعات"}</span><span class="v">${esc(note.referenceNumber ?? "—")}</span></div>
     ${note.operationNumber ? `<div class="row"><span class="k">رقم العملية</span><span class="v">${esc(note.operationNumber)}</span></div>` : ""}
     ${note.journalEntryId ? `<div class="row"><span class="k">رقم القيد</span><span class="v">#${esc(note.journalEntryId)}</span></div>` : ""}
-    <div class="row"><span class="k">الحالة</span><span class="v">${esc(statusLabel)}</span></div>`;
+    <div class="row"><span class="k">الحالة</span><span class="v">${esc(statusLabel)}</span></div>
+    ${preparedBy ? `<div class="row"><span class="k">المُعِدّ</span><span class="v">${esc(preparedBy)}</span></div>` : ""}`;
 
   const statementText = esc(note.description ?? note.notes ?? "");
   const extraNotes = (note.description && note.notes) ? esc(note.notes) : "";

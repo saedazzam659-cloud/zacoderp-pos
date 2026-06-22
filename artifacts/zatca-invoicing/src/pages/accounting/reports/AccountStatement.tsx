@@ -14,6 +14,7 @@ import { useFmt } from "@/hooks/use-fmt";
 import BranchFilter from "@/components/BranchFilter";
 import CostCenterFilter from "@/components/CostCenterFilter";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
+import AccountStatementView from "@/components/AccountStatementView";
 import { FileText, Search, Printer, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
@@ -40,7 +41,20 @@ const ENTRY_TYPE_LABEL: Record<string, string> = {
   purchase_invoice:          "فاتورة مشتريات",
   purchase_return:           "مرتجع مشتريات",
   receipt:                   "سند قبض",
+  receipt_cash:              "سند قبض نقدي",
+  receipt_bank:              "سند قبض بنكي",
   payment:                   "سند صرف",
+  payment_cash:              "سند صرف نقدي",
+  payment_bank:              "سند صرف بنكي",
+  account_note_customer_credit: "إشعار دائن (عميل)",
+  account_note_customer_debit:  "إشعار مدين (عميل)",
+  account_note_supplier_credit: "إشعار دائن (مورد)",
+  account_note_supplier_debit:  "إشعار مدين (مورد)",
+  credit_note:               "إشعار دائن",
+  debit_note:                "إشعار مدين",
+  sister_transfer:           "تحويل لشركة شقيقة",
+  sister_transfer_return:    "مرتجع تحويل شركة شقيقة",
+  sister_settlement:         "تسوية شركة شقيقة",
   opening:                   "رصيد افتتاحي",
   pos_sale:                  "بيع نقاط بيع",
   pos_return:                "مرتجع نقاط بيع",
@@ -88,8 +102,14 @@ function docTypeTone(row: any): { ring: string; bg: string; text: string; code: 
   // Cost-side documents (purchases / incoming contracting bill / LC) → amber
   if (k.startsWith("purchase") || k === "contracting_incoming_bill" || k === "lc_funding" || k === "lc_expense_payment")
     return { ring: "border-amber-200",   bg: "from-amber-50 to-orange-50",    text: "text-amber-800",   code: "bg-amber-100 text-amber-700" };
-  if (k === "receipt" || k === "payment")
+  if (k === "receipt" || k === "payment" || k.startsWith("receipt_") || k.startsWith("payment_"))
     return { ring: "border-emerald-200", bg: "from-emerald-50 to-teal-50",    text: "text-emerald-800", code: "bg-emerald-100 text-emerald-700" };
+  // Credit / debit notes (إشعارات دائنة/مدينة) → indigo
+  if (k.startsWith("account_note") || k === "credit_note" || k === "debit_note")
+    return { ring: "border-indigo-200",  bg: "from-indigo-50 to-blue-50",     text: "text-indigo-800",  code: "bg-indigo-100 text-indigo-700" };
+  // Sister-company movements → cyan
+  if (k.startsWith("sister_"))
+    return { ring: "border-cyan-200",    bg: "from-cyan-50 to-sky-50",        text: "text-cyan-800",    code: "bg-cyan-100 text-cyan-700" };
   if (k.startsWith("fa_"))
     return { ring: "border-violet-200",  bg: "from-violet-50 to-fuchsia-50",  text: "text-violet-800",  code: "bg-violet-100 text-violet-700" };
   if (k === "payroll_run" || k === "employee_loan" || k === "eos_payment")
@@ -464,8 +484,9 @@ export default function AccountStatement() {
 
       {searched && (rows.length > 0 || previousBalance !== 0) && (
         <>
-          {/* Account Info */}
-          <div className="rounded-xl border bg-primary/5 p-4 flex flex-wrap gap-6">
+          {/* Account Info (screen only — the print uses the unified
+              AccountStatementView header instead). */}
+          <div className="rounded-xl border bg-primary/5 p-4 flex flex-wrap gap-6 print:hidden">
             <div>
               <span className="text-xs text-muted-foreground block">{t("accountStatement.account")}</span>
               <span className="font-semibold">{selectedAccount?.code} — {accountDisplayName}</span>
@@ -627,145 +648,41 @@ export default function AccountStatement() {
             />
           </div>
 
-          {/* ── Classic printable table (print/PDF only) ───────────────
-              Kept as a deterministic, paper-friendly fallback so
-              window.print() output matches the previous layout users
-              are familiar with. Hidden on screen via `hidden print:block`. */}
-          <div className="hidden print:block rounded-xl border bg-card overflow-hidden shadow-sm">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-muted/50 border-b">
-                    <th className="text-start px-4 py-3 font-semibold text-muted-foreground">#</th>
-                    <th className="text-start px-4 py-3 font-semibold text-muted-foreground">نوع الوثيقة</th>
-                    <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.fromDate")}</th>
-                    <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountStatement.docNumber")}</th>
-                    <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountStatement.description")}</th>
-                    {showCostCenterCol && (
-                      <th className="text-start px-4 py-3 font-semibold text-muted-foreground">
-                        {t("accountingReports.costCenter", { defaultValue: "مركز التكلفة" })}
-                      </th>
-                    )}
-                    <th className="text-end px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.debit")}</th>
-                    <th className="text-end px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.credit")}</th>
-                    <th className="text-end px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.balance")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {/* SAP-style brought-forward row — hidden when the user
-                      unchecks "تضمين الرصيد الافتتاحي". */}
-                  {withOpening && (
-                  <tr className="bg-muted/20 border-b font-semibold">
-                    <td className="px-4 py-2.5 text-muted-foreground text-xs">—</td>
-                    <td className="px-4 py-2.5">
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-gradient-to-l from-slate-50 to-zinc-50 px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm">
-                        رصيد افتتاحي
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5">{fromDate || "—"}</td>
-                    <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">—</td>
-                    <td className="px-4 py-2.5 text-muted-foreground italic">{t("accountStatement.previousBalance")}</td>
-                    {showCostCenterCol && <td className="px-4 py-2.5 text-muted-foreground text-xs">—</td>}
-                    <td className="px-4 py-2.5 text-end font-mono text-blue-700">
-                      {previousDebit > 0 ? fmt(previousDebit) : ""}
-                    </td>
-                    <td className="px-4 py-2.5 text-end font-mono text-rose-700">
-                      {previousCredit > 0 ? fmt(previousCredit) : ""}
-                    </td>
-                    <td className={cn("px-4 py-2.5 text-end font-mono",
-                      previousBalance >= 0 ? "text-primary" : "text-destructive"
-                    )}>
-                      {fmt(Math.abs(previousBalance))}
-                      <span className={cn("text-xs font-normal", isRtl ? "mr-1" : "ml-1")}>{previousBalance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}</span>
-                    </td>
-                  </tr>
-                  )}
-                  {rows.map((r: any, i: number) => {
-                    const href = sourceLinkFor(r);
-                    const label = r.docNumber || `JE-${r.entryId}`;
-                    const tone = docTypeTone(r);
-                    return (
-                    <tr key={r.lineId} className="border-b hover:bg-muted/30 transition-colors">
-                      <td className="px-4 py-2.5 text-muted-foreground text-xs">{i + 1}</td>
-                      <td className="px-4 py-2.5">
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1.5 rounded-full border bg-gradient-to-l px-2.5 py-1 text-xs font-medium shadow-sm whitespace-nowrap",
-                            tone.ring, tone.bg, tone.text,
-                          )}
-                          data-testid={`cell-doctype-${r.lineId}`}
-                          title={r.entryType ?? "general"}
-                        >
-                          {docTypeFor(r)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5">{r.entryDate}</td>
-                      <td className="px-4 py-2.5 font-mono text-xs font-semibold">
-                        {href ? (
-                          <Link
-                            href={href}
-                            className="inline-flex items-center gap-1 text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary/40 rounded"
-                            data-testid={`link-source-${r.entryId}`}
-                            title={t("accountStatement.openSource")}
-                          >
-                            {label}
-                            <ExternalLink className="h-3 w-3 opacity-60" />
-                          </Link>
-                        ) : (
-                          <span className="text-primary">{label}</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 text-muted-foreground max-w-xs truncate">{r.description || "—"}</td>
-                      {showCostCenterCol && (
-                        <td className="px-4 py-2.5">
-                          {r.costCenterCode ? (
-                            <span
-                              className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-gradient-to-l from-violet-50 to-fuchsia-50 px-2.5 py-1 text-xs font-medium text-violet-800 shadow-sm"
-                              title={isRtl ? (r.costCenterNameAr ?? "") : (r.costCenterNameEn ?? r.costCenterNameAr ?? "")}
-                              data-testid={`cell-costcenter-${r.lineId}`}
-                            >
-                              <span className="font-mono text-[10px] rounded bg-violet-100 px-1 py-0.5 text-violet-700">
-                                {r.costCenterCode}
-                              </span>
-                              <span className="truncate max-w-[140px]">
-                                {isRtl ? (r.costCenterNameAr ?? "") : (r.costCenterNameEn ?? r.costCenterNameAr ?? "")}
-                              </span>
-                            </span>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </td>
-                      )}
-                      <td className="px-4 py-2.5 text-end font-mono text-blue-700">
-                        {r.debit > 0 ? fmt(r.debit) : ""}
-                      </td>
-                      <td className="px-4 py-2.5 text-end font-mono text-rose-700">
-                        {r.credit > 0 ? fmt(r.credit) : ""}
-                      </td>
-                      <td className={cn("px-4 py-2.5 text-end font-mono font-semibold",
-                        r.balance >= 0 ? "text-primary" : "text-destructive"
-                      )}>
-                        {fmt(Math.abs(r.balance))}
-                        <span className={cn("text-xs font-normal", isRtl ? "mr-1" : "ml-1")}>{r.balance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}</span>
-                      </td>
-                    </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr className="bg-muted/50 font-semibold border-t-2">
-                    <td colSpan={showCostCenterCol ? 6 : 5} className="px-4 py-3 text-center">{t("accountingReports.total")}</td>
-                    <td className="px-4 py-3 text-end font-mono text-blue-700">{fmt(totalDebit)}</td>
-                    <td className="px-4 py-3 text-end font-mono text-rose-700">{fmt(totalCredit)}</td>
-                    <td className={cn("px-4 py-3 text-end font-mono",
-                      finalBalance >= 0 ? "text-primary" : "text-destructive"
-                    )}>
-                      {fmt(Math.abs(finalBalance))} {finalBalance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+          {/* ── Unified printable statement (print/PDF only) ───────────
+              All four statements (customer / supplier / general-accounts /
+              sister-company) now share the SAME paper layout via
+              AccountStatementView so window.print() output is consistent.
+              The رقم القيد column is intentionally omitted from print. */}
+          <div className="hidden print:block">
+            <AccountStatementView
+              mode="general"
+              company={user?.company ?? null}
+              account={{
+                code: selectedAccount?.code ?? null,
+                nameAr: selectedAccount?.nameAr ?? null,
+                nameEn: selectedAccount?.nameEn ?? null,
+                level: selectedAccount?.level ?? null,
+              }}
+              from={fromDate}
+              to={toDate}
+              opening={previousBalance}
+              lines={rows.map((r: any) => ({
+                id: r.entryId,
+                journalEntryId: r.entryId,
+                date: r.entryDate,
+                docType: docTypeFor(r),
+                type: docTypeFor(r),
+                docNumber: r.docNumber || `JE-${r.entryId}`,
+                docHref: sourceLinkFor(r) || undefined,
+                journalEntryNumber: r.docNumber,
+                description: r.description || "",
+                debit: r.debit ?? 0,
+                credit: r.credit ?? 0,
+                balance: r.balance ?? 0,
+              }))}
+              totals={{ debit: totalDebit, credit: totalCredit }}
+              closing={finalBalance}
+            />
           </div>
         </>
       )}

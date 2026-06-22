@@ -598,8 +598,13 @@ export default function ReceiptVoucherForm() {
     const acct = existing.accountId
       ? (accounts as any[]).find((a: any) => String(a.id) === String(existing.accountId))
       : null;
+    // Customer's linked AR (ذمم العملاء) GL account → its code is what the
+    // voucher row should display for the رمز الحساب field.
+    const custAcct = cust?.accountId
+      ? (accounts as any[]).find((a: any) => String(a.id) === String(cust.accountId))
+      : null;
     const account = {
-      code: cust?.code ?? acct?.code ?? "",
+      code: custAcct?.code ?? cust?.code ?? acct?.code ?? "",
       name: existing.entityName
         || (cust ? (isRtl ? cust.nameAr : (cust.nameEn || cust.nameAr)) : "")
         || (acct ? (isRtl ? acct.nameAr : (acct.nameEn || acct.nameAr)) : ""),

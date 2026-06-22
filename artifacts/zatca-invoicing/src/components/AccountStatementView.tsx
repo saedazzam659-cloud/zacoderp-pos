@@ -99,8 +99,11 @@ export interface AccountStatementViewProps {
   lines: StatementLine[];
   totals: { debit: number; credit: number };
   closing: number;
-  /** Customer = "كشف حساب عميل", supplier shows "كشف حساب مورد" header. */
-  mode: "customer" | "supplier";
+  /** Customer = "كشف حساب عميل", supplier shows "كشف حساب مورد" header,
+   *  general = a plain GL-account statement ("كشف حساب") used by the
+   *  general-accounts and sister-company statement screens so all four
+   *  statements share one printable layout. */
+  mode: "customer" | "supplier" | "general";
   /** Localized branch name when the user filtered by a specific branch.
    *  Undefined / null / empty => "all branches" => the row is hidden. */
   branchName?: string | null;
@@ -187,6 +190,8 @@ export default function AccountStatementView({
               <span className="text-slate-500 shrink-0">
                 {mode === "supplier"
                   ? tr("supplierNameLabel", "اسم المورد")
+                  : mode === "general"
+                  ? tr("accountNameLabel", "اسم الحساب")
                   : tr("customerNameLabel", "اسم العميل")}
               </span>
               <span className="text-slate-500">:</span>
@@ -259,11 +264,13 @@ export default function AccountStatementView({
       {(() => {
         const v = visibleCols;
         // colSpan of the leading "الإجمالي" cell = number of visible
-        // pre-numeric columns (date / docNumber / type). When all three
-        // are hidden we drop the label cell entirely so the row stays
-        // valid HTML.
+        // pre-numeric columns (docType / date / docNumber). The رقم القيد
+        // (`type`) column is intentionally excluded from the PRINTED table
+        // per user request, so it must NOT count toward the leading span.
+        // When all three are hidden we drop the label cell entirely so the
+        // row stays valid HTML.
         const leadingSpan =
-          (v.docType ? 1 : 0) + (v.date ? 1 : 0) + (v.docNumber ? 1 : 0) + (v.type ? 1 : 0);
+          (v.docType ? 1 : 0) + (v.date ? 1 : 0) + (v.docNumber ? 1 : 0);
         const visibleCount =
           leadingSpan +
           (v.debit ? 1 : 0) + (v.credit ? 1 : 0) +
@@ -399,7 +406,7 @@ export default function AccountStatementView({
                     {v.date        && <Th>{tr("colDate", "التاريخ")}</Th>}
                     {v.docType     && <Th>{tr("colDocType", "نوع الوثيقة")}</Th>}
                     {v.docNumber   && <Th>{tr("colDoc", "الرقم")}</Th>}
-                    {v.type        && <Th>{tr("colJournalEntryNumber", "رقم القيد")}</Th>}
+                    {/* رقم القيد (`type`) column intentionally omitted from print. */}
                     {v.debit       && <Th center>{tr("colDebit", "مدين")}</Th>}
                     {v.credit      && <Th center>{tr("colCredit", "دائن")}</Th>}
                     {v.balance     && <Th center>{tr("colBalance", "الرصيد")}</Th>}
@@ -414,7 +421,7 @@ export default function AccountStatementView({
                     {v.date        && <Td mono>{from}</Td>}
                     {v.docType     && <Td className="italic text-slate-500">{tr("openingRow", "رصيد افتتاحي")}</Td>}
                     {v.docNumber   && <Td>—</Td>}
-                    {v.type        && <Td className="text-slate-400">—</Td>}
+                    {/* رقم القيد (`type`) column intentionally omitted from print. */}
                     {v.debit       && <Td center mono>{openingDebit  ? fmt(openingDebit)  : "0.00"}</Td>}
                     {v.credit      && <Td center mono>{openingCredit ? fmt(openingCredit) : "0.00"}</Td>}
                     {v.balance     && <Td center mono className="font-semibold">{fmt(opening)}</Td>}
@@ -445,20 +452,7 @@ export default function AccountStatementView({
                           </a>
                         );
                       })()}</Td>}
-                      {v.type      && <Td mono className="text-slate-600">{(() => {
-                        const label = l.journalEntryNumber || (l.journalEntryId != null ? `#${l.journalEntryId}` : "");
-                        if (!label) return "—";
-                        if (l.journalEntryId == null) return label;
-                        return (
-                          <a
-                            href={`/accounting/journals/${l.journalEntryId}`}
-                            className="text-sky-700 hover:text-sky-900 hover:underline"
-                            title="فتح القيد المحاسبي"
-                          >
-                            {label}
-                          </a>
-                        );
-                      })()}</Td>}
+                      {/* رقم القيد (`type`) column intentionally omitted from print. */}
                       {v.debit && (
                         <Td center mono className={l.debit ? "font-semibold text-sky-700" : "text-slate-400"}>
                           {l.debit ? fmt(l.debit) : "0.00"}

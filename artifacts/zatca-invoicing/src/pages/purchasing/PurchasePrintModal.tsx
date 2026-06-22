@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Printer, X } from "lucide-react";
@@ -7,9 +8,55 @@ import { cn } from "@/lib/utils";
 import { safeLogoSrc } from "@/lib/export";
 import { currencySymbol } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
+import { ZATCA_UNIT_CODES } from "@/lib/zatca-units";
 import { ensurePrinterReady } from "@/lib/printerGuard";
+import QRCode from "qrcode";
 
-const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+// Number formatter — Arabic-Indic digits with the invisible BiDi control
+// characters stripped after formatting (U+061C / U+200E / U+200F / …). On some
+// Windows fonts those zero-width marks fall back to a `.notdef` box drawn as a
+// stray vertical "1" next to every total; stripping them keeps the printed
+// numeric span to visible glyphs only. The `.mono` span in baseStyles is also
+// forced to `direction:ltr; unicode-bidi:isolate` so the browser never injects
+// new marks at render time.
+const NUM_FMT = new Intl.NumberFormat("ar-SA-u-nu-arab", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const STRIP_INVISIBLE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+const fmt = (n: any) => NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
+// Latin-digit formatter for English print mode.
+const EN_NUM_FMT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtEn = (n: any) => EN_NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
+
+// Build the Arabic-name → English-name lookup map from an inventory item list.
+function buildEnNamesMap(items: any[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const it of (items ?? [])) {
+    const ar = (it?.nameAr ?? "").toString().trim().toLowerCase();
+    const en = (it?.nameEn ?? "").toString().trim();
+    if (ar && en) m.set(ar, en);
+  }
+  return m;
+}
+// Build the unit-of-measure → English-name lookup. Seeded with the ZATCA static
+// dictionary then overlaid with the company's own units rows.
+function buildEnUnitsMap(dbUnits: any[]): Map<string, string> {
+  const m = new Map<string, string>();
+  const add = (ar: any, code: any, en: any) => {
+    const enS = (en ?? "").toString().trim();
+    if (!enS) return;
+    const arS = (ar ?? "").toString().trim().toLowerCase();
+    const codeS = (code ?? "").toString().trim().toUpperCase();
+    if (arS) m.set(arS, enS);
+    if (codeS) m.set(codeS, enS);
+  };
+  for (const u of ZATCA_UNIT_CODES) add(u.nameAr, u.code, u.nameEn);
+  for (const u of (dbUnits ?? [])) add(u?.nameAr, u?.code, u?.nameEn);
+  return m;
+}
+
+type PrintLang = "ar" | "en";
 
 interface PrintData {
   type: "invoice" | "return";
@@ -32,7 +79,7 @@ function baseStyles(accent: string, accentText = "#fff") {
       .accent-border { border-color: ${accent}; }
       table { width: 100%; border-collapse: collapse; }
       th, td { padding: 5px 8px; text-align: right; }
-      .mono { font-variant-numeric: tabular-nums; }
+      .mono { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
       @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
     </style>`;
 }
@@ -73,15 +120,34 @@ function supplierBlock(s: any) {
 }
 
 function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
-  const showDisc = lines.some(l => (Number(l.discount) || 0) > 0);
-  // Only render the "مجاني" column when at least one line has free qty.
+  // Discount column appears when ANY line has either a percentage discount
+  // (`discount`) OR a value-based discount (`discountAmount`). Previously
+  // only the % path was checked, so amount-only discounts were hidden in
+  // the printout even though they affected totals.
+  const showDisc = lines.some(l =>
+    (Number(l.discount) || 0) > 0 || (Number(l.discountAmount) || 0) > 0
+  );
+  // Only render the "مجاني" column when at least one line has free qty —
+  // keeps the printed table clean for documents that don't use the feature.
   const showFree = lines.some(l => (Number(l.freeQty) || 0) > 0);
   const rows = lines.map((l, i) => {
-    const disc = Math.max(0, Math.min(100, Number(l.discount) || 0));
-    const sub  = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - disc / 100);
+    const qty   = Number(l.qty) || 0;
+    const price = Number(l.unitPrice) || 0;
+    const gross = qty * price;
+    const discPct = Math.max(0, Math.min(100, Number(l.discount) || 0));
+    const rawAmt  = Math.max(0, Number(l.discountAmount) || 0);
+    // The two discount fields are mirrors of one value (see
+    // `lib/lineDiscountSync.ts`). Use the SAR amount when present,
+    // otherwise derive it from %. Never subtract both — that would
+    // double-count post-sync.
+    const discAmtEff = rawAmt > 0 ? Math.min(rawAmt, gross) : (gross * discPct) / 100;
+    const sub  = Math.max(0, gross - discAmtEff);
     const vat  = sub * ((Number(l.vatRate) || 0) / 100);
     const tot  = sub + vat;
     const freeQ = Number(l.freeQty) || 0;
+    // % cell shows percentage; value cell shows the SAR amount.
+    const discPctCell = discPct > 0 ? `${discPct}%` : "—";
+    const discValCell = discAmtEff > 0 ? fmt(discAmtEff) : "—";
     return `
       <tr style="${i % 2 === 0 ? rowEvenStyle : ""}">
         <td>${i + 1}</td>
@@ -90,7 +156,8 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
         ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
         <td>${l.unit ?? "—"}</td>
         <td class="mono">${fmt(l.unitPrice)}</td>
-        ${showDisc ? `<td class="mono" style="color:#b91c1c;">${disc}%</td>` : ""}
+        ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discPctCell}</td>` : ""}
+        ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discValCell}</td>` : ""}
         <td class="mono">${l.vatRate ?? 15}%</td>
         <td class="mono">${fmt(vat)}</td>
         <td class="mono" style="font-weight:600;">${fmt(tot)}</td>
@@ -107,7 +174,8 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
           ${showFree ? `<th style="color:#b45309;">مجاني</th>` : ""}
           <th>الوحدة</th>
           <th>سعر الوحدة</th>
-          ${showDisc ? `<th>خصم%</th>` : ""}
+          ${showDisc ? `<th>الخصم</th>` : ""}
+          ${showDisc ? `<th>قيمة الخصم</th>` : ""}
           <th>الضريبة</th>
           <th>قيمة الضريبة</th>
           <th>الإجمالي</th>
@@ -135,6 +203,277 @@ function totalsBlock(doc: any, align = "right") {
         </div>
       </div>
     </div>`;
+}
+
+function numberToArabicWords(n: number): string {
+  if (!isFinite(n) || n < 0 || n > 999999999.99) return String(n);
+  const ones = ["", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة",
+    "عشرة", "أحد عشر", "اثنا عشر", "ثلاثة عشر", "أربعة عشر",
+    "خمسة عشر", "ستة عشر", "سبعة عشر", "ثمانية عشر", "تسعة عشر"];
+  const tens = ["", "", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"];
+  const hundreds = ["", "مائة", "مائتان", "ثلاثمائة", "أربعمائة", "خمسمائة",
+    "ستمائة", "سبعمائة", "ثمانمائة", "تسعمائة"];
+  const under1000 = (x: number): string => {
+    if (x === 0) return "";
+    const h = Math.floor(x / 100); const r = x % 100; const parts: string[] = [];
+    if (h) parts.push(hundreds[h]!);
+    if (r < 20) { if (r) parts.push(ones[r]!); }
+    else {
+      const t = Math.floor(r / 10); const o = r % 10;
+      if (o) parts.push(`${ones[o]} و${tens[t]}`); else parts.push(tens[t]!);
+    }
+    return parts.join(" و");
+  };
+  const intPart = Math.floor(n);
+  const fracPart = Math.round((n - intPart) * 100);
+  const millions = Math.floor(intPart / 1000000);
+  const thousands = Math.floor((intPart % 1000000) / 1000);
+  const rest = intPart % 1000;
+  const segments: string[] = [];
+  if (millions) {
+    if (millions === 1) segments.push("مليون");
+    else if (millions === 2) segments.push("مليونان");
+    else if (millions <= 10) segments.push(`${under1000(millions)} ملايين`);
+    else segments.push(`${under1000(millions)} مليون`);
+  }
+  if (thousands) {
+    if (thousands === 1) segments.push("ألف");
+    else if (thousands === 2) segments.push("ألفان");
+    else if (thousands <= 10) segments.push(`${under1000(thousands)} آلاف`);
+    else segments.push(`${under1000(thousands)} ألف`);
+  }
+  if (rest) segments.push(under1000(rest));
+  let out = segments.join(" و") || "صفر";
+  if (fracPart > 0) out += ` و ${under1000(fracPart)} هللة`;
+  return `فقط ${out} ريال سعودي لا غير`;
+}
+
+// ── Full totals computation ──────────────────────────────────────────────────
+// Derives the 5 standard print totals from lines (so it works even when the
+// server-side aggregates haven't refreshed yet). Combines BOTH percent‑based
+// (`discount` as %) and value‑based (`discountAmount` as absolute SAR) per‑line
+// discounts — clamped so the line discount can never exceed the gross.
+interface FullTotals {
+  subtotalPreDiscount: number;
+  discountTotal: number;
+  netPreVat: number;
+  vatAmount: number;
+  grandTotal: number;
+  totalQty: number;
+  totalFreeQty: number;
+  itemsCount: number;
+  currency: string;
+  currencySym: string;
+  amountWords: string;
+  exchangeRate: number;
+  baseCurrency: string;
+  baseSym: string;
+  isForeign: boolean;
+  vatAmountBase: number;
+  grandTotalBase: number;
+  showSarEq: boolean;
+}
+function computeFullTotals(doc: any, lines: any[], printType?: "invoice" | "return"): FullTotals {
+  let subtotalPreDiscount = 0, discountTotal = 0, netPreVat = 0, vatAmount = 0;
+  let totalQty = 0, totalFreeQty = 0;
+  for (const l of (lines ?? [])) {
+    const qty   = Number(l.qty)         || 0;
+    const free  = Number(l.freeQty)     || 0;
+    const price = Number(l.unitPrice)   || 0;
+    const dPct  = Math.max(0, Math.min(100, Number(l.discount) || 0));
+    const dAmt  = Math.max(0, Number(l.discountAmount) || 0);
+    const gross = qty * price;
+    const disc  = Math.min(gross, dAmt > 0 ? dAmt : (gross * dPct / 100));
+    const net   = gross - disc;
+    const vat   = net * ((Number(l.vatRate) || 0) / 100);
+    subtotalPreDiscount += gross;
+    discountTotal       += disc;
+    netPreVat           += net;
+    vatAmount           += vat;
+    totalQty            += qty;
+    totalFreeQty        += free;
+  }
+  const grandTotal = netPreVat + vatAmount;
+  const currency = doc?.currencyCode ?? "SAR";
+  const baseCurrency = "SAR";
+  const exchangeRate = Number(doc?.exchangeRate) || 1;
+  const isForeign = !!currency && currency.toUpperCase() !== baseCurrency;
+  const resolvedType: "invoice" | "return" | undefined = printType ?? (doc?.__printType as "invoice" | "return" | undefined);
+  const isTaxDoc = resolvedType ? (resolvedType === "invoice" || resolvedType === "return") : true;
+  const vatAmountBase = vatAmount * exchangeRate;
+  const grandTotalBase = grandTotal * exchangeRate;
+  return {
+    subtotalPreDiscount, discountTotal, netPreVat, vatAmount, grandTotal,
+    totalQty, totalFreeQty, itemsCount: (lines ?? []).length, currency,
+    currencySym: currencySymbol(currency),
+    amountWords: numberToArabicWords(grandTotal),
+    exchangeRate, baseCurrency, baseSym: currencySymbol(baseCurrency),
+    isForeign, vatAmountBase, grandTotalBase,
+    showSarEq: isForeign && isTaxDoc,
+  };
+}
+
+// SAR-equivalent rows appended after the grand-total line. Renders ONLY for a
+// foreign-currency tax document (gated via `t.showSarEq`); returns "" otherwise
+// so every template can splice it in unconditionally.
+function sarEqRowsHtml(
+  t: FullTotals,
+  rowClass = "totals-row",
+  tl: (ar: string, en: string) => string = (ar, en) => `${ar} — ${en}`,
+  nf: (n: number) => string = fmt,
+): string {
+  if (!t.showSarEq) return "";
+  return `
+    <div class="${rowClass}" style="border-top:1px dashed #cbd5e1;margin-top:4px;padding-top:6px;"><span>${tl("ضريبة القيمة المضافة (بالريال)", "VAT (in SAR)")}</span><span class="mono">${nf(t.vatAmountBase)} ${t.baseSym}</span></div>
+    <div class="${rowClass}"><span>${tl("الإجمالي شامل الضريبة (بالريال)", "Total (in SAR)")}</span><span class="mono">${nf(t.grandTotalBase)} ${t.baseSym}</span></div>
+    <div class="${rowClass}" style="font-size:9px;opacity:.65;"><span>${tl("سعر الصرف", "Exchange rate")}</span><span class="mono">1 ${t.currency} = ${nf(t.exchangeRate)} ${t.baseSym}</span></div>`;
+}
+
+// Standardised 5‑row totals body. Caller provides the CSS row class (so each
+// template keeps its native styling) plus an optional grand‑row class.
+function totalRowsHtml(t: FullTotals, rowClass = "totals-row", grandClass = "grand"): string {
+  return `
+    <div class="${rowClass}"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(t.subtotalPreDiscount)} ${t.currencySym}</span></div>
+    <div class="${rowClass}"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(t.discountTotal)} ${t.currencySym}</span></div>
+    <div class="${rowClass}"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currencySym}</span></div>
+    <div class="${rowClass}"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(t.vatAmount)} ${t.currencySym}</span></div>
+    <div class="${rowClass} ${grandClass}"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}</span></div>`;
+}
+
+// Universal summary footer (tafqeet + total items + total qty inc. free).
+function summaryFooterHtml(t: FullTotals): string {
+  return `
+    <div style="margin-top:10px;border:1px solid #e5e7eb;border-radius:6px;padding:8px 12px;font-size:11px;background:#fafafa;">
+      <div style="font-weight:700;color:#0f172a;margin-bottom:6px;line-height:1.5;">${t.amountWords}</div>
+      <div style="display:flex;justify-content:space-between;border-top:1px dashed #cbd5e1;padding-top:6px;">
+        <span>إجمالي أصناف الفاتورة</span>
+        <span class="mono" style="font-weight:700;">${t.itemsCount}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:3px;">
+        <span>إجمالي كميات الفاتورة (شاملة المجانية)</span>
+        <span class="mono" style="font-weight:700;">${fmt(t.totalQty + t.totalFreeQty)}${t.totalFreeQty > 0 ? ` <span style="color:#b45309;font-weight:600;">(منها ${fmt(t.totalFreeQty)} مجاني)</span>` : ""}</span>
+      </div>
+    </div>`;
+}
+
+// English-only summary footer (no Arabic tafqeet) used when printing template
+// 14 in English. Mirrors the layout of `summaryFooterHtml` minus amountWords.
+function summaryFooterHtmlEn(t: FullTotals): string {
+  return `
+    <div style="margin-top:10px;border:1px solid #e5e7eb;border-radius:6px;padding:8px 12px;font-size:11px;background:#fafafa;">
+      <div style="display:flex;justify-content:space-between;border-top:1px dashed #cbd5e1;padding-top:6px;">
+        <span>Total Items</span>
+        <span class="mono" style="font-weight:700;">${t.itemsCount}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:3px;">
+        <span>Total Quantity (incl. free)</span>
+        <span class="mono" style="font-weight:700;">${fmtEn(t.totalQty + t.totalFreeQty)}${t.totalFreeQty > 0 ? ` <span style="color:#b45309;font-weight:600;">(${fmtEn(t.totalFreeQty)} free)</span>` : ""}</span>
+      </div>
+    </div>`;
+}
+
+// ── ZATCA TLV QR builder ─────────────────────────────────────────────────────
+// Phase‑1 e‑invoicing TLV spec (5 mandatory tags). Returns a data URL for an
+// <img> tag. Falls back to "" on any error so print never breaks.
+function buildTlvBase64(company: any, doc: any, t: FullTotals): string {
+  const enc = new TextEncoder();
+  const pieces: Uint8Array[] = [];
+  const push = (tag: number, val: string) => {
+    const bytes = enc.encode(val);
+    pieces.push(Uint8Array.from([tag, bytes.length]));
+    pieces.push(bytes);
+  };
+  push(1, String(company?.nameAr ?? company?.nameEn ?? ""));
+  push(2, String(company?.vatNumber ?? ""));
+  let ts = "";
+  const raw = doc?.invoiceDate ?? doc?.issueDate ?? doc?.createdAt ?? doc?.returnDate;
+  if (raw) {
+    try {
+      const dt = new Date(raw);
+      if (!isNaN(dt.getTime())) ts = dt.toISOString().replace(/\.\d{3}Z$/, "Z");
+    } catch { /* noop */ }
+  }
+  if (!ts) ts = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  push(3, ts);
+  push(4, t.grandTotal.toFixed(2));
+  push(5, t.vatAmount.toFixed(2));
+  const total = pieces.reduce((sum, p) => sum + p.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of pieces) { out.set(p, off); off += p.length; }
+  let bin = "";
+  for (let i = 0; i < out.length; i++) bin += String.fromCharCode(out[i]!);
+  return btoa(bin);
+}
+
+async function buildZatcaQrDataUrl(company: any, doc: any, t: FullTotals): Promise<string> {
+  try {
+    const b64 = buildTlvBase64(company, doc, t);
+    return await QRCode.toDataURL(b64, {
+      width: 220, margin: 1, errorCorrectionLevel: "M",
+    });
+  } catch { return ""; }
+}
+
+// Reusable QR rendering helper — uses the real ZATCA data URL when available,
+// falls back to a labelled placeholder so layouts don't collapse.
+function qrImgHtml(d: PrintData, opts: { size?: number; border?: string; bg?: string; color?: string } = {}): string {
+  const size = opts.size ?? 110;
+  const url = (d as any)._qrDataUrl as string | undefined;
+  if (url) {
+    return `<img src="${url}" alt="QR ZATCA" width="${size}" height="${size}" style="display:block;${opts.border ? `border:${opts.border};` : ""}${opts.bg ? `background:${opts.bg};` : ""}padding:3px;border-radius:4px;" />`;
+  }
+  return `<div style="width:${size}px;height:${size}px;border:1.5px dashed ${opts.color ?? "#999"};border-radius:4px;display:flex;align-items:center;justify-content:center;color:${opts.color ?? "#999"};font-size:10px;text-align:center;background:${opts.bg ?? "#fafafa"};">QR<br/>ZATCA</div>`;
+}
+
+function docPrefix(type: "invoice" | "return") {
+  return type === "invoice" ? "PI" : "PR";
+}
+
+function docDate(doc: any, type: "invoice" | "return") {
+  return type === "invoice" ? (doc.invoiceDate ?? "—") : (doc.returnDate ?? "—");
+}
+
+// ── Print i18n (currently honoured by template 14 «الأصلي» only) ────────────
+interface PrintLabels {
+  companyInfo: string; vatNumber: string; crNumber: string; phone: string;
+  supplierInfo: string; accountCode: string; supplierAddress: string;
+  validUntil: string; reference: string;
+  colItem: string; colQty: string; colFree: string; colUnit: string;
+  colUnitPrice: string; colDiscount: string; colDiscountValue: string;
+  colAmount: string; colVat: string; colVatValue: string; colTotal: string;
+  lineNotesLbl: string; notesLbl: string;
+  createdAtLbl: string; byLbl: string; printedLbl: string;
+  companyNameFallback: string; none: string;
+  totalItemsLbl: string; totalQtyLbl: string; freeWord: string;
+}
+function getPrintLabels(lang: PrintLang): PrintLabels {
+  if (lang === "en") {
+    return {
+      companyInfo: "Company", vatNumber: "VAT No.", crNumber: "CR No.", phone: "Phone",
+      supplierInfo: "Supplier", accountCode: "Account Code", supplierAddress: "Address",
+      validUntil: "Valid until", reference: "Ref",
+      colItem: "Item / Service", colQty: "Qty", colFree: "Free Qty", colUnit: "Unit",
+      colUnitPrice: "Unit Price", colDiscount: "Discount", colDiscountValue: "Disc. Value",
+      colAmount: "Amount", colVat: "VAT", colVatValue: "VAT Value", colTotal: "Total",
+      lineNotesLbl: "Notes:", notesLbl: "Notes:",
+      createdAtLbl: "Created", byLbl: "By", printedLbl: "Printed",
+      companyNameFallback: "Company Name", none: "—",
+      totalItemsLbl: "Total Items", totalQtyLbl: "Total Quantity (incl. free)", freeWord: "free",
+    };
+  }
+  return {
+    companyInfo: "بيانات الشركة", vatNumber: "الرقم الضريبي:", crNumber: "السجل التجاري:", phone: "الهاتف:",
+    supplierInfo: "بيانات المورد", accountCode: "كود الحساب:", supplierAddress: "عنوان المورد:",
+    validUntil: "صالح حتى", reference: "مرجع",
+    colItem: "الصنف / الخدمة", colQty: "الكمية", colFree: "الكمية المجانية", colUnit: "الوحدة",
+    colUnitPrice: "سعر الوحدة", colDiscount: "الخصم", colDiscountValue: "قيمة الخصم",
+    colAmount: "المبلغ", colVat: "الضريبة", colVatValue: "قيمة الضريبة", colTotal: "الإجمالي",
+    lineNotesLbl: "ملاحظات:", notesLbl: "ملاحظات:",
+    createdAtLbl: "تاريخ الإنشاء", byLbl: "بواسطة", printedLbl: "طُبع",
+    companyNameFallback: "اسم الشركة", none: "—",
+    totalItemsLbl: "إجمالي أصناف الفاتورة", totalQtyLbl: "إجمالي كميات الفاتورة (شاملة المجانية)", freeWord: "مجاني",
+  };
 }
 
 // ── Template 1: كلاسيكي ──────────────────────────────────────────────────────
@@ -481,13 +820,685 @@ function template5(d: PrintData): string {
   </body></html>`;
 }
 
+// Reusable centered logo header used by the thermal / receipt-style
+// templates (6 + 7) which don't render the full `companyBlock` —
+// they just need the brand mark on top of the company name.
+function logoCenterHtml(c: any, maxH = 50, maxW = 150): string {
+  const safeLogo = safeLogoSrc(c?.logo);
+  if (!safeLogo) return "";
+  return `<div style="text-align:center;margin-bottom:4px;"><img src="${safeLogo}" alt="" style="max-height:${maxH}px;max-width:${maxW}px;object-fit:contain;display:inline-block;" /></div>`;
+}
+
+// Resolve customizable footer pieces from company settings (with safe defaults).
+function footerSettings(company: any, isReturn: boolean) {
+  const thanks = isReturn
+    ? (company?.printFooterReturn  ?? "تم استلام المرتجع — شكراً لتعاملكم")
+    : (company?.printFooterInvoice ?? "شكراً لتعاملكم");
+  const showTimestamp  = company?.printShowTimestamp  !== false;
+  const showZatcaBrand = company?.printShowZatcaBrand !== false;
+  return { thanks, showTimestamp, showZatcaBrand };
+}
+
+// ── Template 6: حراري كلاسيكي (80mm) ─────────────────────────────────────────
+function template6(d: PrintData): string {
+  const { doc, lines, supplier, company } = d;
+  const isReturn = d.type === "return";
+  const accent = isReturn ? "#b91c1c" : "#111";
+  const { thanks, showTimestamp, showZatcaBrand } = footerSettings(company, isReturn);
+  const itemsRows = lines.map((l) => {
+    const disc = Math.max(0, Math.min(100, Number(l.discount) || 0));
+    const sub = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - disc / 100);
+    const vat = sub * ((Number(l.vatRate) || 0) / 100);
+    const tot = sub + vat;
+    return `
+      <tr>
+        <td colspan="3" style="padding-top:4px;">${l.itemName ?? l.itemCode ?? "—"}</td>
+      </tr>
+      <tr>
+        <td class="mono" style="padding-bottom:4px;border-bottom:1px dashed #999;">
+          ${Math.round(Number(l.qty) || 0)} × ${fmt(l.unitPrice)}${(Number(l.freeQty) || 0) > 0 ? ` <span style="color:#b45309;font-weight:700;">+ ${Math.round(Number(l.freeQty))} مجاني</span>` : ""}
+        </td>
+        <td class="mono" style="text-align:center;padding-bottom:4px;border-bottom:1px dashed #999;">
+          ${l.vatRate ?? 15}%
+        </td>
+        <td class="mono" style="text-align:left;padding-bottom:4px;border-bottom:1px dashed #999;font-weight:700;">
+          ${fmt(tot)}
+        </td>
+      </tr>`;
+  }).join("");
+
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  <style>
+    @page { size: 80mm auto; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { direction: rtl; font-family: 'Courier New', 'Tahoma', monospace; font-size: 11px; color: #000; padding: 4mm 3mm; width: 80mm; }
+    .center { text-align: center; }
+    .mono { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
+    .name-ar { font-size: 14px; font-weight: 700; }
+    .name-en { font-size: 9px; opacity: .75; margin-top: 2px; }
+    .meta { font-size: 10px; line-height: 1.45; }
+    .doc-type { background: ${accent}; color: #fff; display: inline-block; padding: 3px 10px; margin: 6px 0 4px; font-weight: 700; font-size: 11px; border-radius: 3px; }
+    .doc-num  { font-size: 12px; font-weight: 700; margin-top: 2px; }
+    .sep { border-top: 1px dashed #555; margin: 6px 0; }
+    .sep-solid { border-top: 1.5px solid #000; margin: 6px 0; }
+    .info { font-size: 10px; line-height: 1.5; }
+    .info b { display: inline-block; min-width: 42px; }
+    table.items { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 2px; }
+    table.items th { padding: 3px 0; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; font-size: 10px; }
+    .totals { margin-top: 4px; font-size: 11px; }
+    .totals .row { display: flex; justify-content: space-between; padding: 2px 0; }
+    .totals .grand { font-size: 13px; font-weight: 700; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 4px 0; margin-top: 4px; }
+    .footer { text-align: center; margin-top: 8px; font-size: 9px; line-height: 1.5; }
+    .qr-box { text-align: center; margin: 8px 0 4px; font-size: 9px; }
+    .qr-box .qr-ph { width: 30mm; height: 30mm; margin: 0 auto 4px; border: 1px dashed #999; display: flex; align-items: center; justify-content: center; color: #999; font-size: 9px; }
+    @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  </style>
+  </head><body>
+    <div class="center">
+      ${logoCenterHtml(company, 46, 140)}
+      <div class="name-ar">${company?.nameAr ?? "اسم الشركة"}</div>
+      ${company?.nameEn ? `<div class="name-en">${company.nameEn}</div>` : ""}
+      <div class="meta">
+        ${company?.vatNumber ? `<div>الرقم الضريبي: ${company.vatNumber}</div>` : ""}
+        ${company?.crNumber  ? `<div>س.ت: ${company.crNumber}</div>` : ""}
+        ${company?.city      ? `<div>${company.city}${company.country ? ` — ${company.country}` : ""}</div>` : ""}
+        ${company?.phone     ? `<div>هاتف: ${company.phone}</div>` : ""}
+      </div>
+      <div class="doc-type">${docTitle(d.type)}</div>
+      <div class="doc-num mono">${doc.docNumber ?? (d.type === "return" ? `PR-${doc.id}` : `PI-${doc.id}`)}</div>
+      <div class="meta">${doc.invoiceDate ?? doc.returnDate ?? "—"}</div>
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="info">
+      <div><b>المورد:</b> ${supplier?.nameAr ?? "—"}</div>
+      ${supplier?.vatNumber ? `<div><b>ر.ض:</b> ${supplier.vatNumber}</div>` : ""}
+      ${supplier?.phone     ? `<div><b>هاتف:</b> ${supplier.phone}</div>` : ""}
+      <div><b>الدفع:</b> ${doc.paymentType === "cash" ? "نقدي" : "آجل"}</div>
+      ${isReturn && doc.returnReason ? `<div><b>السبب:</b> ${doc.returnReason}</div>` : ""}
+      ${isReturn && doc.originalInvoiceNumber ? `<div><b>الفاتورة الأصلية:</b> ${doc.originalInvoiceNumber}</div>` : ""}
+    </div>
+
+    <table class="items">
+      <thead>
+        <tr>
+          <th style="text-align:right;">الصنف / الكمية × السعر</th>
+          <th style="text-align:center;width:18mm;">ض.</th>
+          <th style="text-align:left;width:22mm;">الإجمالي</th>
+        </tr>
+      </thead>
+      <tbody>${itemsRows}</tbody>
+    </table>
+
+    <div class="totals">${totalRowsHtml(computeFullTotals(doc, lines), "row", "grand")}</div>
+    ${(() => { const t = computeFullTotals(doc, lines); return `
+      <div style="margin-top:6px;font-size:10px;line-height:1.5;border-top:1px dashed #555;padding-top:5px;">
+        <div style="font-weight:700;margin-bottom:3px;">${t.amountWords}</div>
+        <div style="display:flex;justify-content:space-between;"><span>إجمالي الأصناف:</span><span class="mono"><b>${t.itemsCount}</b></span></div>
+        <div style="display:flex;justify-content:space-between;"><span>إجمالي الكميات (مع المجاني):</span><span class="mono"><b>${fmt(t.totalQty + t.totalFreeQty)}</b></span></div>
+      </div>`; })()}
+
+    ${doc.notes ? `<div class="sep"></div><div class="info"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
+
+    <div class="qr-box">
+      ${qrImgHtml(d, { size: 110 })}
+      <div style="margin-top:3px;">رمز ZATCA — تحقّق من الفاتورة</div>
+    </div>
+
+    <div class="sep-solid"></div>
+    <div class="footer">
+      ${thanks ? `<div>${thanks}</div>` : ""}
+      ${showTimestamp ? `<div style="margin-top:3px;">طُبع: ${new Date().toLocaleString("ar-SA")}</div>` : ""}
+      ${showZatcaBrand ? `<div style="margin-top:3px;opacity:.7;">ZATCA e-Invoicing</div>` : ""}
+    </div>
+  </body></html>`;
+}
+
+// ── Template 7: حراري عصري (80mm) ────────────────────────────────────────────
+function template7(d: PrintData): string {
+  const { doc, lines, supplier, company } = d;
+  const isReturn = d.type === "return";
+  const accent = isReturn ? "#dc2626" : "#0f766e";
+  const accentSoft = isReturn ? "#fee2e2" : "#ccfbf1";
+  const { thanks, showTimestamp, showZatcaBrand } = footerSettings(company, isReturn);
+
+  const itemsRows = lines.map((l, i) => {
+    const disc = Math.max(0, Math.min(100, Number(l.discount) || 0));
+    const sub = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - disc / 100);
+    const vat = sub * ((Number(l.vatRate) || 0) / 100);
+    const tot = sub + vat;
+    return `
+      <div class="line ${i % 2 === 0 ? "alt" : ""}">
+        <div class="line-top">
+          <span class="line-name">${l.itemName ?? l.itemCode ?? "—"}</span>
+          <span class="mono line-tot">${fmt(tot)}</span>
+        </div>
+        <div class="line-sub mono">
+          ${Math.round(Number(l.qty) || 0)} ${l.unit ?? ""} × ${fmt(l.unitPrice)}
+          ${(Number(l.freeQty) || 0) > 0 ? ` <span style="color:#b45309;font-weight:700;">+ ${Math.round(Number(l.freeQty))} مجاني</span>` : ""}
+          ${disc > 0 ? ` <span style="color:#b91c1c;">(خصم ${disc}%)</span>` : ""}
+          <span style="opacity:.7;"> · ض ${l.vatRate ?? 15}%</span>
+        </div>
+      </div>`;
+  }).join("");
+
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  <style>
+    @page { size: 80mm auto; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', 'Tahoma', sans-serif; }
+    body { direction: rtl; font-size: 11px; color: #1a1a1a; width: 80mm; padding: 0; }
+    .mono { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
+    .header { background: ${accent}; color: #fff; padding: 8px 4mm 10px; text-align: center; }
+    .header .name-ar { font-size: 14px; font-weight: 800; letter-spacing: .3px; }
+    .header .name-en { font-size: 9px; opacity: .85; margin-top: 2px; }
+    .header .meta { font-size: 9.5px; opacity: .9; margin-top: 4px; line-height: 1.45; }
+    .doc-band { background: ${accentSoft}; padding: 6px 4mm; text-align: center; border-bottom: 1.5px solid ${accent}; }
+    .doc-band .label { font-size: 10px; color: ${accent}; font-weight: 700; }
+    .doc-band .num { font-size: 13px; font-weight: 800; margin-top: 2px; }
+    .doc-band .date { font-size: 10px; color: #555; margin-top: 2px; }
+    .body { padding: 6px 4mm; }
+    .info-card { background: #f9fafb; border-radius: 4px; padding: 6px 8px; font-size: 10px; line-height: 1.55; margin-bottom: 6px; }
+    .info-card b { color: ${accent}; display: inline-block; min-width: 42px; }
+    .lines-title { font-size: 10px; font-weight: 700; color: ${accent}; margin: 8px 0 4px; padding-bottom: 3px; border-bottom: 1.5px solid ${accent}; }
+    .line { padding: 4px 0; border-bottom: 1px dashed #d1d5db; }
+    .line.alt { background: #fafafa; padding-right: 4px; padding-left: 4px; margin: 0 -4px; }
+    .line-top { display: flex; justify-content: space-between; align-items: baseline; }
+    .line-name { font-size: 11px; font-weight: 600; flex: 1; }
+    .line-tot { font-size: 11px; font-weight: 700; color: ${accent}; }
+    .line-sub { font-size: 9.5px; color: #666; margin-top: 2px; }
+    .totals { margin-top: 8px; padding: 6px 8px; background: #f9fafb; border-radius: 4px; font-size: 10.5px; }
+    .totals .row { display: flex; justify-content: space-between; padding: 2px 0; }
+    .totals .grand { font-size: 13px; font-weight: 800; color: ${accent}; border-top: 2px solid ${accent}; padding-top: 5px; margin-top: 4px; }
+    .qr-box { text-align: center; margin: 8px 0 4px; }
+    .qr-box .qr-ph { width: 28mm; height: 28mm; margin: 0 auto 4px; border: 1.5px dashed ${accent}; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: ${accent}; font-size: 9px; font-weight: 700; }
+    .qr-box .qr-cap { font-size: 9px; color: #555; }
+    .footer { background: ${accent}; color: #fff; padding: 8px 4mm; text-align: center; font-size: 9.5px; line-height: 1.5; }
+    .footer .thanks { font-size: 11px; font-weight: 700; margin-bottom: 3px; }
+    @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  </style>
+  </head><body>
+    <div class="header">
+      ${logoCenterHtml(company, 46, 130)}
+      <div class="name-ar">${company?.nameAr ?? "اسم الشركة"}</div>
+      ${company?.nameEn ? `<div class="name-en">${company.nameEn}</div>` : ""}
+      <div class="meta">
+        ${company?.vatNumber ? `الرقم الضريبي: ${company.vatNumber}` : ""}
+        ${company?.crNumber ? `<br/>س.ت: ${company.crNumber}` : ""}
+        ${company?.phone ? `<br/>هاتف: ${company.phone}` : ""}
+        ${company?.city ? `<br/>${company.city}${company.country ? ` — ${company.country}` : ""}` : ""}
+      </div>
+    </div>
+
+    <div class="doc-band">
+      <div class="label">${docTitle(d.type)}</div>
+      <div class="num mono">${doc.docNumber ?? (d.type === "return" ? `PR-${doc.id}` : `PI-${doc.id}`)}</div>
+      <div class="date">${doc.invoiceDate ?? doc.returnDate ?? "—"}</div>
+    </div>
+
+    <div class="body">
+      <div class="info-card">
+        <div><b>المورد:</b> ${supplier?.nameAr ?? "—"}</div>
+        ${supplier?.vatNumber ? `<div><b>ر.ض:</b> ${supplier.vatNumber}</div>` : ""}
+        ${supplier?.phone ? `<div><b>هاتف:</b> ${supplier.phone}</div>` : ""}
+        <div><b>الدفع:</b> ${doc.paymentType === "cash" ? "نقدي" : "آجل"}</div>
+        ${isReturn && doc.returnReason ? `<div><b>السبب:</b> ${doc.returnReason}</div>` : ""}
+        ${isReturn && doc.originalInvoiceNumber ? `<div><b>الفاتورة الأصلية:</b> ${doc.originalInvoiceNumber}</div>` : ""}
+      </div>
+
+      <div class="lines-title">بنود ${docTitle(d.type)} (${lines.length})</div>
+      ${itemsRows}
+
+      <div class="totals">${totalRowsHtml(computeFullTotals(doc, lines), "row", "grand")}</div>
+      ${(() => { const t = computeFullTotals(doc, lines); return `
+        <div style="margin-top:6px;font-size:10px;line-height:1.5;background:#f9fafb;border-radius:4px;padding:6px 8px;">
+          <div style="font-weight:700;color:${accent};margin-bottom:3px;">${t.amountWords}</div>
+          <div style="display:flex;justify-content:space-between;"><span>إجمالي الأصناف:</span><span class="mono"><b>${t.itemsCount}</b></span></div>
+          <div style="display:flex;justify-content:space-between;"><span>إجمالي الكميات (مع المجاني):</span><span class="mono"><b>${fmt(t.totalQty + t.totalFreeQty)}</b></span></div>
+        </div>`; })()}
+
+      ${doc.notes ? `<div class="info-card" style="margin-top:8px;"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
+
+      <div class="qr-box">
+        ${qrImgHtml(d, { size: 105, color: accent })}
+        <div class="qr-cap">امسح للتحقق من الفاتورة</div>
+      </div>
+    </div>
+
+    <div class="footer">
+      ${thanks ? `<div class="thanks">${thanks}</div>` : ""}
+      ${showTimestamp ? `<div>طُبع: ${new Date().toLocaleString("ar-SA")}</div>` : ""}
+      ${showZatcaBrand ? `<div style="opacity:.85;margin-top:2px;">ZATCA e-Invoicing</div>` : ""}
+    </div>
+  </body></html>`;
+}
+
+// ── Template 8: نقي أنيق (Pure & Elegant) ───────────────────────────────────
+function template8(d: PrintData): string {
+  const { doc, lines, supplier, company } = d;
+  const safeLogo = safeLogoSrc(company?.logo);
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  ${baseStyles("#0f172a")}
+  <style>
+    body { font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif; }
+    .top { border-bottom: 1px solid #0f172a; padding-bottom: 14px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: flex-end; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-name { font-size: 22px; font-weight: 300; letter-spacing: 4px; color: #0f172a; text-transform: uppercase; }
+    .brand-name b { font-weight: 700; }
+    .doc-title { text-align: left; }
+    .doc-title .word { font-size: 11px; color: #64748b; letter-spacing: 2px; text-transform: uppercase; }
+    .doc-title .num { font-size: 26px; font-weight: 200; color: #0f172a; margin-top: 2px; }
+    .gold-bar { height: 3px; background: linear-gradient(90deg,#0f172a, #d4af37, #0f172a); margin: 0 0 18px; }
+    .meta-strip { display: grid; grid-template-columns: repeat(3,1fr); gap: 1px; background: #e5e7eb; margin-bottom: 16px; }
+    .meta-cell { background: #fff; padding: 10px 14px; }
+    .meta-cell .k { font-size: 9px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px; }
+    .meta-cell .v { font-size: 13px; color: #0f172a; font-weight: 600; }
+    .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+    .party { padding: 12px 16px; border: 1px solid #e2e8f0; border-radius: 2px; }
+    .party h4 { font-size: 9px; color: #d4af37; letter-spacing: 2px; margin-bottom: 6px; text-transform: uppercase; font-weight: 700; }
+    table { font-size: 11px; }
+    thead tr { border-bottom: 2px solid #0f172a; border-top: 2px solid #0f172a; }
+    thead th { padding: 9px 8px; font-size: 10px; color: #475569; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+    tbody td { padding: 8px; border-bottom: 1px solid #f1f5f9; }
+    .totals { margin-top: 18px; display: flex; justify-content: flex-start; }
+    .totals-card { min-width: 260px; border-top: 2px solid #d4af37; padding: 12px 0; }
+    .totals-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; color: #475569; }
+    .totals-row.grand { font-size: 16px; font-weight: 700; color: #0f172a; border-top: 1px solid #e2e8f0; margin-top: 6px; padding-top: 8px; }
+    .footer { margin-top: 28px; padding-top: 14px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; font-size: 9px; color: #94a3b8; letter-spacing: 1px; text-transform: uppercase; }
+  </style>
+  </head><body>
+  <div class="top">
+    <div class="brand">
+      ${safeLogo ? `<img src="${safeLogo}" alt="" style="max-height:50px;max-width:120px;object-fit:contain;display:block;"/>` : ""}
+      <div>
+        <div class="brand-name">${company?.nameAr ?? "اسم الشركة"}</div>
+        ${company?.nameEn ? `<div style="font-size:10px;color:#94a3b8;letter-spacing:3px;">${company.nameEn}</div>` : ""}
+      </div>
+    </div>
+    <div class="doc-title">
+      <div class="word">${docTitle(d.type)}</div>
+      <div class="num">${doc.docNumber ?? (d.type === "return" ? `PR-${doc.id}` : `PI-${doc.id}`)}</div>
+    </div>
+  </div>
+  <div class="gold-bar"></div>
+  <div class="meta-strip">
+    <div class="meta-cell"><div class="k">التاريخ</div><div class="v">${doc.invoiceDate ?? doc.returnDate ?? "—"}</div></div>
+    <div class="meta-cell"><div class="k">العملة</div><div class="v">${doc.currencyCode ?? "SAR"}</div></div>
+    <div class="meta-cell"><div class="k">الدفع</div><div class="v">${doc.paymentType === "cash" ? "نقدي" : "آجل"}</div></div>
+  </div>
+  <div class="parties">
+    <div class="party"><h4>المورد</h4>${supplierBlock(supplier)}</div>
+    <div class="party"><h4>المنشأة</h4>${companyBlock(company)}</div>
+  </div>
+  ${linesTable(lines, "", "")}
+  <div class="totals" style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;">
+    <div style="text-align:center;">
+      ${qrImgHtml(d, { size: 110, border: "1px solid #0f172a", bg: "#fff" })}
+      <div style="font-size:9px;color:#0f172a;margin-top:4px;letter-spacing:2px;text-transform:uppercase;">QR — ZATCA</div>
+    </div>
+    <div class="totals-card" style="flex:1;max-width:360px;">
+      ${totalRowsHtml(computeFullTotals(doc, lines), "totals-row", "grand")}
+      ${summaryFooterHtml(computeFullTotals(doc, lines))}
+    </div>
+  </div>
+  ${doc.notes ? `<div style="margin-top:18px;padding:12px 14px;background:#f8fafc;border-right:3px solid #d4af37;font-size:11px;"><b>ملاحظات: </b>${doc.notes}</div>` : ""}
+  <div class="footer">
+    <span>${company?.vatNumber ? `VAT ${company.vatNumber}` : ""}</span>
+    <span>طُبع ${new Date().toLocaleDateString("ar-SA")}</span>
+  </div>
+  </body></html>`;
+}
+
+// ── Template 9: ذهبي فاخر (Premium Gold) ────────────────────────────────────
+function template9(d: PrintData): string {
+  const { doc, lines, supplier, company } = d;
+  const safeLogo = safeLogoSrc(company?.logo);
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  ${baseStyles("#1c1917", "#f5d57a")}
+  <style>
+    body { background: #fafaf9; }
+    .frame { border: 1px solid #d4af37; padding: 18px; background: #fff; }
+    .header { background: linear-gradient(135deg,#1c1917 0%, #292524 50%, #1c1917 100%); color: #f5d57a; padding: 22px 26px; display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #d4af37; }
+    .h-left { display: flex; align-items: center; gap: 14px; }
+    .logo-box { background: rgba(212,175,55,.1); border: 1px solid rgba(212,175,55,.4); padding: 6px 8px; border-radius: 4px; }
+    .h-name { font-size: 22px; font-weight: 700; letter-spacing: 1px; color: #f5d57a; }
+    .h-sub { font-size: 11px; opacity: .7; margin-top: 4px; }
+    .h-right { text-align: left; }
+    .h-right .lbl { font-size: 11px; color: #d4af37; letter-spacing: 3px; text-transform: uppercase; }
+    .h-right .num { font-size: 24px; font-weight: 800; color: #fff; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .h-right .dt { font-size: 10px; color: rgba(245,213,122,.7); margin-top: 4px; }
+    .body { padding: 18px 22px; background: #fff; }
+    .strip { background: linear-gradient(90deg,#1c1917, #44403c); color: #f5d57a; padding: 10px 18px; font-size: 11px; display: flex; gap: 26px; margin-bottom: 16px; }
+    .strip b { color: #fff; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+    .panel { background: #fafaf9; border: 1px solid #e7e5e4; border-radius: 4px; padding: 12px 16px; }
+    .panel h4 { font-size: 10px; color: #92400e; letter-spacing: 2px; text-transform: uppercase; font-weight: 700; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #d4af37; }
+    table { font-size: 11px; }
+    thead tr { background: #1c1917; color: #f5d57a; }
+    thead th { padding: 9px 8px; font-weight: 600; border-right: 1px solid rgba(212,175,55,.2); }
+    tbody tr:nth-child(even) { background: #fefce8; }
+    tbody td { padding: 8px; border: 1px solid #e7e5e4; }
+    .totals-area { background: #1c1917; color: #f5d57a; padding: 14px 20px; margin-top: 16px; min-width: 280px; border: 1px solid #d4af37; }
+    .t-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; }
+    .t-row.grand { border-top: 1px solid #d4af37; padding-top: 8px; margin-top: 6px; font-size: 17px; font-weight: 800; color: #fff; }
+    .footer { background: #1c1917; color: #f5d57a; padding: 10px 22px; display: flex; justify-content: space-between; font-size: 10px; opacity: .9; margin-top: 14px; }
+  </style>
+  </head><body>
+  <div class="frame">
+    <div class="header">
+      <div class="h-left">
+        ${safeLogo ? `<div class="logo-box"><img src="${safeLogo}" alt="" style="max-height:48px;max-width:130px;object-fit:contain;display:block;"/></div>` : ""}
+        <div>
+          <div class="h-name">${company?.nameAr ?? "اسم الشركة"}</div>
+          <div class="h-sub">${company?.vatNumber ? `الرقم الضريبي ${company.vatNumber}` : ""}${company?.crNumber ? ` • س.ت ${company.crNumber}` : ""}</div>
+        </div>
+      </div>
+      <div class="h-right">
+        <div class="lbl">${docTitle(d.type)}</div>
+        <div class="num">${doc.docNumber ?? (d.type === "return" ? `PR-${doc.id}` : `PI-${doc.id}`)}</div>
+        <div class="dt">${doc.invoiceDate ?? doc.returnDate ?? "—"}</div>
+      </div>
+    </div>
+    <div class="body">
+      <div class="strip">
+        <span>التاريخ: <b>${doc.invoiceDate ?? doc.returnDate ?? "—"}</b></span>
+        <span>العملة: <b>${doc.currencyCode ?? "SAR"}</b></span>
+        <span>الدفع: <b>${doc.paymentType === "cash" ? "نقدي" : "آجل"}</b></span>
+      </div>
+      <div class="two">
+        <div class="panel"><h4>المورد</h4>${supplierBlock(supplier)}</div>
+        <div class="panel"><h4>المنشأة</h4>${companyBlock(company)}</div>
+      </div>
+      ${linesTable(lines, "", "")}
+      <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
+        <div style="text-align:center;">
+          ${qrImgHtml(d, { size: 110, border: "1px solid #d4af37", bg: "#fff" })}
+          <div style="font-size:9px;color:#d4af37;margin-top:4px;font-weight:700;letter-spacing:1px;">QR — ZATCA</div>
+        </div>
+        <div style="flex:1;max-width:360px;">
+          <div class="totals-area">${totalRowsHtml(computeFullTotals(doc, lines), "t-row", "grand")}</div>
+          ${summaryFooterHtml(computeFullTotals(doc, lines))}
+        </div>
+      </div>
+      ${doc.notes ? `<div class="panel" style="margin-top:14px;"><h4>ملاحظات</h4>${doc.notes}</div>` : ""}
+    </div>
+    <div class="footer">
+      <span>${company?.nameAr ?? ""} • ${company?.city ?? ""}</span>
+      <span>تم بنظام الفاتورة الإلكترونية ZATCA</span>
+    </div>
+  </div>
+  </body></html>`;
+}
+
+// ── Template 10: بحري عميق (Deep Ocean) ─────────────────────────────────────
+function template10(d: PrintData): string {
+  const { doc, lines, supplier, company } = d;
+  const safeLogo = safeLogoSrc(company?.logo);
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  ${baseStyles("#0e7490")}
+  <style>
+    .wave-header { background: linear-gradient(135deg,#0c4a6e 0%, #0e7490 50%, #06b6d4 100%); color: #fff; padding: 26px 28px 38px; position: relative; overflow: hidden; }
+    .wave-header::after { content: ""; position: absolute; bottom: -1px; left: 0; right: 0; height: 22px; background: #fff; clip-path: polygon(0 100%, 100% 100%, 100% 30%, 80% 60%, 60% 30%, 40% 60%, 20% 30%, 0 60%); }
+    .wh-grid { display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: center; position: relative; z-index: 2; }
+    .wh-brand { display: flex; align-items: center; gap: 14px; }
+    .wh-logo { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3); padding: 6px 10px; border-radius: 8px; backdrop-filter: blur(4px); }
+    .wh-name { font-size: 21px; font-weight: 700; }
+    .wh-meta { font-size: 11px; opacity: .85; margin-top: 4px; }
+    .wh-badge { background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.4); border-radius: 12px; padding: 12px 18px; text-align: center; backdrop-filter: blur(4px); }
+    .wh-badge .lbl { font-size: 10px; opacity: .85; letter-spacing: 1.5px; text-transform: uppercase; }
+    .wh-badge .num { font-size: 20px; font-weight: 700; margin-top: 2px; }
+    .body { padding: 12px 24px 24px; }
+    .info-bar { background: #ecfeff; border: 1px solid #a5f3fc; border-radius: 8px; padding: 10px 16px; display: flex; justify-content: space-around; font-size: 11px; color: #155e75; margin-bottom: 16px; }
+    .info-bar b { color: #0c4a6e; font-size: 12px; display: block; margin-top: 2px; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+    .card { background: #f0f9ff; border-right: 4px solid #0e7490; padding: 12px 16px; border-radius: 4px 0 0 4px; }
+    .card h4 { font-size: 10px; color: #0e7490; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; font-weight: 700; }
+    table { border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+    thead tr { background: linear-gradient(90deg,#0c4a6e,#0e7490); color: #fff; }
+    thead th { padding: 10px 8px; font-weight: 600; }
+    tbody tr:nth-child(even) { background: #f0f9ff; }
+    tbody td { padding: 8px; border-bottom: 1px solid #e0f2fe; }
+    .totals-area { background: linear-gradient(135deg,#0c4a6e,#0e7490); color: #fff; padding: 16px 22px; border-radius: 12px; min-width: 280px; }
+    .t-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; opacity: .95; }
+    .t-row.grand { border-top: 1px solid rgba(255,255,255,.3); padding-top: 8px; margin-top: 6px; font-size: 17px; font-weight: 800; opacity: 1; }
+    .footer { margin-top: 22px; padding-top: 12px; border-top: 2px solid #06b6d4; display: flex; justify-content: space-between; font-size: 10px; color: #155e75; }
+  </style>
+  </head><body>
+  <div class="wave-header">
+    <div class="wh-grid">
+      <div class="wh-brand">
+        ${safeLogo ? `<div class="wh-logo"><img src="${safeLogo}" alt="" style="max-height:50px;max-width:140px;object-fit:contain;display:block;"/></div>` : ""}
+        <div>
+          <div class="wh-name">${company?.nameAr ?? "اسم الشركة"}</div>
+          <div class="wh-meta">${company?.vatNumber ? `الرقم الضريبي ${company.vatNumber}` : ""}${company?.city ? ` • ${company.city}` : ""}</div>
+        </div>
+      </div>
+      <div class="wh-badge">
+        <div class="lbl">${docTitle(d.type)}</div>
+        <div class="num">${doc.docNumber ?? (d.type === "return" ? `PR-${doc.id}` : `PI-${doc.id}`)}</div>
+      </div>
+    </div>
+  </div>
+  <div class="body">
+    <div class="info-bar">
+      <span>التاريخ <b>${doc.invoiceDate ?? doc.returnDate ?? "—"}</b></span>
+      <span>العملة <b>${doc.currencyCode ?? "SAR"}</b></span>
+      <span>الدفع <b>${doc.paymentType === "cash" ? "نقدي" : "آجل"}</b></span>
+    </div>
+    <div class="two">
+      <div class="card"><h4>المورد</h4>${supplierBlock(supplier)}</div>
+      <div class="card"><h4>المنشأة</h4>${companyBlock(company)}</div>
+    </div>
+    ${linesTable(lines, "", "")}
+    <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
+      <div style="text-align:center;">
+        ${qrImgHtml(d, { size: 110, bg: "#fff" })}
+        <div style="font-size:9px;margin-top:4px;font-weight:700;">QR — ZATCA</div>
+      </div>
+      <div style="flex:1;max-width:360px;">
+        <div class="totals-area">${totalRowsHtml(computeFullTotals(doc, lines), "t-row", "grand")}</div>
+        ${summaryFooterHtml(computeFullTotals(doc, lines))}
+      </div>
+    </div>
+    ${doc.notes ? `<div class="card" style="margin-top:14px;"><h4>ملاحظات</h4>${doc.notes}</div>` : ""}
+    <div class="footer">
+      <span>${company?.nameAr ?? ""}</span>
+      <span>ZATCA e-Invoicing • ${new Date().toLocaleDateString("ar-SA")}</span>
+    </div>
+  </div>
+  </body></html>`;
+}
+
+// ── Template 11: حيوي (Vibrant) ─────────────────────────────────────────────
+function template11(d: PrintData): string {
+  const { doc, lines, supplier, company } = d;
+  const safeLogo = safeLogoSrc(company?.logo);
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  ${baseStyles("#7c3aed")}
+  <style>
+    .top-stripe { height: 8px; background: linear-gradient(90deg,#ec4899,#a855f7,#7c3aed,#3b82f6); }
+    .header { padding: 22px 26px 14px; display: flex; justify-content: space-between; align-items: flex-start; }
+    .brand-row { display: flex; align-items: center; gap: 14px; }
+    .brand-name { font-size: 22px; font-weight: 800; background: linear-gradient(90deg,#a855f7,#ec4899); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .brand-sub { font-size: 11px; color: #6b7280; margin-top: 2px; }
+    .ribbon { background: linear-gradient(135deg,#a855f7,#ec4899); color: #fff; padding: 12px 22px; border-radius: 12px; box-shadow: 0 4px 12px rgba(168,85,247,.3); text-align: center; }
+    .ribbon .l { font-size: 10px; opacity: .9; letter-spacing: 2px; text-transform: uppercase; }
+    .ribbon .n { font-size: 22px; font-weight: 800; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .body { padding: 4px 26px 22px; }
+    .pills { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+    .pill { background: #f5f3ff; border: 1px solid #ddd6fe; color: #6b21a8; border-radius: 999px; padding: 6px 14px; font-size: 11px; font-weight: 600; }
+    .pill b { color: #4c1d95; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+    .card { background: #faf5ff; border-radius: 12px; padding: 14px 16px; position: relative; overflow: hidden; }
+    .card::before { content: ""; position: absolute; top: 0; right: 0; width: 60px; height: 60px; background: radial-gradient(circle at top right, rgba(168,85,247,.15), transparent 70%); }
+    .card h4 { font-size: 10px; color: #7c3aed; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px; font-weight: 700; }
+    table { border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    thead tr { background: linear-gradient(90deg,#7c3aed,#a855f7,#ec4899); color: #fff; }
+    thead th { padding: 10px 8px; font-weight: 600; }
+    tbody tr:nth-child(even) { background: #faf5ff; }
+    tbody td { padding: 8px; border-bottom: 1px solid #f3e8ff; }
+    .totals-area { background: linear-gradient(135deg,#a855f7,#ec4899); color: #fff; padding: 16px 22px; border-radius: 12px; min-width: 280px; box-shadow: 0 6px 14px rgba(168,85,247,.25); }
+    .t-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; opacity: .95; }
+    .t-row.grand { border-top: 1px solid rgba(255,255,255,.3); padding-top: 8px; margin-top: 6px; font-size: 18px; font-weight: 800; opacity: 1; }
+    .footer { margin-top: 22px; padding: 10px 26px; background: linear-gradient(90deg,#7c3aed,#ec4899); color: #fff; display: flex; justify-content: space-between; font-size: 10px; }
+  </style>
+  </head><body>
+  <div class="top-stripe"></div>
+  <div class="header">
+    <div class="brand-row">
+      ${safeLogo ? `<img src="${safeLogo}" alt="" style="max-height:54px;max-width:140px;object-fit:contain;display:block;"/>` : ""}
+      <div>
+        <div class="brand-name">${company?.nameAr ?? "اسم الشركة"}</div>
+        <div class="brand-sub">${company?.vatNumber ? `VAT ${company.vatNumber}` : ""}${company?.city ? ` • ${company.city}` : ""}</div>
+      </div>
+    </div>
+    <div class="ribbon">
+      <div class="l">${docTitle(d.type)}</div>
+      <div class="n">${doc.docNumber ?? (d.type === "return" ? `PR-${doc.id}` : `PI-${doc.id}`)}</div>
+    </div>
+  </div>
+  <div class="body">
+    <div class="pills">
+      <span class="pill">التاريخ <b>${doc.invoiceDate ?? doc.returnDate ?? "—"}</b></span>
+      <span class="pill">العملة <b>${doc.currencyCode ?? "SAR"}</b></span>
+      <span class="pill">الدفع <b>${doc.paymentType === "cash" ? "نقدي" : "آجل"}</b></span>
+    </div>
+    <div class="two">
+      <div class="card"><h4>المورد</h4>${supplierBlock(supplier)}</div>
+      <div class="card"><h4>المنشأة</h4>${companyBlock(company)}</div>
+    </div>
+    ${linesTable(lines, "", "")}
+    <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
+      <div style="text-align:center;">
+        ${qrImgHtml(d, { size: 110, bg: "#fff" })}
+        <div style="font-size:9px;margin-top:4px;font-weight:700;">QR — ZATCA</div>
+      </div>
+      <div style="flex:1;max-width:360px;">
+        <div class="totals-area">${totalRowsHtml(computeFullTotals(doc, lines), "t-row", "grand")}</div>
+        ${summaryFooterHtml(computeFullTotals(doc, lines))}
+      </div>
+    </div>
+    ${doc.notes ? `<div class="card" style="margin-top:14px;"><h4>ملاحظات</h4>${doc.notes}</div>` : ""}
+  </div>
+  <div class="footer">
+    <span>${company?.nameAr ?? ""}</span>
+    <span>ZATCA Compliant • ${new Date().toLocaleDateString("ar-SA")}</span>
+  </div>
+  </body></html>`;
+}
+
+// ── Template 12: تنفيذي (Executive Side-Panel) ──────────────────────────────
+function template12(d: PrintData): string {
+  const { doc, lines, supplier, company } = d;
+  const safeLogo = safeLogoSrc(company?.logo);
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  ${baseStyles("#334155")}
+  <style>
+    .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 95vh; }
+    .side { background: linear-gradient(180deg,#0f172a 0%, #1e293b 50%, #334155 100%); color: #f1f5f9; padding: 22px 18px; }
+    .side .logo-wrap { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15); border-radius: 8px; padding: 10px; text-align: center; margin-bottom: 16px; }
+    .side .co-name { font-size: 16px; font-weight: 700; line-height: 1.4; }
+    .side .co-en { font-size: 10px; opacity: .7; margin-top: 2px; }
+    .side .divider { height: 1px; background: linear-gradient(90deg,transparent,#64748b,transparent); margin: 16px 0; }
+    .side .info-block { font-size: 10.5px; color: #cbd5e1; line-height: 1.8; }
+    .side .info-block b { color: #fff; display: block; font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 2px; opacity: .8; }
+    .side .info-block .grp { margin-bottom: 12px; }
+    .main { padding: 22px 26px; background: #fff; }
+    .main-head { border-bottom: 3px solid #0f172a; padding-bottom: 14px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: flex-end; }
+    .main-head h1 { font-size: 26px; font-weight: 800; color: #0f172a; }
+    .main-head .sub { font-size: 11px; color: #64748b; margin-top: 4px; letter-spacing: 1px; }
+    .num-box { text-align: left; }
+    .num-box .lbl { font-size: 10px; color: #64748b; letter-spacing: 1.5px; }
+    .num-box .num { font-size: 22px; font-weight: 800; color: #0f172a; font-variant-numeric: tabular-nums; }
+    .num-box .dt { font-size: 11px; color: #64748b; margin-top: 2px; }
+    .meta-cards { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-bottom: 16px; }
+    .mc { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; text-align: center; }
+    .mc .l { font-size: 9px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
+    .mc .v { font-size: 12px; color: #0f172a; font-weight: 700; margin-top: 2px; }
+    .cust-card { background: #f8fafc; border-right: 4px solid #0f172a; padding: 12px 16px; margin-bottom: 14px; border-radius: 4px 0 0 4px; }
+    .cust-card h4 { font-size: 9px; color: #0f172a; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; font-weight: 700; }
+    table { font-size: 11px; }
+    thead tr { background: #0f172a; color: #fff; }
+    thead th { padding: 9px 8px; font-weight: 600; }
+    tbody td { padding: 8px; border-bottom: 1px solid #e2e8f0; }
+    tbody tr:nth-child(even) { background: #f8fafc; }
+    .totals-area { margin-top: 14px; display: flex; justify-content: flex-start; }
+    .totals-card { min-width: 280px; background: #0f172a; color: #fff; padding: 14px 18px; border-radius: 8px; }
+    .t-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 12px; }
+    .t-row.grand { border-top: 1px solid rgba(255,255,255,.25); padding-top: 8px; margin-top: 6px; font-size: 16px; font-weight: 800; }
+    .notes-box { margin-top: 16px; padding: 12px 14px; background: #fef3c7; border-right: 3px solid #f59e0b; border-radius: 4px 0 0 4px; font-size: 11px; }
+    .footer { margin-top: 22px; padding-top: 10px; border-top: 1px solid #e2e8f0; font-size: 9px; color: #94a3b8; text-align: center; letter-spacing: 1px; }
+  </style>
+  </head><body>
+  <div class="layout">
+    <aside class="side">
+      ${safeLogo ? `<div class="logo-wrap"><img src="${safeLogo}" alt="" style="max-height:60px;max-width:160px;object-fit:contain;display:block;margin:auto;"/></div>` : ""}
+      <div class="co-name">${company?.nameAr ?? "اسم الشركة"}</div>
+      ${company?.nameEn ? `<div class="co-en">${company.nameEn}</div>` : ""}
+      <div class="divider"></div>
+      <div class="info-block">
+        ${company?.vatNumber ? `<div class="grp"><b>الرقم الضريبي</b>${company.vatNumber}</div>` : ""}
+        ${company?.crNumber  ? `<div class="grp"><b>السجل التجاري</b>${company.crNumber}</div>` : ""}
+        ${company?.city      ? `<div class="grp"><b>الموقع</b>${company.city}${company.country ? ` — ${company.country}` : ""}</div>` : ""}
+        ${(company as any)?.phone ? `<div class="grp"><b>الهاتف</b>${(company as any).phone}</div>` : ""}
+        ${(company as any)?.email ? `<div class="grp"><b>البريد</b>${(company as any).email}</div>` : ""}
+      </div>
+    </aside>
+    <main class="main">
+      <div class="main-head">
+        <div>
+          <h1>${docTitle(d.type)}</h1>
+          <div class="sub">${docTitle(d.type).toUpperCase()}</div>
+        </div>
+        <div class="num-box">
+          <div class="lbl">رقم الوثيقة</div>
+          <div class="num">${doc.docNumber ?? (d.type === "return" ? `PR-${doc.id}` : `PI-${doc.id}`)}</div>
+          <div class="dt">${doc.invoiceDate ?? doc.returnDate ?? "—"}</div>
+        </div>
+      </div>
+      <div class="meta-cards">
+        <div class="mc"><div class="l">العملة</div><div class="v">${doc.currencyCode ?? "SAR"}</div></div>
+        <div class="mc"><div class="l">نوع الدفع</div><div class="v">${doc.paymentType === "cash" ? "نقدي" : "آجل"}</div></div>
+        <div class="mc"><div class="l">عدد البنود</div><div class="v">${lines.length}</div></div>
+      </div>
+      <div class="cust-card">
+        <h4>المورد</h4>
+        ${supplierBlock(supplier)}
+      </div>
+      ${linesTable(lines, "", "")}
+      <div class="totals-area" style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;">
+        <div style="text-align:center;">
+          ${qrImgHtml(d, { size: 110, border: "1px solid #0f172a", bg: "#fff" })}
+          <div style="font-size:9px;color:#0f172a;margin-top:4px;font-weight:700;letter-spacing:1px;">QR — ZATCA</div>
+        </div>
+        <div class="totals-card" style="flex:1;max-width:360px;">
+          ${totalRowsHtml(computeFullTotals(doc, lines), "t-row", "grand")}
+          ${summaryFooterHtml(computeFullTotals(doc, lines))}
+        </div>
+      </div>
+      ${doc.notes ? `<div class="notes-box"><b>ملاحظات: </b>${doc.notes}</div>` : ""}
+      <div class="footer">
+        نظام الفاتورة الإلكترونية المتوافق مع ZATCA — طُبع ${new Date().toLocaleDateString("ar-SA")}
+      </div>
+    </main>
+  </div>
+  </body></html>`;
+}
+
 // ─── Template registry ────────────────────────────────────────────────────────
 const TEMPLATES = [
-  { id: 1, name: "كلاسيكي",    desc: "حدود وجداول تقليدية",      color: "#2563eb", fn: template1 },
-  { id: 2, name: "حديث",       desc: "تصميم نظيف بهيدر أخضر",   color: "#059669", fn: template2 },
-  { id: 3, name: "مؤسسي",      desc: "هيدر داكن احترافي",        color: "#1e3a5f", fn: template3 },
-  { id: 4, name: "ملوّن",      desc: "ألوان دافئة مع تدرج",      color: "#d97706", fn: template4 },
-  { id: 5, name: "ZATCA رسمي", desc: "النموذج الحكومي مع QR",    color: "#1a6e3d", fn: template5 },
+  { id: 1, name: "كلاسيكي",      desc: "حدود وجداول تقليدية",      color: "#2563eb", fn: template1 },
+  { id: 2, name: "حديث",         desc: "تصميم نظيف بهيدر أخضر",   color: "#059669", fn: template2 },
+  { id: 3, name: "مؤسسي",        desc: "هيدر داكن احترافي",        color: "#1e3a5f", fn: template3 },
+  { id: 4, name: "ملوّن",        desc: "ألوان دافئة مع تدرج",      color: "#d97706", fn: template4 },
+  { id: 5, name: "ZATCA رسمي",   desc: "النموذج الحكومي مع QR",    color: "#1a6e3d", fn: template5 },
+  { id: 6, name: "حراري كلاسيكي", desc: "إيصال 80mm أبيض/أسود",    color: "#111111", fn: template6 },
+  { id: 7, name: "حراري عصري",    desc: "إيصال 80mm ملوّن",         color: "#0f766e", fn: template7 },
+  { id: 8, name: "نقي أنيق",      desc: "أبيض وأسود مع لمسة ذهبية", color: "#0f172a", fn: template8 },
+  { id: 9, name: "ذهبي فاخر",     desc: "خلفية داكنة ولمسات ذهبية", color: "#1c1917", fn: template9 },
+  { id: 10, name: "بحري عميق",     desc: "تدرج أزرق مع موجة سفلية",  color: "#0e7490", fn: template10 },
+  { id: 11, name: "حيوي",          desc: "تدرجات بنفسجية ووردية",    color: "#a855f7", fn: template11 },
+  { id: 12, name: "تنفيذي",        desc: "شريط جانبي ببيانات الشركة", color: "#0f172a", fn: template12 },
 ];
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
@@ -502,12 +1513,22 @@ export default function PurchasePrintModal({ open, onClose, data }: Props) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
 
-  function handlePrint() {
+  async function handlePrint() {
     if (!data) return;
     if (!ensurePrinterReady(toast, navigate)) return;
     const tmpl = TEMPLATES.find(t => t.id === selected);
     if (!tmpl) return;
-    const html = tmpl.fn(data);
+    // ZATCA phase‑1 QR: on a PURCHASE document the seller is the SUPPLIER (not
+    // our own company), so build the TLV from the supplier's name/VAT. Generated
+    // asynchronously and injected as `_qrDataUrl`; on any failure the templates
+    // fall back to their dashed placeholder so printing never breaks.
+    let qrDataUrl = "";
+    try {
+      const totals = computeFullTotals(data.doc, data.lines);
+      qrDataUrl = await buildZatcaQrDataUrl(data.supplier, data.doc, totals);
+    } catch { /* noop — placeholder fallback */ }
+    const printData: PrintData = qrDataUrl ? { ...data, _qrDataUrl: qrDataUrl } as PrintData : data;
+    const html = tmpl.fn(printData);
     const win = window.open("", "_blank", "width=900,height=700");
     if (!win) return;
     win.document.open();

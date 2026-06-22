@@ -10,8 +10,11 @@ import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
 import { branchesApi } from "@/lib/branchesApi";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { DateField } from "@/components/ui/date-field";
+import AccountStatementView from "@/components/AccountStatementView";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function SisterCompanyStatement() {
+  const { user } = useAuth() as any;
   const [, params] = useRoute<{ id: string }>("/inventory/sister-companies/:id/statement");
   const sid = Number(params?.id);
   const [from, setFrom] = useState<string>("");
@@ -32,7 +35,7 @@ export default function SisterCompanyStatement() {
 
   return (
     <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
+      <div className="flex items-center justify-between flex-wrap gap-2 print:hidden">
         <h1 className="text-xl font-bold flex items-center gap-2">
           <FileText className="h-5 w-5" /> كشف حساب — {sister?.nameAr ?? "…"}
         </h1>
@@ -67,7 +70,7 @@ export default function SisterCompanyStatement() {
             return (
               <>
                 <Button variant="outline" size="sm" disabled={disabled}
-                  onClick={() => exportToPDF(data, cols, `sister-statement-${sid}`, title, subtitle, true, totals)}
+                  onClick={() => window.print()}
                   data-testid="btn-print">
                   <Printer className="h-4 w-4 ml-1" /> طباعة
                 </Button>
@@ -90,7 +93,7 @@ export default function SisterCompanyStatement() {
         </div>
       </div>
 
-      <Card><CardContent className="flex flex-wrap gap-3 items-end pt-6">
+      <Card className="print:hidden"><CardContent className="flex flex-wrap gap-3 items-end pt-6">
         <label><span className="text-sm">من تاريخ</span>
           <DateField value={from} onChange={e => setFrom(e.target.value)} /></label>
         <label><span className="text-sm">إلى تاريخ</span>
@@ -104,7 +107,7 @@ export default function SisterCompanyStatement() {
         <Button variant="outline" onClick={() => { setFrom(""); setTo(""); setBranchId(""); }}>إعادة تعيين</Button>
       </CardContent></Card>
 
-      <Card><CardContent className="p-0 overflow-x-auto">
+      <Card className="print:hidden"><CardContent className="p-0 overflow-x-auto">
         {isLoading || !stmt ? <div className="p-4"><Skeleton className="h-32" /></div> : (
           <table className="w-full text-sm" data-testid="table-statement">
             <thead className="bg-muted/50"><tr>
@@ -143,6 +146,45 @@ export default function SisterCompanyStatement() {
           </table>
         )}
       </CardContent></Card>
+
+      {/* ── Unified printable statement (print only) ───────────────────
+          Shares the exact same paper layout as the customer / supplier /
+          general-accounts statements via AccountStatementView. The
+          رقم القيد column is intentionally omitted from print. */}
+      {stmt && (
+        <div className="hidden print:block">
+          <AccountStatementView
+            mode="general"
+            company={user?.company ?? null}
+            account={{
+              nameAr: sister?.nameAr ?? null,
+              nameEn: sister?.nameEn ?? null,
+            }}
+            from={from}
+            to={to}
+            opening={Number(stmt.opening) || 0}
+            lines={stmt.rows.map((r: any) => ({
+              id: r.id,
+              journalEntryId: r.journalEntryId,
+              date: r.date,
+              docType: r.type,
+              type: r.type,
+              docNumber: r.docNumber,
+              docHref: r.journalEntryId != null ? `/accounting/journals/${r.journalEntryId}` : undefined,
+              journalEntryNumber: r.journalEntryNumber,
+              description: r.description,
+              debit: Number(r.debit) || 0,
+              credit: Number(r.credit) || 0,
+              balance: Number(r.balance) || 0,
+            }))}
+            totals={{
+              debit:  stmt.rows.reduce((s: number, r: any) => s + (Number(r.debit)  || 0), 0),
+              credit: stmt.rows.reduce((s: number, r: any) => s + (Number(r.credit) || 0), 0),
+            }}
+            closing={Number(stmt.closing) || 0}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -23,6 +23,7 @@ import {
   customersTable, suppliersTable,
   accountsTable,
   journalEntriesTable, journalEntryLinesTable,
+  usersTable,
 } from "@workspace/db";
 import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
@@ -191,7 +192,16 @@ router.get("/:id", async (req, res) => {
     .where(and(eq(accountNotesTable.id, id), eq(accountNotesTable.companyId, cid)));
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   if (!(await checkModule(req, res, row.partyType as any))) return;
-  res.json(row);
+  // Resolve the preparer (معد) display name so the print can show it.
+  let createdByName: string | null = null;
+  if (row.createdBy) {
+    const [creator] = await db
+      .select({ username: usersTable.username, nameAr: usersTable.nameAr, nameEn: usersTable.nameEn })
+      .from(usersTable)
+      .where(eq(usersTable.id, row.createdBy));
+    createdByName = creator ? (creator.nameAr || creator.nameEn || creator.username || null) : null;
+  }
+  res.json({ ...row, createdByName });
 });
 
 // ═════════════════════════════════════════════════════════════════

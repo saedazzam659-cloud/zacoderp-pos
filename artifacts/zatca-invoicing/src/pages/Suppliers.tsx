@@ -417,20 +417,26 @@ export default function Suppliers() {
                 <Field label={t("pages.suppliers.postalCode")} value={editForm.postalCode} onChange={v => setEditForm(f => ({ ...f, postalCode: v }))} placeholder="12345" dir="ltr" />
               </div>
             </div>
-            <div className="space-y-4">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2">{t("pages.suppliers.accountingLink")}</p>
-              <div className="max-w-sm space-y-1.5">
-                <label className="text-sm font-medium">حساب الدائنين (المورد)</label>
-                <AccountCombobox
-                  value={editForm.accountId}
-                  onValueChange={(v) => setEditForm(f => ({ ...f, accountId: v }))}
-                  placeholder={`— ${t("pages.suppliers.selectAccountsPayable")} —`}
-                  filterTypes={["liability"]}
-                  grouped={false}
-                />
-                <p className="text-xs text-muted-foreground">{t("pages.suppliers.accountingLinkHelp")}</p>
+            {/* Accounting link: hidden on CREATE so every new supplier auto-mints
+                its OWN AP sub-account under the موردين parent (same behaviour as
+                customers, which have no picker) and therefore shows individually
+                in شجرة الحسابات. Kept on EDIT for remapping legacy suppliers. */}
+            {editSup && (
+              <div className="space-y-4">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2">{t("pages.suppliers.accountingLink")}</p>
+                <div className="max-w-sm space-y-1.5">
+                  <label className="text-sm font-medium">حساب الدائنين (المورد)</label>
+                  <AccountCombobox
+                    value={editForm.accountId}
+                    onValueChange={(v) => setEditForm(f => ({ ...f, accountId: v }))}
+                    placeholder={`— ${t("pages.suppliers.selectAccountsPayable")} —`}
+                    filterTypes={["liability"]}
+                    grouped={false}
+                  />
+                  <p className="text-xs text-muted-foreground">{t("pages.suppliers.accountingLinkHelp")}</p>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </FormPanel>
       )}

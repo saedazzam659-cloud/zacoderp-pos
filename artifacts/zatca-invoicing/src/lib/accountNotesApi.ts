@@ -52,6 +52,8 @@ export interface AccountNote {
   projectId:       number | null;
   status: AccountNoteStatus;
   journalEntryId: number | null;
+  /** Preparer display name — returned by GET /:id only. */
+  createdByName?: string | null;
 }
 
 export const accountNotesApi = {

@@ -978,7 +978,7 @@ ${sections}
                       return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.subtotal)}</td>;
                     }
                     if (col.key === "vat") {
-                      return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.vat)}</td>;
+                      return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border, footerTheme.toneVat)}>{fmt(totals.vat)}</td>;
                     }
                     if (col.key === "total") {
                       return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.total)}</td>;

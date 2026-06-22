@@ -546,8 +546,13 @@ export default function PaymentVoucherForm() {
     const acct = existing.accountId
       ? (accounts as any[]).find((a: any) => String(a.id) === String(existing.accountId))
       : null;
+    // Supplier's linked AP (ذمم الموردين) GL account → its code is what the
+    // voucher row should display for the رمز الحساب field.
+    const suppAcct = supp?.accountId
+      ? (accounts as any[]).find((a: any) => String(a.id) === String(supp.accountId))
+      : null;
     const account = {
-      code: supp?.code ?? acct?.code ?? "",
+      code: suppAcct?.code ?? supp?.code ?? acct?.code ?? "",
       name: existing.entityName
         || (supp ? (isRtl ? supp.nameAr : (supp.nameEn || supp.nameAr)) : "")
         || (acct ? (isRtl ? acct.nameAr : (acct.nameEn || acct.nameAr)) : ""),

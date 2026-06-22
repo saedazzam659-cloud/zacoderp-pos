@@ -214,9 +214,8 @@ table.lines tfoot td { font-weight:800; background:#f1f5f9; }
     <tr>
       <th>رمز الحساب</th>
       <th>اسم الحساب</th>
-      <th>البيان</th>
+      <th style="width:50%;">البيان</th>
       <th>المبلغ</th>
-      <th>الخصم</th>
       <th>الإجمالي</th>
     </tr>
   </thead>
@@ -226,7 +225,6 @@ table.lines tfoot td { font-weight:800; background:#f1f5f9; }
       <td>${esc(account?.name ?? "—")}</td>
       <td>${esc(desc || "")}</td>
       <td class="num">${fmtMoney(amount)}</td>
-      <td class="num">0.00</td>
       <td class="num">${fmtMoney(amount)}</td>
     </tr>
   </tbody>
@@ -234,7 +232,6 @@ table.lines tfoot td { font-weight:800; background:#f1f5f9; }
     <tr>
       <td colspan="3" style="text-align:left;">الإجمالي</td>
       <td class="num">${fmtMoney(amount)}</td>
-      <td class="num">0.00</td>
       <td class="num">${fmtMoney(amount)}</td>
     </tr>
   </tfoot>

@@ -241,6 +241,7 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
       party: selectedParty ?? null,
       company: user?.company ?? {},
       partyLabel,
+      preparedBy: (existing as any).createdByName ?? user?.username ?? null,
       onError: (msg) => toast({ title: msg, variant: "destructive" }),
     });
   }
