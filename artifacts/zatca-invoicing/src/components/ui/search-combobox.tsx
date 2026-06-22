@@ -235,7 +235,13 @@ export function SearchCombobox({
             onKeyDown={onKeyDown}
             dir="auto"
             className={cn(
-              "flex h-9 w-full rounded-md border border-input bg-background px-3 pe-14 text-sm text-foreground shadow-sm",
+              // Use purely *logical* padding (ps/pe) — mixing physical `px-3`
+              // with `pe-14` makes both target the same side in RTL, so the
+              // physical rule wins and the reserved space for the clear/chevron
+              // icons collapses, overlapping the selected text. ps-3 + pe-14
+              // keeps a clean 0.75rem start gap and 3.5rem icon gutter in both
+              // RTL and LTR.
+              "flex h-9 w-full rounded-md border border-input bg-background ps-3 pe-14 text-sm text-foreground shadow-sm",
               "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
               "disabled:cursor-not-allowed disabled:opacity-50"
             )}
