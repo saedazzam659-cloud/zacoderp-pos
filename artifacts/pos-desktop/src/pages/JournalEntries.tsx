@@ -9,6 +9,7 @@ import {
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, btnDanger, btnLink, fmt, todayStr, SearchCombobox,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { getTaxRate } from "../lib/taxSettings";
@@ -145,6 +146,10 @@ export default function JournalEntries() {
       return e.entryNo.toLowerCase().includes(q) || (e.description ?? "").toLowerCase().includes(q);
     });
   }, [rows, statusFilter, search]);
+
+  // Single-row ActionBar selection binds to the VISIBLE (filtered) set so a
+  // hidden row can never be acted on; useRowSelect self-clears when it drops out.
+  const sel = useRowSelect(filtered);
 
   // ── Form prev/next navigation: cycle through the filtered MANUAL entries
   //    by display order (newest-first as returned by the list). ───────────
@@ -294,17 +299,45 @@ export default function JournalEntries() {
         </div>
       </Card>
 
+      {filtered.length > 0 && !form && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.entryNo : null}>
+          {(() => {
+            const s = sel.selected;
+            const rowBusy = !!s && busyId === s.id;
+            const manual = !!s && isManual(s);
+            return (
+              <>
+                <ActionBtn label={expandedId === sel.selectedId ? "إخفاء" : "عرض"} icon="▼" disabled={!s || !!form}
+                  onClick={() => { if (s) void toggleView(s.id); }} />
+                <ActionBtn label="تعديل" icon="✎" disabled={!s || !manual || !!form || rowBusy}
+                  onClick={() => { if (s) void openEdit(s.id); }} />
+                <ActionBtn label="نسخ" icon="⧉" disabled={!s || !!form || rowBusy}
+                  onClick={() => { if (s) void openDuplicate(s.id); }} />
+                <ActionBtn label="طباعة" icon="🖨️" tone="primary" disabled={!s || rowBusy}
+                  onClick={() => { if (s) void doPrint(s.id); }} />
+                <ActionBtn label="ترحيل" icon="✔" tone="success" disabled={!s || !manual || s?.status !== "draft" || rowBusy}
+                  onClick={() => { if (s) void doPost(s.id); }} />
+                <ActionBtn label="فك ترحيل" icon="↺" tone="warn" disabled={!s || !manual || s?.status !== "posted" || rowBusy}
+                  onClick={() => { if (s) void doUnpost(s.id); }} />
+                <ActionBtn label="حذف" icon="🗑" tone="danger" disabled={!s || !manual || rowBusy}
+                  onClick={() => { if (s) void doDelete(s.id, s.entryNo); }} />
+              </>
+            );
+          })()}
+        </ActionBar>
+      )}
+
       <Card>
         {filtered.length === 0 ? <Empty text="لا توجد قيود مطابقة" /> : (
           <Table>
             <thead><tr>
+              <SelectTh />
               <Th style={{ width: 38 }}>
                 <input type="checkbox" checked={allSelected} disabled={selectableIds.length === 0}
                   title="تحديد كل القيود اليدوية" onChange={toggleSelectAll} />
               </Th>
               <Th>رقم القيد</Th><Th>التاريخ</Th><Th>النوع</Th><Th>البيان</Th><Th>المصدر</Th><Th>الحالة</Th>
               <Th style={{ textAlign: "left" }}>المدين</Th><Th style={{ textAlign: "left" }}>الدائن</Th>
-              <Th style={{ width: 260 }}></Th>
             </tr></thead>
             <tbody>
               {(() => {
@@ -332,6 +365,7 @@ export default function JournalEntries() {
                   nodes.push(
                     <React.Fragment key={e.id}>
                       <tr>
+                        <SelectCell id={e.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                         <Td style={{ borderInlineStart: `4px solid ${mi.accent}` }}>
                           {manual ? (
                             <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleSel(e.id)} />
@@ -345,28 +379,6 @@ export default function JournalEntries() {
                         <Td><StatusTag status={e.status} /></Td>
                         <Td num>{fmt(e.totalDebit)}</Td>
                         <Td num>{fmt(e.totalCredit)}</Td>
-                        <Td>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                            <button onClick={() => void toggleView(e.id)} disabled={!!form} aria-expanded={expandedId === e.id}
-                              style={{ ...btnLink, opacity: form ? 0.5 : 1 }}>
-                              {expandedId === e.id ? "▲ إخفاء" : "▼ عرض"}
-                            </button>
-                            {manual && (
-                              <button onClick={() => void openEdit(e.id)} disabled={!!form || rowBusy} style={btnLink}>تعديل</button>
-                            )}
-                            <button onClick={() => void openDuplicate(e.id)} disabled={!!form || rowBusy} style={btnLink}>نسخ</button>
-                            <button onClick={() => void doPrint(e.id)} disabled={rowBusy} style={btnLink}>طباعة</button>
-                            {manual && e.status === "draft" && (
-                              <button onClick={() => void doPost(e.id)} disabled={rowBusy} style={{ ...btnLink, color: "#15803d", fontWeight: 600 }}>ترحيل</button>
-                            )}
-                            {manual && e.status === "posted" && (
-                              <button onClick={() => void doUnpost(e.id)} disabled={rowBusy} style={{ ...btnLink, color: "#b45309" }}>فك ترحيل</button>
-                            )}
-                            {manual && (
-                              <button onClick={() => void doDelete(e.id, e.entryNo)} disabled={rowBusy} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
-                            )}
-                          </div>
-                        </Td>
                       </tr>
                       {expandedId === e.id && (
                         <tr style={{ background: "#f8fafc" }}>

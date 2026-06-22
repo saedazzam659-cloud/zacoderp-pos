@@ -8,7 +8,8 @@ import {
 } from "../lib/accounting";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
-  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
+  input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 
@@ -23,6 +24,8 @@ export default function SupplierSettlementAdmin() {
   const [rows, setRows] = useState<SupplierSettlement[]>([]);
   const [deps, setDeps] = useState<Deps | null>(null);
   const [edit, setEdit] = useState<EditState>(null);
+
+  const sel = useRowSelect(rows);
 
   async function refresh() { setRows(await listSupplierSettlements()); }
   useEffect(() => {
@@ -73,20 +76,37 @@ export default function SupplierSettlementAdmin() {
         </Card>
       )}
 
+      {rows.length > 0 && !edit && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.docNo : null}>
+          {(() => {
+            const s = sel.selected;
+            const posted = s?.status === "posted";
+            return (
+              <>
+                <ActionBtn label="تعديل" icon="✎" disabled={!s || posted} onClick={() => { if (s) setEdit({ mode: "edit", row: s }); }} />
+                <ActionBtn label="ترحيل" icon="✔" tone="success" disabled={!s || posted} onClick={() => { if (s) void post(s); }} />
+                <ActionBtn label="حذف" icon="🗑" tone="danger" disabled={!s || posted} onClick={() => { if (s) void remove(s); }} />
+                <ActionBtn label="إلغاء الترحيل" icon="↺" tone="warn" disabled={!s || !posted} onClick={() => { if (s) void unpost(s); }} />
+              </>
+            );
+          })()}
+        </ActionBar>
+      )}
       <Card>
         {rows.length === 0 ? <Empty text="لا توجد سندات تسوية" /> : (
           <Table>
             <thead><tr>
+              <SelectTh />
               <Th>الرقم</Th><Th>التاريخ</Th><Th>المورد</Th><Th>طريقة الدفع</Th>
               <Th style={{ textAlign: "left" }}>المبلغ</Th>
               <Th style={{ width: 90 }}>الحالة</Th>
-              <Th style={{ width: 200 }}>إجراءات</Th>
             </tr></thead>
             <tbody>
               {rows.map((r) => {
                 const posted = r.status === "posted";
                 return (
                   <tr key={r.id} style={{ opacity: edit ? 0.5 : 1 }}>
+                    <SelectCell id={r.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{r.docNo}</Td>
                     <Td>{r.settlementDate}</Td>
                     <Td>{r.supplierName ?? "—"}</Td>
@@ -99,18 +119,6 @@ export default function SupplierSettlementAdmin() {
                       <span style={{ background: posted ? "#dcfce7" : "#fef9c3", color: posted ? "#15803d" : "#854d0e", padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>
                         {posted ? "مرحّل" : "مسودة"}
                       </span>
-                    </Td>
-                    <Td>
-                      {!posted && <>
-                        <button onClick={() => setEdit({ mode: "edit", row: r })} disabled={!!edit} style={btnLink}>تعديل</button>
-                        {" · "}
-                        <button onClick={() => post(r)} disabled={!!edit} style={{ ...btnLink, color: "#15803d" }}>ترحيل</button>
-                        {" · "}
-                        <button onClick={() => remove(r)} disabled={!!edit} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
-                      </>}
-                      {posted && (
-                        <button onClick={() => unpost(r)} disabled={!!edit} style={{ ...btnLink, color: "#b45309" }}>إلغاء الترحيل</button>
-                      )}
                     </Td>
                   </tr>
                 );

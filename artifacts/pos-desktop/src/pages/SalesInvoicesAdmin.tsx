@@ -15,10 +15,11 @@ import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
 import { getCompanyProfile } from "../lib/appSettings";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
-  input, btnPrimary, btnSecondary, btnLink, actionChip, fmt, todayStr, SearchCombobox,
+  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -154,6 +155,7 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
     return base;
   }, [zatca, paidByInvoice]);
   const grid = useGridFilter(rows, columns);
+  const sel = useRowSelect(grid.view);
 
   const { start, end, page: clampedPage } = pageSlice(grid.view.length, page, pageSize);
   const pageRows = grid.view.slice(start, end);
@@ -208,11 +210,39 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
         </Card>
       )}
       {rows.length > 0 && !formOpen && <GridToolbar grid={grid} placeholder="🔍 بحث في فواتير المبيعات…" extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="فواتير-المبيعات" title="فواتير المبيعات" />} />}
+      {rows.length > 0 && !formOpen && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.invoiceNo : null}>
+          <ActionBtn label={expandedId === sel.selectedId ? "إخفاء" : "عرض"} icon="▼" disabled={!sel.selected}
+            onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
+          <ActionBtn label="طباعة" icon="🖨️" tone="primary" disabled={!sel.selected || busyId === sel.selectedId}
+            onClick={() => { if (sel.selectedId != null) void printRow(sel.selectedId); }} />
+          {onNavigate && (
+            <ActionBtn label="إرجاع" icon="↩" tone="warn" disabled={!sel.selected}
+              onClick={() => { if (sel.selectedId != null) void startReturn(sel.selectedId); }} />
+          )}
+          {sel.selected?.zatcaStatus ? (
+            <span style={{ fontSize: 12, color: "#94a3b8" }}>🔒 مُرحّلة لزاتكا</span>
+          ) : (() => {
+            const s = sel.selected;
+            const busy = !s || busyId === s.id;
+            const isDraft = s?.status === "draft";
+            return (
+              <>
+                <ActionBtn label="ترحيل" icon="✔" tone="success" disabled={busy || !isDraft} onClick={() => { if (s) void post(s.id, s.invoiceNo); }} />
+                <ActionBtn label="تعديل" icon="✎" disabled={busy || !isDraft} onClick={() => { if (s) void startEdit(s.id); }} />
+                <ActionBtn label="حذف" icon="🗑" tone="danger" disabled={busy || !isDraft} onClick={() => { if (s) void remove(s.id, s.invoiceNo, s.zatcaStatus); }} />
+                <ActionBtn label="فك الترحيل" icon="↺" tone="warn" disabled={busy || isDraft} onClick={() => { if (s) void unpost(s.id, s.invoiceNo); }} />
+              </>
+            );
+          })()}
+        </ActionBar>
+      )}
       <Card>
         {rows.length === 0 && !formOpen ? <Empty text="لا توجد فواتير مبيعات" /> : grid.view.length === 0 ? <Empty text="لا نتائج مطابقة للبحث" /> : (
           <Table>
             <thead>
               <tr>
+                <SelectTh />
                 <SortableTh grid={grid} colKey="invoiceNo">رقم الفاتورة</SortableTh>
                 <SortableTh grid={grid} colKey="date">التاريخ</SortableTh>
                 <SortableTh grid={grid} colKey="customer">العميل</SortableTh>
@@ -223,14 +253,14 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
                 <SortableTh grid={grid} colKey="vat" style={{ textAlign: "left" }}>الضريبة</SortableTh>
                 <SortableTh grid={grid} colKey="grand" style={{ textAlign: "left" }}>الإجمالي</SortableTh>
                 <SortableTh grid={grid} colKey="paid" style={{ textAlign: "left" }}>المسدّد / المتبقّي</SortableTh>
-                <Th style={{ width: 100 }}></Th>
               </tr>
-              <GridFilterRow grid={grid} columns={columns} trailing={1} />
+              <GridFilterRow grid={grid} columns={columns} leading={1} />
             </thead>
             <tbody>
               {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
                   <tr>
+                    <SelectCell id={p.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{p.invoiceNo}</Td>
                     <Td>{p.invoiceDate}</Td>
                     <Td>{p.customerName ?? "نقدي/بدون عميل"}</Td>
@@ -241,35 +271,6 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
                     <Td num>{paidCell(p, paidByInvoice.get(p.id) ?? 0)}</Td>
-                    <Td>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-                        <button onClick={() => void toggleView(p.id)} disabled={formOpen} aria-expanded={expandedId === p.id}
-                          style={actionChip("default", formOpen)}>
-                          {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
-                        </button>
-                        <button onClick={() => void printRow(p.id)} disabled={busyId === p.id || formOpen} title="طباعة الفاتورة A4"
-                          style={actionChip("primary", busyId === p.id || formOpen)}>
-                          🖨️ طباعة
-                        </button>
-                        {onNavigate && (
-                          <button onClick={() => void startReturn(p.id)} disabled={formOpen} title="إنشاء مرتجع من هذه الفاتورة"
-                            style={actionChip("warn", formOpen)}>
-                            ↩ إرجاع
-                          </button>
-                        )}
-                        {p.zatcaStatus ? (
-                          <span title={bridgedMsg()} style={{ fontSize: 12, color: "#94a3b8" }}>🔒 مُرحّلة لزاتكا</span>
-                        ) : p.status === "draft" ? (
-                          <>
-                            <button onClick={() => void post(p.id, p.invoiceNo)} disabled={busyId === p.id || formOpen} title="ترحيل الفاتورة" style={actionChip("success", busyId === p.id || formOpen)}>✔ ترحيل</button>
-                            <button onClick={() => void startEdit(p.id)} disabled={busyId === p.id || formOpen} title="تعديل الفاتورة" style={actionChip("default", busyId === p.id || formOpen)}>✎ تعديل</button>
-                            <button onClick={() => void remove(p.id, p.invoiceNo, p.zatcaStatus)} disabled={busyId === p.id || formOpen} title="حذف الفاتورة" style={actionChip("danger", busyId === p.id || formOpen)}>حذف</button>
-                          </>
-                        ) : (
-                          <button onClick={() => void unpost(p.id, p.invoiceNo)} disabled={busyId === p.id || formOpen} title="فك الترحيل لتعديل أو حذف الفاتورة" style={actionChip("warn", busyId === p.id || formOpen)}>↺ فك الترحيل</button>
-                        )}
-                      </div>
-                    </Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>

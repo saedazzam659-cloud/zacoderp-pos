@@ -455,16 +455,17 @@ fn truthy(v: &str) -> bool { v == "1" || v.eq_ignore_ascii_case("true") }
 /// Decides whether a freshly-created document of `doc_type` posts its journal
 /// entry to the general ledger immediately (auto) or leaves it as a DRAFT for
 /// مركز الترحيل (manual). A per-type override `auto_post_<doc_type>` wins;
-/// otherwise the master `auto_posting_enabled` flag decides. Default is MANUAL
-/// (draft) — the master flag is absent/"0" until the user opts in via
-/// التحكم العام. Regardless of this flag, the sub-ledger (party + cash/bank
+/// otherwise the master `auto_posting_enabled` flag decides. Default is now
+/// AUTO (posted): documents hit the GL immediately on save unless the user
+/// sets auto_posting_enabled="0" via التحكم العام to defer to مركز الترحيل.
+/// Regardless of this flag, the sub-ledger (party + cash/bank
 /// shadow balances and the document-driven party statement) updates on save;
 /// only the GL impact is deferred until posting.
 fn resolve_auto_post(tx: &Transaction, doc_type: &str) -> bool {
     if let Some(per) = setting_raw_tx(tx, &format!("auto_post_{doc_type}")) {
         return truthy(&per);
     }
-    setting_raw_tx(tx, "auto_posting_enabled").map(|v| truthy(&v)).unwrap_or(false)
+    setting_raw_tx(tx, "auto_posting_enabled").map(|v| truthy(&v)).unwrap_or(true)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -856,7 +857,7 @@ fn setting_opt_bool(conn: &Connection, key: &str) -> Option<bool> {
 pub fn posting_settings_get() -> Result<PostingSettings, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     Ok(PostingSettings {
-        auto_posting_enabled: setting_opt_bool(&conn, "auto_posting_enabled").unwrap_or(false),
+        auto_posting_enabled: setting_opt_bool(&conn, "auto_posting_enabled").unwrap_or(true),
         sale: setting_opt_bool(&conn, "auto_post_sale"),
         purchase: setting_opt_bool(&conn, "auto_post_purchase"),
         sale_return: setting_opt_bool(&conn, "auto_post_sale_return"),
@@ -2191,6 +2192,10 @@ fn reverse_purchase_impact(tx: &Transaction, purchase_id: i64) -> Result<(), Str
         )
         .map_err(|e| e.to_string())?;
 
+    // Null the source je_id FIRST so deleting the JE below doesn't trip the
+    // purchases_local.je_id foreign key (no ON DELETE action on the column).
+    tx.execute("UPDATE purchases_local SET je_id=NULL WHERE id=?1", params![purchase_id]).map_err(|e| e.to_string())?;
+
     // 1) Reverse (only POSTED entries touched the GL) then delete the JE.
     let je_rows: Vec<(i64, String)> = {
         let mut stmt = tx
@@ -3074,6 +3079,8 @@ pub fn goods_receipt_delete(id: i64) -> Result<(), String> {
     if status == "converted" { return Err("سند الاستلام محوّل لفاتورة — احذف الفاتورة أولاً".into()); }
     if status == "posted" {
         guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
+        // Null je_id first so the JE delete doesn't trip the goods_receipts_local FK.
+        tx.execute("UPDATE goods_receipts_local SET je_id=NULL WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
         // Reverse + delete the receipt JE.
         let je_rows: Vec<(i64, String)> = {
             let mut stmt = tx.prepare("SELECT id,status FROM journal_entries_local WHERE source_id=?1 AND source_type='goods_receipt'")
@@ -3561,6 +3568,10 @@ fn reverse_sales_invoice_impact(tx: &Transaction, invoice_id: i64) -> Result<(),
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
         )
         .map_err(|e| e.to_string())?;
+
+    // Null the source je_id FIRST so deleting the JE below doesn't trip the
+    // sales_invoices_local.je_id foreign key (no ON DELETE action on the column).
+    tx.execute("UPDATE sales_invoices_local SET je_id=NULL WHERE id=?1", params![invoice_id]).map_err(|e| e.to_string())?;
 
     // 1) Reverse + delete the revenue & COGS journal entries tied to this
     //    invoice. Only POSTED entries touched GL balances, so guard per-row.
@@ -5037,6 +5048,9 @@ pub fn financial_tx_unpost(id: i64) -> Result<(), String> {
 
     // Reverse (only if the JE actually touched GL balances) + delete the JE.
     if let Some(jid) = je_id {
+        // Null the source je_id FIRST so deleting the JE doesn't trip the
+        // financial_transactions_local.je_id foreign key.
+        tx.execute("UPDATE financial_transactions_local SET je_id=NULL WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
         let jstatus: Option<String> = tx.query_row(
             "SELECT status FROM journal_entries_local WHERE id=?1", params![jid], |r| r.get(0),
         ).optional().map_err(|e| e.to_string())?;
@@ -6896,6 +6910,8 @@ pub fn goods_delivery_delete(id: i64) -> Result<(), String> {
     ).map_err(|e| e.to_string())?;
     if status == "posted" {
         guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
+        // Null je_id first so the JE delete doesn't trip the goods_deliveries_local FK.
+        tx.execute("UPDATE goods_deliveries_local SET je_id=NULL WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
         let je_rows: Vec<(i64, String)> = {
             let mut stmt = tx.prepare("SELECT id,status FROM journal_entries_local WHERE source_id=?1 AND source_type='goods_delivery'")
                 .map_err(|e| e.to_string())?;
@@ -7128,6 +7144,9 @@ pub fn supplier_settlement_unpost(id: i64) -> Result<(), String> {
     guard_period_open_for_date(&tx, &date)?;
     let amount_base = amount * rate;
     if let Some(je) = je_id {
+        // Null the source je_id FIRST so deleting the JE doesn't trip the
+        // supplier_settlements_local.je_id foreign key.
+        tx.execute("UPDATE supplier_settlements_local SET je_id=NULL WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
         reverse_je_balance(&tx, je).map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM journal_entry_lines_local WHERE entry_id=?1", params![je]).map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM journal_entries_local WHERE id=?1", params![je]).map_err(|e| e.to_string())?;

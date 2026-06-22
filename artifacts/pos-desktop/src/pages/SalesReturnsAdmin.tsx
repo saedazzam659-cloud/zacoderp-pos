@@ -12,6 +12,7 @@ import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -50,6 +51,7 @@ export default function SalesReturnsAdmin() {
 
   function closeForm() { setCreating(false); setPrefill(null); }
 
+  const sel = useRowSelect(rows);
   const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
   const pageRows = rows.slice(start, end);
   useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
@@ -79,28 +81,30 @@ export default function SalesReturnsAdmin() {
           </div>
         </Card>
       )}
+      {rows.length > 0 && !creating && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.returnNo : null}>
+          <ActionBtn label={expandedId === sel.selectedId ? "إخفاء" : "عرض"} icon="▼" disabled={!sel.selected}
+            onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
+        </ActionBar>
+      )}
       <Card>
         {rows.length === 0 && !creating ? <Empty text="لا توجد مرتجعات" /> : (
           <Table>
             <thead><tr>
+              <SelectTh />
               <Th>رقم المرتجع</Th><Th>التاريخ</Th><Th>العميل</Th><Th>طريقة الدفع</Th>
               <Th style={{ textAlign: "left" }}>المجموع</Th><Th style={{ textAlign: "left" }}>الضريبة</Th>
-              <Th style={{ textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 100 }}></Th>
+              <Th style={{ textAlign: "left" }}>الإجمالي</Th>
             </tr></thead>
             <tbody>
               {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
                   <tr>
+                    <SelectCell id={p.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{p.returnNo}</Td><Td>{p.returnDate}</Td><Td>{p.customerName ?? "نقدي/بدون عميل"}</Td>
                     <Td><PayBadge m={p.paymentMethod} /></Td>
                     <Td num>{fmt(p.subtotal)}</Td><Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
-                    <Td>
-                      <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
-                        style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                        {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
-                      </button>
-                    </Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>

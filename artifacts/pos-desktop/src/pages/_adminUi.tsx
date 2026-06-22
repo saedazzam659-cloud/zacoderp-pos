@@ -164,6 +164,72 @@ export function actionChip(tone: ChipTone = "default", disabled = false): CSSPro
   };
 }
 
+// ─── Top action bar + single-row selection ───────────────────────────
+// Document grids expose their per-row verbs (عرض/طباعة/إرجاع/ترحيل/تعديل/
+// حذف/فك الترحيل …) from ONE attractive bar above the table instead of a
+// cramped action cell on every row. The user ticks a single row (radio), the
+// bar lights up the verbs valid for THAT row's status, and clicking runs the
+// existing handler against the selected id. `useRowSelect` also self-clears
+// the selection when the chosen row vanishes after a refresh.
+export function useRowSelect<T extends { id: number }>(rows: T[]) {
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  useEffect(() => {
+    if (selectedId != null && !rows.some((r) => r.id === selectedId)) setSelectedId(null);
+  }, [rows, selectedId]);
+  const selected = rows.find((r) => r.id === selectedId) ?? null;
+  const toggle = (id: number) => setSelectedId((cur) => (cur === id ? null : id));
+  return { selectedId, setSelectedId, selected, toggle, clear: () => setSelectedId(null) };
+}
+
+// Narrow leading header cell for the selection column.
+export function SelectTh() {
+  return <Th style={{ width: 36 }}></Th>;
+}
+
+// Leading row cell carrying the selection radio. Clicking the row's radio
+// (or the cell) selects it; clicking the active one again clears it.
+export function SelectCell({ id, selectedId, onToggle }: { id: number; selectedId: number | null; onToggle: (id: number) => void }) {
+  const on = selectedId === id;
+  return (
+    <Td style={{ width: 36, textAlign: "center" }}>
+      <input type="radio" name="rowsel" checked={on} onChange={() => onToggle(id)}
+        onClick={() => { if (on) onToggle(id); }} aria-label="تحديد الصف"
+        style={{ cursor: "pointer", width: 16, height: 16, accentColor: "#2563eb" }} />
+    </Td>
+  );
+}
+
+// The sticky-feeling top bar. `selectedLabel` shows what's currently ticked
+// (e.g. the document number) so the user knows what the verbs will act on.
+export function ActionBar({ selectedLabel, children }: { selectedLabel?: ReactNode; children: ReactNode }) {
+  return (
+    <div style={{
+      display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center",
+      padding: "10px 12px", marginBottom: 12, background: "#f8fafc",
+      border: "1px solid #e2e8f0", borderRadius: 10,
+    }}>
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: "#475569", marginInlineEnd: 4 }}>
+        {selectedLabel ? <>المحدّد: <span style={{ color: "#0f172a" }}>{selectedLabel}</span></> : "اختر صفاً من الجدول لتفعيل الإجراءات"}
+      </span>
+      <div style={{ flex: 1 }} />
+      {children}
+    </div>
+  );
+}
+
+// A verb button for the ActionBar. `tone` maps to the same chip palette; the
+// button is disabled (greyed) when the verb is invalid for the selection.
+export function ActionBtn({ label, icon, tone = "default", onClick, disabled, title }: {
+  label: string; icon?: string; tone?: ChipTone; onClick: () => void; disabled?: boolean; title?: string;
+}) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} title={title ?? label}
+      style={{ ...actionChip(tone, disabled), padding: "7px 14px", fontSize: 13 }}>
+      {icon ? <span aria-hidden>{icon}</span> : null} {label}
+    </button>
+  );
+}
+
 // ─── Tauri error text ────────────────────────────────────────────────
 // Tauri `Err(String)` rejects `invoke` with a RAW string, so `e.message` is
 // undefined and naive `e?.message ?? "fallback"` hides the real cause. Always

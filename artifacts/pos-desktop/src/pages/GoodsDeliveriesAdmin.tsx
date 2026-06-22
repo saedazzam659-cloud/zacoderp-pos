@@ -12,6 +12,7 @@ import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, ValidationPanel, collectDocIssues,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { useInvoiceTaxes } from "./_invoiceTax";
@@ -47,6 +48,7 @@ export default function GoodsDeliveriesAdmin() {
 
   const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
   const pageRows = rows.slice(start, end);
+  const sel = useRowSelect(rows);
   useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
 
   async function toggleView(id: number) {
@@ -89,18 +91,35 @@ export default function GoodsDeliveriesAdmin() {
           </div>
         </Card>
       )}
+      {rows.length > 0 && !creating && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.deliveryNo : null}>
+          <ActionBtn label={expandedId === sel.selectedId ? "إخفاء" : "عرض"} icon="▼" disabled={!sel.selected || creating}
+            onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
+          {(() => {
+            const s = sel.selected;
+            return (
+              <>
+                <ActionBtn label="ترحيل" icon="✔" tone="success" disabled={!s || creating || s.status !== "draft"} onClick={() => { if (s) void post(s.id); }} />
+                <ActionBtn label="حذف" icon="🗑" tone="danger" disabled={!s || creating} onClick={() => { if (s) void remove(s.id); }} />
+              </>
+            );
+          })()}
+        </ActionBar>
+      )}
       <Card>
         {rows.length === 0 && !creating ? <Empty text="لا توجد أذونات صرف" /> : (
           <Table>
             <thead><tr>
+              <SelectTh />
               <Th>رقم الإذن</Th><Th>التاريخ</Th><Th>العميل</Th><Th>الحالة</Th>
               <Th style={{ textAlign: "left" }}>المجموع</Th><Th style={{ textAlign: "left" }}>الضريبة</Th>
-              <Th style={{ textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 100 }}></Th>
+              <Th style={{ textAlign: "left" }}>الإجمالي</Th>
             </tr></thead>
             <tbody>
               {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
                   <tr>
+                    <SelectCell id={p.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{p.deliveryNo}</Td>
                     <Td>{p.deliveryDate}</Td>
                     <Td>{p.customerName}</Td>
@@ -108,24 +127,6 @@ export default function GoodsDeliveriesAdmin() {
                     <Td num>{fmt(p.subtotal)}</Td>
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
-                    <Td>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                        <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
-                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                          {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
-                        </button>
-                        {p.status === "draft" && (
-                          <button onClick={() => void post(p.id)} disabled={creating} title="ترحيل وصرف المخزون"
-                            style={{ ...btnLink, color: "#1e40af", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                            ✓ ترحيل
-                          </button>
-                        )}
-                        <button onClick={() => void remove(p.id)} disabled={creating} title="حذف"
-                          style={{ ...btnLink, color: "#dc2626", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                          حذف
-                        </button>
-                      </div>
-                    </Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>

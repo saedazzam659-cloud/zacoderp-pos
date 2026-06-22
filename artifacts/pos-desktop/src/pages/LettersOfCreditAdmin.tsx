@@ -10,6 +10,7 @@ import {
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Modal,
   input, btnPrimary, btnSecondary, btnLink, btnDanger, fmt, todayStr, SearchCombobox,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 
@@ -29,6 +30,7 @@ export default function LettersOfCreditAdmin() {
   const [deps, setDeps] = useState<Deps | null>(null);
   const [editing, setEditing] = useState<null | { mode: "new" } | { mode: "edit"; row: LetterOfCredit }>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
+  const sel = useRowSelect(rows);
 
   async function refresh() { setRows(await listLettersOfCredit()); }
   useEffect(() => {
@@ -81,16 +83,27 @@ export default function LettersOfCreditAdmin() {
         </Card>
       )}
 
+      {rows.length > 0 && !editing && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.lcNumber : null}>
+          <ActionBtn label="تفاصيل" icon="▼" disabled={!sel.selected}
+            onClick={() => { if (sel.selected) setDetailId(sel.selected.id); }} />
+          <ActionBtn label="تعديل" icon="✎" disabled={!sel.selected || sel.selected.status === "closed"}
+            onClick={() => { const s = sel.selected; if (s) setEditing({ mode: "edit", row: s }); }} />
+          <ActionBtn label="حذف" icon="🗑" tone="danger" disabled={!sel.selected}
+            onClick={() => { const s = sel.selected; if (s) void remove(s); }} />
+        </ActionBar>
+      )}
+
       <Card>
         {rows.length === 0 ? <Empty text="لا توجد اعتمادات مستندية" /> : (
           <Table>
             <thead><tr>
+              <SelectTh />
               <Th>الرقم</Th><Th>التاريخ</Th><Th>المورد</Th><Th>البنك</Th>
               <Th style={{ textAlign: "left" }}>القيمة</Th>
               <Th style={{ textAlign: "left" }}>المستخدم</Th>
               <Th style={{ textAlign: "left" }}>المتاح</Th>
               <Th style={{ width: 110 }}>الحالة</Th>
-              <Th style={{ width: 220 }}>إجراءات</Th>
             </tr></thead>
             <tbody>
               {rows.map((r) => {
@@ -99,6 +112,7 @@ export default function LettersOfCreditAdmin() {
                 const available = Math.max(0, totalBase - r.usedAmount);
                 return (
                   <tr key={r.id} style={{ opacity: editing ? 0.5 : 1 }}>
+                    <SelectCell id={r.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{r.lcNumber}</Td>
                     <Td>{r.lcDate}</Td>
                     <Td>{r.supplierName ?? "—"}</Td>
@@ -107,13 +121,6 @@ export default function LettersOfCreditAdmin() {
                     <Td num style={{ color: "#854d0e" }}>{fmt(r.usedAmount)}</Td>
                     <Td num style={{ color: "#15803d", fontWeight: 600 }}>{fmt(available)}</Td>
                     <Td><span style={{ background: st.bg, color: st.fg, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{st.label}</span></Td>
-                    <Td>
-                      <button onClick={() => setDetailId(r.id)} disabled={!!editing} style={btnLink}>تفاصيل</button>
-                      {" · "}
-                      <button onClick={() => setEditing({ mode: "edit", row: r })} disabled={!!editing || r.status === "closed"} style={btnLink}>تعديل</button>
-                      {" · "}
-                      <button onClick={() => remove(r)} disabled={!!editing} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
-                    </Td>
                   </tr>
                 );
               })}

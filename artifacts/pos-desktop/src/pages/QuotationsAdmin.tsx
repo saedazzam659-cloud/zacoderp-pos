@@ -15,6 +15,7 @@ import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -59,6 +60,7 @@ export default function QuotationsAdmin() {
     })();
   }, []);
 
+  const sel = useRowSelect(rows);
   const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
   const pageRows = rows.slice(start, end);
   useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
@@ -123,18 +125,49 @@ export default function QuotationsAdmin() {
           </div>
         </Card>
       )}
+      {rows.length > 0 && !formOpen && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.docNo : null}>
+          {(() => {
+            const s = sel.selected;
+            const busy = !s || busyId === s.id;
+            return (
+              <>
+                <ActionBtn label={expandedId === sel.selectedId ? "إخفاء" : "عرض"} icon="▼" disabled={!s}
+                  onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
+                <ActionBtn label="إرسال" icon="📤" disabled={busy || s?.status !== "draft"}
+                  onClick={() => { if (s) void changeStatus(s.id, "sent"); }} />
+                <ActionBtn label="قبول" icon="✔" tone="success" disabled={busy || s?.status !== "sent"}
+                  onClick={() => { if (s) void changeStatus(s.id, "accepted"); }} />
+                <ActionBtn label="رفض" icon="✖" tone="danger" disabled={busy || s?.status !== "sent"}
+                  onClick={() => { if (s) void changeStatus(s.id, "rejected"); }} />
+                <ActionBtn label="إلى فاتورة" icon="↪" tone="purple" disabled={busy || s?.status === "converted" || s?.status === "rejected"}
+                  onClick={() => { if (s) void convert(s.id); }} />
+                <ActionBtn label="تعديل" icon="✎" disabled={busy || s?.status === "converted"}
+                  onClick={() => { if (s) void startEdit(s.id); }} />
+                <ActionBtn label="حذف" icon="🗑" tone="danger" disabled={busy || s?.status === "converted"}
+                  onClick={() => { if (s) void remove(s.id, s.docNo); }} />
+                {s?.status === "converted" && s.convertedInvoiceId && (
+                  <span style={{ fontSize: 12, color: "#7c3aed" }}>فاتورة #{s.convertedInvoiceId}</span>
+                )}
+              </>
+            );
+          })()}
+        </ActionBar>
+      )}
       <Card>
         {rows.length === 0 && !formOpen ? <Empty text="لا توجد عروض أسعار" /> : (
           <Table>
             <thead><tr>
+              <SelectTh />
               <Th>رقم العرض</Th><Th>التاريخ</Th><Th>صالح حتى</Th><Th>العميل</Th><Th>الحالة</Th>
               <Th style={{ textAlign: "left" }}>المجموع</Th><Th style={{ textAlign: "left" }}>الضريبة</Th>
-              <Th style={{ textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 280 }}></Th>
+              <Th style={{ textAlign: "left" }}>الإجمالي</Th>
             </tr></thead>
             <tbody>
               {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
                   <tr>
+                    <SelectCell id={p.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{p.docNo}</Td>
                     <Td>{p.quotationDate}</Td>
                     <Td>{p.validUntil ?? "—"}</Td>
@@ -143,35 +176,6 @@ export default function QuotationsAdmin() {
                     <Td num>{fmt(p.subtotal)}</Td>
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
-                    <Td>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-                        <button onClick={() => void toggleView(p.id)} disabled={formOpen} aria-expanded={expandedId === p.id}
-                          style={{ ...btnLink, opacity: formOpen ? 0.5 : 1, cursor: formOpen ? "not-allowed" : "pointer" }}>
-                          {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
-                        </button>
-                        {p.status === "draft" && (
-                          <button onClick={() => void changeStatus(p.id, "sent")} disabled={busyId === p.id} style={btnLink}>إرسال</button>
-                        )}
-                        {p.status === "sent" && (
-                          <>
-                            <button onClick={() => void changeStatus(p.id, "accepted")} disabled={busyId === p.id} style={{ ...btnLink, color: "#15803d" }}>قبول</button>
-                            <button onClick={() => void changeStatus(p.id, "rejected")} disabled={busyId === p.id} style={{ ...btnLink, color: "#b91c1c" }}>رفض</button>
-                          </>
-                        )}
-                        {p.status !== "converted" && p.status !== "rejected" && (
-                          <button onClick={() => void convert(p.id)} disabled={busyId === p.id} style={{ ...btnPrimary, padding: "4px 10px", fontSize: 12 }}>↪ إلى فاتورة</button>
-                        )}
-                        {p.status !== "converted" && (
-                          <>
-                            <button onClick={() => void startEdit(p.id)} disabled={busyId === p.id || formOpen} style={btnLink}>تعديل</button>
-                            <button onClick={() => void remove(p.id, p.docNo)} disabled={busyId === p.id || formOpen} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
-                          </>
-                        )}
-                        {p.status === "converted" && p.convertedInvoiceId && (
-                          <span style={{ fontSize: 12, color: "#7c3aed" }}>فاتورة #{p.convertedInvoiceId}</span>
-                        )}
-                      </div>
-                    </Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>

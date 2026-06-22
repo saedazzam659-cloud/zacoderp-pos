@@ -9,12 +9,14 @@ import type { LocalItem } from "../lib/items";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 
 export default function StocktakesAdmin() {
   const [rows, setRows] = useState<StocktakeSummary[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [posting, setPosting] = useState<number | null>(null);
+  const sel = useRowSelect(rows);
 
   async function refresh() { setRows(await listStocktakes()); }
   useEffect(() => { void refresh(); }, []);
@@ -45,17 +47,26 @@ export default function StocktakesAdmin() {
           </div>
         </Card>
       )}
+      {rows.length > 0 && !showForm && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.stocktake_no : null}>
+          <ActionBtn label="ترحيل" icon="✔" tone="success"
+            disabled={!sel.selected || posting === sel.selectedId || showForm || sel.selected.status !== "draft"}
+            onClick={() => { const s = sel.selected; if (s) void post(s); }} />
+        </ActionBar>
+      )}
       <Card>
         {rows.length === 0 && !showForm ? <Empty text="لا توجد عمليات جرد بعد" /> : (
           <Table>
             <thead><tr>
+              <SelectTh />
               <Th>الرقم</Th><Th>التاريخ</Th><Th>المخزن</Th>
               <Th>عدد الأصناف</Th><Th>الحالة</Th>
-              <Th>التسوية</Th><Th style={{ width: 120 }}>إجراءات</Th>
+              <Th>التسوية</Th>
             </tr></thead>
             <tbody>
               {rows.map((s) => (
                 <tr key={s.id}>
+                  <SelectCell id={s.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                   <Td mono>{s.stocktake_no}</Td>
                   <Td mono>{s.stocktake_date}</Td>
                   <Td>{s.warehouse_name}</Td>
@@ -66,14 +77,6 @@ export default function StocktakesAdmin() {
                       : <span style={{ color: "#16a34a", fontWeight: 600 }}>مرحّل</span>}
                   </Td>
                   <Td mono>{s.adjustment_id ? `ADJ #${s.adjustment_id}` : "—"}</Td>
-                  <Td>
-                    {s.status === "draft" && (
-                      <button onClick={() => post(s)} disabled={posting === s.id || showForm}
-                        style={{ ...btnLink, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>
-                        {posting === s.id ? "..." : "ترحيل"}
-                      </button>
-                    )}
-                  </Td>
                 </tr>
               ))}
             </tbody>

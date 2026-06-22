@@ -12,10 +12,11 @@ import { emitData } from "../lib/dataBus";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
-  input, btnPrimary, btnSecondary, btnLink, actionChip, fmt, todayStr, SearchCombobox,
+  input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -85,6 +86,7 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
     { key: "paid", label: "المدفوع", type: "number", value: (p) => paidByPurchase.get(p.id) ?? 0 },
   ], [paidByPurchase]);
   const grid = useGridFilter(rows, columns);
+  const sel = useRowSelect(grid.view);
 
   const { start, end, page: clampedPage } = pageSlice(grid.view.length, page, pageSize);
   const pageRows = grid.view.slice(start, end);
@@ -251,11 +253,48 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
         </Card>
       )}
       {rows.length > 0 && !creating && <GridToolbar grid={grid} placeholder="🔍 بحث في فواتير الشراء…" extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="فواتير-الشراء" title="فواتير الشراء" />} />}
+      {rows.length > 0 && !creating && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.invoiceNo : null}>
+          <ActionBtn label={expandedId === sel.selectedId ? "إخفاء" : "عرض"} icon="▼" disabled={!sel.selected}
+            onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
+          <ActionBtn label="نسخ" icon="⧉" disabled={!sel.selected}
+            onClick={() => { if (sel.selectedId != null) void duplicate(sel.selectedId); }} />
+          <ActionBtn label="طباعة" icon="🖶" tone="primary" disabled={!sel.selected}
+            onClick={() => { if (sel.selectedId != null) void printDoc(sel.selectedId, "a4"); }} />
+          {onNavigate && (
+            <ActionBtn label="إرجاع" icon="↩" tone="warn" disabled={!sel.selected}
+              onClick={() => { if (sel.selectedId != null) void startReturn(sel.selectedId); }} />
+          )}
+          {(() => {
+            const s = sel.selected;
+            if (!s) return null;
+            if (s.sourceGoodsReceiptId != null) {
+              return (
+                <>
+                  <span title="ناتجة عن سند استلام — تُدار من شاشة سندات الاستلام" style={{ fontSize: 12, color: "#94a3b8" }}>🔒 من سند استلام</span>
+                  <ActionBtn label="حذف" icon="🗑" tone="danger" onClick={() => void remove(s.id)} />
+                </>
+              );
+            }
+            if (s.status === "draft") {
+              return (
+                <>
+                  <ActionBtn label="ترحيل" icon="✔" tone="success" onClick={() => void post(s.id)} />
+                  <ActionBtn label="تعديل" icon="✎" onClick={() => void startEdit(s.id)} />
+                  <ActionBtn label="حذف" icon="🗑" tone="danger" onClick={() => void remove(s.id)} />
+                </>
+              );
+            }
+            return <ActionBtn label="فك الترحيل" icon="↺" tone="warn" onClick={() => void unpost(s.id)} />;
+          })()}
+        </ActionBar>
+      )}
       <Card>
         {rows.length === 0 && !creating ? <Empty text="لا توجد فواتير شراء" /> : grid.view.length === 0 ? <Empty text="لا نتائج مطابقة للبحث" /> : (
           <Table>
             <thead>
               <tr>
+                <SelectTh />
                 <SortableTh grid={grid} colKey="invoiceNo">رقم الفاتورة</SortableTh>
                 <SortableTh grid={grid} colKey="date">التاريخ</SortableTh>
                 <SortableTh grid={grid} colKey="supplier">المورد</SortableTh>
@@ -265,14 +304,14 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
                 <SortableTh grid={grid} colKey="vat" style={{ textAlign: "left" }}>الضريبة</SortableTh>
                 <SortableTh grid={grid} colKey="grand" style={{ textAlign: "left" }}>الإجمالي</SortableTh>
                 <SortableTh grid={grid} colKey="paid" style={{ textAlign: "left" }}>المدفوع / المتبقّي</SortableTh>
-                <Th style={{ width: 100 }}></Th>
               </tr>
-              <GridFilterRow grid={grid} columns={columns} trailing={1} />
+              <GridFilterRow grid={grid} columns={columns} leading={1} />
             </thead>
             <tbody>
               {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
                   <tr>
+                    <SelectCell id={p.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{p.invoiceNo}</Td>
                     <Td>{p.invoiceDate}</Td>
                     <Td>{p.supplierName}</Td>
@@ -282,59 +321,6 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
                     <Td num>{paidCell(p, paidByPurchase.get(p.id) ?? 0)}</Td>
-                    <Td>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                        <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
-                          style={actionChip("default", creating)}>
-                          {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
-                        </button>
-                        <button onClick={() => void duplicate(p.id)} disabled={creating} title="نسخ كفاتورة جديدة"
-                          style={actionChip("default", creating)}>
-                          ⧉ نسخ
-                        </button>
-                        <button onClick={() => void printDoc(p.id, "a4")} disabled={creating} title="طباعة A4"
-                          style={actionChip("primary", creating)}>
-                          🖶 طباعة
-                        </button>
-                        {onNavigate && (
-                          <button onClick={() => void startReturn(p.id)} disabled={creating} title="إنشاء مرتجع من هذه الفاتورة"
-                            style={actionChip("warn", creating)}>
-                            ↩ إرجاع
-                          </button>
-                        )}
-                        {p.sourceGoodsReceiptId != null ? (
-                          // GR-sourced: legacy lifecycle (always posted, managed from
-                          // goods-receipts) — no draft cycle, edit blocked at the Rust layer.
-                          <>
-                            <span title="ناتجة عن سند استلام — تُدار من شاشة سندات الاستلام" style={{ fontSize: 12, color: "#94a3b8" }}>🔒 من سند استلام</span>
-                            <button onClick={() => void remove(p.id)} disabled={creating} title="حذف الفاتورة"
-                              style={actionChip("danger", creating)}>
-                              حذف
-                            </button>
-                          </>
-                        ) : p.status === "draft" ? (
-                          <>
-                            <button onClick={() => void post(p.id)} disabled={creating} title="ترحيل الفاتورة"
-                              style={actionChip("success", creating)}>
-                              ✔ ترحيل
-                            </button>
-                            <button onClick={() => void startEdit(p.id)} disabled={creating} title="تعديل الفاتورة"
-                              style={actionChip("default", creating)}>
-                              ✎ تعديل
-                            </button>
-                            <button onClick={() => void remove(p.id)} disabled={creating} title="حذف الفاتورة"
-                              style={actionChip("danger", creating)}>
-                              حذف
-                            </button>
-                          </>
-                        ) : (
-                          <button onClick={() => void unpost(p.id)} disabled={creating} title="فك الترحيل لتعديل أو حذف الفاتورة"
-                            style={actionChip("warn", creating)}>
-                            ↺ فك الترحيل
-                          </button>
-                        )}
-                      </div>
-                    </Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>

@@ -9,6 +9,7 @@ import {
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { printVoucher } from "../lib/invoicePrint";
@@ -58,6 +59,7 @@ export default function SupplierPaymentAdmin() {
     { key: "amount", label: "المبلغ", type: "number", value: (f) => f.amount },
   ], [deps]);
   const grid = useGridFilter(rows, columns);
+  const sel = useRowSelect(grid.view);
 
   return (
     <Page
@@ -77,49 +79,53 @@ export default function SupplierPaymentAdmin() {
         </Card>
       )}
       {rows.length > 0 && <GridToolbar grid={grid} placeholder="🔍 بحث في سندات الصرف…" extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="سندات-الصرف" title="سندات الصرف للموردين" />} />}
+      {rows.length > 0 && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.txNo : null}>
+          <ActionBtn label="طباعة" icon="🖨️" tone="primary" disabled={!sel.selected}
+            onClick={() => {
+              const f = sel.selected; if (!f) return;
+              const inv = invByApplied(f);
+              printVoucher({
+                kind: "payment",
+                title: "سند صرف",
+                docNo: f.txNo,
+                date: f.txDate,
+                partyName: f.partyName ?? null,
+                amount: f.amount,
+                description: f.description ?? null,
+                walletKind: f.bankId != null ? "bank" : "cash",
+                walletName: payWalletName(deps, f),
+                linkedDocNo: inv ? inv.invoiceNo : null,
+              });
+            }} />
+        </ActionBar>
+      )}
       <Card>
         {rows.length === 0 && !creating ? <Empty text="لا توجد سندات صرف للموردين" /> : grid.view.length === 0 ? <Empty text="لا نتائج مطابقة للبحث" /> : (
           <Table>
             <thead>
               <tr>
+                <SelectTh />
                 <SortableTh grid={grid} colKey="txNo">الرقم</SortableTh>
                 <SortableTh grid={grid} colKey="txDate">التاريخ</SortableTh>
                 <SortableTh grid={grid} colKey="party">المورد</SortableTh>
                 <SortableTh grid={grid} colKey="invoice">الفاتورة المرتبطة</SortableTh>
                 <SortableTh grid={grid} colKey="description">البيان</SortableTh>
                 <SortableTh grid={grid} colKey="amount" style={{ textAlign: "left" }}>المبلغ</SortableTh>
-                <Th>طباعة</Th>
               </tr>
-              <GridFilterRow grid={grid} columns={columns} />
+              <GridFilterRow grid={grid} columns={columns} leading={1} />
             </thead>
             <tbody>
               {grid.view.map((f) => {
                 const inv = invByApplied(f);
                 return (
                   <tr key={f.id}>
+                    <SelectCell id={f.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{f.txNo}</Td><Td>{f.txDate}</Td>
                     <Td>{f.partyName ?? "—"}</Td>
                     <Td mono>{inv ? inv.invoiceNo : "—"}</Td>
                     <Td>{f.description ?? "—"}</Td>
                     <Td num style={{ fontWeight: 600, color: "#b91c1c" }}>{fmt(f.amount)}</Td>
-                    <Td>
-                      <button
-                        type="button"
-                        style={btnSecondary}
-                        onClick={() => printVoucher({
-                          kind: "payment",
-                          title: "سند صرف",
-                          docNo: f.txNo,
-                          date: f.txDate,
-                          partyName: f.partyName ?? null,
-                          amount: f.amount,
-                          description: f.description ?? null,
-                          walletKind: f.bankId != null ? "bank" : "cash",
-                          walletName: payWalletName(deps, f),
-                          linkedDocNo: inv ? inv.invoiceNo : null,
-                        })}
-                      >🖨️ طباعة</button>
-                    </Td>
                   </tr>
                 );
               })}
